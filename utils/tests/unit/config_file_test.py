@@ -34,29 +34,34 @@ class ConfigFileTest(Case):
         self.root = Path(tmp.name).resolve()
         self.path = self.root / "config.toml"
 
-    def test_merge_nested_tables_and_replace_other_values_without_changing_inputs(self):
-        base = {"table": {"keep": 1, "change": {"x": 1}, "list": [1]}, "value": 1}
-        overlay = {"table": {"change": {"y": 2}, "list": [2]}, "value": {"x": 3}}
-        original = copy.deepcopy((base, overlay))
-        self.assertEqual(
-            merge(base, overlay),
-            {"table": {"keep": 1, "change": {"x": 1, "y": 2}, "list": [2]}, "value": {"x": 3}},
-        )
-        self.assertEqual((base, overlay), original)
-
-    def test_merge_adds_keys_replaces_a_table_by_a_value_and_merges_at_any_depth(self):
-        base = {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}}
-        over = {"b": 2, "s": {"k": 1}, "u": 5, "t": {"y": 2, "l": [3], "n": {"q": 3}}}
-        self.assertEqual(
-            merge(base, over),
-            {
-                "a": 1,
-                "b": 2,
-                "s": {"k": 1},
-                "u": 5,
-                "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}},
-            },
-        )
+    def test_merge_adds_keys_merges_tables_at_any_depth_and_replaces_other_values(self):
+        for base, overlay, want in (
+            (
+                {"table": {"keep": 1, "change": {"x": 1}, "list": [1]}, "value": 1},
+                {"table": {"change": {"y": 2}, "list": [2]}, "value": {"x": 3}},
+                {"table": {"keep": 1, "change": {"x": 1, "y": 2}, "list": [2]}, "value": {"x": 3}},
+            ),
+            (
+                {
+                    "a": 1,
+                    "s": "x",
+                    "u": {"k": 1},
+                    "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}},
+                },
+                {"b": 2, "s": {"k": 1}, "u": 5, "t": {"y": 2, "l": [3], "n": {"q": 3}}},
+                {
+                    "a": 1,
+                    "b": 2,
+                    "s": {"k": 1},
+                    "u": 5,
+                    "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}},
+                },
+            ),
+        ):
+            with self.subTest(base=base):
+                original = copy.deepcopy((base, overlay))
+                self.assertEqual(merge(base, overlay), want)
+                self.assertEqual((base, overlay), original)
 
     def test_load_reads_one_file_and_a_missing_or_malformed_one_raises(self):
         with self.assertRaises(FileNotFoundError):
@@ -236,18 +241,6 @@ class Resources(Case):
             read_resources(self.resources[:2], validate=validate)
         self.assertIs(caught.exception, error)
 
-    def test_flat_local_keys_name_the_required_section(self):
-        for text, section in (
-            ('client = "x"\n', "delegate"),
-            ("[hosts.tmux]\nstatus_line = true\n", "session"),
-        ):
-            self.local(text)
-            with (
-                self.subTest(text=text),
-                self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"),
-            ):
-                read_resources(self.resources)
-
     def test_flat_migration_hints_match_key_paths_and_never_choose_utils(self):
         unrelated = DELEGATE + '[clients.writer]\naccount = ""\n'
         Path(self.root, self.package, "delegate", "config.toml").write_text(unrelated)
@@ -285,15 +278,10 @@ class Resources(Case):
             )
             self.assertNotIn("[utils]", str(caught.exception))
 
-    def test_a_flat_key_without_a_supplied_owner_does_not_name_another_layer(self):
-        self.local('harness_key = "linear-harness"\n')
-        expected = "~/.agent-pm/config.local.toml: unknown key 'harness_key': flat local configuration; no supplied layer has it; move it under its owning layer's section"
-        with self.assertRaises(ConfigFileError) as caught:
-            read_resources(self.resources[:1])
-        self.assertEqual(str(caught.exception), expected)
-
-    def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
+    def test_flat_keys_unknown_keys_and_non_table_sections_are_errors(self):
         for text, error in (
+            ('client = "x"\n', r"move it under \[delegate\]"),
+            ("[hosts.tmux]\nstatus_line = true\n", r"move it under \[session\]"),
             ("[delegate]\nunknown_field = 1\n", r"unknown key 'unknown_field' in \[delegate\]"),
             (
                 "session = 1\n",
@@ -305,13 +293,29 @@ class Resources(Case):
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
                 read_resources(self.resources)
 
-    def test_supplied_non_table_sections_are_checked_before_flat_keys(self):
-        self.local('harness_key = "unprovided"\nsession = 1\n')
-        with self.assertRaises(ConfigFileError) as caught:
-            read_resources(self.resources[:1])
-        self.assertEqual(
-            str(caught.exception), "~/.agent-pm/config.local.toml: [session]: want a table"
-        )
+    def test_an_unowned_flat_key_a_section_before_flat_keys_and_a_renamed_key(self):
+        for text, layers, message in (
+            (
+                'harness_key = "linear-harness"\n',
+                1,
+                "~/.agent-pm/config.local.toml: unknown key 'harness_key': flat local configuration; no supplied layer has it; move it under its owning layer's section",
+            ),
+            (
+                'harness_key = "unprovided"\nsession = 1\n',
+                1,
+                "~/.agent-pm/config.local.toml: [session]: want a table",
+            ),
+            (
+                '[delegate]\nruntime = "codex"\n',
+                2,
+                "~/.agent-pm/config.local.toml: unknown key 'runtime' in [delegate]; renamed to 'client'",
+            ),
+        ):
+            self.local(text)
+            with self.subTest(text=text):
+                with self.assertRaises(ConfigFileError) as caught:
+                    read_resources(self.resources[:layers])
+                self.assertEqual(str(caught.exception), message)
 
     def test_nested_keys_are_passed_to_their_owner(self):
         self.local(
@@ -356,15 +360,6 @@ class Resources(Case):
         self.assertEqual(
             found["roles"]["pm"],
             {"tier": 1, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
-        )
-
-    def test_a_renamed_local_key_is_refused_naming_its_new_key(self):
-        self.local('[delegate]\nruntime = "codex"\n')
-        with self.assertRaises(ConfigFileError) as caught:
-            read_resources(self.resources[:2])
-        self.assertEqual(
-            str(caught.exception),
-            "~/.agent-pm/config.local.toml: unknown key 'runtime' in [delegate]; renamed to 'client'",
         )
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):

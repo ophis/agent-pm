@@ -62,15 +62,17 @@ class PathsTest(Case):
         ):
             real_dirs(["~unknown-task318-user/project"], "roots")
 
-    def test_under_returns_first_real_root_and_respects_path_boundaries(self):
-        path = str(self.home / "project")
-        self.assertEqual(under(path, [self.alias, self.root]), str(self.home))
-        self.assertEqual(under(path, [self.root, self.alias]), str(self.root))
-        self.assertIsNone(under(str(self.root / "home-other"), [self.home]))
-
-    def test_under_a_root_equal_to_the_path_holds_it_and_no_roots_hold_nothing(self):
-        self.assertEqual(under(str(self.home), [self.alias]), str(self.home))
-        self.assertIsNone(under(str(self.home), []))
+    def test_under_returns_first_real_root_holding_the_path_and_respects_path_boundaries(self):
+        project = str(self.home / "project")
+        for path, roots, want in (
+            (project, [self.alias, self.root], str(self.home)),
+            (project, [self.root, self.alias], str(self.root)),
+            (str(self.root / "home-other"), [self.home], None),
+            (str(self.home), [self.alias], str(self.home)),
+            (str(self.home), [], None),
+        ):
+            with self.subTest(path=path, roots=roots):
+                self.assertEqual(under(path, roots), want)
 
     def test_temp_dirs_collects_environment_python_system_and_darwin_roots(self):
         value = SimpleNamespace(returncode=0, stdout=str(self.root / "darwin") + "\n", stderr="")
@@ -125,24 +127,21 @@ class PrintableAbs(Case):
                 self.assertFalse(printable_abs(value))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ModuleRootsTest(Case):
-    def test_separate_package_roots_follow_module_files_in_order(self):
-        session = ModuleType("agent_pm.session")
-        session.__file__ = "/installation-one/agent_pm/session/__init__.py"
-        utils = ModuleType("agent_pm.utils")
-        utils.__file__ = "/installation-two/agent_pm/utils/__init__.py"
-        self.assertEqual(module_roots(session, utils), ("/installation-one", "/installation-two"))
-
-    def test_a_shared_installation_root_is_supplied_once(self):
-        session = ModuleType("agent_pm.session")
-        session.__file__ = "/installation/agent_pm/session/__init__.py"
-        utils = ModuleType("agent_pm.utils")
-        utils.__file__ = "/installation/agent_pm/utils/__init__.py"
-        self.assertEqual(module_roots(session, utils), ("/installation",))
+    def test_package_roots_follow_module_files_in_order_and_a_shared_one_is_supplied_once(self):
+        for files, want in (
+            (
+                ("/installation-one", "/installation-two"),
+                ("/installation-one", "/installation-two"),
+            ),
+            (("/installation", "/installation"), ("/installation",)),
+        ):
+            with self.subTest(files=files):
+                session = ModuleType("agent_pm.session")
+                session.__file__ = f"{files[0]}/agent_pm/session/__init__.py"
+                utils = ModuleType("agent_pm.utils")
+                utils.__file__ = f"{files[1]}/agent_pm/utils/__init__.py"
+                self.assertEqual(module_roots(session, utils), want)
 
     def test_a_package_without_a_file_is_rejected(self):
         package = ModuleType("namespace")
@@ -265,69 +264,57 @@ class ImportEnvironment(Case):
         module.__spec__ = ModuleSpec(module.__name__, loader=None)
         self.assertEqual(module_roots(module, self.packages[0]), (self.roots[0],))
 
-    def test_bootstrap_paths_are_supplied_in_package_order_without_unrelated_roots(self):
-        with mock.patch.dict(os.environ, {"PYTHONPATH": "/unrelated"}):
-            self.assertEqual(
-                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join(self.roots)}
-            )
-
-    def test_roots_available_only_from_pythonpath_still_need_child_bootstrap(self):
-        with mock.patch.dict(os.environ, {"PYTHONPATH": os.pathsep.join(self.roots)}):
-            self.assertEqual(
-                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join(self.roots)}
-            )
-
-    def test_installed_shared_root_needs_no_pythonpath(self):
+    def test_import_env_supplies_each_source_root_not_installed_and_on_sys_path(self):
         root = os.path.realpath(next(path for path in sys.path if path))
-        for module in self.packages:
-            module.__file__ = f"{root}/agent_pm/{module.__name__.rsplit('.', 1)[-1]}/__init__.py"
-        with (
-            mock.patch("sysconfig.get_paths", return_value={"purelib": root, "platlib": root}),
-            mock.patch.dict(os.environ, {"PYTHONPATH": "/unrelated"}),
+        everywhere = {"delegate": root, "session": root, "utils": root}
+        roots, mixed = os.pathsep.join(self.roots), (root, *self.roots[1:])
+        for name, at, installed, pythonpath, want in (
+            ("unrelated", {}, "/installation", "/unrelated", {"PYTHONPATH": roots}),
+            ("from pythonpath", {}, "/installation", roots, {"PYTHONPATH": roots}),
+            ("installed shared", everywhere, root, "/unrelated", {}),
+            ("manual bootstrap", everywhere, "/installation", "", {"PYTHONPATH": root}),
+            ("mixed", {"delegate": root}, root, "", {"PYTHONPATH": os.pathsep.join(mixed)}),
         ):
-            self.assertEqual(import_env(*self.packages), {})
-
-    def test_manually_bootstrapped_source_paths_still_need_child_bootstrap(self):
-        root = os.path.realpath(next(path for path in sys.path if path))
-        for module in self.packages:
-            module.__file__ = f"{root}/agent_pm/{module.__name__.rsplit('.', 1)[-1]}/__init__.py"
-        with mock.patch.dict(os.environ, {"PYTHONPATH": ""}):
-            self.assertEqual(import_env(*self.packages), {"PYTHONPATH": root})
-
-    def test_mixed_installation_needs_all_supplied_roots(self):
-        root = os.path.realpath(next(path for path in sys.path if path))
-        self.packages[0].__file__ = f"{root}/agent_pm/delegate/__init__.py"
-        with (
-            mock.patch("sysconfig.get_paths", return_value={"purelib": root, "platlib": root}),
-            mock.patch.dict(os.environ, {"PYTHONPATH": ""}),
-        ):
-            self.assertEqual(
-                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join((root, *self.roots[1:]))}
-            )
+            with (
+                self.subTest(name=name),
+                mock.patch(
+                    "sysconfig.get_paths", return_value={"purelib": installed, "platlib": installed}
+                ),
+                mock.patch.dict(os.environ, {"PYTHONPATH": pythonpath}),
+            ):
+                for module in self.packages:
+                    package = module.__name__.rsplit(".", 1)[-1]
+                    module.__file__ = (
+                        f"{at[package]}/agent_pm/{package}/__init__.py"
+                        if package in at
+                        else f"/checkout/{package}/src/agent_pm/{package}/__init__.py"
+                    )
+                self.assertEqual(import_env(*self.packages), want)
 
 
 class SourcePath(Case):
     def setUp(self):
         self.installed = os.path.realpath(next(path for path in sys.path if path))
-        self.enterContext(
-            mock.patch(
-                "sysconfig.get_paths",
-                return_value={"purelib": self.installed, "platlib": self.installed},
-            )
-        )
 
-    def test_roots_once_in_order_without_the_installed_ones(self):
-        roots = ("/checkout/delegate/src", self.installed, "/repo", "/checkout/delegate/src")
-        self.assertEqual(
-            source_path(roots), {"PYTHONPATH": os.pathsep.join(("/checkout/delegate/src", "/repo"))}
-        )
-
-    def test_nothing_left_to_supply_is_no_pythonpath(self):
-        self.assertEqual(source_path(()), {})
-        self.assertEqual(source_path((self.installed,)), {})
-
-    def test_an_installed_path_missing_from_sys_path_is_still_supplied(self):
-        with mock.patch(
-            "sysconfig.get_paths", return_value={"purelib": "/off-path", "platlib": "/off-path"}
+    def test_roots_once_in_order_without_the_installed_ones_on_sys_path(self):
+        for roots, installed, want in (
+            (
+                ("/checkout/delegate/src", self.installed, "/repo", "/checkout/delegate/src"),
+                self.installed,
+                {"PYTHONPATH": os.pathsep.join(("/checkout/delegate/src", "/repo"))},
+            ),
+            ((), self.installed, {}),
+            ((self.installed,), self.installed, {}),
+            (("/off-path",), "/off-path", {"PYTHONPATH": "/off-path"}),
         ):
-            self.assertEqual(source_path(("/off-path",)), {"PYTHONPATH": "/off-path"})
+            with (
+                self.subTest(roots=roots, installed=installed),
+                mock.patch(
+                    "sysconfig.get_paths", return_value={"purelib": installed, "platlib": installed}
+                ),
+            ):
+                self.assertEqual(source_path(roots), want)
+
+
+if __name__ == "__main__":
+    unittest.main()

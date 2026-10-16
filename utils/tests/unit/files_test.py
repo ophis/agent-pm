@@ -61,34 +61,25 @@ class ReadRegular(Base):
         self.write(b"")
         self.assertEqual(files.read_regular(self.path), b"")
 
-    def test_limit_from_the_start_or_the_end(self):
+    def test_limit_from_the_start_or_the_end_and_from_an_offset(self):
         self.write()
-        for limit, tail, want in (
-            (4, False, b"0123"),
-            (4, True, b"6789"),
-            (0, False, b""),
-            (0, True, b""),
-            (20, False, DATA),
-            (20, True, DATA),
-            (None, True, DATA),
+        for options, want in (
+            ({"limit": 4, "tail": False}, b"0123"),
+            ({"limit": 4, "tail": True}, b"6789"),
+            ({"limit": 0, "tail": False}, b""),
+            ({"limit": 0, "tail": True}, b""),
+            ({"limit": 20, "tail": False}, DATA),
+            ({"limit": 20, "tail": True}, DATA),
+            ({"limit": None, "tail": True}, DATA),
+            ({"offset": 3, "limit": None, "tail": False}, b"3456789"),
+            ({"offset": 3, "limit": 4, "tail": False}, b"3456"),
+            ({"offset": 3, "limit": 4, "tail": True}, b"6789"),
+            ({"offset": 8, "limit": 4, "tail": True}, b"89"),
+            ({"offset": 10, "limit": None, "tail": False}, b""),
+            ({"offset": 12, "limit": 4, "tail": False}, b""),
         ):
-            with self.subTest(limit=limit, tail=tail):
-                self.assertEqual(files.read_regular(self.path, limit=limit, tail=tail), want)
-
-    def test_from_an_offset(self):
-        self.write()
-        for offset, limit, tail, want in (
-            (3, None, False, b"3456789"),
-            (3, 4, False, b"3456"),
-            (3, 4, True, b"6789"),
-            (8, 4, True, b"89"),
-            (10, None, False, b""),
-            (12, 4, False, b""),
-        ):
-            with self.subTest(offset=offset, limit=limit, tail=tail):
-                self.assertEqual(
-                    files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want
-                )
+            with self.subTest(**options):
+                self.assertEqual(files.read_regular(self.path, **options), want)
 
     def test_a_fifo_or_directory_is_none_without_blocking(self):
         os.mkfifo(self.path)
@@ -155,9 +146,19 @@ class AppendLine(Base):
         files.append_line(self.path, "two\n")
         self.assertEqual(self.content(), b"one\ntwo\n")
 
-    def test_bytes_are_preserved_without_decoding(self):
-        files.append_line(self.path, b"raw\xff\n")
-        self.assertEqual(self.content(), b"raw\xff\n")
+    def test_bytes_are_preserved_and_a_lone_surrogate_becomes_a_replacement_character(self):
+        for name, text, want in (
+            ("bytes", b"raw\xff\n", b"raw\xff\n"),
+            (
+                "surrogate",
+                json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n",
+                b'{"text": "a?b"}\n',
+            ),
+        ):
+            with self.subTest(text=text):
+                path = os.path.join(self.dir, name)
+                files.append_line(path, text)
+                self.assertEqual(Path(path).read_bytes(), want)
 
     def test_a_short_write_continues_with_the_rest(self):
         real = os.write
@@ -178,27 +179,20 @@ class AppendLine(Base):
             self.promptly(lambda: files.append_line(self.path, "x\n"))
         self.assertEqual(e.exception.errno, errno.EINVAL)
 
-    def test_a_lone_surrogate_is_written_as_a_replacement_character(self):
-        files.append_line(self.path, json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n")
-        self.assertEqual(self.content(), b'{"text": "a?b"}\n')
-
 
 class Holds(Base):
-    def test_is_exported(self):
-        self.assertIs(holds, files.holds)
-
     def test_only_a_regular_file_holding_exactly_the_text(self):
-        self.assertFalse(files.holds(self.path, "x"))
+        self.assertFalse(holds(self.path, "x"))
         with open(self.path, "w") as f:
             f.write("héllo")
-        self.assertTrue(files.holds(self.path, "héllo"))
-        self.assertTrue(files.holds(Path(self.path), "héllo"))
+        self.assertTrue(holds(self.path, "héllo"))
+        self.assertTrue(holds(Path(self.path), "héllo"))
         for text in ("héll", "héllo!", "", "other"):
-            self.assertFalse(files.holds(self.path, text), text)
+            self.assertFalse(holds(self.path, text), text)
 
     def test_a_fifo_is_no_without_blocking(self):
         os.mkfifo(self.path)
-        self.assertFalse(self.promptly(lambda: files.holds(self.path, "")))
+        self.assertFalse(self.promptly(lambda: holds(self.path, "")))
 
 
 class FileLock(Base):

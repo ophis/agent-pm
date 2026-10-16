@@ -83,11 +83,6 @@ class RecordLine(Case):
         with self.assertRaises(RecordError):
             Record(**{**asdict(FULL), "detail": "a\nb"})
 
-    def test_v_must_be_the_int_one(self):
-        for v in (2, True, "1", 1.0, None):
-            with self.subTest(v=v):
-                self.refused(line(FULL, v=v), "v: want 1")
-
     def test_each_missing_field_is_named(self):
         for field in asdict(FULL):
             with self.subTest(field=field):
@@ -95,14 +90,54 @@ class RecordLine(Case):
                 del data[field]
                 self.refused(json.dumps(data), f"{field}: missing")
 
-    def test_an_extra_key_is_named(self):
-        self.refused(line(FULL, extra=1), "extra: unknown field")
-
-    def test_ctl_and_resume_are_lists_of_str(self):
-        for field in ("ctl", "resume"):
-            for value in ([], "agent-pm-session", ["agent-pm-session", 1], None):
+    def test_each_field_rule_names_the_field(self):
+        for field, values, want in (
+            ("v", (2, True, "1", 1.0, None), "v: want 1"),
+            ("extra", (1,), "extra: unknown field"),
+            *(
+                (field, ([], "agent-pm-session", ["agent-pm-session", 1], None), f"{field}: {ARGV}")
+                for field in ("ctl", "resume")
+            ),
+            (
+                "ctl",
+                (
+                    [CROSS],
+                    ["sh", "-c", "touch /tmp/pwned"],
+                    ["agent-pm-crew"],
+                    ["fake-ctl"],
+                    ["/usr/bin/agent-pm-session"],
+                    ["agent-pm-session", "status"],
+                    ["agent-pm-delegate", "--config", "/x"],
+                    [""],
+                ),
+                CTL,
+            ),
+            (
+                "resume",
+                (
+                    ["sh", "-c", "touch /tmp/pwned"],
+                    ["agent-pm-session", "resume", "/w/run 1"],
+                    ["agent-pm-delegate", "resume"],
+                    ["agent-pm-delegate", "resume", "/w", "--x"],
+                    ["agent-pm-delegate", "start", "/w"],
+                    ["agent-pm-delegate", "resume", "--help"],
+                    ["agent-pm-delegate", "resume", "-"],
+                    ["agent-pm-delegate", "resume", ""],
+                    ["agent-pm-delegate", "resume", "a\nb"],
+                    [CROSS, "resume", "x"],
+                ),
+                RESUME,
+            ),
+            ("kind", ("", "a\tb", None, 1), f"kind: {TEXT}"),
+            ("name", ("", "a\nb", ["n"]), f"name: {TEXT}"),
+            ("sid", ("", "a\x1bb", 1, []), f"sid: {NULL_TEXT}"),
+            ("workdir", ("", "/w\n"), f"workdir: {NULL_TEXT}"),
+            ("detail", ("", "\x07", 1), f"detail: {NULL_TEXT}"),
+            ("sessions", ("a", None, ["a", ""], ["a\n"], [1], [["a"]]), SESSIONS),
+        ):
+            for value in values:
                 with self.subTest(field=field, value=value):
-                    self.refused(line(FULL, **{field: value}), f"{field}: {ARGV}")
+                    self.refused(line(FULL, **{field: value}), want)
 
     def test_each_layer_commands_exact_forms_are_accepted(self):
         for command in ("agent-pm-delegate", "agent-pm-linear", "agent-pm-session"):
@@ -111,53 +146,6 @@ class RecordLine(Case):
                     line(FULL, ctl=[command], resume=[command, "resume", "TASK-1 /w"])
                 )
                 self.assertEqual(record.ctl, (command,))
-
-    def test_ctl_is_only_a_layer_command_alone(self):
-        for value in (
-            [CROSS],
-            ["sh", "-c", "touch /tmp/pwned"],
-            ["agent-pm-crew"],
-            ["fake-ctl"],
-            ["/usr/bin/agent-pm-session"],
-            ["agent-pm-session", "status"],
-            ["agent-pm-delegate", "--config", "/x"],
-            [""],
-        ):
-            with self.subTest(value=value):
-                self.refused(line(FULL, ctl=value), CTL)
-
-    def test_resume_is_its_ctl_command_resume_and_one_key(self):
-        for value in (
-            ["sh", "-c", "touch /tmp/pwned"],
-            ["agent-pm-session", "resume", "/w/run 1"],
-            ["agent-pm-delegate", "resume"],
-            ["agent-pm-delegate", "resume", "/w", "--x"],
-            ["agent-pm-delegate", "start", "/w"],
-            ["agent-pm-delegate", "resume", "--help"],
-            ["agent-pm-delegate", "resume", "-"],
-            ["agent-pm-delegate", "resume", ""],
-            ["agent-pm-delegate", "resume", "a\nb"],
-            [CROSS, "resume", "x"],
-        ):
-            with self.subTest(value=value):
-                self.refused(line(FULL, resume=value), RESUME)
-
-    def test_each_text_field_rule(self):
-        for field, values, want in (
-            ("kind", ("", "a\tb", None, 1), TEXT),
-            ("name", ("", "a\nb", ["n"]), TEXT),
-            ("sid", ("", "a\x1bb", 1, []), NULL_TEXT),
-            ("workdir", ("", "/w\n"), NULL_TEXT),
-            ("detail", ("", "\x07", 1), NULL_TEXT),
-        ):
-            for value in values:
-                with self.subTest(field=field, value=value):
-                    self.refused(line(FULL, **{field: value}), f"{field}: {want}")
-
-    def test_sessions_is_a_list_of_names(self):
-        for value in ("a", None, ["a", ""], ["a\n"], [1], [["a"]]):
-            with self.subTest(value=value):
-                self.refused(line(FULL, sessions=value), SESSIONS)
 
     def test_display_is_null_or_a_str(self):
         self.assertEqual(Record.parse(line(FULL, display="")).display, "")
@@ -346,8 +334,9 @@ class AnswerKeys(Case):
                 self.assertEqual(self.answer((), stdin), (2, "", f"prog: {error}\n"))
                 self.assertEqual(self.resolved, [])
 
-    def test_a_failing_key_is_named_and_later_keys_are_still_answered(self):
+    def test_a_failing_key_is_named_later_keys_are_still_answered_and_none_writes_no_line(self):
         for args, code, err in (
+            (("a", "q", "b"), 0, ""),
             (("a", "u", "b"), 2, "prog: u: not a key\n"),
             (("a", "f", "b"), 1, "prog: f: not found\n"),
             (("f", "a", "u", "b"), 2, "prog: f: not found\nprog: u: not a key\n"),
@@ -381,9 +370,6 @@ class AnswerKeys(Case):
         self.assertEqual(self.resolved, [])
         self.assertEqual(self.answer(("a",), single=True), (0, "a: ok\n", ""))
         self.assertEqual(self.answer((), record_line("b"), single=True), (0, "b: ok\n", ""))
-
-    def test_a_reply_of_none_writes_no_line(self):
-        self.assertEqual(self.answer(("a", "q", "b")), (0, "a: ok\nb: ok\n", ""))
 
     def test_errors_reach_stderr_without_control_characters(self):
         def resolve(_key):
