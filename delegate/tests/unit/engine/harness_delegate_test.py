@@ -13,15 +13,27 @@ import json
 import os
 import shutil
 import signal
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Finished, Outcome, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine import harness_delegate
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import Access, Exited, Liveness, Mode, NotShowable, Reply, SessionError
+from agent_pm.session import (
+    Access,
+    Exited,
+    Launch,
+    Liveness,
+    Mode,
+    NotShowable,
+    Reply,
+    Session,
+    SessionError,
+)
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 
@@ -39,7 +51,7 @@ ORPHAN = 4242
 
 
 class CreateTest(HarnessCase):
-    def test_create_returns_a_persisted_run_with_its_placement_and_overlays(self):
+    def test_create_persists_placement_with_overlays(self):
         class Bound(HarnessDelegate):
             def __init__(self, role, spec, **placement):
                 super().__init__(role, spec, session_cls=HarnessSession, **placement)
@@ -54,7 +66,9 @@ class CreateTest(HarnessCase):
         )
         self.assertIsInstance(view, Bound)
         self.assertEqual(self.metadata()["overlays"], [overlay])
-        self.assertEqual((view._state.display, view._state.callback), ("none", ("callback",)))
+        self.assertEqual(
+            (self.metadata()["display"], self.metadata()["callback"]), ("none", ["callback"])
+        )
         attached = Bound.attach(self.work, sid=SID, session_cls=HarnessSession)
         self.assertEqual(attached.workdir, self.work)
 
@@ -71,6 +85,58 @@ class CloseTest(HarnessCase):
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
+
+
+class IdentityTest(HarnessCase):
+    def start_tui(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        return record, HarnessDelegate.attach(record)
+
+    def test_a_foreign_agent_survives_old_run_close(self):
+        record, view = self.start_tui()
+        original = HarnessSession.live[record.sessions[1]]
+        original.stop()
+        replacement = HarnessSession.start(
+            replace(original.spec, sid=SID.replace("0", "1")), host="agent"
+        )
+        self.assertFalse(view.status().alive)
+        with self.assertRaisesRegex(ConfigError, "still alive"):
+            view.resume(input="answer")
+        with self.assertRaisesRegex(ConfigError, "still alive"):
+            self.make()
+        view.close()
+        self.assertTrue(replacement.alive())
+
+    def test_a_cached_agent_cannot_close_its_replacement(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        view = self.make(spec=spec)
+        view.run()
+        name = self.metadata()["agent_name"]
+        original = HarnessSession.live[name]
+        original.stop()
+        HarnessSession.start(replace(original.spec, sid=SID.replace("0", "1")), host="agent")
+        view.close()
+        self.assertTrue(RecordingHost.processes["agent", name].alive())
+
+    def test_a_foreign_harness_survives_old_run_close(self):
+        for sid in (SID.replace("0", "1"), None):
+            with self.subTest(sid=sid):
+                HarnessSession.reset()
+                self.work = os.path.join(self.home, f"run-{sid}")
+                record, view = self.start_tui()
+                name = record.sessions[0]
+                host = HarnessSession.host("agent")
+                host.attach(name).close()
+                replacement = host.detach(
+                    name,
+                    Launch(("replacement",)),
+                    record=None if sid is None else replace(record, sid=sid, sessions=(name,)),
+                )
+                self.assertFalse(view.status().alive)
+                view.close()
+                self.assertTrue(replacement.alive())
+                replacement.close()
 
 
 class OuterTest(HarnessCase):
@@ -95,6 +161,27 @@ class RunDirTest(HarnessCase):
     def stored(self):
         with open(self.record(), encoding="utf-8") as file:
             return json.load(file)
+
+    def test_the_default_session_class_is_null(self):
+        self.make(session_cls=Session, driver=AgentDriver(HarnessSession))
+        self.assertIsNone(self.stored()["session_cls"])
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, Session)
+
+    def test_a_historical_default_class_path_still_loads(self):
+        self.make(session_cls=Session, driver=AgentDriver(HarnessSession))
+        data = self.stored()
+        data["session_cls"] = f"{Session.__module__}:{Session.__qualname__}"
+        with open(self.record(), "w", encoding="utf-8") as file:
+            json.dump(data, file)
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, Session)
+
+    def test_an_injected_session_class_is_loaded_from_its_saved_path(self):
+        self.make()
+        self.assertEqual(
+            self.stored()["session_cls"],
+            "delegate.tests.fakes.harness_session:HarnessSession",
+        )
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, HarnessSession)
 
     def corrupt(self, text):
         self.make()
@@ -711,6 +798,35 @@ class StatusTest(HarnessCase):
     def test_content_is_the_current_status_line(self):
         self.make().detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertEqual(view.content(), view.status().to_line())
+
+    def test_tui_content_uses_the_current_result(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(record)
+        agent = HarnessSession.live[record.sessions[1]]
+        for result, expected in (
+            (None, "agent content"),
+            (Result(0, None), "agent content"),
+            (Result(0, Outcome("done", "T", "S")), None),
+            (Result(1, None, error="boom"), None),
+        ):
+            with self.subTest(result=result):
+                if result is not None:
+                    view._complete(result)
+                with mock.patch.object(agent, "content", return_value="agent content") as content:
+                    self.assertEqual(
+                        view.content(),
+                        expected if expected is not None else view.status().to_line(),
+                    )
+                    self.assertEqual(content.call_count, int(expected is not None))
+                self.assertTrue(RecordingHost.processes["agent", record.sessions[0]].alive())
+
+    def test_tui_content_without_its_agent_falls_back_to_status(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        HarnessSession.live[record.sessions[1]].stop()
+        view = HarnessDelegate.attach(record)
         self.assertEqual(view.content(), view.status().to_line())
 
     def test_its_state_is_working_while_the_run_lives_else_gone(self):

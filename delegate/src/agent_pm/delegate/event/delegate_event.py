@@ -8,8 +8,8 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Self
 
-from agent_pm.delegate.event.types import Outcome
-from agent_pm.utils import OutcomeStatus
+from agent_pm.delegate.event.outcome import parse as parse_outcome
+from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 
 
 class DelegateEventKind(StrEnum):
@@ -37,21 +37,6 @@ def _check(*, ok: bool, message: str) -> None:
 
 def _number(value) -> bool:
     return isinstance(value, int | float) and (not isinstance(value, bool))
-
-
-def _outcome(data) -> Outcome:
-    names = {f.name for f in fields(Outcome)}
-    _check(
-        ok=isinstance(data, dict) and data.keys() == names,
-        message=f"outcome: want the fields {', '.join(sorted(names))}",
-    )
-    for name, value in data.items():
-        if name in ("questions", "files"):
-            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
-        else:
-            valid = isinstance(value, str) and (name != "status" or value in tuple(OutcomeStatus))
-        _check(ok=valid, message=f"outcome {name}: {value!r}")
-    return Outcome(**{**data, "status": OutcomeStatus(data["status"])})
 
 
 @dataclass(frozen=True)
@@ -89,8 +74,6 @@ class DelegateEvent:
                 ok=outcome is None or isinstance(outcome, Outcome),
                 message="outcome: want null or an Outcome",
             )
-            if outcome is not None:
-                _outcome(asdict(outcome))
             _check(ok=isinstance(self.error, str), message="error: want a str")
             _check(
                 ok=limit is None
@@ -121,5 +104,8 @@ class DelegateEvent:
         for key in data:
             _check(ok=key in ("v", "kind", *_FIELDS[kind]), message=f"{key}: not a {kind} field")
         if data.get("outcome") is not None:
-            data["outcome"] = _outcome(data["outcome"])
+            try:
+                data["outcome"] = parse_outcome(data["outcome"])
+            except InvalidOutcome as error:
+                raise DelegateEventError(str(error)) from None
         return cls(**{k: v for k, v in data.items() if k != "v"})

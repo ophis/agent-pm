@@ -9,7 +9,8 @@ from enum import StrEnum
 
 from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
 from agent_pm.delegate.composer.types import ConfigError, Team
-from agent_pm.delegate.config import CONFIG, read_config, validate_team_dirs
+from agent_pm.delegate.config import CONFIG, validate_team_dirs
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils import LOCAL, under, unfenced
 from agent_pm.utils import load_config as load

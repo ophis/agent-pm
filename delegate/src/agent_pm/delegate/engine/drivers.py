@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 from agent_pm.delegate import config
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.delegate.engine.types import ConfigError, DriverSpec, Instruction
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, Session, Spec
@@ -51,7 +52,9 @@ class AgentDriver(Driver):
 
     def policy(self, client: str) -> tuple[tuple[str, ...], dict[str, str]]:
         try:
-            flags, env = config.policy(client, self.settings)
+            flags, env = config.policy(
+                client, read_config() if self.settings is None else self.settings
+            )
             self.session_cls.validate_policy(flags=tuple(flags), env=env)
             return tuple(flags), dict(env)
         except (OSError, ValueError, SessionConfigError) as error:

@@ -17,7 +17,7 @@ from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback, sweep
-from agent_pm.delegate.engine.config import module_roots
+from agent_pm.delegate.engine.config import module_roots, read_config
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute, say, stopped
@@ -116,7 +116,7 @@ def _encode(value: object) -> object:
 class _State:
     role: str
     plan: Plan
-    session_cls: str
+    session_cls: str | None
     host: str
     harness_host: str
     display: Display
@@ -172,7 +172,7 @@ class HarnessDelegate(Delegate):
     def instruct(cls, role: str, spec: Spec) -> Result:
         """Delivers the role's prompt to spec.out: no Session, no delegate.json."""
         try:
-            composer = Composer(config=DelegateConfig(config.read_config()), team=spec.team)
+            composer = Composer(config=DelegateConfig(read_config()), team=spec.team)
         except (OSError, ValueError) as error:
             raise ConfigError(str(error)) from None
         driver = InstructionDriver()
@@ -200,7 +200,7 @@ class HarnessDelegate(Delegate):
     ):
         try:
             self.composer = composer or Composer(
-                config=DelegateConfig(config.read_config()), team=spec.team
+                config=DelegateConfig(read_config()), team=spec.team
             )
             run = self.composer.resolve(role, spec.task, overlays=overlays)
             self._settings = thaw(self.composer.config.values)
@@ -253,7 +253,9 @@ class HarnessDelegate(Delegate):
         self._state = _State(
             role,
             accepted,
-            f"{session_cls.__module__}:{session_cls.__qualname__}",
+            None
+            if session_cls is Session
+            else f"{session_cls.__module__}:{session_cls.__qualname__}",
             agent_host.name,
             harness.name,
             display,
@@ -450,7 +452,7 @@ class HarnessDelegate(Delegate):
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
         try:
             view.composer = composer or Composer(
-                config=DelegateConfig(config.read_config()),
+                config=DelegateConfig(read_config()),
                 team=None
                 if view._state.plan.spec.team is None
                 else _team(view._state.plan.spec.team),
@@ -458,7 +460,7 @@ class HarnessDelegate(Delegate):
             view._settings = thaw(view.composer.config.values)
             view.session_cls = session_cls or (
                 Session
-                if view._state.session_cls == f"{Session.__module__}:{Session.__qualname__}"
+                if view._state.session_cls in (None, f"{Session.__module__}:{Session.__qualname__}")
                 else load_class(view._state.session_cls, Session)
             )
             view._configure()
@@ -566,26 +568,31 @@ class HarnessDelegate(Delegate):
         return None
 
     def _agent(self, state: _State) -> Session | None:
-        if (agent := self._own(state)) is not None:
+        if (agent := self._own(state)) is not None and agent.mode != Mode.TUI:
             return agent
         try:
-            return self.session_cls.attach(state.agent_name, host=state.host)
+            return self.session_cls.attach(state.agent_name, sid=state.plan.sid, host=state.host)
         except SessionError:
             return None
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
     def _harness(self, state: _State) -> Process | None:
-        return self._process(state.harness_host, state.harness_name) if state.detached else None
+        return (
+            self._process(state.harness_host, state.harness_name, sid=state.plan.sid)
+            if state.detached
+            else None
+        )
 
-    def _process(self, host_name: str, name: str) -> Process | None:
+    def _process(self, host_name: str, name: str, *, sid: str | None = None) -> Process | None:
         try:
             host = (
                 self._harness_override
                 if self._harness_override is not None and self._harness_override.name == host_name
                 else self.session_cls.host(host_name)
             )
-            return host.attach(name)
+            process = host.attach(name)
+            return process if sid is None or process.session_identity()[0] == sid else None
         except SessionError:
             return None
         except SessionConfigError as error:
@@ -622,13 +629,21 @@ class HarnessDelegate(Delegate):
         )
 
     def content(self) -> str:
+        state = self._read()
+        result = state.result
+        if (
+            state.plan.spec.mode == Mode.TUI
+            and (result is None or result.outcome is None and not result.error)
+            and (agent := self._agent(state)) is not None
+        ):
+            return agent.content()
         return self.status().to_line()
 
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)
         found = None if agent is None else agent.status()
-        alive = self._alive(state)
+        alive = self._alive(state) and (state.plan.spec.mode != Mode.TUI or found is not None)
         if found is not None and found.state == StatusState.UNKNOWN:
             word = StatusState.UNKNOWN
         else:

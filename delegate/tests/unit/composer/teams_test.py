@@ -28,7 +28,7 @@ from agent_pm.delegate.composer.teams import (
     team_paths,
     used,
 )
-from agent_pm.delegate.config import read_config
+from agent_pm.delegate.engine.config import read_config
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.shipped import catalog
