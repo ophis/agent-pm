@@ -691,6 +691,7 @@ class Tui(Base):
             ([STOP] * (1 + STOP_LIMIT), 1, "delegate: the agent run returned no outcome"),
         ):
             with self.subTest(want=want):
+                self.work = os.path.join(self.home, f"run-{want}")
                 handle = FakeHandle(events)
                 with (
                     mock.patch.object(self.driver, "preflight"),

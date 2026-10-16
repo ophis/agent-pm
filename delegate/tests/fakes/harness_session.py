@@ -34,6 +34,10 @@ class RecordingProcess(Process):
         self.name, self.display_value, self.record_value = name, display, record
         self.live = True
         self.closed = 0
+        self.sid = None if record is None else record.sid
+
+    def session_identity(self):
+        return self.sid, None
 
     def alive(self):
         return self.live
@@ -179,10 +183,10 @@ class HarnessSession(SessionClass):
         return session
 
     @classmethod
-    def attach(cls, name, *, host=None, idle_timeout=None):
+    def attach(cls, name, *, sid=None, host=None, idle_timeout=None):
         cls.attached.append((name, host))
         cls.host(host)
-        session = super().attach(name, host=host, idle_timeout=idle_timeout)
+        session = super().attach(name, sid=sid, host=host, idle_timeout=idle_timeout)
         if cls.host_names[name] != (host or "agent"):
             raise SessionError(f"no {host} session {name}")
         return session
@@ -246,6 +250,9 @@ class DiskProcess(Process):
     def alive(self):
         return self.data().get("alive", False)
 
+    def session_identity(self):
+        return self.data().get("sid"), None
+
     def close(self):
         save(self.path, json.dumps({**self.data(), "alive": False}))
 
@@ -275,7 +282,12 @@ class DiskHost(RecordingHost):
         save(
             path,
             json.dumps(
-                {"alive": True, "display": display, "record": record.to_line() if record else None}
+                {
+                    "alive": True,
+                    "display": display,
+                    "record": record.to_line() if record else None,
+                    "sid": record.sid if record else None,
+                }
             ),
         )
         append_line(

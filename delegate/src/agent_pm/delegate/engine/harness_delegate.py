@@ -569,23 +569,28 @@ class HarnessDelegate(Delegate):
         if (agent := self._own(state)) is not None:
             return agent
         try:
-            return self.session_cls.attach(state.agent_name, host=state.host)
+            return self.session_cls.attach(state.agent_name, sid=state.plan.sid, host=state.host)
         except SessionError:
             return None
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
     def _harness(self, state: _State) -> Process | None:
-        return self._process(state.harness_host, state.harness_name) if state.detached else None
+        return (
+            self._process(state.harness_host, state.harness_name, sid=state.plan.sid)
+            if state.detached
+            else None
+        )
 
-    def _process(self, host_name: str, name: str) -> Process | None:
+    def _process(self, host_name: str, name: str, *, sid: str | None = None) -> Process | None:
         try:
             host = (
                 self._harness_override
                 if self._harness_override is not None and self._harness_override.name == host_name
                 else self.session_cls.host(host_name)
             )
-            return host.attach(name)
+            process = host.attach(name)
+            return process if sid is None or process.session_identity()[0] == sid else None
         except SessionError:
             return None
         except SessionConfigError as error:
@@ -628,7 +633,7 @@ class HarnessDelegate(Delegate):
         state = self._read()
         agent = self._agent(state)
         found = None if agent is None else agent.status()
-        alive = self._alive(state)
+        alive = self._alive(state) and (state.plan.spec.mode != Mode.TUI or found is not None)
         if found is not None and found.state == StatusState.UNKNOWN:
             word = StatusState.UNKNOWN
         else:

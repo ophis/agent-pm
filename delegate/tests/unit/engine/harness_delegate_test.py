@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import signal
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Finished, Outcome, Result, Spec
@@ -21,7 +22,16 @@ from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import Access, Exited, Liveness, Mode, NotShowable, Reply, SessionError
+from agent_pm.session import (
+    Access,
+    Exited,
+    Launch,
+    Liveness,
+    Mode,
+    NotShowable,
+    Reply,
+    SessionError,
+)
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 
@@ -71,6 +81,47 @@ class CloseTest(HarnessCase):
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
+
+
+class IdentityTest(HarnessCase):
+    def start_tui(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        return record, HarnessDelegate.attach(record)
+
+    def test_a_foreign_agent_survives_old_run_close(self):
+        record, view = self.start_tui()
+        original = HarnessSession.live[record.sessions[1]]
+        original.stop()
+        replacement = HarnessSession.start(
+            replace(original.spec, sid=SID.replace("0", "1")), host="agent"
+        )
+        self.assertFalse(view.status().alive)
+        with self.assertRaisesRegex(ConfigError, "still alive"):
+            view.resume(input="answer")
+        with self.assertRaisesRegex(ConfigError, "still alive"):
+            self.make()
+        view.close()
+        self.assertTrue(replacement.alive())
+
+    def test_a_foreign_harness_survives_old_run_close(self):
+        for sid in (SID.replace("0", "1"), None):
+            with self.subTest(sid=sid):
+                HarnessSession.reset()
+                self.work = os.path.join(self.home, f"run-{sid}")
+                record, view = self.start_tui()
+                name = record.sessions[0]
+                host = HarnessSession.host("agent")
+                host.attach(name).close()
+                replacement = host.detach(
+                    name,
+                    Launch(("replacement",)),
+                    record=None if sid is None else replace(record, sid=sid, sessions=(name,)),
+                )
+                self.assertFalse(view.status().alive)
+                view.close()
+                self.assertTrue(replacement.alive())
+                replacement.close()
 
 
 class OuterTest(HarnessCase):
