@@ -2,7 +2,7 @@
 
 import re
 
-from manager.tests.skills.tmux import text
+from manager.tests.skills.commands import text
 
 
 def rule(phrase: str) -> str:

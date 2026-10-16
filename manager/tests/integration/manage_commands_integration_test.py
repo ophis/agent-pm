@@ -1,4 +1,4 @@
-"""manager/skills/{tmux,manage}/SKILL.md's layer command examples against the real bin/ commands:
+"""manager/skills/manage/SKILL.md's layer command examples against the real bin/ commands:
 each subcommand's --help exits 0 and lists every flag the example writes; a misspelt one does not.
 """
 
@@ -7,7 +7,7 @@ import re
 import subprocess
 
 from manager.tests.case import Case, child_env
-from manager.tests.skills.tmux import BIN, body, examples, flags, subcommand
+from manager.tests.skills.commands import BIN, body, examples, flags, subcommand
 
 
 class Examples(Case):
@@ -41,7 +41,7 @@ class Examples(Case):
         return found
 
     def test_every_example_names_a_subcommand_and_flags_its_command_takes(self):
-        self.assertEqual(self.refused(body("tmux") + body("manage")), [])
+        self.assertEqual(self.refused(body("manage")), [])
 
     def test_a_misspelt_subcommand_or_flag_is_refused(self):
         source = "`agent-pm-crew close-all --dryrun` and `agent-pm-session sendkeys w`"

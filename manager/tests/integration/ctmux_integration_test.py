@@ -1,4 +1,4 @@
-"""ctmux (manager/skills/tmux/scripts/ctmux): its tmux calls through a fake tmux, its attach per
+"""ctmux (manager/skills/manage/scripts/ctmux): its tmux calls through a fake tmux, its attach per
 terminal, its new session on a private tmux server with the shell under its plugin's agent-pm-crew
 hold, and the launchers --install puts in ~/.agent-pm/bin, run from a plain PATH before and after a
 plugin upgrade.
@@ -18,8 +18,8 @@ from agent_pm.manager.engine.types import Held
 from manager.tests.case import REPO, Case
 from session.tests import live_tmux
 
-CTMUX = os.path.join(REPO, "manager", "skills", "tmux", "scripts", "ctmux")
-LAUNCHER = os.path.join(REPO, "manager", "skills", "tmux", "scripts", "launcher")
+CTMUX = os.path.join(REPO, "manager", "skills", "manage", "scripts", "ctmux")
+LAUNCHER = os.path.join(REPO, "manager", "skills", "manage", "scripts", "launcher")
 COMMANDS = ("ctmux", "agent-pm-crew", "agent-pm-session", "agent-pm-delegate", "agent-pm-linear")
 USAGE = "usage: ctmux <session-name> | ctmux --install"
 FAKE = """#!{python} -I
