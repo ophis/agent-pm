@@ -13,9 +13,11 @@ from agent_pm.utils.config_file import (
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.environment import AGENT_SESSION_ENV, LEASE_ENV, environment_ok, nested_start
 from agent_pm.utils.files import (
+    STALE_AGE,
     ConfinedFileError,
     ConfinedReason,
     append_line,
+    drop_stale,
     file_lock,
     holds,
     idle,
@@ -97,6 +99,7 @@ __all__ = [
     "Repo",
     "Runner",
     "SHORT",
+    "STALE_AGE",
     "STATE",
     "STOP_WAIT",
     "Status",
@@ -107,6 +110,7 @@ __all__ = [
     "checkout",
     "command_path",
     "common_dir",
+    "drop_stale",
     "environment_ok",
     "err_text",
     "fenced",

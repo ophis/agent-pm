@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
@@ -14,7 +15,7 @@ from agent_pm.session import ConfigError, Host, HostProcess, Mode, Session, Sess
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
-from agent_pm.utils import Record
+from agent_pm.utils import Record, file_lock
 
 from session.tests.case import Case
 
@@ -247,6 +248,126 @@ class StartTest(Base):
         self.session.close.assert_called_once_with()
         self.handle.publish.assert_not_called()
         self.assertFalse(os.path.exists(state_path()))
+
+
+def sid(n: int) -> str:
+    return f"{n:08x}-0000-4000-8000-000000000000"
+
+
+class StaleTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.root = os.path.dirname(state().workdir())
+
+    def planted(self, sid: str, days: float, *, latest: str | None = None) -> str:
+        """workers/<sid>/worker.json `days` old; `latest`: by-name/<latest> names it."""
+        path = os.path.join(self.root, sid)
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, worker.STATE_FILE), "w", encoding="utf-8") as f:
+            f.write("{}")
+        when = time.time() - days * 86400
+        os.utime(os.path.join(path, worker.STATE_FILE), (when, when))
+        if latest is not None:
+            os.makedirs(os.path.join(self.root, worker.BY_NAME), exist_ok=True)
+            with open(os.path.join(self.root, worker.BY_NAME, latest), "w", encoding="utf-8") as f:
+                f.write(sid + "\n")
+        return path
+
+    def test_a_start_drops_only_stale_unheld_non_latest_sids(self):
+        self.planted(sid(1), 31)
+        self.planted(sid(2), 31, latest="w1")
+        held = self.planted(sid(3), 31)
+        self.planted(sid(4), 31, latest="w2")
+        self.planted(sid(5), 29)
+        with file_lock(os.path.join(held, "worker")):
+            self.worker().start(prompt="", resume=False)
+        self.assertEqual(
+            sorted(os.listdir(self.root)),
+            sorted([worker.BY_NAME, SID, sid(2), sid(3), sid(4), sid(5)]),
+        )
+        self.assertEqual(sorted(os.listdir(os.path.join(self.root, worker.BY_NAME))), ["w1", "w2"])
+        self.assertEqual(self.said, [])
+
+    def test_odd_entries_stay(self):
+        bare = os.path.join(self.root, sid(1))
+        os.makedirs(bare)
+        old = time.time() - 31 * 86400
+        os.utime(bare, (old, old))
+        elsewhere = self.planted(sid(2), 31)
+        os.rename(elsewhere, os.path.expanduser("~/elsewhere"))
+        os.symlink(os.path.expanduser("~/elsewhere"), os.path.join(self.root, sid(2)))
+        self.planted("junk", 31)
+        self.worker().start(prompt="", resume=False)
+        self.assertEqual(
+            sorted(os.listdir(self.root)), sorted([worker.BY_NAME, SID, sid(1), sid(2), "junk"])
+        )
+        self.assertEqual(os.listdir(os.path.expanduser("~/elsewhere")), [worker.STATE_FILE])
+        self.assertEqual(self.said, [])
+
+    def test_a_symlinked_lock_is_never_followed(self):
+        path = self.planted(sid(1), 31)
+        target = os.path.expanduser("~/outside.lock")
+        os.symlink(target, os.path.join(path, "worker.lock"))
+        self.worker().start(prompt="", resume=False)
+        self.assertIn(sid(1), os.listdir(self.root))
+        self.assertFalse(os.path.lexists(target))
+
+    def test_a_pointer_it_cannot_read_drops_nothing(self):
+        self.planted(sid(1), 31)
+        os.makedirs(os.path.join(self.root, worker.BY_NAME, "w3"))
+        self.worker().start(prompt="", resume=False)
+        self.assertIn(sid(1), os.listdir(self.root))
+        pointers = os.path.join(self.root, worker.BY_NAME)
+        self.assertEqual(self.said, [f"worker cleanup skipped: {pointers}/w3: unreadable"])
+
+    def test_pointers_it_cannot_list_drop_nothing(self):
+        self.planted(sid(1), 31)
+        pointers = os.path.join(self.root, worker.BY_NAME)
+        refused = PermissionError(errno.EACCES, "refused", pointers)
+        real = os.listdir
+
+        def listdir(path="."):
+            if path == pointers:
+                raise refused
+            return real(path)
+
+        with mock.patch("os.listdir", side_effect=listdir):
+            self.worker().start(prompt="", resume=False)
+        self.assertIn(sid(1), os.listdir(self.root))
+        self.assertEqual(self.said, [f"worker cleanup skipped: {refused}"])
+
+    def test_a_workers_dir_it_cannot_list_is_said_and_the_start_goes_on(self):
+        self.planted(sid(1), 31)
+        refused = PermissionError(errno.EACCES, "refused", self.root)
+        real = os.scandir
+
+        def scandir(path="."):
+            if path == self.root:
+                raise refused
+            return real(path)
+
+        with mock.patch("os.scandir", side_effect=scandir):
+            self.worker().start(prompt="", resume=False)
+        self.assertIn(sid(1), os.listdir(self.root))
+        self.assertEqual(self.said, [f"worker cleanup: {self.root}: {refused}"])
+
+    def test_a_drop_error_is_said_and_the_start_goes_on(self):
+        path = self.planted(sid(1), 31)
+        refused = OSError(errno.EPERM, "refused", path)
+        with mock.patch("shutil.rmtree", side_effect=refused):
+            record = self.worker().start(prompt="", resume=False)
+        self.assertEqual(record, state(token="/tmp/apm-group-1").record())
+        self.assertIn(sid(1), os.listdir(self.root))
+        self.assertEqual(self.said, [f"worker cleanup: {path}: {refused}"])
+
+    def test_a_failed_start_keeps_the_previous_latest(self):
+        Worker(state(sid=OTHER), session_cls=self.session_cls).start(prompt="", resume=False)
+        old = time.time() - 31 * 86400
+        os.utime(os.path.join(self.root, OTHER, worker.STATE_FILE), (old, old))
+        self.session_cls.start.side_effect = SessionError("tui session w1 is running")
+        with self.assertRaises(SessionError):
+            self.worker().start(prompt="", resume=False)
+        self.assertEqual(Worker.load("w1").state.sid, OTHER)
 
 
 class ColorWatchTest(Base):
