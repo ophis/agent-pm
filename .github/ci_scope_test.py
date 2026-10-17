@@ -299,7 +299,15 @@ class Aggregate(unittest.TestCase):
     def needs(self, *, full=True, event="pull_request", docs=False):
         result = {
             job: {"result": "success"}
-            for job in ("changes", "lint", "repository", "unit", "coverage", "integration")
+            for job in (
+                "changes",
+                "lint",
+                "repository",
+                "unit",
+                "coverage",
+                "integration",
+                "broker",
+            )
         }
         result["changes"]["outputs"] = {"full": str(full).lower(), "docs": str(docs).lower()}
         result["repository"]["result"] = "success" if full else "skipped"
