@@ -216,6 +216,25 @@ class Client(Live):
             "200x50",
         )
 
+    def test_attach_resends_a_lost_resize(self):
+        self.server.start("mgr")
+        self.ok("new-session", "-d", "-s", "w1", "-x", "80", "-y", "24", *live_tmux.IDLE)
+        write, dropped = os.write, []
+
+        def lossy(fd: int, data: bytes) -> int:
+            if data.startswith(b"refresh-client") and not dropped:
+                dropped.append(data)
+                return len(data)
+            return write(fd, data)
+
+        with mock.patch("os.write", side_effect=lossy):
+            self.server.attach("w1")
+        self.assertEqual(dropped, [b"refresh-client -C 200x50\n"])
+        self.assertEqual(
+            self.ok("display-message", "-p", "-t", "=w1:", "#{window_width}x#{window_height}"),
+            "200x50",
+        )
+
 
 class Readers(Live):
     def test_option_pane_of_panes_events(self):
