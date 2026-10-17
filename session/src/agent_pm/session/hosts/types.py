@@ -1,5 +1,3 @@
-"""Attach targets: what the Viewer shows a session through, named by its Host."""
-
 from dataclasses import dataclass
 
 
@@ -12,9 +10,7 @@ class SessionView:
 
 @dataclass(frozen=True)
 class CommandView:
-    """A command the Viewer runs in a view session it makes: printed, the attach command shown to
-    the user; argv, what that view session runs.
-    """
+    """printed: the attach command shown; argv: what the view session runs."""
 
     printed: str
     argv: tuple[str, ...]

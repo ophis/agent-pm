@@ -1,6 +1,5 @@
-"""The Viewer's part inside the session layer: `--display` (validate_display, display,
-display_help, layout), tile, and what it adds to a Host's rows and Status. Only on an attachable
-Host does FORMAT apply; on another, a display is kept as given and matched exactly.
+"""The Viewer's functions the session layer calls. FORMAT applies only on an attachable Host; on
+another, a display is kept as given and matched exactly.
 """
 
 from __future__ import annotations
@@ -88,9 +87,8 @@ def display_help(host: Host) -> str:
 
 
 def layout(viewer: Viewer, host: Host, display: Display) -> str | None:
-    """None on a Host that cannot show; else display, its opener part the caller's once the pane
-    it goes beside (split_from's, else the caller's) is found; that part stays empty only beside
-    split_from. NO_DISPLAY needs no pane: the caller's opener when it has one, started hidden.
+    """None on a Host that cannot show; else display, its empty opener part the caller's once the
+    pane it goes beside is found. NO_DISPLAY needs no pane, started hidden.
     """
     validate_display(display, host)
     if not host.attachable:
@@ -138,7 +136,6 @@ def _matching(host: Host, display: Display) -> list[SessionRow]:
 
 
 def _placed(viewer: Viewer) -> dict[str, dict]:
-    """The host tmux listing rows by name, view sessions' included."""
     found = viewer._tmux.listing()
     views = viewer._tmux.listing(views=True)
     if found is None or views is None:
@@ -147,7 +144,7 @@ def _placed(viewer: Viewer) -> dict[str, dict]:
 
 
 def rows(viewer: Viewer, host: Host, display: Display) -> list[SessionRow]:
-    """host's rows display lists, each with shown and own from its placed session."""
+    """host's rows display lists, with shown and own."""
     found = _matching(host, display)
     if not (found and host.attachable):
         return found
@@ -208,9 +205,7 @@ def started(viewer: Viewer, name: str, host: Host, display: Display) -> None:
 
 
 def status(viewer: Viewer, host: Host, process: Process) -> Status:
-    """process's Status with hidden and, alive on an attachable Host, attach; unknown when its Host
-    fails.
-    """
+    """process's Status with hidden and attach; unknown when its Host fails."""
     found = process.status()
     if found.state == StatusState.UNKNOWN:
         return found

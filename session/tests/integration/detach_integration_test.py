@@ -83,7 +83,7 @@ class DetachTest(Case):
         self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
         self.assertEqual(
-            [self.server.option("d1", key) for key in ("@opener", "@display")], [MANAGER, MANAGER]
+            [self.server.option("d1", key) for key in ("@opener", "@display")], ["", MANAGER]
         )
         with self.assertRaises(SessionError) as caught:
             self.session_cls.attach("d1")

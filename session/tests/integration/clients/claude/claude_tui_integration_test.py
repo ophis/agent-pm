@@ -497,7 +497,7 @@ class ShowTest(Live):
             what="the grid [['w1']], the detached session in no cell",
         )
         self.assertEqual(
-            [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER]
+            [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, ""]
         )
         tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
 

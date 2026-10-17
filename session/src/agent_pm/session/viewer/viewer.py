@@ -1,8 +1,5 @@
-"""Viewer, the one display of every Host's sessions, on the host tmux through the TmuxCli it holds
-and its Grid and Placement. It places a session through its Host's attach target: a SessionView as
-it is, a CommandView in a view session it makes (tagged VIEW = VIEW_TAG). The display format,
-FORMAT, has one encoder (fold) and one decoder (unfold); whether a session is hidden is in the
-hidden store (hidden.py), by name and sid.
+"""Viewer, the one display of every Host's sessions on the host tmux, places a CommandView in a
+view session it makes (tagged VIEW = VIEW_TAG). FORMAT has one encoder (fold), one decoder (unfold).
 """
 
 from __future__ import annotations
@@ -87,16 +84,13 @@ def listed(display: Display, value: Display) -> bool:
 
 
 def printed(target: SessionView | CommandView) -> str:
-    """The attach command shown for an attach target."""
     if isinstance(target, SessionView):
         return tmux_cli.attach_command(target.session)
     return target.printed
 
 
 class Viewer:
-    """settings: [viewer]'s workers_per_column and grid_retile shape show's grid. Each session is
-    placed in the host tmux session of its name: its own (SessionView) or its view session.
-    """
+    """settings: [viewer]'s workers_per_column and grid_retile."""
 
     def __init__(self, settings: Mapping | None = None, *, tmux: TmuxCli | None = None) -> None:
         table = thaw(settings or {})
@@ -193,7 +187,7 @@ class Viewer:
         return printed(self._target(name, host))
 
     def close(self, name: str, host: Host) -> None:
-        """Kills the view session it made for `name`, if any; never another tmux session."""
+        """Kills only the view session it made for `name`."""
         if not host.attachable:
             return
         try:
@@ -220,7 +214,7 @@ class Viewer:
                 ) from error
 
     def _live(self, host: Host) -> set[str] | None:
-        """The host tmux sessions and host's: whose hidden entries a write keeps (None: all)."""
+        """Whose hidden entries a write keeps (None: all)."""
         found = self._tmux.sessions()
         if found is None:
             return None

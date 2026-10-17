@@ -2202,8 +2202,7 @@ class SessionIdentityTest(HostedTuiBase):
         current.calls.send.assert_not_called()
         current.calls.press.assert_not_called()
         current.calls.close.assert_not_called()
-        self.host.calls.show.assert_not_called()
-        self.host.calls.hide.assert_not_called()
+        self.assertNotIn(mock.call.close_view("w1"), self.host.calls.mock_calls)
         self.assertTrue(current.alive())
         self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
 

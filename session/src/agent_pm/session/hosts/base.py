@@ -1,5 +1,5 @@
 """Host, where processes live, keeping each one's Record and Display; an attachable one names the
-attach target (SessionView, CommandView) the Viewer shows a session through.
+attach target the Viewer shows a session through.
 """
 
 from __future__ import annotations

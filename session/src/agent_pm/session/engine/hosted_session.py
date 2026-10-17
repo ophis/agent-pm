@@ -207,9 +207,7 @@ class HostedSession(Session):
         viewer: Mapping | None = None,
         viewer_factory: ViewerFactory = Viewer,
     ) -> None:
-        """host_factory(cls, name, settings) builds a configured Host; viewer_factory([viewer])
-        its Viewer.
-        """
+        """host_factory(cls, name, settings) builds a configured Host."""
         if not isinstance(hosts, Hosts):
             raise ConfigError("hosts: want parsed Hosts (Host.parse_hosts)")
         if viewer is not None and not isinstance(viewer, Mapping):
@@ -321,9 +319,6 @@ class HostedSession(Session):
     def _started(
         cls, viewer: Viewer, name: str, running: BaseMode, on: Host, display: Display
     ) -> None:
-        """Closes a leftover view of its name, then the Viewer marks it started; on a failure the
-        session closes.
-        """
         try:
             viewer.close(name, on)
             displays.started(viewer, name, on, display)
@@ -633,11 +628,9 @@ class HostedSession(Session):
 
     def close(self) -> None:
         name = self._tui()
-        try:
-            self._running.close()
-        finally:
-            if name is not None:
-                self._viewer.close(name, self._host)
+        self._running.close()
+        if name is not None:
+            self._viewer.close(name, self._host)
 
     def session_status(self) -> SessionStatus:
         info = self.info()
