@@ -155,13 +155,15 @@ class HookCallback:
 class ClientHome:
     """What a container Host needs to run a client: its per-session state dir (`field`, its name in
     the Host's records; `dir`, the dir's last path part; `env`, the variable that points the client
-    at it) and `credential`, the kind of credential the Host injects for it.
+    at it), `credential`, the credential kind the Host injects, and `files`, (name, text) for a
+    fresh dir.
     """
 
     field: str
     dir: str
     env: str
     credential: str
+    files: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

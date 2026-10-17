@@ -502,9 +502,16 @@ class StartTest(Base):
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
 
+    def test_a_fresh_home_gets_the_clients_files(self):
+        self.start(home_files=json.dumps({"settings.json": '{"model": "opus"}'}))
+        self.assertEqual(os.listdir(self.home_dir), ["settings.json"])
+        with open(os.path.join(self.home_dir, "settings.json")) as f:
+            self.assertEqual(f.read(), '{"model": "opus"}')
+
     def test_resume_keeps_the_home_and_starts_a_new_container(self):
         transcript = self.history()
-        process = self.start(resume="1")
+        process = self.start(resume="1", home_files=json.dumps({"settings.json": "{}"}))
+        self.assertFalse(os.path.exists(os.path.join(self.home_dir, "settings.json")))
         with open(transcript) as f:
             self.assertEqual(f.read(), "{}\n")
         manifest = os.path.join(self.state, f"{GEN}.json")

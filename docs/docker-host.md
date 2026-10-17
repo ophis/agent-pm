@@ -203,6 +203,13 @@ generation's `<generation>.seq` (the last hook event it delivered), `<generation
 (its image is older than the current plugin's) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
+Each new start writes the fresh Claude config dir a `settings.json` holding only `model`,
+`effortLevel` and `modelSettings` from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`,
+else `~/.claude/settings.json`), so the worker runs the host's default model and effort; no
+other host setting, credential, hook or permission reaches it. Without readable host
+settings it runs on Claude's default. `--model`/`--effort` and role config still win, as on
+tmux.
+
 ### Recovery
 
 Hook events travel from the container's hook stub to a relay daemon, which queues them

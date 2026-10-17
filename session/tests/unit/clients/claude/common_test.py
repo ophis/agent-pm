@@ -84,6 +84,40 @@ class HomeTest(Case):
         self.assertEqual(HOME.credential, "claude-setup-token")
 
 
+class HomeFilesTest(Base):
+    MODEL = {"model": "opus[1m]", "effortLevel": "xhigh", "modelSettings": {"opus": {"a": 1}}}
+
+    def settings(self, text):
+        os.makedirs(self.config_dir, exist_ok=True)
+        with open(os.path.join(self.config_dir, "settings.json"), "wb") as f:
+            f.write(text if isinstance(text, bytes) else text.encode())
+
+    def test_only_the_hosts_model_and_effort_keys_reach_a_container_home(self):
+        other = {"hooks": {"Stop": []}, "permissions": {"allow": ["Bash"]}, "env": {"K": "v"}}
+        self.settings(json.dumps({**self.MODEL, **other, "apiKeyHelper": "/bin/key"}))
+        ((name, text),) = ClaudeClient(CONFIG).tui()._home().files
+        self.assertEqual((name, json.loads(text)), ("settings.json", self.MODEL))
+        self.assertEqual(dataclasses.replace(ClaudeClient(CONFIG).tui()._home(), files=()), HOME)
+
+    def test_missing_or_invalid_host_settings_give_no_file(self):
+        self.assertEqual(ClaudeCommon({}).home_files(), ())
+        for text in ("not json", "[]", '{"theme": "dark"}', b"\xff"):
+            with self.subTest(text=text):
+                self.settings(text)
+                self.assertEqual(ClaudeCommon({}).home_files(), ())
+        os.remove(os.path.join(self.config_dir, "settings.json"))
+        os.mkdir(os.path.join(self.config_dir, "settings.json"))
+        self.assertEqual(ClaudeCommon({}).home_files(), ())
+
+    def test_an_explicit_model_or_effort_flag_still_wins(self):
+        self.settings(json.dumps(self.MODEL))
+        argv = tui_launch(self.work, tier=1, effort="max").argv
+        self.assertEqual(
+            (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]), ("fable", "mx")
+        )
+        self.assertFalse(any("opus[1m]" in arg for arg in argv))
+
+
 class SettingSourcesTest(Base):
     def test_session_flags_cannot_override_access_project_in_either_mode(self):
         for flags in (

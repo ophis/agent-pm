@@ -631,7 +631,9 @@ class StartTest(Base):
     def test_host_client_env_reaches_launch_and_names_the_home_in_metadata(self):
         class Homed(ScanTui):
             def _home(self):
-                return ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token")
+                return ClientHome(
+                    "fake_dir", "fake", "FAKE_HOME", "fake-token", (("settings.json", "{}"),)
+                )
 
             def launch(self, spec, hook):
                 self.spec = spec
@@ -656,7 +658,7 @@ class StartTest(Base):
                         (
                             NAME,
                             "fake",
-                            ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token"),
+                            run._home(),
                             resume,
                         )
                     ],
@@ -669,6 +671,7 @@ class StartTest(Base):
                     ("fake_dir", "fake", flag),
                 )
                 self.assertEqual(metadata["credential"], "fake-token")
+                self.assertEqual(json.loads(metadata["home_files"]), {"settings.json": "{}"})
                 self.assertNotIn("approval", metadata)
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 
