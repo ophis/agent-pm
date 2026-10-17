@@ -47,6 +47,7 @@ WATCH = "; watch it with tmux attach -t '=s'"
 
 ABSENT = (
     "can't find session: =s",
+    "no such session: =s:",
     "no server running on /tmp/tmux-501/default",
     "error connecting to /tmp/tmux-501/default (No such file or directory)",
 )

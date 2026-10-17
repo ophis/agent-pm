@@ -939,6 +939,14 @@ class CloseTest(Base):
         self.assertEqual(self.host_calls[-1], ["kill-session", "-t", "=w"])
         self.assertTrue(os.path.isdir(self.state))
 
+    def test_close_with_no_host_view_succeeds(self):
+        process = self.terminal()
+        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
+        with mock.patch("os.kill"):
+            process.close()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertNotIn(["kill-session", "-t", "=w"], self.host_calls)
+
     def test_close_when_container_gone(self):
         process = self.terminal()
         self.docker.replies = {
