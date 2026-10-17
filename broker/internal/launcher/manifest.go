@@ -3,8 +3,6 @@ package launcher
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -31,18 +29,20 @@ func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
-// strictJSON rejects duplicate keys and anything after the first value; Token rejects NaN and other non-JSON.
-func strictJSON(data []byte) error {
+// ParseManifest validates a manifest against protocol 1's schema; every failure is manifest_rejected.
+func ParseManifest(data []byte) (Manifest, error) {
+	reject := func(format string, args ...any) (Manifest, error) {
+		return Manifest{}, protocol.Newf(protocol.ManifestRejected, "Manifest rejected: "+format, args...)
+	}
+	if !utf8.Valid(data) {
+		return reject("not UTF-8")
+	}
+	// Reject duplicate keys and anything after the first value; Token rejects NaN and other non-JSON.
 	type frame struct {
 		object, wantKey bool
 		keys            map[string]bool
 	}
 	var stack []*frame
-	done := func() {
-		if n := len(stack); n > 0 && stack[n-1].object {
-			stack[n-1].wantKey = true
-		}
-	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	values := 0
@@ -52,17 +52,17 @@ func strictJSON(data []byte) error {
 			break
 		}
 		if err != nil {
-			return err
+			return reject("%v", err)
 		}
 		if len(stack) == 0 {
 			if values++; values > 1 {
-				return errors.New("trailing data after the manifest")
+				return reject("trailing data after the manifest")
 			}
 		}
 		if n := len(stack); n > 0 && stack[n-1].object && stack[n-1].wantKey {
 			if key, ok := tok.(string); ok {
 				if stack[n-1].keys[key] {
-					return fmt.Errorf("duplicate key %q", key)
+					return reject("duplicate key %q", key)
 				}
 				stack[n-1].keys[key], stack[n-1].wantKey = true, false
 				continue
@@ -78,42 +78,24 @@ func strictJSON(data []byte) error {
 		case json.Delim('}'), json.Delim(']'):
 			stack = stack[:len(stack)-1]
 		}
-		done()
+		if n := len(stack); n > 0 && stack[n-1].object {
+			stack[n-1].wantKey = true
+		}
 	}
 	if values == 0 {
-		return errors.New("empty manifest")
+		return reject("empty manifest")
 	}
-	return nil
-}
 
-func jsonString(raw json.RawMessage) (string, bool) {
-	var s string
-	if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &s) != nil || hasControl(s) {
-		return "", false
-	}
-	return s, true
-}
-
-// ParseManifest validates a manifest against protocol 1's schema; every failure is manifest_rejected.
-func ParseManifest(data []byte) (Manifest, error) {
-	m, err := parseManifest(data)
-	if err != nil {
-		e := protocol.New(protocol.ManifestRejected, "Manifest rejected: "+err.Error())
-		return Manifest{}, e
-	}
-	return m, nil
-}
-
-func parseManifest(data []byte) (Manifest, error) {
-	if !utf8.Valid(data) {
-		return Manifest{}, errors.New("not UTF-8")
-	}
-	if err := strictJSON(data); err != nil {
-		return Manifest{}, err
+	str := func(raw json.RawMessage) (string, bool) {
+		var s string
+		if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &s) != nil || hasControl(s) {
+			return "", false
+		}
+		return s, true
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
-		return Manifest{}, errors.New("not a JSON object")
+		return reject("not a JSON object")
 	}
 	var m Manifest
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
@@ -124,39 +106,39 @@ func parseManifest(data []byte) (Manifest, error) {
 		}
 		target, ok := targets[key]
 		if !ok {
-			return Manifest{}, fmt.Errorf("unknown field %q", key)
+			return reject("unknown field %q", key)
 		}
-		if *target, ok = jsonString(raw); !ok {
-			return Manifest{}, fmt.Errorf("field %q must be a string without control characters", key)
+		if *target, ok = str(raw); !ok {
+			return reject("field %q must be a string without control characters", key)
 		}
 	}
 	for _, key := range []string{"name", "generation", "image", "cwd", "claude_dir", "labels"} {
 		if _, ok := fields[key]; !ok {
-			return Manifest{}, fmt.Errorf("missing field %q", key)
+			return reject("missing field %q", key)
 		}
 	}
 	_, m.HasHook = fields["hook_path"]
 	switch {
 	case !namePattern.MatchString(m.Name) || m.Name == "none":
-		return Manifest{}, errors.New("invalid name")
+		return reject("invalid name")
 	case !generationPattern.MatchString(m.Generation):
-		return Manifest{}, errors.New("invalid generation")
+		return reject("invalid generation")
 	case !imagePattern.MatchString(m.Image):
-		return Manifest{}, errors.New("image must be agent-pm-worker:<64 hex>")
+		return reject("image must be agent-pm-worker:<64 hex>")
 	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
-		return Manifest{}, errors.New("paths must be absolute")
+		return reject("paths must be absolute")
 	}
 	m.CWD = filepath.Clean(m.CWD) // Docker mounts at the cleaned target
 
 	var labels map[string]json.RawMessage
 	if raw := fields["labels"]; len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &labels) != nil {
-		return Manifest{}, errors.New("labels must be an object")
+		return reject("labels must be an object")
 	}
 	m.Labels = map[string]string{}
 	for key, raw := range labels {
-		value, ok := jsonString(raw)
+		value, ok := str(raw)
 		if !ok || !labelKeyPattern.MatchString(key) || strings.HasPrefix(key, "agent-pm.") {
-			return Manifest{}, fmt.Errorf("invalid label %q", key)
+			return reject("invalid label %q", key)
 		}
 		m.Labels[key] = value
 	}
