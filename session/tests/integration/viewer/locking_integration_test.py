@@ -3,7 +3,7 @@
 import os
 
 from agent_pm.session.engine.tmux_cli import TuiError
-from agent_pm.session.hosts.tmux import grid
+from agent_pm.session.viewer import grid
 
 from session.tests.case import Case
 

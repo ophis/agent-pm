@@ -286,7 +286,7 @@ def tmux_calls(repo: str) -> list[str]:
         tree = ast.parse(text, rel)
         if rel.startswith(SESSION_SRC):
             found.update(
-                f"{rel}:{line}: tmux outside session/hosts/tmux/ and engine/tmux_cli.py"
+                f"{rel}:{line}: tmux outside session/hosts/tmux/, viewer/ and engine/tmux_cli.py"
                 for line, value in _code_words(text, tree)
                 if "tmux" in value.lower()
             )

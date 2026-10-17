@@ -13,6 +13,7 @@ TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 TMUX_HOME = (
     f"{SESSION_SRC}hosts/tmux/",
+    f"{SESSION_SRC}viewer/",
     f"{SESSION_SRC}engine/tmux_cli.py",
     # The Docker Host drives its container's tmux: its Host and hook callback are tmux code too.
     f"{SESSION_SRC}hosts/docker/host.py",
@@ -39,7 +40,7 @@ SESSION_INTERFACE_MODULES = ("agent_pm.session", "agent_pm.session.extension")
 
 
 SUBPACKAGES = {
-    SESSION: {"clients", "hosts", "modes"},
+    SESSION: {"clients", "hosts", "modes", "viewer"},
 }
 
 
@@ -86,7 +87,7 @@ OPTION_TUPLES_ALLOWED = {
     (f"{SESSION_SRC}clients/claude/tui.py", "MONTHS"): "month names, indexed by month",
     (f"{SESSION_SRC}clients/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
     (
-        f"{SESSION_SRC}hosts/tmux/grid.py",
+        f"{SESSION_SRC}viewer/grid.py",
         "GRID_HOOKS",
     ): "tmux hook names the grid sets and unsets together",
 }

@@ -2,8 +2,8 @@
 
 import itertools
 
-from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux import types
+from agent_pm.session.viewer import layout as layouts
+from agent_pm.session.viewer import types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (

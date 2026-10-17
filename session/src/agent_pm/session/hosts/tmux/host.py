@@ -45,12 +45,12 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
-from agent_pm.session.hosts.tmux import hidden as hidden_store
 from agent_pm.session.hosts.tmux import hook
-from agent_pm.session.hosts.tmux.grid import Grid
-from agent_pm.session.hosts.tmux.iterm import Iterm
-from agent_pm.session.hosts.tmux.placement import Placement
-from agent_pm.session.hosts.tmux.types import Retile, Split
+from agent_pm.session.viewer import hidden as hidden_store
+from agent_pm.session.viewer.grid import Grid
+from agent_pm.session.viewer.iterm import Iterm
+from agent_pm.session.viewer.placement import Placement
+from agent_pm.session.viewer.types import Retile, Split
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, Status, sid_error
 
 FORMAT = "<opener>[/<split>[/<split_from>[/hidden]]]"

@@ -20,7 +20,7 @@ from agent_pm.session.engine.tmux_cli import (
     TuiError,
 )
 from agent_pm.session.engine.types import COMMAND
-from agent_pm.session.hosts.tmux.layout import (
+from agent_pm.session.viewer.layout import (
     grid_layout,
     grid_tree,
     leaf_cells,
@@ -29,7 +29,7 @@ from agent_pm.session.hosts.tmux.layout import (
     render_layout,
     swaps,
 )
-from agent_pm.session.hosts.tmux.types import (
+from agent_pm.session.viewer.types import (
     Cell,
     Retile,
 )

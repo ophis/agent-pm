@@ -13,9 +13,10 @@ from unittest import mock
 from agent_pm.session import Showable
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Launch, SessionError
-from agent_pm.session.hosts.tmux import TmuxHost, layout
-from agent_pm.session.hosts.tmux import grid as tmux_model
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
+from agent_pm.session.viewer import grid as tmux_model
+from agent_pm.session.viewer import layout
 
 from session.tests import live_tmux
 from session.tests.case import PLUGIN_BIN, Case

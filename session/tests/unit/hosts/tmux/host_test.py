@@ -19,8 +19,9 @@ from agent_pm.session.engine.tmux_cli import (
 )
 from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
-from agent_pm.session.hosts.tmux import TmuxHost, hidden
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
+from agent_pm.session.viewer import hidden
 from agent_pm.utils import STALE_AGE, ProcessControl, StatusState, load_class
 
 from session.tests.case import Case

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from agent_pm.session.hosts.tmux.types import (
+from agent_pm.session.viewer.types import (
     Cell,
     Slot,
 )

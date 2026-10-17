@@ -6,7 +6,7 @@ import os
 import time
 from contextlib import redirect_stderr
 
-from agent_pm.session.hosts.tmux import hidden
+from agent_pm.session.viewer import hidden
 from agent_pm.utils import STALE_AGE
 
 from session.tests.case import Case
