@@ -208,7 +208,6 @@ dependencies = []
 
 [tool.typos.files]
 ignore-hidden = false
-extend-exclude = ["docs/readme/README.*.md"]
 
 [tool.typos.default.extend-words]
 # Escaped café filenames test Unicode handling.
