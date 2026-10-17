@@ -10,14 +10,14 @@ import uuid
 from dataclasses import replace
 
 from agent_pm.delegate.composer import Composer, RunConfig
-from agent_pm.delegate.engine.container import reference_repo, repo_lines, with_repo
+from agent_pm.delegate.engine.container import reference_repo, repo_lines, users_env, with_repo
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.types import ConfigError, Layout, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import under
+from agent_pm.utils import thaw, under
 
 
 def _own(f):
@@ -138,6 +138,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         env=intent.env,
     )
     flags, env = driver.policy(client)
+    if driver.docker:
+        env = env | users_env(thaw(composition.config.values).get("users", []))
     session = SessionSpec(
         workdir=layout.run,
         client=client,

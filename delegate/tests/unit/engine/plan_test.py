@@ -616,6 +616,7 @@ class Docker(Base):
                 self.assertIn("\n- `<team>`: `/opt/agent-pm/team`\n", got.prompt)
                 access = got.session.access
                 self.assertEqual((access.dirs, access.cwd, access.env), ((), self.layout.agent, {}))
+                self.assertEqual(got.session.env["AGENT_PM_USERS"], "[]")
                 self.assertEqual(access.reads[0], "/opt/agent-pm/team/tasks")
                 self.assertTrue(all(r.startswith("/opt/agent-pm/team") for r in access.reads))
                 self.assertFalse(any(TEAM in c for c in access.commands), access.commands)
@@ -630,6 +631,7 @@ class Docker(Base):
                     self.assertIn("inline in the outcome's `deliverable`", got.prompt)
         self.driver.docker = False
         got, _ = self.planned(keys={"output": {"type": "local"}}, out=None)
+        self.assertNotIn("AGENT_PM_USERS", got.session.env)
         self.assertIn("deliverable_file", got.prompt)
         self.assertIn(f"- `<tasks>`: `{TASKS}`", got.prompt)
 

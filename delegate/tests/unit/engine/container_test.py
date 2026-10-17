@@ -1,16 +1,13 @@
 """delegate/engine/container.py: the input's Reference `Repo:` as a github.com owner/name, a local
-clone's from its origin read with GUARD; the run intent's fields and its owner-only file.
+clone's from its origin read with GUARD; AGENT_PM_USERS; the Docker Host test.
 """
 
 import json
 import os
-import stat
 import subprocess
-from dataclasses import replace
 
 from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import container
-from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import GUARD
 
 from delegate.tests.plans import Base
@@ -75,45 +72,19 @@ class ReferenceRepo(Base):
         self.assertIsNone(container.reference_repo("Reference: T\nRepo: ~/gone\n", run=run))
 
 
-class Intent(Base):
-    def test_the_intent_names_the_role_its_repos_and_the_container_config(self):
-        got, _ = self.planned(input="Reference: T\nRepo: ophis/agent-pm\n\nResearch X.")
-        self.assertEqual(got.repo, "ophis/agent-pm")
-        github = {"type": "github", "repo": "ophis/private_docs", "branch": "main", "dir": "R/"}
-        for output, want in ((got.run.output, None), (github, "ophis/private_docs")):
-            with self.subTest(output=output):
-                planned = replace(got, run=replace(got.run, output=output))
-                self.assertEqual(
-                    container.intent(planned, ["octocat", "agent-pm-engineer[bot]", 'q"uote']),
-                    {
-                        "role": "researcher",
-                        "repo": "ophis/agent-pm",
-                        "output_repo": want,
-                        "delegate_config": (
-                            '[delegate]\nusers = ["octocat", "q\\"uote"]\ntrusted_dirs = []\n'
-                        ),
-                    },
-                )
+class UsersEnv(Base):
+    def test_the_users_without_bots_as_a_json_array(self):
+        got = container.users_env(["octocat", "agent-pm-bot[bot]", 'q"uote'])
+        self.assertEqual(got, {"AGENT_PM_USERS": '["octocat", "q\\"uote"]'})
+        self.assertEqual(json.loads(got["AGENT_PM_USERS"]), ["octocat", 'q"uote'])
+        for users in ("octocat", [1]):
+            with self.subTest(users=users), self.assertRaises(ConfigError):
+                container.users_env(users)
 
     def test_a_run_whose_reference_names_two_repos_is_refused_before_any_write(self):
         why = self.refused(input="Reference: T\nRepo: ophis/a\nRepo: ophis/b\n\nResearch X.")
         self.assertIn("Repo:", why)
         self.assertFalse(os.path.exists(self.work))
-
-    def test_users_must_be_logins(self):
-        got, _ = self.planned()
-        for users in ("octocat", [1]):
-            with self.subTest(users=users), self.assertRaises(ConfigError):
-                container.intent(got, users)
-
-    def test_write_intent_saves_it_owner_only_in_the_run_dir(self):
-        got, _ = self.planned()
-        layout = Layout(self.work)
-        container.write_intent(layout, got, [])
-        path = os.path.join(layout.run, "container-intent.json")
-        with open(path) as f:
-            self.assertEqual(json.load(f), container.intent(got, []))
-        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
 
 class OnDocker(Base):

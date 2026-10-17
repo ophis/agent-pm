@@ -1,18 +1,17 @@
-"""A run's container intent, <workdir>/run/container-intent.json, written before every session start
-whatever the Host; the Docker Host builds a role run's container from it (docs/docker-host.md).
+"""What the Delegate changes for a run whose agent is on the Docker Host (docs/docker-host.md): the
+test for that Host, the input's Reference repo and the container's users.
 """
 
 import itertools
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
-from agent_pm.delegate.engine.types import ConfigError, Layout, Plan
+from agent_pm.delegate.engine.types import ConfigError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Host
-from agent_pm.utils import GUARD, GitError, Invalid, Repo, Runner, origin, run_git, save, sh
+from agent_pm.utils import GUARD, GitError, Invalid, Repo, Runner, origin, run_git, sh
 
-INTENT = "container-intent.json"
 DOCKER_HOST = "agent_pm.session.hosts.docker.host:DockerHost"
 
 
@@ -74,20 +73,8 @@ def _github(spec: str, run: Runner) -> str | None:
     return f"{repo.owner}/{repo.name}" if repo.host == "github.com" else None
 
 
-def intent(plan: Plan, users: Sequence[str]) -> dict:
-    """`users`: the Delegate config's; any `[bot]` login is left out of the container's."""
+def users_env(users) -> dict[str, str]:
+    """AGENT_PM_USERS for a Docker run's container: the Delegate config's users, no `[bot]` login."""
     if not isinstance(users, list | tuple) or not all(isinstance(u, str) for u in users):
         raise ConfigError("users must be a list of GitHub logins")
-    output = plan.run.output
-    humans = [user for user in users if not user.endswith("[bot]")]
-    return {
-        "role": plan.run.role,
-        "repo": plan.repo,
-        "output_repo": (output.get("repo") or None) if output["type"] == "github" else None,
-        "delegate_config": f"[delegate]\nusers = {json.dumps(humans)}\ntrusted_dirs = []\n",
-    }
-
-
-def write_intent(layout: Layout, plan: Plan, users: Sequence[str]) -> None:
-    """Owner-only, as save makes it."""
-    save(os.path.join(layout.run, INTENT), json.dumps(intent(plan, users)))
+    return {"AGENT_PM_USERS": json.dumps([u for u in users if not u.endswith("[bot]")])}

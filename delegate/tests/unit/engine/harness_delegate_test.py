@@ -65,14 +65,8 @@ class CreateTest(HarnessCase):
         self.assertEqual(attached.workdir, self.work)
 
 
-class IntentTest(HarnessCase):
-    def intent(self):
-        with open(os.path.join(self.work, "run", "container-intent.json")) as f:
-            return json.load(f)
-
-    def test_a_new_run_and_a_resume_write_the_intent_on_every_host(self):
-        with open(self.local, "a", encoding="utf-8") as file:
-            file.write('[delegate.roles.dummy-tester.output]\ntype = "orchestrator"\n')
+class ReferenceRepoTest(HarnessCase):
+    def test_a_new_run_and_a_resume_record_the_reference_repo_and_write_no_intent(self):
         spec = Spec(
             "Reference: T\nRepo: ophis/agent-pm\n\nHello.",
             self.work,
@@ -81,21 +75,14 @@ class IntentTest(HarnessCase):
             client="fake",
         )
         view = self.make(spec=spec)
-        want = {
-            "role": "dummy-tester",
-            "repo": "ophis/agent-pm",
-            "output_repo": None,
-            "delegate_config": "[delegate]\nusers = []\ntrusted_dirs = []\n",
-        }
-        self.assertEqual(self.intent(), want)
         self.assertEqual(self.metadata()["plan"]["repo"], "ophis/agent-pm")
         self.assertFalse(self.metadata()["plan"]["docker"])
-        os.unlink(os.path.join(self.work, "run", "container-intent.json"))
         view._complete(
             Result(0, Outcome("needs_input", "Question", "Answer needed", questions=["Which?"]))
         )
         view.resume(input="Reference: T\nRepo: ophis/other\n\nThe answer.")
-        self.assertEqual(self.intent(), want | {"repo": "ophis/other"})
+        self.assertEqual(self.metadata()["plan"]["repo"], "ophis/other")
+        self.assertNotIn("container-intent.json", os.listdir(os.path.join(self.work, "run")))
 
 
 class DockerHarnessTest(HarnessCase):
@@ -238,8 +225,7 @@ class RunDirTest(HarnessCase):
         self.assertEqual(sorted(os.listdir(self.work)), ["agent", "run"])
         self.assertEqual(self.stored()["spec"]["sid"], SID)
         self.assertEqual(
-            sorted(os.listdir(os.path.join(self.work, "run"))),
-            ["container-intent.json", "delegate.json", "delegate.lock"],
+            sorted(os.listdir(os.path.join(self.work, "run"))), ["delegate.json", "delegate.lock"]
         )
         self.assertEqual(os.listdir(self.agent_pm), ["config.local.toml"])
 
