@@ -12,15 +12,6 @@
 
 Linear 보드에서 코딩 에이전트(Claude Code, Codex, 앞으로 더 추가 예정)를 무인으로 실행합니다. 각 Linear project는 하나의 제품이고, issue의 assignee(role 계정)가 그 단계입니다. 각 role은 한 번에 최대 `max_runs`개의 issue를 처리하고 결과물을 검토하도록 돌려줍니다. 승인하면 다음 role이 이어받습니다.
 
-| 레이어 | 하는 일 | 시작점 |
-|---|---|---|
-| Session | tmux 또는 pty에서 코딩 에이전트(Claude Code, Codex)를 시작, 감시, 재개합니다. 모든 client에서 같은 방식입니다. | [Sessions](../sessions.md) |
-| Delegate (코어) | session을 통해 role이 하나의 task를 실행하게 하고, 검사된 결과를 돌려줍니다. 단독으로도 쓸 수 있는 Claude Code 및 Codex 플러그인입니다. | [설치](#설치) |
-| Linear orchestrator | Linear 보드에서 role을 실행합니다. 제 워크플로입니다. | [Linear 보드](../board.md) |
-| Manager | 아래 레이어들의 드라이버. 대화하는 에이전트로, worker, role run, 보드 run을 시작하고 감시하며 보고합니다. | [데모](#데모-manager-하나-worker-여럿) |
-
-아래 두 레이어인 Session과 Delegate는 범용 구성 요소입니다. 그 위에 자신만의 흐름을 만드세요. Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 제 철학입니다(리서치, PRD, 빌드 순으로, 각 단계 사이에 사람의 검토). 그대로 쓰거나, 건너뛰거나, 바꿔도 됩니다. role과 task 자체도 직접 편집할 수 있습니다([role과 task 사용자 지정](../customizing-roles-and-tasks.md)).
-
 개발자: [`AGENTS.md`](../../AGENTS.md).
 
 ```mermaid
@@ -29,6 +20,21 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## 레이어 구조
+
+agent-pm은 레이어로 구성되며, 각 레이어는 한 가지 일만 하고 바로 아래 레이어만 호출합니다. 아래 두 레이어인 Session과 Delegate는 단독으로 쓸 수 있는 범용 구성 요소이고, 맨 위는 바꿀 수 있어 Linear orchestrator 대신 자신의 워크플로를 둘 수 있습니다. 확장할 때는 새 에이전트 client를 Session에, 새 role과 task를 Delegate에 추가합니다.
+
+![agent-pm 레이어(위에서 아래로): Manager(사용자 인터페이스), Linear orchestrator(오케스트레이션), Delegate(role 레이어), Session(client 어댑터)](../images/layers.svg)
+
+| 레이어 | 하는 일 | 시작점 |
+|---|---|---|
+| Manager | 아래 레이어들의 드라이버. 대화하는 에이전트로, worker, role run, 보드 run을 시작하고 감시하며 보고합니다. | [데모](#데모-manager-하나-worker-여럿) |
+| Linear orchestrator | Linear 보드에서 role을 실행합니다. 제 워크플로입니다. | [Linear 보드](../board.md) |
+| Delegate (코어) | session을 통해 role이 하나의 task를 실행하게 하고, 검사된 결과를 돌려줍니다. 단독으로도 쓸 수 있는 Claude Code 및 Codex 플러그인입니다. | [설치](#설치) |
+| Session | tmux 또는 pty에서 코딩 에이전트(Claude Code, Codex)를 시작, 감시, 재개합니다. 모든 client에서 같은 방식입니다. | [Sessions](../sessions.md) |
+
+Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 제 철학입니다(리서치, PRD, 빌드 순으로, 각 단계 사이에 사람의 검토). role과 task 자체도 직접 편집할 수 있습니다([role과 task 사용자 지정](../customizing-roles-and-tasks.md)).
 
 ## 왜 agent-pm인가
 

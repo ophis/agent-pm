@@ -12,15 +12,6 @@
 
 Ejecuta agentes de programación (Claude Code, Codex y más en el futuro) sin supervisión desde un tablero de Linear. Cada project de Linear es un producto, y el assignee de un issue (una cuenta de role) es su etapa. Cada role trabaja hasta en `max_runs` issues a la vez y te devuelve su resultado para que lo revises. Cuando lo apruebas, lo toma el siguiente role.
 
-| Capa | Qué hace | Empieza en |
-|---|---|---|
-| Session | Inicia, vigila y reanuda un agente de programación (Claude Code, Codex) en tmux o en un pty, igual para todos los clients. | [Sessions](../sessions.md) |
-| Delegate (núcleo) | Ejecuta un role sobre una task a través de una session y devuelve un resultado verificado. Un plugin de Claude Code y Codex que puedes usar por separado. | [Instalación](#instalación) |
-| Linear orchestrator | Ejecuta los roles desde un tablero de Linear: mi propio flujo de trabajo. | [Tablero de Linear](../board.md) |
-| Manager | Un conductor para las capas de abajo: un agente con el que hablas, que lanza workers, role runs y runs del tablero, los vigila e informa. | [Demo](#demo-un-manager-muchos-workers) |
-
-Las dos capas de abajo, Session y Delegate, son piezas genéricas: tómalas y construye tu propio flujo encima. El Linear orchestrator es mi filosofía de cómo deberían trabajar los agentes (investigación, luego un PRD, luego un build, con revisión humana entre cada etapa). Úsalo tal cual, sáltalo o cámbialo; los roles y las tasks también son tuyos para editar ([Personalizar roles y tasks](../customizing-roles-and-tasks.md)).
-
 Desarrolladores: [`AGENTS.md`](../../AGENTS.md).
 
 ```mermaid
@@ -29,6 +20,21 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## Arquitectura en capas
+
+agent-pm está construido en capas: cada una hace un solo trabajo y solo llama a la de abajo. Las dos capas de abajo, Session y Delegate, son piezas genéricas que puedes usar por separado, y la de arriba se puede cambiar: tu propio flujo de trabajo puede sustituir al Linear orchestrator. Para ampliarlo, un nuevo client de agente se conecta en Session, y los nuevos roles y tasks se añaden en Delegate.
+
+![Capas de agent-pm, de arriba abajo: Manager (la interfaz de usuario), Linear orchestrator (orquestación), Delegate (la capa de roles), Session (el adaptador de clients)](../images/layers.svg)
+
+| Capa | Qué hace | Empieza en |
+|---|---|---|
+| Manager | Un conductor para las capas de abajo: un agente con el que hablas, que lanza workers, role runs y runs del tablero, los vigila e informa. | [Demo](#demo-un-manager-muchos-workers) |
+| Linear orchestrator | Ejecuta los roles desde un tablero de Linear: mi propio flujo de trabajo. | [Tablero de Linear](../board.md) |
+| Delegate (núcleo) | Ejecuta un role sobre una task a través de una session y devuelve un resultado verificado. Un plugin de Claude Code y Codex que puedes usar por separado. | [Instalación](#instalación) |
+| Session | Inicia, vigila y reanuda un agente de programación (Claude Code, Codex) en tmux o en un pty, igual para todos los clients. | [Sessions](../sessions.md) |
+
+El Linear orchestrator es mi filosofía de cómo deberían trabajar los agentes (investigación, luego un PRD, luego un build, con revisión humana entre cada etapa). Los roles y las tasks también son tuyos para editar ([Personalizar roles y tasks](../customizing-roles-and-tasks.md)).
 
 ## Por qué agent-pm
 

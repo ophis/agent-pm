@@ -10,15 +10,6 @@ English · [中文](docs/readme/README.zh-CN.md) · [日本語](docs/readme/READ
 
 Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
 
-| Layer | What it does | Start at |
-|---|---|---|
-| Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
-| Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
-| Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
-| Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
-
-The bottom two layers, Session and Delegate, are general building blocks: take them and build your own flow on top. The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). Use it as is, skip it, or change it; the roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
-
 Developers: `AGENTS.md`.
 
 ```mermaid
@@ -27,6 +18,21 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## Layered architecture
+
+agent-pm is built in layers: each does one job and calls only the one below. Take the bottom two, Session and Delegate, on their own as general building blocks, or swap the top: your own workflow can replace the Linear orchestrator. To extend it, plug a new agent client in at Session, or add roles and tasks at Delegate.
+
+![agent-pm layers, top to bottom: Manager (the user interface), Linear orchestrator (orchestration), Delegate (the role layer), Session (the client adapter)](docs/images/layers.svg)
+
+| Layer | What it does | Start at |
+|---|---|---|
+| Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
+| Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
+| Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
+| Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
+
+The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). The roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
 ## Why agent-pm
 
