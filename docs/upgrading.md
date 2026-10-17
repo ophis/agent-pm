@@ -24,6 +24,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | a `~/.agent-pm/bin/ctmux` that is a copy of ctmux, not a launcher (its sessions exit at once outside Claude Code), or launchers installed before ctmux moved to `manage` (`ctmux` fails with `no installed agent-pm plugin has manager/skills/tmux/scripts/ctmux`) | Run the plugin's ctmux once: `<plugin>/manager/skills/manage/scripts/ctmux --install`, `<plugin>` being `~/.claude/plugins/cache/agent-pm/agent-pm/<version>` or `~/.codex/plugins/cache/agent-pm/agent-pm/<version>`. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
 | `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
+| scripts or notes calling `agent-pm-crew attach --after` or `--gen` | Switch to `agent-pm-crew ack --through <line> --gen <gen>`; reading events no longer marks them handled. |
 
 ### Workdir split
 
