@@ -99,7 +99,7 @@ class ControlTest(Case):
 
     def test_completed_generation_does_not_signal_after_unobserved_exit_or_replacement(self):
         process, control = self.process()
-        Path(control.path, "done.json").write_text('{"rc": 0}')
+        Path(control.path, "state.json").write_text('{"done": 0}')
         Path(process.folder, "meta.json").write_text('{"id": "replacement"}')
         with mock.patch("os.killpg") as killpg, mock.patch("socket.socket") as socket:
             process.kill()

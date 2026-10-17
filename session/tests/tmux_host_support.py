@@ -100,13 +100,12 @@ class Base(Case):
 
     @staticmethod
     def completed(path):
-        for name, message in (("started.json", {"started": True}), ("done.json", {"rc": 0})):
-            Path(path, name).write_text(json.dumps(message))
+        Path(path, "state.json").write_text(json.dumps({"started": {"started": True}, "done": 0}))
 
     def detached(self, *_args, **kw):
         self.control = ProcessControl(kw["control"])
         self.addCleanup(self.control.remove)
-        Path(self.control.path, "started.json").write_text('{"started": true}')
+        Path(self.control.path, "state.json").write_text('{"started": {"started": true}}')
         return PROCESS
 
     def terminal_started(self, *_args, **kw):
@@ -115,7 +114,7 @@ class Base(Case):
 
     def active(self, *responses):
         self.controlled = True
-        Path(self.control.path, "done.json").unlink(missing_ok=True)
+        Path(self.control.path, "state.json").write_text('{"started": {"started": true}}')
         stream = self.connection.makefile.return_value.__enter__.return_value
         stream.readline.side_effect = [
             json.dumps(response).encode() + b"\n" for response in responses

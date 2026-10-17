@@ -67,7 +67,7 @@ DAY = 24 * 3600
 
 class Starting(Case):
     """detach's start against a fake supervisor process (subprocess.Popen) that writes its pid and
-    a runner that reports through started.json.
+    a runner that reports through its ProcessControl's state.json.
     """
 
     def start(self, *, pid=True, poll=None, started="{}", events=None, ended=False, record=None):
@@ -79,14 +79,13 @@ class Starting(Case):
                 state.put(folder, state.PID, "4242")
             else:
                 os.write(options["stderr"].fileno(), b"booting\nno pty\n")
-            if started is not None:
-                control = json.loads(state.read(folder, state.META))["control"]
-                with open(os.path.join(control, "started.json"), "w", encoding="utf-8") as file:
-                    file.write(started)
+            control = json.loads(state.read(folder, state.META))["control"]
+            recorded = {} if started is None else {"started": json.loads(started)}
+            if recorded or ended:
+                with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
+                    json.dump({**recorded, **({"done": 0} if ended else {})}, file)
             if ended:
                 state.put(folder, state.RC, "0")
-                with open(os.path.join(control, "done.json"), "w", encoding="utf-8") as file:
-                    file.write("{}")
                 moment = time.time() - 31 * DAY
                 for path in (folder, f"{folder}.lock", os.path.join(folder, state.OUTPUT)):
                     os.utime(path, (moment, moment))
@@ -191,8 +190,8 @@ class Start(Starting):
         self.assertEqual(str(error), "pty session x is live")
         spawned.assert_not_called()
         state.put(folder, state.RC, "0")
-        with open(os.path.join(control, "done.json"), "w", encoding="utf-8") as file:
-            file.write("{}")
+        with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
+            file.write('{"done": 0}')
         process, _, _ = self.start()
         self.assertNotEqual(process.identity, "old")
 
@@ -217,8 +216,8 @@ class Sweep(Starting):
         control = os.path.join(self.home, f"{name}-control")
         os.makedirs(control)
         if not group:
-            with open(os.path.join(control, "done.json"), "w", encoding="utf-8") as file:
-                file.write("{}")
+            with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
+                file.write('{"done": 0}')
         if meta:
             state.put(folder, state.META, json.dumps({"id": name, "control": control}))
             state.put(folder, state.RC, "0")

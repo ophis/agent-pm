@@ -304,8 +304,9 @@ def fake_tmux(case=None) -> mock.Mock:
             case.addCleanup(shutil.rmtree, tags["@control"], ignore_errors=True)
         host.listing.return_value.append(listed(_name))
         host.status.return_value = 0
-        for file, payload in (("started.json", {"started": True}), ("done.json", {"rc": 0})):
-            Path(tags["@control"], file).write_text(json.dumps(payload))
+        Path(tags["@control"], "state.json").write_text(
+            json.dumps({"started": {"started": True}, "done": 0})
+        )
         return host.process.return_value
 
     def killed(_target):

@@ -1003,8 +1003,8 @@ class SweepTest(Base):
         def popen(argv, **_options):
             pty_state.put(argv[5], pty_state.PID, "4242")
             control = json.loads(pty_state.read(argv[5], pty_state.META))["control"]
-            with open(os.path.join(control, "started.json"), "w", encoding="utf-8") as file:
-                file.write("{}")
+            with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
+                file.write('{"started": {}}')
             return mock.Mock(pid=4242, poll=mock.Mock(return_value=None))
 
         self.host = PtyHost("pty")

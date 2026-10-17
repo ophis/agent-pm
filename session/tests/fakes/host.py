@@ -316,7 +316,7 @@ class FakeHost(Host):
         try:
             deadline = time.monotonic() + START_TIMEOUT
             while _read(folder, "pid") is None and not os.path.isfile(
-                os.path.join(control.path, "started.json")
+                os.path.join(control.path, "state.json")
             ):
                 if supervisor.returncode is not None or time.monotonic() > deadline:
                     tail = (_read(folder, "output") or "").strip().rpartition("\n")[2]
