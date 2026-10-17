@@ -72,6 +72,9 @@ jobs:
             types) python3 -m pip install pyright==1.1.414 ;;
             design) python3 -m pip install import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 ;;
           esac
+      - name: Protect shipped source
+        if: ${{ !cancelled() }}
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Comment budget
         if: ${{ !cancelled() && matrix.group == 'style' }}
         run: python3 .github/comment_budget.py
@@ -98,9 +101,6 @@ jobs:
       - name: Repository design and test boundaries
         if: ${{ !cancelled() && matrix.group == 'design' }}
         run: python3 -m tests.checks
-      - name: Protect shipped source
-        if: ${{ !cancelled() }}
-        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Require unchanged checkout
         if: ${{ always() }}
         run: |
