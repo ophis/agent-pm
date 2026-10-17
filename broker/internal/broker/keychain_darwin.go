@@ -139,22 +139,233 @@ done:
     CFRelease(kc);
     return s;
 }
-// Replaces the whole ACL in place; content and attributes stay, and a failed change leaves the item as it was.
-static OSStatus item_trust_self(const char *path, const char *service, const char *account, const char *label) {
+static OSStatus item_ref(const char *path, const char *service, const char *account, SecKeychainItemRef *item) {
     SecKeychainRef kc = NULL;
     OSStatus s;
     CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     CFDictionarySetValue(q, kSecReturnRef, kCFBooleanTrue);
-    CFTypeRef item = NULL;
-    SecAccessRef access = NULL;
-    s = SecItemCopyMatching(q, &item);
-    if (s == errSecSuccess) s = self_access(label, &access);
-    if (s == errSecSuccess) s = SecKeychainItemSetAccess((SecKeychainItemRef)item, access);
-    if (access) CFRelease(access);
-    if (item) CFRelease(item);
+    s = SecItemCopyMatching(q, (CFTypeRef *)item);
     CFRelease(q);
     CFRelease(kc);
+    return s;
+}
+// The partition ID securityd gives items this executable creates: its team, else its cdhash in lowercase hex.
+static OSStatus self_partition(CFStringRef *id) {
+    SecCodeRef code = NULL;
+    CFDictionaryRef info = NULL;
+    OSStatus s = SecCodeCopySelf(kSecCSDefaultFlags, &code);
+    if (s == errSecSuccess) s = SecCodeCopySigningInformation(code, kSecCSSigningInformation, &info);
+    if (s == errSecSuccess) {
+        CFStringRef team = CFDictionaryGetValue(info, kSecCodeInfoTeamIdentifier);
+        CFDataRef cdhash = CFDictionaryGetValue(info, kSecCodeInfoUnique);
+        if (team) *id = CFStringCreateWithFormat(NULL, NULL, CFSTR("teamid:%@"), team);
+        else if (cdhash) {
+            CFMutableStringRef hex = CFStringCreateMutable(NULL, 0);
+            CFStringAppend(hex, CFSTR("cdhash:"));
+            for (CFIndex i = 0; i < CFDataGetLength(cdhash); i++) CFStringAppendFormat(hex, NULL, CFSTR("%02x"), CFDataGetBytePtr(cdhash)[i]);
+            *id = hex;
+        } else s = errSecCSUnsigned;
+    }
+    if (info) CFRelease(info);
+    if (code) CFRelease(code);
+    return s;
+}
+static CFStringRef auth_name(CFStringRef a) {
+    if (CFEqual(a, kSecACLAuthorizationAny)) return CFSTR("any");
+    if (CFEqual(a, kSecACLAuthorizationDecrypt)) return CFSTR("decrypt");
+    if (CFEqual(a, kSecACLAuthorizationExportClear)) return CFSTR("export_clear");
+    if (CFEqual(a, kSecACLAuthorizationExportWrapped)) return CFSTR("export_wrapped");
+    if (CFEqual(a, kSecACLAuthorizationPartitionID)) return CFSTR("partition_id");
+    return a;
+}
+static int reads(CFArrayRef auths) {
+    for (CFIndex i = 0; i < CFArrayGetCount(auths); i++) {
+        CFStringRef n = auth_name(CFArrayGetValueAtIndex(auths, i));
+        if (CFEqual(n, CFSTR("any")) || CFEqual(n, CFSTR("decrypt")) || CFEqual(n, CFSTR("export_clear")) || CFEqual(n, CFSTR("export_wrapped"))) return 1;
+    }
+    return 0;
+}
+static int partition_entry(CFArrayRef auths) {
+    return CFArrayContainsValue(auths, CFRangeMake(0, CFArrayGetCount(auths)), kSecACLAuthorizationPartitionID);
+}
+// A partition entry's description is the hex of an XML plist {"Partitions": [ID...]}, as security's
+// set-generic-password-partition-list writes it.
+static CFStringRef partitions_description(CFStringRef id) {
+    const void *ids[] = {id};
+    CFArrayRef list = CFArrayCreate(NULL, ids, 1, &kCFTypeArrayCallBacks);
+    const void *keys[] = {CFSTR("Partitions")}, *values[] = {list};
+    CFDictionaryRef plist = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDataRef xml = CFPropertyListCreateData(NULL, plist, kCFPropertyListXMLFormat_v1_0, 0, NULL);
+    CFMutableStringRef hex = NULL;
+    if (xml) {
+        hex = CFStringCreateMutable(NULL, 0);
+        for (CFIndex i = 0; i < CFDataGetLength(xml); i++) CFStringAppendFormat(hex, NULL, CFSTR("%02x"), CFDataGetBytePtr(xml)[i]);
+        CFRelease(xml);
+    }
+    CFRelease(plist);
+    CFRelease(list);
+    return hex;
+}
+// Edits the item's own entries in place: SecKeychainItemSetAccess applies only changed entries, so a fresh
+// SecAccessCreate access would be appended beside the old ones. Entries that read or export the item get
+// only this executable, the partition list only its partition ID; a failed change leaves the item as it was.
+static OSStatus item_trust_self(const char *path, const char *service, const char *account) {
+    SecKeychainItemRef item = NULL;
+    SecAccessRef access = NULL;
+    SecTrustedApplicationRef self = NULL;
+    CFStringRef partition = NULL, partitions = NULL;
+    CFArrayRef apps = NULL, acls = NULL;
+    OSStatus s = item_ref(path, service, account, &item);
+    if (s == errSecSuccess) s = SecKeychainItemCopyAccess(item, &access);
+    if (s == errSecSuccess) s = SecTrustedApplicationCreateFromPath(NULL, &self);
+    if (s == errSecSuccess) s = self_partition(&partition);
+    if (s == errSecSuccess && !(partitions = partitions_description(partition))) s = errSecAllocate;
+    if (s == errSecSuccess) {
+        const void *list[] = {self};
+        apps = CFArrayCreate(NULL, list, 1, &kCFTypeArrayCallBacks);
+        s = SecAccessCopyACLList(access, &acls);
+    }
+    for (CFIndex i = 0; s == errSecSuccess && i < CFArrayGetCount(acls); i++) {
+        SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
+        CFArrayRef auths = SecACLCopyAuthorizations(acl), old = NULL;
+        CFStringRef description = NULL;
+        SecKeychainPromptSelector selector = 0;
+        if (!auths) s = errSecDecode;
+        if (s == errSecSuccess) s = SecACLCopyContents(acl, &old, &description, &selector);
+        if (s == errSecSuccess && partition_entry(auths)) s = SecACLSetContents(acl, NULL, partitions, selector);
+        else if (s == errSecSuccess && reads(auths)) s = SecACLSetContents(acl, apps, description, selector);
+        if (old) CFRelease(old);
+        if (description) CFRelease(description);
+        if (auths) CFRelease(auths);
+    }
+    if (s == errSecSuccess) s = SecKeychainItemSetAccess(item, access);
+    if (acls) CFRelease(acls);
+    if (apps) CFRelease(apps);
+    if (partitions) CFRelease(partitions);
+    if (partition) CFRelease(partition);
+    if (self) CFRelease(self);
+    if (access) CFRelease(access);
+    if (item) CFRelease(item);
+    return s;
+}
+static void put_hex(CFMutableDataRef out, const UInt8 *b, CFIndex n) {
+    static const char digits[] = "0123456789abcdef";
+    CFDataAppendBytes(out, (const UInt8 *)" ", 1);
+    for (CFIndex i = 0; i < n; i++) {
+        UInt8 pair[] = {digits[b[i] >> 4], digits[b[i] & 15]};
+        CFDataAppendBytes(out, pair, 2);
+    }
+}
+static void put_string(CFMutableDataRef out, CFStringRef s) {
+    CFDataRef d = CFStringCreateExternalRepresentation(NULL, s, kCFStringEncodingUTF8, '?');
+    put_hex(out, d ? CFDataGetBytePtr(d) : NULL, d ? CFDataGetLength(d) : 0);
+    if (d) CFRelease(d);
+}
+static void put_record(CFMutableDataRef out, const char *kind) {
+    if (CFDataGetLength(out)) CFDataAppendBytes(out, (const UInt8 *)"\n", 1);
+    CFDataAppendBytes(out, (const UInt8 *)kind, strlen(kind));
+}
+// A trusted application's data is its path, NUL-terminated.
+static OSStatus put_app(CFMutableDataRef out, SecTrustedApplicationRef app) {
+    CFDataRef d = NULL;
+    OSStatus s = SecTrustedApplicationCopyData(app, &d);
+    if (s != errSecSuccess) return s;
+    CFIndex n = CFDataGetLength(d);
+    while (n && CFDataGetBytePtr(d)[n - 1] == 0) n--;
+    put_record(out, "app");
+    put_hex(out, CFDataGetBytePtr(d), n);
+    CFRelease(d);
+    return s;
+}
+static int nibble(UniChar c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+static OSStatus put_partitions(CFMutableDataRef out, CFStringRef description) {
+    CFIndex n = description ? CFStringGetLength(description) : 0;
+    if (n % 2) return errSecDecode;
+    CFMutableDataRef xml = CFDataCreateMutable(NULL, n / 2);
+    OSStatus s = errSecSuccess;
+    for (CFIndex i = 0; s == errSecSuccess && i < n; i += 2) {
+        int high = nibble(CFStringGetCharacterAtIndex(description, i)), low = nibble(CFStringGetCharacterAtIndex(description, i + 1));
+        UInt8 b = (UInt8)(high << 4 | low);
+        if (high < 0 || low < 0) s = errSecDecode;
+        else CFDataAppendBytes(xml, &b, 1);
+    }
+    CFPropertyListRef plist = s == errSecSuccess ? CFPropertyListCreateWithData(NULL, xml, kCFPropertyListImmutable, NULL, NULL) : NULL;
+    CFArrayRef ids = plist && CFGetTypeID(plist) == CFDictionaryGetTypeID() ? CFDictionaryGetValue(plist, CFSTR("Partitions")) : NULL;
+    if (!ids || CFGetTypeID(ids) != CFArrayGetTypeID()) s = errSecDecode;
+    for (CFIndex i = 0; s == errSecSuccess && i < CFArrayGetCount(ids); i++) {
+        CFStringRef id = CFArrayGetValueAtIndex(ids, i);
+        if (CFGetTypeID(id) != CFStringGetTypeID()) s = errSecDecode;
+        else {
+            put_record(out, "partition");
+            put_string(out, id);
+        }
+    }
+    if (plist) CFRelease(plist);
+    CFRelease(xml);
+    return s;
+}
+// The item's access in the record text parseAccess reads; attributes only, so it never prompts.
+static OSStatus item_access(const char *path, const char *service, const char *account, void **text, long *length) {
+    SecKeychainItemRef item = NULL;
+    SecAccessRef access = NULL;
+    SecTrustedApplicationRef self = NULL;
+    CFStringRef partition = NULL;
+    CFArrayRef acls = NULL;
+    CFMutableDataRef out = CFDataCreateMutable(NULL, 0);
+    OSStatus s = item_ref(path, service, account, &item);
+    if (s == errSecSuccess) s = SecKeychainItemCopyAccess(item, &access);
+    if (s == errSecSuccess) s = SecTrustedApplicationCreateFromPath(NULL, &self);
+    if (s == errSecSuccess) s = self_partition(&partition);
+    if (s == errSecSuccess) {
+        CFDataRef d = NULL;
+        s = SecTrustedApplicationCopyData(self, &d);
+        if (s == errSecSuccess) {
+            CFIndex n = CFDataGetLength(d);
+            while (n && CFDataGetBytePtr(d)[n - 1] == 0) n--;
+            put_record(out, "self");
+            put_hex(out, CFDataGetBytePtr(d), n);
+            put_string(out, partition);
+            CFRelease(d);
+        }
+    }
+    if (s == errSecSuccess) s = SecAccessCopyACLList(access, &acls);
+    for (CFIndex i = 0; s == errSecSuccess && i < CFArrayGetCount(acls); i++) {
+        SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
+        CFArrayRef auths = SecACLCopyAuthorizations(acl), list = NULL;
+        CFStringRef description = NULL;
+        SecKeychainPromptSelector selector = 0;
+        if (!auths) s = errSecDecode;
+        if (s == errSecSuccess) s = SecACLCopyContents(acl, &list, &description, &selector);
+        if (s == errSecSuccess) {
+            put_record(out, "acl");
+            for (CFIndex j = 0; j < CFArrayGetCount(auths); j++) put_string(out, auth_name(CFArrayGetValueAtIndex(auths, j)));
+            if (!list) put_record(out, "any");
+            for (CFIndex j = 0; list && s == errSecSuccess && j < CFArrayGetCount(list); j++)
+                s = put_app(out, (SecTrustedApplicationRef)CFArrayGetValueAtIndex(list, j));
+        }
+        if (s == errSecSuccess && partition_entry(auths)) s = put_partitions(out, description);
+        if (list) CFRelease(list);
+        if (description) CFRelease(description);
+        if (auths) CFRelease(auths);
+    }
+    if (s == errSecSuccess) {
+        *length = CFDataGetLength(out);
+        *text = malloc(*length ? *length : 1);
+        if (!*text) s = errSecAllocate;
+        else memcpy(*text, CFDataGetBytePtr(out), *length);
+    }
+    CFRelease(out);
+    if (acls) CFRelease(acls);
+    if (partition) CFRelease(partition);
+    if (self) CFRelease(self);
+    if (access) CFRelease(access);
+    if (item) CFRelease(item);
     return s;
 }
 static int hidden_token(char *buffer, size_t capacity) {
@@ -299,9 +510,21 @@ func (k fileKeychain) AppAccount(app string) (string, error) {
 func (k fileKeychain) AppKey(app, account string) ([]byte, error) { return k.get(app, account) }
 
 func (k fileKeychain) TrustOnlyBroker(app, account string) error {
-	p, free := cStrings(string(k), app, account, "agent-pm GitHub App "+app)
+	p, free := cStrings(string(k), app, account)
 	defer free()
-	return status(C.item_trust_self(p[0], p[1], p[2], p[3]))
+	return status(C.item_trust_self(p[0], p[1], p[2]))
+}
+
+func (k fileKeychain) AppAccess(app, account string) (AppAccess, error) {
+	p, free := cStrings(string(k), app, account)
+	defer free()
+	var text unsafe.Pointer
+	var n C.long
+	if err := status(C.item_access(p[0], p[1], p[2], &text, &n)); err != nil {
+		return AppAccess{}, err
+	}
+	defer C.free(text)
+	return parseAccess(C.GoBytes(text, C.int(n)))
 }
 
 // SystemKeychain is the item in the account's login keychain, reachable only from the hardened install.
@@ -351,4 +574,11 @@ func (k SystemKeychain) TrustOnlyBroker(app, account string) error {
 		return err
 	}
 	return k.login().TrustOnlyBroker(app, account)
+}
+
+func (k SystemKeychain) AppAccess(app, account string) (AppAccess, error) {
+	if err := CheckInstalled(); err != nil {
+		return AppAccess{}, err
+	}
+	return k.login().AppAccess(app, account)
 }
