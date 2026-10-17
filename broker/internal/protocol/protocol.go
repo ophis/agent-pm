@@ -26,13 +26,15 @@ const (
 	WorkspaceDirty    Code = "workspace_dirty"
 	WorkspaceRejected Code = "workspace_rejected"
 	WorkspaceFailed   Code = "workspace_failed"
+	GitHubFailed      Code = "github_failed"
+	RefreshFailed     Code = "refresh_failed"
 	InternalError     Code = "internal_error"
 )
 
 var exits = map[Code]int{
 	Usage: 2, ManifestRejected: 3, MountRejected: 4, LoginRequired: 5, ImageRejected: 6,
 	DockerUnreachable: 7, BuildFailed: 8, StartFailed: 9, CloseFailed: 10, KeychainFailed: 11,
-	WorkspaceDirty: 12, WorkspaceRejected: 13, WorkspaceFailed: 14,
+	WorkspaceDirty: 12, WorkspaceRejected: 13, WorkspaceFailed: 14, GitHubFailed: 15, RefreshFailed: 16,
 	InternalError: 70,
 }
 
@@ -48,6 +50,19 @@ const (
 	Removed   = "removed"
 	Failed    = "failed"
 )
+
+// Expiry is one installation token's account and expiry, as start and refresh report it: never the token.
+type Expiry struct {
+	Account   string `json:"account"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// Pending is a token the broker still has to revoke, as status reports it.
+type Pending struct {
+	Container string `json:"container"`
+	Account   string `json:"account"`
+	ExpiresAt string `json:"expires_at"`
+}
 
 type Error struct {
 	Code         Code   `json:"code"`
