@@ -180,6 +180,17 @@ class Base(Case):
         return self.host.attach("w")
 
 
+def _free(path):
+    fd = os.open(path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(fd)
+    return True
+
+
 class ConfigTest(Base):
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
@@ -254,7 +265,7 @@ class StartTest(Base):
             ("tmux", "new-session"): (0, PROCESS + "\n", ""),
             ("tmux", "display-message"): pane(),
         }
-        self.supervisor = mock.Mock()
+        self.supervisor = mock.Mock(pid=4321)
         popen = mock.patch("subprocess.Popen", side_effect=self.popen)
         self.popen_mock = popen.start()
         self.addCleanup(popen.stop)
@@ -266,6 +277,8 @@ class StartTest(Base):
 
     def popen(self, argv, **kw):
         self.order.append("supervisor")
+        self.spawned_lock_held = not _free(os.path.join(self.state, "supervisor.lock"))
+        self.spawned_record = self.host_record()
         return self.supervisor
 
     def start(self, **metadata):
@@ -309,8 +322,9 @@ class StartTest(Base):
                 "version",
                 ("build", REPO),
                 ("start", manifest, client_keys(REPO)),
-                "supervisor",
+                ["exec", "-d", CONTAINER, RELAY, "serve"],
                 ["exec", "-i", CONTAINER, "test", "-S"],
+                "supervisor",
                 ["exec", "-i", CONTAINER, "tmux", "new-session"],
                 ["exec", "-i", CONTAINER, "tmux", "display-message"],
             ],
@@ -340,16 +354,66 @@ class StartTest(Base):
                 "display": "lead/below",
                 "record": RECORD.to_line(),
                 "hidden": False,
+                "events": os.path.join(self.home, "events"),
                 "process": PROCESS,
             },
         )
         self.assertIsInstance(process, DockerTerminal)
         self.assertEqual((process.identity, process.token), (PROCESS, None))
 
+    def test_start_takes_the_lock_before_saving_the_generation_and_spawns_on_it(self):
+        self.start()
+        self.assertTrue(self.spawned_lock_held)
+        self.assertEqual(self.spawned_record["generation"], GEN)
+        with open(os.path.join(self.state, "supervisor.lock")) as f:
+            self.assertEqual(f.read(), GEN)
+        with open(os.path.join(self.state, "supervisor.pid")) as f:
+            self.assertEqual(f.read(), "4321")
+        argv = self.popen_mock.call_args.args[0]
+        lock = int(argv[11])
+        self.assertEqual(self.popen_mock.call_args.kwargs["pass_fds"], (lock,))
+        self.assertTrue(_free(os.path.join(self.state, "supervisor.lock")))
+
+    def test_start_rolls_back_when_relay_serve_fails_the_socket_never_appears_or_the_lock_is_held(
+        self,
+    ):
+        for case, replies in (
+            ("serve fails", {(RELAY, "serve"): (1, "", "no relay")}),
+            ("serve times out", {(RELAY, "serve"): TimeoutExpired("docker", 10)}),
+            ("no socket", {("test",): (1, "", "")}),
+        ):
+            with (
+                self.subTest(case=case),
+                mock.patch("time.sleep"),
+                mock.patch("time.monotonic", side_effect=range(0, 10000, 5)),
+            ):
+                self.docker.replies = replies
+                self.order.clear()
+                with self.assertRaisesRegex(SessionError, "docker session w: "):
+                    self.start()
+                self.assertNotIn("supervisor", self.order)
+                self.assertEqual(self.order[-1], ("close", CONTAINER))
+        self.docker.replies = {}
+        fd = os.open(os.path.join(self.state, "supervisor.lock"), os.O_RDWR | os.O_CREAT)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.order.clear()
+        with (
+            mock.patch("os.kill"),
+            mock.patch("time.sleep"),
+            mock.patch("time.monotonic", side_effect=range(0, 10000, 10)),
+            self.assertRaisesRegex(SessionError, "still holds"),
+        ):
+            self.start()
+        self.assertNotIn("supervisor", self.order)
+        self.assertEqual(self.order[-1], ("close", CONTAINER))
+
     def test_the_container_launch_and_the_supervisor(self):
         self.start()
-        self.assertEqual(self.docker.execs()[0], ["test", "-S", SOCKET])
-        new = self.docker.execs()[1]
+        self.assertEqual(self.docker.execs()[0], [RELAY, "serve", GEN])
+        self.assertEqual(self.docker.execs()[1], ["test", "-S", SOCKET])
+        self.assertEqual(SOCKET, "/run/agent-pm/relay.sock")
+        new = self.docker.execs()[2]
         tail = new[new.index("--") :]
         self.assertEqual(tail[:4], ["--", "with-secrets", "agent", "--flag"])
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
@@ -363,20 +427,20 @@ class StartTest(Base):
         argv = self.popen_mock.call_args.args[0]
         self.assertEqual(argv[1:5], ["-P", "-s", "-m", "agent_pm.session.hosts.docker.supervisor"])
         self.assertEqual(
-            argv[5:10],
+            argv[5:11],
             [
                 "w",
                 self.state,
                 os.path.join(self.home, ".agent-pm", "tui", "w"),
                 os.path.join(self.home, "events"),
                 os.path.join(REPO, "bin", "agent-pm-session"),
+                GEN,
             ],
         )
-        relay, wait, check = (json.loads(arg) for arg in argv[10:])
+        relay, wait, check = (json.loads(arg) for arg in argv[12:])
         prefix = [DOCKER, "--host", self.ep, "exec"]
-        self.assertEqual(relay, [*prefix, "-i", CONTAINER, *RELAY])
-        self.assertEqual(RELAY[0], "/opt/agent-pm/venv/bin/python")
-        self.assertTrue(RELAY[-1].endswith("/agent_pm/session/hosts/docker/relay.py"))
+        self.assertEqual(relay, [*prefix, "-i", CONTAINER, RELAY, "connect"])
+        self.assertEqual(RELAY, "/opt/agent-pm/bin/relay")
         self.assertEqual(wait, [*prefix, CONTAINER, "tmux", "wait-for", "agent-pm-dead"])
         self.assertEqual(
             check,

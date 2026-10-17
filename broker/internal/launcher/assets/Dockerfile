@@ -12,10 +12,12 @@ COPY bootstrap.py hook-stub with-secrets /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
 RUN python3 -m venv /opt/agent-pm/venv && mkdir -p /opt/agent-pm/bin \
     && printf '%s\n' '#!/bin/sh' 'export PYTHONPATH=/opt/agent-pm/session/src:/opt/agent-pm/utils/src' 'exec /opt/agent-pm/venv/bin/python -P -m agent_pm.session.cli "$@"' > /opt/agent-pm/bin/agent-pm-session \
+    && printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay \
     && ln -s /opt/agent-pm/lib/with-secrets /opt/agent-pm/bin/with-secrets \
-    && chmod 755 /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub \
+    && chmod 755 /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub \
     && cp -a /home/agent/.npm-global /opt/agent-pm/client-baseline \
-    && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm
+    && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm \
+    && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue
 ARG AGENT_PM_VERSION
 LABEL agent-pm.version=${AGENT_PM_VERSION} agent-pm.agent-uid=${AGENT_UID} agent-pm.agent-gid=${AGENT_GID}
 ENV PATH=/opt/agent-pm/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin

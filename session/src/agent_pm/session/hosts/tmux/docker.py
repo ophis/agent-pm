@@ -102,6 +102,28 @@ def _save_record(name: str, data: Mapping) -> None:
     save(os.path.join(state_dir(name), RECORD), json.dumps(dict(data)), durable=True)
 
 
+def _take_lock(name: str) -> int | None:
+    """supervisor.lock's fd, flocked and its stale pid file gone; None while another holds it."""
+    state = state_dir(name)
+    fd = os.open(os.path.join(state, "supervisor.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(os.path.join(state, "supervisor.pid"))
+    return fd
+
+
+def _pid(name: str) -> int | None:
+    try:
+        with open(os.path.join(state_dir(name), "supervisor.pid"), encoding="utf-8") as f:
+            return int(f.read())
+    except (OSError, ValueError):
+        return None
+
+
 def _lock_free(path: str) -> bool:
     try:
         fd = os.open(path, os.O_RDONLY)
@@ -237,16 +259,12 @@ class DockerTerminal(TmuxTerminal):
 
 def _stop_supervisor(name: str) -> str | None:
     """Why supervisor.lock is still held after SIGTERM, then SIGKILL, to its holder; else None."""
-    state = state_dir(name)
-    lock = os.path.join(state, "supervisor.lock")
+    lock = os.path.join(state_dir(name), "supervisor.lock")
     if _lock_free(lock):
         return None
-    try:
-        with open(os.path.join(state, "supervisor.pid"), encoding="utf-8") as f:
-            pid = int(f.read())
-    except (OSError, ValueError):
-        pid = None
+    pid = None
     for sig, wait in ((signal.SIGTERM, LOCK_WAIT), (signal.SIGKILL, KILL_WAIT)):
+        pid = _pid(name)
         if pid is not None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, sig)
@@ -395,13 +413,20 @@ class DockerHost(Host, Showable):
                     self.broker.close(error.container)
             raise
         ended = timestamp()
-        supervisor = None
+        supervisor = lock = None
         try:
             if (started.endpoint, started.container) != (endpoint(), container):
                 raise SessionError(
                     f"broker: started {started.container} at {started.endpoint},"
                     f" want {container} at {endpoint()}"
                 )
+            if why := _stop_supervisor(name):
+                raise SessionError(why)
+            lock = _take_lock(name)
+            if lock is None:
+                raise SessionError(f"{state_dir(name)}/supervisor.lock: held")
+            os.ftruncate(lock, 0)
+            os.write(lock, generation.encode())
             sid = metadata.get("sid") or (record.sid if record is not None else None)
             _save_record(
                 name,
@@ -412,12 +437,16 @@ class DockerHost(Host, Showable):
                     "display": display,
                     "record": None if record is None else record.to_line(),
                     "hidden": False,
+                    "events": events,
                 },
             )
-            supervisor = self._supervise(name, container, events, hook)
+            self._serve_relay(container, generation)
             tmux = self.container_tmux(container)
             if not _wait(lambda: tmux.runner(["test", "-S", SOCKET]).returncode == 0, READY_WAIT):
                 raise SessionError(f"no hook relay in {container} after {READY_WAIT} s")
+            supervisor = self._spawn_supervisor(
+                name, container, generation=generation, events=events, hook=hook, lock=lock
+            )
             process = tmux.launch(
                 name,
                 ["with-secrets", *launch.argv],
@@ -446,11 +475,32 @@ class DockerHost(Host, Showable):
         except (SessionError, TuiError, OSError) as error:
             cleanup = self._roll_back(supervisor, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
+        finally:
+            if lock is not None:
+                os.close(lock)
         return DockerTerminal(
             name, process, tmux=tmux, host=self, container=container, generation=generation
         )
 
-    def _supervise(self, name: str, container: str, events: str | None, hook: str):
+    def _serve_relay(self, container: str, generation: str) -> None:
+        argv, env = docker_call(self.docker, "exec", "-d", container, RELAY, "serve", generation)
+        try:
+            res = self.run(argv, env, timeout=RUN_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SessionError(f"relay serve in {container}: {error}") from None
+        if res.returncode:
+            raise SessionError(f"relay serve in {container}: {res.stderr.strip()}")
+
+    def _spawn_supervisor(
+        self,
+        name: str,
+        container: str,
+        *,
+        generation: str,
+        events: str | None,
+        hook: str,
+        lock: int,
+    ):
         def execs(*args: str) -> str:
             return json.dumps(docker_call(self.docker, "exec", *args)[0])
 
@@ -461,8 +511,8 @@ class DockerHost(Host, Showable):
                 os.path.realpath(sys.executable),
                 *("-P", "-s", "-m", run_supervisor.__name__),
                 *(name, state_dir(name), os.path.join(os.path.expanduser(TUI_DIR), name)),
-                *(events or "", hook),
-                execs("-i", container, *RELAY),
+                *(events or "", hook, generation, str(lock)),
+                execs("-i", container, RELAY, "connect"),
                 execs(container, "tmux", "wait-for", DEAD_SIGNAL),
                 execs(container, "tmux", *dead),
             ],
@@ -472,8 +522,10 @@ class DockerHost(Host, Showable):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            pass_fds=(lock,),
         )
         threading.Thread(target=proc.wait, daemon=True).start()
+        save(os.path.join(state_dir(name), "supervisor.pid"), str(proc.pid))
         return proc
 
     def _roll_back(self, supervisor, container: str) -> str:
