@@ -36,6 +36,22 @@ flowchart LR
 
 에이전트 하나로는 계속 기다려야 합니다. 여러 에이전트를 수동으로 돌리면 모든 프롬프트, 검사, 승인이 당신을 거칩니다. agent-pm에서는 manager와 대화하고, manager가 worker를 시작하고 감시하며 보고합니다.
 
+## AI agent를 마스터하는 다섯 level
+
+코딩 agent와 일하는 것은 사다리와 같습니다. 각 level은 아래 level 위에 엔지니어링 분야를 하나씩 더하고, 핵심은 문제에 맞는 level을 고르는 것입니다.
+
+![AI agent를 마스터하는 다섯 level: Drive, Equip, Systematize, Orchestrate, Master, agent-pm은 4와 5 사이](../images/levels.svg)
+
+| Level | 분야 | 의미 |
+|---|---|---|
+| 1. Drive | prompt engineering과 context engineering | 대화형 prompting, context 관리, 어떤 일에 어떤 모델을 쓸지 아는 것. |
+| 2. Equip | tools, skills, MCP | agent에게 도구를 줘서 바깥 세계(파일, API, 브라우저, MCP server)에 닿아 직접 다루게 하되, 권한과 sandbox 안에서. |
+| 3. Systematize | state engineering | 하나의 workflow를 상태 기계로 돌리기: 정해진 단계, 재시도, 멱등한 단계, 인계. |
+| 4. Orchestrate | loop engineering | 여러 agent: fan-out, planner와 verifier, 라우팅, 동시 실행과 quota 한도. |
+| 5. Master | environment engineering | 가드레일과 agent-oriented 환경: 사람이 아니라 agent를 위해 만든 도구, 검사, 검증으로 가장 쉬운 길이 곧 옳은 길이 되게 하기(Lauren Tan의 생각). |
+
+아직 level 3이 아니라고요? [autopilot](https://github.com/ophis/claude-autopilot)을 써 보세요. 적어도 거기까지는 데려다줍니다. agent-pm의 레이어(맨 위 표)는 더 올라갑니다. Session은 agent의 대화를 돌리고 손을 쓸 host를 줍니다(level 1–2). Delegate는 role 하나를 task 하나에 검사가 붙은 workflow로 돌립니다(3). Linear orchestrator와 그 위의 manager는 여러 agent를 조율합니다(4와 5 사이). 여기에 당신이 맨 위에서 환경, 경계, 관문을 정하면 Master가 됩니다. 다만 agent-pm의 검증은 아직 조금 부족합니다. 목표는 level 5, 그리고 그 너머입니다.
+
 ## 데모: manager 하나, worker 여럿
 
 보드 없이, 에이전트 하나(manager)와 대화하는 것만으로 agent-pm을 실행할 수 있습니다. `ctmux <name>`으로 그 session을 열고, Claude Code나 Codex를 시작한 뒤 `/agent-pm:manage`를 호출합니다. 평범한 말로 일을 맡기면 task마다 worker를 시작하고, 이벤트를 감시하고, pull request를 검사한 뒤 보고합니다.

@@ -36,6 +36,22 @@ flowchart LR
 
 单个 agent 让你一直等；手动管理多个 agent，每个 prompt、检查和批准都要经过你。用 agent-pm，你只和一个 manager 对话，由它启动、监视 worker 并汇报。
 
+## 精通 AI agent 的五个 level
+
+和编码 agent 协作是一架梯子：每个 level 在下面几层之上再加一门工程功夫，真正的本事是让 level 匹配问题。
+
+![精通 AI agent 的五个 level：Drive、Equip、Systematize、Orchestrate、Master，agent-pm 位于 4 和 5 之间](../images/levels.svg)
+
+| Level | 工程方向 | 含义 |
+|---|---|---|
+| 1. Drive | prompt engineering 和 context engineering | 对话式 prompting、管理 context、知道什么活用什么模型。 |
+| 2. Equip | tools、skills、MCP | 给 agent 工具，让它能触及并操作外部世界（文件、API、浏览器、MCP server），但都在权限和 sandbox 之内。 |
+| 3. Systematize | state engineering | 把一套 workflow 跑成状态机：明确的阶段、重试、幂等步骤、交接。 |
+| 4. Orchestrate | loop engineering | 多个 agent：fan-out、planner 和 verifier、路由、并发和配额上限。 |
+| 5. Master | environment engineering | 护栏，加上 agent-oriented 的环境：工具、检查和验证都为 agent 而不是为人设计，让最省事的路就是对的路（Lauren Tan 的观点）。 |
+
+还没到 level 3？试试 [autopilot](https://github.com/ophis/claude-autopilot)：至少能把你带到那儿。agent-pm 的各层（见开头的表格）爬得更高：Session 跑 agent 的对话并给它一个能动手的 host（level 1–2），Delegate 把一个 role 在一个 task 上跑成带检查的 workflow（3），Linear orchestrator 加上其上的 manager 协调多个 agent（4 和 5 之间）。再加上你在最上面设定环境、边界和关卡，就是 Master，只是 agent-pm 的验证还差一点。目标是 level 5，乃至更高。
+
 ## 演示：一个 manager，多个 worker
 
 不用看板时，你可以通过和一个 agent（manager）对话来运行 agent-pm。用 `ctmux <name>` 打开它的 session，在里面启动 Claude Code 或 Codex，然后调用 `/agent-pm:manage`。你用平常的话交代工作；它为每个 task 启动一个 worker，监视它们的事件，检查它们的 pull request 并向你汇报。

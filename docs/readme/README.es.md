@@ -36,6 +36,22 @@ flowchart LR
 
 Un solo agente te hace esperar; con muchos agentes a mano, cada prompt, revisión y aprobación pasa por ti. Con agent-pm hablas con un manager, que lanza, vigila e informa sobre los workers.
 
+## Cinco levels para dominar los AI agents
+
+Trabajar con agents de programación es una escalera: cada level suma una disciplina de ingeniería sobre las de abajo, y la habilidad está en elegir el level que pide el problema.
+
+![Cinco levels para dominar los AI agents: Drive, Equip, Systematize, Orchestrate, Master, con agent-pm entre 4 y 5](../images/levels.svg)
+
+| Level | Disciplina | Qué significa |
+|---|---|---|
+| 1. Drive | prompt engineering y context engineering | Prompting conversacional, gestión del context, saber qué modelo sirve para cada trabajo. |
+| 2. Equip | tools, skills, MCP | Dar al agent herramientas para alcanzar y actuar sobre el mundo (archivos, APIs, un navegador, MCP servers), dentro de permisos y un sandbox. |
+| 3. Systematize | state engineering | Un workflow ejecutado como máquina de estados: etapas definidas, reintentos, pasos idempotentes, traspasos. |
+| 4. Orchestrate | loop engineering | Muchos agents: fan-out, planner y verifier, enrutamiento, límites de concurrencia y de cuota. |
+| 5. Master | environment engineering | Barreras de seguridad y un entorno agent-oriented: herramientas, checks y verificación hechos para agents, no para humanos, para que el camino más fácil sea el correcto (una idea de Lauren Tan). |
+
+¿Aún no llegas al level 3? Prueba [autopilot](https://github.com/ophis/claude-autopilot): al menos te lleva hasta ahí. Las capas de agent-pm (la tabla del principio) suben más: Session lleva la conversación del agent y le da un host donde actuar (levels 1–2), Delegate ejecuta un role sobre una task como un workflow verificado (3), y el Linear orchestrator, con el manager encima, coordina muchos agents (entre 4 y 5). Ponte tú encima, fijando el entorno, los límites y las puertas, y eso es Master, aunque la verificación de agent-pm todavía se queda un poco corta. La meta es el level 5 y más allá.
+
 ## Demo: un manager, muchos workers
 
 Sin el tablero, puedes usar agent-pm hablando con un solo agente, el manager. Abre su session con `ctmux <name>`, inicia Claude Code o Codex en ella e invoca `/agent-pm:manage`. Le das trabajo con palabras normales; lanza un worker por cada task, vigila sus eventos, revisa sus pull requests e informa.
