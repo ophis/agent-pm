@@ -8,7 +8,7 @@ select = [
     "E721", "E722", "E731", "E741", "E742", "E743", "E902", "F",
     "UP", "B", "SIM", "I", "ERA001", "PLR0917", "PLR0133",
     "ARG001", "ARG004", "ARG005", "TID", "BLE", "TRY002", "TRY201", "TRY203", "TRY300",
-    "TRY400", "TRY401", "FBT",
+    "TRY400", "TRY401", "FBT", "T100",
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]

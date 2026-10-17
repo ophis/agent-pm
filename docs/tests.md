@@ -10,6 +10,7 @@ Lint (tool versions pinned in `.github/workflows/test.yml`):
 python3 .github/comment_budget.py
 ruff check --no-cache
 ruff format --check --no-cache
+python3 -m tests.unit_imports
 pyright
 lint-imports --no-cache
 pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
@@ -104,8 +105,9 @@ occurs exactly once. Coverage applies to pull requests; `CI` requires every appl
 `.github/ci_scope.py` derives project roots from the import-linter `layers` contract and
 their `src` packages. Layers before `agent_pm.delegate` form the upper group; every
 other path selects the full suite. Renames consider both endpoints. `TEST_PROJECTS`
-passes the selected group to discovery. Static lint remains required; `CI` accepts a
-skipped repository job only for the upper-only decision, and rejects failures,
+passes the selected group to discovery. Static lint remains required; `Lint style` checks
+unit import boundaries on every change. `CI` accepts a skipped repository job only for
+the upper-only decision, and rejects failures,
 cancellation or unexpected skips.
 
 ```bash
