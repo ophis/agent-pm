@@ -144,7 +144,6 @@ Q_RECHECK = (
     "labels { nodes { id name parent { id } } } } }"
 )
 Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + ops.HISTORY + " } }"
-Q_VIEWER = "query { viewer { id } }"
 
 
 @dataclass(frozen=True)
@@ -279,8 +278,6 @@ class Board:
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
-        self.starts = latest(e for e in entries if e.kind == "start")
-        self.harness_id = None
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
@@ -330,71 +327,17 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def history(self, issue, *, since=None):
-        if issue["id"] not in self.hist:
-            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]
-        history = self.hist[issue["id"]]
-        while (
-            since is not None
-            and history["pageInfo"]["hasNextPage"]
-            and (not history["nodes"] or parse_time(history["nodes"][-1]["createdAt"]) > since)
-        ):
-            page = self.gql(Q_HISTORY, i=issue["id"], after=history["pageInfo"]["endCursor"])[
-                "issue"
-            ]["history"]
-            history["nodes"].extend(page["nodes"])
-            history["pageInfo"] = page["pageInfo"]
-        return history["nodes"]
-
     def last_move(self, issue, state, *, by_user=False):
+        if issue["id"] not in self.hist:
+            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
         return ops.last_move(
-            self.history(issue), {self.states[state]}, self.humans if by_user else None
+            self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
         )
-
-    def pinned_client(self, issue):
-        start = self.starts.get(issue["identifier"])
-        if start is None:
-            return None
-        if self.harness_id is None:
-            self.harness_id = self.gql(Q_VIEWER)["viewer"]["id"]
-        automated = {self.harness_id, *self.roles}
-        moved = ops.last_move(
-            [
-                n
-                for n in self.history(issue, since=start.ts)
-                if n["actorId"] and n["actorId"] not in automated
-            ],
-            {self.states["todo"]},
-        )
-        return start.client if moved is None or moved <= start.ts else None
 
     def select_client(self, labels, role):
         return client_for(
             labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
         )
-
-    def client_pinned(self, spec):
-        if self.dry or not self.cfg.agent_label_group:
-            return
-        if spec.mode != "resume" and spec.client_source != "pinned":
-            return
-        role = config.role_for(self.cfg.roles, spec.assignee)
-        if role is None:
-            return
-        try:
-            current = self.gql(Q_RECHECK, i=spec.uuid)["issue"]
-            selected, _, error = self.select_client(current["labels"]["nodes"], role)
-            if error:
-                selected = "invalid"
-            if selected != spec.client:
-                self.say(
-                    "client-pinned", spec.issue, sid=spec.sid, client=spec.client, label=selected
-                )
-                writeback.client_pinned(
-                    writeback.for_run(self.cfg, role, self.gql, spec), spec.client, selected
-                )
-        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as error:
-            self.say("client-pinned-error", spec.issue, sid=spec.sid, error=one_line(error))
 
     def attempts(self, issue):
         tried = [*self.entries, *self.failures]
@@ -428,11 +371,11 @@ class Board:
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
-    def bounce(self, issue, body):
-        """A Todo issue that cannot be claimed: comment body and move it to In Review."""
+    def bounce(self, issue, body, frm="todo"):
+        """An issue that cannot be run: comment body and move it from frm to In Review."""
         if self.dry:
             self.say("would comment", issue["identifier"], body=body, to="in_review")
-        self.comment_and_move(issue, body, "in_review", "todo", "claim")
+        self.comment_and_move(issue, body, "in_review", frm, "claim")
 
     def status(self, ident, sid):
         if sid not in self.statuses:
@@ -553,21 +496,45 @@ class Board:
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
-    def gated(self, role, ident, client, source):
-        return self.gate is not None and self.gate.blocked(
-            role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
-        )
-
-    def preview_resume(self, issue, sid):
-        if self.dry:
-            self.say(
-                "preview",
-                issue["identifier"],
-                client=client_of(self.entries, sid),
-                client_source="pinned",
-                mode="resume",
-                sid=sid,
+    def gated(self, issue, role, client, source, frm="todo"):
+        """Whether the usage gate blocks a new run of client; a label-selected client's quota
+        configuration error bounces the issue from frm instead.
+        """
+        ident = issue["identifier"]
+        try:
+            return self.gate is not None and self.gate.blocked(
+                role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
             )
+        except delegate.ConfigError as error:
+            self.say("launch-error", ident, client=client, error=one_line(error))
+            self.bounce(issue, _label_client_message(client, error), frm)
+            return True
+
+    def resumption(self, issue, sid, new_sid):
+        """The run that continues the issue's session sid: its resume, or a new session (new_sid) on
+        the client the Agent label selects when that differs, as a session resumes only in its own
+        client. Invalid Agent or task labels keep the resume.
+        """
+        ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
+        labels = self.gql(Q_RECHECK, i=issue["id"])["issue"]["labels"]["nodes"]
+        client, source, client_error = self.select_client(labels, role)
+        task, task_error = task_for(
+            labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
+        )
+        if client_error or task_error or client == resumed:
+            if self.dry:
+                self.say("preview", ident, client=resumed, mode="resume", sid=sid)
+            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=resumed)
+        self.say("restart", ident, sid=sid, client=client, client_source=source, resumed=resumed)
+        return Spec.from_issue(
+            issue,
+            mode="new",
+            # a launcher's sid naming the old session: a fresh one, which other_sid refuses
+            sid=str(uuid.uuid4()) if new_sid == sid else new_sid,
+            task=task,
+            client=client,
+            client_source=source,
+        )
 
     def first(self, found):
         """found's first item not None; a dry run goes through all of found, previewing each."""
@@ -633,10 +600,7 @@ class Board:
             self.cfg.roles[role].tasks,
             self.label_tasks,
         )
-        if pinned := self.pinned_client(issue):
-            client, source, client_error = pinned, "pinned", None
-        else:
-            client, source, client_error = self.select_client(labels, role)
+        client, source, client_error = self.select_client(labels, role)
         if self.dry:
             self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
@@ -649,12 +613,7 @@ class Board:
             self.say("claim-skip", ident, to="in_review", reason=reason)
             self.bounce(issue, "\n\n".join(comments))
             return None
-        try:
-            if self.gated(role, ident, client, source):
-                return None
-        except delegate.ConfigError as error:
-            self.say("launch-error", ident, client=client, error=one_line(error))
-            self.bounce(issue, _label_client_message(client, error))
+        if self.gated(issue, role, client, source):
             return None
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         if self.dry:
@@ -940,7 +899,7 @@ class Held:
 
 
 def other_sid(spec, launch_sid):
-    """Whether the run resumes a session other than the launcher's `launch_sid`, said."""
+    """Whether the run's session is not the launcher's `launch_sid`, said."""
     if launch_sid is None or spec.sid == launch_sid:
         return False
     print(
@@ -957,15 +916,15 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
         for issue, sid in board.recover(live_ids):
             if not board.available(issue, full):
                 continue
-            client = client_of(board.entries, sid)
-            board.preview_resume(issue, sid)
-            if not gate.blocked(
-                board.role(issue),
-                issue["identifier"],
-                key=(delegate_of(board.entries, sid), client),
-            ):
+            spec, role = board.resumption(issue, sid, new_sid), board.role(issue)
+            if spec.mode == "new":
+                blocked = board.gated(issue, role, spec.client, spec.client_source, "in_progress")
+            else:
+                key = (delegate_of(board.entries, sid), spec.client)
+                blocked = gate.blocked(role, issue["identifier"], key=key)
+            if not blocked:
                 board.plan(("resume", issue, sid), counts)
-                yield Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+                yield spec
 
     def claimed():
         nonlocal unclaimed
@@ -1025,17 +984,11 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
             spec = choose(board, gate, live_ids, full, counts, new_sid=new_sid)
-            if (
-                not dry
-                and spec is not None
-                and spec.mode == "resume"
-                and other_sid(spec, launch_sid)
-            ):
+            if not dry and spec is not None and other_sid(spec, launch_sid):
                 return 2
             if spec is None or dry:
                 return 0
             walk.write()  # the outer logs past the walk
-            board.client_pinned(spec)
             return start_run(start, begin(cfg, spec), walk)
 
 
@@ -1068,10 +1021,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             if not board.settle(issue, sid, wait=False):
                 return 0 if board.replays.get(ident) else stop
             board.plan(("resume", issue, sid))
-            board.preview_resume(issue, sid)
-            spec = Spec.from_issue(
-                issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
-            )
+            spec = board.resumption(issue, sid, launch_sid or str(uuid.uuid4()))
             if not dry and other_sid(spec, launch_sid):
                 return 2
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
@@ -1088,7 +1038,6 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             )
         if dry:
             return 0
-        board.client_pinned(spec)
         return start(begin(cfg, spec))
 
 
