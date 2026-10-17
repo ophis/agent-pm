@@ -124,6 +124,9 @@ class ResponseTest(Case):
         self.assertEqual(raised.exception.code, "build_failed")
         found = Broker(FakeBroker((0, text("build-cached.json"), progress))).build("/opt/agent-pm")
         self.assertEqual(found[0], data("build-cached.json")["image"])
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker((rc, "", "#7 partial\n" + err))).build("/opt/agent-pm")
+        self.assertEqual(raised.exception.code, "build_failed")
 
     def test_only_build_may_put_progress_before_the_error_object(self):
         rc, _, err = failure("error-login_required.json")
@@ -231,6 +234,22 @@ class StreamTest(Case):
         _, shown, res = self.run_stream(b"", b'#1 load\n{"exit_code": 8}\n', 8)
         self.assertEqual((res.returncode, res.stderr), (8, '#1 load\n{"exit_code": 8}\n'))
         self.assertEqual(shown, "#1 load\n")
+
+    def test_build_notes_after_progress_are_shown(self):
+        notes = b"#7 partial\nagent-pm-broker: removed agent-pm-user:" + b"1" * 64 + b"\n"
+        _, shown, res = self.run_stream(b'{"ok": 1}\n', notes, 0)
+        self.assertEqual((res.stdout, shown), ('{"ok": 1}\n', notes.decode()))
+
+    def test_a_broker_reaped_just_after_the_deadline_is_not_a_timeout(self):
+        class Late(FakeProc):
+            def wait(self, timeout=None):
+                if not timeout:
+                    raise TimeoutExpired(self.args, 0)
+                return self.code
+
+        with mock.patch("subprocess.Popen", return_value=Late(["b"], b"{}\n", b"", 0)):
+            res = broker._stream(["b"], stdin=DEVNULL, env={}, timeout=0)
+        self.assertEqual((res.returncode, res.stdout), (0, "{}\n"))
 
     def test_bad_utf8_is_a_decode_error_only_on_stdout(self):
         with self.assertRaises(UnicodeDecodeError):
