@@ -78,7 +78,7 @@ type fakeApps struct {
 	frozen                 bool
 	steps                  []string
 	password               []byte
-	passwordSeen           string
+	passwordSeen           []string
 	got                    []byte
 	reads                  int
 }
@@ -147,6 +147,7 @@ func (k *fakeApps) AppAccess(app, account string) (AppAccess, error) {
 
 func (k *fakeApps) AppAccount(app string) (string, error) { return k.account, k.accountErr }
 func (k *fakeApps) AppKey(app, account string) ([]byte, error) {
+	k.steps = append(k.steps, "key "+app+" "+account)
 	if account != k.account {
 		return nil, ErrNotFound
 	}
@@ -154,8 +155,9 @@ func (k *fakeApps) AppKey(app, account string) ([]byte, error) {
 	return k.got, k.getErr
 }
 
-func (k *fakeApps) TrustApps(app, account string) error {
+func (k *fakeApps) TrustApps(app, account string, password []byte) error {
 	k.steps = append(k.steps, "apps "+app+" "+account)
+	k.password, k.passwordSeen = password, append(k.passwordSeen, string(password))
 	if k.appsErr != nil || k.frozen {
 		return k.appsErr
 	}
@@ -169,7 +171,7 @@ func (k *fakeApps) TrustApps(app, account string) error {
 
 func (k *fakeApps) TrustPartition(app, account string, password []byte) error {
 	k.steps = append(k.steps, "partition "+app+" "+account)
-	k.password, k.passwordSeen = password, string(password)
+	k.password, k.passwordSeen = password, append(k.passwordSeen, string(password))
 	if k.partitionErr != nil || k.frozen {
 		return k.partitionErr
 	}
@@ -203,10 +205,10 @@ func TestLoginGitHub(t *testing.T) {
 		steps  []string
 		asks   int
 	}{
-		"added":        {access: added(), steps: []string{"apps", "partition"}, asks: 1},
-		"half done":    {access: halfDone(), steps: []string{"partition"}, asks: 1},
-		"already done": {steps: nil},
-		"reinstalled":  {access: reinstalled(), steps: []string{"apps", "partition"}, asks: 1},
+		"added":        {access: added(), steps: []string{"apps", "partition", "key"}, asks: 1},
+		"half done":    {access: halfDone(), steps: []string{"partition", "key"}, asks: 1},
+		"already done": {steps: []string{"key"}},
+		"reinstalled":  {access: reinstalled(), steps: []string{"apps", "partition", "key"}, asks: 1},
 	} {
 		k := &fakeApps{account: "5352992", key: appKey, access: tc.access}
 		ask := &askOnce{}
@@ -227,8 +229,11 @@ func TestLoginGitHub(t *testing.T) {
 		if !bytes.Equal(k.got, make([]byte, len(appKey))) {
 			t.Fatalf("%s: key buffer not erased", name)
 		}
-		if tc.asks > 0 && (k.passwordSeen != keychainPass || !bytes.Equal(k.password, make([]byte, len(keychainPass)))) {
-			t.Fatalf("%s: partition step got %q, buffer after %q", name, k.passwordSeen, k.password)
+		if len(k.passwordSeen) != len(tc.steps)-1 || slices.ContainsFunc(k.passwordSeen, func(p string) bool { return p != keychainPass }) {
+			t.Fatalf("%s: steps got passwords %q", name, k.passwordSeen)
+		}
+		if tc.asks > 0 && !bytes.Equal(k.password, make([]byte, len(keychainPass))) {
+			t.Fatalf("%s: password buffer after %q", name, k.password)
 		}
 		if !reflect.DeepEqual(*k.access, brokerOnly()) {
 			t.Fatalf("%s: left %#v", name, *k.access)
@@ -239,14 +244,12 @@ func TestLoginGitHub(t *testing.T) {
 		}
 	}
 	for name, k := range map[string]*fakeApps{
-		"missing":     {accountErr: ErrNotFound},
-		"ambiguous":   {accountErr: ErrAmbiguous},
-		"keychain":    {accountErr: errors.New("keychain status -25308")},
-		"not an id":   {account: "setup-token", key: appKey},
-		"zero id":     {account: "0123", key: appKey},
-		"read failed": {account: "5352992", key: appKey, getErr: errors.New("keychain status -128")},
-		"empty":       {account: "5352992"},
-		"access":      {account: "5352992", key: appKey, access: added(), accessErr: errors.New("keychain status -25293")},
+		"missing":   {accountErr: ErrNotFound},
+		"ambiguous": {accountErr: ErrAmbiguous},
+		"keychain":  {accountErr: errors.New("keychain status -25308")},
+		"not an id": {account: "setup-token", key: appKey},
+		"zero id":   {account: "0123", key: appKey},
+		"access":    {account: "5352992", key: appKey, access: added(), accessErr: errors.New("keychain status -25293")},
 	} {
 		ask := &askOnce{}
 		var out bytes.Buffer
@@ -254,7 +257,32 @@ func TestLoginGitHub(t *testing.T) {
 		if err == nil || k.steps != nil || ask.calls != 0 || out.Len() != 0 || strings.Contains(err.Error(), appKey) {
 			t.Fatalf("%s: %v steps %q out %q", name, err, k.steps, out.String())
 		}
-		if k.got != nil && !bytes.Equal(k.got, make([]byte, len(k.got))) {
+	}
+}
+
+// The key is read only once the item trusts only the broker, so the read needs no dialog.
+func TestLoginGitHubKeyAfterAccess(t *testing.T) {
+	for name, tc := range map[string]struct {
+		k    *fakeApps
+		want string
+	}{
+		"read failed": {
+			k:    &fakeApps{key: appKey, getErr: errors.New("keychain status -128")},
+			want: "keychain item agent-pm-docs trusts only the broker, but reading it failed: keychain status -128",
+		},
+		"empty": {k: &fakeApps{}, want: "keychain item agent-pm-docs trusts only the broker, but it is empty"},
+	} {
+		tc.k.account, tc.k.access = "5352992", added()
+		ask := &askOnce{}
+		var out bytes.Buffer
+		err := LoginGitHub("agent-pm-docs", tc.k, ask.read, &out)
+		if err == nil || err.Error() != tc.want || ask.calls != 1 || out.Len() != 0 {
+			t.Fatalf("%s: %v asked %d times out %q", name, err, ask.calls, out.String())
+		}
+		if !slices.Equal(tc.k.steps, []string{"apps agent-pm-docs 5352992", "partition agent-pm-docs 5352992", "key agent-pm-docs 5352992"}) {
+			t.Fatalf("%s: steps %q", name, tc.k.steps)
+		}
+		if !bytes.Equal(tc.k.got, make([]byte, len(tc.k.got))) {
 			t.Fatalf("%s: key buffer not erased", name)
 		}
 	}
@@ -285,13 +313,14 @@ func TestLoginGitHubStepFails(t *testing.T) {
 		},
 		"apps": {
 			k:     &fakeApps{access: added(), appsErr: denied},
+			asks:  1,
 			wants: []string{"agent-pm-docs unchanged: changing its read and export entries failed", "done: nothing", `entry trusts ["/usr/bin/security"]`, partition, rerun},
 		},
 		"password read": {
 			k:     &fakeApps{access: added()},
 			ask:   &askOnce{err: errors.New("needs an interactive terminal")},
 			asks:  1,
-			wants: []string{"agent-pm-docs partly changed: reading the login keychain password failed: needs an interactive terminal", apps, partition, rerun},
+			wants: []string{"agent-pm-docs unchanged: reading the login keychain password failed: needs an interactive terminal", "done: nothing", `entry trusts ["/usr/bin/security"]`, partition, rerun},
 		},
 		"read back": {
 			k:     &fakeApps{access: added(), partitionErr: denied, readBackErr: errors.New("keychain status -25308")},
@@ -305,8 +334,8 @@ func TestLoginGitHubStepFails(t *testing.T) {
 		}
 		var out bytes.Buffer
 		err := LoginGitHub("agent-pm-docs", tc.k, tc.ask.read, &out)
-		if err == nil || out.Len() != 0 || tc.ask.calls != tc.asks {
-			t.Fatalf("%s: %v out %q asked %d times", name, err, out.String(), tc.ask.calls)
+		if err == nil || out.Len() != 0 || tc.ask.calls != tc.asks || slices.ContainsFunc(tc.k.steps, func(s string) bool { return strings.HasPrefix(s, "key ") }) {
+			t.Fatalf("%s: %v out %q asked %d times, steps %q", name, err, out.String(), tc.ask.calls, tc.k.steps)
 		}
 		for _, want := range tc.wants {
 			if !strings.Contains(err.Error(), want) {

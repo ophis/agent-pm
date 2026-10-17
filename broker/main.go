@@ -195,7 +195,7 @@ func system() app {
 				return err
 			}
 			return broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
-				fmt.Fprint(os.Stderr, "Login keychain password, to set the partition list of "+app+" (hidden): ")
+				fmt.Fprint(os.Stderr, "Login keychain password, to make "+app+" trust only the broker (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, out)
