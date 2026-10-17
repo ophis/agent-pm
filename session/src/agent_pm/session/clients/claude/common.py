@@ -314,7 +314,7 @@ class ClaudeCommon:
         with contextlib.suppress(OSError), os.scandir(projects) as entries:
             for entry in entries:
                 candidate = os.path.join(entry.path, f"{target}.jsonl")
-                if os.path.isfile(candidate) and os.path.commonpath(
+                if read(candidate, limit=0) is not None and os.path.commonpath(
                     (os.path.realpath(candidate), os.path.realpath(projects))
                 ) == os.path.realpath(projects):
                     path = candidate
