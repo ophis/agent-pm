@@ -68,8 +68,8 @@ func TestLogin(t *testing.T) {
 type fakeApps struct {
 	account, key       string
 	accountErr, getErr error
-	putErr             error
-	put                []string
+	trustErr           error
+	trusted            []string
 	got                []byte
 }
 
@@ -81,25 +81,24 @@ func (k *fakeApps) AppKey(app, account string) ([]byte, error) {
 	k.got = []byte(k.key)
 	return k.got, k.getErr
 }
-func (k *fakeApps) PutAppKey(app, account string, key []byte) error {
-	if k.putErr != nil {
-		return k.putErr
+func (k *fakeApps) TrustOnlyBroker(app, account string) error {
+	if k.trustErr != nil {
+		return k.trustErr
 	}
-	k.put = []string{app, account, string(key)}
-	k.key = string(key)
+	k.trusted = append(k.trusted, app+" "+account)
 	return nil
 }
 
 func TestLoginGitHub(t *testing.T) {
 	const key = "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQ=="
 	k := &fakeApps{account: "5352992", key: key}
-	for range 2 {
+	for i := range 2 {
 		var out bytes.Buffer
 		if err := LoginGitHub("agent-pm-engineer", k, &out); err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(k.put, []string{"agent-pm-engineer", "5352992", key}) {
-			t.Fatalf("put %q", k.put)
+		if len(k.trusted) != i+1 || k.trusted[i] != "agent-pm-engineer 5352992" {
+			t.Fatalf("trusted %q", k.trusted)
 		}
 		if out.String() != "GitHub App agent-pm-engineer private key (App ID 5352992) now trusts only the broker\n" {
 			t.Fatalf("%q", out.String())
@@ -109,22 +108,25 @@ func TestLoginGitHub(t *testing.T) {
 		}
 	}
 	for name, k := range map[string]*fakeApps{
-		"missing":     {accountErr: ErrNotFound},
-		"ambiguous":   {accountErr: ErrAmbiguous},
-		"keychain":    {accountErr: errors.New("keychain status -25308")},
-		"not an id":   {account: "setup-token", key: key},
-		"zero id":     {account: "0123", key: key},
-		"read failed": {account: "5352992", key: key, getErr: errors.New("keychain status -128")},
-		"empty":       {account: "5352992"},
-		"put failed":  {account: "5352992", key: key, putErr: errors.New("item deleted but not re-created")},
+		"missing":      {accountErr: ErrNotFound},
+		"ambiguous":    {accountErr: ErrAmbiguous},
+		"keychain":     {accountErr: errors.New("keychain status -25308")},
+		"not an id":    {account: "setup-token", key: key},
+		"zero id":      {account: "0123", key: key},
+		"read failed":  {account: "5352992", key: key, getErr: errors.New("keychain status -128")},
+		"empty":        {account: "5352992"},
+		"trust failed": {account: "5352992", key: key, trustErr: errors.New("keychain status -128")},
 	} {
 		var out bytes.Buffer
 		err := LoginGitHub("agent-pm-docs", k, &out)
-		if err == nil || k.put != nil || out.Len() != 0 || strings.Contains(err.Error(), key) {
-			t.Fatalf("%s: %v put %q out %q", name, err, k.put, out.String())
+		if err == nil || k.trusted != nil || out.Len() != 0 || strings.Contains(err.Error(), key) {
+			t.Fatalf("%s: %v trusted %q out %q", name, err, k.trusted, out.String())
 		}
 		if k.got != nil && !bytes.Equal(k.got, make([]byte, len(k.got))) {
 			t.Fatalf("%s: key buffer not erased", name)
+		}
+		if name == "trust failed" && !strings.Contains(err.Error(), "agent-pm-docs unchanged") {
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
 }

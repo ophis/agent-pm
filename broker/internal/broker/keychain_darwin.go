@@ -101,44 +101,58 @@ static OSStatus item_get(const char *path, const char *service, const char *acco
     CFRelease(kc);
     return s;
 }
-// An existing item is deleted, never updated, so a pre-planted permissive ACL does not survive.
-// The access is built before the delete; if the add then fails, the item is re-added with the default access (*restored).
-static OSStatus item_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length, int *deleted, int *restored) {
-    SecKeychainRef kc = NULL;
-    OSStatus s;
-    *deleted = 0;
-    *restored = 0;
-    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
-    if (!q) return s;
+// An access whose only trusted application is this executable.
+static OSStatus self_access(const char *label, SecAccessRef *access) {
     SecTrustedApplicationRef self = NULL;
-    SecAccessRef access = NULL;
-    s = SecTrustedApplicationCreateFromPath(NULL, &self);
-    if (s != errSecSuccess) goto done;
+    OSStatus s = SecTrustedApplicationCreateFromPath(NULL, &self);
+    if (s != errSecSuccess) return s;
     const void *apps[] = {self};
     CFArrayRef list = CFArrayCreate(NULL, apps, 1, &kCFTypeArrayCallBacks);
     CFStringRef description = CFStringCreateWithCString(NULL, label, kCFStringEncodingUTF8);
-    s = SecAccessCreate(description, list, &access);
+    s = SecAccessCreate(description, list, access);
     CFRelease(description);
     CFRelease(list);
     CFRelease(self);
-    if (s != errSecSuccess) goto done;
+    return s;
+}
+// An existing item is deleted, never updated, so a pre-planted permissive ACL does not survive.
+static OSStatus item_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length) {
+    SecKeychainRef kc = NULL;
+    OSStatus s;
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
+    if (!q) return s;
     s = SecItemDelete(q);
-    if (s == errSecSuccess) *deleted = 1;
-    else if (s != errSecItemNotFound) goto release;
+    if (s != errSecSuccess && s != errSecItemNotFound) goto done;
+    SecAccessRef access = NULL;
+    s = self_access(label, &access);
+    if (s != errSecSuccess) goto done;
     CFDictionaryRemoveValue(q, kSecMatchSearchList);
     CFDataRef data = CFDataCreate(NULL, bytes, length);
     CFDictionarySetValue(q, kSecUseKeychain, kc);
     CFDictionarySetValue(q, kSecValueData, data);
     CFDictionarySetValue(q, kSecAttrAccess, access);
     s = SecItemAdd(q, NULL);
-    if (s != errSecSuccess && *deleted) {
-        CFDictionaryRemoveValue(q, kSecAttrAccess);
-        *restored = SecItemAdd(q, NULL) == errSecSuccess;
-    }
     CFRelease(data);
-release:
     CFRelease(access);
 done:
+    CFRelease(q);
+    CFRelease(kc);
+    return s;
+}
+// Replaces the whole ACL in place; content and attributes stay, and a failed change leaves the item as it was.
+static OSStatus item_trust_self(const char *path, const char *service, const char *account, const char *label) {
+    SecKeychainRef kc = NULL;
+    OSStatus s;
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
+    if (!q) return s;
+    CFDictionarySetValue(q, kSecReturnRef, kCFBooleanTrue);
+    CFTypeRef item = NULL;
+    SecAccessRef access = NULL;
+    s = SecItemCopyMatching(q, &item);
+    if (s == errSecSuccess) s = self_access(label, &access);
+    if (s == errSecSuccess) s = SecKeychainItemSetAccess((SecKeychainItemRef)item, access);
+    if (access) CFRelease(access);
+    if (item) CFRelease(item);
     CFRelease(q);
     CFRelease(kc);
     return s;
@@ -255,20 +269,7 @@ func (k fileKeychain) put(service, account, label string, data []byte) error {
 	}
 	p, free := cStrings(string(k), service, account, label)
 	defer free()
-	var deleted, restored C.int
-	err := status(C.item_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data)), &deleted, &restored))
-	return putError(service, err, deleted != 0, restored != 0)
-}
-
-// putError reports a failed put; deleted and restored say what became of the old item.
-func putError(service string, err error, deleted, restored bool) error {
-	switch {
-	case err == nil || !deleted:
-		return err
-	case restored:
-		return fmt.Errorf("re-creating keychain item %s failed (%w); it was restored with its content and the default access: rerun", service, err)
-	}
-	return fmt.Errorf("keychain item %s was deleted and could not be restored (%w): add it again", service, err)
+	return status(C.item_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data))))
 }
 
 func (k fileKeychain) Exists() error {
@@ -301,8 +302,10 @@ func (k fileKeychain) AppAccount(app string) (string, error) {
 
 func (k fileKeychain) AppKey(app, account string) ([]byte, error) { return k.get(app, account) }
 
-func (k fileKeychain) PutAppKey(app, account string, key []byte) error {
-	return k.put(app, account, "agent-pm GitHub App "+app, key)
+func (k fileKeychain) TrustOnlyBroker(app, account string) error {
+	p, free := cStrings(string(k), app, account, "agent-pm GitHub App "+app)
+	defer free()
+	return status(C.item_trust_self(p[0], p[1], p[2], p[3]))
 }
 
 // SystemKeychain is the item in the account's login keychain, reachable only from the hardened install.
@@ -347,9 +350,9 @@ func (k SystemKeychain) AppKey(app, account string) ([]byte, error) {
 	return k.login().AppKey(app, account)
 }
 
-func (k SystemKeychain) PutAppKey(app, account string, key []byte) error {
+func (k SystemKeychain) TrustOnlyBroker(app, account string) error {
 	if err := CheckInstalled(); err != nil {
 		return err
 	}
-	return k.login().PutAppKey(app, account, key)
+	return k.login().TrustOnlyBroker(app, account)
 }

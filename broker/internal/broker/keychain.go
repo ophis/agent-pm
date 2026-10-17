@@ -38,7 +38,7 @@ var GitHubApps = map[string]bool{"agent-pm-engineer": true, "agent-pm-docs": tru
 type AppKeychain interface {
 	AppAccount(app string) (string, error)
 	AppKey(app, account string) ([]byte, error)
-	PutAppKey(app, account string, key []byte) error
+	TrustOnlyBroker(app, account string) error
 }
 
 var appID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
@@ -71,8 +71,8 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 	return err
 }
 
-// LoginGitHub re-creates app's existing private-key item, same account and content, trusting only the broker.
-// out never sees the key.
+// LoginGitHub reads app's existing private-key item once to confirm it is usable, then changes its ACL in place
+// to trust only the broker; the item is never deleted and its content never changes. out never sees the key.
 func LoginGitHub(app string, k AppKeychain, out io.Writer) error {
 	account, err := k.AppAccount(app)
 	switch {
@@ -86,15 +86,16 @@ func LoginGitHub(app string, k AppKeychain, out io.Writer) error {
 		return fmt.Errorf("keychain item %s: account %q is not an App ID", app, account)
 	}
 	key, err := k.AppKey(app, account)
-	defer erase(key)
-	if err != nil {
+	empty := len(key) == 0
+	erase(key)
+	switch {
+	case err != nil:
 		return err
-	}
-	if len(key) == 0 {
+	case empty:
 		return fmt.Errorf("keychain item %s is empty", app)
 	}
-	if err := k.PutAppKey(app, account, key); err != nil {
-		return err
+	if err := k.TrustOnlyBroker(app, account); err != nil {
+		return fmt.Errorf("keychain item %s unchanged: changing its access failed: %w", app, err)
 	}
 	_, err = fmt.Fprintf(out, "GitHub App %s private key (App ID %s) now trusts only the broker\n", app, account)
 	return err

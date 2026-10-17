@@ -7,43 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestPutError(t *testing.T) {
-	failed := errors.New("keychain status -61")
-	for _, tc := range []struct {
-		err               error
-		deleted, restored bool
-		want              string
-	}{
-		{nil, true, false, ""},
-		{failed, false, false, "keychain status -61"},
-		{failed, true, true, "re-creating keychain item svc failed (keychain status -61); it was restored with its content and the default access: rerun"},
-		{failed, true, false, "keychain item svc was deleted and could not be restored (keychain status -61): add it again"},
-	} {
-		got := putError("svc", tc.err, tc.deleted, tc.restored)
-		if (got == nil) != (tc.want == "") || got != nil && (got.Error() != tc.want || !errors.Is(got, failed)) {
-			t.Fatalf("%+v: %v", tc, got)
-		}
-	}
-}
 
 func TestFileKeychain(t *testing.T) {
 	if os.Getenv("CI") == "" {
 		t.Skip("CI only: security create-keychain adds the throwaway keychain to the user's search list")
 	}
 	path := filepath.Join(t.TempDir(), "throwaway.keychain-db")
-	security := func(args ...string) {
+	security := func(args ...string) string {
 		t.Helper()
 		// A keychain prompt on a headless runner fails the test instead of hanging the job.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if out, err := exec.CommandContext(ctx, "/usr/bin/security", args...).CombinedOutput(); err != nil {
+		out, err := exec.CommandContext(ctx, "/usr/bin/security", args...).CombinedOutput()
+		if err != nil {
 			t.Fatalf("security %q: %v %s", args, err, out)
 		}
+		return string(out)
 	}
 	security("create-keychain", "-p", "throwaway", path)
 	t.Cleanup(func() { _ = exec.Command("/usr/bin/security", "delete-keychain", path).Run() })
@@ -80,6 +64,11 @@ func TestFileKeychain(t *testing.T) {
 	}
 	// -A lets the test binary read the seed without a prompt, as the user allows once.
 	security("add-generic-password", "-A", "-s", app, "-a", "4242", "-w", key, path)
+	created := regexp.MustCompile(`"cdat"<timedate>=\S+`).FindString(security("find-generic-password", "-s", app, path))
+	self, err := os.Executable()
+	if err != nil || created == "" {
+		t.Fatalf("%q %v", created, err)
+	}
 	for range 2 {
 		var out bytes.Buffer
 		if err := LoginGitHub(app, k, &out); err != nil || strings.Contains(out.String(), key) {
@@ -87,6 +76,13 @@ func TestFileKeychain(t *testing.T) {
 		}
 		if got, err := k.AppKey(app, "4242"); err != nil || string(got) != key {
 			t.Fatalf("AppKey %q %v", got, err)
+		}
+		// Changed in place: the item keeps its creation date, and no entry trusts every application.
+		if now := security("find-generic-password", "-s", app, path); !strings.Contains(now, created) {
+			t.Fatalf("item re-created: %s, was %s", now, created)
+		}
+		if acl := security("dump-keychain", "-a", path); strings.Contains(acl, "applications: <null>") || !strings.Contains(acl, self) {
+			t.Fatalf("ACL not broker-only:\n%s", acl)
 		}
 	}
 	security("add-generic-password", "-A", "-s", app, "-a", "4343", "-w", key, path)

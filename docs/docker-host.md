@@ -57,8 +57,9 @@ claude setup-token          # copy the token it prints
 | shell history | no token |
 
 GitHub: each App's private key must already be a generic-password item in the login
-keychain, service the App name, account its App ID, content the base64 key. Make each
-item trust only the broker (allow the keychain prompt once):
+keychain, service the App name, account its App ID, content the base64 key. Change each
+item's access in place to trust only the broker (allow the keychain prompts); content
+and account stay:
 
 ```sh
 "$B" login github agent-pm-engineer
@@ -69,7 +70,7 @@ item trust only the broker (allow the keychain prompt once):
 |---|---|
 | output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
 | `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | prompts; Deny fails |
-| rerun `login github agent-pm-engineer` | same output, no prompt |
+| rerun `login github agent-pm-engineer` | same output |
 
 ## Build
 
