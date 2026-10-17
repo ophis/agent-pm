@@ -111,7 +111,7 @@ class TmuxHostContractTest(HostContract, Case):
         )
         self.split(name)
         self.assertEqual(self.row(name).state, StatusState.WORKING)
-        for screen in (self.host.screen(name), self.host.screen(name, 50)):
+        for screen in (self.host.attach(name).screen(), self.host.attach(name).screen(50)):
             self.assertIn("agent pane", screen)
             self.assertNotIn("user pane", screen)
         Path(gate).touch()
@@ -119,7 +119,7 @@ class TmuxHostContractTest(HostContract, Case):
         last = self.row(name).last_lines
         self.assertIn("agent pane", last)
         self.assertNotIn("user pane", last)
-        self.assertNotIn("user pane", self.host.screen(name))
+        self.assertNotIn("user pane", self.host.attach(name).screen())
 
     def test_a_split_refocused_detached_sessions_exit_closes_only_its_launched_pane(self):
         name, gate, events = self.fresh(), self.file("gate"), self.file("events")

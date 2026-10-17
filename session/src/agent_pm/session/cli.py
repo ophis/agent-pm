@@ -725,8 +725,12 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
             print(text)
     elif cmd == "read":
         host = Session.host(_host_of(args.name, hosts))
-        check_sid(args.name, host.attach(args.name), args.sid)
-        print(_shown(args.name, hosts).screen(args.name, args.lines))
+        process = host.attach(args.name)
+        check_sid(args.name, process, args.sid)
+        try:
+            print(process.screen(args.lines))
+        except NotShowable:
+            raise NotShowable(f"session {args.name}: host {host.name} cannot show") from None
     elif cmd == "client-resume":
         return Session.client_resume(args.client, args.arguments)
     else:

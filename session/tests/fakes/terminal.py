@@ -104,7 +104,16 @@ class MemoryTerminal(InteractiveProcess):
         )
 
 
+class ScreenTerminal(MemoryTerminal):
+    def screen(self, lines=None):
+        if not self._own():
+            raise SessionError(f"terminal {self.name} is not running")
+        return self.host.calls.screen(self, lines)
+
+
 class MemoryHost(Host):
+    terminal_class = MemoryTerminal
+
     def __init__(self, name="memory", *, hook=None):
         super().__init__(name)
         self.calls = mock.Mock()
@@ -119,7 +128,7 @@ class MemoryHost(Host):
         generation = identity or f"generation-{self.serial}"
         if metadata is None:
             metadata = {"sid": sid, "generation": generation}
-        process = MemoryTerminal(
+        process = self.terminal_class(
             self, name, generation, receipt, metadata=metadata, display=display
         )
         self.processes[name] = process
@@ -172,14 +181,11 @@ class MemoryHost(Host):
 
 
 class ScreenHost(MemoryHost, Showable):
+    terminal_class = ScreenTerminal
+
     def __init__(self, name="memory", **options):
         super().__init__(name, **options)
         self.calls.screen.return_value = ""
-
-    def screen(self, name, lines=None):
-        if isinstance(name, MemoryTerminal) and not name._own():
-            raise SessionError(f"terminal {name.name} is not running")
-        return self.calls.screen(name, lines)
 
     def show(self, name, *, display=None, command=None):
         shown = self.calls.show(name, display=display, command=command)

@@ -875,37 +875,52 @@ class HideTest(Base):
 class ScreenTest(Base):
     def test_screen_reads_the_launched_panes_last_lines(self):
         self.tmux.read.return_value = "text"
-        self.assertEqual(self.host.screen("w1", 5), "text")
+        self.assertEqual(self.host.attach("w1").screen(5), "text")
         self.tmux.read.assert_called_once_with("%7", 5)
 
-    def test_screen_of_a_name_without_a_launch_reads_its_active_pane(self):
+    def test_screen_of_a_session_it_did_not_launch_reads_its_active_pane(self):
+        self.kind, self.controlled = None, False
+        self.tmux.process.return_value = "4242 $3 %9 5555"
         self.tmux.read.return_value = "text"
-        self.recorded = None
-        self.assertEqual(self.host.screen("w1"), "text")
-        self.tmux.read.assert_called_once_with("w1", None)
+        self.assertEqual(self.host.attach("w1").screen(), "text")
+        self.tmux.read.assert_called_once_with("%9", None)
+
+    def test_screen_of_a_dead_pane_still_its_own_reads_its_last_text(self):
+        process = self.host.attach("w1")
+        self.tmux.status.return_value = 3
+        self.tmux.read.return_value = "last words"
+        self.assertFalse(process.alive())
+        self.assertEqual(process.screen(), "last words")
+
+    def test_screen_of_a_pane_no_longer_its_own_is_refused_before_reading(self):
+        process = self.host.attach("w1")
+        self.tmux.process.return_value = "4242 $3 %7 9999"
+        with self.assertRaisesRegex(SessionError, "^tmux session w1 is gone$"):
+            process.screen()
+        self.tmux.read.assert_not_called()
 
     def test_screen_names_a_failed_read(self):
         self.tmux.read.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
-            self.host.screen("w1")
+            self.host.attach("w1").screen()
 
     def test_screen_refuses_a_bad_launch_record_before_reading(self):
         self.recorded = "4242 $3 %x 4343"
         with self.assertRaisesRegex(
             SessionError, "^tmux session w1: bad @process '4242 \\$3 %x 4343'$"
         ):
-            self.host.screen("w1")
+            self.host.attach("w1").screen()
         self.tmux.read.assert_not_called()
 
     def test_screen_names_a_failed_launch_record_read_before_reading(self):
         self.tmux.option.side_effect = TuiError("tmux: lost server")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
-            self.host.screen("w1")
+            self.host.attach("w1").screen()
         self.tmux.read.assert_not_called()
 
     def test_screen_refuses_a_bad_name_before_tmux(self):
         with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
-            self.host.screen("a b")
+            self.host.attach("a b").screen()
         self.tmux.option.assert_not_called()
         self.tmux.read.assert_not_called()
 

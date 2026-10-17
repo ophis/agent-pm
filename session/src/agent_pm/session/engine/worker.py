@@ -33,7 +33,7 @@ from agent_pm.session.engine.types import (
     SessionError,
     Spec,
 )
-from agent_pm.session.hosts.base import Process, Showable
+from agent_pm.session.hosts.base import Process
 from agent_pm.session.modes.tui import TuiStore
 from agent_pm.utils import (
     CONFIG_NAME,
@@ -491,10 +491,8 @@ class Worker:
     def _died(self, code: int) -> str:
         head = f"{self.state.name}: {self.state.client} exited {code} at once"
         host = self.session_cls.host(self.state.host)
-        if not isinstance(host, Showable):
-            return head
         try:
-            screen = host.screen(self.state.name, SCREEN_LINES)
+            screen = host.attach(self.state.name).screen(SCREEN_LINES)
         except SessionError:
             return head
         lines = [line for line in screen.splitlines() if line.strip()][-REPORT_LINES:]

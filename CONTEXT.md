@@ -70,7 +70,7 @@ _Avoid_: agent run (a role's run, in a session)
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Showable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
+Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Showable Host also shows them; a process on it reads its own screen (`Process.screen`). In code: `session/src/agent_pm/session/hosts/`.
 
 **Record**:
 A versioned JSON line naming a started thing, its session identity and display, with commands to control and resume it. In code: `utils/src/agent_pm/utils/record.py`.

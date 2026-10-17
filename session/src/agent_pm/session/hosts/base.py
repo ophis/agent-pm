@@ -18,6 +18,7 @@ from agent_pm.session.engine.types import (
     KeyPress,
     Launch,
     Liveness,
+    NotShowable,
     Paste,
     SessionError,
     SessionRow,
@@ -90,6 +91,9 @@ class Process(ABC):
 
     def hidden(self) -> bool:
         return False
+
+    def screen(self, lines: int | None = None) -> str:
+        raise NotShowable(f"session {self.name}: its host cannot show")
 
     def status(self) -> Status:
         """unknown, too, when its host fails after telling its liveness."""
@@ -302,9 +306,6 @@ class Showable(ABC):
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...
-
-    @abstractmethod
-    def screen(self, name: str | Process, lines: int | None = None) -> str: ...
 
     @abstractmethod
     def layout(self, *, display: Display = None) -> str | None: ...
