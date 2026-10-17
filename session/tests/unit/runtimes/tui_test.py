@@ -631,7 +631,10 @@ class StartTest(Base):
     def test_host_client_env_reaches_launch_and_names_the_home_in_metadata(self):
         class Homed(ScanTui):
             def _home(self):
-                return ClientHome("fake_dir", "fake", "FAKE_HOME")
+                return ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token")
+
+            def _approval(self, argv):
+                return ("--ask", argv[0])
 
             def launch(self, spec, hook):
                 self.spec = spec
@@ -651,7 +654,15 @@ class StartTest(Base):
                 with mock.patch.object(self.host, "_client_env", client_env):
                     self.start(run=run, env={"OTHER": "1"}, resume=resume)
                 self.assertEqual(
-                    calls, [(NAME, "fake", ClientHome("fake_dir", "fake", "FAKE_HOME"), resume)]
+                    calls,
+                    [
+                        (
+                            NAME,
+                            "fake",
+                            ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token"),
+                            resume,
+                        )
+                    ],
                 )
                 self.assertEqual(dict(run.spec.env), {"OTHER": "1", "FAKE_HOME": "/home/fake"})
                 args, kwargs = self.host.calls.terminal.call_args
@@ -659,6 +670,10 @@ class StartTest(Base):
                 self.assertEqual(
                     (metadata["home_field"], metadata["home_dir"], metadata["resume"]),
                     ("fake_dir", "fake", flag),
+                )
+                self.assertEqual(
+                    (metadata["credential"], json.loads(metadata["approval"])),
+                    ("fake-token", ["--ask", args[1].argv[0]]),
                 )
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 

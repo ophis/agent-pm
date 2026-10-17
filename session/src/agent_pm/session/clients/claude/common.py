@@ -8,7 +8,7 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
 
 from agent_pm.session.clients import common
@@ -48,9 +48,18 @@ STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
-HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR")
+HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
 HOME_READ_MAX = 64 << 20
 TUI_ENV = MappingProxyType({"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1"})
+APPROVAL_VALUED = MappingProxyType(
+    {flag: flag for flag in ("--permission-mode", "--permission-prompt-tool", "--settings")}
+)
+APPROVAL_BARE = frozenset(
+    {"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions"}
+)
+APPROVAL_LISTS = frozenset(
+    {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools"}
+)
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -60,6 +69,38 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
         for flag in scan(flags, {"--add-dir": "--add-dir"})
         if flag.word == "--add-dir" and flag.value is not None
     )
+
+
+def approval(argv: Sequence[str]) -> tuple[str, ...]:
+    """argv's permission flags before "--" with their values, and each --settings reduced to its
+    permissions object: its other settings (an env among them) are never kept.
+    """
+    found: list[str] = []
+    flags, listing = argv[1:], False
+    for flag in scan(flags, APPROVAL_VALUED):
+        if listing and not flag.arg.startswith("-"):
+            found.append(flag.arg)
+            continue
+        listing = flag.word in APPROVAL_LISTS and "=" not in flag.arg
+        if flag.word == "--settings":
+            found.extend(_permissions(flag.value or ""))
+        elif (
+            flag.word in APPROVAL_VALUED
+            or flag.word in APPROVAL_BARE
+            or flag.word in APPROVAL_LISTS
+        ):
+            found.extend(flags[flag.start : flag.end])
+    return tuple(found)
+
+
+def _permissions(settings: str) -> tuple[str, ...]:
+    try:
+        parsed = json.loads(settings)
+    except ValueError:
+        return ()
+    if not isinstance(parsed, dict) or "permissions" not in parsed:
+        return ()
+    return ("--settings", json.dumps({"permissions": parsed["permissions"]}))
 
 
 def _read(path: str) -> str:

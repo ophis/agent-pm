@@ -39,7 +39,7 @@ GEN = "0123456789abcdef0123456789abcdef"
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
-HOME = ClientHome("agent_dir", "agent", "AGENT_HOME")
+HOME = ClientHome("agent_dir", "agent", "AGENT_HOME", "agent-token")
 RECORD = Record(
     1,
     "agent",

@@ -14,6 +14,7 @@ from functools import partial
 from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
+from agent_pm.session.clients.claude.common import HOME, approval
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -75,6 +76,76 @@ class ModelEffortTest(Base):
         self.refused(lambda: self.launch(tier=3), "no model for tier 3 in [clients.claude].tiers")
         self.refused(
             lambda: self.launch(effort="high"), "no effort for 'high' in [clients.claude].efforts"
+        )
+
+
+class ApprovalTest(unittest.TestCase):
+    def test_permission_flags_keep_their_values_and_nothing_else(self):
+        argv = (
+            "claude",
+            "--model",
+            "fable",
+            "--permission-mode",
+            "plan",
+            "--permission-prompt-tool=mcp__p",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+            "--allowedTools",
+            "Bash(git status)",
+            "Read(/r/**)",
+            "--name",
+            "w",
+            "--disallowed-tools=Edit",
+            "--disallowedTools",
+            "Write",
+            "--",
+            "--permission-mode",
+            "x",
+        )
+        self.assertEqual(
+            approval(argv),
+            (
+                "--permission-mode",
+                "plan",
+                "--permission-prompt-tool=mcp__p",
+                "--dangerously-skip-permissions",
+                "--allow-dangerously-skip-permissions",
+                "--allowedTools",
+                "Bash(git status)",
+                "Read(/r/**)",
+                "--disallowed-tools=Edit",
+                "--disallowedTools",
+                "Write",
+            ),
+        )
+
+    def test_settings_keep_only_their_permissions(self):
+        permissions = {"allow": ["Bash(ls)"], "defaultMode": "plan"}
+        settings = json.dumps({"permissions": permissions, "env": {"ANTHROPIC_API_KEY": "x"}})
+        wanted = ("--settings", json.dumps({"permissions": permissions}))
+        for argv in (("claude", "--settings", settings), ("claude", f"--settings={settings}")):
+            with self.subTest(argv=argv):
+                found = approval(argv)
+                self.assertEqual(found, wanted)
+                self.assertNotIn("ANTHROPIC_API_KEY", " ".join(found))
+
+    def test_settings_without_permissions_are_dropped_whole(self):
+        for value in (
+            '{"env": {"ANTHROPIC_API_KEY": "x"}}',
+            "not json",
+            "[1]",
+            "settings.json",
+            "",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(approval(("claude", "--settings", value)), ())
+
+    def test_no_approval_args_and_the_credential_kind(self):
+        self.assertEqual(approval(("claude", "--model", "fable")), ())
+        self.assertEqual(HOME.credential, "claude-setup-token")
+        self.assertEqual(
+            ClaudeClient({}).tui()._approval(("claude", "--permission-mode", "plan")),
+            ("--permission-mode", "plan"),
         )
 
 
