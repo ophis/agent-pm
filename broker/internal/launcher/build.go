@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -123,8 +122,8 @@ func treeDigest(root string) (string, error) {
 }
 
 // inspectImage returns found=false when Docker reports the image absent.
-func inspectImage(ctx context.Context, d docker.Runner, image string) (imageInfo, bool, error) {
-	out, err := d.Run(ctx, []string{"image", "inspect", image}, nil)
+func (h Host) inspectImage(ctx context.Context, image string) (imageInfo, bool, error) {
+	out, err := h.Docker.Run(ctx, []string{"image", "inspect", image}, nil)
 	if absent(err) {
 		return imageInfo{}, false, nil
 	}
@@ -199,7 +198,7 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 		return failed("Cannot hash the build context.")
 	}
 	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
-	info, found, err := inspectImage(ctx, h.Docker, image)
+	info, found, err := h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the worker image.")
 	}
@@ -223,7 +222,7 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the agent-pm image stage failed.")
 	}
-	info, found, err = inspectImage(ctx, h.Docker, image)
+	info, found, err = h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the built image.")
 	}

@@ -37,7 +37,7 @@ func numeric(s string) bool {
 
 // checkImage requires a broker-built image: matching key, version and agent ids in its labels.
 func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
-	info, found, err := inspectImage(ctx, h.Docker, image)
+	info, found, err := h.inspectImage(ctx, image)
 	if err != nil {
 		return imageInfo{}, failure(err, protocol.ImageRejected, "Cannot inspect image "+image+".")
 	}
@@ -70,7 +70,7 @@ func (h Host) checkNesting(ctx context.Context, cwd string) error {
 			return protocol.New(protocol.StartFailed, "Cannot read running workers' mounts.")
 		}
 		for _, m := range mounts {
-			if m.Type == "bind" && m.Source != "" && within(h, cwd, m.Source) && !h.Same(cwd, m.Source) {
+			if m.Type == "bind" && m.Source != "" && h.within(cwd, m.Source) && !h.Same(cwd, m.Source) {
 				return protocol.Newf(protocol.MountRejected, "cwd %s is inside running worker mount %s.", cwd, m.Source)
 			}
 		}
@@ -87,7 +87,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err != nil {
 		return StartResult{}, err
 	}
-	cwd, err := checkMounts(h, m)
+	cwd, err := h.checkMounts(m)
 	if err != nil {
 		return StartResult{}, err
 	}

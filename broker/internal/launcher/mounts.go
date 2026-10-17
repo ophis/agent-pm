@@ -14,7 +14,7 @@ import (
 var denied = []string{".agent-pm", ".codex", ".claude", ".ssh", ".config", ".docker", "Library", ".aws", ".gnupg", ".kube", ".npmrc"}
 
 // within reports whether a or one of its ancestors is the same file as b.
-func within(h Host, a, b string) bool {
+func (h Host) within(a, b string) bool {
 	b = filepath.Clean(b)
 	for x := filepath.Clean(a); ; x = filepath.Dir(x) {
 		if h.Same(x, b) {
@@ -61,7 +61,7 @@ func lexWithin(a, b string) bool {
 }
 
 // checkMounts applies the mount rules and returns cwd's real path, the bind source.
-func checkMounts(h Host, m Manifest) (string, error) {
+func (h Host) checkMounts(m Manifest) (string, error) {
 	reject := func(format string, args ...any) (string, error) {
 		return "", protocol.Newf(protocol.MountRejected, format, args...)
 	}
@@ -83,7 +83,7 @@ func checkMounts(h Host, m Manifest) (string, error) {
 	var real []string
 	for _, root := range roots {
 		r := resolve(root)
-		if within(h, h.Home, r) {
+		if h.within(h.Home, r) {
 			return reject("mount root %s is the home directory or its ancestor.", root)
 		}
 		real = append(real, r)
@@ -92,18 +92,18 @@ func checkMounts(h Host, m Manifest) (string, error) {
 	if err != nil {
 		return reject("cwd %s cannot be resolved.", m.CWD)
 	}
-	if within(h, h.Home, cwd) {
+	if h.within(h.Home, cwd) {
 		return reject("cwd %s is the home directory or its ancestor (denied).", m.CWD)
 	}
 	for _, name := range denied {
 		d := resolve(filepath.Join(h.Home, name))
-		if within(h, cwd, d) || within(h, d, cwd) {
+		if h.within(cwd, d) || h.within(d, cwd) {
 			return reject("cwd %s overlaps denied path %s.", m.CWD, d)
 		}
 	}
 	inside := false
 	for _, r := range real {
-		inside = inside || within(h, cwd, r)
+		inside = inside || h.within(cwd, r)
 	}
 	if !inside {
 		return reject("cwd %s is outside every mount root.", m.CWD)

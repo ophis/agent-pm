@@ -35,7 +35,7 @@ func baseManifest() Manifest {
 func TestMountRules(t *testing.T) {
 	roots := []string{home + "/src"}
 	ok := mountHost(roots, nil)
-	if real, err := checkMounts(ok, baseManifest()); err != nil || real != home+"/src/project" {
+	if real, err := ok.checkMounts(baseManifest()); err != nil || real != home+"/src/project" {
 		t.Fatalf("%q %v", real, err)
 	}
 	type tc struct {
@@ -76,7 +76,7 @@ func TestMountRules(t *testing.T) {
 			if c.edit != nil {
 				c.edit(&m)
 			}
-			_, err := checkMounts(c.host, m)
+			_, err := c.host.checkMounts(m)
 			var e *protocol.Error
 			if !errors.As(err, &e) || e.Code != protocol.MountRejected || !strings.Contains(e.Message, c.reason) {
 				t.Fatalf("%v", err)
@@ -85,7 +85,7 @@ func TestMountRules(t *testing.T) {
 	}
 	noHook := baseManifest()
 	noHook.HasHook, noHook.HookPath = false, ""
-	if _, err := checkMounts(ok, noHook); err != nil {
+	if _, err := ok.checkMounts(noHook); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,7 +105,7 @@ func TestIdentityCaseVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := Host{Same: realSame}
-	if !within(h, inside, upper) || !within(h, lower, upper) || within(h, dir, upper) {
+	if !h.within(inside, upper) || !h.within(lower, upper) || h.within(dir, upper) {
 		t.Fatal("identity comparison missed a case variant")
 	}
 	if !realSame("/nonexistent/AbC", "/nonexistent/abc") || realSame(upper, "/nonexistent") {
