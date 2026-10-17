@@ -122,6 +122,8 @@ def _copy(source: str, destination: str) -> None:
             raise ValueError(f"symlink outside installation: {path}")
         if os.path.isdir(path):
             shutil.copytree(path, target, ignore=ignore)
+            for folder, _dirs, _files in os.walk(target):
+                os.chmod(folder, os.stat(folder).st_mode | stat.S_IWUSR)
         elif os.path.isfile(path):
             shutil.copy2(path, target)
 

@@ -26,6 +26,14 @@ class InstallationTest(Case):
     def keep(self):
         return installation.Installation(str(self.source), root=str(self.root))
 
+    def test_read_only_source_directories_produce_removable_owned_copies(self):
+        self.resource.parent.chmod(0o555)
+        self.addCleanup(self.resource.parent.chmod, 0o755)
+        with self.keep() as kept:
+            folder = Path(kept.root)
+            self.assertTrue((folder / "utils/src/agent_pm/utils").stat().st_mode & 0o200)
+        self.assertFalse(folder.exists())
+
     def test_copies_resources_modes_and_internal_symlinks_without_development_files(self):
         (self.source / "utils/tests").mkdir()
         (self.source / "utils/tests/ignored.py").write_text("unused")
