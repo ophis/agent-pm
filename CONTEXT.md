@@ -70,7 +70,10 @@ _Avoid_: agent run (a role's run, in a session)
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Showable Host also shows them; a process on it reads its own screen (`Process.screen`). In code: `session/src/agent_pm/session/hosts/`.
+Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). It only runs them: an attachable Host names an attach target (`SessionView`, `CommandView`) the Viewer shows a session through; a process on it reads its own screen (`Process.screen`). In code: `session/src/agent_pm/session/hosts/`.
+
+**Viewer**:
+The one display of every Host's sessions, on the host tmux: show, hide, layout, tile, the `--display` grammar, hidden state, opener relations and the grid settings (`[viewer]`). In code: `Viewer` (`session/src/agent_pm/session/viewer/viewer.py`, reached through `agent_pm.session.get_viewer()`) and the session layer's display functions (`viewer/display.py`).
 
 **Record**:
 A versioned JSON line naming a started thing, its session identity and display, with commands to control and resume it. In code: `utils/src/agent_pm/utils/record.py`.

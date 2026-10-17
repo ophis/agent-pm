@@ -9,10 +9,12 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | If you have | Do |
 |---|---|
 | running agent-pm sessions | Close them first. |
+| running Docker Host sessions | Close them before upgrading: their view sessions' old tag and their records' `hidden` field are no longer read. |
+| `workers_per_column` or `grid_retile` in `[session.hosts.tmux]` | Move them to `[session.viewer]`; left there, the tmux Host refuses them with `unknown key`. |
 | running Docker Host sessions whose `session.json` `host_hook.module` is `agent_pm.session.hosts.tmux.docker_hook` | After upgrading, close and reopen each: that module moved to `agent_pm.session.hosts.docker.hook`, so their host hook no longer loads. |
 | a flat `config.local.toml` | Move top-level values under `[session]`, `[delegate]` or `[linear_orchestrator]`, per the layer's packaged `config.toml`, and prefix tables with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` (run) or `[linear_orchestrator.roles.engineer]` (board). `show` goes under `[delegate]` or `[delegate.roles.<role>]`. `core-new.local.toml` goes under `delegate`, `linear-new.local.toml` under `linear_orchestrator`. |
 | a `runtime` key or `--runtime` | Rename it `client` everywhere. Records written with `runtime` are not read. |
-| `[session.adapters.<name>]` tables, or an `implementation` naming `agent_pm.session.adapters` or an `…Adapter` class | Rename them `[session.clients.<name>]`, `agent_pm.session.clients` and `…Client` (`ClaudeClient`, `CodexClient`); an extension's `Adapter` base is now `Client`; a Host's `HostProcess` is `Process`, `Terminal` is `InteractiveProcess` (its `send` / `press` in `Interactive`), `Displayable` / `NotDisplayable` are `Showable` / `NotShowable`. |
+| `[session.adapters.<name>]` tables, or an `implementation` naming `agent_pm.session.adapters` or an `…Adapter` class | Rename them `[session.clients.<name>]`, `agent_pm.session.clients` and `…Client` (`ClaudeClient`, `CodexClient`); an extension's `Adapter` base is now `Client`; a Host's `HostProcess` is `Process`, `Terminal` is `InteractiveProcess` (its `send` / `press` in `Interactive`), `Displayable` is gone (a Host names an attach target the Viewer shows) and `NotDisplayable` is `NotShowable`. |
 | `~/.agent-pm/core-new-sessions/codex` | Close Codex TUI sessions, then `mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions`. |
 | a v1 manager roster: `~/.agent-pm/managers/<name>/roster.json` with `"version": 1`, which fails `agent-pm-crew status` and `attach` with `want roster fields` | Back up `~/.agent-pm/managers/`, then move its contents to the Trash. The next `agent-pm-crew attach` starts an empty roster. |
 | `default_task` or `tasks` in a role table | Drop `default_task`. Move each `<prefix>.roles.<role>.tasks.<task>` table's keys to `<prefix>.roles.<role>`, for the prefixes `delegate`, `delegate.clients.<name>` and `linear_orchestrator.core`. |
@@ -74,7 +76,8 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 | v1 | `config.local.toml` |
 |---|---|
 | `core.local.toml` `tier`, `effort`, `language`, `cwd`, `show`, `users`, `trusted_dirs`, `team_dirs` | `[delegate]` |
-| `core.local.toml` `status_line`, `workers_per_column`, `grid_retile` | `[session.hosts.tmux]` |
+| `core.local.toml` `status_line` | `[session.hosts.tmux]` |
+| `core.local.toml` `workers_per_column`, `grid_retile` | `[session.viewer]` |
 | `core.local.toml` `[output]`, `[roles.<role>]` | `[delegate.output]`, `[delegate.roles.<role>]` |
 | `core.local.toml` `[clients.claude]` `flags` | `--permission-mode`, `--strict-mcp-config` to `[delegate.policy.claude]`, the rest to `[session.clients.claude]` |
 | `core.local.toml` `[clients.claude]` `allow`, `env`, `tiers`, `efforts` | `[session.clients.claude]`, same names |

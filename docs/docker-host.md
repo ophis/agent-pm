@@ -154,7 +154,8 @@ default = "docker"
 
 Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container, and
 `send`, `read`, `attach`, `status`, `report`, `next-event`, `pending` and `close` work as
-on tmux. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
+on tmux. The Viewer shows it as it shows a tmux session: `--display none` starts it hidden,
+`[session.viewer]` shapes its grid, and `ls --descendants` follows the sessions it opened. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
 whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
 Each start, restart or resume runs a new generation in a new container, built from the
