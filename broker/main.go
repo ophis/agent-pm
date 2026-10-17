@@ -194,7 +194,11 @@ func system() app {
 			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			return broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, out)
+			return broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to set the partition list of "+app+" (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, out)
 		},
 	}
 }
