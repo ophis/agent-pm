@@ -351,11 +351,29 @@ class Reopen(CliCase):
         )
         return run
 
-    def reopen(self, *extra, crew=()):
-        with mock.patch("subprocess.run") as run:
-            result = self.start("reopen", "--manager", "mgr", *crew, "TASK-9", *extra)
-        run.assert_not_called()
-        return result
+    def reopen(self, *extra, crew=(), listed=(), alive=()):
+        def run(argv, **kwargs):
+            if argv[1] == "ls":
+                return SimpleNamespace(returncode=0, stdout=lines(listed), stderr="")
+            names = (Record.parse(line).name for line in kwargs["input"].splitlines())
+            statuses = (
+                Status(
+                    name=name,
+                    alive=name in alive,
+                    state=StatusState.WORKING,
+                    outcome=None,
+                    attach=None,
+                    hidden=False,
+                )
+                for name in names
+            )
+            return SimpleNamespace(returncode=0, stdout=lines(statuses), stderr="")
+
+        def lines(items):
+            return "".join(item.to_line() + "\n" for item in items)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.start("reopen", "--manager", "mgr", *crew, "TASK-9", *extra)
 
     def test_reopen_resumes_the_recorded_session_with_its_client(self):
         for client, base, option in (
@@ -390,7 +408,7 @@ class Reopen(CliCase):
 
     def test_reopen_refuses_options_the_run_record_sets(self):
         self.record()
-        for option in ("--client", "--cwd=/tmp", "--resume"):
+        for option in ("--client", "--cwd=/tmp", "--resume", "--c", "--cw", "--cl=codex", "--res"):
             with self.subTest(option=option):
                 result, stdout, stderr = self.reopen(option, "x", "--", "--cwd")
                 self.assertEqual((result, stdout), (2, ""))
@@ -398,6 +416,25 @@ class Reopen(CliCase):
                 self.assertEqual((self.calls, self.roster.entries()), ([], {}))
         result, _, stderr = self.reopen("--", "--client-flag")
         self.assertEqual(result, 0, stderr)
+
+    def test_reopen_refuses_a_run_that_still_answers_alive(self):
+        self.record()
+        issue = self.fake_record("TASK-9")
+        self.roster.begin(Spec("TASK-9", ("start",)), sid=issue.sid)
+        self.roster.commit("TASK-9", issue)
+        session = self.fake_record("researcher-tui", sid=self.sid)
+        for listed, alive, live in (
+            ((), ("TASK-9",), "TASK-9"),
+            ((session,), ("researcher-tui",), "session researcher-tui"),
+        ):
+            with self.subTest(live=live):
+                result, stdout, stderr = self.reopen(listed=listed, alive=alive)
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn(f"TASK-9: still live ({live}); close it before reopen", stderr)
+                self.assertEqual((self.calls, set(self.roster.entries())), ([], {"TASK-9"}))
+        result, _, stderr = self.reopen(listed=(session,))
+        self.assertEqual(result, 0, stderr)
+        self.assertIn("researcher-TASK-9", self.roster.entries())
 
     def test_reopen_without_a_run_record_or_session_id_fails_clearly(self):
         for case, prepare, message in (

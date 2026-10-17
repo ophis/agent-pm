@@ -237,10 +237,16 @@ class Crew:
             command = ("agent-pm-session", "start", key, *resumed, *argv)
         elif kind == "reopen":
             options = argv[: argv.index("--")] if "--" in argv else argv
-            if fixed := {"--client", "--cwd", "--resume"} & {o.split("=")[0] for o in options}:
+            # Session's argparse takes unique abbreviations, so --cw is --cwd.
+            words = {w for w in (o.split("=")[0] for o in options) if w.startswith("--") and w[2:]}
+            if fixed := {
+                f for f in ("--client", "--cwd", "--resume") for w in words if f.startswith(w)
+            }:
                 raise ValueError(f"reopen sets {', '.join(sorted(fixed))} from the run record")
             role, client, sid, cwd = _closed_run(work_dir, key)
             name = f"{role}-{key}"
+            if live := self._live({key, name}, sid):
+                raise ValueError(f"{key}: still live ({', '.join(live)}); close it before reopen")
             command = (
                 "agent-pm-session",
                 "start",
@@ -262,6 +268,23 @@ class Crew:
         else:
             raise ValueError(f"unknown launch kind: {kind}")
         return self._run(Spec(name, command, note), sid, shorthand=True)
+
+    def _live(self, names: set[str], sid: str) -> list[str]:
+        """Roster entries named in names or holding sid, and sessions listed here or below holding
+        sid, that answer alive; one whose status fails is reported on stderr, not refused.
+        """
+        candidates = {
+            name: entry
+            for name, entry in self.roster.entries().items()
+            if name in names or sid in (entry.sid, entry.record and entry.record.sid)
+        }
+        for record in self._listing(DESCENDANTS) or ():
+            if record.sid == sid:
+                candidates[f"session {record.name}"] = Entry(record, State.LIVE, None, "")
+        answers, failures = self._statuses(candidates)
+        for name, reason in failures.items():
+            print(f"crew: {name}: {reason}", file=sys.stderr)
+        return sorted(name for name, status in answers.items() if status.alive)
 
     def _run(self, spec: Spec, sid: str, *, shorthand: bool) -> Record:
         self._listed = None
