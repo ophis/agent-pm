@@ -4,6 +4,7 @@ package launcher
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
@@ -11,8 +12,24 @@ import (
 )
 
 type Host struct {
-	Home   string
-	Docker docker.Runner
+	Home     string
+	Roots    func() ([]string, error)
+	RealPath func(string) (string, error)
+	Safe     func(string) error
+	Same     func(a, b string) bool
+	Docker   docker.Runner
+}
+
+// NewHost wires the real filesystem; tests build Host with fakes.
+func NewHost(home string, d docker.Runner) Host {
+	return Host{
+		Home:     home,
+		Roots:    func() ([]string, error) { return LoadRoots(home) },
+		RealPath: filepath.EvalSymlinks,
+		Safe:     realSafe,
+		Same:     realSame,
+		Docker:   d,
+	}
 }
 
 type BuildResult struct {

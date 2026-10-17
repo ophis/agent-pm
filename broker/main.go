@@ -125,7 +125,7 @@ func host() (launcher.Host, func(), error) {
 	if err != nil {
 		return launcher.Host{}, nil, protocol.New(protocol.DockerUnreachable, err.Error())
 	}
-	return launcher.Host{Home: home, Docker: d}, clean, nil
+	return launcher.NewHost(home, d), clean, nil
 }
 
 func system() app {
