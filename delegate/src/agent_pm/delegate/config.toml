@@ -107,15 +107,14 @@ host = ""
 #                 as in read; a word holding one is shell-quoted once filled, and a prompt text writing the command
 #                 with <Workdir>, <team> or <role team> gets it as approved when that quoting changed it; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
-#                 round; any report: before its Visual step); its approval follows the Client; "" → none (the
-#                 orchestrator's overlay sets it)
+#                 round); its approval follows the Client; "" → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, client, language, cwd, idle_timeout, show or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]
 templates = ["research-report"]
 read = ["{{team}}"]
-commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *", "python3 -P {{team}}/tools/html_check.py *", "python3 -P {{team}}/tools/report_check.py *"]
+commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *", "python3 -P {{team}}/tools/svg_check.py *", "python3 -P {{team}}/tools/report_check.py *"]
 # local: [delegate.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: [delegate.roles.researcher.output]

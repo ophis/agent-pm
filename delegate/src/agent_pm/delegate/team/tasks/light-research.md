@@ -11,7 +11,7 @@ Search, read and write a short report yourself, in one pass.
 4. **Research** yourself, in one pass: no subagents, no workflow. Web search and fetch for web, the worktrees for local, both for mixed; web queries carry no private detail ([Researcher › Type and target › Agents](#type-and-target)). Note per finding the claim, its sources, how many are independent, and confidence; plus what you could not cover.
 5. **Failure** ([Researcher › Failure](#failure)).
 6. **Report** ([Researcher › Standards](#standards)). Type line and verification depth: the Template.
-7. **Finish.** `status: done`. One pass can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Research: <reason>`. Then [Researcher › Visual](#visual).
+7. **Finish.** `status: done`. One pass can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Research: <reason>`.
 
 ## Resume
 
