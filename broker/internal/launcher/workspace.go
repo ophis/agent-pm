@@ -25,11 +25,11 @@ func (h Host) WorkspaceRm(ctx context.Context, volume string, force bool) (Works
 	if err != nil {
 		return WorkspaceResult{}, failure(err, protocol.WorkspaceFailed, "Cannot inspect volume "+volume+".")
 	}
-	if labels["agent-pm.kind"] == "" {
-		return WorkspaceResult{}, protocol.Newf(protocol.WorkspaceRejected, "Volume %s is not an agent-pm workspace (no agent-pm.kind label).", volume)
+	if labels[kindLabel] == "" {
+		return WorkspaceResult{}, protocol.Newf(protocol.WorkspaceRejected, "Volume %s is not an agent-pm workspace (no %s label).", volume, kindLabel)
 	}
 	if !force {
-		dirty, err := h.checkWorkspace(ctx, volume, labels["agent-pm.workspace"])
+		dirty, err := h.checkWorkspace(ctx, volume, labels[workspaceLabel])
 		if err != nil {
 			return WorkspaceResult{}, err
 		}
@@ -48,7 +48,7 @@ func (h Host) WorkspaceRm(ctx context.Context, volume string, force bool) (Works
 // checkWorkspace runs the newest worker image's workspace-check on the volume, read-only and offline, mounted where the worker saw it.
 func (h Host) checkWorkspace(ctx context.Context, volume, path string) ([]string, error) {
 	if !strings.HasPrefix(path, "/") || filepath.Clean(path) != path || hasControl(path) {
-		return nil, protocol.Newf(protocol.WorkspaceRejected, "Volume %s has no clean absolute agent-pm.workspace path.", volume)
+		return nil, protocol.Newf(protocol.WorkspaceRejected, "Volume %s has no clean absolute %s path.", volume, workspaceLabel)
 	}
 	if err := checkTree(path, protocol.WorkspaceRejected); err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (h Host) checkWorkspace(ctx context.Context, volume, path string) ([]string
 	defer cancel()
 	out, err = h.Docker.Run(cctx, []string{"run", "--rm", "--name", name, "--label", "agent-pm.check=1", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--user", "agent", "--network", "none", "--mount", volumeMount(volume, path, true),
-		"--entrypoint", python, info.ID, "-I", checker, path}, nil)
+		"--entrypoint", python, info.ID, "-I", checker, path, cache}, nil)
 	if err != nil {
 		_, _ = h.Docker.Run(context.WithoutCancel(ctx), []string{"rm", "--force", name}, nil)
 		return nil, diagnosed(err, protocol.WorkspaceFailed, "The workspace check of "+volume+" failed.")

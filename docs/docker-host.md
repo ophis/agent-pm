@@ -342,12 +342,12 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 - **New start**: deletes the crew volume first. Unsaved work fails the start before its
   config dir is cleared, with that message and `or resume it: agent-pm-session resume
   NAME`; any other failure also stops it.
-- **Reclaim**: each sweep (before every start and close) runs `workspace-rm` on every
-  `run` volume whose `agent-pm.workspace` path no longer exists on the host. One with
-  unsaved work stays, with one warning `docker workspace <volume> kept: …` and a marker
-  `~/.agent-pm/docker-state/.kept/<volume>` that stops later sweeps checking it; delete it
-  with `--force` once its work is saved. Any other failure warns at each sweep and
-  deletes nothing.
+- **Reclaim**: each `close`, never a start, runs `workspace-rm` on one `run` volume whose
+  `agent-pm.workspace` path no longer exists on the host, so a close waits for at most one
+  check. A volume whose check fails stays, with one warning `docker workspace <volume>
+  kept: …` and a marker `~/.agent-pm/docker-state/.kept/<volume>`: for unsaved work it
+  stops every later close checking it (delete the volume with `--force` once its work is
+  saved); for any other failure it stops them for 24 hours.
 
 | Check | Expect |
 |---|---|

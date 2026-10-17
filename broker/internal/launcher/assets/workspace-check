@@ -1,6 +1,7 @@
 #!/opt/agent-pm/venv/bin/python
 """Prints {"dirty": [...]}: the repos at most three levels under a workspace mount point with
-uncommitted, stashed or unpushed work, relative to it. Run by agent-pm-broker workspace-rm on a
+uncommitted, stashed or unpushed work, relative to it; changes under the package cache dir
+(the broker names it) are not work. Run by agent-pm-broker workspace-rm on a
 read-only mount with no network.
 """
 
@@ -10,7 +11,6 @@ import re
 import subprocess
 import sys
 
-CACHE = ".agent-pm-cache"
 DEPTH = 3
 GIT = (
     "git",
@@ -22,15 +22,11 @@ GIT = (
     "-c",
     "safe.directory=*",
 )
-CHECKS = (
-    ("status", "--porcelain", "--untracked-files=all", "--", ".", f":(exclude){CACHE}"),
-    ("rev-list", "--all", "--not", "--remotes"),
-)
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
-def repos(root):
-    """(root and the directories up to DEPTH below it holding .git, skipping .git and CACHE; the
+def repos(root, cache):
+    """(root and the directories up to DEPTH below it holding .git, skipping .git and cache; the
     directories it cannot list, which may hide work).
     """
     found, blocked, todo = [], [], [(root, 0)]
@@ -48,14 +44,17 @@ def repos(root):
         todo += [
             (entry.path, level + 1)
             for entry in entries
-            if entry.name not in (".git", CACHE) and entry.is_dir(follow_symlinks=False)
+            if entry.name not in (".git", cache) and entry.is_dir(follow_symlinks=False)
         ]
     return sorted(found), blocked
 
 
-def unsaved(path, run):
+def unsaved(path, cache, run):
     """Whether git reports work in path, or cannot tell."""
-    for check in CHECKS:
+    for check in (
+        ("status", "--porcelain", "--untracked-files=all", "--", ".", f":(exclude){cache}"),
+        ("rev-list", "--all", "--not", "--remotes"),
+    ):
         try:
             res = run([*GIT, *check], cwd=path, capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.SubprocessError):
@@ -65,18 +64,23 @@ def unsaved(path, run):
     return False
 
 
-def dirty(root, run=subprocess.run):
-    found, blocked = repos(root)
+def dirty(root, cache, run=subprocess.run):
+    found, blocked = repos(root, cache)
     return [
         CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", os.path.relpath(path, root))
-        for path in sorted({*blocked, *(path for path in found if unsaved(path, run))})
+        for path in sorted({*blocked, *(path for path in found if unsaved(path, cache, run))})
     ]
 
 
 def main(argv):
-    if len(argv) != 1 or not os.path.isabs(argv[0]):
-        sys.exit("usage: workspace-check MOUNT_POINT")
-    print(json.dumps({"dirty": dirty(argv[0])}))
+    if (
+        len(argv) != 2
+        or not os.path.isabs(argv[0])
+        or os.sep in argv[1]
+        or argv[1] in ("", ".", "..")
+    ):
+        sys.exit("usage: workspace-check MOUNT_POINT CACHE_DIR_NAME")
+    print(json.dumps({"dirty": dirty(*argv)}))
 
 
 if __name__ == "__main__":

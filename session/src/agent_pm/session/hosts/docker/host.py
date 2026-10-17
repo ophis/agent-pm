@@ -79,7 +79,14 @@ from agent_pm.session.hosts.docker.daemon import (
     endpoint,
     exec_runner,
 )
-from agent_pm.session.hosts.docker.mounts import RUN_VOLUME, check_cwd, crew_volume, state_dir
+from agent_pm.session.hosts.docker.mounts import (
+    KIND_LABEL,
+    RUN_VOLUME,
+    WORKSPACE_LABEL,
+    check_cwd,
+    crew_volume,
+    state_dir,
+)
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
@@ -114,9 +121,10 @@ PS_FORMAT = "\t".join(
     )
 )
 LOG = logging.getLogger("session")
-KEPT = f"{DOCKER_STATE}/.kept"  # a marker per run volume kept for unsaved work
+KEPT = f"{DOCKER_STATE}/.kept"  # a marker per run volume kept: unsaved work, or a failed check
 KEPT_LOCK = ".lock"
-VOLUME_FORMAT = '{{.Name}}\t{{.Label "agent-pm.workspace"}}'
+KEPT_RETRY = 24 * 3600  # seconds before a volume whose check failed is checked again
+VOLUME_FORMAT = '{{.Name}}\t{{.Label "' + WORKSPACE_LABEL + '"}}'
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
@@ -406,8 +414,21 @@ class DockerTerminal(InteractiveProcess):
             self.host.broker.close(self.container)
         except SessionError as error:
             failures.append(str(error))
+        self.host.reclaim()
         if failures:
             raise SessionError(f"docker session {self.name}: {'; '.join(failures)}")
+
+
+def _held(marker: str) -> bool:
+    """Whether a kept marker still holds its volume back: a failed check for KEPT_RETRY, anything
+    else for good.
+    """
+    try:
+        with open(marker) as f:
+            failed = f.read() == "failed"
+        return not failed or time.time() - os.stat(marker).st_mtime < KEPT_RETRY
+    except FileNotFoundError:
+        return False
 
 
 def _stop_supervisor(name: str) -> str | None:
@@ -519,18 +540,21 @@ class DockerHost(Host):
                                 os.unlink(lock)
             except (SessionError, OSError) as error:
                 LOG.warning("docker sweep %s: %s", row.name, error)
+
+    def reclaim(self) -> None:
+        """At a close, never a start: removes one run workspace volume whose workdir is gone, after
+        the broker's check (up to its 120 s). One with unsaved work is kept for good, one whose check
+        failed for KEPT_RETRY; each is warned about once and marked. Listed before the lock, so no
+        orphan writes no file.
+        """
         try:
             self._reclaim()
         except (SessionError, OSError) as error:
-            LOG.warning("docker sweep: %s", error)
+            LOG.warning("docker reclaim: %s", error)
 
     def _reclaim(self) -> None:
-        """Removes the run workspace volumes whose workdir is gone, after the broker's check; one with
-        unsaved work is kept, warned about once and marked. Listed before the lock, so no orphan
-        writes no file.
-        """
         rows = self._listed(
-            "volume", "ls", "--filter", "label=agent-pm.kind=run", "--format", VOLUME_FORMAT
+            "volume", "ls", "--filter", f"label={KIND_LABEL}=run", "--format", VOLUME_FORMAT
         )
         if rows is None:
             return
@@ -550,17 +574,21 @@ class DockerHost(Host):
                 return
             for marker in set(os.listdir(kept)) - {row[0] for row in rows} - {KEPT_LOCK}:
                 os.unlink(os.path.join(kept, marker))
-            for volume in gone:
-                if os.path.lexists(os.path.join(kept, volume)):
-                    continue
-                try:
-                    self.broker.workspace_rm(volume)
-                except BrokerError as error:
-                    if error.code == "workspace_dirty":
-                        save(os.path.join(kept, volume), "")
-                    LOG.warning("docker workspace %s kept: %s", volume, error.message)
-                except SessionError as error:
-                    LOG.warning("docker workspace %s kept: %s", volume, error)
+            volume = next((v for v in gone if not _held(os.path.join(kept, v))), None)
+            if volume is None:
+                return
+            marker = os.path.join(kept, volume)
+            try:
+                self.broker.workspace_rm(volume)
+            except BrokerError as error:
+                save(marker, "dirty" if error.code == "workspace_dirty" else "failed")
+                LOG.warning("docker workspace %s kept: %s", volume, error.message)
+            except SessionError as error:
+                save(marker, "failed")
+                LOG.warning("docker workspace %s kept: %s", volume, error)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(marker)
 
     def _sweep_row(self, row: Row) -> None:
         path = _state_file(row.name)

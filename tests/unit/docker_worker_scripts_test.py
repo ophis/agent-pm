@@ -164,6 +164,9 @@ class DefaultDockerfile(Case):
         self.assertNotIn("SHASUMS256", text)
 
 
+CACHE = ".agent-pm-cache"
+
+
 class WorkspaceCheck(Case):
     """The walk, argv and output over a fake git; real git: workspace_check_integration_test.py."""
 
@@ -198,7 +201,7 @@ class WorkspaceCheck(Case):
             self.repo(rel)
         (self.root / "src" / "link").symlink_to(self.root / "a")
         self.assertEqual(
-            [os.path.relpath(p, self.root) for p in self.check["repos"](str(self.root))[0]],
+            [os.path.relpath(p, self.root) for p in self.check["repos"](str(self.root), CACHE)[0]],
             [".", "publish", "src/o/a"],
         )
 
@@ -206,7 +209,7 @@ class WorkspaceCheck(Case):
         for rel in ("publish", "src/o/a", "src/o/b"):
             self.repo(rel)
         found = self.check["dirty"](
-            str(self.root), run=self.run(dirty={"src/o/a"}, failing={"src/o/b"})
+            str(self.root), CACHE, run=self.run(dirty={"src/o/a"}, failing={"src/o/b"})
         )
         self.assertEqual(found, ["src/o/a", "src/o/b"])
         guard = [
@@ -247,18 +250,27 @@ class WorkspaceCheck(Case):
             return scandir(path)
 
         with mock.patch("os.scandir", side_effect=denied):
-            found = self.check["dirty"](str(self.root), run=self.run())
+            found = self.check["dirty"](str(self.root), CACHE, run=self.run())
         self.assertEqual(found, ["src/o"])
 
     def test_paths_have_control_characters_escaped(self):
         self.repo("src/o/bad\x1b[31m")
-        found = self.check["dirty"](str(self.root), run=self.run(dirty={"src/o/bad\x1b[31m"}))
+        found = self.check["dirty"](
+            str(self.root), CACHE, run=self.run(dirty={"src/o/bad\x1b[31m"})
+        )
         self.assertEqual(found, ["src/o/bad\\x1b[31m"])
 
     def test_main_prints_the_dirty_list_and_wants_one_absolute_path(self):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            self.check["main"]([str(self.root)])
+            self.check["main"]([str(self.root), CACHE])
         self.assertEqual(json.loads(out.getvalue()), {"dirty": []})
-        for argv in ([], ["relative"], ["/a", "/b"]):
+        for argv in (
+            [],
+            [str(self.root)],
+            ["relative", CACHE],
+            ["/a", "x/y"],
+            ["/a", ".."],
+            ["/a", CACHE, "x"],
+        ):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 self.check["main"](argv)

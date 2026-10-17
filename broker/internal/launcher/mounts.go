@@ -144,7 +144,7 @@ func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) erro
 	labels, err := h.volumeLabels(ctx, v)
 	created := docker.Absent(err)
 	if created {
-		create := []string{"volume", "create", "--label", "agent-pm.kind=" + m.Kind(), "--label", "agent-pm.workspace=" + m.CWD, v}
+		create := []string{"volume", "create", "--label", kindLabel + "=" + m.Kind(), "--label", workspaceLabel + "=" + m.CWD, v}
 		if _, err := h.Docker.Run(ctx, create, nil); err != nil {
 			return failure(err, protocol.StartFailed, "Creating workspace volume "+v+" failed.")
 		}
@@ -163,9 +163,9 @@ func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) erro
 	if err != nil {
 		return undo(failure(err, protocol.StartFailed, "Cannot inspect workspace volume "+v+"."))
 	}
-	if labels["agent-pm.kind"] != m.Kind() || labels["agent-pm.workspace"] != m.CWD {
-		return protocol.Newf(protocol.MountRejected, "Volume %s is not the workspace for %s (agent-pm.kind %q, agent-pm.workspace %q).",
-			v, m.CWD, labels["agent-pm.kind"], labels["agent-pm.workspace"])
+	if labels[kindLabel] != m.Kind() || labels[workspaceLabel] != m.CWD {
+		return protocol.Newf(protocol.MountRejected, "Volume %s is not the workspace for %s (%s %q, %s %q).",
+			v, m.CWD, kindLabel, labels[kindLabel], workspaceLabel, labels[workspaceLabel])
 	}
 	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
 	if err != nil {

@@ -12,6 +12,7 @@ import shlex
 import signal
 import stat
 import threading
+import time
 import tomllib
 from dataclasses import replace
 from types import SimpleNamespace
@@ -35,7 +36,7 @@ from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
-from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
+from agent_pm.session.hosts.docker.host import KEPT_RETRY, DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
@@ -382,7 +383,6 @@ class StartTest(Base):
             [step if isinstance(step, str | tuple) else step[:5] for step in self.order],
             [
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
-                ["volume", "ls", "--filter", "label=agent-pm.kind=run", "--format"],
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 "version",
                 ("build", REPO),
@@ -754,7 +754,7 @@ class StartTest(Base):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
         with self.assertRaisesRegex(SessionError, "a container for it exists"):
             self.start()
-        self.assertEqual({step[0] for step in self.order}, {"ps", "volume"})
+        self.assertEqual({step[0] for step in self.order}, {"ps"})
 
     def test_a_role_run_cwd_fails_before_any_docker_call(self):
         cwd = os.path.join(self.account, ".agent-pm", "adhoc", "x", "agent")
@@ -1081,10 +1081,10 @@ class CloseTest(Base):
             [
                 ["ps", "-a", "--filter", "label=agent-pm.session"],
                 ["exec", "-i", CONTAINER, "tmux"],
-                ["volume", "ls", "--filter", "label=agent-pm.kind=run"],
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
+                ["volume", "ls", "--filter", "label=agent-pm.kind=run"],
             ],
         )
         self.assertEqual(self.docker.execs()[0], ["tmux", "has-session", "-t", "=w"])
@@ -1478,8 +1478,17 @@ class ReclaimTest(Base):
             step[1] for step in self.order if isinstance(step, tuple) and step[0] == "workspace_rm"
         ]
 
+    def marker(self, volume, text="", age=0):
+        os.makedirs(self.kept, exist_ok=True)
+        path = os.path.join(self.kept, volume)
+        with open(path, "w") as f:
+            f.write(text)
+        then = time.time() - age
+        os.utime(path, (then, then))
+        return path
+
     def test_a_run_volume_whose_workdir_is_gone_is_removed_and_others_are_left(self):
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertEqual(self.removed(), [self.GONE])
         self.assertIn(
             [
@@ -1493,43 +1502,71 @@ class ReclaimTest(Base):
             self.order,
         )
 
-    def test_unsaved_work_keeps_the_volume_and_warns_once(self):
+    def test_a_sweep_never_reclaims(self):
+        self.host.sweep("w")
+        self.assertFalse([step for step in self.order if step[0] == "volume"])
+        self.assertEqual(self.removed(), [])
+
+    def test_each_reclaim_checks_at_most_one_volume(self):
+        self.docker.volumes.append(f"agent-pm-run-TASK-5-0123abcd\t{self.account}/gone/TASK-5")
+        self.broker.failing = {
+            "workspace_rm": BrokerError(14, "workspace_failed", "check failed", "not_needed", None)
+        }
+        for want in (self.GONE, "agent-pm-run-TASK-5-0123abcd"):
+            self.order.clear()
+            with self.assertLogs("session", "WARNING"):
+                self.host.reclaim()
+            self.assertEqual(self.removed(), [want])
+
+    def test_unsaved_work_keeps_the_volume_and_warns_once_for_good(self):
         message = f"Workspace {self.GONE} has uncommitted or unpushed work in: publish."
         self.broker.failing = {
             "workspace_rm": BrokerError(12, "workspace_dirty", message, "not_needed", None)
         }
         with self.assertLogs("session", "WARNING") as logs:
-            self.host.sweep("w")
+            self.host.reclaim()
         self.assertEqual(
             logs.output, [f"WARNING:session:docker workspace {self.GONE} kept: {message}"]
         )
-        self.assertTrue(os.path.isfile(os.path.join(self.kept, self.GONE)))
+        marker = os.path.join(self.kept, self.GONE)
+        self.assertTrue(os.path.isfile(marker))
+        old = time.time() - 10 * KEPT_RETRY
+        os.utime(marker, (old, old))
         self.order.clear()
         with self.assertNoLogs("session", "WARNING"):
-            self.host.sweep("w")
+            self.host.reclaim()
         self.assertEqual(self.removed(), [])
 
-    def test_a_failing_check_warns_at_each_sweep_and_keeps_no_marker(self):
+    def test_a_failing_check_is_retried_only_after_a_day(self):
         for error in (
             BrokerError(14, "workspace_failed", "check failed", "not_needed", None),
             SessionError("broker: workspace-rm timed out"),
         ):
             with self.subTest(error=error):
                 self.broker.failing = {"workspace_rm": error}
-                for _ in range(2):
-                    self.order.clear()
-                    with self.assertLogs("session", "WARNING") as logs:
-                        self.host.sweep("w")
-                    self.assertEqual(self.removed(), [self.GONE])
-                    self.assertIn(f"docker workspace {self.GONE} kept: ", logs.output[0])
-                self.assertEqual(os.listdir(self.kept), [".lock"])
+                self.order.clear()
+                with self.assertLogs("session", "WARNING") as logs:
+                    self.host.reclaim()
+                self.assertEqual(self.removed(), [self.GONE])
+                self.assertIn(f"docker workspace {self.GONE} kept: ", logs.output[0])
+                marker = os.path.join(self.kept, self.GONE)
+                with open(marker) as f:
+                    self.assertEqual(f.read(), "failed")
+                self.order.clear()
+                with self.assertNoLogs("session", "WARNING"):
+                    self.host.reclaim()
+                self.assertEqual(self.removed(), [])
+                self.marker(self.GONE, "failed", age=KEPT_RETRY + 1)
+                self.broker.failing = {}
+                self.host.reclaim()
+                self.assertEqual(self.removed(), [self.GONE])
+                self.assertFalse(os.path.exists(marker))
 
     def test_a_marker_whose_volume_is_gone_is_deleted(self):
-        os.makedirs(self.kept)
         for name in ("agent-pm-run-old-0123abcd", "agent-pm-run-TASK-2-0123abcd"):
-            open(os.path.join(self.kept, name), "w").close()
+            self.marker(name)
         self.docker.volumes = self.docker.volumes[1:]
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertEqual(sorted(os.listdir(self.kept)), [".lock", "agent-pm-run-TASK-2-0123abcd"])
         self.assertEqual(self.removed(), [])
 
@@ -1538,29 +1575,33 @@ class ReclaimTest(Base):
         busy = os.open(os.path.join(self.kept, ".lock"), os.O_RDWR | os.O_CREAT)
         self.addCleanup(os.close, busy)
         fcntl.flock(busy, fcntl.LOCK_EX)
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertEqual(self.removed(), [])
         fcntl.flock(busy, fcntl.LOCK_UN)
         os.remove(self.ep.removeprefix("unix://"))
         self.order.clear()
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertEqual(self.order, [])
 
     def test_without_the_daemon_or_the_cli_a_kept_marker_stays(self):
-        os.makedirs(self.kept)
-        marker = os.path.join(self.kept, self.GONE)
-        open(marker, "w").close()
+        marker = self.marker(self.GONE)
         os.remove(self.ep.removeprefix("unix://"))
-        self.host.sweep("w")
+        self.host.reclaim()
         open(self.ep.removeprefix("unix://"), "w").close()
         self.host.run = mock.Mock(side_effect=FileNotFoundError(2, "No such file", DOCKER))
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertTrue(os.path.exists(marker))
         self.assertEqual(self.removed(), [])
 
+    def test_a_failed_listing_only_warns(self):
+        self.host.run = mock.Mock(return_value=done(1, "", "Cannot connect"))
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host.reclaim()
+        self.assertIn("docker reclaim: docker volume: Cannot connect", logs.output[0])
+
     def test_no_orphan_creates_no_file(self):
         self.docker.volumes = self.docker.volumes[1:]
-        self.host.sweep("w")
+        self.host.reclaim()
         self.assertFalse(os.path.exists(self.kept))
 
 

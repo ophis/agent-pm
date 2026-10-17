@@ -38,12 +38,12 @@ class WorkspaceCheck(Case):
 
     def test_pushed_clones_and_cache_only_changes_are_clean(self):
         self.clone("src/o/a")
-        self.assertEqual(self.dirty(str(self.root)), [])
+        self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), [])
         shutil.rmtree(self.root)
         repo = self.clone(".")
         (repo / ".agent-pm-cache").mkdir()
         (repo / ".agent-pm-cache" / "pkg").write_text("x")
-        self.assertEqual(self.dirty(str(self.root)), [])
+        self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), [])
 
     def test_each_kind_of_unsaved_work_is_dirty(self):
         cases = {
@@ -64,7 +64,7 @@ class WorkspaceCheck(Case):
             with self.subTest(name):
                 repo = self.clone(f"src/o/{name}")
                 change(repo)
-                self.assertEqual(self.dirty(str(self.root)), [f"src/o/{name}"])
+                self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), [f"src/o/{name}"])
                 shutil.rmtree(repo)
 
     def test_a_repo_under_a_dir_it_cannot_read_is_dirty(self):
@@ -72,12 +72,12 @@ class WorkspaceCheck(Case):
         locked = self.root / "src" / "o"
         locked.chmod(0)
         self.addCleanup(locked.chmod, 0o755)
-        self.assertEqual(self.dirty(str(self.root)), ["src/o"])
+        self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), ["src/o"])
 
     def test_an_empty_init_is_clean_and_a_broken_repo_is_dirty(self):
         self.git("init", "-q", str(self.root / "publish"))
-        self.assertEqual(self.dirty(str(self.root)), [])
+        self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), [])
         broken = self.root / "src" / "o" / "b"
         broken.mkdir(parents=True)
         (broken / ".git").write_text("gitdir: /nowhere\n")
-        self.assertEqual(self.dirty(str(self.root)), ["src/o/b"])
+        self.assertEqual(self.dirty(str(self.root), ".agent-pm-cache"), ["src/o/b"])

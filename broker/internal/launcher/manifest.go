@@ -18,7 +18,13 @@ type Manifest struct {
 	Labels                                                       map[string]string
 }
 
-// Kind is the workspace volume's agent-pm.kind label: run or crew.
+// A workspace volume's labels: its Kind and its mount point.
+const (
+	kindLabel      = "agent-pm.kind"
+	workspaceLabel = "agent-pm.workspace"
+)
+
+// Kind is the workspace volume's kindLabel: run or crew.
 func (m Manifest) Kind() string {
 	if strings.HasPrefix(m.Workspace, "agent-pm-run-") {
 		return "run"
