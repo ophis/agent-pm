@@ -280,15 +280,6 @@ func (k fileKeychain) Put(token []byte) error {
 	return status(C.token_put(p, unsafe.Pointer(&token[0]), C.long(len(token))))
 }
 
-// setInteraction turns keychain prompts on or off for this process; off, a call that needs one fails.
-func setInteraction(allowed bool) error {
-	var b C.Boolean
-	if allowed {
-		b = 1
-	}
-	return status(C.SecKeychainSetUserInteractionAllowed(b))
-}
-
 func (k fileKeychain) AppAccount(app string) (string, error) {
 	p, free := cStrings(string(k), app)
 	defer free()
