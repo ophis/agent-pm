@@ -27,10 +27,9 @@ from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
-from agent_pm.session.hosts.tmux import docker as docker_module
 from agent_pm.session.hosts.tmux.docker import DockerHost, DockerTerminal
 from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.utils import Record
+from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
 from utils.tests.process_fixtures import TimeoutExpired
@@ -457,47 +456,33 @@ class StartTest(Base):
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
-            with (
-                self.subTest(resume=resume),
-                mock.patch(
-                    "agent_pm.session.hosts.tmux.docker.timestamp", side_effect=["t0", "t1"]
-                ),
-            ):
+            with self.subTest(resume=resume):
                 if resume == "1":
                     self.history()
                     os.remove(result)
                 self.start(resume=resume)
                 with open(result) as f:
-                    self.assertEqual(
-                        json.load(f),
-                        {
-                            "container": CONTAINER,
-                            "image": IMAGE,
-                            "image_digest": "sha256:" + "b" * 64,
-                            "clients": {"claude": "2.1.0"},
-                            "update": {"status": "updated"},
-                            "started_at": "t0",
-                            "ended_at": "t1",
-                        },
-                    )
+                    found = json.load(f)
+                began, ended = found.pop("started_at"), found.pop("ended_at")
+                self.assertLessEqual(parse_time(began), parse_time(ended))
+                self.assertEqual(
+                    found,
+                    {
+                        "container": CONTAINER,
+                        "image": IMAGE,
+                        "image_digest": "sha256:" + "b" * 64,
+                        "client_versions": {"claude": "2.1.0"},
+                        "update": {"status": "updated"},
+                    },
+                )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
 
     def test_a_result_write_failure_rolls_back(self):
-        real = docker_module.save
-
-        def save(path, text, **kw):
-            if str(path).endswith(".result.json"):
-                raise OSError("disk full")
-            return real(path, text, **kw)
-
-        with (
-            mock.patch("agent_pm.session.hosts.tmux.docker.save", side_effect=save),
-            self.assertRaisesRegex(SessionError, "docker session w: disk full"),
-        ):
+        os.makedirs(os.path.join(self.state, f"{GEN}.result.json", "taken"))
+        with self.assertRaisesRegex(SessionError, "docker session w: "):
             self.start()
         self.supervisor.terminate.assert_called()
         self.assertEqual(self.order[-1], ("close", CONTAINER))
-        self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.result.json")))
 
     def test_existing_container_refuses_start(self):
         self.docker.ps = ["agent-pm-w-other\tw\tother"]

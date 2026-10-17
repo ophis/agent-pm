@@ -260,7 +260,7 @@ class Host(ABC):
         return {}
 
     def _resume_argv(self, name: str) -> tuple[str, ...] | None:
-        """The resume command's argv for `name` on this Host; None: the client's."""
+        """None: the client's."""
         return None
 
     def tui_settings(self) -> TuiSettings:
