@@ -16,6 +16,36 @@ Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its o
 
 `start --display none` starts a worker without a pane, still opened by the caller, and hidden. Hidden (from that, `hide`, or closing its pane by hand; not from losing the manager's window or detaching its viewer) lasts through `restart` and `resume` until `show`.
 
+## Codex plugin upgrades and recovery
+
+Codex runs retain their starting plugin's runtime files under `~/.agent-pm/installations/`. Hook executables, callback modules/resources, harness imports and write-back commands use that copy. The harness and terminal own separate copies: a terminal can remain open after the outcome. Each owner removes its copy when it exits; the next Codex launch collects unlocked crash leftovers older than 60 seconds. Active leases are never collected. Preflight creates no copy; writable roots overlapping this executable tree are refused. Claude and other clients retain their existing launch behavior.
+
+An already-running stale process keeps its old hook command. Installing this fix does not change its startup configuration. Keep the workdir, worker/run metadata, Codex recovery mappings and native transcript. Do recovery from the commander or an ordinary terminal, using the new installation's `bin/` commands.
+
+```mermaid
+flowchart TD
+    A[Wait until idle] --> B[Save work and session IDs]
+    B --> C{Owner}
+    C -->|Worker| D[Explicit restart]
+    C -->|Detached run| E[Close stopped or idle run]
+    E --> F[Resume same workdir]
+    D --> G[Verify new hook delivery]
+    F --> G
+```
+
+The close/restart actions are manual and terminate the selected processes. Never interrupt a busy run automatically.
+
+| Owner | Recovery using the new installation |
+|---|---|
+| Named worker | Inspect `agent-pm-session status NAME` and `read NAME`; when idle, run `agent-pm-session restart NAME`. If already gone, use `resume NAME`. Both preserve its saved session/native conversation binding. |
+| Interrupted detached run | Inspect `agent-pm-delegate status WORKDIR` and `content WORKDIR`. After it is idle/stopped, explicitly `close WORKDIR` if needed, then `resume WORKDIR`. Answer an existing `needs_input` result with `resume WORKDIR --input TEXT`. Pipeline answers go through their issue board. |
+
+Live `resume` returns the existing process; it does not refresh hooks. A completed run returns its recorded outcome. Legacy Codex records with a missing packaged default-team installation rebind to the current installation; custom team directories must still exist. Native `client-resume` alone omits agent-pm's managed hooks.
+
+After recovery, inspect Codex `/hooks` and send a short follow-up: hook delivery must succeed, the native session ID must match, and saved work/history must remain. Trust still follows the existing [Codex hook review](https://learn.chatgpt.com/docs/hooks) flow; [Codex resume](https://learn.chatgpt.com/docs/developer-commands?surface=cli) continues the saved conversation. No user configuration edits are required.
+
+Verification fixtures: `session/tests/integration/clients/codex/installation_integration_test.py` covers six hooks after installation removal and an idle live legacy session with exit 127; `delegate/tests/integration/installation_integration_test.py` covers retained outcome/write-back, the surviving terminal and pre-fix metadata recovery on the new installation. Fixtures preserve work and conversation identity without touching real caches.
+
 ## Client policy
 
 Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`. A local list replaces the default whole. Codex defaults to `danger-full-access`, which ignores writable roots and team dirs. For `workspace-write`:
