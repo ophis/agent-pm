@@ -12,9 +12,8 @@ Protocol 2 changes no broker field: it marks the stub's switch to the
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
-This change supplies protocol artifacts only. Broker installation, interactive
-`login claude`, image construction and Docker Host implementation belong to those
-tickets. Context: [TASK-545](https://linear.app/ophis-workgroup/issue/TASK-545).
+The broker is `broker/`; its Session client and the Docker Host:
+[Docker Host](docker-host.md). Context: [TASK-545](https://linear.app/ophis-workgroup/issue/TASK-545).
 
 ## Schemas and channels
 
