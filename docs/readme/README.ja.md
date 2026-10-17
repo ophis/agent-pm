@@ -36,11 +36,11 @@ flowchart LR
 
 エージェント 1 つでは待たされます。複数のエージェントを手作業で回すと、すべてのプロンプト、チェック、承認があなたを経由します。agent-pm では manager と話すだけで、manager が worker を起動・監視し、報告します。
 
-## agent と働く 5 つの level
+## AI agent を使いこなす 5 つの level
 
 コーディング agent との協働ははしごのようなものです。各 level は下の level の上に新しいエンジニアリングを積み重ね、肝心なのは問題に合った level を選ぶことです。
 
-![agent と働く 5 つの level：Drive、Equip、Systematize、Orchestrate、Master。agent-pm は 4 と 5 の間](../images/levels.svg)
+![AI agent を使いこなす 5 つの level：Drive、Equip、Systematize、Orchestrate、Master。agent-pm は 4 と 5 の間](../images/levels.svg)
 
 | Level | 分野 | 内容 |
 |---|---|---|

@@ -36,11 +36,11 @@ flowchart LR
 
 Un seul agent vous fait attendre ; plusieurs agents à la main font passer chaque prompt, vérification et approbation par vous. Avec agent-pm, vous parlez à un manager, qui lance les workers, les surveille et vous en rend compte.
 
-## Cinq levels pour travailler avec des agents
+## Cinq levels pour maîtriser les AI agents
 
 Travailler avec des agents de code, c'est une échelle : chaque level ajoute une discipline d'ingénierie au-dessus des précédentes, et tout l'art consiste à choisir le level adapté au problème.
 
-![Cinq levels pour travailler avec des agents : Drive, Equip, Systematize, Orchestrate, Master, avec agent-pm entre 4 et 5](../images/levels.svg)
+![Cinq levels pour maîtriser les AI agents : Drive, Equip, Systematize, Orchestrate, Master, avec agent-pm entre 4 et 5](../images/levels.svg)
 
 | Level | Discipline | Ce que cela veut dire |
 |---|---|---|

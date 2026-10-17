@@ -36,11 +36,11 @@ flowchart LR
 
 Um único agente deixa você esperando; vários agentes à mão fazem cada prompt, verificação e aprovação passar por você. Com o agent-pm você conversa com um manager, que lança os workers, os acompanha e reporta.
 
-## Cinco levels para trabalhar com agents
+## Cinco levels para dominar AI agents
 
 Trabalhar com agents de programação é uma escada: cada level soma uma disciplina de engenharia às de baixo, e a habilidade está em escolher o level que o problema pede.
 
-![Cinco levels para trabalhar com agents: Drive, Equip, Systematize, Orchestrate, Master, com agent-pm entre 4 e 5](../images/levels.svg)
+![Cinco levels para dominar AI agents: Drive, Equip, Systematize, Orchestrate, Master, com agent-pm entre 4 e 5](../images/levels.svg)
 
 | Level | Disciplina | O que significa |
 |---|---|---|

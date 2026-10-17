@@ -34,11 +34,11 @@ flowchart LR
 
 One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
 
-## Five levels of working with agents
+## Five levels of mastering AI agents
 
 Working with coding agents is a ladder: each level adds an engineering discipline on top of the ones below, and the skill is matching the level to the problem.
 
-![Five levels of working with agents: Drive, Equip, Systematize, Orchestrate, Master, with agent-pm between 4 and 5](docs/images/levels.svg)
+![Five levels of mastering AI agents: Drive, Equip, Systematize, Orchestrate, Master, with agent-pm between 4 and 5](docs/images/levels.svg)
 
 | Level | Discipline | What it means |
 |---|---|---|

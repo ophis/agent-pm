@@ -36,11 +36,11 @@ flowchart LR
 
 单个 agent 让你一直等；手动管理多个 agent，每个 prompt、检查和批准都要经过你。用 agent-pm，你只和一个 manager 对话，由它启动、监视 worker 并汇报。
 
-## 与 agent 协作的五个 level
+## 精通 AI agent 的五个 level
 
 和编码 agent 协作是一架梯子：每个 level 在下面几层之上再加一门工程功夫，真正的本事是让 level 匹配问题。
 
-![与 agent 协作的五个 level：Drive、Equip、Systematize、Orchestrate、Master，agent-pm 位于 4 和 5 之间](../images/levels.svg)
+![精通 AI agent 的五个 level：Drive、Equip、Systematize、Orchestrate、Master，agent-pm 位于 4 和 5 之间](../images/levels.svg)
 
 | Level | 工程方向 | 含义 |
 |---|---|---|

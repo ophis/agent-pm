@@ -36,11 +36,11 @@ flowchart LR
 
 에이전트 하나로는 계속 기다려야 합니다. 여러 에이전트를 수동으로 돌리면 모든 프롬프트, 검사, 승인이 당신을 거칩니다. agent-pm에서는 manager와 대화하고, manager가 worker를 시작하고 감시하며 보고합니다.
 
-## agent와 일하는 다섯 level
+## AI agent를 마스터하는 다섯 level
 
 코딩 agent와 일하는 것은 사다리와 같습니다. 각 level은 아래 level 위에 엔지니어링 분야를 하나씩 더하고, 핵심은 문제에 맞는 level을 고르는 것입니다.
 
-![agent와 일하는 다섯 level: Drive, Equip, Systematize, Orchestrate, Master, agent-pm은 4와 5 사이](../images/levels.svg)
+![AI agent를 마스터하는 다섯 level: Drive, Equip, Systematize, Orchestrate, Master, agent-pm은 4와 5 사이](../images/levels.svg)
 
 | Level | 분야 | 의미 |
 |---|---|---|

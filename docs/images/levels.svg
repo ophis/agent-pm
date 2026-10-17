@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
-<title id="t">Five levels of working with agents</title>
+<title id="t">Five levels of mastering AI agents</title>
 <desc id="d">A staircase of five levels. 1 Drive: prompt and context engineering, a back-and-forth conversation with the right model. 2 Equip: tools, skills and MCP servers let the agent reach files, APIs and a browser, inside permissions and a sandbox. 3 Systematize: state engineering, a workflow run as a state machine with stages and retries; autopilot lives here. 4 Orchestrate: loop engineering, a manager fanning work out to workers and verifying results. 5 Master: environment engineering, guardrails and an agent-oriented environment where the easiest path is the right path. agent-pm layers are marked on the steps: Session on levels 1 and 2, Delegate on 3, the Linear orchestrator with the manager between 4 and 5, and you on top, setting the rules, on 5. agent-pm is marked between levels 4 and 5, heading for 5 and beyond.</desc>
 <defs>
 <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2f7"/></linearGradient>
@@ -15,7 +15,7 @@
 <g id="person"><circle cx="0" cy="-8" r="6"/><path d="M-10,11 V8 A10,9 0 0 1 10,8 V11 Z"/></g>
 </defs>
 <rect x="1" y="1" width="1198" height="638" rx="22" fill="url(#bg)" stroke="#e2e8f0"/>
-<text x="40" y="62" font-size="24" fill="#0f172a" font-weight="700" text-anchor="start" letter-spacing="-0.3">Five levels of working with agents</text>
+<text x="40" y="62" font-size="24" fill="#0f172a" font-weight="700" text-anchor="start" letter-spacing="-0.3">Five levels of mastering AI agents</text>
 <text x="40" y="90" font-size="14" fill="#64748b" font-weight="500" text-anchor="start">Each level adds a discipline on top of the ones below.</text>
 <text x="40" y="112" font-size="14" fill="#64748b" font-weight="500" text-anchor="start">Match the level to the problem.</text>
 <rect x="34" y="510" width="202" height="30" rx="6" fill="url(#riser)"/>
