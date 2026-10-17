@@ -152,7 +152,7 @@ class DefaultDockerfile(Case):
             "uv==0.13.1",
             "tmux git gh python3",
             "useradd --create-home --shell /bin/bash agent",
-            "apt-get purge -y sudo",
+            "SUDO_FORCE_REMOVE=yes apt-get purge -y sudo",
             "rm -rf /etc/sudoers.d",
             "USER agent",
             "NPM_CONFIG_PREFIX=/home/agent/.npm-global",
