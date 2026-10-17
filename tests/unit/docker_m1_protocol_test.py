@@ -27,9 +27,7 @@ class DockerM1Protocol(Case):
                 self.assertEqual(Path(case["file"]).name, case["file"])
                 definition = case["definition"]
                 self.assertIn(definition, schema["$defs"])
-                validator = Draft202012Validator(
-                    {**schema, "$ref": f"#/$defs/{definition}"}
-                )
+                validator = Draft202012Validator({**schema, "$ref": f"#/$defs/{definition}"})
                 data = json.loads((PROTOCOL / "fixtures" / case["file"]).read_text())
                 errors = list(validator.iter_errors(data))
                 self.assertEqual(not errors, case["valid"], [e.message for e in errors])
