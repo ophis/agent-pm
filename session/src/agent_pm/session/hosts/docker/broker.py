@@ -19,10 +19,13 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "2"
+PROTOCOL = "3"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
+REFRESH = (
+    7 * 24 * 3600
+)  # seconds: a start rebuilds an older image, which installs the latest clients
 GRACE = 5  # for a broker whose pipes closed by the deadline to be reaped
 
 TEXT = re.compile(r"[^\x00-\x1f\x7f]+")
@@ -30,7 +33,6 @@ IMAGE = re.compile(r"agent-pm-worker:[0-9a-f]{64}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 CONTAINER = re.compile(r"agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}")
 ENDPOINT = re.compile(r"unix:///[^\x00-\x1f\x7f]+/\.docker/run/docker\.sock")
-REASONS = frozenset({"network", "timeout", "command_failed", "version_failed"})
 COMMANDS = frozenset({"version", "build", "start", "close", "unknown"})
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
@@ -122,20 +124,6 @@ def _error(command: str, returncode: int, data: dict) -> BrokerError:
     return BrokerError(exit_code, code, error["message"], cleanup, container)
 
 
-def _update(update) -> bool:
-    if not isinstance(update, dict):
-        return False
-    if update == {"status": "updated"}:
-        return True
-    return (
-        set(update) == {"status", "reason", "message"}
-        and update["status"] == "fallback"
-        and isinstance(update["reason"], str)
-        and update["reason"] in REASONS
-        and _text(update["message"])
-    )
-
-
 def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:
     """argv's text result, copying stderr (build's progress) to ours line by line as it arrives,
     but a failing run's error object. TimeoutExpired past `timeout`.
@@ -223,8 +211,11 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def build(self, package: str) -> tuple[str, str]:
-        """`package`'s image tag and digest."""
+    def build(self, package: str, *, max_age: int | None = None) -> tuple[str, str]:
+        """`package`'s image tag and digest; `max_age`: rebuild an image built at least that many
+        seconds ago.
+        """
+        age = () if max_age is None else ("--max-age", str(max_age))
         found = self._parsed(
             "build",
             lambda d: (
@@ -235,6 +226,7 @@ class Broker:
             ),
             "--agent-pm",
             package,
+            *age,
         )
         return found["image"], found["digest"]
 
@@ -251,7 +243,6 @@ class Broker:
             and isinstance(started.clients, dict)
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
-            and _update(started.update)
         ):
             raise SessionError("broker: bad response to start: fields")
         return started

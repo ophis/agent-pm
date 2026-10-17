@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -28,8 +29,9 @@ var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-
 var builtPattern = regexp.MustCompile(`^agent-pm-(?:user|worker):[0-9a-f]{64}$`)
 
 type imageInfo struct {
-	ID     string `json:"Id"`
-	Config struct {
+	ID      string `json:"Id"`
+	Created time.Time
+	Config  struct {
 		Labels map[string]string
 	}
 }
@@ -196,8 +198,9 @@ func (h Host) stage(pkg, tmp string) (string, error) {
 	return meta.Version, nil
 }
 
-// Build produces agent-pm-worker:<key> in two stages; an image with this key and version is reused.
-func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
+// Build produces agent-pm-worker:<key> in two stages; an image with this key and version built less than maxAge ago
+// is reused (maxAge < 0: of any age; 0: never). A rebuild builds the user stage without cache, so it installs the latest clients.
+func (h Host) Build(ctx context.Context, pkg string, maxAge time.Duration) (BuildResult, error) {
 	tmp, err := docker.TempDir(h.Home, "agent-pm-build-")
 	if err != nil {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Cannot create a build directory.")
@@ -211,15 +214,33 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	if err != nil {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Cannot hash the build context.")
 	}
-	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
+	image := "agent-pm-worker:" + key
 	info, found, err := h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the worker image.")
 	}
-	if found && info.Config.Labels["agent-pm.key"] == key && info.Config.Labels["agent-pm.version"] == version {
+	current := found && info.Config.Labels["agent-pm.key"] == key && info.Config.Labels["agent-pm.version"] == version
+	if current && (maxAge < 0 || (maxAge > 0 && time.Since(info.Created) < maxAge)) {
 		return BuildResult{Image: image, Digest: info.ID}, nil
 	}
-	if _, err := h.Docker.Run(ctx, []string{"build", "--progress=plain", "--tag", userImage, filepath.Join(tmp, "user")}, nil); err != nil {
+	result, err := h.rebuild(ctx, tmp, key, version)
+	var e *protocol.Error
+	if current && maxAge > 0 && errors.As(err, &e) && e.Code == protocol.BuildFailed {
+		// An age-only refresh that fails (e.g. offline) keeps the usable image.
+		why := e.Message
+		if e.Cause != "" {
+			why += " (" + e.Cause + ")"
+		}
+		h.note("kept " + image + ": refreshing it failed: " + why)
+		return BuildResult{Image: image, Digest: info.ID}, nil
+	}
+	return result, err
+}
+
+// rebuild builds both stages of key's images from the context in tmp.
+func (h Host) rebuild(ctx context.Context, tmp, key, version string) (BuildResult, error) {
+	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
+	if _, err := h.Docker.Run(ctx, []string{"build", "--progress=plain", "--no-cache", "--label", "agent-pm.key=" + key, "--tag", userImage, filepath.Join(tmp, "user")}, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the worker image definition failed.")
 	}
 	out, err := h.Docker.Run(ctx, []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -237,7 +258,7 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the agent-pm image stage failed.")
 	}
-	info, found, err = h.inspectImage(ctx, image)
+	info, found, err := h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the built image.")
 	}
@@ -249,22 +270,17 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	return BuildResult{Image: image, Digest: info.ID, Rebuilt: true}, nil
 }
 
-// prune removes the user and worker images of keys other than key that no container, running or stopped, uses,
-// noting each to Progress; whatever fails is kept and never fails the build.
+// prune removes the user and worker images of keys other than key, and the untagged ones a same-key rebuild left,
+// that no container, running or stopped, uses, noting each to Progress; whatever fails is kept and never fails the build.
 func (h Host) prune(ctx context.Context, key string) {
-	note := func(s string) {
-		if h.Progress != nil {
-			fmt.Fprintln(h.Progress, "agent-pm-broker: "+s)
-		}
-	}
 	used, err := h.usedImages(ctx)
 	if err != nil {
-		note("kept older images: cannot list containers: " + docker.Diagnostic(err))
+		h.note("kept older images: cannot list containers: " + docker.Diagnostic(err))
 		return
 	}
 	out, err := h.Docker.Run(ctx, []string{"image", "ls", "--no-trunc", "--format", "{{.Repository}}:{{.Tag}} {{.ID}}"}, nil)
 	if err != nil {
-		note("kept older images: cannot list images: " + docker.Diagnostic(err))
+		h.note("kept older images: cannot list images: " + docker.Diagnostic(err))
 		return
 	}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -274,10 +290,31 @@ func (h Host) prune(ctx context.Context, key string) {
 		}
 		// No --force: Docker also refuses an image a container uses.
 		if _, err := h.Docker.Run(ctx, []string{"image", "rm", ref}, nil); err != nil {
-			note("kept " + ref + ": " + docker.Diagnostic(err))
+			h.note("kept " + ref + ": " + docker.Diagnostic(err))
 		} else {
-			note("removed " + ref)
+			h.note("removed " + ref)
 		}
+	}
+	out, err = h.Docker.Run(ctx, []string{"image", "ls", "--quiet", "--no-trunc", "--filter", "dangling=true", "--filter", "label=agent-pm.key"}, nil)
+	if err != nil {
+		h.note("kept untagged images: cannot list them: " + docker.Diagnostic(err))
+		return
+	}
+	for _, id := range strings.Fields(string(out)) {
+		if used[id] {
+			continue
+		}
+		if _, err := h.Docker.Run(ctx, []string{"image", "rm", id}, nil); err != nil {
+			h.note("kept " + id + ": " + docker.Diagnostic(err))
+		} else {
+			h.note("removed " + id)
+		}
+	}
+}
+
+func (h Host) note(s string) {
+	if h.Progress != nil {
+		fmt.Fprintln(h.Progress, "agent-pm-broker: "+s)
 	}
 }
 

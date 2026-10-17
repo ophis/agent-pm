@@ -358,7 +358,7 @@ class PackagedDeployments(ConfigFile, Case):
         fake.write_text(
             f"#!{sys.executable}\nfrom pathlib import Path\n"
             f"Path({str(marker)!r}).touch()\n"
-            'print(\'{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{}}}\')\n'
+            'print("Current session: 0% used")\n'
         )
         fake.chmod(0o700)
         shutil.copytree(Path(REPO) / "bin", self.deployment / "bin")

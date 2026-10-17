@@ -309,7 +309,7 @@ class Router(TmuxFlow):
         self.assertEqual([e["kind"] for e in self.logged()].count("linear-error"), 1)
 
     def test_a_tick_at_95_percent_usage_skips_the_claim(self):
-        self.scene([START, DONE], rate_limit=usage(0.95))
+        self.scene([START, DONE], usage=usage(0.95))
         res = self.router("--now")
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
         self.assertEqual(
@@ -322,7 +322,7 @@ class Router(TmuxFlow):
         self.assertEqual(self.sent("linear.M_STATE"), [])
 
     def test_a_tick_at_50_percent_usage_claims_and_finishes(self):
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         sid = self.claim("start", "--now")
         self.wait_end(sid, ID)
         self.assert_built(sid)
@@ -383,7 +383,7 @@ class Gate(Flow):
             f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
         os.chmod(shim, 0o755)
         self.guard()
-        self.scene([], rate_limit=usage(0.5))
+        self.scene([], usage=usage(0.5))
         res = subprocess.run(
             ["sh", "-c", config.load().roles["researcher"].run.gate],
             cwd=self.root,

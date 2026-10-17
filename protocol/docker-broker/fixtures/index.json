@@ -1,5 +1,5 @@
 {
-  "protocol_version": "2",
+  "protocol_version": "3",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -273,6 +273,26 @@
       }
     },
     {
+      "file": "build-input-max-age.json",
+      "definition": "build_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "build-input-max-age-missing.json",
+      "definition": "build_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
       "file": "build-output.json",
       "definition": "build_output",
       "valid": true,
@@ -392,56 +412,6 @@
       "expected": {
         "stage": "response",
         "exit_code": 0,
-        "error_code": null
-      }
-    },
-    {
-      "file": "start-fallback-network.json",
-      "definition": "start_output",
-      "valid": true,
-      "expected": {
-        "stage": "response",
-        "exit_code": 0,
-        "error_code": null
-      }
-    },
-    {
-      "file": "start-fallback-timeout.json",
-      "definition": "start_output",
-      "valid": true,
-      "expected": {
-        "stage": "response",
-        "exit_code": 0,
-        "error_code": null
-      }
-    },
-    {
-      "file": "start-fallback-command_failed.json",
-      "definition": "start_output",
-      "valid": true,
-      "expected": {
-        "stage": "response",
-        "exit_code": 0,
-        "error_code": null
-      }
-    },
-    {
-      "file": "start-fallback-version_failed.json",
-      "definition": "start_output",
-      "valid": true,
-      "expected": {
-        "stage": "response",
-        "exit_code": 0,
-        "error_code": null
-      }
-    },
-    {
-      "file": "start-fallback-missing-reason.json",
-      "definition": "start_output",
-      "valid": false,
-      "expected": {
-        "stage": "response",
-        "exit_code": null,
         "error_code": null
       }
     },

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/docker"
@@ -27,7 +28,11 @@ func recording(calls *[]call) app {
 			return map[string]string{"ok": name}, nil
 		}
 	}
-	return app{build: result("build"), start: result("start"), close: result("close")}
+	build := result("build")
+	return app{build: func(ctx context.Context, arg string, _ time.Duration, p io.Writer) (any, error) {
+		return build(ctx, arg, p)
+	},
+		start: result("start"), close: result("close")}
 }
 
 func invoke(a app, args ...string) (int, string, string) {
@@ -38,7 +43,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"2"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"3"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -104,6 +109,12 @@ func TestUsageErrors(t *testing.T) {
 		{"build", []string{"build", "--agent-pm"}},
 		{"build", []string{"build", "--package", "/x"}},
 		{"build", []string{"build", "--agent-pm", "relative"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "-1"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1.5"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1234567890"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1", "x"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-ages", "1"}},
 		{"start", []string{"start", "--manifest", "/bad\npath"}},
 		{"start", []string{"start", "--manifest", "/bad\xffpath"}},
 		{"close", []string{"close", "--container", "other"}},
@@ -121,8 +132,26 @@ func TestUsageErrors(t *testing.T) {
 	}
 }
 
+func TestBuildMaxAge(t *testing.T) {
+	for want, args := range map[time.Duration][]string{
+		-1:                      nil,
+		0:                       {"--max-age", "0"},
+		7 * 24 * time.Hour:      {"--max-age", "604800"},
+		999999999 * time.Second: {"--max-age", "999999999"},
+	} {
+		got := time.Duration(-2)
+		a := app{build: func(_ context.Context, _ string, maxAge time.Duration, _ io.Writer) (any, error) {
+			got = maxAge
+			return map[string]string{}, nil
+		}}
+		if code, _, errOut := invoke(a, append([]string{"build", "--agent-pm", "/pkg"}, args...)...); code != 0 || got != want {
+			t.Fatalf("%q: exit %d max age %v want %v: %s", args, code, got, want, errOut)
+		}
+	}
+}
+
 func TestChannels(t *testing.T) {
-	failing := app{build: func(context.Context, string, io.Writer) (any, error) {
+	failing := app{build: func(context.Context, string, time.Duration, io.Writer) (any, error) {
 		return nil, protocol.New(protocol.BuildFailed, "stage failed")
 	}, close: func(context.Context, string, io.Writer) (any, error) {
 		return nil, errors.New("surprise")
@@ -235,7 +264,7 @@ func TestTokenNeverLeaves(t *testing.T) {
 func TestBuildProgressGoesToStderr(t *testing.T) {
 	result := map[string]any{"image": "agent-pm-worker:k", "digest": "sha256:d", "rebuilt": true}
 	build := func(fail bool) app {
-		return app{build: func(_ context.Context, _ string, progress io.Writer) (any, error) {
+		return app{build: func(_ context.Context, _ string, _ time.Duration, progress io.Writer) (any, error) {
 			_, _ = io.WriteString(progress, "#1 [1/3] FROM base\n#2 DONE\n")
 			if fail {
 				return nil, protocol.New(protocol.BuildFailed, "stage failed")

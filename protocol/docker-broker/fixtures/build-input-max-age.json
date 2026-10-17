@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "build",
+    "--agent-pm",
+    "/opt/agent-pm",
+    "--max-age",
+    "604800"
+  ]
+}

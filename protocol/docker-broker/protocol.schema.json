@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 2",
+  "title": "Docker broker protocol 3",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -184,7 +184,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "2"
+          "const": "3"
         }
       },
       "required": [
@@ -206,10 +206,25 @@
             },
             {
               "$ref": "#/$defs/path"
+            },
+            {
+              "const": "--max-age"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]{1,9}$"
             }
           ],
           "items": false,
-          "minItems": 3
+          "minItems": 3,
+          "anyOf": [
+            {
+              "maxItems": 3
+            },
+            {
+              "minItems": 5
+            }
+          ]
         }
       },
       "required": [
@@ -289,55 +304,13 @@
             "codex"
           ],
           "additionalProperties": false
-        },
-        "update": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "const": "updated"
-                }
-              },
-              "required": [
-                "status"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "const": "fallback"
-                },
-                "reason": {
-                  "enum": [
-                    "network",
-                    "timeout",
-                    "command_failed",
-                    "version_failed"
-                  ]
-                },
-                "message": {
-                  "$ref": "#/$defs/text"
-                }
-              },
-              "required": [
-                "status",
-                "reason",
-                "message"
-              ],
-              "additionalProperties": false
-            }
-          ]
         }
       },
       "required": [
         "container",
         "endpoint",
         "image_digest",
-        "clients",
-        "update"
+        "clients"
       ],
       "additionalProperties": false
     },

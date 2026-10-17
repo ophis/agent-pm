@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.clients import common
+from agent_pm.session.clients.claude import usage
 from agent_pm.session.clients.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
@@ -23,7 +24,6 @@ from agent_pm.session.engine.types import (
     SessionStatus,
     Spec,
     Usage,
-    Window,
 )
 from agent_pm.utils import (
     LOCAL_ENV_VARS,
@@ -32,7 +32,6 @@ from agent_pm.utils import (
     drop_stale,
     environment_ok,
     json_records,
-    number,
     printable_abs,
     read_beneath,
     read_regular,
@@ -130,18 +129,8 @@ def _merge(base: dict, over: Mapping) -> dict:
     return base
 
 
-def _window(value) -> Window | None:
-    used = number(value.get("utilization")) if isinstance(value, dict) else None
-    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
-
-
-def _full(window: Window | None, resets: float | None) -> Window:
-    """`window` at least 100% used; its reset time, else `resets`."""
-    if window is None:
-        return Window(100.0, resets)
-    return Window(
-        max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at
-    )
+def _credential(name: str) -> bool:
+    return name.startswith("ANTHROPIC_") or name == "CLAUDE_CODE_OAUTH_TOKEN"
 
 
 def _read_dir(path: str) -> str:
@@ -238,18 +227,17 @@ class ClaudeCommon:
         "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
         "on a permission prompt."
     )
+    # `/usage` reads the account's limits without a model request (CodexBar's direct probe).
     PROBE = (
         "claude",
         "-p",
-        "Reply with OK.",
-        "--model",
-        "haiku",
-        "--output-format",
-        "stream-json",
-        "--verbose",
+        "--no-session-persistence",
+        "--strict-mcp-config",
         "--setting-sources",
         "user",
-        "--strict-mcp-config",
+        "--settings",
+        '{"remoteControlAtStartup":false,"disableAllHooks":true}',
+        "/usage",
     )
 
     def __init__(self, config: Mapping, *, selector):
@@ -496,37 +484,27 @@ class ClaudeCommon:
         )
 
     def probe(self) -> Launch:
-        return Launch(self.PROBE, env={**self.ENV, **self.env()}, unset=self.UNSET)
+        """The account's own env (CLAUDE_CONFIG_DIR), without API credentials that would pick
+        another account.
+        """
+        env = {k: v for k, v in self.env().items() if not _credential(k)}
+        found = sorted(
+            name for name in {*os.environ, "CLAUDE_CODE_OAUTH_TOKEN"} if _credential(name)
+        )
+        return Launch(
+            self.PROBE,
+            env={**env, "DISABLE_AUTOUPDATER": "1"},
+            unset=tuple(dict.fromkeys((*self.UNSET, *found))),
+        )
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """A successful probe without a rate_limit_event reports no windows."""
-        evented, info, succeeded = False, None, False
-        for record in json_records(output.splitlines()):
-            if record.get("type") == "rate_limit_event":
-                evented, info = True, record.get("rate_limit_info")
-            elif record.get("type") == "result":
-                succeeded = record.get("is_error") is False
-        if not evented:
-            return Usage(None, None) if succeeded else None
-        if not isinstance(info, dict):
+        """None, logged, when the output holds no usage panel; never retried here."""
+        try:
+            return usage.parse(output)
+        except ValueError as error:
+            print(f"claude usage: unknown: {error}", file=sys.stderr)
             return None
-        windows = info.get("unifiedWindows")
-        windows = windows if isinstance(windows, dict) else {}
-        five_hour = _window(windows.get("five_hour"))
-        weeks = filter(
-            None,
-            (_window(window) for name, window in windows.items() if name.startswith("seven_day")),
-        )
-        weekly = max(weeks, key=lambda window: window.used_percent, default=None)
-        if info.get("status") == "rejected":
-            resets = number(info.get("resetsAt"))
-            kind = info.get("rateLimitType")
-            if isinstance(kind, str) and kind.startswith("seven_day"):
-                weekly = _full(weekly, resets)
-            else:
-                five_hour = _full(five_hour, resets)
-        return Usage(five_hour, weekly)
 
     def session_status(
         self,

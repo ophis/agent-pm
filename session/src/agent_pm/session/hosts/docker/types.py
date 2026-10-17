@@ -10,4 +10,3 @@ class Started:
     endpoint: str
     image_digest: str
     clients: Mapping[str, str]  # client name → its runnable version
-    update: Mapping[str, str]

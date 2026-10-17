@@ -88,7 +88,7 @@ def main(argv: list[str]) -> int:
         raise SystemExit(f"agent-pm-crew attach printed no N= and GEN=: {cursor!r:.200}")
     timed(
         times,
-        "container start and client update",
+        "container start",
         lambda: run(
             *("agent-pm-crew", "worker", "--manager", manager, name),
             *("--client", "claude", "--cwd", cwd, "--display", "none"),

@@ -111,10 +111,15 @@ class ResponseTest(Case):
                 endpoint="unix:///Users/example/.docker/run/docker.sock",
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "0.100.0"},
-                update={"status": "updated"},
             ),
         )
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
+
+    def test_build_passes_a_max_age(self):
+        fake = FakeBroker(success("build-cached.json"))
+        Broker(fake).build("/opt/agent-pm", max_age=broker.REFRESH)
+        self.assertEqual(fake.calls, [[BROKER, *data("build-input-max-age.json")["argv"]]])
+        self.assertEqual(broker.REFRESH, 7 * 24 * 3600)
 
     def test_build_progress_before_the_error_object_is_not_the_error(self):
         progress = "#5 [2/3] RUN apt-get purge -y sudo\n#5 ERROR: process exited 1\n"
@@ -160,6 +165,7 @@ class ResponseTest(Case):
     def test_wrong_protocol_or_missing_broker_fails_before_build(self):
         for result in (
             (0, '{"protocol_version": "1"}\n', ""),
+            (0, '{"protocol_version": "2"}\n', ""),
             FileNotFoundError(2, "No such file", BROKER),
             PermissionError(13, "Permission denied", BROKER),
         ):
@@ -170,9 +176,8 @@ class ResponseTest(Case):
                 self.assertIn(BROKER, str(raised.exception))
                 self.assertEqual(fake.calls, [argv("version")])
 
-    def test_an_unhashable_update_reason_is_bad(self):
-        started = data("start-fallback-timeout.json")
-        started["update"]["reason"] = []
+    def test_a_protocol_2_update_field_is_bad(self):
+        started = {**data("start-output.json"), "update": {"status": "updated"}}
         result = (0, json.dumps(started), "")
         with self.assertRaisesRegex(SessionError, "bad response"):
             Broker(FakeBroker(result)).start(MANIFEST, clients=KEYS)

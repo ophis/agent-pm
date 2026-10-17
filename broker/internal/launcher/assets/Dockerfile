@@ -15,7 +15,6 @@ RUN python3 -m venv /opt/agent-pm/venv && mkdir -p /opt/agent-pm/bin \
     && printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay \
     && ln -s /opt/agent-pm/lib/with-secrets /opt/agent-pm/bin/with-secrets \
     && chmod 755 /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub \
-    && cp -a /home/agent/.npm-global /opt/agent-pm/client-baseline \
     && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm \
     && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue
 ARG AGENT_PM_VERSION

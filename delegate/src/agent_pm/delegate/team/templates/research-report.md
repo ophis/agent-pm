@@ -27,7 +27,7 @@ Instruction sections: omit Template rules and Filled example from the report. St
 | Deep Research | Research workflows; independent votes on key claims |
 
 - Alert: one bold answer with confidence; at most 3 reasons; Next step and Risk each one line. No synthesis label inside it.
-- Body: lists, tables and Mermaid only; One fact per list item. Keep only material relevant to the research question. Mark synthesis at most once per section, outside the alert.
+- Body: text where detail is needed; a figure (Mermaid, or SVG: [Researcher › Standards › Figures](#standards)) or table wherever it makes the report easier to read. Be concise; avoid long essay-style paragraphs. One fact per list item. Keep only material relevant to the research question. Mark synthesis at most once per section, outside the alert.
 - Length: display columns, lists/paragraphs 80; table last column 80, other cells 30. W/F characters in `unicodedata.east_asian_width` count 2, others 1. URLs, link targets, `[n]` and Markdown markers do not count. Code/Mermaid blocks, headings, type line and HTML tag lines are exempt; text inside `<details>` is checked. Soft-wrapped text shares one item's budget. Delivery check: [Researcher › Standards › Concise](#standards).
 
 ## Comparison table
@@ -39,7 +39,7 @@ Optional; omit when the input asks for no comparison. A table ([Principles › W
 <details>
 <summary>Findings (<count>)</summary>
 
-One subsection per part of the question, each starting with one **bold answer**; list the findings the conclusion depends on first. Architecture, flow or timeline → a diagram ([Principles › Writing › Diagrams and tables](#writing)). One list item per finding, ending with `(<confidence: high, medium or low>; [n]…; <single-source or unverified, when so>)`. Translate the label names, keeping the listed values English. Sources disagree → name both and which you favor, and why; confidence at most medium.
+One subsection per part of the question, each starting with one **bold answer**; list the findings the conclusion depends on first. One list item per finding, ending with `(<confidence: high, medium or low>; [n]…; <single-source or unverified, when so>)`. Translate the label names, keeping the listed values English. Sources disagree → name both and which you favor, and why; confidence at most medium.
 
 </details>
 
