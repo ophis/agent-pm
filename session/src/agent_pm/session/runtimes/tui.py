@@ -428,7 +428,10 @@ class _Start:
 
     @property
     def launch(self) -> Launch:
-        return Launch(self.prepared.argv, env=self.prepared.env, cwd=self.prepared.info.cwd)
+        info = self.prepared.info
+        return Launch(
+            self.prepared.argv, env=self.prepared.env, cwd=info.cwd, transcript=info.transcript
+        )
 
 
 class TuiRuntime(Runtime):
@@ -513,7 +516,11 @@ class TuiRuntime(Runtime):
             "client": spec.client or "session",
             "generation": uuid.uuid4().hex,
             **(
-                {"home_field": client_home.field, "home_dir": client_home.dir}
+                {
+                    "home_field": client_home.field,
+                    "home_dir": client_home.dir,
+                    "resume": "1" if spec.resume else "0",
+                }
                 if home and client_home
                 else {}
             ),
