@@ -42,8 +42,8 @@ running a broader suite.
 Subtest annotations use the method ID and keep parameters in the error text; selecting
 that method runs all its subtests.
 
-Docker broker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
-Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py`.
+Docker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
+Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py tests/unit/docker_relay_protocol_test.py`.
 
 Integration jobs upload `integration-<run-id>-<attempt>-<job>` artifacts containing
 the discovered IDs, assigned IDs, expected load, Python/tmux versions, runner type, supervised

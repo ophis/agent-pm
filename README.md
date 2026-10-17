@@ -122,3 +122,4 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
 | [Docker broker protocol](docs/docker-broker-protocol.md) | broker schemas, errors and shared fixtures (developers) |
+| [Docker relay protocol](docs/docker-relay-protocol.md) | hook relay wire format and shared fixtures (developers) |

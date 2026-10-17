@@ -182,7 +182,7 @@ jobs:
       - name: Install pinned coverage
         if: ${{ github.event_name == 'pull_request' }}
         run: python3 -m pip install coverage=="$COVERAGE_VERSION"
-      - name: Install Docker broker protocol test dependency
+      - name: Install Docker protocol test dependency
         run: python3 -m pip install jsonschema==4.26.0
       - name: Unit tests
         id: unit

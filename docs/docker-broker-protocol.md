@@ -7,7 +7,8 @@ equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
 
 The broker installs the hook stub, so this version also covers the stub's wire format.
-Protocol 2 changes no broker field: it marks the stub's switch to the relay wire format.
+Protocol 2 changes no broker field: it marks the stub's switch to the
+[relay wire format](docker-relay-protocol.md).
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 

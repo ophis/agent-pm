@@ -1,0 +1,9 @@
+{
+  "id": 7,
+  "argv": [
+    "hook",
+    "/Users/example/.agent-pm/tui/worker_1",
+    "Stop"
+  ],
+  "payload": "abc"
+}
