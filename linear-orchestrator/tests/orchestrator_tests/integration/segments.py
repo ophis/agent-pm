@@ -69,7 +69,7 @@ REPORT = (
 
 BUILD = "Build the session registry."
 
-USAGE = {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.5}}}
+USAGE = "Current session: 50% used\n"
 
 # turn ends without an outcome after the nudge: past the tui run's give-up count (3)
 STOP = {
@@ -308,7 +308,7 @@ class Segment(TmuxFlow):
         self.n_gates += 1
         gate = os.path.join(self.root, f"gate-{self.n_gates}")
         scene = tui_scene(script) if tui else {"steps": script.steps}
-        self.scene(**scene, gate=gate, **({"rate_limit": USAGE} if tick else {}))
+        self.scene(**scene, gate=gate, **({"usage": USAGE} if tick else {}))
         had_prior = any(
             row["issue"] == ident and row["kind"] in ("start", "resume") for row in self.runs()
         )

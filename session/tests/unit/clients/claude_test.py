@@ -1,6 +1,9 @@
 """Claude claude behavior."""
 
+import contextlib
+import io
 import os
+from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import ClaudeCommon as UnconfiguredCommon
@@ -12,13 +15,10 @@ from agent_pm.session.engine.types import (
     Launch,
     SessionInfo,
     SessionStatus,
-    Usage,
-    Window,
 )
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.unit.clients.claude.support import (
-    CEILING,
     CONFIG,
     NOTE,
     PROBE,
@@ -28,7 +28,7 @@ from session.tests.unit.clients.claude.support import (
     Base,
     ClaudeCommon,
     Spec,
-    event,
+    fixture,
     reference,
 )
 
@@ -125,12 +125,19 @@ class ClientTest(Base):
 
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
-        self.assertEqual(
-            ClaudeClient(CONFIG).usage_probe(),
-            Launch(PROBE, env={**CEILING, "K": "v"}, unset=UNSET),
-        )
-        self.assertEqual(ClaudeClient({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
-        self.assertIsNone(ClaudeClient({}).usage("garbage"))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                ClaudeClient(CONFIG).usage_probe(),
+                Launch(
+                    PROBE,
+                    env={"K": "v", "DISABLE_AUTOUPDATER": "1"},
+                    unset=(*UNSET, "CLAUDE_CODE_OAUTH_TOKEN"),
+                ),
+            )
+        found = ClaudeClient({}).usage(fixture("usage-default.txt"))
+        self.assertEqual((found.five_hour.used_percent, found.weekly.used_percent), (17.0, 1.0))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(ClaudeClient({}).usage("garbage"))
 
     def test_status_uses_an_in_store_recorded_transcript_and_rebuilds_resume(self):
         client = ClaudeClient({})

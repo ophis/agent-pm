@@ -762,8 +762,11 @@ class Gate(Case):
 
     def test_the_usage_probe_never_waits(self):
         gate = os.path.join(self.root, "gate")
-        self.scene(steps=["OK"], gate=gate)
-        self.assertEqual(self.result(self.run_fake(*ClaudeClient({}).usage_probe().argv[1:])), "OK")
+        self.scene(usage="Current session: 1% used\n", gate=gate)
+        self.assertEqual(
+            self.run_fake(*ClaudeClient({}).usage_probe().argv[1:]).stdout,
+            "Current session: 1% used\n",
+        )
         self.assertFalse(os.path.exists(gate))
 
 

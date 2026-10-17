@@ -100,8 +100,8 @@ GUARD = (
 
 
 def usage(five_hour):
-    """fake_claude's rate_limit_info at five_hour utilization."""
-    return {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": five_hour}}}
+    """fake_claude's `/usage` panel at five_hour utilization."""
+    return f"Current session: {round(100 * five_hour)}% used\n"
 
 
 def steps(*names, end=0, found=(), more=()):

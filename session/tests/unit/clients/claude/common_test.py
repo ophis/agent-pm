@@ -15,41 +15,32 @@ from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import HOME
+from agent_pm.session.clients.claude.usage import NO_PANEL
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Mode,
     SessionInfo,
     SessionStatus,
-    Usage,
-    Window,
 )
 from agent_pm.utils import LOCAL_ENV_VARS, docker_home
 
 from session.tests.case import SPAWNS, Case
 from session.tests.unit.clients.claude.support import (
-    API_KEY_PROBE,
     CEILING,
     CONFIG,
     HOOK,
-    PROBE_REPLY,
-    PROBE_RESULT,
+    PROBE,
     SID,
-    SUBSCRIPTION_PROBE,
     TUI_DEFAULTS,
     UNSET,
     Base,
     ClaudeCommon,
     Spec,
-    event,
-    info_line,
-    probe_init,
+    fixture,
     reference,
-    stdout,
     store,
     tui_launch,
-    unified,
-    usage,
 )
 
 
@@ -324,258 +315,45 @@ class EnvTest(Base):
             )
 
 
-class ParseUsageTest(Case):
-    def test_router_gate_cases(self):
-        rows = (
-            (['{"type":"system"}', "garbage"], False),
-            ([event(five=0.85)], True),
-            ([event(five=0.89)], True),
-            ([event(five=0.9)], False),
-            ([event(status="rejected", five=0.1)], False),
-            ([event(five=0.1, seven_day=1.0)], False),
-            ([event(five=0.89, seven_day=0.99, seven_day_opus=0.5)], True),
-            ([event(five=0.1, seven_day=0.2, seven_day_opus=1.0)], False),
-            ([event(status="rejected", five=0.1, kind="seven_day_opus", seven_day=0.2)], False),
-            ([event(status="allowed_warning", five=0.5)], True),
-            ([event(five=0.1), event(five=0.9)], False),
-            ([event(five=0.9), "{}", event(five=0.1)], True),
-        )
-        for row, (lines, ok) in enumerate(rows):
-            with self.subTest(row=row):
-                found = usage(*lines)
-                self.assertEqual(
-                    found is not None
-                    and found.five_hour is not None
-                    and found.five_hour.used_percent < 90
-                    and (found.weekly is None or found.weekly.used_percent < 100),
-                    ok,
-                )
-
-    def test_each_window_and_a_rejected_status_filling_its_window(self):
-        rows = (
-            (event(five=0.25), Usage(Window(25.0, 1.0), None)),
-            (event(five=0.25, seven_day=0.5), Usage(Window(25.0, 1.0), Window(50.0, 2.0))),
-            (event(five=1, seven_day=1), Usage(Window(100.0, 1.0), Window(100.0, 2.0))),
-            (event(five=1.5, seven_day_opus=2), Usage(Window(150.0, 1.0), Window(200.0, 2.0))),
-            (
-                event(five=0.25, seven_day="1", seven_day_sonnet=True),
-                Usage(Window(25.0, 1.0), None),
-            ),
-            (
-                event(five=0.25, seven_day=None, seven_day_opus=1e999),
-                Usage(Window(25.0, 1.0), None),
-            ),
-            (event(five=None, seven_day=0.5), Usage(None, Window(50.0, 2.0))),
-            (event(five="0.5"), Usage(None, None)),
-            (event(five=True), Usage(None, None)),
-            (event(five=1e999), Usage(None, None)),
-            (event(five=10**400), Usage(None, None)),
-            (unified(five_hour=0.5, seven_day=[1]), Usage(None, None)),
-            (
-                unified(
-                    five_hour={"utilization": 0.5},
-                    weekly={"utilization": 0.9},
-                    one_day={"utilization": 0.9},
-                ),
-                Usage(Window(50.0, None), None),
-            ),
-            (event(status="rejected", five=0.25, resets=9), Usage(Window(100.0, 1.0), None)),
-            (event(status="rejected", five=1.5, resets=9), Usage(Window(150.0, 1.0), None)),
-            (
-                event(status="rejected", five=0.25, kind=None, resets=9),
-                Usage(Window(100.0, 1.0), None),
-            ),
-            (
-                event(status="rejected", five=0.25, kind=5, resets=9),
-                Usage(Window(100.0, 1.0), None),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="five_hour_x", seven_day=0.5, resets=9),
-                Usage(Window(100.0, 1.0), Window(50.0, 2.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day", resets=9),
-                Usage(Window(25.0, 1.0), Window(100.0, 9.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day_opus", seven_day=0.5, resets=9),
-                Usage(Window(25.0, 1.0), Window(100.0, 2.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day", seven_day=1.5, resets=9),
-                Usage(Window(25.0, 1.0), Window(150.0, 2.0)),
-            ),
-            (event(status="rejected", five="x", resets=9), Usage(Window(100.0, 9.0), None)),
-            (event(status="rejected", five=0.25, resets=None), Usage(Window(100.0, 1.0), None)),
-            (event(status="rejected", five=None, resets=None), Usage(Window(100.0, None), None)),
-            (event(status="rejected", five=None, resets=True), Usage(Window(100.0, None), None)),
-            (
-                info_line({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": 9}),
-                Usage(Window(100.0, 9.0), None),
-            ),
-            (
-                info_line(
-                    {
-                        "status": "rejected",
-                        "rateLimitType": "seven_day",
-                        "resetsAt": 9,
-                        "unifiedWindows": {
-                            "five_hour": {"utilization": 0.25},
-                            "seven_day": {"utilization": 0.5},
-                        },
-                    }
-                ),
-                Usage(Window(25.0, None), Window(100.0, 9.0)),
-            ),
-            (
-                info_line(
-                    {
-                        "status": "rejected",
-                        "resetsAt": 9,
-                        "unifiedWindows": {"five_hour": {"utilization": 0.25}},
-                    }
-                ),
-                Usage(Window(100.0, 9.0), None),
-            ),
-            (event(status="allowed_warning", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
-            (event(status="Rejected", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
-            *(
-                (line, Usage(None, None))
-                for line in (
-                    info_line({}),
-                    info_line({"status": "allowed", "resetsAt": 9}),
-                    info_line({"unifiedWindows": {}}),
-                    info_line({"unifiedWindows": [1]}),
-                    info_line({"unifiedWindows": None}),
-                    info_line({"unifiedWindows": {"five_hour": 0.5}}),
-                )
-            ),
-        )
-        for row, (line, want) in enumerate(rows):
-            with self.subTest(row=row):
-                self.assertEqual(usage(line), want)
-
-    def test_weekly_is_the_most_used_seven_day_window(self):
-        rows = (
-            (
-                event(five=0.1, seven_day=0.3, seven_day_opus=0.8, seven_day_sonnet=0.5),
-                Window(80.0, 2.0),
-            ),
-            (
-                unified(
-                    seven_day={"utilization": 0.5, "resetsAt": 3},
-                    seven_day_opus={"utilization": 0.5, "resetsAt": 4},
-                ),
-                Window(50.0, 3.0),
-            ),
-            (
-                unified(
-                    seven_day_opus={"utilization": 0.5, "resetsAt": 4},
-                    seven_day={"utilization": 0.5, "resetsAt": 3},
-                ),
-                Window(50.0, 4.0),
-            ),
-            (
-                unified(seven_day={"utilization": "0.9"}, seven_day_opus={"utilization": 0.4}),
-                Window(40.0, None),
-            ),
-            (
-                unified(
-                    seven_day_x={"utilization": 0.7, "resetsAt": 5}, seven_day={"utilization": 0.2}
-                ),
-                Window(70.0, 5.0),
-            ),
-        )
-        for row, (line, want) in enumerate(rows):
-            with self.subTest(row=row):
-                self.assertEqual(usage(line).weekly, want)
-
-    def test_each_window_resets_at_its_own_time(self):
-        rows = (
-            ({"resetsAt": 1700000000.5}, Window(25.0, 1700000000.5)),
-            ({}, Window(25.0, None)),
-            ({"resetsAt": None}, Window(25.0, None)),
-            ({"resetsAt": True}, Window(25.0, None)),
-            ({"resetsAt": "1"}, Window(25.0, None)),
-            ({"resetsAt": 10**400}, Window(25.0, None)),
-        )
-        for row, (resets, want) in enumerate(rows):
-            with self.subTest(row=row):
-                line = info_line(
-                    {
-                        "status": "allowed",
-                        "resetsAt": 9,
-                        "unifiedWindows": {
-                            "five_hour": {"utilization": 0.25, **resets},
-                            "seven_day": {"utilization": 0.5, **resets},
-                        },
-                    }
-                )
-                self.assertEqual(usage(line), Usage(want, Window(50.0, want.resets_at)))
-
-    def test_a_successful_probe_without_an_event_has_no_telemetry(self):
-        self.assertEqual(ClaudeCommon.parse_usage(API_KEY_PROBE), Usage(None, None))
-        self.assertEqual(ClaudeClient({}).usage(API_KEY_PROBE), Usage(None, None))
-
-    def test_a_subscription_probe_reads_its_windows(self):
+class UsageProbeTest(Base):
+    def test_the_probe_strips_api_credentials_and_keeps_the_account_dir(self):
+        ambient = {"ANTHROPIC_API_KEY": "sk-1", "ANTHROPIC_BASE_URL": "u", "HOME": "/h"}
+        config = {"env": {"CLAUDE_CONFIG_DIR": "/acct", "ANTHROPIC_AUTH_TOKEN": "x", "K": "v"}}
+        with mock.patch.dict(os.environ, ambient, clear=True):
+            launch = ClaudeClient(config).usage_probe()
+        self.assertEqual(launch.argv, PROBE)
         self.assertEqual(
-            ClaudeCommon.parse_usage(SUBSCRIPTION_PROBE),
-            Usage(Window(25.0, 1760000000.0), Window(40.0, 1760500000.0)),
+            dict(launch.env), {"CLAUDE_CONFIG_DIR": "/acct", "K": "v", "DISABLE_AUTOUPDATER": "1"}
         )
+        self.assertEqual(
+            launch.unset[len(UNSET) :],
+            ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"),
+        )
+        self.assertEqual(launch.unset[: len(UNSET)], UNSET)
 
-    def test_a_failed_probe_is_none(self):
-        init = probe_init("ANTHROPIC_API_KEY")
-        refused = {
-            **PROBE_RESULT,
-            "is_error": True,
-            "result": "Invalid API key · Please run /login",
-        }
-        unflagged = {k: v for k, v in PROBE_RESULT.items() if k != "is_error"}
-        rows = (
-            "",
-            "garbage",
-            stdout(init),
-            stdout(init, PROBE_REPLY),
-            stdout(init, PROBE_REPLY, refused),
-            stdout(init, PROBE_REPLY, unflagged),
-            *(
-                stdout(init, PROBE_REPLY, {**PROBE_RESULT, "is_error": v})
-                for v in (None, "false", 0)
-            ),
-            stdout(init, PROBE_RESULT, refused),
-        )
-        for output in rows:
-            with self.subTest(output=output[-80:]):
-                self.assertIsNone(ClaudeCommon.parse_usage(output))
+    def test_a_usage_panel_is_the_usage(self):
+        for name, five, week in (
+            ("usage-default.txt", 17.0, 1.0),
+            ("usage-config-dir.txt", 13.0, 14.0),
+        ):
+            with self.subTest(name), contextlib.redirect_stderr(io.StringIO()) as err:
+                found = ClaudeCommon.parse_usage(fixture(name))
+                self.assertEqual(
+                    (found.five_hour.used_percent, found.weekly.used_percent), (five, week)
+                )
+                self.assertIsNotNone(found.five_hour.resets_at)
+                self.assertEqual(err.getvalue(), "")
 
-    def test_an_event_decides_beside_a_result(self):
-        rejected = info_line(
-            {
-                "status": "rejected",
-                "resetsAt": 9,
-                "unifiedWindows": {"five_hour": {"utilization": 0.25}},
-            }
-        )
-        refused = json.dumps({**PROBE_RESULT, "is_error": True})
-        self.assertIsNone(usage(event(five=0.1), info_line(None), json.dumps(PROBE_RESULT)))
-        self.assertEqual(usage(rejected, refused), Usage(Window(100.0, 9.0), None))
-
-    def test_no_successful_result_or_a_bad_info_is_none(self):
-        rows = (
-            (),
-            ("garbage",),
-            ('{"type":"system"}',),
-            ("[" * 100000,),
-            ('[{"type": "rate_limit_event"}]',),
-            (json.dumps({"type": "rate_limit_event"}),),
-            (info_line(None),),
-            (info_line([1]),),
-            (info_line("x"),),
-            (event(five=0.1), info_line(None)),
-        )
-        for lines in rows:
-            with self.subTest(lines=[x[:40] for x in lines]):
-                self.assertIsNone(usage(*lines))
+    def test_output_without_a_usage_panel_is_unknown_and_says_why(self):
+        for output, reason in (
+            ("", "no output"),
+            ("Hi! It looks like you typed /usage. How can I help?\n", NO_PANEL),
+            ('{"type":"result","result":"OK"}\n', NO_PANEL),
+            ("Failed to load usage data\n", "could not load usage data"),
+        ):
+            with self.subTest(output), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertIsNone(ClaudeClient({}).usage(output))
+                self.assertEqual(err.getvalue(), f"claude usage: unknown: {reason}\n")
 
 
 class TranscriptTest(Base):
