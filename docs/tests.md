@@ -97,6 +97,7 @@ occurs exactly once. Coverage applies to pull requests; `CI` requires every appl
 | Change/event | Unit and integration tests | Repository tests |
 |---|---|---|
 | PR touching only `manager/` and/or `linear-orchestrator/`, including their docs/skills | both upper layers | intentionally skipped |
+| PR touching only root `*.md` files and/or `docs/` | upper-layer unit tests (they check the docs skills cite); integration, type and design lints skipped | intentionally skipped |
 | PR touching a lower layer, `tests/`, `.github/`, shared config, an unknown path, or an empty diff | all layers, plus shared unit tests | run |
 | push to `main` | all layers, plus shared unit tests | run |
 
