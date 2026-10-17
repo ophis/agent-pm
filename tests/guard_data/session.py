@@ -11,7 +11,12 @@ SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 
-TMUX_HOME = f"{SESSION_SRC}hosts/tmux/"
+TMUX_HOME = (
+    f"{SESSION_SRC}hosts/tmux/",
+    # The Docker Host drives its container's tmux: its Host and hook callback are tmux code too.
+    f"{SESSION_SRC}hosts/docker/host.py",
+    f"{SESSION_SRC}hosts/docker/hook.py",
+)
 
 
 CLIENTS_HOME = f"{SESSION_SRC}clients/registry.py"

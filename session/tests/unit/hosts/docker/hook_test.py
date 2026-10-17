@@ -1,4 +1,4 @@
-"""hosts/tmux/docker_hook.py: the Docker Host's hook callback checks its state, marks the container
+"""hosts/docker/hook.py: the Docker Host's hook callback checks its state, marks the container
 pane its launch recorded through docker exec, and names the host's target in the events line.
 """
 
@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.engine.types import HookCall, HookError
-from agent_pm.session.hosts.tmux import docker_hook
+from agent_pm.session.hosts.docker import hook as docker_hook
 
 from session.tests.case import Case
 from session.tests.unit.hosts.docker.support import FakePopen

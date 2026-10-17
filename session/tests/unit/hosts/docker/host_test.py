@@ -1,4 +1,4 @@
-"""hosts/tmux/docker.py: DockerHost's config, start order and rollback, container commands, the Host
+"""hosts/docker/host.py: DockerHost's config, start order and rollback, container commands, the Host
 record, listing, close and show, over a fake docker CLI, a fake broker and a recorded host tmux.
 """
 
@@ -31,9 +31,9 @@ from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
+from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
-from agent_pm.session.hosts.tmux.docker import DockerHost, DockerTerminal
 from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.utils import Record, parse_time
 
@@ -255,7 +255,7 @@ class ConfigTest(Base):
         self.assertEqual(
             table["docker"],
             {
-                "implementation": "agent_pm.session.hosts.tmux.docker:DockerHost",
+                "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
                 "mount_roots": [],
             },
@@ -1463,7 +1463,7 @@ class ListTest(Base):
 
     def test_hook_callback(self):
         callback = self.host.hook_callback("w", {"generation": GEN})
-        self.assertEqual(callback.module, "agent_pm.session.hosts.tmux.docker_hook")
+        self.assertEqual(callback.module, "agent_pm.session.hosts.docker.hook")
         self.assertEqual(
             dict(callback.state),
             {
