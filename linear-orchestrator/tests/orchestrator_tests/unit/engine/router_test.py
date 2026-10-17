@@ -1464,6 +1464,19 @@ class LabelClients(TickBase):
                     self.assertEqual(fake.issues["TASK-1"].get("comments", []), [])
                     self.assertNotIn("restart", [e["kind"] for e in logged(self.logs)])
 
+    def test_a_restart_whose_label_client_is_misconfigured_goes_to_review(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        self.api.usages = {"a": DelegateConfigError("a: not installed\nhidden details")}
+        _, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
+        self.assertEqual(self.tick(fake), 0)
+        found = fake.issues["TASK-1"]
+        self.assertEqual(found["state"], "In Review")
+        (comment,) = found["comments"]
+        self.assertIn('Agent label selected client "a"', comment)
+        self.assertIn("a: not installed", comment)
+        self.assertNotIn("hidden details", comment)
+        self.assertEqual(self.start.launches, [])
+
     def test_a_launcher_sid_naming_the_old_session_is_refused_not_reused(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
         for argv in (("--now",), ("--issue", "TASK-1")):

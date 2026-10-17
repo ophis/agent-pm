@@ -371,11 +371,11 @@ class Board:
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
-    def bounce(self, issue, body):
-        """A Todo issue that cannot be claimed: comment body and move it to In Review."""
+    def bounce(self, issue, body, frm="todo"):
+        """An issue that cannot be run: comment body and move it from frm to In Review."""
         if self.dry:
             self.say("would comment", issue["identifier"], body=body, to="in_review")
-        self.comment_and_move(issue, body, "in_review", "todo", "claim")
+        self.comment_and_move(issue, body, "in_review", frm, "claim")
 
     def status(self, ident, sid):
         if sid not in self.statuses:
@@ -496,10 +496,19 @@ class Board:
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
-    def gated(self, role, ident, client, source):
-        return self.gate is not None and self.gate.blocked(
-            role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
-        )
+    def gated(self, issue, role, client, source, frm="todo"):
+        """Whether the usage gate blocks a new run of client; a label-selected client's quota
+        configuration error bounces the issue from frm instead.
+        """
+        ident = issue["identifier"]
+        try:
+            return self.gate is not None and self.gate.blocked(
+                role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
+            )
+        except delegate.ConfigError as error:
+            self.say("launch-error", ident, client=client, error=one_line(error))
+            self.bounce(issue, _label_client_message(client, error), frm)
+            return True
 
     def resumption(self, issue, sid, new_sid):
         """The run that continues the issue's session sid: its resume, or a new session (new_sid) on
@@ -604,12 +613,7 @@ class Board:
             self.say("claim-skip", ident, to="in_review", reason=reason)
             self.bounce(issue, "\n\n".join(comments))
             return None
-        try:
-            if self.gated(role, ident, client, source):
-                return None
-        except delegate.ConfigError as error:
-            self.say("launch-error", ident, client=client, error=one_line(error))
-            self.bounce(issue, _label_client_message(client, error))
+        if self.gated(issue, role, client, source):
             return None
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         if self.dry:
@@ -912,13 +916,13 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
         for issue, sid in board.recover(live_ids):
             if not board.available(issue, full):
                 continue
-            spec = board.resumption(issue, sid, new_sid)
-            kind = (
-                delegate_of(board.entries, sid)
-                if spec.mode == "resume"
-                else board.cfg.delegate_kind
-            )
-            if not gate.blocked(board.role(issue), issue["identifier"], key=(kind, spec.client)):
+            spec, role = board.resumption(issue, sid, new_sid), board.role(issue)
+            if spec.mode == "new":
+                blocked = board.gated(issue, role, spec.client, spec.client_source, "in_progress")
+            else:
+                key = (delegate_of(board.entries, sid), spec.client)
+                blocked = gate.blocked(role, issue["identifier"], key=key)
+            if not blocked:
                 board.plan(("resume", issue, sid), counts)
                 yield spec
 

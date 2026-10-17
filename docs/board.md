@@ -120,20 +120,20 @@ Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [l
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [router.py:566](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L566). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([router.py:793](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L793)); fix it → move back to Todo.
+Selection: [router.py:575](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L575). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([router.py:797](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L797)); fix it → move back to Todo.
 
-Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, and logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([router.py:504](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L504)). Invalid Agent or task labels keep the resume.
+Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, and logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([router.py:513](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L513)). Invalid Agent or task labels keep the resume.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([runtimes/base.py:53](../session/src/agent_pm/session/runtimes/base.py#L53), [router.py:1041](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1041)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([runtimes/base.py:53](../session/src/agent_pm/session/runtimes/base.py#L53), [router.py:1045](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1045)).
 
-`--dry-run` re-reads each new candidate's labels and prints `client` and `client_source` (`label` or `default`); a resume prints its recorded client, or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:596](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L596)).
+`--dry-run` re-reads each new candidate's labels and prints `client` and `client_source` (`label` or `default`); a resume prints its recorded client, or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:605](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L605)).
 
 Rollout:
 
 ```mermaid
 flowchart LR
     A[Configure group and mappings] --> B["router --issue ID on a labeled Todo issue"]
-    B --> C["Check claim client/source and runs.jsonl start client"]
+    B --> C["Check claim client/source"]
     C --> D[Enable scheduled ticks]
 ```
 
