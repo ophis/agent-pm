@@ -83,7 +83,7 @@ Linear orchestrator は、エージェントがどう働くべきかについて
 | 必要なもの | 用途 |
 |---|---|
 | `claude` CLI、Python 3.11+ | すべてのエージェント run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) プラグイン（各 client に）：Claude Code は `/plugin marketplace add ophis/claude-autopilot`、続けて `/plugin install autopilot@claude-autopilot`。Codex は `codex plugin marketplace add ophis/claude-autopilot`、続けて `codex plugin add autopilot@claude-autopilot` | コーディング：engineer の build task（`/autopilot:build`、`/autopilot:light-build`）。それ以外では不要。 |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) プラグイン（各 client に）：Claude Code は `/plugin marketplace add ophis/claude-autopilot`、続けて `/plugin install autopilot@claude-autopilot`。Codex は `codex plugin marketplace add ophis/claude-autopilot`、続けて `codex plugin add autopilot@claude-autopilot` | engineer の build task（`/autopilot:build`、`/autopilot:light-build`）と PM の PRD レビュー（`/autopilot:review`）。それ以外では不要。 |
 | tmux 3.3+ | `tmux` Host 上の tui run |
 | `git`、ログイン済みの `gh` | コーディング（checkout、pull request）と GitHub の出力先。それ以外では不要。 |
 | 起動中の iTerm2 | デフォルトの iTerm2 分割 |

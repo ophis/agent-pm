@@ -83,7 +83,7 @@ Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再�
 | 依赖 | 用途 |
 |---|---|
 | `claude` CLI、Python 3.11+ | 每次 agent run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) 插件，每个 client 都要装：Claude Code `/plugin marketplace add ophis/claude-autopilot`，然后 `/plugin install autopilot@claude-autopilot`；Codex `codex plugin marketplace add ophis/claude-autopilot`，然后 `codex plugin add autopilot@claude-autopilot` | 写代码：engineer 的 build task（`/autopilot:build`、`/autopilot:light-build`）。其他情况不需要。 |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) 插件，每个 client 都要装：Claude Code `/plugin marketplace add ophis/claude-autopilot`，然后 `/plugin install autopilot@claude-autopilot`；Codex `codex plugin marketplace add ophis/claude-autopilot`，然后 `codex plugin add autopilot@claude-autopilot` | engineer 的 build task（`/autopilot:build`、`/autopilot:light-build`）和 PM 的 PRD 评审（`/autopilot:review`）。其他情况不需要。 |
 | tmux 3.3+ | 在 `tmux` Host 上的 tui run |
 | `git`、已登录的 `gh` | 写代码（checkout、pull request）和 GitHub 目标。其他情况不需要。 |
 | 正在运行的 iTerm2 | 默认的 iTerm2 分屏 |
