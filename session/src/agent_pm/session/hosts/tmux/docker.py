@@ -26,6 +26,7 @@ from typing import NamedTuple
 import agent_pm.utils
 from agent_pm.session.engine.types import (
     COMMAND,
+    RESUME,
     SESSION_NAME,
     ClientHome,
     ConfigError,
@@ -50,6 +51,7 @@ from agent_pm.session.hosts.docker.daemon import (
     RUN_TIMEOUT,
     account_home,
     capped,
+    container_name,
     docker_call,
     endpoint,
     exec_runner,
@@ -93,6 +95,7 @@ PS_FORMAT = "\t".join(
 )
 LOG = logging.getLogger("session")
 STATE_MAX = 1 << 20
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
 
 
@@ -103,10 +106,6 @@ class Row(NamedTuple):
     container: str
     generation: str
     state: str
-
-
-def container_name(name: str, generation: str) -> str:
-    return f"agent-pm-{name}-{generation}"
 
 
 def _attach_argv(docker: str, container: str, name: str) -> list[str]:
@@ -207,6 +206,11 @@ def _report_plan(name: str, plan: Mapping) -> None:
         print(f"docker plan {name} {plan['generation']}: {part}", file=sys.stderr)
 
 
+def _text(found: str) -> str:
+    """Container text, which reaches the host terminal, without C0 or C1 controls but tab."""
+    return CONTROL.sub("", found)
+
+
 def _wait(ready, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
@@ -298,14 +302,18 @@ class DockerTerminal(TmuxTerminal):
         """
         self.host.sweep(self.name)
         failures = []
-        res = self.tmux.run(
-            [
-                *("set-hook", "-p", "-u", "-t", self._pane, "pane-died", ";"),
-                *("kill-session", "-t", f"={self.name}"),
-            ]
-        )
-        if res.returncode and not absent(res):
-            failures.append(f"kill: {res.stderr.strip()}")
+        try:
+            res = self.tmux.run(
+                [
+                    *("set-hook", "-p", "-u", "-t", self._pane, "pane-died", ";"),
+                    *("kill-session", "-t", f"={self.name}"),
+                ]
+            )
+        except TuiError as error:
+            failures.append(f"kill: {error}")
+        else:
+            if res.returncode and not absent(res):
+                failures.append(f"kill: {res.stderr.strip()}")
         if self.current and (why := _stop_supervisor(self.name)):
             failures.append(why)
         try:
@@ -524,7 +532,7 @@ class DockerHost(Host, Showable):
         return {home.env: docker_home(name, home.dir)}
 
     def _resume_argv(self, name: str) -> tuple[str, ...]:
-        return (COMMAND, "resume", name)
+        return (*RESUME, name)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         """The preflight, before any container: the cwd, the broker handshake and the build."""
@@ -616,6 +624,9 @@ class DockerHost(Host, Showable):
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
+        except SessionError as error:  # a timeout or bad response: the container may exist
+            cleanup = self._roll_back(None, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         ended = timestamp()
         supervisor = lock = None
         try:
@@ -789,7 +800,14 @@ class DockerHost(Host, Showable):
         return _listed(self._containers(), display)
 
     def rows(self, display: Display = None) -> list[SessionRow]:
-        containers = self._containers()
+        """[] with a warning when docker fails, so the other Hosts' rows still list; list() raises,
+        as its callers act on absence.
+        """
+        try:
+            containers = self._containers()
+        except SessionError as error:
+            LOG.warning("docker rows: %s", error)
+            return []
         return [
             self._row(name, containers[name].container, containers[name].generation)
             for name in _listed(containers, display)
@@ -812,7 +830,7 @@ class DockerHost(Host, Showable):
             else StatusState(state or StatusState.WORKING),
             display=record.get("display"),
             shown=None,
-            last_lines=row["last_lines"],
+            last_lines=None if row["last_lines"] is None else _text(row["last_lines"]),
             own=False,
         )
 
@@ -879,6 +897,6 @@ class DockerHost(Host, Showable):
         ):
             raise SessionError(f"session {process.name} is not running on host {self.name}")
         try:
-            return process.tmux.read(process._pane, lines)
+            return _text(process.tmux.read(process._pane, lines))
         except TuiError as error:
             raise SessionError(f"docker session {process.name}: {error}") from None

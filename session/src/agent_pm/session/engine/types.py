@@ -193,6 +193,7 @@ SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_DISPLAY}"
 
 
 COMMAND = "agent-pm-session"
+RESUME = (COMMAND, "resume")
 
 
 def _string_tuple(value) -> bool:

@@ -159,9 +159,9 @@ class Queue:
     def first(self, wait: float | None = None) -> tuple[int, bytes] | None:
         """The smallest undeleted message; None if none came within `wait` s (None: no limit)."""
         with self.changed:
-            if not self.changed.wait_for(self._seqs, wait):
+            if not (seqs := self.changed.wait_for(self._seqs, wait)):
                 return None
-            seq = self._seqs()[0]
+            seq = seqs[0]
             with open(os.path.join(self.path, f"{seq}.json"), "rb") as f:
                 return seq, f.read()
 
@@ -204,7 +204,9 @@ def pump(queue: Queue, reader, writer, idle: float | None = None) -> None:
 class Daemon:
     def __init__(self, gen: str, run: str = RUN) -> None:
         self.gen, self.run = gen, run
-        self.socket, self.uplink = f"{run}/relay.sock", f"{run}/relay-up.sock"
+        self.socket, self.uplink = (
+            os.path.join(run, os.path.basename(p)) for p in (SOCKET, UPLINK)
+        )
         self.listeners: list[socket.socket] = []
 
     def start(self) -> bool:

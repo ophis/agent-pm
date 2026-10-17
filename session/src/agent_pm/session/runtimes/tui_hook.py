@@ -36,8 +36,6 @@ CUT = 4096
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
-STATE = TUI_STATE
-
 HOOKS = "hooks.jsonl"
 
 ROTATED = HOOKS + ".1"
@@ -78,7 +76,7 @@ def _prepare(argv: Sequence[str], roots: Sequence[str]):
     then every callback's roots, then sys.path.
     """
     folder, label = _arguments(argv)
-    path = os.path.join(folder, STATE)
+    path = os.path.join(folder, TUI_STATE)
     state = _read_state(path, HookError)
     _check_callbacks(state, path, HookError)
     hooks = [
@@ -104,7 +102,7 @@ def main(argv: Sequence[str], stdin, *, roots: Sequence[str]) -> None:
 
 
 def _dispatch(folder, label, payload, state, specs):
-    _validate_state(state, os.path.join(folder, STATE), HookError)
+    _validate_state(state, os.path.join(folder, TUI_STATE), HookError)
 
     def call(kind, given) -> HookCall:
         return HookCall(

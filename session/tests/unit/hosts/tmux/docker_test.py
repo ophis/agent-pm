@@ -655,10 +655,15 @@ class StartTest(Base):
 
     def test_a_result_write_failure_rolls_back(self):
         os.makedirs(os.path.join(self.state, f"{GEN}.result.json", "taken"))
-        with self.assertRaisesRegex(SessionError, "docker session w: "):
-            self.start()
-        self.supervisor.terminate.assert_called()
-        self.assertEqual(self.order[-1], ("close", CONTAINER))
+        for resume in ("0", "1"):
+            with self.subTest(resume=resume):
+                if resume == "1":
+                    self.history()
+                self.supervisor.reset_mock()
+                with self.assertRaisesRegex(SessionError, "docker session w: "):
+                    self.start(resume=resume)
+                self.supervisor.terminate.assert_called()
+                self.assertEqual(self.order[-1], ("close", CONTAINER))
 
     def test_existing_container_refuses_start(self):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
@@ -709,6 +714,18 @@ class StartTest(Base):
         with self.assertRaises(BrokerError):
             self.start()
         self.assertEqual(self.broker.closed, [CONTAINER])
+
+    def test_a_start_failing_in_transport_closes_the_container(self):
+        for error in (
+            SessionError("broker: start timed out after 1800 s"),
+            SessionError("broker: bad response to start: fields"),
+        ):
+            with self.subTest(error=error):
+                self.broker.error, self.broker.closed = error, []
+                with self.assertRaisesRegex(SessionError, f"^docker session w: {error}$"):
+                    self.start()
+                self.assertEqual(self.broker.closed, [CONTAINER])
+                self.popen_mock.assert_not_called()
 
     def test_login_required_surfaces_message(self):
         self.broker.error = BrokerError(5, "login_required", "log in first", "not_needed", None)
@@ -780,6 +797,15 @@ class TerminalTest(Base):
             all(c[:3] == ["exec", "-i", CONTAINER] for c in self.order if c[0] == "exec")
         )
         self.assertEqual(self.host_calls, [])
+
+    def test_screen_text_reaches_the_host_without_control_characters(self):
+        process = self.terminal()
+        self.live_supervisor()
+        self.docker.replies = {
+            ("tmux", "display-message"): pane(),
+            ("tmux", "capture-pane"): (0, "a\x1b]0;x\x07b\tc\n\x1b[2Jd\u3000e\u200d\x9b\r\n", ""),
+        }
+        self.assertEqual(self.host.screen(process), "a]0;xb\tc\n[2Jd\u3000e\u200d")
 
     def test_dead_pane_returncode(self):
         process = self.terminal()
@@ -914,6 +940,23 @@ class CloseTest(Base):
         with mock.patch("os.kill") as kill:
             process.close()
         kill.assert_not_called()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
+    def test_a_kill_that_cannot_run_still_stops_the_supervisor_and_the_container(self):
+        process = self.terminal()
+        fd = self.hold_lock()
+        self.docker.replies = {("tmux", "set-hook"): FileNotFoundError(2, "no docker")}
+
+        def kill(pid, sig):
+            self.order.append(("signal", pid, sig))
+            os.close(fd)
+
+        with (
+            mock.patch("os.kill", side_effect=kill),
+            self.assertRaisesRegex(SessionError, r"^docker session w: kill: tmux: .*no docker"),
+        ):
+            process.close()
+        self.assertIn(("signal", 999, signal.SIGTERM), self.order)
         self.assertEqual(self.broker.closed, [CONTAINER])
 
     def test_a_supervisor_that_keeps_its_lock_fails_close_after_the_rest(self):
@@ -1244,6 +1287,16 @@ class ListTest(Base):
         self.docker.replies = {(): (1, "", "Error response from daemon: No such container: x")}
         self.assertEqual(self.host.rows()[0].state, StatusState.DEAD)
 
+    def test_a_dead_rows_last_lines_have_no_control_characters(self):
+        self.listed("w")
+        self.record()
+        self.docker.replies = {
+            ("tmux", "-u", "list-sessions"): (0, "w\t1\t\t\t\t\t\t\t\n", ""),
+            ("tmux", "capture-pane"): (0, "bye\x1b[31m\nend\x07\n", ""),
+        }
+        (row,) = self.host.rows()
+        self.assertEqual((row.state, row.last_lines), (StatusState.DEAD, "bye[31m\nend"))
+
     def test_docker_ps_failure_raises(self):
         for run in (
             mock.Mock(return_value=done(1, "", "Cannot connect")),
@@ -1253,6 +1306,15 @@ class ListTest(Base):
                 self.host.run = run
                 with self.assertRaisesRegex(SessionError, "docker ps"):
                     self.host.list()
+
+    def test_a_daemon_that_does_not_answer_lists_no_rows_but_fails_list(self):
+        self.listed("w")
+        self.host.run = mock.Mock(side_effect=TimeoutExpired("docker", RUN_TIMEOUT))
+        with self.assertLogs("session", "WARNING") as logs:
+            self.assertEqual(self.host.rows(), [])
+        self.assertIn("docker ps", logs.output[0])
+        with self.assertRaisesRegex(SessionError, "docker ps"):
+            self.host.list()
 
     def test_no_daemon_socket_or_cli_lists_nothing(self):
         self.listed("w")

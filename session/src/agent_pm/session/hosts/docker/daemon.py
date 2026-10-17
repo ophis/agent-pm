@@ -30,6 +30,10 @@ def endpoint() -> str:
     return f"unix://{account_home()}/.docker/run/docker.sock"
 
 
+def container_name(name: str, generation: str) -> str:
+    return f"agent-pm-{name}-{generation}"
+
+
 def docker_call(docker: str, *args: str) -> tuple[list[str], dict[str, str]]:
     """argv and env for `docker <args>` against endpoint()."""
     env = {k: v for k, v in os.environ.items() if k not in CLEARED}

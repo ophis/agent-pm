@@ -26,10 +26,9 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.utils import (
-    DOCKER_STATE,
     LOCAL_ENV_VARS,
     STATE,
-    docker_home,
+    docker_home_of,
     drop_stale,
     environment_ok,
     json_records,
@@ -210,10 +209,9 @@ def read(path: str, *, offset: int = 0, limit: int | None = None, tail: bool = F
     link and at most HOME_READ_MAX bytes.
     """
     path = os.path.abspath(path)
-    state = os.path.expanduser(DOCKER_STATE) + os.sep
-    if not path.startswith(state):
+    root = docker_home_of(path, HOME.dir)
+    if root is None:
         return read_regular(path, offset=offset, limit=limit, tail=tail)
-    root = docker_home(path.removeprefix(state).split(os.sep)[0], HOME.dir)
     cap = HOME_READ_MAX if limit is None else min(limit, HOME_READ_MAX)
     return read_beneath(root, path, offset=offset, limit=cap, tail=tail)
 

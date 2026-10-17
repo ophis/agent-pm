@@ -57,6 +57,7 @@ from agent_pm.utils import (
     module_roots,
     printable_abs,
     probe,
+    resume_command,
     sid_error,
     thaw,
 )
@@ -556,7 +557,8 @@ class HostedSession(Session):
             return
         try:
             resolved = self._client.session_metadata(self._info)
-            info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
+            resume = self._host_resume(self._info.cwd) or resolved.resume
+            info = replace(self._info, transcript=resolved.transcript, resume=resume)
         except OSError:
             return
         if info != self._info:
@@ -586,7 +588,16 @@ class HostedSession(Session):
         self._running.close()
 
     def session_status(self) -> SessionStatus:
-        return _resumable(lambda: self._client, self.info(), self._running.prepared.spec)
+        info = self.info()
+        found = _resumable(lambda: self._client, info, self._running.prepared.spec)
+        resume = self._host_resume(info.cwd)
+        return found if resume is None else replace(found, resume_command=resume)
+
+    def _host_resume(self, cwd: str) -> str | None:
+        """A tui session's Host resume command (the Docker Host's), which outranks the client's."""
+        name = self._tui()
+        argv = None if name is None else self._host._resume_argv(name)
+        return resume_command(cwd, {}, argv) if argv else None
 
     def record(self) -> Record | None:
         self._running.state()
