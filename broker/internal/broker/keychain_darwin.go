@@ -102,11 +102,12 @@ static OSStatus item_get(const char *path, const char *service, const char *acco
     return s;
 }
 // An existing item is deleted, never updated, so a pre-planted permissive ACL does not survive.
-// Everything that can fail is built before the delete, so only SecItemAdd itself can leave the item gone (*deleted).
-static OSStatus item_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length, int *deleted) {
+// The access is built before the delete; if the add then fails, the item is re-added with the default access (*restored).
+static OSStatus item_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length, int *deleted, int *restored) {
     SecKeychainRef kc = NULL;
     OSStatus s;
     *deleted = 0;
+    *restored = 0;
     CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     SecTrustedApplicationRef self = NULL;
@@ -130,6 +131,10 @@ static OSStatus item_put(const char *path, const char *service, const char *acco
     CFDictionarySetValue(q, kSecValueData, data);
     CFDictionarySetValue(q, kSecAttrAccess, access);
     s = SecItemAdd(q, NULL);
+    if (s != errSecSuccess && *deleted) {
+        CFDictionaryRemoveValue(q, kSecAttrAccess);
+        *restored = SecItemAdd(q, NULL) == errSecSuccess;
+    }
     CFRelease(data);
 release:
     CFRelease(access);
@@ -250,12 +255,20 @@ func (k fileKeychain) put(service, account, label string, data []byte) error {
 	}
 	p, free := cStrings(string(k), service, account, label)
 	defer free()
-	var deleted C.int
-	err := status(C.item_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data)), &deleted))
-	if err != nil && deleted != 0 {
-		return fmt.Errorf("keychain item %s was deleted but not re-created (%w): add it again", service, err)
+	var deleted, restored C.int
+	err := status(C.item_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data)), &deleted, &restored))
+	return putError(service, err, deleted != 0, restored != 0)
+}
+
+// putError reports a failed put; deleted and restored say what became of the old item.
+func putError(service string, err error, deleted, restored bool) error {
+	switch {
+	case err == nil || !deleted:
+		return err
+	case restored:
+		return fmt.Errorf("re-creating keychain item %s failed (%w); it was restored with its content and the default access: rerun", service, err)
 	}
-	return err
+	return fmt.Errorf("keychain item %s was deleted and could not be restored (%w): add it again", service, err)
 }
 
 func (k fileKeychain) Exists() error {

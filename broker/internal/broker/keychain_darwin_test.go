@@ -12,6 +12,25 @@ import (
 	"time"
 )
 
+func TestPutError(t *testing.T) {
+	failed := errors.New("keychain status -61")
+	for _, tc := range []struct {
+		err               error
+		deleted, restored bool
+		want              string
+	}{
+		{nil, true, false, ""},
+		{failed, false, false, "keychain status -61"},
+		{failed, true, true, "re-creating keychain item svc failed (keychain status -61); it was restored with its content and the default access: rerun"},
+		{failed, true, false, "keychain item svc was deleted and could not be restored (keychain status -61): add it again"},
+	} {
+		got := putError("svc", tc.err, tc.deleted, tc.restored)
+		if (got == nil) != (tc.want == "") || got != nil && (got.Error() != tc.want || !errors.Is(got, failed)) {
+			t.Fatalf("%+v: %v", tc, got)
+		}
+	}
+}
+
 func TestFileKeychain(t *testing.T) {
 	if os.Getenv("CI") == "" {
 		t.Skip("CI only: security create-keychain adds the throwaway keychain to the user's search list")
