@@ -30,9 +30,9 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Host
 from agent_pm.utils import (
     AGENT_SESSION_ENV,
+    CLIENT_ENV,
     EVENTS_ENV,
     LEASE_ENV,
-    RUN_CLIENT_ENV,
     SID_ENV,
     Display,
     command_path,
@@ -40,12 +40,17 @@ from agent_pm.utils import (
 )
 
 
-def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
-    """The environment less drop and unset, then the launch env, PWD and AGENT_SESSION_ENV; PATH
-    led by the running plugin's bin/, where PATH finds COMMAND (FR-32), when it does.
+def child_env(
+    launch: Launch, cwd: str, drop: Collection[str] = (), client: str | None = None
+) -> dict[str, str]:
+    """The environment less drop and unset, then the launch env, PWD, AGENT_SESSION_ENV and
+    CLIENT_ENV (client, when given); PATH led by the running plugin's bin/, where PATH finds
+    COMMAND (FR-32), when it does.
     """
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
     env = {**env, **launch.env, "PWD": cwd, AGENT_SESSION_ENV: "1"}
+    if client is not None:
+        env[CLIENT_ENV] = client
     command = command_path(COMMAND)
     if command is not None:
         plugin = os.path.dirname(command)
@@ -172,7 +177,4 @@ class Runtime(ABC):
         cwd = command.cwd or spec.access.cwd
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
-        env = child_env(command, cwd, drop)
-        if spec.client is not None:
-            env[RUN_CLIENT_ENV] = spec.client
-        return Prepared(spec, info, command.argv, env)
+        return Prepared(spec, info, command.argv, child_env(command, cwd, drop, spec.client))

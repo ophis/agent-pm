@@ -66,8 +66,7 @@ canceled = ""
 [agent_labels]
 
 # local: [linear_orchestrator.agent_labels]
-# local: claude = "00000000-0000-4000-8000-000000000102"
-# local: codex = "00000000-0000-4000-8000-000000000103"
+# local: "<client>" = "00000000-0000-4000-8000-000000000102"
 
 # Option labels; optional: Linear labels outside the Tasks group that switch on a run option, by id.
 #   visual  local: the Visual label's id; a research issue carrying it gets `Visual: yes` in its input (the researcher

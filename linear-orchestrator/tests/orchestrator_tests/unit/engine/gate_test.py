@@ -9,6 +9,7 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.gate_fixtures import quota_config, quota_provider
 
 NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
+SHARED = ("first", "shared-client")
 
 
 class DelegateQuotaKeys(Case):
@@ -23,7 +24,9 @@ class DelegateQuotaKeys(Case):
         core = {"roles": {"engineer": {"client": "overlay-client"}}}
         provider = quota_provider("catalog-client", 10)
         self.assertFalse(
-            self.gate(provider, client="overlay-client", core=core).blocked("engineer", "TASK-1")
+            self.gate(provider, client="overlay-client", core=core).blocked(
+                "engineer", "TASK-1", key=("first", "overlay-client")
+            )
         )
         self.assertEqual(
             (provider.queried, provider.overlays),
@@ -40,34 +43,34 @@ class DelegateQuotaKeys(Case):
             attempt=1,
         )
         gate = self.gate(provider, client="overlay-client", core=core, log=log)
-        self.assertTrue(gate.blocked("engineer", "TASK-1"))
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("first", "overlay-client")))
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_roles_sharing_a_client_probe_once_even_when_blocked(self):
         provider = quota_provider("shared-client", 95)
         gate = self.gate(provider)
-        self.assertTrue(gate.blocked("engineer", "TASK-1"))
-        self.assertTrue(gate.blocked("pm", "TASK-2"))
-        self.assertTrue(gate.blocked("engineer", "TASK-3"))
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=SHARED))
+        self.assertTrue(gate.blocked("pm", "TASK-2", key=SHARED))
+        self.assertTrue(gate.blocked("engineer", "TASK-3", key=SHARED))
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_allowed_usage_is_not_cached_across_ticks(self):
         provider = quota_provider("shared-client", 10)
         for _ in range(2):
             gate = self.gate(provider)
-            self.assertFalse(gate.blocked("engineer", "TASK-1"))
-            self.assertFalse(gate.blocked("pm", "TASK-2"))
+            self.assertFalse(gate.blocked("engineer", "TASK-1", key=SHARED))
+            self.assertFalse(gate.blocked("pm", "TASK-2", key=SHARED))
         self.assertEqual(provider.queried, ["engineer", "engineer"])
 
     def test_distinct_kinds_sharing_a_client_probe_once(self):
         exhausted = quota_provider("shared-client", 95)
         available = quota_provider("shared-client", 10)
         gate = self.gate(exhausted)
-        self.assertTrue(gate.blocked("engineer", "TASK-1"))
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=SHARED))
         gate.cfg.delegate_kind = "second"
         gate.cfg.delegate_cls = available
         gate.cfg.delegates["second"] = available
-        self.assertTrue(gate.blocked("engineer", "TASK-2"))
+        self.assertTrue(gate.blocked("engineer", "TASK-2", key=("second", "shared-client")))
         self.assertEqual((exhausted.queried, available.queried), (["engineer"], []))
 
     def test_recorded_client_is_probed_through_its_recorded_provider(self):
@@ -85,7 +88,7 @@ class DelegateQuotaKeys(Case):
         )
         self.assertEqual(events[0][0], "usage-skip")
         self.assertEqual(events[0][2]["client"], "saved-client")
-        self.assertTrue(gate.blocked("engineer", "TASK-2"))
+        self.assertTrue(gate.blocked("engineer", "TASK-2", key=("first", "current-client")))
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_missing_recorded_provider_blocks_without_probing_default(self):

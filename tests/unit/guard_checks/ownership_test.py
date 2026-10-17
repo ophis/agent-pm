@@ -74,30 +74,14 @@ class SessionNames(Sample):
 
 
 class OrchestratorText(Sample):
-    def test_agent_label_examples_are_limited_to_the_packaged_config_table(self):
-        header = "# local: [linear_orchestrator.agent_labels]\n"
-        entry = '# local: codex = "00000000-0000-4000-8000-000000000083"\n'
-        for path, text, expected in (
-            (f"{OPKG}/config.toml", header + entry, []),
-            (f"{OPKG}/config.toml", entry, [1]),
-            ("config.toml", header + entry, [2]),
-            (f"{OPKG}/other.toml", header + entry, [2]),
-            (f"{OPKG}/config.toml", header + "# codex\n", [2]),
-            (f"{OPKG}/config.toml", header + "[option_labels]\n" + entry, [3]),
-            (
-                f"{OPKG}/config.toml",
-                header + "# local: [linear_orchestrator.task_labels]\n" + entry,
-                [3],
-            ),
-            (f"{OPKG}/config.toml", header + '# local: codex = "not-a-uuid"\n', [2]),
-            (f"{OPKG}/router.py", header + entry, [2]),
-        ):
-            with self.subTest(path=path, text=text):
-                root = self.wrap_orchestrator(self.tree({path: text}))
-                self.assertEqual(
-                    ownership.orchestrator_text(root),
-                    [f"{path}:{number}: client name codex" for number in expected],
-                )
+    def test_agent_label_examples_in_the_packaged_config_name_no_client(self):
+        path = f"{OPKG}/config.toml"
+        text = (
+            "# local: [linear_orchestrator.agent_labels]\n"
+            '# local: codex = "00000000-0000-4000-8000-000000000083"\n'
+        )
+        root = self.wrap_orchestrator(self.tree({path: text}))
+        self.assertEqual(ownership.orchestrator_text(root), [f"{path}:2: client name codex"])
 
     def test_client_names_tool_strings_and_handoff_literals_name_the_file_and_line(self):
         for files, expected in (

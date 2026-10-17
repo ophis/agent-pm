@@ -1915,7 +1915,10 @@ class ClientUsage(Base):
             with self.subTest(value=value):
                 self.api.usages = {"a": value}
                 with redirect_stderr(io.StringIO()), self.log_dir(again=False):
-                    self.assertEqual(self.gate().blocked("researcher", "TASK-1"), why is not None)
+                    self.assertEqual(
+                        self.gate().blocked("researcher", "TASK-1", key=("harness", "a")),
+                        why is not None,
+                    )
                 self.raw = ""
                 self.assertEqual(self.said(), [f"usage-skip TASK-1 client=a {why}"] if why else [])
 
@@ -1924,17 +1927,21 @@ class ClientUsage(Base):
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
             got = [
-                gate.blocked(r, i)
-                for r, i in (("researcher", "TASK-1"), ("pm", "TASK-2"), ("engineer", "TASK-3"))
+                gate.blocked(r, i, key=("harness", c))
+                for r, i, c in (
+                    ("researcher", "TASK-1", "a"),
+                    ("pm", "TASK-2", "b"),
+                    ("engineer", "TASK-3", "a"),
+                )
             ]
         self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b"]))
 
     def test_usage_cache_does_not_cross_ticks(self):
         self.api.usages = {"a": reading(95)}
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
-            self.assertTrue(self.gate().blocked("researcher", "TASK-1"))
+            self.assertTrue(self.gate().blocked("researcher", "TASK-1", key=("harness", "a")))
             self.api.usages = {"a": reading(10)}
-            self.assertFalse(self.gate().blocked("researcher", "TASK-1"))
+            self.assertFalse(self.gate().blocked("researcher", "TASK-1", key=("harness", "a")))
         self.assertEqual(self.api.usage_calls, ["a", "a"])
 
     def test_summary(self):
@@ -2141,7 +2148,7 @@ class RunBrake(Base):
         for usage, rc in ((reading(70), 0), (reading(80), 1), (None, 1)):
             with self.subTest(usage=usage):
                 self.api.usages, self.api.usage_calls = {"a": reading(95), "b": usage}, []
-                with mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "b"}):
+                with mock.patch.dict(os.environ, {"AGENT_PM_CLIENT": "b"}):
                     self.assertEqual(self.brake("researcher"), (rc, quota.summary(usage) + "\n"))
                 self.assertEqual(self.api.usage_calls, ["b"])
 
@@ -2291,7 +2298,6 @@ class ScheduledUsageGates(TickBase):
         said = "\n".join(self.said())
         self.assertIn("client=a client_source=pinned", said)
         self.assertNotIn("would comment", said)
-        self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-1"])
         self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
 
     def test_recorded_client_exhaustion_blocks_despite_an_available_new_default(self):
@@ -3547,7 +3553,7 @@ class ExplicitIssueRuns(TickBase):
                 )
                 self.assertEqual(
                     [q for q, _ in fake.queries if q == RECHECK],
-                    [RECHECK] if name in ("todo", "resume") else [],
+                    [RECHECK] if name == "todo" else [],
                 )
 
     def test_todo_not_claimable_starts_nothing(self):

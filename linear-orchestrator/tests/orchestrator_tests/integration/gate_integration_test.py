@@ -50,7 +50,7 @@ class RecordedQuotaKeys(Case):
                 )
             ],
         )
-        self.assertFalse(gate.blocked("engineer", "TASK-2"))
+        self.assertFalse(gate.blocked("engineer", "TASK-2", key=("current-kind", "current-client")))
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_limit_in_one_kind_does_not_block_another_kind_with_the_same_client(self):
@@ -67,7 +67,7 @@ class RecordedQuotaKeys(Case):
             attempt=1,
         )
         gate = Gate(path, NOW, cfg=cfg, dry=False)
-        self.assertFalse(gate.blocked("engineer", "TASK-2"))
+        self.assertFalse(gate.blocked("engineer", "TASK-2", key=("current-kind", "shared-client")))
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_expired_saved_limit_probes_and_caches_the_recorded_client(self):

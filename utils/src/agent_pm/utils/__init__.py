@@ -13,9 +13,9 @@ from agent_pm.utils.config_file import (
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.environment import (
     AGENT_SESSION_ENV,
+    CLIENT_ENV,
     EVENTS_ENV,
     LEASE_ENV,
-    RUN_CLIENT_ENV,
     SID_ENV,
     environment_ok,
     nested_start,
@@ -97,6 +97,7 @@ from agent_pm.utils.text import one_line, parse_time, printable, sid_error, time
 __all__ = [
     "AGENT_SESSION_ENV",
     "CLASS_PATH",
+    "CLIENT_ENV",
     "CONFIG_NAME",
     "ConfigFileError",
     "ConfinedFileError",
@@ -116,7 +117,6 @@ __all__ = [
     "Once",
     "OutcomeStatus",
     "ProcessControl",
-    "RUN_CLIENT_ENV",
     "Record",
     "Repo",
     "Runner",

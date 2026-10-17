@@ -110,7 +110,7 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 
 ### Agent label
 
-Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [linear-orchestrator/config.toml](../linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, replacing the example ids with the Agent group's and its child labels' ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
+Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [linear-orchestrator/config.toml](../linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, with one line per client in place of the `"<client>"` line, and the Agent group's and its child labels' ids in place of the example ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
 
 | Agent-group labels at claim recheck | New run |
 |---|---|
@@ -134,9 +134,9 @@ flowchart LR
 
 Switch only with no agent run live.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:54](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L54)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_RUN_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([runtimes/base.py:177](../session/src/agent_pm/session/runtimes/base.py#L177), [router.py:1058](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1058)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([runtimes/base.py:53](../session/src/agent_pm/session/runtimes/base.py#L53), [router.py:1096](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1096)).
 
-`--dry-run` re-reads all candidate labels and prints `client` and `client_source` (`label`, `default`, or `pinned` for a retained client). Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:525](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L525), [router.py:565](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L565)).
+`--dry-run` re-reads each new candidate's labels and prints `client` and `client_source` (`label`, `default`, or `pinned` for a retained client); a resume prints its recorded client as `pinned` without reading labels. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:561](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L561), [router.py:608](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L608)).
 
 Rollout:
 

@@ -762,7 +762,8 @@ class GraphQLQueries(ServerCase):
                             "fromStateId": STATES["in_review"],
                             "toStateId": STATES["handoff"],
                         }
-                    ]
+                    ],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
                 },
                 "comments": {
                     "nodes": [

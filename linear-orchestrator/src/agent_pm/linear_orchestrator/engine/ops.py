@@ -31,7 +31,8 @@ M_SUBSCRIBE = (
 Q_ISSUE_STATE = "query($i: String!) { issue(id: $i) { state { id } } }"
 # orderBy createdAt returns newest first, so the latest moves are on this page.
 HISTORY = (
-    "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId fromStateId toStateId } }"
+    "history(first: 250, after: $after, orderBy: createdAt) { "
+    "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } }"
 )
 NOT_FOUND = "Entity not found"
 
