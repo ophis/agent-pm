@@ -20,6 +20,7 @@ const (
 	digest    = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	imageKey  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	container = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
+	volume    = "agent-pm-crew-worker_1"
 	fakeToken = "FAKE-TOKEN"
 )
 
@@ -42,17 +43,19 @@ func goodLabels() map[string]string {
 
 // world is a scripted Docker Desktop: each field steers one kind of call.
 type world struct {
-	labels       map[string]string
-	imageMissing bool
-	running      string // docker ps output
-	mounts       string // docker inspect .Mounts output
-	exists       bool   // container already present
-	runErr       error
-	execErr      func(args []string) error
-	versions     []string
-	rmErr        error
-	rmSilent     bool // rm --force exits 0 without echoing: the container was absent
-	unreachable  bool
+	labels          map[string]string
+	imageMissing    bool
+	volume          string // "" absent, "matching", "mismatched" or "unlabeled"
+	createUnlabeled bool   // a racing create leaves the volume unlabeled
+	inUse           string // docker ps --filter volume= output
+	chownErr        error
+	exists          bool // container already present
+	runErr          error
+	execErr         func(args []string) error
+	versions        []string
+	rmErr           error
+	rmSilent        bool // rm --force exits 0 without echoing: the container was absent
+	unreachable     bool
 }
 
 func (w *world) docker() *fakeDocker {
@@ -67,10 +70,26 @@ func (w *world) docker() *fakeDocker {
 				return nil, noImage
 			}
 			return inspectJSON(digest, w.labels, time.Time{}), nil
-		case "ps --all", "ps --filter":
-			return []byte(w.running), nil
-		case "inspect --format":
-			return []byte(w.mounts), nil
+		case "ps --filter":
+			return []byte(w.inUse), nil
+		case "volume inspect":
+			switch w.volume {
+			case "matching":
+				return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"` + home + `/src/project"}` + "\n"), nil
+			case "mismatched":
+				return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"/elsewhere"}` + "\n"), nil
+			case "unlabeled":
+				return []byte("null\n"), nil
+			}
+			return nil, &docker.CommandError{Exit: 1, Stderr: "Error response from daemon: get " + volume + ": no such volume"}
+		case "volume create":
+			w.volume = "matching"
+			if w.createUnlabeled {
+				w.volume = "unlabeled"
+			}
+			return []byte(volume + "\n"), nil
+		case "volume rm":
+			return []byte(volume + "\n"), nil
 		case "container inspect":
 			if w.exists {
 				return []byte("[{}]"), nil
@@ -79,6 +98,9 @@ func (w *world) docker() *fakeDocker {
 		}
 		switch args[0] {
 		case "run":
+			if args[1] == "--rm" {
+				return nil, w.chownErr
+			}
 			return []byte("id\n"), w.runErr
 		case "rm":
 			if w.rmErr != nil || w.rmSilent {
@@ -130,7 +152,7 @@ func validManifest(t *testing.T) string {
 
 func startHost(w *world, creds *fakeCreds) (Host, *fakeDocker) {
 	d := w.docker()
-	h := mountHost([]string{home + "/src"}, nil)
+	h := mountHost()
 	h.Docker, h.Creds, h.Endpoint = d, creds, "unix://"+home+"/.docker/run/docker.sock"
 	return h, d
 }
@@ -176,28 +198,24 @@ func TestRuntimeFixtures(t *testing.T) {
 			case "denied":
 				creds.ready = protocol.New(protocol.KeychainFailed, "denied")
 			}
+			switch ctx.Volume {
+			case "matching", "mismatched":
+				w.volume = ctx.Volume
+			case "in_use":
+				w.volume, w.inUse = "matching", "agent-pm-other-0123456789abcdef0123456789abcdef\n"
+			}
 			d := w.docker()
+			m, _ := ParseManifest(c.Data)
 			h := Host{
 				Home:     ctx.Home,
 				Endpoint: "unix://" + ctx.Home + "/.docker/run/docker.sock",
-				Roots:    func() ([]string, error) { return ctx.MountRoots, nil },
-				RealPath: func(p string) (string, error) {
-					if strings.HasSuffix(p, "/claude") || !strings.HasPrefix(p, "/") {
-						return p, nil
-					}
-					m, _ := ParseManifest(c.Data)
-					if p == m.CWD {
-						return ctx.CWDRealpath, nil
-					}
-					return p, nil
-				},
+				IsDir:    func(p string) bool { return ctx.CWDExists || p != m.CWD },
 				Safe: func(string) error {
 					if ctx.ClaudeDirHasSymlink {
 						return errors.New("symlink component")
 					}
 					return nil
 				},
-				Same:   func(a, b string) bool { return a == b },
 				Docker: d,
 				Creds:  creds,
 			}
@@ -209,7 +227,7 @@ func TestRuntimeFixtures(t *testing.T) {
 			if e.Cleanup != protocol.NotNeeded {
 				t.Fatalf("cleanup %s", e.Cleanup)
 			}
-			if e.Code != protocol.StartFailed && hasCall(d, "run") {
+			if e.Code != protocol.StartFailed && (hasCall(d, "run") || hasCall(d, "volume create")) {
 				t.Fatalf("created a container before rejecting: %q", d.verbs())
 			}
 		})
@@ -230,17 +248,13 @@ func TestRunArguments(t *testing.T) {
 	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
 		t.Fatal(err)
 	}
-	var run []string
-	for _, c := range d.calls {
-		if c[0] == "run" {
-			run = c
-		}
-	}
+	run := detached(d)
 	cwd, claude := home+"/src/project", home+"/.agent-pm/docker-state/worker_1/claude"
 	want := []string{"run", "--detach", "--name", container, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", cwd, "--env", "CLAUDE_CONFIG_DIR=" + claude,
+		"--env", "npm_config_cache=" + cwd + "/.agent-pm-cache", "--env", "UV_CACHE_DIR=" + cwd + "/.agent-pm-cache", "--env", "PIP_CACHE_DIR=" + cwd + "/.agent-pm-cache",
 		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "team=crew",
-		"--mount", "type=bind,source=" + cwd + ",target=" + cwd, "--mount", "type=bind,source=" + claude + ",target=" + claude,
+		"--mount", "type=volume,source=" + volume + ",target=" + cwd, "--mount", "type=bind,source=" + claude + ",target=" + claude,
 		"--tmpfs", "/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536,mode=0700,uid=1001,gid=1002",
 		"--entrypoint", "/usr/bin/tini", digest, "--", "sleep", "infinity"}
 	if !slices.Equal(run, want) {
@@ -255,9 +269,56 @@ func TestRunArguments(t *testing.T) {
 	}
 }
 
-func TestMountCSVQuoting(t *testing.T) {
-	if got := bindMount("/a,b", `/c"d`); got != `type=bind,"source=/a,b","target=/c""d"` {
-		t.Fatal(got)
+// detached is the worker's docker run call; nil if none ran.
+func detached(d *fakeDocker) []string {
+	for _, c := range d.calls {
+		if len(c) > 1 && c[0] == "run" && c[1] == "--detach" {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestStartVolume(t *testing.T) {
+	create := []string{"volume", "create", "--label", "agent-pm.kind=crew", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
+	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
+		"--mount", "type=volume,source=" + volume + ",target=/workspace", "--entrypoint", "/bin/chown", digest, "1001:1002", "/workspace"}
+	has := func(d *fakeDocker, call []string) bool {
+		return slices.ContainsFunc(d.calls, func(c []string) bool { return slices.Equal(c, call) })
+	}
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), validManifest(t)); err != nil || !has(d, create) || !has(d, chown) {
+		t.Fatalf("absent: %v %q", err, d.calls)
+	}
+	h, d = startHost(&world{labels: goodLabels(), volume: "matching"}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), validManifest(t)); err != nil || hasCall(d, "volume create") || hasCall(d, "run --rm") || detached(d) == nil {
+		t.Fatalf("matching: %v %q", err, d.verbs())
+	}
+	for name, w := range map[string]*world{
+		"mismatched":         {volume: "mismatched"},
+		"unlabeled":          {volume: "unlabeled"},
+		"unlabeled by racer": {createUnlabeled: true},
+		"in use":             {volume: "matching", inUse: "agent-pm-other-0123456789abcdef0123456789abcdef\n"},
+	} {
+		w.labels = goodLabels()
+		h, d := startHost(w, &fakeCreds{})
+		_, err := h.Start(context.Background(), validManifest(t))
+		e := protoErr(t, err)
+		if e.Code != protocol.MountRejected || e.Cleanup != protocol.NotNeeded || hasCall(d, "run") || hasCall(d, "volume rm") {
+			t.Fatalf("%s: %+v %q", name, e, d.verbs())
+		}
+		if name == "in use" && !strings.Contains(e.Message, "agent-pm-other-") {
+			t.Fatalf("in use: %q", e.Message)
+		}
+	}
+	h, d = startHost(&world{labels: goodLabels(), chownErr: &docker.CommandError{Exit: 1, Stderr: "boom"}}, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	if e := protoErr(t, err); e.Code != protocol.StartFailed || !has(d, []string{"volume", "rm", volume}) || detached(d) != nil {
+		t.Fatalf("chown: %+v %q", e, d.calls)
+	}
+	h, d = startHost(&world{labels: goodLabels(), unreachable: true}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), validManifest(t)); protoErr(t, err).Code != protocol.DockerUnreachable {
+		t.Fatal(err)
 	}
 }
 
@@ -286,7 +347,7 @@ func TestStartOrder(t *testing.T) {
 		}
 		steps = append(steps, step)
 	}
-	wantSteps := []string{"image inspect", "ps --filter", "container inspect", "run --detach",
+	wantSteps := []string{"image inspect", "container inspect", "volume inspect", "volume create", "volume inspect", "ps --filter", "run --rm", "run --detach",
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"agent claude --version", "agent codex --version",
@@ -297,7 +358,7 @@ func TestStartOrder(t *testing.T) {
 	if inject := d.calls[len(d.calls)-1]; !slices.Equal(inject, []string{"exec", "--interactive", "--user", "agent", container, "inject"}) {
 		t.Fatalf("inject %q", inject)
 	}
-	boot, hook := d.calls[4], d.calls[5]
+	boot, hook := d.calls[8], d.calls[9]
 	if !slices.Equal(boot[len(boot)-3:], []string{"claude", home + "/.agent-pm/docker-state/worker_1/claude", home + "/src/project"}) ||
 		!slices.Equal(hook[len(hook)-2:], []string{"hook", "/usr/local/bin/agent-pm-session"}) {
 		t.Fatalf("%q %q", boot, hook)
@@ -405,7 +466,7 @@ func TestManifestUnreadable(t *testing.T) {
 
 func TestHookUnderUncleanCWD(t *testing.T) {
 	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
-		`","cwd":"` + home + `/src/project/.","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{}}`
+		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-crew-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{}}`
 	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))
 	if protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run") {

@@ -43,7 +43,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"3"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"4"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -211,6 +211,8 @@ func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, 
 	case strings.HasPrefix(joined, "image inspect"):
 		return []byte(`[{"Id":"sha256:` + strings.Repeat("b", 64) + `","Config":{"Labels":{"agent-pm.key":"` + strings.Repeat("a", 64) +
 			`","agent-pm.version":"1.2.3","agent-pm.agent-uid":"1001","agent-pm.agent-gid":"1002"}}}]`), nil
+	case strings.HasPrefix(joined, "volume inspect"):
+		return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"/Users/example/src/project"}`), nil
 	case strings.HasPrefix(joined, "container inspect"):
 		return nil, &docker.CommandError{Exit: 1, Stderr: "No such container"}
 	case strings.HasSuffix(joined, "--version"):
@@ -234,12 +236,10 @@ func TestTokenNeverLeaves(t *testing.T) {
 		d := &scripted{fail: fail}
 		h := launcher.Host{
 			Home: home, Endpoint: "unix://" + home + "/.docker/run/docker.sock",
-			Roots:    func() ([]string, error) { return []string{home + "/src"}, nil },
-			RealPath: func(p string) (string, error) { return p, nil },
-			Safe:     func(string) error { return nil },
-			Same:     func(a, b string) bool { return a == b },
-			Docker:   d,
-			Creds:    broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
+			IsDir:  func(string) bool { return true },
+			Safe:   func(string) error { return nil },
+			Docker: d,
+			Creds:  broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
 		}
 		a := app{start: func(ctx context.Context, m string, _ io.Writer) (any, error) { return h.Start(ctx, m) }}
 		_, out, errOut := invoke(a, "start", "--manifest", path)

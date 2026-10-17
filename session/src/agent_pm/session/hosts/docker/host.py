@@ -79,7 +79,7 @@ from agent_pm.session.hosts.docker.daemon import (
     endpoint,
     exec_runner,
 )
-from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
+from agent_pm.session.hosts.docker.mounts import check_cwd, crew_volume, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
@@ -208,8 +208,10 @@ def _report_plan(name: str, plan: Mapping) -> None:
     except OSError as error:
         raise SessionError(f"docker session {name}: plan: {error}") from None
     mounts = ", ".join(f"{mount['path']} rw" for mount in plan["mounts"])
+    workspace = plan["workspace"]
     for part in (
         f"image {plan['image']} {plan['image_digest']}",
+        f"workspace {workspace['volume']} at {workspace['path']} rw",
         f"mounts {mounts}",
         f"credential {plan['credential']}",
     ):
@@ -421,8 +423,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker (the CLI's absolute path) and mount_roots (the dirs a
-    session's cwd may lie under). Only terminal sessions run here.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Only terminal sessions run here,
+    each on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -437,16 +439,12 @@ class DockerHost(Host):
         broker: Broker | None = None,
     ) -> None:
         super().__init__(name, settings)
-        if extra := sorted(set(self.settings) - {"docker", "mount_roots"}):
-            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
+        if extra := sorted(set(self.settings) - {"docker"}):
+            removed = "; see docs/upgrading.md" if extra[0] == "mount_roots" else ""
+            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]{removed}")
         self.docker = self.settings.get("docker")
         if not isinstance(self.docker, str) or not os.path.isabs(self.docker):
             raise ConfigError(f"[hosts.{name}] docker: want an absolute path")
-        self.roots = self.settings.get("mount_roots", [])
-        if not isinstance(self.roots, list | tuple) or not all(
-            isinstance(root, str) for root in self.roots
-        ):
-            raise ConfigError(f"[hosts.{name}] mount_roots: want a list of paths")
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
@@ -619,8 +617,7 @@ class DockerHost(Host):
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
-        roots = [os.path.realpath(os.path.expanduser(root)) for root in self.roots]
-        check_cwd(cwd, roots, os.path.realpath(account_home()))
+        check_cwd(cwd, os.path.realpath(account_home()))
 
     def _image(
         self, name: str, *, max_age: int | None = REFRESH
@@ -699,6 +696,7 @@ class DockerHost(Host):
         hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
         cwd = os.path.realpath(launch.cwd)
+        volume = crew_volume(name)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
             manifest,
@@ -706,6 +704,7 @@ class DockerHost(Host):
             generation=generation,
             image=image,
             cwd=cwd,
+            workspace=volume,
             home=(field, home),
             hook_path=hook,
         )
@@ -716,7 +715,8 @@ class DockerHost(Host):
                 "generation": generation,
                 "image": image,
                 "image_digest": digest,
-                "mounts": [{"path": cwd, "rw": True}, {"path": home, "rw": True}],
+                "workspace": {"volume": volume, "path": cwd},
+                "mounts": [{"path": home, "rw": True}],
                 "credential": credential,
             },
         )

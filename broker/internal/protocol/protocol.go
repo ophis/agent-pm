@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const Version = "3"
+const Version = "4"
 
 type Code string
 

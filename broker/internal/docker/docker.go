@@ -53,10 +53,11 @@ func Diagnostic(err error) string {
 	return err.Error()
 }
 
-// Absent reports whether Docker says the image, object or container does not exist.
+// Absent reports whether Docker says the image, object, container or volume does not exist.
 func Absent(err error) bool {
 	var ce *CommandError
-	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
+	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") ||
+		strings.Contains(ce.Stderr, "No such container") || strings.Contains(ce.Stderr, "no such volume"))
 }
 
 // Conflict reports whether Docker refused a container name another container holds.

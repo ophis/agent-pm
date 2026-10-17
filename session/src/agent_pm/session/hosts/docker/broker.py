@@ -19,7 +19,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "3"
+PROTOCOL = "4"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -300,6 +300,7 @@ def write_manifest(
     generation: str,
     image: str,
     cwd: str,
+    workspace: str,
     home: tuple[str, str],
     hook_path: str,
 ) -> None:
@@ -310,6 +311,7 @@ def write_manifest(
         "generation": generation,
         "image": image,
         "cwd": cwd,
+        "workspace": workspace,
         field: home_path,
         "hook_path": hook_path,
         "labels": {},

@@ -10,13 +10,13 @@ import (
 )
 
 type Context struct {
-	Home                string   `json:"home"`
-	MountRoots          []string `json:"mount_roots"`
-	CWDRealpath         string   `json:"cwd_realpath"`
-	ClaudeDirHasSymlink bool     `json:"claude_dir_has_symlink"`
-	Login               string   `json:"login"`
-	Image               string   `json:"image"`
-	Docker              string   `json:"docker"`
+	Home                string `json:"home"`
+	CWDExists           bool   `json:"cwd_exists"`
+	Volume              string `json:"volume"`
+	ClaudeDirHasSymlink bool   `json:"claude_dir_has_symlink"`
+	Login               string `json:"login"`
+	Image               string `json:"image"`
+	Docker              string `json:"docker"`
 }
 
 type Case struct {

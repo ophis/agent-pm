@@ -160,7 +160,7 @@ class Base(Case):
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
-            {"docker": DOCKER, "mount_roots": [os.path.join(self.account, "src")]},
+            {"docker": DOCKER},
             run=self.docker,
             broker=self.broker,
         )
@@ -253,19 +253,20 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
-                "mount_roots": [],
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
-        self.assertEqual(DockerHost("docker", settings).roots, [])
+        self.assertEqual(DockerHost("docker", settings).docker, "/usr/local/bin/docker")
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
-            ({"docker": DOCKER, "other": 1}, "'other'"),
+            ({"docker": DOCKER, "other": 1}, r"^unknown key 'other' in \[hosts.docker\]$"),
             ({"docker": "docker"}, "docker"),
-            ({"docker": DOCKER, "mount_roots": "/src"}, "mount_roots"),
-            ({"docker": DOCKER, "mount_roots": ["/src", 1]}, "mount_roots"),
+            (
+                {"docker": DOCKER, "mount_roots": ["~/src"]},
+                r"^unknown key 'mount_roots' in \[hosts.docker\]; see docs/upgrading.md$",
+            ),
         ):
             with self.subTest(settings=settings), self.assertRaisesRegex(ConfigError, key):
                 DockerHost("docker", settings)
@@ -395,6 +396,7 @@ class StartTest(Base):
                     "generation": GEN,
                     "image": IMAGE,
                     "cwd": self.cwd,
+                    "workspace": "agent-pm-crew-w",
                     "agent_dir": self.home_dir,
                     "hook_path": os.path.join(REPO, "bin", "agent-pm-session"),
                     "labels": {},
@@ -653,10 +655,8 @@ class StartTest(Base):
                         "generation": GEN,
                         "image": IMAGE,
                         "image_digest": DIGEST,
-                        "mounts": [
-                            {"path": self.cwd, "rw": True},
-                            {"path": self.home_dir, "rw": True},
-                        ],
+                        "workspace": {"volume": "agent-pm-crew-w", "path": self.cwd},
+                        "mounts": [{"path": self.home_dir, "rw": True}],
                         "credential": "agent-token",
                     },
                 )
@@ -665,7 +665,8 @@ class StartTest(Base):
                     stderr.getvalue().splitlines(),
                     [
                         f"{head} image {IMAGE} {DIGEST}",
-                        f"{head} mounts {self.cwd} rw, {self.home_dir} rw",
+                        f"{head} workspace agent-pm-crew-w at {self.cwd} rw",
+                        f"{head} mounts {self.home_dir} rw",
                         f"{head} credential agent-token",
                     ],
                 )
@@ -708,9 +709,11 @@ class StartTest(Base):
             self.start()
         self.assertEqual({step[0] for step in self.order}, {"ps"})
 
-    def test_bad_cwd_fails_before_any_docker_call(self):
-        self.launch = Launch(("agent",), cwd=self.account, env={})
-        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.account}"):
+    def test_a_role_run_cwd_fails_before_any_docker_call(self):
+        cwd = os.path.join(self.account, ".agent-pm", "adhoc", "x", "agent")
+        os.makedirs(cwd)
+        self.launch = Launch(("agent",), cwd=cwd, env={})
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: role runs are not supported"):
             self.start()
         self.assertEqual(self.order, [])
 

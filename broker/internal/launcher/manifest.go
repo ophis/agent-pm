@@ -13,9 +13,17 @@ import (
 )
 
 type Manifest struct {
-	Name, Generation, Image, CWD, ClaudeDir, HookPath string
-	HasHook                                           bool
-	Labels                                            map[string]string
+	Name, Generation, Image, CWD, Workspace, ClaudeDir, HookPath string
+	HasHook                                                      bool
+	Labels                                                       map[string]string
+}
+
+// Kind is the workspace volume's agent-pm.kind label: run or crew.
+func (m Manifest) Kind() string {
+	if strings.HasPrefix(m.Workspace, "agent-pm-run-") {
+		return "run"
+	}
+	return "crew"
 }
 
 var (
@@ -23,13 +31,14 @@ var (
 	generationPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+	runVolumePattern  = regexp.MustCompile(`^agent-pm-run-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`)
 )
 
 func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
-// ParseManifest validates a manifest against protocol 1's schema; every failure is manifest_rejected.
+// ParseManifest validates a manifest against the protocol's schema; every failure is manifest_rejected.
 func ParseManifest(data []byte) (Manifest, error) {
 	reject := func(format string, args ...any) (Manifest, error) {
 		return Manifest{}, protocol.Newf(protocol.ManifestRejected, "Manifest rejected: "+format, args...)
@@ -99,7 +108,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	}
 	var m Manifest
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
-		"cwd": &m.CWD, "claude_dir": &m.ClaudeDir, "hook_path": &m.HookPath}
+		"cwd": &m.CWD, "workspace": &m.Workspace, "claude_dir": &m.ClaudeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
 		if key == "labels" {
 			continue
@@ -112,7 +121,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return reject("field %q must be a string without control characters", key)
 		}
 	}
-	for _, key := range []string{"name", "generation", "image", "cwd", "claude_dir", "labels"} {
+	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "labels"} {
 		if _, ok := fields[key]; !ok {
 			return reject("missing field %q", key)
 		}
@@ -125,6 +134,8 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return reject("invalid generation")
 	case !imagePattern.MatchString(m.Image):
 		return reject("image must be agent-pm-worker:<64 hex>")
+	case m.Workspace != "agent-pm-crew-"+m.Name && !runVolumePattern.MatchString(m.Workspace):
+		return reject("workspace must be agent-pm-crew-<name> or agent-pm-run-<dir>-<8 hex>")
 	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
 		return reject("paths must be absolute")
 	}

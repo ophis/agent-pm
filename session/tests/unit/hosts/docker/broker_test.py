@@ -197,6 +197,7 @@ class ManifestTest(Case):
             generation="0" * 32,
             image="agent-pm-worker:" + "a" * 64,
             cwd="/work",
+            workspace="agent-pm-crew-w",
             home=("x_dir", "/home/x"),
             hook_path="/plugin/bin/agent-pm-session",
         )
@@ -208,6 +209,7 @@ class ManifestTest(Case):
                     "generation": "0" * 32,
                     "image": "agent-pm-worker:" + "a" * 64,
                     "cwd": "/work",
+                    "workspace": "agent-pm-crew-w",
                     "x_dir": "/home/x",
                     "hook_path": "/plugin/bin/agent-pm-session",
                     "labels": {},

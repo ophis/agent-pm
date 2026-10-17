@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 3",
+  "title": "Docker broker protocol 4",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -90,6 +90,10 @@
       ],
       "pattern": "^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$"
     },
+    "workspace": {
+      "type": "string",
+      "pattern": "^agent-pm-(crew-[A-Za-z0-9_-]+|run-[A-Za-z0-9_.-]+-[0-9a-f]{8})$"
+    },
     "endpoint": {
       "type": "string",
       "minLength": 1,
@@ -141,6 +145,9 @@
         "cwd": {
           "$ref": "#/$defs/path"
         },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
         "claude_dir": {
           "$ref": "#/$defs/path"
         },
@@ -156,6 +163,7 @@
         "generation",
         "image",
         "cwd",
+        "workspace",
         "claude_dir",
         "labels"
       ],
@@ -184,7 +192,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "3"
+          "const": "4"
         }
       },
       "required": [

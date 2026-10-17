@@ -2,7 +2,8 @@
   "name": "worker_1",
   "generation": "0123456789abcdef0123456789abcdef",
   "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "cwd": "/Users/example/.agent-pm/x",
+  "cwd": "/lib64/x",
+  "workspace": "agent-pm-crew-worker_1",
   "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
