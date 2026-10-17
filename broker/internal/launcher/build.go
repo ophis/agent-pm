@@ -25,6 +25,7 @@ var assets embed.FS
 
 var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$`)
+var builtPattern = regexp.MustCompile(`^agent-pm-(?:user|worker):[0-9a-f]{64}$`)
 
 type imageInfo struct {
 	ID     string `json:"Id"`
@@ -244,5 +245,53 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	if !found || labels["agent-pm.key"] != key || labels["agent-pm.version"] != version || labels["agent-pm.agent-uid"] != uid || labels["agent-pm.agent-gid"] != gid {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Built image labels do not match the package.")
 	}
+	h.prune(ctx, key)
 	return BuildResult{Image: image, Digest: info.ID, Rebuilt: true}, nil
+}
+
+// prune removes the user and worker images of keys other than key that no container, running or stopped, uses,
+// noting each to Progress; whatever fails is kept and never fails the build.
+func (h Host) prune(ctx context.Context, key string) {
+	note := func(s string) {
+		if h.Progress != nil {
+			fmt.Fprintln(h.Progress, "agent-pm-broker: "+s)
+		}
+	}
+	used, err := h.usedImages(ctx)
+	if err != nil {
+		note("kept older images: cannot list containers: " + docker.Diagnostic(err))
+		return
+	}
+	out, err := h.Docker.Run(ctx, []string{"image", "ls", "--no-trunc", "--format", "{{.Repository}}:{{.Tag}} {{.ID}}"}, nil)
+	if err != nil {
+		note("kept older images: cannot list images: " + docker.Diagnostic(err))
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		ref, id, _ := strings.Cut(line, " ")
+		if !builtPattern.MatchString(ref) || strings.HasSuffix(ref, ":"+key) || used[id] {
+			continue
+		}
+		// No --force: Docker also refuses an image a container uses.
+		if _, err := h.Docker.Run(ctx, []string{"image", "rm", ref}, nil); err != nil {
+			note("kept " + ref + ": " + docker.Diagnostic(err))
+		} else {
+			note("removed " + ref)
+		}
+	}
+}
+
+// usedImages is the set of image IDs every container, running or stopped, was created from.
+func (h Host) usedImages(ctx context.Context) (map[string]bool, error) {
+	out, err := h.Docker.Run(ctx, []string{"container", "ls", "--all", "--quiet", "--no-trunc"}, nil)
+	ids := strings.Fields(string(out))
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	out, err = h.Docker.Run(ctx, append([]string{"container", "inspect", "--format", "{{.Image}}"}, ids...), nil)
+	used := map[string]bool{}
+	for _, id := range strings.Fields(string(out)) {
+		used[id] = true
+	}
+	return used, err
 }
