@@ -1,10 +1,7 @@
 package launcher
 
 import (
-	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,31 +11,28 @@ import (
 
 const home = "/Users/example"
 
-func mountHost(roots []string, real map[string]string) Host {
+// mountHost sees every directory as present but those in missing.
+func mountHost(missing ...string) Host {
 	return Host{
 		Home:  home,
-		Roots: func() ([]string, error) { return roots, nil },
-		RealPath: func(p string) (string, error) {
-			if r, ok := real[p]; ok {
-				return r, nil
-			}
-			return p, nil
-		},
-		Safe: func(string) error { return nil },
-		Same: func(a, b string) bool { return a == b },
+		IsDir: func(p string) bool { return !slices.Contains(missing, p) },
+		Safe:  func(string) error { return nil },
 	}
 }
 
 func baseManifest() Manifest {
-	return Manifest{Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project",
+	return Manifest{Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project", Workspace: "agent-pm-crew-w",
 		ClaudeDir: home + "/.agent-pm/docker-state/w/claude", HookPath: "/usr/local/bin/agent-pm-session", HasHook: true}
 }
 
 func TestMountRules(t *testing.T) {
-	roots := []string{home + "/src"}
-	ok := mountHost(roots, nil)
-	if real, err := ok.checkMounts(baseManifest()); err != nil || real != home+"/src/project" {
-		t.Fatalf("%q %v", real, err)
+	ok := mountHost()
+	for _, cwd := range []string{home + "/src/project", home + "/.agent-pm/adhoc/x/agent", "/home/alice/src/p", "/tmp/demo", "/opt/other/p", "/var/tmp/p", "/usr2", "/homework"} {
+		m := baseManifest()
+		m.CWD = cwd
+		if err := ok.checkMounts(m); err != nil {
+			t.Errorf("%s: %v", cwd, err)
+		}
 	}
 	type tc struct {
 		name   string
@@ -46,39 +40,43 @@ func TestMountRules(t *testing.T) {
 		edit   func(*Manifest)
 		reason string
 	}
+	cwd := func(p string) func(*Manifest) { return func(m *Manifest) { m.CWD = p } }
 	cases := []tc{
-		{"no roots", mountHost(nil, nil), nil, "mount_roots"},
-		{"roots unreadable", Host{Home: home, Roots: func() ([]string, error) { return nil, errors.New("bad toml") }}, nil, "mount_roots"},
-		{"home root", mountHost([]string{home + "/src", home}, nil), nil, "mount root"},
-		{"ancestor root", mountHost([]string{"/Users"}, nil), nil, "mount root"},
-		{"root resolves to home", mountHost([]string{"/link"}, map[string]string{"/link": home}), nil, "mount root"},
-		{"outside roots", ok, func(m *Manifest) { m.CWD = "/tmp/elsewhere" }, "outside"},
-		{"symlink to secret", mountHost(roots, map[string]string{home + "/src/project": home + "/.ssh"}), nil, ""},
-		{"contains denied", mountHost([]string{"/data"}, map[string]string{home + "/src/project": "/data/keys", home + "/.ssh": "/data/keys/ssh"}), nil, "denied"},
+		{"missing cwd", mountHost(home + "/src/project"), nil, "existing host directory"},
+		{"root", ok, cwd("/"), "contains"},
+		{"home", ok, cwd(home), "claude_dir"},
+		{"Users", ok, cwd("/Users"), "claude_dir"},
+		{"state dir", ok, cwd(home + "/.agent-pm/docker-state/w"), "claude_dir"},
+		{"claude dir", ok, cwd(home + "/.agent-pm/docker-state/w/claude"), "claude_dir"},
+		{"inside claude dir", ok, cwd(home + "/.agent-pm/docker-state/w/claude/x"), "claude_dir"},
 		{"claude dir wrong", ok, func(m *Manifest) { m.ClaudeDir = home + "/.agent-pm/docker-state/other/claude" }, "claude_dir"},
 		{"claude dir trailing slash", ok, func(m *Manifest) { m.ClaudeDir += "/" }, "claude_dir"},
 		{"hook in cwd", ok, func(m *Manifest) { m.HookPath = home + "/src/project/bin/hook" }, "hook_path"},
 		{"hook is cwd", ok, func(m *Manifest) { m.HookPath = home + "/src/project" }, "hook_path"},
+		{"cwd inside hook", ok, func(m *Manifest) { m.CWD, m.HookPath = home+"/src/project", home+"/src" }, "hook_path"},
 		{"hook in claude dir", ok, func(m *Manifest) { m.HookPath = m.ClaudeDir + "/hook" }, "hook_path"},
 		{"hook in secrets", ok, func(m *Manifest) { m.HookPath = "/run/agent-pm/secrets/claude" }, "hook_path"},
 		{"hook dotdot", ok, func(m *Manifest) { m.HookPath = "/tmp/../" + home + "/src/project/h" }, "hook_path"},
 		{"hook dot", ok, func(m *Manifest) { m.HookPath = "/usr/./bin/h" }, "hook_path"},
 		{"hook empty component", ok, func(m *Manifest) { m.HookPath = "/usr//bin/h" }, "hook_path"},
 	}
-	unsafe := mountHost(roots, nil)
+	for _, p := range []string{"/usr", "/etc", "/opt", "/run", "/home", "/tmp", "/proc", "/sys", "/dev"} {
+		cases = append(cases, tc{"equal " + p, ok, cwd(p), "contains"})
+	}
+	for _, p := range []string{"/usr/lib/x", "/etc/x", "/opt/agent-pm", "/opt/agent-pm/lib", "/run/agent-pm", "/proc/1", "/sys/x", "/dev/x",
+		"/bin", "/sbin/x", "/lib/x", "/lib32", "/lib64/x", "/libx32", "/var/run/agent-pm", "/var/lock", "/home/agent", "/home/agent/.npm-global"} {
+		cases = append(cases, tc{"inside " + p, ok, cwd(p), "inside"})
+	}
+	unsafe := mountHost()
 	unsafe.Safe = func(string) error { return errors.New("symlink component") }
 	cases = append(cases, tc{"claude dir symlink", unsafe, nil, "claude_dir"})
-	for _, name := range []string{".agent-pm/x", ".ssh", "Library", ".codex", ".claude", ".config", ".docker", ".aws", ".gnupg", ".kube", ".npmrc"} {
-		cwd := home + "/" + name
-		cases = append(cases, tc{"deny " + name, mountHost([]string{home + "/src", cwd}, nil), func(m *Manifest) { m.CWD = cwd }, "denied"})
-	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := baseManifest()
 			if c.edit != nil {
 				c.edit(&m)
 			}
-			_, err := c.host.checkMounts(m)
+			err := c.host.checkMounts(m)
 			var e *protocol.Error
 			if !errors.As(err, &e) || e.Code != protocol.MountRejected || !strings.Contains(e.Message, c.reason) {
 				t.Fatalf("%v", err)
@@ -87,90 +85,19 @@ func TestMountRules(t *testing.T) {
 	}
 	noHook := baseManifest()
 	noHook.HasHook, noHook.HookPath = false, ""
-	if _, err := ok.checkMounts(noHook); err != nil {
+	if err := ok.checkMounts(noHook); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestIdentityCaseVariant(t *testing.T) {
-	dir := t.TempDir()
-	upper := filepath.Join(dir, "Secret")
-	if err := os.Mkdir(upper, 0o755); err != nil {
-		t.Fatal(err)
+func TestMountCSVQuoting(t *testing.T) {
+	if got := bindMount("/a,b", `/c"d`); got != `type=bind,"source=/a,b","target=/c""d"` {
+		t.Fatal(got)
 	}
-	lower := filepath.Join(dir, "secret")
-	if _, err := os.Stat(lower); err != nil {
-		t.Skip("case-sensitive filesystem")
+	if got := volumeMount("agent-pm-crew-w", "/a,b", true); got != `type=volume,source=agent-pm-crew-w,"target=/a,b",readonly` {
+		t.Fatal(got)
 	}
-	inside := filepath.Join(lower, "x")
-	if err := os.Mkdir(inside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h := Host{Same: realSame}
-	if !h.within(inside, upper) || !h.within(lower, upper) || h.within(dir, upper) {
-		t.Fatal("identity comparison missed a case variant")
-	}
-	if !realSame("/nonexistent/AbC", "/nonexistent/abc") || realSame(upper, "/nonexistent") {
-		t.Fatal("absent paths")
-	}
-}
-
-func TestLoadRoots(t *testing.T) {
-	home := t.TempDir()
-	write := func(text string) {
-		t.Helper()
-		putFile(t, filepath.Join(home, ".agent-pm/config.local.toml"), text)
-	}
-	if roots, err := LoadRoots(home); err != nil || len(roots) != 0 {
-		t.Fatalf("missing file: %q %v", roots, err)
-	}
-	write("[session]\nx = 1\n")
-	if roots, err := LoadRoots(home); err != nil || len(roots) != 0 {
-		t.Fatalf("missing key: %q %v", roots, err)
-	}
-	write("[session.hosts]\ndefault = \"docker\"\n\n[session.hosts.docker]\nmount_roots = [\"~/src\", \"~\", \"/abs/work\"]\n")
-	roots, err := LoadRoots(home)
-	if err != nil || !slices.Equal(roots, []string{filepath.Join(home, "src"), home, "/abs/work"}) {
-		t.Fatalf("%q %v", roots, err)
-	}
-	write("[session]\nhosts.docker.mount_roots = [\"/a\"]\n")
-	if roots, err := LoadRoots(home); err != nil || !slices.Equal(roots, []string{"/a"}) {
-		t.Fatalf("dotted: %q %v", roots, err)
-	}
-	for _, bad := range []string{
-		"[session.hosts.docker]\nmount_roots = \"/a\"\n",
-		"[session.hosts.docker]\nmount_roots = [1]\n",
-		"[session.hosts.docker]\nmount_roots = [\"relative\"]\n",
-		"[session.hosts.docker]\nmount_roots = [\"~user/x\"]\n",
-		"[session.hosts\n",
-	} {
-		write(bad)
-		if _, err := LoadRoots(home); err == nil {
-			t.Errorf("accepted %q", bad)
-		}
-	}
-	if err := os.Chmod(filepath.Join(home, ".agent-pm/config.local.toml"), 0); err == nil && os.Getuid() != 0 {
-		if _, err := LoadRoots(home); err == nil {
-			t.Error("unreadable config accepted")
-		}
-	}
-}
-
-func TestNestedInRunningWorker(t *testing.T) {
-	for source, rejected := range map[string]bool{home + "/src": true, home + "/src/project": false, home + "/other": false,
-		"/host_mnt" + home + "/src": true, "/host_mnt" + home + "/other": false, "/gone/src": true} {
-		w := &world{labels: goodLabels(), running: "c1\n", mounts: `[{"Type":"bind","Source":"` + source + `","Destination":"/x"},{"Type":"tmpfs","Source":"","Destination":"/run"}]` + "\n"}
-		h, d := startHost(w, &fakeCreds{})
-		// Like the host: VM paths and deleted directories do not resolve.
-		h.RealPath = func(p string) (string, error) {
-			if strings.HasPrefix(p, "/host_mnt/") || strings.HasPrefix(p, "/gone/") {
-				return "", os.ErrNotExist
-			}
-			return p, nil
-		}
-		_, err := h.Start(context.Background(), validManifest(t))
-		if rejected != (err != nil) || rejected && (protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run")) {
-			t.Fatalf("%s: %v", source, err)
-		}
+	if got := volumeMount("v", "/w", false); got != `type=volume,source=v,target=/w` {
+		t.Fatal(got)
 	}
 }

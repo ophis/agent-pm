@@ -1,8 +1,10 @@
+import io
 import json
 import os
 import runpy
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.case import REPO, Case
@@ -160,3 +162,115 @@ class DefaultDockerfile(Case):
         ):
             self.assertIn(needle, text)
         self.assertNotIn("SHASUMS256", text)
+
+
+CACHE = ".agent-pm-cache"
+
+
+class WorkspaceCheck(Case):
+    """The walk, argv and output over a fake git; real git: workspace_check_integration_test.py."""
+
+    def setUp(self):
+        self.check = script("workspace-check")
+        self.root = Path(self.home, "work")
+        self.calls = []
+
+    def repo(self, rel):
+        (self.root / rel / ".git").mkdir(parents=True)
+
+    def run(self, dirty=(), failing=()):
+        def run(argv, **kw):
+            rel = os.path.relpath(kw["cwd"], self.root)
+            self.calls.append((argv, kw))
+            if rel in failing:
+                raise OSError("no git")
+            out = "?? x\n" if rel in dirty and argv[8] == "status" else ""
+            return SimpleNamespace(returncode=0, stdout=out)
+
+        return run
+
+    def test_repos_up_to_three_levels_outside_git_and_cache_dirs(self):
+        for rel in (
+            ".",
+            "publish",
+            "src/o/a",
+            "a/b/c/d",
+            ".agent-pm-cache/x",
+            "src/o/a/.git/modules/m",
+        ):
+            self.repo(rel)
+        (self.root / "src" / "link").symlink_to(self.root / "a")
+        self.assertEqual(
+            [os.path.relpath(p, self.root) for p in self.check["repos"](str(self.root), CACHE)[0]],
+            [".", "publish", "src/o/a"],
+        )
+
+    def test_git_runs_guarded_without_optional_locks_and_a_failure_counts_as_dirty(self):
+        for rel in ("publish", "src/o/a", "src/o/b"):
+            self.repo(rel)
+        found = self.check["dirty"](
+            str(self.root), CACHE, run=self.run(dirty={"src/o/a"}, failing={"src/o/b"})
+        )
+        self.assertEqual(found, ["src/o/a", "src/o/b"])
+        guard = [
+            "git",
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "safe.directory=*",
+        ]
+        publish = [argv for argv, kw in self.calls if kw["cwd"] == str(self.root / "publish")]
+        self.assertEqual(
+            publish,
+            [
+                [
+                    *guard,
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                    "--",
+                    ".",
+                    ":(exclude).agent-pm-cache",
+                ],
+                [*guard, "rev-list", "--all", "--not", "--remotes"],
+            ],
+        )
+
+    def test_a_dir_it_cannot_list_counts_as_dirty(self):
+        self.repo("src/o/a")
+        locked = str(self.root / "src" / "o")
+        scandir = os.scandir
+
+        def denied(path):
+            if path == locked:
+                raise PermissionError(13, "Permission denied", path)
+            return scandir(path)
+
+        with mock.patch("os.scandir", side_effect=denied):
+            found = self.check["dirty"](str(self.root), CACHE, run=self.run())
+        self.assertEqual(found, ["src/o"])
+
+    def test_paths_have_control_characters_escaped(self):
+        self.repo("src/o/bad\x1b[31m")
+        found = self.check["dirty"](
+            str(self.root), CACHE, run=self.run(dirty={"src/o/bad\x1b[31m"})
+        )
+        self.assertEqual(found, ["src/o/bad\\x1b[31m"])
+
+    def test_main_prints_the_dirty_list_and_wants_one_absolute_path(self):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.check["main"]([str(self.root), CACHE])
+        self.assertEqual(json.loads(out.getvalue()), {"dirty": []})
+        for argv in (
+            [],
+            [str(self.root)],
+            ["relative", CACHE],
+            ["/a", "x/y"],
+            ["/a", ".."],
+            ["/a", CACHE, "x"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                self.check["main"](argv)

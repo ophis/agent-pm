@@ -1,5 +1,5 @@
 {
-  "protocol_version": "3",
+  "protocol_version": "4",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -416,6 +416,77 @@
       }
     },
     {
+      "file": "workspace-rm-input.json",
+      "definition": "workspace_rm_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-input-force.json",
+      "definition": "workspace_rm_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-input-extra.json",
+      "definition": "workspace_rm_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "workspace-rm-input-bad-volume.json",
+      "definition": "workspace_rm_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "workspace-rm-output.json",
+      "definition": "workspace_rm_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-absent.json",
+      "definition": "workspace_rm_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-output-extra.json",
+      "definition": "workspace_rm_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      },
+      "note": "Malformed broker response; caller fails closed."
+    },
+    {
       "file": "start-output-missing-codex.json",
       "definition": "start_output",
       "valid": false,
@@ -576,6 +647,36 @@
       }
     },
     {
+      "file": "error-workspace_dirty.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 12,
+        "error_code": "workspace_dirty"
+      }
+    },
+    {
+      "file": "error-workspace_rejected.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 13,
+        "error_code": "workspace_rejected"
+      }
+    },
+    {
+      "file": "error-workspace_failed.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 14,
+        "error_code": "workspace_failed"
+      }
+    },
+    {
       "file": "error-internal_error.json",
       "definition": "error",
       "valid": true,
@@ -616,114 +717,6 @@
       }
     },
     {
-      "file": "runtime-mount-outside-roots.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/tmp/project",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-mount-empty-roots.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [],
-        "cwd_realpath": "/Users/example/src/project",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-mount-home-root.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-mount-root-parent.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-mount-symlink-secret.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/.ssh",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
       "file": "runtime-claude-dir-wrong.json",
       "definition": "manifest",
       "valid": true,
@@ -734,10 +727,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -756,10 +747,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": true,
         "login": "present",
         "image": "broker_built",
@@ -778,10 +767,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -800,10 +787,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -822,10 +807,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "missing",
         "image": "broker_built",
@@ -844,10 +827,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "denied",
         "image": "broker_built",
@@ -866,10 +847,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "untrusted",
@@ -888,10 +867,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "missing_version_label",
@@ -910,10 +887,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -932,10 +907,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src"
-        ],
-        "cwd_realpath": "/Users/example/src/project",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -944,7 +917,27 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example.json",
+      "file": "manifest-missing-workspace.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-bad-workspace.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "runtime-mount-root.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -954,11 +947,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example"
-        ],
-        "cwd_realpath": "/Users/example",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -967,7 +957,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users.json",
+      "file": "runtime-mount-usr.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -977,11 +967,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users"
-        ],
-        "cwd_realpath": "/Users",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -990,7 +977,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_agent-pm_x.json",
+      "file": "runtime-mount-in-opt-agent-pm.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1000,11 +987,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.agent-pm/x"
-        ],
-        "cwd_realpath": "/Users/example/.agent-pm/x",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1013,7 +997,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_ssh.json",
+      "file": "runtime-mount-in-lib64.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1023,11 +1007,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.ssh"
-        ],
-        "cwd_realpath": "/Users/example/.ssh",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1036,7 +1017,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_Library.json",
+      "file": "runtime-mount-home.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1046,11 +1027,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/Library"
-        ],
-        "cwd_realpath": "/Users/example/Library",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1059,7 +1037,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_claude.json",
+      "file": "runtime-mount-claude-dir.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1069,11 +1047,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.claude"
-        ],
-        "cwd_realpath": "/Users/example/.claude",
+        "cwd_exists": true,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1082,7 +1057,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_codex.json",
+      "file": "runtime-mount-missing.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1092,11 +1067,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.codex"
-        ],
-        "cwd_realpath": "/Users/example/.codex",
+        "cwd_exists": false,
+        "volume": "absent",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1105,7 +1077,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_config.json",
+      "file": "runtime-volume-label-mismatch.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1115,11 +1087,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.config"
-        ],
-        "cwd_realpath": "/Users/example/.config",
+        "cwd_exists": true,
+        "volume": "mismatched",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",
@@ -1128,7 +1097,7 @@
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
     },
     {
-      "file": "runtime-deny-Users_example_docker.json",
+      "file": "runtime-volume-in-use.json",
       "definition": "manifest",
       "valid": true,
       "expected": {
@@ -1138,103 +1107,8 @@
       },
       "context": {
         "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.docker"
-        ],
-        "cwd_realpath": "/Users/example/.docker",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-deny-Users_example_aws.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.aws"
-        ],
-        "cwd_realpath": "/Users/example/.aws",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-deny-Users_example_gnupg.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.gnupg"
-        ],
-        "cwd_realpath": "/Users/example/.gnupg",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-deny-Users_example_kube.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.kube"
-        ],
-        "cwd_realpath": "/Users/example/.kube",
-        "claude_dir_has_symlink": false,
-        "login": "present",
-        "image": "broker_built",
-        "docker": "reachable"
-      },
-      "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
-    },
-    {
-      "file": "runtime-deny-Users_example_npmrc.json",
-      "definition": "manifest",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "exit_code": 4,
-        "error_code": "mount_rejected"
-      },
-      "context": {
-        "home": "/Users/example",
-        "mount_roots": [
-          "/Users/example/src",
-          "/Users/example/.npmrc"
-        ],
-        "cwd_realpath": "/Users/example/.npmrc",
+        "cwd_exists": true,
+        "volume": "in_use",
         "claude_dir_has_symlink": false,
         "login": "present",
         "image": "broker_built",

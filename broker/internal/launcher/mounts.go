@@ -2,84 +2,43 @@ package launcher
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-// Fixed in the broker; configuration cannot change it.
-var denied = []string{".agent-pm", ".codex", ".claude", ".ssh", ".config", ".docker", "Library", ".aws", ".gnupg", ".kube", ".npmrc"}
+var (
+	// A workspace may not equal or contain these container paths.
+	covered = []string{"/", "/usr", "/etc", "/opt", "/run", "/home", "/tmp", "/proc", "/sys", "/dev"}
+	// Nor lie inside these: a volume there would replace what the image's root-run steps execute.
+	internal = []string{"/usr", "/etc", "/opt/agent-pm", "/run", "/proc", "/sys", "/dev", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32",
+		"/var/run", "/var/lock", "/home/agent"}
+)
 
-// LoadRoots reads session.hosts.docker.mount_roots from <home>/.agent-pm/config.local.toml; absent means none.
-func LoadRoots(home string) ([]string, error) {
-	var config map[string]any
-	if _, err := toml.DecodeFile(filepath.Join(home, ".agent-pm/config.local.toml"), &config); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var node any = config
-	for _, key := range []string{"session", "hosts", "docker", "mount_roots"} {
-		table, ok := node.(map[string]any)
-		if !ok {
-			return nil, errors.New("session.hosts.docker must be a table")
-		}
-		if node, ok = table[key]; !ok {
-			return nil, nil
-		}
-	}
-	list, ok := node.([]any)
-	if !ok {
-		return nil, errors.New("mount_roots must be an array of paths")
-	}
-	var roots []string
-	for _, item := range list {
-		root, ok := item.(string)
-		switch {
-		case !ok:
-			return nil, errors.New("mount_roots must be an array of paths")
-		case root == "~":
-			root = home
-		case strings.HasPrefix(root, "~/"):
-			root = filepath.Join(home, root[2:])
-		}
-		if !strings.HasPrefix(root, "/") || hasControl(root) {
-			return nil, fmt.Errorf("mount root %q must be absolute or start with ~/", root)
-		}
-		roots = append(roots, filepath.Clean(root))
-	}
-	return roots, nil
+// inside reports whether path p is base or below it, by components.
+func inside(p, base string) bool {
+	return p == base || base == "/" || strings.HasPrefix(p, base+"/")
 }
 
-// within reports whether a or one of its ancestors is the same file as b.
-func (h Host) within(a, b string) bool {
-	b = filepath.Clean(b)
-	for x := filepath.Clean(a); ; x = filepath.Dir(x) {
-		if h.Same(x, b) {
-			return true
-		}
-		if x == "/" {
-			return false
+// checkTree applies the mount-point rules a clean absolute container path can be judged on alone, failing with code.
+func checkTree(p string, code protocol.Code) error {
+	for _, c := range covered {
+		if inside(c, p) {
+			return protocol.Newf(code, "Workspace %s equals or contains the container's %s.", p, c)
 		}
 	}
-}
-
-// realSame compares by file identity, so APFS case and normalization variants match.
-func realSame(a, b string) bool {
-	ia, ea := os.Stat(a)
-	ib, eb := os.Stat(b)
-	if ea == nil && eb == nil {
-		return os.SameFile(ia, ib)
+	for _, c := range internal {
+		if inside(p, c) {
+			return protocol.Newf(code, "Workspace %s lies inside the container's %s.", p, c)
+		}
 	}
-	return ea != nil && eb != nil && strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	return nil
 }
 
 // realSafe requires an existing directory reached without any symlink component.
@@ -101,53 +60,21 @@ func realSafe(path string) error {
 	return nil
 }
 
-// checkMounts applies the mount rules and returns cwd's real path, the bind source.
-func (h Host) checkMounts(m Manifest) (string, error) {
-	reject := func(format string, args ...any) (string, error) {
-		return "", protocol.Newf(protocol.MountRejected, format, args...)
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// checkMounts applies the mount rules; cwd is a mount point, never a bind source.
+func (h Host) checkMounts(m Manifest) error {
+	reject := func(format string, args ...any) error {
+		return protocol.Newf(protocol.MountRejected, format, args...)
 	}
-	roots, err := h.Roots()
-	if err != nil {
-		e := protocol.New(protocol.MountRejected, "Cannot read mount_roots from ~/.agent-pm/config.local.toml.")
-		e.Cause = err.Error()
-		return "", e
+	if !h.IsDir(m.CWD) {
+		return reject("Workspace %s must be an existing host directory.", m.CWD)
 	}
-	if len(roots) == 0 {
-		return reject("No mount_roots configured: set [session.hosts.docker] mount_roots in ~/.agent-pm/config.local.toml.")
-	}
-	resolve := func(p string) string {
-		if r, err := h.RealPath(p); err == nil {
-			return r
-		}
-		return filepath.Clean(p)
-	}
-	var realRoots []string
-	for _, root := range roots {
-		r := resolve(root)
-		if h.within(h.Home, r) {
-			return reject("mount root %s is the home directory or its ancestor.", root)
-		}
-		realRoots = append(realRoots, r)
-	}
-	cwd, err := h.RealPath(m.CWD)
-	if err != nil {
-		return reject("cwd %s cannot be resolved.", m.CWD)
-	}
-	if h.within(h.Home, cwd) {
-		return reject("cwd %s is the home directory or its ancestor (denied).", m.CWD)
-	}
-	for _, name := range denied {
-		d := resolve(filepath.Join(h.Home, name))
-		if h.within(cwd, d) || h.within(d, cwd) {
-			return reject("cwd %s overlaps denied path %s.", m.CWD, d)
-		}
-	}
-	inside := false
-	for _, r := range realRoots {
-		inside = inside || h.within(cwd, r)
-	}
-	if !inside {
-		return reject("cwd %s is outside every mount root.", m.CWD)
+	if err := checkTree(m.CWD, protocol.MountRejected); err != nil {
+		return err
 	}
 	if want := filepath.Join(h.Home, ".agent-pm/docker-state", m.Name, "claude"); m.ClaudeDir != want {
 		return reject("claude_dir must be %s.", want)
@@ -155,59 +82,106 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 	if err := h.Safe(m.ClaudeDir); err != nil {
 		return reject("claude_dir %s must be an existing directory without symlinks: %v.", m.ClaudeDir, err)
 	}
+	if inside(m.CWD, m.ClaudeDir) || inside(m.ClaudeDir, m.CWD) {
+		return reject("Workspace %s overlaps claude_dir %s.", m.CWD, m.ClaudeDir)
+	}
 	if m.HasHook {
 		for _, part := range strings.Split(m.HookPath[1:], "/") {
 			if part == "" || part == "." || part == ".." {
 				return reject("hook_path %s must be a clean absolute path.", m.HookPath)
 			}
 		}
-		for _, mount := range []string{m.CWD, cwd, m.ClaudeDir, docker.SecretsDir} {
-			// The container's view: mounts sit at literal paths there.
-			if m.HookPath == mount || strings.HasPrefix(m.HookPath, strings.TrimSuffix(mount, "/")+"/") {
+		for _, mount := range []string{m.CWD, m.ClaudeDir, docker.SecretsDir} {
+			if inside(m.HookPath, mount) {
 				return reject("hook_path %s lies inside the mount %s.", m.HookPath, mount)
 			}
 		}
+		if inside(m.CWD, m.HookPath) {
+			return reject("Workspace %s lies inside hook_path %s.", m.CWD, m.HookPath)
+		}
 	}
-	return cwd, nil
+	return nil
 }
 
-// checkNesting refuses a cwd strictly inside a running worker's bind source: that worker could swap
-// a directory for a symlink between this check and Docker's mount. A source the host cannot resolve
-// refuses too, since nesting cannot be ruled out.
-func (h Host) checkNesting(ctx context.Context, cwd string) error {
-	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "label=agent-pm.session", "--format", "{{.ID}}"}, nil)
-	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot list running workers.")
+// mountSpec renders a --mount value; Docker parses it as one CSV record.
+func mountSpec(fields ...string) string {
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	_ = w.Write(fields)
+	w.Flush()
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func bindMount(source, target string) string {
+	return mountSpec("type=bind", "source="+source, "target="+target)
+}
+
+func volumeMount(volume, target string, readonly bool) string {
+	fields := []string{"type=volume", "source=" + volume, "target=" + target}
+	if readonly {
+		fields = append(fields, "readonly")
 	}
-	ids := strings.Fields(string(out))
-	if len(ids) == 0 {
+	return mountSpec(fields...)
+}
+
+// volumeLabels reads a volume's labels; an absent volume is an error docker.Absent recognizes.
+func (h Host) volumeLabels(ctx context.Context, volume string) (map[string]string, error) {
+	out, err := h.Docker.Run(ctx, []string{"volume", "inspect", "--format", "{{json .Labels}}", volume}, nil)
+	if err != nil {
+		return nil, err
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(out, &labels); err != nil {
+		return nil, fmt.Errorf("volume %s labels: %w", volume, err)
+	}
+	return labels, nil
+}
+
+// ensureVolume gives m its workspace volume: created with its labels and an agent-owned root, or an
+// existing one whose labels match and that no container mounts.
+func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) error {
+	v := m.Workspace
+	labels, err := h.volumeLabels(ctx, v)
+	created := docker.Absent(err)
+	if created {
+		create := []string{"volume", "create", "--label", kindLabel + "=" + m.Kind(), "--label", workspaceLabel + "=" + m.CWD, v}
+		if _, err := h.Docker.Run(ctx, create, nil); err != nil {
+			return failure(err, protocol.StartFailed, "Creating workspace volume "+v+" failed.")
+		}
+		// create succeeds on a name a racing start made first, so read back what exists.
+		labels, err = h.volumeLabels(ctx, v)
+	}
+	// Until its root is the agent's, a volume this start created is removed on failure: a later start would skip the chown.
+	undo := func(e *protocol.Error) error {
+		if created {
+			if _, rmErr := h.Docker.Run(context.WithoutCancel(ctx), []string{"volume", "rm", v}, nil); rmErr != nil {
+				e.Message += " Remove it with docker volume rm " + v + " before retrying."
+			}
+		}
+		return e
+	}
+	if err != nil {
+		return undo(failure(err, protocol.StartFailed, "Cannot inspect workspace volume "+v+"."))
+	}
+	if labels[kindLabel] != m.Kind() || labels[workspaceLabel] != m.CWD {
+		return protocol.Newf(protocol.MountRejected, "Volume %s is not the workspace for %s (%s %q, %s %q).",
+			v, m.CWD, kindLabel, labels[kindLabel], workspaceLabel, labels[workspaceLabel])
+	}
+	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
+	if err != nil {
+		return undo(failure(err, protocol.StartFailed, "Cannot list the containers using "+v+"."))
+	}
+	if users := strings.Fields(string(out)); len(users) > 0 {
+		return protocol.Newf(protocol.MountRejected, "Workspace volume %s is mounted by running container %s; close it first.", v, users[0])
+	}
+	if !created {
 		return nil
 	}
-	out, err = h.Docker.Run(ctx, append([]string{"inspect", "--format", "{{json .Mounts}}"}, ids...), nil)
-	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot inspect running workers.")
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		var mounts []struct{ Type, Source string }
-		if err := json.Unmarshal([]byte(line), &mounts); err != nil {
-			return protocol.New(protocol.StartFailed, "Cannot read running workers' mounts.")
-		}
-		for _, m := range mounts {
-			if m.Type != "bind" || m.Source == "" {
-				continue
-			}
-			source, err := h.RealPath(m.Source)
-			if err != nil {
-				// Docker Desktop may report a source by its path in the VM's /host_mnt.
-				source, err = h.RealPath(strings.TrimPrefix(m.Source, "/host_mnt"))
-			}
-			if err != nil {
-				return protocol.Newf(protocol.MountRejected, "Cannot resolve running worker mount %s; close that worker first.", m.Source)
-			}
-			if h.within(cwd, source) && !h.Same(cwd, source) {
-				return protocol.Newf(protocol.MountRejected, "cwd %s is inside running worker mount %s.", cwd, m.Source)
-			}
-		}
+	l := info.Config.Labels
+	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
+		"--mount", volumeMount(v, "/workspace", false), "--entrypoint", "/bin/chown", info.ID, l["agent-pm.agent-uid"] + ":" + l["agent-pm.agent-gid"], "/workspace"}
+	if _, err := h.Docker.Run(ctx, chown, nil); err != nil {
+		return undo(failure(err, protocol.StartFailed, "Giving workspace volume "+v+" to agent failed."))
 	}
 	return nil
 }

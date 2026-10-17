@@ -79,10 +79,18 @@ from agent_pm.session.hosts.docker.daemon import (
     endpoint,
     exec_runner,
 )
-from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
+from agent_pm.session.hosts.docker.mounts import (
+    KIND_LABEL,
+    RUN_VOLUME,
+    WORKSPACE_LABEL,
+    check_cwd,
+    crew_volume,
+    state_dir,
+)
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
+    DOCKER_STATE,
     Display,
     Record,
     command_path,
@@ -113,6 +121,10 @@ PS_FORMAT = "\t".join(
     )
 )
 LOG = logging.getLogger("session")
+KEPT = f"{DOCKER_STATE}/.kept"  # a marker per run volume kept: unsaved work, or a failed check
+KEPT_LOCK = ".lock"
+KEPT_RETRY = 24 * 3600  # seconds before a volume whose check failed is checked again
+VOLUME_FORMAT = '{{.Name}}\t{{.Label "' + WORKSPACE_LABEL + '"}}'
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
@@ -208,8 +220,10 @@ def _report_plan(name: str, plan: Mapping) -> None:
     except OSError as error:
         raise SessionError(f"docker session {name}: plan: {error}") from None
     mounts = ", ".join(f"{mount['path']} rw" for mount in plan["mounts"])
+    workspace = plan["workspace"]
     for part in (
         f"image {plan['image']} {plan['image_digest']}",
+        f"workspace {workspace['volume']} at {workspace['path']} rw",
         f"mounts {mounts}",
         f"credential {plan['credential']}",
     ):
@@ -400,8 +414,21 @@ class DockerTerminal(InteractiveProcess):
             self.host.broker.close(self.container)
         except SessionError as error:
             failures.append(str(error))
+        self.host.reclaim()
         if failures:
             raise SessionError(f"docker session {self.name}: {'; '.join(failures)}")
+
+
+def _held(marker: str) -> bool:
+    """Whether a kept marker still holds its volume back: a failed check for KEPT_RETRY, anything
+    else for good.
+    """
+    try:
+        with open(marker) as f:
+            failed = f.read() == "failed"
+        return not failed or time.time() - os.stat(marker).st_mtime < KEPT_RETRY
+    except FileNotFoundError:
+        return False
 
 
 def _stop_supervisor(name: str) -> str | None:
@@ -421,8 +448,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker (the CLI's absolute path) and mount_roots (the dirs a
-    session's cwd may lie under). Only terminal sessions run here.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Only terminal sessions run here,
+    each on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -437,16 +464,12 @@ class DockerHost(Host):
         broker: Broker | None = None,
     ) -> None:
         super().__init__(name, settings)
-        if extra := sorted(set(self.settings) - {"docker", "mount_roots"}):
-            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
+        if extra := sorted(set(self.settings) - {"docker"}):
+            removed = "; see docs/upgrading.md" if extra[0] == "mount_roots" else ""
+            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]{removed}")
         self.docker = self.settings.get("docker")
         if not isinstance(self.docker, str) or not os.path.isabs(self.docker):
             raise ConfigError(f"[hosts.{name}] docker: want an absolute path")
-        self.roots = self.settings.get("mount_roots", [])
-        if not isinstance(self.roots, list | tuple) or not all(
-            isinstance(root, str) for root in self.roots
-        ):
-            raise ConfigError(f"[hosts.{name}] mount_roots: want a list of paths")
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
@@ -456,19 +479,21 @@ class DockerHost(Host):
 
     def _ps(self) -> list[list[str]]:
         """[] with no daemon socket or docker CLI, as tmux with no server: every Host is listed."""
+        return self._listed("ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT) or []
+
+    def _listed(self, *args: str) -> list[list[str]] | None:
+        """docker `args`' tab-separated rows; None with no daemon socket or docker CLI."""
         if not os.path.exists(endpoint().removeprefix("unix://")):
-            return []
-        argv, env = docker_call(
-            self.docker, "ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT
-        )
+            return None
+        argv, env = docker_call(self.docker, *args)
         try:
             res = self.run(argv, env, timeout=RUN_TIMEOUT)
         except FileNotFoundError:
-            return []
+            return None
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise SessionError(f"docker ps: {error}") from None
+            raise SessionError(f"docker {args[0]}: {error}") from None
         if res.returncode:
-            raise SessionError(f"docker ps: {res.stderr.strip()}")
+            raise SessionError(f"docker {args[0]}: {res.stderr.strip()}")
         return [line.split("\t") for line in res.stdout.splitlines()]
 
     def _rows(self) -> list[Row]:
@@ -515,6 +540,55 @@ class DockerHost(Host):
                                 os.unlink(lock)
             except (SessionError, OSError) as error:
                 LOG.warning("docker sweep %s: %s", row.name, error)
+
+    def reclaim(self) -> None:
+        """At a close, never a start: removes one run workspace volume whose workdir is gone, after
+        the broker's check (up to its 120 s). One with unsaved work is kept for good, one whose check
+        failed for KEPT_RETRY; each is warned about once and marked. Listed before the lock, so no
+        orphan writes no file.
+        """
+        try:
+            self._reclaim()
+        except (SessionError, OSError) as error:
+            LOG.warning("docker reclaim: %s", error)
+
+    def _reclaim(self) -> None:
+        rows = self._listed(
+            "volume", "ls", "--filter", f"label={KIND_LABEL}=run", "--format", VOLUME_FORMAT
+        )
+        if rows is None:
+            return
+        gone = [
+            volume
+            for volume, anchor in (row for row in rows if len(row) == 2)
+            if RUN_VOLUME.fullmatch(volume)
+            and os.path.isabs(anchor)
+            and not os.path.lexists(anchor)
+        ]
+        kept = os.path.expanduser(KEPT)
+        if not gone and not os.path.isdir(kept):
+            return
+        os.makedirs(kept, mode=0o700, exist_ok=True)
+        with inode_lock(os.path.join(kept, KEPT_LOCK), wait=False) as held:
+            if not held:
+                return
+            for marker in set(os.listdir(kept)) - {row[0] for row in rows} - {KEPT_LOCK}:
+                os.unlink(os.path.join(kept, marker))
+            volume = next((v for v in gone if not _held(os.path.join(kept, v))), None)
+            if volume is None:
+                return
+            marker = os.path.join(kept, volume)
+            try:
+                self.broker.workspace_rm(volume)
+            except BrokerError as error:
+                save(marker, "dirty" if error.code == "workspace_dirty" else "failed")
+                LOG.warning("docker workspace %s kept: %s", volume, error.message)
+            except SessionError as error:
+                save(marker, "failed")
+                LOG.warning("docker workspace %s kept: %s", volume, error)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(marker)
 
     def _sweep_row(self, row: Row) -> None:
         path = _state_file(row.name)
@@ -619,8 +693,7 @@ class DockerHost(Host):
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
-        roots = [os.path.realpath(os.path.expanduser(root)) for root in self.roots]
-        check_cwd(cwd, roots, os.path.realpath(account_home()))
+        check_cwd(cwd, os.path.realpath(account_home()))
 
     def _image(
         self, name: str, *, max_age: int | None = REFRESH
@@ -632,6 +705,17 @@ class DockerHost(Host):
         self.broker.version()
         root = plugin_root(hook)
         return hook, root, self.broker.build(root, max_age=max_age)
+
+    def _reset_workspace(self, name: str, volume: str) -> None:
+        """Deletes a new start's workspace volume, unless the broker's check finds unsaved work."""
+        try:
+            self.broker.workspace_rm(volume)
+        except BrokerError as error:
+            if error.code == "workspace_dirty":
+                raise ConfigError(
+                    f"docker session {name}: {error.message}; or resume it: agent-pm-session resume {name}"
+                ) from error
+            raise
 
     def detach(self, name, launch, *, display=None, events=None, record=None) -> Process:
         raise SessionError(f"detach {name}: the Docker Host runs only terminal sessions")
@@ -688,15 +772,17 @@ class DockerHost(Host):
                 f"docker session {name}: a container for it exists; close {name} first"
             )
         home = docker_home(name, home_dir)
+        if resume == "1" and read_beneath(home, launch.transcript, limit=0) is None:
+            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
+        laps("checks")
+        hook, root, (image, digest) = self._image(name)
+        volume = crew_volume(name)
         if resume == "0":
+            self._reset_workspace(name, volume)
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
-        elif read_beneath(home, launch.transcript, limit=0) is None:
-            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
-        laps("checks")
-        hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
         cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
@@ -706,6 +792,7 @@ class DockerHost(Host):
             generation=generation,
             image=image,
             cwd=cwd,
+            workspace=volume,
             home=(field, home),
             hook_path=hook,
         )
@@ -716,7 +803,8 @@ class DockerHost(Host):
                 "generation": generation,
                 "image": image,
                 "image_digest": digest,
-                "mounts": [{"path": cwd, "rw": True}, {"path": home, "rw": True}],
+                "workspace": {"volume": volume, "path": cwd},
+                "mounts": [{"path": home, "rw": True}],
                 "credential": credential,
             },
         )

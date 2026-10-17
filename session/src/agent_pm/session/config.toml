@@ -79,7 +79,6 @@ max = "max"
 #   outer_terminal    variables of an enclosing terminal a tui program on the pty never gets (its TERM: xterm-256color)
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
-#   mount_roots       dirs a session's cwd may lie under; set it in the local config (empty: every start fails)
 [hosts]
 default = "tmux"
 
@@ -99,9 +98,6 @@ outer_terminal = ["TMUX", "TMUX_PANE"]
 # DockerHost (session/src/agent_pm/session/hosts/docker/host.py)
 implementation = "agent_pm.session.hosts.docker.host:DockerHost"
 docker = "/usr/local/bin/docker"
-mount_roots = []
-# local: [session.hosts.docker]
-# local: mount_roots = ["~/src"]
 
 # ── Viewer ──────────────────────────────────────────────
 # [viewer]            how the Viewer (session/src/agent_pm/session/viewer/viewer.py) shows every Host's sessions:

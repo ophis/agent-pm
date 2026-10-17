@@ -5,7 +5,6 @@ package launcher
 import (
 	"errors"
 	"io"
-	"path/filepath"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -23,10 +22,8 @@ type Credentials interface {
 type Host struct {
 	Home     string
 	Endpoint string
-	Roots    func() ([]string, error)
-	RealPath func(string) (string, error)
+	IsDir    func(string) bool
 	Safe     func(string) error
-	Same     func(a, b string) bool
 	Docker   docker.Runner
 	Creds    Credentials
 	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
@@ -38,10 +35,8 @@ func NewHost(home, endpoint string, d docker.Runner, creds Credentials) Host {
 		Home:     home,
 		Endpoint: endpoint,
 		Creds:    creds,
-		Roots:    func() ([]string, error) { return LoadRoots(home) },
-		RealPath: filepath.EvalSymlinks,
+		IsDir:    isDir,
 		Safe:     realSafe,
-		Same:     realSame,
 		Docker:   d,
 	}
 }
@@ -69,6 +64,11 @@ type CloseResult struct {
 	Removed   bool   `json:"removed"`
 }
 
+type WorkspaceResult struct {
+	Volume  string `json:"volume"`
+	Removed bool   `json:"removed"`
+}
+
 // failure classifies a Docker error: unreachable daemon, else code.
 func failure(err error, code protocol.Code, message string) *protocol.Error {
 	if errors.Is(err, docker.ErrUnreachable) {
@@ -77,7 +77,7 @@ func failure(err error, code protocol.Code, message string) *protocol.Error {
 	return protocol.New(code, message)
 }
 
-// diagnosed is failure with Docker's diagnostic as cause, only for the steps protocol 1 names: build stages and run.
+// diagnosed is failure with Docker's diagnostic as cause, only for the steps the protocol names: build stages, run, and workspace-rm's check and volume rm.
 func diagnosed(err error, code protocol.Code, message string) *protocol.Error {
 	e := failure(err, code, message)
 	if e.Code == code {

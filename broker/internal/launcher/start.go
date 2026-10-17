@@ -2,11 +2,11 @@ package launcher
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,7 +18,9 @@ import (
 const (
 	python    = "/opt/agent-pm/venv/bin/python"
 	bootstrap = "/opt/agent-pm/lib/bootstrap.py"
-	sharing   = "Docker Desktop file sharing must include cwd and ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
+	checker   = "/opt/agent-pm/lib/workspace-check"
+	sharing   = "Docker Desktop file sharing must include ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
+	cache     = ".agent-pm-cache"
 )
 
 // errTaken: another start created the container first, so it is not this start's to roll back.
@@ -48,15 +50,6 @@ func taken(c string) *protocol.Error {
 	return protocol.New(protocol.StartFailed, "Container "+c+" already exists; close it first.")
 }
 
-// bindMount renders a --mount value; Docker parses it as one CSV record.
-func bindMount(source, target string) string {
-	var b strings.Builder
-	w := csv.NewWriter(&b)
-	_ = w.Write([]string{"type=bind", "source=" + source, "target=" + target})
-	w.Flush()
-	return strings.TrimSuffix(b.String(), "\n")
-}
-
 // Start writes each phase's seconds to Progress only once it succeeds, so a failure's stderr stays one error object.
 func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	var times strings.Builder
@@ -75,8 +68,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err != nil {
 		return StartResult{}, err
 	}
-	cwd, err := h.checkMounts(m)
-	if err != nil {
+	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}
 	if err := h.Creds.Ready(); err != nil {
@@ -88,9 +80,6 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	lap("image")
-	if err := h.checkNesting(ctx, cwd); err != nil {
-		return StartResult{}, err
-	}
 	c := "agent-pm-" + m.Name + "-" + m.Generation
 	if _, err := h.Docker.Run(ctx, []string{"container", "inspect", c}, nil); !docker.Absent(err) {
 		if err != nil {
@@ -98,8 +87,11 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		}
 		return StartResult{}, taken(c)
 	}
+	if err := h.ensureVolume(ctx, m, info); err != nil {
+		return StartResult{}, err
+	}
 	lap("checks")
-	result, err := h.create(ctx, c, m, cwd, info, lap)
+	result, err := h.create(ctx, c, m, info, lap)
 	if errors.Is(err, errTaken) {
 		return StartResult{}, taken(c)
 	}
@@ -119,11 +111,15 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 }
 
 // create runs every step after the absence check; any error makes Start roll back.
-func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info imageInfo, lap func(phase string)) (StartResult, error) {
+func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, lap func(phase string)) (StartResult, error) {
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
-		"--network", "bridge", "--workdir", m.CWD, "--env", "CLAUDE_CONFIG_DIR=" + m.ClaudeDir,
-		"--label", "agent-pm.session=" + m.Name, "--label", "agent-pm.generation=" + m.Generation}
+		"--network", "bridge", "--workdir", m.CWD, "--env", "CLAUDE_CONFIG_DIR=" + m.ClaudeDir}
+	for _, key := range []string{"npm_config_cache", "UV_CACHE_DIR", "PIP_CACHE_DIR"} {
+		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
+	}
+	args = append(args,
+		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation)
 	keys := make([]string, 0, len(m.Labels))
 	for k := range m.Labels {
 		keys = append(keys, k)
@@ -132,7 +128,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 	for _, k := range keys {
 		args = append(args, "--label", k+"="+m.Labels[k])
 	}
-	args = append(args, "--mount", bindMount(cwd, m.CWD), "--mount", bindMount(m.ClaudeDir, m.ClaudeDir),
+	args = append(args, "--mount", volumeMount(m.Workspace, m.CWD, false), "--mount", bindMount(m.ClaudeDir, m.ClaudeDir),
 		"--tmpfs", docker.SecretsDir+":rw,noexec,nosuid,nodev,size=65536,mode=0700,uid="+labels["agent-pm.agent-uid"]+",gid="+labels["agent-pm.agent-gid"],
 		"--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {

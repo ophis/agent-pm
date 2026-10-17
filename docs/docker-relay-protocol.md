@@ -6,7 +6,7 @@ The stub, relay and supervisor are `session/src/agent_pm/session/hosts/docker/st
 `relay.py` and `supervisor.py`; recovery: [Docker Host](docker-host.md#recovery).
 
 The relay protocol has no version of its own. The broker installs the stub, so
-[broker protocol](docker-broker-protocol.md) `2` covers this format: each change to the
+[broker protocol](docker-broker-protocol.md) `4` covers this format: each change to the
 stub's wire format bumps the broker's `protocol_version`.
 
 ```mermaid

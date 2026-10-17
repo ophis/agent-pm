@@ -28,11 +28,12 @@ func recording(calls *[]call) app {
 			return map[string]string{"ok": name}, nil
 		}
 	}
-	build := result("build")
+	build, workspaceRm := result("build"), result("workspace-rm")
 	return app{build: func(ctx context.Context, arg string, _ time.Duration, p io.Writer) (any, error) {
 		return build(ctx, arg, p)
 	},
-		start: result("start"), close: result("close")}
+		start: result("start"), close: result("close"),
+		workspaceRm: func(ctx context.Context, volume string, _ bool) (any, error) { return workspaceRm(ctx, volume, nil) }}
 }
 
 func invoke(a app, args ...string) (int, string, string) {
@@ -43,7 +44,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"3"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"4"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -54,7 +55,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestInputFixtures(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "close_input") {
+	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "close_input", "workspace_rm_input") {
 		t.Run(c.File, func(t *testing.T) {
 			var in struct{ Argv []string }
 			if err := json.Unmarshal(c.Data, &in); err != nil {
@@ -120,6 +121,13 @@ func TestUsageErrors(t *testing.T) {
 		{"close", []string{"close", "--container", "other"}},
 		{"close", []string{"close", "--container", "agent-pm-x-0123"}},
 		{"version", []string{"version", "x"}},
+		{"workspace-rm", []string{"workspace-rm"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", ".hidden"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", "a/b"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", strings.Repeat("v", 256)}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", "v", "--forced"}},
+		{"workspace-rm", []string{"workspace-rm", "--force", "--volume", "v"}},
 		{"unknown", []string{"login"}},
 		{"unknown", []string{"login", "github"}},
 		{"unknown", []string{"login", "github", "agent-pm-other"}},
@@ -169,6 +177,19 @@ func TestBuildMaxAge(t *testing.T) {
 		}}
 		if code, _, errOut := invoke(a, append([]string{"build", "--agent-pm", "/pkg"}, args...)...); code != 0 || got != want {
 			t.Fatalf("%q: exit %d max age %v want %v: %s", args, code, got, want, errOut)
+		}
+	}
+}
+
+func TestWorkspaceRmForce(t *testing.T) {
+	for want, args := range map[bool][]string{false: {"workspace-rm", "--volume", "v"}, true: {"workspace-rm", "--volume", "v", "--force"}} {
+		got := !want
+		a := app{workspaceRm: func(_ context.Context, volume string, force bool) (any, error) {
+			got = force
+			return map[string]any{"volume": volume, "removed": true}, nil
+		}}
+		if code, out, errOut := invoke(a, args...); code != 0 || got != want || out != `{"removed":true,"volume":"v"}`+"\n" {
+			t.Fatalf("%q: exit %d force %v: %q %s", args, code, got, out, errOut)
 		}
 	}
 }
@@ -234,6 +255,8 @@ func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, 
 	case strings.HasPrefix(joined, "image inspect"):
 		return []byte(`[{"Id":"sha256:` + strings.Repeat("b", 64) + `","Config":{"Labels":{"agent-pm.key":"` + strings.Repeat("a", 64) +
 			`","agent-pm.version":"1.2.3","agent-pm.agent-uid":"1001","agent-pm.agent-gid":"1002"}}}]`), nil
+	case strings.HasPrefix(joined, "volume inspect"):
+		return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"/Users/example/src/project"}`), nil
 	case strings.HasPrefix(joined, "container inspect"):
 		return nil, &docker.CommandError{Exit: 1, Stderr: "No such container"}
 	case strings.HasSuffix(joined, "--version"):
@@ -257,12 +280,10 @@ func TestTokenNeverLeaves(t *testing.T) {
 		d := &scripted{fail: fail}
 		h := launcher.Host{
 			Home: home, Endpoint: "unix://" + home + "/.docker/run/docker.sock",
-			Roots:    func() ([]string, error) { return []string{home + "/src"}, nil },
-			RealPath: func(p string) (string, error) { return p, nil },
-			Safe:     func(string) error { return nil },
-			Same:     func(a, b string) bool { return a == b },
-			Docker:   d,
-			Creds:    broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
+			IsDir:  func(string) bool { return true },
+			Safe:   func(string) error { return nil },
+			Docker: d,
+			Creds:  broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
 		}
 		a := app{start: func(ctx context.Context, m string, _ io.Writer) (any, error) { return h.Start(ctx, m) }}
 		_, out, errOut := invoke(a, "start", "--manifest", path)

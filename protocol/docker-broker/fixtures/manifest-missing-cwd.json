@@ -6,5 +6,6 @@
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
     "team": "crew"
-  }
+  },
+  "workspace": "agent-pm-crew-worker_1"
 }

@@ -22,10 +22,11 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-engineer|agent-pm-docs | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME"
+const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-engineer|agent-pm-docs | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
+var volumePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 // step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
 type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
@@ -33,6 +34,7 @@ type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 type app struct {
 	build        func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error)
 	start, close step
+	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
 	login        func(out io.Writer) error
 	loginGitHub  func(app string, out io.Writer) error
 }
@@ -60,7 +62,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	command := "unknown"
 	if len(args) > 0 {
 		switch args[0] {
-		case "version", "build", "start", "close":
+		case "version", "build", "start", "close", "workspace-rm":
 			command = args[0]
 		case "login":
 			var login func() error
@@ -103,6 +105,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		s, arg = a.start, args[2]
 	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
 		s, arg = a.close, args[2]
+	case command == "workspace-rm" && (len(args) == 3 || len(args) == 4 && args[3] == "--force") && args[1] == "--volume" &&
+		volumePattern.MatchString(args[2]):
+		force := len(args) == 4
+		s, arg = func(ctx context.Context, volume string, _ io.Writer) (any, error) {
+			return a.workspaceRm(ctx, volume, force)
+		}, args[2]
 	default:
 		return fail(stderr, command, protocol.New(protocol.Usage, usage))
 	}
@@ -160,6 +168,9 @@ func system() app {
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
+		},
+		workspaceRm: func(ctx context.Context, volume string, force bool) (any, error) {
+			return withHost(nil, func(h launcher.Host) (any, error) { return h.WorkspaceRm(ctx, volume, force) })
 		},
 		login: func(out io.Writer) error {
 			home, err := accountHome()

@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const Version = "3"
+const Version = "4"
 
 type Code string
 
@@ -23,12 +23,16 @@ const (
 	StartFailed       Code = "start_failed"
 	CloseFailed       Code = "close_failed"
 	KeychainFailed    Code = "keychain_failed"
+	WorkspaceDirty    Code = "workspace_dirty"
+	WorkspaceRejected Code = "workspace_rejected"
+	WorkspaceFailed   Code = "workspace_failed"
 	InternalError     Code = "internal_error"
 )
 
 var exits = map[Code]int{
 	Usage: 2, ManifestRejected: 3, MountRejected: 4, LoginRequired: 5, ImageRejected: 6,
 	DockerUnreachable: 7, BuildFailed: 8, StartFailed: 9, CloseFailed: 10, KeychainFailed: 11,
+	WorkspaceDirty: 12, WorkspaceRejected: 13, WorkspaceFailed: 14,
 	InternalError: 70,
 }
 

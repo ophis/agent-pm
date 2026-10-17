@@ -1,5 +1,5 @@
-"""The root-owned broker at the PROTOCOL version (docs/docker-broker-protocol.md): version, build, start and close
-with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
+"""The root-owned broker at the PROTOCOL version (docs/docker-broker-protocol.md): version, build, start, close
+and workspace-rm with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
 a valid error response is a BrokerError.
 """
 
@@ -19,7 +19,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "3"
+PROTOCOL = "4"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -33,18 +33,21 @@ IMAGE = re.compile(r"agent-pm-worker:[0-9a-f]{64}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 CONTAINER = re.compile(r"agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}")
 ENDPOINT = re.compile(r"unix:///[^\x00-\x1f\x7f]+/\.docker/run/docker\.sock")
-COMMANDS = frozenset({"version", "build", "start", "close", "unknown"})
+COMMANDS = frozenset({"version", "build", "start", "close", "workspace-rm", "unknown"})
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
     "manifest_rejected": (3, {"start"}),
     "mount_rejected": (4, {"start"}),
     "login_required": (5, {"start"}),
     "image_rejected": (6, {"start"}),
-    "docker_unreachable": (7, {"build", "start", "close"}),
+    "docker_unreachable": (7, {"build", "start", "close", "workspace-rm"}),
     "build_failed": (8, {"build"}),
     "start_failed": (9, {"start"}),
     "close_failed": (10, {"close"}),
     "keychain_failed": (11, {"start"}),
+    "workspace_dirty": (12, {"workspace-rm"}),
+    "workspace_rejected": (13, {"workspace-rm"}),
+    "workspace_failed": (14, {"workspace-rm"}),
     "internal_error": (70, COMMANDS),
 }
 ERROR_KEYS = frozenset({"command", "code", "message", "cleanup"})
@@ -55,9 +58,10 @@ class BrokerError(SessionError):
     def __init__(
         self, exit_code: int, code: str, message: str, cleanup: str, container: str | None
     ) -> None:
-        self.exit_code, self.code, self.cleanup, self.container = (
+        self.exit_code, self.code, self.message, self.cleanup, self.container = (
             exit_code,
             code,
+            message,
             cleanup,
             container,
         )
@@ -261,6 +265,20 @@ class Broker:
         )
         return found["removed"]
 
+    def workspace_rm(self, volume: str) -> bool:
+        """Whether it removed workspace `volume` after its check found no unsaved work; False: none."""
+        found = self._parsed(
+            "workspace-rm",
+            lambda d: (
+                d.keys() == {"volume", "removed"}
+                and d["volume"] == volume
+                and type(d["removed"]) is bool
+            ),
+            "--volume",
+            volume,
+        )
+        return found["removed"]
+
     def _parsed(self, command: str, valid, *args: str) -> dict:
         found = self._run(command, *args)
         if not valid(found):
@@ -300,6 +318,7 @@ def write_manifest(
     generation: str,
     image: str,
     cwd: str,
+    workspace: str,
     home: tuple[str, str],
     hook_path: str,
 ) -> None:
@@ -310,6 +329,7 @@ def write_manifest(
         "generation": generation,
         "image": image,
         "cwd": cwd,
+        "workspace": workspace,
         field: home_path,
         "hook_path": hook_path,
         "labels": {},
