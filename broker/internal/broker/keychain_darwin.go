@@ -3,6 +3,7 @@ package broker
 /*
 #cgo LDFLAGS: -framework Security -framework CoreFoundation
 #cgo CFLAGS: -Wno-deprecated-declarations
+#define __STDC_WANT_LIB_EXT1__ 1
 #include <Security/Security.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <unistd.h>
@@ -390,6 +391,7 @@ static int hidden_token(char *buffer, size_t capacity) {
         buffer[n++] = c;
     }
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+    memset_s(&c, sizeof c, 0, sizeof c); // on overflow c holds a byte of the secret
     return result;
 }
 */
