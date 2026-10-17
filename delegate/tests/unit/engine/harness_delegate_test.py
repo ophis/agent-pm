@@ -89,12 +89,33 @@ class IntentTest(HarnessCase):
         }
         self.assertEqual(self.intent(), want)
         self.assertEqual(self.metadata()["plan"]["repo"], "ophis/agent-pm")
+        self.assertFalse(self.metadata()["plan"]["docker"])
         os.unlink(os.path.join(self.work, "run", "container-intent.json"))
         view._complete(
             Result(0, Outcome("needs_input", "Question", "Answer needed", questions=["Which?"]))
         )
         view.resume(input="Reference: T\nRepo: ophis/other\n\nThe answer.")
         self.assertEqual(self.intent(), want | {"repo": "ophis/other"})
+
+
+class DockerHarnessTest(HarnessCase):
+    def test_a_docker_agent_needs_a_harness_on_another_host(self):
+        HarnessSession.hosts["box"] = RecordingHost("box")
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(
+                "[session.hosts.box]\n"
+                'implementation = "agent_pm.session.hosts.docker.host:DockerHost"\n'
+                'docker = "/usr/local/bin/docker"\n'
+            )
+        for harness in (None, "box"):
+            with self.subTest(harness=harness), self.assertRaises(ConfigError) as cm:
+                self.make(host="box", harness_host=harness)
+            self.assertIn('harness_host = "tmux"', str(cm.exception))
+        self.assertFalse(os.path.exists(self.work))
+        self.make(host="box", harness_host="harness").close()
+        self.assertTrue(self.metadata()["plan"]["docker"])
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertTrue(view._state.plan.docker and view.driver.docker)
 
 
 class CloseTest(HarnessCase):

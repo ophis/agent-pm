@@ -130,13 +130,15 @@ class DriverSpec:
 @dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its client, sid and team set, its paths absolute; `session` the session's
-    Spec; `repo` the input's Reference repo (container.reference_repo).
+    Spec; `repo` the input's Reference repo (container.reference_repo); `docker` whether the agent
+    runs on the Docker Host.
     """
 
     spec: Spec
     session: SessionSpec
     run: RunConfig
     repo: str | None = None
+    docker: bool = False
 
     @property
     def prompt(self) -> str:
@@ -149,6 +151,7 @@ class Plan:
             out=self.driver_spec.out,
             workdir=Layout(self.spec.workdir).agent,
             resume=self.spec.resume,
+            docker=self.docker,
         )
 
     @property

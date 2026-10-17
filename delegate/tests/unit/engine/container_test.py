@@ -114,3 +114,18 @@ class Intent(Base):
         with open(path) as f:
             self.assertEqual(json.load(f), container.intent(got, []))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+
+class OnDocker(Base):
+    def test_the_agents_host_is_docker_by_its_implementation(self):
+        hosts = {
+            "default": "tmux",
+            "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"},
+            "box": {"implementation": "agent_pm.session.hosts.docker.host:DockerHost"},
+        }
+        for host, want in ((None, False), ("tmux", False), ("box", True), ("absent", False)):
+            with self.subTest(host=host):
+                self.assertIs(container.on_docker({"hosts": hosts}, host), want)
+        self.assertTrue(container.on_docker({"hosts": hosts | {"default": "box"}}, None))
+        with self.assertRaises(ConfigError):
+            container.on_docker({"hosts": {"default": "x"}}, None)

@@ -100,6 +100,7 @@ class RunParams:
     out: str
     workdir: str
     resume: bool = False
+    docker: bool = False
 
     @property
     def deliverable(self) -> str:

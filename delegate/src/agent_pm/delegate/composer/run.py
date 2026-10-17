@@ -48,6 +48,7 @@ RUN_KEYS = frozenset(
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
 NAMES = {"workdir": "<Workdir>", "team": "<team>", "role_team": "<role team>"}
+IMAGE_TEAM = "/opt/agent-pm/team"
 
 
 def run_key(layer: Mapping, role: str, key: str):
@@ -119,10 +120,25 @@ def trusted_dirs(
         raise ConfigError(str(e)) from None
 
 
+def _in_image(path: str) -> bool:
+    return os.path.commonpath([path, IMAGE_TEAM]) == IMAGE_TEAM
+
+
 def bind(entry: str, repo_dir: str | None) -> str | None:
     if entry == "repo":
         return os.path.abspath(repo_dir) if repo_dir else None
     return os.path.abspath(os.path.expanduser(entry))
+
+
+def team_paths(run: RunConfig, team: Team, *, docker: bool = False) -> dict[str, str]:
+    """{team, role_team, tasks}: on the host, else in the image, which holds only the core team."""
+    if docker:
+        return {"team": IMAGE_TEAM, "role_team": IMAGE_TEAM, "tasks": f"{IMAGE_TEAM}/tasks"}
+    return {
+        "team": team.root,
+        "role_team": role_team(team, run.role),
+        "tasks": tasks_path(run.role, team),
+    }
 
 
 def access(
@@ -133,43 +149,51 @@ def access(
     project: bool,
     repo_dir: str | None = None,
     team: Team | None = None,
+    docker: bool = False,
 ) -> Intent:
+    """`docker`: the image's team paths, no env, and any other read or a write refused."""
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
-    roots = {"team": team.root, "role_team": role_team(team, run.role)}
+    roots = team_paths(run, team, docker=docker)
     paths = {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, roots, key), repo_dir)
+            if docker and (key == "write" or not p or not _in_image(p)):
+                raise ConfigError(
+                    f"{key} {entry}: a Docker run reads only the image's team and writes only its agent dir"
+                )
             if p and p not in paths[key]:
                 paths[key].append(p)
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
     dirs += [p for p in paths["write"] if p not in dirs]
     seen, reads = set(map(os.path.realpath, dirs)), []
-    for p in (tasks_path(run.role, team), *paths["read"]):
+    for p in (roots["tasks"], *paths["read"]):
         if (real := os.path.realpath(p)) not in seen:
             seen.add(real)
             reads.append(p)
-    commands = tuple(c.rule for c in approved(run, workdir, team))
+    commands = tuple(c.rule for c in approved(run, workdir, team, docker=docker))
+    needs_env = (commands or run.gate) and not docker
     return Intent(
         dirs=tuple(dirs),
         reads=tuple(reads),
         writes=tuple(paths["write"]),
         commands=commands,
         gate=run.gate,
-        env=utils.import_env(delegate_config, session, utils) if commands or run.gate else {},
+        env=utils.import_env(delegate_config, session, utils) if needs_env else {},
         cwd=cwd,
         project=project,
     )
 
 
-def approved(run: RunConfig, workdir: str, team: Team) -> tuple[ApprovedCommand, ...]:
+def approved(
+    run: RunConfig, workdir: str, team: Team, *, docker: bool = False
+) -> tuple[ApprovedCommand, ...]:
     """Each requested command, its words holding a placeholder shell-quoted once filled, so a path
     with a space stays one argument; the prompt writes a quoted one as approved.
     """
-    values = {"workdir": os.path.abspath(workdir), "team": team.root}
-    values["role_team"] = role_team(team, run.role)
+    values = {"workdir": os.path.abspath(workdir)} | team_paths(run, team, docker=docker)
     out = []
     for command in run.commands:
         words = [(word, fill(word, values, "commands")) for word in command.split(" ")]

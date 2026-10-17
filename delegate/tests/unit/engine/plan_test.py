@@ -6,6 +6,7 @@ only with team dirs (their other overlap cases: plan_team_integration_test.py).
 import io
 import json
 import os
+import subprocess
 import uuid
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -589,3 +590,91 @@ class InstructionPlans(InstructionCase):
                     (instruction.session.flags, dict(instruction.session.env)), ((), {})
                 )
                 self.assertEqual(got.prompt, instruction.prompt)
+
+
+class Docker(Base):
+    """A run whose agent Host is the Docker Host: only the image's team, in its agent dir, its
+    Reference repo by name and its deliverable inline.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.driver.docker = True
+        self.layout = Layout(self.work)
+
+    def test_the_default_core_roles_run_with_the_images_team(self):
+        for role, task in (
+            ("researcher", "research"),
+            ("pm", "product-design"),
+            ("engineer", "build"),
+        ):
+            with self.subTest(role=role):
+                got, _ = self.planned(role, task, out=None)
+                self.assertTrue(got.docker)
+                self.assertNotIn(TEAM, got.prompt)
+                self.assertIn("\n- `<tasks>`: `/opt/agent-pm/team/tasks`\n", got.prompt)
+                self.assertIn("\n- `<team>`: `/opt/agent-pm/team`\n", got.prompt)
+                access = got.session.access
+                self.assertEqual((access.dirs, access.cwd, access.env), ((), self.layout.agent, {}))
+                self.assertEqual(access.reads[0], "/opt/agent-pm/team/tasks")
+                self.assertTrue(all(r.startswith("/opt/agent-pm/team") for r in access.reads))
+                self.assertFalse(any(TEAM in c for c in access.commands), access.commands)
+
+    def test_the_prompt_asks_for_the_deliverable_inline(self):
+        for output in ({"type": "local"}, {"type": "orchestrator"}, {"type": "pull-request"}):
+            with self.subTest(output=output):
+                got, _ = self.planned(keys={"output": output}, out=None)
+                self.assertNotIn("deliverable_file", got.prompt)
+                self.assertNotIn("deliverable.md", got.prompt)
+                if output["type"] != "pull-request":
+                    self.assertIn("inline in the outcome's `deliverable`", got.prompt)
+        self.driver.docker = False
+        got, _ = self.planned(keys={"output": {"type": "local"}}, out=None)
+        self.assertIn("deliverable_file", got.prompt)
+        self.assertIn(f"- `<tasks>`: `{TASKS}`", got.prompt)
+
+    def origin(self, url, code=0):
+        """subprocess.run answering git's `remote get-url origin` with `url`."""
+        done = subprocess.CompletedProcess((), code, url, "fatal: no remote")
+        return mock.patch("subprocess.run", return_value=done)
+
+    def test_a_local_reference_repo_is_rewritten_to_its_name(self):
+        clone = os.path.join(self.tmp, "clone")
+        text = f"Reference: T\nTitle: x\nRepo: {clone}\n\nBody Repo: {clone}\n"
+        with self.origin("git@github.com:ophis/agent-pm.git\n"):
+            got, _ = self.planned(input=text)
+        self.assertEqual(got.repo, "ophis/agent-pm")
+        want = f"Reference: T\nTitle: x\nRepo: ophis/agent-pm\n\nBody Repo: {clone}\n"
+        self.assertEqual(got.spec.input, want)
+        self.assertTrue(got.prompt.endswith(f"\n{want.strip()}\n"))
+
+    def test_a_reference_repo_off_github_is_refused(self):
+        for text, url, code in (
+            ("Reference: T\nRepo: ~/src/x\n\nBody", "", 2),
+            ("Reference: T\nRepo: ~/src/x\n\nBody", "git@ghe.example.com:o/x.git\n", 0),
+            ("Reference: T\nRepo: ghe.example.com/o/x\n\nBody", "", 0),
+        ):
+            with self.subTest(text=text, url=url), self.origin(url, code):
+                self.assertIn("Repo:", self.refused(input=text))
+
+    def test_host_dir_grants_are_refused_naming_their_key(self):
+        for keys, word in (
+            ({"read": ["~/x"]}, "read"),
+            ({"read": ["{{team}}", "repo"]}, "read"),
+            ({"write": ["~/y"]}, "write"),
+            ({"cwd": self.tmp}, "cwd"),
+        ):
+            with self.subTest(keys=keys):
+                self.assertIn(word, self.refused(keys=keys, out=None))
+        project = os.path.join(self.tmp, "project")
+        os.mkdir(project)
+        self.local(f"trusted_dirs = {json.dumps([project])}\n")
+        self.driver.docker = True
+        self.assertIn("trusted_dirs", self.refused(cwd=project, out=None))
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_a_team_dir_role_is_refused(self):
+        top = os.path.join(self.tmp, "team")
+        write_team(top)
+        team = teams.team(dirs=(top,))
+        self.assertIn("team_dirs", self.refused("poet", "verse", team=team, out=None))

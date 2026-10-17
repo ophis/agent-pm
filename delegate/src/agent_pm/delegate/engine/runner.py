@@ -26,7 +26,7 @@ from agent_pm.delegate.engine.types import (
     Result,
     Stopped,
 )
-from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
+from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, drop_files
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import Autopilot, InvalidOutcome, Outcome
@@ -281,6 +281,11 @@ class _Attempts:
                 return Result(rc, None, f"the client's turn failed: {failed.error}{detail}")
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
+            if p.docker:
+                # The harness cannot read the container's files.
+                block, dropped = drop_files(block)
+                if dropped:
+                    self.note("files_dropped", count=dropped)
             try:
                 outcome, autopilot = read_outcome(
                     block, p.run.output, p.params.workdir, hosts(p.run.output)

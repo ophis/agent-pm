@@ -101,7 +101,9 @@ host = ""
 #                 default danger-full-access can write there too (docs/sessions.md › Client policy). A dir also in write,
 #                 or inside the cwd, <workdir>/agent or a write dir, stays writable; shell commands can write there
 #                 regardless
-#   write         extra dirs the agent run needs to write; <workdir>/agent is always reachable; [] → none
+#   write         extra dirs the agent run needs to write; <workdir>/agent is always reachable; [] → none.
+#                 On the Docker Host a run reads only the image's team and writes only <workdir>/agent: any other
+#                 read, a write, a role cwd, a trusted_dirs project cwd or a team_dirs role refuses it (docs/docker-host.md)
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the Client decides how
 #                 they are approved. {{workdir}} is <workdir>/agent, {{team}} core's team/ dir, {{role_team}}
 #                 as in read; a word holding one is shell-quoted once filled, and a prompt text writing the command
@@ -147,7 +149,8 @@ tier = 3
 effort = "low"
 
 # [delegates]
-#   harness_host  the [hosts.<name>] (session/src/agent_pm/session/config.toml) the harness runs on; "" → the agent's Host
+#   harness_host  the [hosts.<name>] (session/src/agent_pm/session/config.toml) the harness runs on; "" → the agent's Host.
+#                 An agent on the Docker Host needs a harness on another one, e.g. "tmux"
 [delegates]
 harness_host = ""
 

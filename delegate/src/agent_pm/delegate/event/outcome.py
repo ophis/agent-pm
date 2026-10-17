@@ -60,6 +60,18 @@ def read(
     return validate(data, output, workdir, hosts), _autopilot(data.get("autopilot"))
 
 
+def drop_files(body: str) -> tuple[str, int]:
+    """`body` without its `files` and how many it named; a body that is no JSON object is kept."""
+    try:
+        data = json.loads(body)
+    except (ValueError, RecursionError):
+        return body, 0
+    if not isinstance(data, dict) or "files" not in data:
+        return body, 0
+    files = data.pop("files")
+    return json.dumps(data), len(files) if isinstance(files, list) else 1
+
+
 def _autopilot(found) -> Autopilot | None:
     """`found`: a validated outcome's `autopilot`."""
     return None if found is None else Autopilot(AutopilotStatus(found["status"]), found["head"])
