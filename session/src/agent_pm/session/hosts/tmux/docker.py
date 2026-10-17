@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -19,6 +20,7 @@ import threading
 import time
 from collections.abc import Mapping
 from dataclasses import replace
+from typing import NamedTuple
 
 import agent_pm.utils
 from agent_pm.session.engine.types import (
@@ -52,7 +54,7 @@ from agent_pm.session.hosts.docker.daemon import (
     exec_runner,
 )
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
-from agent_pm.session.hosts.docker.relay import SOCKET
+from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.tmux import docker_hook
 from agent_pm.session.hosts.tmux.host import TmuxHost, TmuxTerminal
 from agent_pm.session.hosts.tmux.transport import DIED, VIEW, Tmux, absent
@@ -78,7 +80,24 @@ LOCK_WAIT = 30
 KILL_WAIT = 5
 POLL = 0.2
 LABEL = "agent-pm.session"
-PS_FORMAT = '{{.Names}}\t{{.Label "agent-pm.session"}}\t{{.Label "agent-pm.generation"}}'
+PS_FORMAT = "\t".join(
+    (
+        "{{.Names}}",
+        '{{.Label "agent-pm.session"}}',
+        '{{.Label "agent-pm.generation"}}',
+        "{{.State}}",
+    )
+)
+LOG = logging.getLogger("session")
+
+
+class Row(NamedTuple):
+    """A `docker ps` row whose labels name a session and generation and match its name."""
+
+    name: str
+    container: str
+    generation: str
+    state: str
 
 
 def container_name(name: str, generation: str) -> str:
@@ -138,7 +157,19 @@ def _lock_free(path: str) -> bool:
     return True
 
 
-def _listed(containers: Mapping[str, tuple[str, str]], display: Display) -> list[str]:
+def _image_digest(row: Row) -> str | None:
+    """The image digest row's generation recorded at start."""
+    try:
+        with open(
+            os.path.join(state_dir(row.name), f"{row.generation}.result.json"), encoding="utf-8"
+        ) as f:
+            found = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return found.get("image_digest") if isinstance(found, dict) else None
+
+
+def _listed(containers: Mapping[str, Row], display: Display) -> list[str]:
     if display == "":
         return []
     return [
@@ -169,10 +200,12 @@ class DockerTerminal(TmuxTerminal):
         host: DockerHost,
         container: str,
         generation: str,
+        current: bool = True,
     ) -> None:
         self.name, self.tmux, self._process, self._control = name, tmux, process, None
         _, _, self._pane, self._pane_pid = process.split(" ")
         self.host, self.container, self.generation = host, container, generation
+        self.current = current
 
     def _own_record(self) -> dict:
         found = _record(self.name)
@@ -232,7 +265,9 @@ class DockerTerminal(TmuxTerminal):
         self._signal("KILL")
 
     def close(self) -> None:
-        """Kills the client (pane-died disarmed), the supervisor, the container, then the view."""
+        """Kills the client (pane-died disarmed), the supervisor (unless the image is another
+        version's), the container, then the view.
+        """
         failures = []
         res = self.tmux.run(
             [
@@ -242,7 +277,7 @@ class DockerTerminal(TmuxTerminal):
         )
         if res.returncode and not absent(res):
             failures.append(f"kill: {res.stderr.strip()}")
-        if why := _stop_supervisor(self.name):
+        if self.current and (why := _stop_supervisor(self.name)):
             failures.append(why)
         try:
             self.host.broker.close(self.container)
@@ -304,6 +339,7 @@ class DockerHost(Host, Showable):
         self.view = TmuxHost(name, tmux=self.tmux)
         self.run = run
         self.broker = Broker() if broker is None else broker
+        self._warned: set[str] = set()
 
     def container_tmux(self, container: str) -> Tmux:
         return Tmux(exec_runner(self.docker, container, run=self.run))
@@ -325,14 +361,68 @@ class DockerHost(Host, Showable):
             raise SessionError(f"docker ps: {res.stderr.strip()}")
         return [line.split("\t") for line in res.stdout.splitlines()]
 
-    def _containers(self) -> dict[str, tuple[str, str]]:
-        return {
-            row[1]: (row[0], row[2])
-            for row in self._ps()
-            if len(row) == 3
-            and SESSION_NAME.fullmatch(row[1])
-            and row[0] == container_name(row[1], row[2])
-        }
+    def _rows(self) -> list[Row]:
+        return [
+            Row(name, container, generation, state)
+            for container, name, generation, state in (
+                row for row in self._ps() if len(row) == len(Row._fields)
+            )
+            if SESSION_NAME.fullmatch(name)
+            and GEN.fullmatch(generation)
+            and container == container_name(name, generation)
+        ]
+
+    def _containers(self) -> dict[str, Row]:
+        """Name → its row; of several, the one of host.json's generation."""
+        found: dict[str, Row] = {}
+        for row in self._rows():
+            if row.name not in found or row.generation == _record(row.name).get("generation"):
+                found[row.name] = row
+        return found
+
+    def _recover(self, row: Row) -> bool:
+        """False when row's image is not the one the current plugin builds. With its live container
+        host.json's generation and supervisor.lock free, it checks that, then restarts the relay
+        daemon and the supervisor on that lock; a failure only logs.
+        """
+        record = _record(row.name)
+        if row.state != "running" or record.get("generation") != row.generation:
+            return True
+        lock = _take_lock(row.name)
+        if lock is None:
+            return True
+        events = record.get("events")
+        try:
+            hook = command_path(COMMAND)
+            if hook is None:
+                raise ConfigError(f"{COMMAND} is not on PATH")
+            self.broker.version()
+            _, digest = self.broker.build(plugin_root(hook))
+            if _image_digest(row) != digest:
+                if row.name not in self._warned:
+                    self._warned.add(row.name)
+                    LOG.warning(
+                        "docker session %s runs an image from an older agent-pm;"
+                        " restart it to upgrade",
+                        row.name,
+                    )
+                return False
+            os.ftruncate(lock, 0)
+            os.write(lock, row.generation.encode())
+            self._serve_relay(row.container, row.generation)
+            self._spawn_supervisor(
+                row.name,
+                row.container,
+                generation=row.generation,
+                events=events if isinstance(events, str) else None,
+                hook=hook,
+                lock=lock,
+            )
+        except (ConfigError, SessionError, OSError) as error:
+            LOG.warning("docker session %s: no supervisor restart: %s", row.name, error)
+        finally:
+            os.close(lock)
+        return True
 
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
@@ -391,7 +481,7 @@ class DockerHost(Host, Showable):
         self.broker.version()
         root = plugin_root(hook)
         clients = client_keys(root)
-        image = self.broker.build(root)
+        image, _ = self.broker.build(root)
         cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
@@ -559,7 +649,8 @@ class DockerHost(Host, Showable):
         found = self._containers().get(name)
         if found is None:
             raise SessionError(f"no docker session {name}")
-        container, generation = found
+        current = self._recover(found)
+        container, generation = found.container, found.generation
         tmux = self.container_tmux(container)
         record = _record(name)
         process = record.get("process") if record.get("generation") == generation else None
@@ -571,7 +662,13 @@ class DockerHost(Host, Showable):
         if process is None:
             raise SessionError(f"no docker session {name}: its container runs no client")
         return DockerTerminal(
-            name, process, tmux=tmux, host=self, container=container, generation=generation
+            name,
+            process,
+            tmux=tmux,
+            host=self,
+            container=container,
+            generation=generation,
+            current=current,
         )
 
     def list(self, display: Display = None) -> list[str]:
@@ -579,7 +676,10 @@ class DockerHost(Host, Showable):
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         containers = self._containers()
-        return [self._row(name, *containers[name]) for name in _listed(containers, display)]
+        return [
+            self._row(name, containers[name].container, containers[name].generation)
+            for name in _listed(containers, display)
+        ]
 
     def _row(self, name: str, container: str, generation: str) -> SessionRow:
         record = _record(name)
@@ -621,7 +721,7 @@ class DockerHost(Host, Showable):
         found = self._containers().get(name)
         if found is None:
             raise SessionError(f"no docker session {name}")
-        return shlex.join(_attach_argv(self.docker, found[0], name))
+        return shlex.join(_attach_argv(self.docker, found.container, name))
 
     def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
         process = self.attach(name)

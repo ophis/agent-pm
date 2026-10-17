@@ -2,6 +2,7 @@
 record, listing, close and show, over a fake docker CLI, a fake broker and a recorded host tmux.
 """
 
+import contextlib
 import fcntl
 import json
 import os
@@ -39,6 +40,7 @@ GEN = "0123456789abcdef0123456789abcdef"
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
+DIGEST = "sha256:" + "b" * 64
 HOME = ClientHome("agent_dir", "agent", "AGENT_HOME")
 RECORD = Record(
     1,
@@ -106,7 +108,7 @@ class FakeBroker:
 
     def build(self, package):
         self.order.append(("build", package))
-        return IMAGE
+        return IMAGE, DIGEST
 
     def start(self, manifest, *, clients):
         self.order.append(("start", manifest, clients))
@@ -144,6 +146,20 @@ class Base(Case):
             broker=self.broker,
         )
         self.state = os.path.join(self.home, ".agent-pm", "docker-state", "w")
+        self.spawned, self.inherit = [], False
+        popen = mock.patch("subprocess.Popen", side_effect=self.spawn)
+        self.spawn_mock = popen.start()
+        self.addCleanup(popen.stop)
+
+    def spawn(self, argv, **kw):
+        """A supervisor that holds the lock fd it inherits while `inherit` is set."""
+        held = [os.dup(fd) for fd in kw.get("pass_fds", ())] if self.inherit else []
+        for fd in held:
+            self.addCleanup(_close, fd)
+        proc = mock.Mock(pid=4321 + len(self.spawned))
+        proc.terminate.side_effect = lambda: [_close(fd) for fd in held]
+        self.spawned.append((argv, kw, held))
+        return proc
 
     def host_tmux(self, argv, **kw):
         self.host_calls.append(argv[1:])
@@ -171,13 +187,31 @@ class Base(Case):
         with open(os.path.join(self.state, "host.json")) as f:
             return json.load(f)
 
-    def listed(self, *names):
-        self.docker.ps = [f"agent-pm-{name}-{GEN}\t{name}\t{GEN}" for name in names]
+    def listed(self, *names, state="running", gen=GEN):
+        self.docker.ps = [f"agent-pm-{name}-{gen}\t{name}\t{gen}\t{state}" for name in names]
+
+    def live_supervisor(self):
+        """supervisor.lock held, as by a running supervisor, until _close(fd) or cleanup."""
+        os.makedirs(self.state, exist_ok=True)
+        fd = os.open(os.path.join(self.state, "supervisor.lock"), os.O_RDWR | os.O_CREAT)
+        self.addCleanup(_close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
 
     def terminal(self):
+        """w attached while its supervisor runs: no restart."""
         self.listed("w")
         self.record()
-        return self.host.attach("w")
+        fd = self.live_supervisor()
+        try:
+            return self.host.attach("w")
+        finally:
+            _close(fd)
+
+
+def _close(fd):
+    with contextlib.suppress(OSError):
+        os.close(fd)
 
 
 def _free(path):
@@ -549,7 +583,7 @@ class StartTest(Base):
         self.assertEqual(self.order[-1], ("close", CONTAINER))
 
     def test_existing_container_refuses_start(self):
-        self.docker.ps = ["agent-pm-w-other\tw\tother"]
+        self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
         with self.assertRaisesRegex(SessionError, "a container for it exists"):
             self.start()
         self.assertEqual(len(self.order), 1)
@@ -620,6 +654,7 @@ class TerminalTest(Base):
             ("tmux", "capture-pane"): (0, "hello\n\n", ""),
         }
         process = self.terminal()
+        self.live_supervisor()
         process.send(Paste("hi"))
         process.press([KeyPress("a")])
         self.assertEqual(self.host.screen(process), "hello")
@@ -783,12 +818,147 @@ class CloseTest(Base):
         self.assertEqual(self.broker.closed, [CONTAINER])
 
 
+class RecoverTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.listed("w")
+        self.record(events=os.path.join(self.home, "events"))
+        self.lock = os.path.join(self.state, "supervisor.lock")
+        self.result(DIGEST)
+
+    def result(self, digest):
+        with open(os.path.join(self.state, f"{GEN}.result.json"), "w") as f:
+            json.dump({"container": CONTAINER, "image_digest": digest}, f)
+
+    def serves(self):
+        return [call for call in self.docker.execs() if call[:2] == [RELAY, "serve"]]
+
+    def test_attach_restarts_daemon_and_supervisor_when_the_lock_is_free(self):
+        process = self.host.attach("w")
+        self.assertTrue(process.current)
+        self.assertEqual(self.serves(), [[RELAY, "serve", GEN]])
+        self.assertIn(["exec", "-d", CONTAINER, RELAY, "serve", GEN], self.docker.order)
+        ((argv, kw, _),) = self.spawned
+        self.assertEqual(json.loads(argv[12])[-2:], [RELAY, "connect"])
+        self.assertEqual(argv[10:12], [GEN, str(kw["pass_fds"][0])])
+        with open(self.lock) as f:
+            self.assertEqual(f.read(), GEN)
+        with open(os.path.join(self.state, "supervisor.pid")) as f:
+            self.assertEqual(f.read(), "4321")
+        self.assertTrue(_free(self.lock))
+
+    def test_recovery_spawns_the_host_hook_and_host_json_events(self):
+        self.host.attach("w")
+        ((argv, _, _),) = self.spawned
+        self.assertEqual(
+            argv[5:10],
+            [
+                "w",
+                self.state,
+                os.path.join(self.home, ".agent-pm", "tui", "w"),
+                os.path.join(self.home, "events"),
+                os.path.join(REPO, "bin", "agent-pm-session"),
+            ],
+        )
+
+    def test_attach_with_the_lock_held_starts_nothing(self):
+        self.live_supervisor()
+        self.host.attach("w")
+        self.assertEqual((self.serves(), self.spawned), ([], []))
+        self.assertNotIn(("build", REPO), self.order)
+
+    def test_two_attaches_on_a_free_lock_spawn_one_supervisor(self):
+        self.inherit = True
+        self.host.attach("w")
+        self.host.attach("w")
+        self.assertEqual(len(self.spawned), 1)
+        self.assertEqual(len(self.serves()), 1)
+        self.assertFalse(_free(self.lock))
+
+    def test_close_right_after_a_recovering_attach_stops_the_new_supervisor(self):
+        self.inherit = True
+        process = self.host.attach("w")
+        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
+
+        def kill(pid, sig):
+            self.order.append(("signal", pid, sig))
+            for fd in self.spawned[0][2]:
+                _close(fd)
+
+        with mock.patch("os.kill", side_effect=kill):
+            process.close()
+        self.assertIn(("signal", 4321, signal.SIGTERM), self.order)
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
+    def test_attach_on_a_stopped_or_other_generation_container_starts_nothing(self):
+        for case in ("stopped", "other generation"):
+            with self.subTest(case=case):
+                if case == "stopped":
+                    self.listed("w", state="exited")
+                else:
+                    self.listed("w")
+                    self.record(generation="f" * 32)
+                    self.docker.replies = {("tmux", "display-message"): pane()}
+                self.host.attach("w")
+                self.assertEqual((self.serves(), self.spawned), ([], []))
+        self.listed("w", state="exited")
+        self.record()
+        (row,) = self.host.rows()
+        self.assertEqual(row.state, StatusState.DEAD)
+
+    def test_an_older_image_is_not_recovered_and_closes_without_the_supervisor(self):
+        for digest in ("sha256:" + "c" * 64, None):
+            with self.subTest(digest=digest):
+                self.host._warned.clear()
+                if digest is None:
+                    os.unlink(os.path.join(self.state, f"{GEN}.result.json"))
+                else:
+                    self.result(digest)
+                with self.assertLogs("session", "WARNING") as logs:
+                    process = self.host.attach("w")
+                    self.host.attach("w")
+                self.assertEqual(
+                    logs.output,
+                    [
+                        "WARNING:session:docker session w runs an image from an older agent-pm;"
+                        " restart it to upgrade"
+                    ],
+                )
+                self.assertFalse(process.current)
+                self.assertEqual((self.serves(), self.spawned), ([], []))
+                self.assertTrue(_free(self.lock))
+        self.live_supervisor()
+        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
+        with mock.patch("os.kill") as kill:
+            process.close()
+        kill.assert_not_called()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
+    def test_a_failing_recovery_logs_and_close_still_removes_the_container(self):
+        for case, replies in (
+            ("serve fails", {(RELAY, "serve"): (1, "", "boom")}),
+            ("serve times out", {(RELAY, "serve"): TimeoutExpired("docker", 10)}),
+        ):
+            with self.subTest(case=case):
+                self.docker.replies = replies
+                with self.assertLogs("session", "WARNING") as logs:
+                    process = self.host.attach("w")
+                self.assertIn("no supervisor restart", logs.output[0])
+                self.assertEqual(self.spawned, [])
+                self.assertTrue(_free(self.lock))
+        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
+        process.close()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
+
 class ListTest(Base):
     def test_list_and_rows_from_labelled_containers(self):
         self.listed("w", "v")
         self.docker.ps += [
-            f"agent-pm-x-{GEN}\tnot a name\t{GEN}",
-            f"someone-else\tz\t{GEN}",
+            f"agent-pm-x-{GEN}\tnot a name\t{GEN}\trunning",
+            f"someone-else\tz\t{GEN}\trunning",
+            f"agent-pm-y-{GEN.upper()}\ty\t{GEN.upper()}\trunning",
+            f"agent-pm-u-{GEN}\tu\t{GEN}",
             "bad line",
         ]
         self.record()
