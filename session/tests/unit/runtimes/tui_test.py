@@ -994,14 +994,14 @@ class SweepTest(Base):
         folder = os.path.join(pty_state.root(), "a")
         os.makedirs(folder)
         pty_state.put(folder, pty_state.META, json.dumps({"id": "a", "control": "/nonexistent"}))
-        pty_state.put(folder, pty_state.RC, "0")
+        pty_state.put(folder, pty_state.SUPERVISOR, '{"rc": 0}')
         open(f"{folder}.lock", "w").close()
         self.age(
             31, folder, f"{folder}.lock", *(os.path.join(folder, f) for f in os.listdir(folder))
         )
 
         def popen(argv, **_options):
-            pty_state.put(argv[5], pty_state.PID, "4242")
+            pty_state.put(argv[5], pty_state.SUPERVISOR, '{"pid": 4242}')
             control = json.loads(pty_state.read(argv[5], pty_state.META))["control"]
             with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
                 file.write('{"started": {}}')

@@ -2,7 +2,7 @@
 path ("" none), as a session leader: it holds the pty master and runs the session's ProcessControl
 child on the slave, its controlling terminal. It keeps the program's output in `output`, writes
 its input socket's requests to the master, and once the program exits writes `exited <rc>`
-(detach) or `dead` (terminal) and rc; a detach's dir then goes.
+(detach) or `dead` (terminal) and adds rc to supervisor.json; a detach's dir then goes.
 """
 
 import contextlib
@@ -115,7 +115,8 @@ def main(folder: str, events: str) -> None:  # pragma: no cover
         child = subprocess.Popen(
             control.command(), stdin=slave, stdout=slave, stderr=slave, cwd="/"
         )
-        state.put(folder, state.PID, str(os.getpid()), dir_fd=directory)
+        pid = os.getpid()
+        state.put(folder, state.SUPERVISOR, json.dumps({"pid": pid}), dir_fd=directory)
         rc = Supervisor(master, listener, output).serve(child)
     detach = meta["kind"] == "detach"
     if events:
@@ -126,7 +127,7 @@ def main(folder: str, events: str) -> None:  # pragma: no cover
             else:
                 log.write(name, "dead")
     with contextlib.suppress(OSError):
-        state.put(folder, state.RC, str(rc), dir_fd=directory)
+        state.put(folder, state.SUPERVISOR, json.dumps({"pid": pid, "rc": rc}), dir_fd=directory)
     if detach and _same(folder, directory):
         shutil.rmtree(folder, ignore_errors=True)
 

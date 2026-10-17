@@ -65,6 +65,11 @@ class _Connection:
 DAY = 24 * 3600
 
 
+def supervised(folder, **fields):
+    """The supervisor's supervisor.json, `fields` added."""
+    state.put(folder, state.SUPERVISOR, json.dumps({**state.supervisor(folder), **fields}))
+
+
 class Starting(Case):
     """detach's start against a fake supervisor process (subprocess.Popen) that writes its pid and
     a runner that reports through its ProcessControl's state.json.
@@ -76,7 +81,7 @@ class Starting(Case):
         def popen(argv, **options):
             folder = argv[5]
             if pid:
-                state.put(folder, state.PID, "4242")
+                supervised(folder, pid=4242)
             else:
                 os.write(options["stderr"].fileno(), b"booting\nno pty\n")
             control = json.loads(state.read(folder, state.META))["control"]
@@ -85,7 +90,7 @@ class Starting(Case):
                 with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
                     json.dump({**recorded, **({"done": 0} if ended else {})}, file)
             if ended:
-                state.put(folder, state.RC, "0")
+                supervised(folder, rc=0)
                 moment = time.time() - 31 * DAY
                 for path in (folder, f"{folder}.lock", os.path.join(folder, state.OUTPUT)):
                     os.utime(path, (moment, moment))
@@ -189,17 +194,34 @@ class Start(Starting):
         error, spawned, _ = self.start()
         self.assertEqual(str(error), "pty session x is live")
         spawned.assert_not_called()
-        state.put(folder, state.RC, "0")
+        supervised(folder, rc=0)
         with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
             file.write('{"done": 0}')
         process, _, _ = self.start()
         self.assertNotEqual(process.identity, "old")
 
+    def test_its_supervisor_json_holds_the_supervisor_pid_then_the_rc(self):
+        folder = os.path.join(state.root(), "x")
+        os.makedirs(folder)
+        state.put(folder, state.META, json.dumps({"id": "g1", "kind": "detach"}))
+        supervised(folder, pid=4242)
+        process = PtyHost("pty").attach("x")
+        with mock.patch("os.kill") as probed:
+            self.assertIsNone(process.returncode())
+        probed.assert_called_once_with(4242, 0)
+        supervised(folder, rc=3)
+        self.assertEqual(
+            (process.returncode(), process.alive(), state.supervisor(folder)),
+            (3, False, {"pid": 4242, "rc": 3}),
+        )
+        state.put(folder, state.SUPERVISOR, "[1]")
+        self.assertEqual(state.supervisor(folder), {})
+
     def test_a_listed_session_whose_client_exited_is_dead(self):
         folder = os.path.join(state.root(), "x")
         os.makedirs(folder)
         state.put(folder, state.META, json.dumps({"id": "g1", "kind": "detach"}))
-        state.put(folder, state.RC, "0")
+        supervised(folder, rc=0)
         found = PtyHost("pty").attach("x").status()
         self.assertEqual((found.alive, found.state), (False, StatusState.DEAD))
 
@@ -220,9 +242,9 @@ class Sweep(Starting):
                 file.write('{"done": 0}')
         if meta:
             state.put(folder, state.META, json.dumps({"id": name, "control": control}))
-            state.put(folder, state.RC, "0")
+            supervised(folder, rc=0)
         if pid is not None:
-            state.put(folder, state.PID, str(pid))
+            supervised(folder, pid=pid)
         paths = [os.path.join(folder, state.OUTPUT), os.path.join(folder, state.ACTIVITY)]
         paths += [f"{folder}.lock", *([tui_lock(name)] if tui else [])]
         for path in paths:

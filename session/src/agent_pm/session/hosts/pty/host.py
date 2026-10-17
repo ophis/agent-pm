@@ -90,7 +90,7 @@ class PtyProcess(Process):
 
     def alive(self) -> bool:
         return (
-            bool(self._own()) and state.read(self.folder, state.RC) is None and self._group_live()
+            bool(self._own()) and "rc" not in state.supervisor(self.folder) and self._group_live()
         )
 
     def state(self) -> Liveness:
@@ -99,13 +99,10 @@ class PtyProcess(Process):
     def returncode(self) -> int | None:
         if not self._own():
             return -signal.SIGHUP
-        value = state.read(self.folder, state.RC)
+        value = state.supervisor(self.folder).get("rc")
         if value is None:
             return None if self._supervised() else -signal.SIGHUP
-        try:
-            return int(value)
-        except ValueError:
-            return -signal.SIGHUP
+        return value if isinstance(value, int) else -signal.SIGHUP
 
     def activity(self) -> StatusState | None:
         value = state.read(self.folder, state.ACTIVITY) if self._own() else None
@@ -188,14 +185,14 @@ class PtyProcess(Process):
 
     def _supervised(self) -> bool:
         """Its supervisor may still write rc: running, or its pid not yet written."""
-        pid = state.read(self.folder, state.PID)
-        if pid is None:
+        pid = state.supervisor(self.folder).get("pid")
+        if not isinstance(pid, int):
             return True
         try:
-            os.kill(int(pid), 0)
+            os.kill(pid, 0)
         except ProcessLookupError:
             return False
-        except (PermissionError, ValueError):
+        except (PermissionError, OverflowError):
             pass
         return True
 
@@ -397,7 +394,7 @@ class PtyHost(Host):
             )
             supervisor = self._supervise(folder, events)
             deadline = time.monotonic() + START_TIMEOUT
-            while state.read(folder, state.PID) is None:
+            while "pid" not in state.supervisor(folder):
                 if supervisor.poll() is not None or time.monotonic() > deadline:
                     tail = (state.read(folder, state.OUTPUT) or "").strip().rpartition("\n")[2]
                     raise SessionError(f"{kind} {name}: did not start: {tail}")
@@ -477,7 +474,7 @@ def _expire(name: str) -> None:
             return
         if os.path.lexists(folder):
             process = PtyProcess(name, folder)
-            supervised = state.read(folder, state.PID) is not None and process._supervised()
+            supervised = "pid" in state.supervisor(folder) and process._supervised()
             if process.alive() or process._group_live() or supervised:
                 return
             process.close()
