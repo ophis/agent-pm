@@ -78,7 +78,7 @@ Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: {
   project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
 Q_DETAIL = (
-    """query($i: String!) { issue(id: $i) { state { id }
+    """query($i: String!, $after: String) { issue(id: $i) { state { id }
   """
     + ops.HISTORY
     + """

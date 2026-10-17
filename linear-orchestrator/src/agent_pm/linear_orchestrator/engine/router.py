@@ -142,11 +142,7 @@ Q_RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-Q_HISTORY = (
-    "query($i: String!, $after: String) { issue(id: $i) { "
-    "history(first: 250, after: $after, orderBy: createdAt) { "
-    "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } } } }"
-)
+Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + ops.HISTORY + " } }"
 Q_VIEWER = "query { viewer { id } }"
 
 

@@ -190,7 +190,8 @@ class Writes(Case):
         self.assertEqual(
             ops.HISTORY,
             (
-                "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId fromStateId toStateId } }"
+                "history(first: 250, after: $after, orderBy: createdAt) { "
+                "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } }"
             ),
         )
 
