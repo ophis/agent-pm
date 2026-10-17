@@ -6,6 +6,7 @@ process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are temp
 
 import contextlib
 import dataclasses
+import io
 import json
 import os
 import shlex
@@ -36,7 +37,6 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
-    Usage,
     Window,
 )
 
@@ -56,16 +56,18 @@ TABLE = {
 }
 PROBE = [
     "-p",
-    "Reply with OK.",
-    "--model",
-    "haiku",
-    "--output-format",
-    "stream-json",
-    "--verbose",
+    "--no-session-persistence",
+    "--strict-mcp-config",
     "--setting-sources",
     "user",
-    "--strict-mcp-config",
+    "--settings",
+    '{"remoteControlAtStartup":false,"disableAllHooks":true}',
+    "/usage",
 ]
+USAGE = (
+    "Current session: 25% used · resets 4:39am (America/New_York)\n"
+    "Current week (all models): 100% used\n"
+)
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
@@ -445,20 +447,11 @@ class InterruptTest(Base):
 
 
 class UsageTest(Base):
-    def test_the_probes_rate_limit_info_is_the_usage(self):
-        self.scenario(
-            rate_limit={
-                "status": "allowed",
-                "resetsAt": RESETS,
-                "unifiedWindows": {
-                    "five_hour": {"utilization": 0.25, "resetsAt": RESETS},
-                    "seven_day": {"utilization": 1.0, "resetsAt": RESETS + 1},
-                },
-            }
-        )
-        self.assertEqual(
-            self.session_cls.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
-        )
+    def test_the_probes_usage_panel_is_the_usage(self):
+        self.scenario(usage=USAGE)
+        found = self.session_cls.usage("claude")
+        self.assertEqual((found.five_hour.used_percent, found.weekly), (25.0, Window(100.0, None)))
+        self.assertIsNotNone(found.five_hour.resets_at)
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], PROBE)
         probe = os.path.join(self.agent_pm, "probe")
@@ -466,24 +459,17 @@ class UsageTest(Base):
         self.assertEqual(stat.S_IMODE(os.lstat(probe).st_mode), 0o700)
         self.assertEqual(self.written(), [])
 
-    def test_a_reading_without_windows_or_a_probe_without_an_event_has_none(self):
-        for name, fields in (
-            (
-                "no windows",
-                {"rate_limit": {"status": "allowed", "unifiedWindows": {"five_hour": "high"}}},
-            ),
-            ("no event", {}),
-        ):
-            with self.subTest(name):
-                self.scenario(**fields)
-                self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
-
     def test_unknown_is_none(self):
         for name, fields in (
             ("failed run", {"exit": 1}),
-            ("no claude", {"rate_limit": {"unifiedWindows": {"five_hour": {"utilization": 0.25}}}}),
+            ("model reply", {"usage": "Hello! How can I help with /usage?\n"}),
+            ("no claude", {"usage": USAGE}),
         ):
-            with self.subTest(name), mock.patch.dict(os.environ):
+            with (
+                self.subTest(name),
+                mock.patch.dict(os.environ),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
                 self.scenario(**fields)
                 if name == "no claude":
                     os.environ["PATH"] = self.dir

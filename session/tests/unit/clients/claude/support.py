@@ -16,7 +16,6 @@ from agent_pm.session.engine.types import (
     ConfigError,
     HookKind,
     Launch,
-    Usage,
 )
 from agent_pm.session.engine.types import Spec as BaseSpec
 from agent_pm.utils import LOCAL_ENV_VARS
@@ -59,16 +58,22 @@ UNSET = (
 PROBE = (
     "claude",
     "-p",
-    "Reply with OK.",
-    "--model",
-    "haiku",
-    "--output-format",
-    "stream-json",
-    "--verbose",
+    "--no-session-persistence",
+    "--strict-mcp-config",
     "--setting-sources",
     "user",
-    "--strict-mcp-config",
+    "--settings",
+    '{"remoteControlAtStartup":false,"disableAllHooks":true}',
+    "/usage",
 )
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def fixture(name) -> str:
+    """A real `claude -p /usage` stdout (Claude Code 2.1.302, Agent_Usage_Monitor's spikes)."""
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as f:
+        return f.read()
+
 
 NOTE = (
     "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits on a "
@@ -150,71 +155,6 @@ def rejected(resets=1700000000, status="rejected") -> dict:
 
 
 INIT = {"type": "system", "subtype": "init", "session_id": SID}
-
-
-def event(status="allowed", five=0.1, kind="five_hour", resets=1, **week) -> str:
-    """router_test's rate_limit_event line, its rateLimitType and resetsAt given."""
-    windows = {"five_hour": {"utilization": five, "resetsAt": 1}}
-    windows.update({k: {"utilization": v, "resetsAt": 2} for k, v in week.items()})
-    return info_line(
-        {
-            "status": status,
-            "utilization": five,
-            "rateLimitType": kind,
-            "resetsAt": resets,
-            "unifiedWindows": windows,
-        }
-    )
-
-
-def info_line(info) -> str:
-    return json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
-
-
-def unified(**found) -> str:
-    """An allowed rate_limit_event line whose unifiedWindows are `found`."""
-    return info_line({"status": "allowed", "unifiedWindows": found})
-
-
-def usage(*lines) -> Usage | None:
-    return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
-
-
-PROBE_REPLY = {"type": "assistant", "message": {"content": [text("OK")]}, "session_id": SID}
-PROBE_RESULT = {
-    "type": "result",
-    "subtype": "success",
-    "is_error": False,
-    "result": "OK",
-    "session_id": SID,
-}
-
-
-def probe_init(source) -> dict:
-    return {**INIT, "cwd": "/probe", "apiKeySource": source, "claude_code_version": "2.1.299"}
-
-
-def stdout(*records) -> str:
-    return "".join(f"{json.dumps(record)}\n" for record in records)
-
-
-# Handwritten Claude 2.1.299 probe stdout: no recordings exist (TASK-421).
-API_KEY_PROBE = stdout(probe_init("ANTHROPIC_API_KEY"), PROBE_REPLY, PROBE_RESULT)
-SUBSCRIPTION_PROBE = stdout(
-    probe_init("none"),
-    PROBE_REPLY,
-    {
-        "type": "rate_limit_event",
-        "rate_limit_info": {
-            "status": "allowed",
-            "unifiedWindows": {
-                "five_hour": {"utilization": 0.25, "resetsAt": 1760000000},
-                "seven_day": {"utilization": 0.4, "resetsAt": 1760500000},
-            },
-        },
-    },
-    PROBE_RESULT,
-)
 
 
 HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
