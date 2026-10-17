@@ -106,3 +106,27 @@ func TestConfigOutsideTMPDIR(t *testing.T) {
 		t.Fatalf("config kept: %v", err)
 	}
 }
+
+func TestDiagnostic(t *testing.T) {
+	failed := `ERROR: failed to solve: process "/bin/sh -c apt-get purge -y sudo" did not complete successfully: exit code: 1`
+	for stderr, want := range map[string]string{
+		"#7 0.412 E: Sub-process /usr/bin/dpkg returned an error code (1)\n#7 ERROR: process \"/bin/sh -c apt-get purge -y sudo\" did not complete successfully: exit code: 1\n" +
+			failed + "\n\nView build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/abc123\n": failed,
+		"docker: Error response from daemon: mounts denied\n\nRun 'docker run --help' for more information\n": "docker: Error response from daemon: mounts denied",
+	} {
+		if got := Diagnostic(&CommandError{Exit: 1, Stderr: stderr}); got != want {
+			t.Errorf("%q: got %q", stderr, got)
+		}
+	}
+	if got := Diagnostic(errors.New("boom")); got != "boom" {
+		t.Fatal(got)
+	}
+}
+
+func TestRunKeepsOutputTail(t *testing.T) {
+	_, err := fakeDocker(t, "head -c 70000 /dev/zero | tr '\\0' x >&2; printf '\\nERROR: last\\n' >&2; exit 1").Run(context.Background(), nil, nil)
+	var ce *CommandError
+	if !errors.As(err, &ce) || len(ce.Stderr) != capture || Diagnostic(err) != "ERROR: last" {
+		t.Fatalf("%v", err)
+	}
+}

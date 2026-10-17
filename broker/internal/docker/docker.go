@@ -35,7 +35,8 @@ func (e *CommandError) Error() string {
 	return fmt.Sprintf("docker exited %d: %s", e.Exit, strings.TrimSpace(e.Stderr))
 }
 
-// Diagnostic is Docker's diagnostic: the last stderr line that is not the CLI's --help trailer.
+// Diagnostic is Docker's diagnostic: the last stderr line that is not the CLI's --help trailer
+// or Docker Desktop's build-details link.
 func Diagnostic(err error) string {
 	var ce *CommandError
 	if !errors.As(err, &ce) {
@@ -44,7 +45,7 @@ func Diagnostic(err error) string {
 	lines := strings.Split(ce.Stderr, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line != "" && !strings.HasPrefix(line, "Run 'docker ") && !strings.HasPrefix(line, "See 'docker ") {
+		if line != "" && !strings.HasPrefix(line, "Run 'docker ") && !strings.HasPrefix(line, "See 'docker ") && !strings.HasPrefix(line, "View build details: ") {
 			return line
 		}
 	}
@@ -103,11 +104,13 @@ func (c *CLI) Command(args []string) (string, []string, []string) {
 	return c.path, argv, env
 }
 
+// capped keeps the last capture bytes: a long build's error comes last.
 type capped struct{ data []byte }
 
 func (b *capped) Write(p []byte) (int, error) {
-	if left := capture - len(b.data); left > 0 {
-		b.data = append(b.data, p[:min(len(p), left)]...)
+	b.data = append(b.data, p...)
+	if over := len(b.data) - capture; over > 0 {
+		b.data = b.data[over:]
 	}
 	return len(p), nil
 }
