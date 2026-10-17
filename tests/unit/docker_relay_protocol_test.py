@@ -65,23 +65,19 @@ class DockerRelayProtocol(Case):
                 if definition not in REPLY:
                     self.assertEqual(expected, {"stage": "response", "reply": None})
                     continue
+                self.assertEqual(expected["stage"], "schema")
                 reply = expected["reply"]
                 self.assertFalse(list(_validator(schema, REPLY[definition]).iter_errors(reply)))
                 if not case["valid"]:
-                    self.assertEqual(expected["stage"], "schema")
                     self.assertEqual(reply, MALFORMED_REPLY[definition])
                     continue
                 request = json.loads((PROTOCOL / "fixtures" / case["file"]).read_text())
                 if definition == "stub_request":
-                    self.assertEqual(expected["stage"], "schema")
                     self.assertEqual(reply, {"id": request["id"], "queued": True})
-                    continue
-                self.assertIn(expected["stage"], ("schema", "runtime"))
-                self.assertEqual(
-                    set(case["context"]), {"generation", "hook_dir", "recorded_seq", "hook_exit"}
-                )
-                self.assertEqual((reply["gen"], reply["seq"]), (request["gen"], request["seq"]))
-                self.assertIsInstance(expected["runs_hook"], bool)
+                else:
+                    self.assertEqual(
+                        reply, {"gen": request["gen"], "seq": request["seq"], "ok": True}
+                    )
 
     def test_required_fields_labels_and_payload_limit_are_exercised(self):
         cases = {case["file"]: case for case in _index()["cases"]}

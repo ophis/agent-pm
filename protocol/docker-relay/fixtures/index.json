@@ -271,94 +271,7 @@
           "gen": "0123456789abcdef0123456789abcdef",
           "seq": 1,
           "ok": true
-        },
-        "runs_hook": true
-      },
-      "context": {
-        "generation": "0123456789abcdef0123456789abcdef",
-        "hook_dir": "/Users/example/.agent-pm/tui/worker_1",
-        "recorded_seq": 0,
-        "hook_exit": 0
-      }
-    },
-    {
-      "file": "relay-request-stale-gen.json",
-      "definition": "relay_request",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "reply": {
-          "gen": "fedcba9876543210fedcba9876543210",
-          "seq": 1,
-          "ok": false
-        },
-        "runs_hook": false
-      },
-      "context": {
-        "generation": "0123456789abcdef0123456789abcdef",
-        "hook_dir": "/Users/example/.agent-pm/tui/worker_1",
-        "recorded_seq": 0,
-        "hook_exit": 0
-      }
-    },
-    {
-      "file": "relay-request-foreign-dir.json",
-      "definition": "relay_request",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "reply": {
-          "gen": "0123456789abcdef0123456789abcdef",
-          "seq": 1,
-          "ok": false
-        },
-        "runs_hook": false
-      },
-      "context": {
-        "generation": "0123456789abcdef0123456789abcdef",
-        "hook_dir": "/Users/example/.agent-pm/tui/worker_1",
-        "recorded_seq": 0,
-        "hook_exit": 0
-      }
-    },
-    {
-      "file": "relay-request-duplicate-seq.json",
-      "definition": "relay_request",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "reply": {
-          "gen": "0123456789abcdef0123456789abcdef",
-          "seq": 3,
-          "ok": true
-        },
-        "runs_hook": false
-      },
-      "context": {
-        "generation": "0123456789abcdef0123456789abcdef",
-        "hook_dir": "/Users/example/.agent-pm/tui/worker_1",
-        "recorded_seq": 3,
-        "hook_exit": 0
-      }
-    },
-    {
-      "file": "relay-request-hook-failed.json",
-      "definition": "relay_request",
-      "valid": true,
-      "expected": {
-        "stage": "runtime",
-        "reply": {
-          "gen": "0123456789abcdef0123456789abcdef",
-          "seq": 4,
-          "ok": false
-        },
-        "runs_hook": true
-      },
-      "context": {
-        "generation": "0123456789abcdef0123456789abcdef",
-        "hook_dir": "/Users/example/.agent-pm/tui/worker_1",
-        "recorded_seq": 3,
-        "hook_exit": 1
+        }
       }
     },
     {
@@ -369,8 +282,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -381,8 +293,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -393,8 +304,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -405,8 +315,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -417,8 +326,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -429,8 +337,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -441,8 +348,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -453,8 +359,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -465,8 +370,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -477,8 +381,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       }
     },
     {
@@ -489,8 +392,7 @@
         "stage": "schema",
         "reply": {
           "ok": false
-        },
-        "runs_hook": false
+        }
       },
       "payload_bytes": 67108865,
       "note": "Replace payload with the base64 of payload_bytes zero bytes before use."

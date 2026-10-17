@@ -39,7 +39,7 @@ point; the document root has none.
 | `argv` | Exactly `["hook", <directory>, <label>]`: absolute directory, label `[A-Za-z0-9_.-]{1,64}` |
 | `payload` | Standard padded base64 (RFC 4648 §4) of the hook's stdin, decoding to at most 64 MiB |
 | `gen` | 32 lowercase hexadecimal characters, the session generation |
-| `seq` | Integer from 1, assigned by the daemon per generation |
+| `seq` | Integer from 1, assigned by the daemon |
 | `queued` | `true`: the request is written to the queue |
 | `ok` | `true` or `false`: either way the supervisor has handled the message |
 
@@ -80,15 +80,9 @@ sample beside it. Stub, relay and supervisor tests read these files, never copie
 | `definition` | Schema entry point under `$defs` |
 | `valid` | Expected schema acceptance |
 | `payload_bytes` | Replace `payload` with the base64 of this many zero bytes before use |
-| `expected.stage` | `schema` for a request decided by the schema; `runtime` for a schema-valid relay request decided by `context`; `response` for replies |
+| `expected.stage` | `schema` for requests; `response` for replies |
 | `expected.reply` | The receiver's reply to a request: the malformed reply when invalid, else the reply when every later step succeeds; `null` for replies |
-| `expected.runs_hook` | Relay requests: whether the supervisor runs `agent-pm-session hook` |
-| `context` | Valid relay requests: fake supervisor state `generation`, `hook_dir`, `recorded_seq` (last `seq` handled) and `hook_exit` |
-
-Runtime cases encode the supervisor's order: `gen` other than `generation`, or a
-directory other than `hook_dir`, gets `ok: false` and runs nothing; `seq` not above
-`recorded_seq` gets `ok: true` and runs nothing; otherwise the hook runs and `ok` is
-`hook_exit == 0`.
+| `note` | Optional explanation for readers |
 
 Install the pinned test dependency and use the supervised test command in
 [docs/tests.md](tests.md); the fixture test is `tests/unit/docker_relay_protocol_test.py`.
