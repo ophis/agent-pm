@@ -28,21 +28,23 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(role, cfg, *, client=None, kind=None):
-    try:
-        return _read_usage(role, cfg, client, kind)
-    except (delegate.ConfigError, delegate.SessionError):
-        return None
+def read_usage(role, cfg, *, client=None):
+    return _probe(role, cfg, cfg.delegate_cls, client)[0]
 
 
-def _read_usage(role, cfg, client, kind):
-    provider = cfg.delegate_cls if kind is None else cfg.delegates.get(kind)
+def _probe(role, cfg, provider, client):
+    """Usage, else None, and the ConfigError that left it unknown."""
     if provider is None:
-        return None
+        return None, None
     overlays = (cfg.core,)
     if client is not None:
         overlays += ({"roles": {role: {"client": client}}},)
-    return provider.usage(role, overlays=overlays)
+    try:
+        return provider.usage(role, overlays=overlays), None
+    except delegate.ConfigError as error:
+        return None, error
+    except delegate.SessionError:
+        return None, None
 
 
 class Gate:
@@ -51,10 +53,7 @@ class Gate:
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
 
-    def blocked(self, role, ident, *, key=None, reject_config=False):
-        configured = self.cfg.roles.get(role)
-        current = (self.cfg.delegate_kind, configured and configured.run.client)
-        key = current if key is None else key
+    def blocked(self, role, ident, *, key, reject_config=False):
         kind, client = key
         if key in self.limits:
             reason, fields = "limit", {"until": self.limits[key].isoformat()}
@@ -71,13 +70,7 @@ class Gate:
         return reason is not None
 
     def _check(self, role, client, kind):
-        error = None
-        try:
-            usage = _read_usage(role, self.cfg, client, kind)
-        except delegate.ConfigError as caught:
-            usage, error = None, caught
-        except delegate.SessionError:
-            usage = None
+        usage, error = _probe(role, self.cfg, self.cfg.delegates.get(kind), client)
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}
