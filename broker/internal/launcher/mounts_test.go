@@ -157,9 +157,17 @@ func TestLoadRoots(t *testing.T) {
 }
 
 func TestNestedInRunningWorker(t *testing.T) {
-	for source, rejected := range map[string]bool{home + "/src": true, home + "/src/project": false, home + "/other": false} {
+	for source, rejected := range map[string]bool{home + "/src": true, home + "/src/project": false, home + "/other": false,
+		"/host_mnt" + home + "/src": true, "/host_mnt" + home + "/other": false, "/gone/src": true} {
 		w := &world{labels: goodLabels(), running: "c1\n", mounts: `[{"Type":"bind","Source":"` + source + `","Destination":"/x"},{"Type":"tmpfs","Source":"","Destination":"/run"}]` + "\n"}
 		h, d := startHost(w, &fakeCreds{})
+		// Like the host: VM paths and deleted directories do not resolve.
+		h.RealPath = func(p string) (string, error) {
+			if strings.HasPrefix(p, "/host_mnt/") || strings.HasPrefix(p, "/gone/") {
+				return "", os.ErrNotExist
+			}
+			return p, nil
+		}
 		_, err := h.Start(context.Background(), validManifest(t))
 		if rejected != (err != nil) || rejected && (protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run")) {
 			t.Fatalf("%s: %v", source, err)
