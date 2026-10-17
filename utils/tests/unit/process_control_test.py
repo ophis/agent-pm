@@ -6,7 +6,7 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.utils.process_control import ROOT_ENV, TIMEOUT, ProcessControl, _Group
+from agent_pm.utils.process_control import ROOT_ENV, STATE, TIMEOUT, ProcessControl, _Group
 
 from utils.tests.case import Case
 
@@ -136,8 +136,8 @@ class ControlTest(Case):
         def respond(command):
             requests.append(command)
             if command == b"start\n":
-                with open(os.path.join(control.path, "started.json"), "w") as stream:
-                    json.dump({"started": True}, stream)
+                with open(os.path.join(control.path, STATE), "w") as stream:
+                    json.dump({"started": {"started": True}}, stream)
 
         with mock.patch("socket.socket") as socket, mock.patch("time.sleep"):
             connection = socket.return_value.__enter__.return_value
@@ -173,8 +173,8 @@ class ControlTest(Case):
         self.addCleanup(control.remove)
         with open(os.path.join(control.path, "control"), "w"):
             pass
-        with open(os.path.join(control.path, "started.json"), "w") as stream:
-            json.dump({"started": True}, stream)
+        with open(os.path.join(control.path, STATE), "w") as stream:
+            json.dump({"started": {"started": True}}, stream)
         with mock.patch("socket.socket") as socket, mock.patch("time.sleep") as sleep:
             connection = socket.return_value.__enter__.return_value
             connection.connect.side_effect = ConnectionRefusedError
@@ -306,8 +306,11 @@ class ControlTest(Case):
         self.assertGreaterEqual(ended, 2 + TIMEOUT)
         self.assertLess(ended, 2 + TIMEOUT + 1)
         exited.assert_called_once_with(3)
-        with open(os.path.join(control.path, "done.json")) as stream:
-            self.assertEqual(json.load(stream), {"rc": 3})
+        with open(os.path.join(control.path, STATE)) as stream:
+            self.assertEqual(
+                json.load(stream), {"started": {"started": True}, "exited": 3, "done": 3}
+            )
+        self.assertEqual(os.listdir(control.path), [STATE])
 
     def test_a_missing_directory_retires_an_ended_group_at_once_and_never_a_live_one(self):
         control = self.control()
@@ -357,8 +360,8 @@ class ControlTest(Case):
                     [json.loads(client.answer) for client in clients],
                     [{"live": True}, {"live": False}],
                 )
-                with open(os.path.join(control.path, "done.json")) as stream:
-                    self.assertEqual(json.load(stream), {"rc": 1})
+                with open(os.path.join(control.path, STATE)) as stream:
+                    self.assertEqual(json.load(stream)["done"], 1)
                 control.remove()
 
     def test_a_query_during_directory_removal_reports_ended(self):
@@ -401,8 +404,8 @@ class ControlTest(Case):
     def test_a_completed_generation_never_contacts_or_signals_a_reused_group(self):
         control = self.control()
         self.addCleanup(control.remove)
-        with open(os.path.join(control.path, "done.json"), "w") as stream:
-            json.dump({"rc": 0}, stream)
+        with open(os.path.join(control.path, STATE), "w") as stream:
+            json.dump({"done": 0}, stream)
         with mock.patch("socket.socket") as socket, mock.patch("os.killpg") as killpg:
             control.terminate()
             control.kill()

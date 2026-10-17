@@ -2,7 +2,8 @@
 anchor until that process group has no live members, so its numeric identity cannot be reused.
 After the group ends it retires once a client accepted it, its directory is gone, or TIMEOUT passed.
 The standalone entry point runs prepare()'s command with inherited terminal, environment and mask.
-Control directories live under the caller's root, else $AGENT_PM_CONTROL_ROOT, else /tmp.
+Control directories live under the caller's root, else $AGENT_PM_CONTROL_ROOT, else /tmp; the
+controller records the anchor's start, exit and retirement in its state.json (STATE).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 POLL = 0.05
 TIMEOUT = 10
 ROOT_ENV = "AGENT_PM_CONTROL_ROOT"
+STATE = "state.json"  # {"started": message, "exited": rc, "done": rc}, each key once written
 
 
 def _write(path, value):
@@ -161,6 +163,7 @@ class ProcessControl:
         self.accepted = False
         self.requested = False
         self.cancelled = False
+        self._recorded: dict = {}
 
     @classmethod
     def attach(cls, path: str) -> ProcessControl:
@@ -241,7 +244,7 @@ class ProcessControl:
 
     def wait_started(self, timeout: float = TIMEOUT) -> None:
         deadline = time.monotonic() + timeout
-        while (message := _read(os.path.join(self.path, "started.json"))) is None:
+        while (message := self._state().get("started")) is None:
             if time.monotonic() >= deadline:
                 raise TimeoutError("process controller did not start")
             if os.path.exists(os.path.join(self.path, "control")):
@@ -256,10 +259,7 @@ class ProcessControl:
         return (
             not self.ended
             and os.path.isdir(self.path)
-            and all(
-                _read(os.path.join(self.path, name)) is None
-                for name in ("exited.json", "done.json")
-            )
+            and not {"exited", "done"} & self._state().keys()
         )
 
     def live(self) -> bool:
@@ -272,11 +272,7 @@ class ProcessControl:
         self._request(f"signal {signal.SIGTERM}")
 
     def _request(self, command: str) -> bool:
-        if (
-            self.ended
-            or not os.path.isdir(self.path)
-            or _read(os.path.join(self.path, "done.json")) is not None
-        ):
+        if self.ended or not os.path.isdir(self.path) or "done" in self._state():
             self.ended = True
             return False
         try:
@@ -295,10 +291,7 @@ class ProcessControl:
             except FileNotFoundError:
                 self.ended = True
                 return False
-            if (
-                not os.path.isdir(self.path)
-                or _read(os.path.join(self.path, "done.json")) is not None
-            ):
+            if not os.path.isdir(self.path) or "done" in self._state():
                 self.ended = True
                 return False
             raise
@@ -424,15 +417,15 @@ class ProcessControl:
         while True:
             for message in group.receive():
                 if "started" in message or "error" in message:
-                    self._record("started.json", message)
+                    self._record(started=message)
                     started = True
             if group.eof and not started:
                 self._record(
-                    "started.json", {"error": "anchor exited before launch", "errno": errno.ECHILD}
+                    started={"error": "anchor exited before launch", "errno": errno.ECHILD}
                 )
                 started = True
             if group.returncode is not None and not reported:
-                self._record("exited.json", {"rc": group.returncode})
+                self._record(exited=group.returncode)
                 if on_exit is not None:
                     on_exit(group.returncode)
                 reported = True
@@ -461,18 +454,24 @@ class ProcessControl:
                 ):
                     rc = group.returncode if group.returncode is not None else 1
                     if not reported:
-                        self._record("exited.json", {"rc": rc})
+                        self._record(exited=rc)
                         if on_exit is not None:
                             on_exit(rc)
-                    self._record("done.json", {"rc": rc})
+                    self._record(done=rc)
                     return rc
             ready, _, _ = select.select([listener], [], [], POLL)
             if ready:
                 self._answer(listener, group, reported=reported)
 
-    def _record(self, name, value):
+    def _state(self) -> dict:
+        found = _read(os.path.join(self.path, STATE))
+        return found if isinstance(found, dict) else {}
+
+    def _record(self, **fields):
+        """Its one writer: the whole state, atomically replaced."""
+        self._recorded.update(fields)
         with contextlib.suppress(FileNotFoundError):
-            _write(os.path.join(self.path, name), value)
+            _write(os.path.join(self.path, STATE), self._recorded)
 
     def _answer(self, listener, group, *, reported):
         connection, _ = listener.accept()
