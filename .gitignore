@@ -8,3 +8,4 @@ __pycache__/
 /docs/handoffs/
 /docs/grill-engineering-comparison.md
 /tmp*/
+/tsconfig.json
