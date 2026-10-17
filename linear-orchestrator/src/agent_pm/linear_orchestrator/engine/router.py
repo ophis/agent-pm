@@ -501,15 +501,31 @@ class Board:
             role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
         )
 
-    def preview_resume(self, issue, sid):
-        if self.dry:
-            self.say(
-                "preview",
-                issue["identifier"],
-                client=client_of(self.entries, sid),
-                mode="resume",
-                sid=sid,
-            )
+    def resumption(self, issue, sid, new_sid):
+        """The run that continues the issue's session sid: its resume, or a new session (new_sid) on
+        the client the Agent label selects when that differs, as a session resumes only in its own
+        client. Invalid Agent or task labels keep the resume.
+        """
+        ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
+        labels = self.gql(Q_RECHECK, i=issue["id"])["issue"]["labels"]["nodes"]
+        client, source, client_error = self.select_client(labels, role)
+        task, task_error = task_for(
+            labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
+        )
+        if client_error or task_error or client == resumed:
+            if self.dry:
+                self.say("preview", ident, client=resumed, mode="resume", sid=sid)
+            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=resumed)
+        self.say("restart", ident, sid=sid, client=client, client_source=source, resumed=resumed)
+        return Spec.from_issue(
+            issue,
+            mode="new",
+            # a launcher's sid naming the old session: a fresh one, which other_sid refuses
+            sid=str(uuid.uuid4()) if new_sid == sid else new_sid,
+            task=task,
+            client=client,
+            client_source=source,
+        )
 
     def first(self, found):
         """found's first item not None; a dry run goes through all of found, previewing each."""
@@ -879,7 +895,7 @@ class Held:
 
 
 def other_sid(spec, launch_sid):
-    """Whether the run resumes a session other than the launcher's `launch_sid`, said."""
+    """Whether the run's session is not the launcher's `launch_sid`, said."""
     if launch_sid is None or spec.sid == launch_sid:
         return False
     print(
@@ -896,15 +912,15 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
         for issue, sid in board.recover(live_ids):
             if not board.available(issue, full):
                 continue
-            client = client_of(board.entries, sid)
-            board.preview_resume(issue, sid)
-            if not gate.blocked(
-                board.role(issue),
-                issue["identifier"],
-                key=(delegate_of(board.entries, sid), client),
-            ):
+            spec = board.resumption(issue, sid, new_sid)
+            kind = (
+                delegate_of(board.entries, sid)
+                if spec.mode == "resume"
+                else board.cfg.delegate_kind
+            )
+            if not gate.blocked(board.role(issue), issue["identifier"], key=(kind, spec.client)):
                 board.plan(("resume", issue, sid), counts)
-                yield Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+                yield spec
 
     def claimed():
         nonlocal unclaimed
@@ -964,12 +980,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
             spec = choose(board, gate, live_ids, full, counts, new_sid=new_sid)
-            if (
-                not dry
-                and spec is not None
-                and spec.mode == "resume"
-                and other_sid(spec, launch_sid)
-            ):
+            if not dry and spec is not None and other_sid(spec, launch_sid):
                 return 2
             if spec is None or dry:
                 return 0
@@ -1006,10 +1017,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             if not board.settle(issue, sid, wait=False):
                 return 0 if board.replays.get(ident) else stop
             board.plan(("resume", issue, sid))
-            board.preview_resume(issue, sid)
-            spec = Spec.from_issue(
-                issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
-            )
+            spec = board.resumption(issue, sid, launch_sid or str(uuid.uuid4()))
             if not dry and other_sid(spec, launch_sid):
                 return 2
         elif board.is_blocked(ident) or not (taken := board.take(ident)):

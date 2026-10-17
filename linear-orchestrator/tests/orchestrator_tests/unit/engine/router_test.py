@@ -804,7 +804,7 @@ class RouterEntry(OuterBase):
             self.said(),
         )
 
-    def test_a_resume_keeps_the_client_of_its_claim(self):
+    def test_a_resume_whose_label_selects_another_client_starts_a_fresh_session(self):
         self.assertEqual(self.entry(now=NOW - timedelta(minutes=60)), 0)
         sid = self.last_run()[2]
         with open(self.runs) as f:
@@ -816,9 +816,11 @@ class RouterEntry(OuterBase):
         )
         self.todo["labels"] = [label("Changed client", AGENT_B, AGENT_GROUP)]
         self.assertEqual(self.entry(), 0)
-        self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
-        self.assertEqual(self.detached(), self.expected(sid=sid, resume=True))
-        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, ["a"]))
+        kind, ident, fresh, role, client = self.last_run()
+        self.assertEqual((kind, ident, role, client), ("start", ID, "engineer", "b"))
+        self.assertNotEqual(fresh, sid)
+        self.assertEqual(self.detached(), self.expected(sid=fresh, client="b"))
+        self.assertEqual(self.api.usage_calls, ["b"])
 
     def test_agent_label_client_reaches_the_delegate_and_start_row(self):
         self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
@@ -930,6 +932,7 @@ class RouterEntry(OuterBase):
                 self.lines, self.todo["state"] = [], "Todo"
                 if resume:
                     self.todo["state"] = "In Progress"
+                    self.todo["labels"] = [label("session client", AGENT_A, AGENT_GROUP)]
                     self.resumable(ID, "old", 60, role="engineer")
                 self.api.construct_error = self.api.detach_error = None
                 setattr(self.api, attr, error)
@@ -1410,6 +1413,79 @@ class LabelClients(TickBase):
                     )
                     self.assertNotEqual(spec.sid, old_sid)
                     self.assertEqual(fake.issues["TASK-1"].get("comments", []), [])
+
+    def interrupted(self, client, labels):
+        self.lines, self.hist = [], {}
+        self.moved("TASK-1", 61)
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client=client)
+        self.touch("old", 40)
+        return self.sid("old"), self.fake(
+            issue("TASK-1", "In Progress", "researcher", labels=labels)
+        )
+
+    def test_a_resume_whose_label_selects_another_client_starts_a_fresh_session(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            for labels, source in (
+                ([label("changed", AGENT_A, AGENT_GROUP)], "label"),
+                ([], "default"),
+            ):
+                with self.subTest(argv=argv, labels=labels):
+                    old_sid, fake = self.interrupted("b", labels)
+                    self.assertEqual(self.tick(fake, *argv), 0)
+                    (spec,) = self.start.launches
+                    self.assertEqual(
+                        (spec.client, spec.client_source, spec.mode), ("a", source, "new")
+                    )
+                    self.assertNotEqual(spec.sid, old_sid)
+                    found = fake.issues["TASK-1"]
+                    self.assertEqual(
+                        (found["state"], found.get("comments", [])), ("In Progress", [])
+                    )
+                    (restart,) = [e for e in logged(self.logs) if e["kind"] == "restart"]
+                    self.assertEqual(
+                        tuple(restart[k] for k in ("issue", "sid", "client", "resumed")),
+                        ("TASK-1", old_sid, "a", "b"),
+                    )
+
+    def test_a_resume_keeps_its_session_when_the_label_agrees_or_is_invalid(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            for labels in (
+                [label("same", AGENT_B, AGENT_GROUP)],
+                [label("unmapped", STRAY, AGENT_GROUP)],
+                [label("one", AGENT_A, AGENT_GROUP), label("two", AGENT_B, AGENT_GROUP)],
+            ):
+                with self.subTest(argv=argv, labels=labels):
+                    old_sid, fake = self.interrupted("b", labels)
+                    self.assertEqual(self.tick(fake, *argv), 0)
+                    (spec,) = self.start.launches
+                    self.assertEqual((spec.client, spec.mode, spec.sid), ("b", "resume", old_sid))
+                    self.assertEqual(fake.issues["TASK-1"].get("comments", []), [])
+                    self.assertNotIn("restart", [e["kind"] for e in logged(self.logs)])
+
+    def test_a_launcher_sid_naming_the_old_session_is_refused_not_reused(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            with self.subTest(argv=argv):
+                old_sid, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
+                self.assertEqual(self.tick(fake, *argv, env={SID_ENV: old_sid}), 2)
+                self.assertEqual((self.start.launches, fake.mutations), ([], []))
+
+    def test_a_dry_run_previews_the_fresh_session_and_changes_nothing(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            with self.subTest(argv=argv):
+                old_sid, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
+                before = self.before()
+                self.assertEqual(self.tick(fake, *argv, "--dry-run"), 0)
+                self.assertIn(
+                    "restart TASK-1 sid=old client=a client_source=label resumed=b",
+                    self.said(),
+                )
+                self.assertEqual(
+                    (fake.mutations, self.start.launches, self.state), ([], [], before)
+                )
 
 
 class RouterArguments(Base):
@@ -2008,10 +2084,7 @@ class ScheduledUsageGates(TickBase):
                 before = self.before()
                 self.assertEqual(self.tick(fake, "--dry-run"), 0)
                 said = "\n".join(self.said())
-                self.assertIn(
-                    "client=a mode=resume" if resume else "client=b client_source=label",
-                    said,
-                )
+                self.assertIn("client=b client_source=label", said)
                 self.assertIn("would comment TASK-2", said)
                 self.assertIn("Unknown", said)
                 self.assertEqual(
@@ -2033,8 +2106,7 @@ class ScheduledUsageGates(TickBase):
         self.assertNotIn("would comment", said)
         self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
 
-    def test_recorded_client_exhaustion_blocks_despite_an_available_new_default(self):
-        self.write_config(CONFIG.replace(OVERLAY, '[core]\nclient = "b"\n'))
+    def test_recorded_client_exhaustion_blocks_its_resume(self):
         self.api.usages = {"a": reading(95), "b": reading(10)}
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "saved", 60)
@@ -2046,7 +2118,7 @@ class ScheduledUsageGates(TickBase):
         )
         self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
 
-    def test_a_resume_keeps_the_client_of_its_claim(self):
+    def test_a_resume_on_a_new_default_client_starts_a_fresh_session_gated_by_it(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, now=NOW - timedelta(minutes=60))
         (claimed,) = self.start.launches
@@ -2068,13 +2140,11 @@ class ScheduledUsageGates(TickBase):
         )
         self.write_config(CONFIG.replace(OVERLAY, '[core]\nclient = "b"\n'))
         self.tick(fake)
-        (resumed,) = self.start.launches
-        self.assertEqual((resumed.sid, resumed.mode, resumed.client), (claimed.sid, "resume", "a"))
-        self.assertEqual(self.launched_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
-        self.assertEqual(
-            (self.api.info, self.api.usage_calls),
-            ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], ["a"]),
-        )
+        (fresh,) = self.start.launches
+        self.assertEqual((fresh.mode, fresh.client, fresh.client_source), ("new", "b", "default"))
+        self.assertNotEqual(fresh.sid, claimed.sid)
+        self.assertEqual(self.launched_run(), ("start", "TASK-1", fresh.sid, "researcher", "b"))
+        self.assertEqual(self.api.usage_calls, ["b"])
 
     def test_a_blocked_resume_candidate_lets_a_claim_start(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
@@ -3286,7 +3356,7 @@ class ExplicitIssueRuns(TickBase):
                 )
                 self.assertEqual(
                     [q for q, _ in fake.queries if q == RECHECK],
-                    [RECHECK] if name == "todo" else [],
+                    [RECHECK] if name in ("todo", "resume") else [],
                 )
 
     def test_todo_not_claimable_starts_nothing(self):
