@@ -9,11 +9,12 @@ import uuid
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.manager.engine.crew import HEADER, Crew
+from agent_pm.manager.engine.crew import GRACE, HEADER, START_TIMEOUT, Crew, _run_start
 from agent_pm.manager.engine.types import RosterError, Spec, State
 from agent_pm.utils import Record, Status
 
 from manager.tests.roster_case import RosterCase
+from manager.tests.starters import answered, finished
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 ARGV = ("fake-ctl", "start", "x")
@@ -23,7 +24,7 @@ class Run(RosterCase):
     def start(self, run, name="x"):
         stderr = io.StringIO()
         with (
-            mock.patch("subprocess.run", side_effect=run) as called,
+            mock.patch("subprocess.Popen", side_effect=answered(run)) as called,
             contextlib.redirect_stderr(stderr),
         ):
             try:
@@ -33,6 +34,7 @@ class Run(RosterCase):
 
     def test_the_final_record_on_stdout_becomes_the_live_entry(self):
         def run(_argv, **options):
+            self.assertEqual(options["timeout"], START_TIMEOUT)
             record = replace(self.record, sid=options["env"]["AGENT_PM_SID"])
             os.write(options["stdout"].fileno(), f"progress\n{record.to_line()}\n".encode())
             return mock.Mock(returncode=0, stderr="warning\n")
@@ -53,12 +55,47 @@ class Run(RosterCase):
             ("stderr", mock.Mock(returncode=2, stderr=" boom \n"), "boom"),
             ("exit", mock.Mock(returncode=2, stderr=""), "exit 2"),
             ("missing", FileNotFoundError(2, "No such file"), "[Errno 2] No such file"),
-            ("timeout", TimeoutExpired(ARGV, 30), "no response within 30 seconds"),
+            ("timeout", TimeoutExpired(ARGV, 30), "no response within 1920 seconds"),
         ):
             with self.subTest(name=name):
-                error, _, _ = self.start(mock.Mock(side_effect=[effect]), name)
+                error, _, _ = self.start(mock.Mock(side_effect=[effect, effect]), name)
                 self.assertEqual(str(error), f"fake-ctl start x: {message}")
                 self.assertIs(self.roster.entries()[name].state, State.LOST)
+
+
+class RunStart(RosterCase):
+    """_run_start: subprocess.run whose deadline sends SIGTERM, then SIGKILL GRACE s later."""
+
+    def run_start(self, *answers):
+        proc = finished(3)
+        proc.communicate.side_effect = answers
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            try:
+                return _run_start(ARGV, timeout=7, stderr=-1), proc, popen
+            except TimeoutExpired as error:
+                return error, proc, popen
+
+    def test_its_result_is_the_exit_code_and_stderr(self):
+        result, proc, popen = self.run_start((None, "warn\n"))
+        self.assertEqual((result.returncode, result.stderr), (3, "warn\n"))
+        self.assertEqual(popen.call_args, mock.call(ARGV, stderr=-1))
+        proc.communicate.assert_called_once_with(timeout=7)
+        proc.terminate.assert_not_called()
+
+    def test_past_the_deadline_it_terminates_and_kills_only_after_the_grace(self):
+        for answers, killed in (
+            ((TimeoutExpired(ARGV, 7), (None, "")), False),
+            ((TimeoutExpired(ARGV, 7), TimeoutExpired(ARGV, GRACE)), True),
+        ):
+            with self.subTest(killed=killed):
+                error, proc, _ = self.run_start(*answers)
+                self.assertIsInstance(error, TimeoutExpired)
+                proc.terminate.assert_called_once_with()
+                self.assertEqual(
+                    proc.communicate.call_args_list,
+                    [mock.call(timeout=7), mock.call(timeout=GRACE)],
+                )
+                self.assertEqual(proc.kill.called, killed)
 
 
 class ResumeInput(RosterCase):
@@ -79,7 +116,7 @@ class ResumeInput(RosterCase):
             os.write(options["stdout"].fileno(), text.encode())
             return mock.Mock(returncode=code, stderr="refused" if code else "")
 
-        with mock.patch("subprocess.run", side_effect=run):
+        with mock.patch("subprocess.Popen", side_effect=answered(run)):
             return Crew(self.roster).resume("x", input=input)
 
     def test_input_and_empty_input_resume_the_same_identity(self):

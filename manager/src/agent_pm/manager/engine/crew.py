@@ -37,9 +37,12 @@ from agent_pm.utils import (
 )
 
 TIMEOUT = 30
+# A start's or resume's: a Docker one may first rebuild its image, which its broker allows 1800 s.
+START_TIMEOUT = 1920
+GRACE = 60  # from SIGTERM to SIGKILL: a Docker start in flight removes its container
 RECOVERY_MARGIN = 5
 # Events, receipt open/read and commit may each wait; margin covers timestamps and cleanup.
-RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
+RECOVERY_AGE = START_TIMEOUT + GRACE + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 DESCENDANTS = (*HERE, "--descendants")
@@ -65,6 +68,23 @@ def _row(fields: Iterable[str]) -> str:
 
 def _first_line(text: str) -> str:
     return next((line.strip() for line in text.splitlines() if line.strip()), "-")[:REPLY_WIDTH]
+
+
+def _run_start(argv: tuple[str, ...], *, timeout: float, **options) -> subprocess.CompletedProcess:
+    """subprocess.run, but past `timeout` SIGTERM first, so the starter can undo its start, and
+    SIGKILL GRACE s later.
+    """
+    with subprocess.Popen(argv, **options) as proc:
+        try:
+            _, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=GRACE)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            raise
+    return subprocess.CompletedProcess(argv, proc.returncode, None, stderr)
 
 
 def _reconciled(entry: Entry, status: Status) -> State:
@@ -139,13 +159,13 @@ class Crew:
         env = {**self._env(events=True), SID_ENV: sid}
         try:
             with self.roster.open_receipt(name) as receipt:
-                result = subprocess.run(
+                result = _run_start(
                     argv,
                     stdin=subprocess.DEVNULL,
                     stdout=receipt,
                     stderr=subprocess.PIPE,
                     text=True,
-                    timeout=TIMEOUT,
+                    timeout=START_TIMEOUT,
                     env=env,
                 )
                 if result.returncode:
@@ -168,7 +188,7 @@ class Crew:
             raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
         except subprocess.TimeoutExpired as error:
             raise RuntimeError(
-                f"{shlex.join(argv)}: no response within {TIMEOUT} seconds"
+                f"{shlex.join(argv)}: no response within {START_TIMEOUT} seconds"
             ) from error
 
     def run(self, spec: Spec) -> Record:
