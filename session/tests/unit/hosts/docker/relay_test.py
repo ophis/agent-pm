@@ -128,6 +128,7 @@ class QueueTest(Case):
             ),
         ):
             self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": False})
+            self.assertEqual(self.queue.first(0)[0], 1)
         relay.answer(request(6), self.queue, GEN)
         self.assertEqual(self.queue.last, 2)
         self.assertEqual(json.loads(self.queue.first(0)[1])["id"], 5)

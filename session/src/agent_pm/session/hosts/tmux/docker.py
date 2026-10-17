@@ -507,7 +507,8 @@ class DockerHost(Host, Showable):
                 lock=lock,
             )
         except (ConfigError, SessionError, OSError) as error:
-            LOG.warning("docker session %s: no supervisor restart: %s", row.name, error)
+            why = str(error).removeprefix(f"docker session {row.name}: ")
+            LOG.warning("docker session %s: no supervisor restart: %s", row.name, why)
         finally:
             if lock is not None:
                 os.close(lock)

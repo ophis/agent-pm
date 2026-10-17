@@ -1083,6 +1083,15 @@ class RecoverTest(Base):
                 self.assertIn("no supervisor restart", logs.output[0])
                 self.assertEqual(self.spawned, [])
                 self.assertTrue(_free(self.lock))
+        with mock.patch("shutil.which", return_value=None), self.assertLogs("session") as logs:
+            self.host.attach("w")
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:session:docker session w: no supervisor restart:"
+                " agent-pm-session is not on PATH (its hooks run it)"
+            ],
+        )
         self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
         process.close()
         self.assertEqual(self.broker.closed, [CONTAINER])

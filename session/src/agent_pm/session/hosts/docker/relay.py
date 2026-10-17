@@ -152,8 +152,8 @@ class Queue:
             message.update(argv=request["argv"], payload=request["payload"])
             self._write(f"{seq}.json", _line(message))
             self.last = seq
-            self._write("counter", str(seq).encode())
             self.changed.notify_all()
+            self._write("counter", str(seq).encode())
         return seq
 
     def first(self, wait: float | None = None) -> tuple[int, bytes] | None:
