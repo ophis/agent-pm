@@ -9,7 +9,7 @@ import os
 import socket
 import sys
 
-SOCKET = "/run/agent-pm/relay.sock"
+SOCKET = "/tmp/agent-pm-relay.sock"
 WAIT = 10
 
 

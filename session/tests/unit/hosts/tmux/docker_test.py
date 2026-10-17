@@ -22,7 +22,7 @@ from agent_pm.session.engine.types import (
     StatusState,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker.broker import BrokerError, client_keys
+from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
@@ -344,7 +344,9 @@ class StartTest(Base):
         )
         relay, wait, check = (json.loads(arg) for arg in argv[10:])
         prefix = [DOCKER, "--host", self.ep, "exec"]
-        self.assertEqual(relay, [*prefix, "-i", CONTAINER, "/opt/agent-pm/bin/relay"])
+        self.assertEqual(relay, [*prefix, "-i", CONTAINER, *RELAY])
+        self.assertEqual(RELAY[0], "/opt/agent-pm/venv/bin/python")
+        self.assertTrue(RELAY[-1].endswith("/agent_pm/session/hosts/docker/relay.py"))
         self.assertEqual(wait, [*prefix, CONTAINER, "tmux", "wait-for", "agent-pm-dead"])
         self.assertEqual(
             check,

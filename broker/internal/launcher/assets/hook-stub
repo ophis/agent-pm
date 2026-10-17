@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "agent-pm hook: event relay unavailable" >&2
+exit 0

@@ -29,6 +29,8 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── hidden/<name>.json            whether that name's tmux session is hidden, for its sid
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:manage role runs
+├── docker/worker/                your worker image definition (Dockerfile), seeded by broker/install.sh
+├── docker-state/<name>/          a Docker Host session's client config dir, manifests and hook supervisor files
 ├── probe/                        the empty cwd of the client usage check
 └── bin/                          ctmux --install's launchers
 ```
@@ -36,8 +38,8 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | Entry | Cleaned by | Safe to delete by hand |
 |---|---|---|
 | `config.local.toml` | nobody | never: your settings |
-| `work/<ID>/agent/` | prune ([Finish](board.md#using-the-board)): all of it 24 hours after Done or Canceled; `src/`, `publish/`, `tmp/` 7 days into any other state but Todo or In Progress; each run's end clears `tmp/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
-| `work/<ID>/run/` | prune deletes the whole `work/<ID>/` 7 days after Done or Canceled, once `agent/` is gone and the run is not live | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
+| `work/<ID>/agent/` | prune ([Finish](board.md#using-the-board)): all of it 2 hours after Done, Canceled or Duplicate; `src/`, `publish/`, `tmp/` 7 days into any other state but Todo or In Progress; each run's end clears `tmp/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| `work/<ID>/run/` | prune deletes the whole `work/<ID>/` 7 days after Done, Canceled or Duplicate, once `agent/` is gone and the run is not live | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
 | `work/<ID>/writeback.json`, `writeback.lock` | prune, with `work/<ID>/run/` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run and latest `start` row ([trim](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/runs.py#L198)) | never ([Operating](board.md#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 6) |
@@ -50,6 +52,8 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `hidden/<name>.json` | each write of one (a `--display none` start, `show`, `hide`): an entry unwritten for 30 days whose tmux session is gone | any time: that session then reads not hidden |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody: your working directory | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
+| `docker/worker/` | nobody | never: your image definition; with it gone, `install.sh` seeds the default again |
+| `docker-state/<name>/` | each Docker start of that name remakes its client config dir | once that session is closed |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
 Each tui start runs the tui sweep and each pty start the pty sweep, over the other names of their dir whose files all went unchanged for 30 days: the tui sweep drops a name its host has no session of, the pty sweep one with no process left; a name whose lock is held stays.

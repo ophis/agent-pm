@@ -420,7 +420,7 @@ class DockerHost(Host, Showable):
                 *("-P", "-s", "-m", run_supervisor.__name__),
                 *(name, state_dir(name), os.path.join(os.path.expanduser(TUI_DIR), name)),
                 *(events or "", hook),
-                execs("-i", container, RELAY),
+                execs("-i", container, *RELAY),
                 execs(container, "tmux", "wait-for", DEAD_SIGNAL),
                 execs(container, "tmux", *dead),
             ],

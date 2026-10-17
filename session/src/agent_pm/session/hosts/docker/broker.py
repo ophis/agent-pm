@@ -13,9 +13,13 @@ from agent_pm.session.engine.types import ConfigError, SessionError
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.utils import save
 
-# Step 1 (TASK-559) installs BROKER and, in the image, RELAY and the hook stub (docs/docker-host.md).
+# Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
-RELAY = "/opt/agent-pm/bin/relay"
+RELAY = (
+    "/opt/agent-pm/venv/bin/python",
+    "-I",
+    "/opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py",
+)
 PROTOCOL = "1"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"

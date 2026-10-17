@@ -12,7 +12,7 @@ import socket
 import sys
 import time
 
-SOCKET = "/run/agent-pm/relay.sock"
+SOCKET = "/tmp/agent-pm-relay.sock"
 LINE_MAX = 90 << 20
 ACK_WAIT = 10
 

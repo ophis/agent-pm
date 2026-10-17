@@ -1,12 +1,5 @@
-"""The Docker Host's live gate, run by hand on a Mac with Docker Desktop and agent-pm-broker installed
-(docs/docker-host.md), never by CI: from a manager session holding its lease ($AGENT_PM_MANAGER),
-with the docker Host the local default and CWD under its mount_roots,
-
-    python3 session/tests/live_docker.py CWD [NAME]
-
-builds the image, starts worker NAME (default docker-live) through agent-pm-crew, waits for its
-first event, sends and reads, closes it, and prints each step's seconds. The broker's start holds
-the container's creation and the client update, so they are timed as one step.
+"""The Docker Host's live gate, run by hand from a manager session: `python3
+session/tests/live_docker.py CWD [NAME]` times build, worker start and first event.
 """
 
 import os

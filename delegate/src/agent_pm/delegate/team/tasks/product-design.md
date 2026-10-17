@@ -11,7 +11,7 @@ Turn the input into a reviewed PRD.
 4. **Research**, if needed, only what the PRD needs, on the web per [PM › Boundaries](#boundaries); too deep for now → Risks. The input names a target repo → check it out first ([Principles › Work › Worktree](#work)), `<branch>` `<id>-product-design`, and read the product's code there, read-only; exit 2 or 1 → the error under Risks, go on without the code.
 5. **Self-grill**, if needed: one fresh subagent, in one round, lists each key decision (one changing requirements or scope) with a suggested answer. Settle each in the PRD; what only the user can decide → Open questions.
 6. **Write** the PRD per the Template; the outcome's `title` is `[Product name]` alone, unchanged on revision.
-7. **Review.** One fresh subagent, given the PRD's full text, the brief and the user's later words, flags missing, contradictory or untestable requirements, scope beyond what the user asked for and over-engineering, asking no more rigor than the brief does; fix the findings that hold up, once.
+7. **Review.** Run `/autopilot:review`, `doc=` the PRD's file (none yet → write it to `<Workdir>/tmp/prd.md`), `requirement=` the brief and the user's later words, verbatim, with the documents they name, at its default round cap; tell it the reviewers' focus: missing, contradictory or untestable requirements, scope beyond what the user asked for and over-engineering, asking no more rigor or scope than the brief does. It fixes real blockers until every reviewer passes. `capped` or `needs-author` → the PRD still ships; the outcome's `summary` lists the open blockers, and `needs-author`'s questions go under Open questions. `stopped` → the PRD ships unreviewed; `summary` gives its reason.
 8. **Finish.** `status: done`.
 
 ## Resume
@@ -20,3 +20,4 @@ Use this session's history; do only what's left:
 - `needs_input` written this session → stop.
 - Grilling subagent answered this session → use its answers; never spawn it again.
 - PRD written this session → continue it, never rewrite it; then what's left of steps 7–8.
+- Review started this session → run `/autopilot:review` again with the same `doc`; it continues from its log.

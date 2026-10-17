@@ -165,6 +165,24 @@ class Shipped(Case):
             self.assertIn(f"`/autopilot:{t}`", task_text(t))
             self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
+    def test_product_design_reviews_the_prd_with_autopilot_review_to_its_default_cap(self):
+        text = task_text("product-design")
+        step = text.split("7. **Review.**", 1)[1].split("\n8.", 1)[0]
+        for literal in (
+            "`/autopilot:review`",
+            "`doc=` the PRD's file",
+            "`requirement=` the brief and the user's later words, verbatim, with the documents they name",
+            "asking no more rigor or scope than the brief does",
+            "`capped` or `needs-author` → the PRD still ships; the outcome's `summary` lists the open blockers",
+        ):
+            self.assertIn(literal, step)
+        self.assertNotIn("cap=", step)
+        self.assertNotIn("fresh subagent", step)
+        self.assertNotRegex(text, r"(?<!/)autopilot:")
+        self.assertIn(
+            "`/autopilot:review` again with the same `doc`", text.split("## Resume", 1)[1]
+        )
+
     def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
