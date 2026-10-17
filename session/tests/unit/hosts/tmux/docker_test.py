@@ -788,10 +788,19 @@ class StartTest(Base):
         self.supervisor.terminate.assert_called()
         self.assertEqual(self.order[-1], ("close", CONTAINER))
 
-    def test_a_start_restores_the_signal_mask(self):
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, ())
+    def test_a_start_blocks_no_signal_and_restores_the_handlers(self):
+        mask, before = signal.pthread_sigmask(signal.SIG_BLOCK, ()), self.caught()
+        handlers = {sig: signal.getsignal(sig) for sig in STOPS}
+        masks = []
+        real = self.broker.start
+        self.broker.start = lambda *a, **k: (
+            masks.append(signal.pthread_sigmask(signal.SIG_BLOCK, ())),
+            real(*a, **k),
+        )[1]
         self.start()
-        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, ()), mask)
+        self.assertEqual(masks, [mask])
+        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, handlers)
+        self.assertEqual(before, [])
 
     def test_an_ignored_signal_stays_ignored(self):
         self.addCleanup(signal.signal, signal.SIGHUP, signal.signal(signal.SIGHUP, signal.SIG_IGN))

@@ -213,21 +213,30 @@ def _text(found: str) -> str:
 
 
 class _Stops:
-    """Blocks STOPS but ignored ones while a start owns its container, so its rollback still runs:
-    check() raises for one pending, which takes effect as usual once unblocked.
+    """Holds STOPS but ignored ones while a start owns its container, so its rollback still runs:
+    check() raises for one received, which is raised again on exit. Catches, not blocks, so no child
+    inherits them blocked; only the main thread can set handlers.
     """
 
     def __enter__(self) -> _Stops:
-        self.held = {sig for sig in STOPS if signal.getsignal(sig) is not signal.SIG_IGN}
-        self.mask = signal.pthread_sigmask(signal.SIG_BLOCK, self.held)
+        self.received: list[int] = []
+        main = threading.current_thread() is threading.main_thread()
+        self.previous = {
+            sig: signal.signal(sig, lambda signum, _: self.received.append(signum))
+            for sig in STOPS
+            if main and signal.getsignal(sig) is not signal.SIG_IGN
+        }
         return self
 
     def __exit__(self, *_) -> None:
-        signal.pthread_sigmask(signal.SIG_SETMASK, self.mask)
+        for sig, handler in self.previous.items():
+            signal.signal(sig, handler)
+        if self.received:
+            signal.raise_signal(self.received[0])
 
     def check(self, prefix: str = "") -> None:
-        if pending := signal.sigpending() & self.held:
-            raise SessionError(f"{prefix}stopped by {min(pending).name}")
+        if self.received:
+            raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
 
 
 def _wait(ready, timeout: float) -> bool:
