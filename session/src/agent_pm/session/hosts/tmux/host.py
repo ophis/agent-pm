@@ -158,6 +158,14 @@ class TmuxProcess(Process):
         found = super().status()
         return replace(found, attach=attach_command(self.name)) if found.alive else found
 
+    def screen(self, lines: int | None = None) -> str:
+        if not self._own():
+            raise SessionError(f"tmux session {self.name} is gone")
+        try:
+            return self.tmux.read(self._pane, lines)
+        except TuiError as e:
+            raise SessionError(f"tmux session {self.name}: {e}") from None
+
     def mark_hidden(self, *, hidden: bool) -> None:
         """Only a session with a sid (no harness) keeps it."""
         sid = self.session_identity()[0]
@@ -764,32 +772,6 @@ class TmuxHost(Host, Showable):
 
     def attach_command(self, name: str) -> str:
         return attach_command(_session(name))
-
-    def screen(self, name: str | Process, lines: int | None = None) -> str:
-        if isinstance(name, Process):
-            if not isinstance(name, TmuxProcess) or name.tmux is not self.tmux or not name.alive():
-                raise SessionError(f"session {name.name} is not running on host {self.name}")
-            target = name._pane
-        else:
-            target = self._launched_pane(name)
-        try:
-            return self.tmux.read(target, lines)
-        except TuiError as e:
-            raise SessionError(f"tmux session {name}: {e}") from None
-
-    def _launched_pane(self, name: str) -> str:
-        """The pane name's launch recorded (@process), whichever pane is active; a session without
-        @process: name, its active pane.
-        """
-        try:
-            process = self.tmux.option(_session(name), "@process")
-        except TuiError as e:
-            raise SessionError(f"tmux session {name}: {e}") from None
-        if process is None:
-            return name
-        if not PROCESS_ID.fullmatch(process):
-            raise SessionError(f"tmux session {name}: bad @process {process!r:.80}")
-        return process.split(" ")[2]
 
     def layout(self, *, display: Display = None) -> str | None:
         """display, its opener part the caller's once the pane it goes beside (split_from's, else

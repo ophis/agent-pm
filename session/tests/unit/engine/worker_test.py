@@ -11,7 +11,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session import ConfigError, Host, Mode, Process, Session, SessionError
+from agent_pm.session import (
+    ConfigError,
+    Host,
+    Mode,
+    NotShowable,
+    Process,
+    Session,
+    SessionError,
+)
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
@@ -180,6 +188,28 @@ class StartTest(Base):
         self.handle.publish.assert_not_called()
         self.session.close.assert_not_called()
         self.assertEqual(Worker.load("w1").state.sid, SID)
+
+    def test_an_early_exit_reports_the_last_lines_its_terminal_shows(self):
+        self.session.events.return_value = iter([Exited(7)])
+        shown = [f"line {n}" for n in range(worker.REPORT_LINES + 5)]
+        self.handle.screen.return_value = "\n \n".join(shown)
+        with self.assertRaises(SessionError) as caught:
+            self.worker().start(prompt="", resume=False)
+        self.assertEqual(
+            str(caught.exception),
+            "\n".join(
+                ["w1: claude exited 7 at once; its last lines:", *shown[-worker.REPORT_LINES :]]
+            ),
+        )
+        self.host.attach.assert_called_with("w1")
+        self.handle.screen.assert_called_once_with(worker.SCREEN_LINES)
+
+    def test_an_early_exit_on_a_terminal_that_cannot_show_reports_only_its_exit(self):
+        self.session.events.return_value = iter([Exited(7)])
+        self.handle.screen.side_effect = NotShowable("session w1: its host cannot show")
+        with self.assertRaises(SessionError) as caught:
+            self.worker().start(prompt="", resume=False)
+        self.assertEqual(str(caught.exception), "w1: claude exited 7 at once")
 
     def test_the_watch_ends_at_its_deadline_without_an_idle_timeout(self):
         ticks = iter([0, 1, worker.EARLY + 1])

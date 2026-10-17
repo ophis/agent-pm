@@ -1778,6 +1778,24 @@ class OpeningTest(Base):
         mode.poll(2)
         self.assertEqual(len(self.sends(mode)), 1)
 
+    def test_a_host_whose_terminals_cannot_show_still_sends_the_opening(self):
+        self.host = MemoryHost("selected")
+        mode = self.opened()
+        self.append(record("ready"))
+        mode.poll(0)
+        mode.poll(1.2)
+        self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
+        self.assertIsNone(mode.opening_pending)
+
+    def test_a_failed_screen_read_holds_the_opening(self):
+        mode = self.opened()
+        self.host.calls.screen.side_effect = SessionError("tmux: gone")
+        self.append(record("ready"))
+        mode.poll(0)
+        mode.poll(1.2)
+        self.assertEqual(self.sends(mode), [])
+        self.assertEqual(mode.opening_pending, "/color")
+
     def test_no_opening_is_never_pending(self):
         mode = self.started()
         self.assertIsNone(mode.opening_pending)

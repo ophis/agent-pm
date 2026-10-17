@@ -299,6 +299,14 @@ class DockerTerminal(TmuxTerminal):
     def hidden(self) -> bool:
         return self._own_record().get("hidden") is True
 
+    def screen(self, lines: int | None = None) -> str:
+        if not self.alive():
+            raise SessionError(f"session {self.name} is not running on host {self.host.name}")
+        try:
+            return _text(self.tmux.read(self._pane, lines))
+        except TuiError as error:
+            raise SessionError(f"docker session {self.name}: {error}") from None
+
     def mark_hidden(self, *, hidden: bool) -> None:
         self._update(hidden=hidden)
 
@@ -942,16 +950,3 @@ class DockerHost(Host, Showable):
         except TuiError as error:
             raise SessionError(f"show {process.name}: {error}") from None
         process.mark_hidden(hidden=not shown)
-
-    def screen(self, name: str | Process, lines: int | None = None) -> str:
-        process = self.attach(name) if isinstance(name, str) else name
-        if (
-            not isinstance(process, DockerTerminal)
-            or process.host is not self
-            or not process.alive()
-        ):
-            raise SessionError(f"session {process.name} is not running on host {self.name}")
-        try:
-            return _text(process.tmux.read(process._pane, lines))
-        except TuiError as error:
-            raise SessionError(f"docker session {process.name}: {error}") from None

@@ -871,8 +871,8 @@ class TerminalTest(Base):
         self.live_supervisor()
         process.send(Paste("hi"))
         process.press([KeyPress("a")])
-        self.assertEqual(self.host.screen(process), "hello")
-        self.assertEqual(self.host.screen("w"), "hello")
+        self.assertEqual(process.screen(), "hello")
+        self.assertEqual(self.host.attach("w").screen(5), "hello")
         execs = self.docker.execs()
         self.assertTrue(all(call[0] == "tmux" for call in execs))
         commands = [call[1] for call in execs]
@@ -891,7 +891,14 @@ class TerminalTest(Base):
             ("tmux", "display-message"): pane(),
             ("tmux", "capture-pane"): (0, "a\x1b]0;x\x07b\tc\n\x1b[2Jd\u3000e\u200d\x9b\r\n", ""),
         }
-        self.assertEqual(self.host.screen(process), "a]0;xb\tc\n[2Jd\u3000e\u200d")
+        self.assertEqual(process.screen(), "a]0;xb\tc\n[2Jd\u3000e\u200d")
+
+    def test_screen_of_a_terminal_not_running_is_refused_before_reading(self):
+        process = self.terminal()
+        self.docker.replies = {("tmux", "display-message"): pane("1 3 ")}
+        with self.assertRaisesRegex(SessionError, "^session w is not running on host docker$"):
+            process.screen()
+        self.assertNotIn("capture-pane", [call[1] for call in self.docker.execs()])
 
     def test_dead_pane_returncode(self):
         process = self.terminal()

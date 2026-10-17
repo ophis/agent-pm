@@ -9,7 +9,15 @@ import tomllib
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.session import SIGNALS, ConfigError, Host, Process, SessionError, Showable
+from agent_pm.session import (
+    SIGNALS,
+    ConfigError,
+    Host,
+    NotShowable,
+    Process,
+    SessionError,
+    Showable,
+)
 from agent_pm.session.engine.types import Hosts, Liveness
 from agent_pm.session.hosts.base import Interactive, InteractiveProcess
 from agent_pm.utils import Status, StatusState
@@ -35,7 +43,7 @@ ABSTRACT = {
     Process: PROCESS,
     Interactive: {"send", "press"},
     InteractiveProcess: PROCESS | {"send", "press"},
-    Showable: {"show", "hide", "attach_command", "screen", "layout", "tile"},
+    Showable: {"show", "hide", "attach_command", "layout", "tile"},
 }
 
 
@@ -79,6 +87,14 @@ class HostDefaults(Case):
         self.assertIsNone(Process.token.fget(process))
         with self.assertRaisesRegex(SessionError, "^session p: its host cannot store a Record"):
             Process.publish(process, mock.sentinel.record)
+
+    def test_a_process_cannot_show_its_screen_unless_its_terminal_reads_one(self):
+        process = mock.create_autospec(Process, instance=True)
+        process.name = "p"
+        for lines in (None, 5):
+            with self.subTest(lines=lines), self.assertRaises(NotShowable) as caught:
+                Process.screen(process, lines)
+            self.assertEqual(str(caught.exception), "session p: its host cannot show")
 
     def test_a_process_status_is_its_liveness_activity_and_hidden(self):
         process = mock.create_autospec(Process, instance=True)
