@@ -2,7 +2,6 @@
 
 import json
 
-from agent_pm.session.clients.base import Headless
 from agent_pm.session.clients.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
@@ -22,6 +21,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
 )
+from agent_pm.session.runtimes.modes.headless import Headless
 
 
 class CodexHeadless(Headless):

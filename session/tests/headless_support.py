@@ -1,9 +1,10 @@
 import sys
 import tempfile
 
-from agent_pm.session.clients.base import Client, JsonHeadless
+from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import Access, Launch, Prepared, Reply, Spec, Stderr
 from agent_pm.session.runtimes.headless import HeadlessRuntime
+from agent_pm.session.runtimes.modes.headless import JsonHeadless
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost

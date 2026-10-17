@@ -16,7 +16,6 @@ from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.clients.base import Tui
 from agent_pm.session.clients.claude.common import HOME, TAIL, TUI_ENV, ClaudeCommon, read
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
@@ -32,6 +31,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
+from agent_pm.session.runtimes.modes.tui import Tui
 from agent_pm.utils import number
 
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")

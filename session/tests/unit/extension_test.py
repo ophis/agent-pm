@@ -11,15 +11,16 @@ from agent_pm.session.clients import base as clients_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
 from agent_pm.session.runtimes.base import Runtime
+from agent_pm.session.runtimes.modes import headless, in_process, tui
 
 from session.tests.case import Case
 
 ABCS = {
     "Client": clients_base,
-    "Headless": clients_base,
-    "JsonHeadless": clients_base,
-    "Tui": clients_base,
-    "InProcess": clients_base,
+    "Headless": headless,
+    "JsonHeadless": headless,
+    "Tui": tui,
+    "InProcess": in_process,
     "Host": hosts_base,
     "Process": hosts_base,
     "Interactive": hosts_base,
