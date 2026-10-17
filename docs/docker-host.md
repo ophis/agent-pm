@@ -59,7 +59,8 @@ claude setup-token          # copy the token it prints
 GitHub: each App's private key must already be a generic-password item in the login
 keychain, service the App name, account its App ID, content the base64 key. Change each
 item's access in place to trust only the broker (allow the keychain prompts); content
-and account stay:
+and account stay. Each prints its success line only after reading the access back:
+otherwise it exits non-zero naming what still trusts another application.
 
 ```sh
 "$B" login github agent-pm-engineer
@@ -69,7 +70,8 @@ and account stay:
 | Check | Expect |
 |---|---|
 | output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
-| `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | prompts; Deny fails |
+| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-engineer"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
+| `timeout 10 security find-generic-password -s agent-pm-engineer -a <App ID> -w` | asks for the keychain password; Cancel or the timeout: non-zero exit, empty stdout |
 | rerun `login github agent-pm-engineer` | same output |
 
 ## Build
