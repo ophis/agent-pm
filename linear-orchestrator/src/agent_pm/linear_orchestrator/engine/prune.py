@@ -1,5 +1,5 @@
 """Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
-such as Duplicate: ops.Team.finished) at least 24 hours ago (its latest move into one; unknown:
+such as Duplicate: ops.Team.finished) at least 2 hours ago (its latest move into one; unknown:
 skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
@@ -51,7 +51,7 @@ from agent_pm.linear_orchestrator.engine.types import (
 from agent_pm.utils import GUARD, SHORT, GitError, StatusState, common_dir, one_line, under
 from agent_pm.utils import run_git as git
 
-QUARANTINE = timedelta(hours=24)
+QUARANTINE = timedelta(hours=2)
 RETENTION = timedelta(days=7)
 STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -82,7 +82,7 @@ Prerequisites and effects:
   Requires configured Linear/Delegate settings, Linear access, harness_key
   Keychain credentials and access to the configured work_dir/local clones.
   Configuration and executable lookup: agent-pm-linear --help
-  For issues Done/Canceled/Duplicate (any canceled-type state) at least 24
+  For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
   hours (latest transition; unknown age is skipped), close recorded runs and
   delete agent files, including uncommitted work, through their Delegate.
   Close/cleanup refusal preserves later steps for a future tick. Unknown run
@@ -91,7 +91,7 @@ Prerequisites and effects:
   ISSUE-* branches already contained in origin/branch or origin/default;
   preserve the default branch and unpushed branches. No fetch is performed.
   Clones under work_dir/work or temporary directories are skipped.
-  Archive team issues finished at least 24 hours ago and assigned to
+  Archive team issues finished at least 2 hours ago and assigned to
   pm/engineer role accounts; unknown finish times are skipped.
   For issues in any other state but Todo/In Progress, 7 days after both their
   latest move into it and their latest recorded run, delete their checkouts

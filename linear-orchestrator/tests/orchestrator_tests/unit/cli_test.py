@@ -140,7 +140,7 @@ class Commands(Case):
                 "TUI (text user interface)",
             ),
             "promote": ("10-minute", "Todo", "Done", "prune", "read", "repeat", "Keychain"),
-            "prune": ("24 hours", "7 days", "uncommitted", "read", "repeat", "Keychain"),
+            "prune": ("2 hours", "7 days", "uncommitted", "read", "repeat", "Keychain"),
             "writeback": ("Automation", "one DelegateEvent", "--issue", "--workdir", "Exit"),
         }
         for command, phrases in expected.items():
