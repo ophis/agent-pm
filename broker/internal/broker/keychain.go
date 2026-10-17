@@ -38,6 +38,13 @@ var (
 // GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
 var GitHubApps = map[string]bool{"agent-pm-bot": true}
 
+// SecretKeychain holds broker-only items: created trusting only the broker, read without a dialog.
+type SecretKeychain interface {
+	Secret(service, account string) ([]byte, error)
+	PutSecret(service, account string, data []byte) error
+	DeleteSecret(service, account string) error // an absent item is success
+}
+
 // AppKeychain holds GitHub App private keys as generic-password items: service the App, account its App ID.
 type AppKeychain interface {
 	AppAccount(app string) (string, error)
