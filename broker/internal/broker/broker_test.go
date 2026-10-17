@@ -87,6 +87,9 @@ func TestReady(t *testing.T) {
 		if k.gets != 0 {
 			t.Fatal("Ready read the token")
 		}
+		if e != nil && e.Cause != "" {
+			t.Fatalf("keychain detail in cause: %q", e.Cause)
+		}
 	}
 }
 

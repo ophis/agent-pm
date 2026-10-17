@@ -65,9 +65,7 @@ func (c Credentials) Ready() error {
 	case errors.Is(err, ErrNotFound):
 		return protocol.New(protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude.")
 	default:
-		e := protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
-		e.Cause = err.Error()
-		return e
+		return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
 	}
 }
 

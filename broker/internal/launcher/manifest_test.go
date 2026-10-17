@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ophis/agent-pm/broker/internal/fixtures"
@@ -66,5 +67,16 @@ func TestManifestDuplicatesTrailingUTF8(t *testing.T) {
 		if _, err := ParseManifest([]byte(doc)); code(t, err) != protocol.ManifestRejected {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+func TestManifestCleansCWD(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := ParseManifest([]byte(strings.Replace(string(data), `src/project"`, `src//project/."`, 1)))
+	if err != nil || m.CWD != "/Users/example/src/project" {
+		t.Fatalf("%q %v", m.CWD, err)
 	}
 }

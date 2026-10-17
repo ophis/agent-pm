@@ -49,6 +49,7 @@ type world struct {
 	execErr      func(args []string) error
 	versions     []string
 	rmErr        error
+	rmSilent     bool // rm --force exits 0 without echoing: the container was absent
 	unreachable  bool
 }
 
@@ -78,7 +79,10 @@ func (w *world) docker() *fakeDocker {
 		case "run":
 			return []byte("id\n"), w.runErr
 		case "rm":
-			return nil, w.rmErr
+			if w.rmErr != nil || w.rmSilent {
+				return nil, w.rmErr
+			}
+			return []byte(args[len(args)-1] + "\n"), nil
 		case "exec":
 			if w.execErr != nil {
 				if err := w.execErr(args); err != nil {
@@ -160,7 +164,7 @@ func TestRuntimeFixtures(t *testing.T) {
 			case "unreachable":
 				w.unreachable = true
 			case "sharing_denied":
-				w.runErr = &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker."}
+				w.runErr = &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker.\n\nRun 'docker run --help' for more information"}
 				w.rmErr = &docker.CommandError{Exit: 1, Stderr: "Error: No such container: " + container}
 			}
 			creds := &fakeCreds{}
@@ -358,13 +362,14 @@ func TestRollback(t *testing.T) {
 		code    protocol.Code
 		cleanup string
 	}{
-		"bootstrap":          {&world{execErr: failOn("claude", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
-		"hook":               {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
-		"inject":             {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
-		"inject unreachable": {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
-		"rm fails":           {&world{execErr: failOn("claude", cmdErr), rmErr: &docker.CommandError{Exit: 1, Stderr: "delete failed"}}, &fakeCreds{}, protocol.StartFailed, protocol.Failed},
-		"run fails absent":   {&world{runErr: cmdErr, rmErr: &docker.CommandError{Exit: 1, Stderr: "No such container: x"}}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
-		"run fails present":  {&world{runErr: cmdErr}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"bootstrap":           {&world{execErr: failOn("claude", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"hook":                {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"inject":              {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
+		"inject unreachable":  {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
+		"rm fails":            {&world{execErr: failOn("claude", cmdErr), rmErr: &docker.CommandError{Exit: 1, Stderr: "delete failed"}}, &fakeCreds{}, protocol.StartFailed, protocol.Failed},
+		"run fails absent":    {&world{runErr: cmdErr, rmErr: &docker.CommandError{Exit: 1, Stderr: "No such container: x"}}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
+		"run fails present":   {&world{runErr: cmdErr}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"run fails rm silent": {&world{runErr: cmdErr, rmSilent: true}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.w.labels = goodLabels()
@@ -405,7 +410,7 @@ func TestRollbackAfterCancel(t *testing.T) {
 }
 
 func TestSharingDenied(t *testing.T) {
-	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker."},
+	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker.\n\nRun 'docker run --help' for more information"},
 		rmErr: &docker.CommandError{Exit: 1, Stderr: "Error: No such container: x"}}
 	h, _ := startHost(w, &fakeCreds{})
 	_, err := h.Start(context.Background(), validManifest(t))
@@ -420,5 +425,40 @@ func TestManifestUnreadable(t *testing.T) {
 	h, _ := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 	if _, err := h.Start(context.Background(), "/nonexistent/m.json"); protoErr(t, err).Code != protocol.ManifestRejected {
 		t.Fatal(err)
+	}
+}
+
+func TestHookUnderUncleanCWD(t *testing.T) {
+	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
+		`","cwd":"` + home + `/src/project/.","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{}}`
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))
+	if protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run") {
+		t.Fatalf("%v %q", err, d.verbs())
+	}
+}
+
+func TestCauseOnlyWhereNamed(t *testing.T) {
+	cmdErr := &docker.CommandError{Exit: 1, Stderr: "boom detail"}
+	for name, w := range map[string]*world{
+		"bootstrap": {execErr: failOn("claude", cmdErr)},
+		"restore": {execErr: func(a []string) error {
+			if slices.Contains(a, "npm") || slices.Contains(a, "/bin/sh") {
+				return cmdErr
+			}
+			return nil
+		}},
+	} {
+		w.labels = goodLabels()
+		h, _ := startHost(w, &fakeCreds{})
+		_, err := h.Start(context.Background(), validManifest(t))
+		if e := protoErr(t, err); e.Cause != "" {
+			t.Fatalf("%s: cause %q", name, e.Cause)
+		}
+	}
+	h, _ := startHost(&world{labels: goodLabels(), runErr: cmdErr}, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	if e := protoErr(t, err); e.Cause != "boom detail" {
+		t.Fatalf("run cause %q", e.Cause)
 	}
 }

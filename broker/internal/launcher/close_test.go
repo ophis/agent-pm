@@ -11,17 +11,19 @@ import (
 
 func TestClose(t *testing.T) {
 	for name, tc := range map[string]struct {
+		out     string
 		err     error
 		removed bool
 		code    protocol.Code
 	}{
-		"removed":     {nil, true, ""},
-		"absent":      {&docker.CommandError{Exit: 1, Stderr: "Error response from daemon: No such container: " + container}, false, ""},
-		"unreachable": {docker.ErrUnreachable, false, protocol.DockerUnreachable},
-		"failed":      {&docker.CommandError{Exit: 1, Stderr: "removal of container in progress"}, false, protocol.CloseFailed},
+		"removed":       {container + "\n", nil, true, ""},
+		"absent":        {"", &docker.CommandError{Exit: 1, Stderr: "Error response from daemon: No such container: " + container}, false, ""},
+		"absent exit 0": {"", nil, false, ""},
+		"unreachable":   {"", docker.ErrUnreachable, false, protocol.DockerUnreachable},
+		"failed":        {"", &docker.CommandError{Exit: 1, Stderr: "removal of container in progress"}, false, protocol.CloseFailed},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := &fakeDocker{respond: func([]string) ([]byte, error) { return nil, tc.err }}
+			d := &fakeDocker{respond: func([]string) ([]byte, error) { return []byte(tc.out), tc.err }}
 			got, err := Host{Docker: d}.Close(context.Background(), container)
 			if !slices.Equal(d.calls[0], []string{"rm", "--force", container}) {
 				t.Fatalf("%q", d.calls)

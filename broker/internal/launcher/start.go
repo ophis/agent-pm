@@ -138,7 +138,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		"--tmpfs", docker.SecretsDir+":rw,noexec,nosuid,nodev,size=65536,mode=0700,uid="+labels["agent-pm.agent-uid"]+",gid="+labels["agent-pm.agent-gid"],
 		"--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
-		e := failure(err, protocol.StartFailed, "Creating the container failed.")
+		e := diagnosed(err, protocol.StartFailed, "Creating the container failed.")
 		if text := err.Error(); strings.Contains(text, "mounts denied") || strings.Contains(text, "not shared from the host") {
 			e.Message = sharing
 		}
@@ -169,13 +169,13 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 func (h Host) rollback(ctx context.Context, c string, e *protocol.Error) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	_, err := h.Docker.Run(rctx, []string{"rm", "--force", c}, nil)
+	removed, err := h.remove(rctx, c)
 	switch {
-	case err == nil:
-		e.Cleanup = protocol.Removed
-	case absent(err):
-		e.Cleanup = protocol.NotNeeded
-	default:
+	case err != nil:
 		e.Cleanup, e.CleanupError, e.Container = protocol.Failed, lastLine(err), c
+	case removed:
+		e.Cleanup = protocol.Removed
+	default:
+		e.Cleanup = protocol.NotNeeded
 	}
 }

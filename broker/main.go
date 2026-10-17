@@ -68,9 +68,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			e := protocol.New(protocol.InternalError, "Unexpected broker failure.")
-			e.Cause = fmt.Sprint(r)
-			code = fail(stderr, command, e)
+			code = fail(stderr, command, protocol.New(protocol.InternalError, "Unexpected broker failure."))
 		}
 	}()
 	var s step
@@ -92,7 +90,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		var e *protocol.Error
 		if !errors.As(err, &e) {
 			e = protocol.New(protocol.InternalError, "Unexpected broker failure.")
-			e.Cause = err.Error()
 		}
 		return fail(stderr, command, e)
 	}

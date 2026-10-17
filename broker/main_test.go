@@ -145,6 +145,9 @@ func TestPanicIsInternalError(t *testing.T) {
 		t.Fatal(code)
 	}
 	assertError(t, errOut, out, "start", protocol.InternalError)
+	if strings.Contains(errOut, "cause") || strings.Contains(errOut, "boom") {
+		t.Fatal(errOut)
+	}
 }
 
 func TestAccountHomeIgnoresHOME(t *testing.T) {

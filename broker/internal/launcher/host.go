@@ -74,23 +74,36 @@ type CloseResult struct {
 	Removed   bool   `json:"removed"`
 }
 
-// lastLine is the most useful line of Docker's stderr for a diagnostic cause.
+// lastLine is Docker's diagnostic: the last stderr line that is not the CLI's --help trailer.
 func lastLine(err error) string {
 	var ce *docker.CommandError
 	if !errors.As(err, &ce) {
 		return err.Error()
 	}
-	lines := strings.Split(strings.TrimSpace(ce.Stderr), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
+	lines := strings.Split(ce.Stderr, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" && !strings.HasPrefix(line, "Run 'docker ") && !strings.HasPrefix(line, "See 'docker ") {
+			return line
+		}
+	}
+	return err.Error()
 }
 
-// failure classifies a Docker error: unreachable daemon, else code with Docker's diagnostic as cause.
+// failure classifies a Docker error: unreachable daemon, else code.
 func failure(err error, code protocol.Code, message string) *protocol.Error {
 	if errors.Is(err, docker.ErrUnreachable) {
 		return protocol.New(protocol.DockerUnreachable, "Cannot reach Docker Desktop; start it and retry.")
 	}
-	e := protocol.New(code, message)
-	e.Cause = lastLine(err)
+	return protocol.New(code, message)
+}
+
+// diagnosed is failure with Docker's diagnostic as cause, only for the steps protocol 1 names: build stages and run.
+func diagnosed(err error, code protocol.Code, message string) *protocol.Error {
+	e := failure(err, code, message)
+	if e.Code == code {
+		e.Cause = lastLine(err)
+	}
 	return e
 }
 

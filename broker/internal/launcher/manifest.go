@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -145,6 +146,8 @@ func parseManifest(data []byte) (Manifest, error) {
 	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
 		return Manifest{}, errors.New("paths must be absolute")
 	}
+	m.CWD = filepath.Clean(m.CWD) // Docker mounts at the cleaned target
+
 	var labels map[string]json.RawMessage
 	if raw := fields["labels"]; len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &labels) != nil {
 		return Manifest{}, errors.New("labels must be an object")
