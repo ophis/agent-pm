@@ -851,9 +851,10 @@ class CodexCommon:
         """spec's recovery state. One saved under another workdir (a closed issue run resumed as a
         worker) is copied under spec's, which commit saves.
         """
-        state = self.load(spec.workdir, spec.sid)
-        if state is None and (found := self.lookup(spec.sid, spec.access.cwd)) is not None:
-            state = replace(found, workdir=session_identity(spec.workdir, spec.sid)[0])
+        workdir, sid = session_identity(spec.workdir, spec.sid)
+        state = self.load(workdir, sid)
+        if state is None and (found := self.lookup(sid, spec.access.cwd)) is not None:
+            state = replace(found, workdir=workdir)
         if state is None:
             raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
         return state
