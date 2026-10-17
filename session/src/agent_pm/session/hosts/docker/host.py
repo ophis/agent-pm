@@ -567,8 +567,7 @@ class DockerHost(Host):
                 if row.name not in self._warned:
                     self._warned.add(row.name)
                     LOG.warning(
-                        "docker session %s runs an image from an older agent-pm;"
-                        " restart it to upgrade",
+                        "docker session %s runs an older image; restart it to upgrade",
                         row.name,
                     )
                 return False

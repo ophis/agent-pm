@@ -212,7 +212,7 @@ class Broker:
             )
 
     def build(self, package: str, *, max_age: int | None = None) -> tuple[str, str]:
-        """`package`'s image tag and digest; `max_age`: rebuild an image built more than that many
+        """`package`'s image tag and digest; `max_age`: rebuild an image built at least that many
         seconds ago.
         """
         age = () if max_age is None else ("--max-age", str(max_age))

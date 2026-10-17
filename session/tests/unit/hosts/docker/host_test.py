@@ -1244,10 +1244,7 @@ class RecoverTest(Base):
                     self.assertEqual(f.read(), DIGEST)
                 self.assertEqual(
                     logs.output,
-                    [
-                        "WARNING:session:docker session w runs an image from an older agent-pm;"
-                        " restart it to upgrade"
-                    ],
+                    ["WARNING:session:docker session w runs an older image; restart it to upgrade"],
                 )
                 self.assertFalse(process.current)
                 self.assertEqual((self.serves(), self.spawned), ([], []))

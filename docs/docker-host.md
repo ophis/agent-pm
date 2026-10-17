@@ -76,7 +76,9 @@ latest Claude Code and Codex. To refresh them now:
 ```
 
 `--max-age N` rebuilds an image built N or more seconds ago (`0`: always) under the same
-key; a start passes 604800 (7 days).
+key; a start passes 604800 (7 days). When such a refresh fails (e.g. offline), `build`
+keeps the image, printing `agent-pm-broker: kept <image>: refreshing it failed: <reason>`;
+`--max-age 0` fails instead.
 
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
 images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or

@@ -92,7 +92,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 | Command | Fields and meaning |
 |---|---|
 | `version` | `protocol_version`: exact string `3` |
-| `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always); without it, never for age |
+| `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
 

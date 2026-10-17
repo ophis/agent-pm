@@ -445,3 +445,33 @@ func TestBuildRemovesUntaggedImages(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestAFailedRefreshKeepsTheImage(t *testing.T) {
+	e := newBuildEnv(t)
+	first, err := e.host().Build(context.Background(), e.pkg, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.age, e.failStage = 8*24*time.Hour, "agent-pm-user"
+	e.progress.Reset()
+	got, err := e.host().Build(context.Background(), e.pkg, 7*24*time.Hour)
+	if err != nil || got != (BuildResult{Image: first.Image, Digest: first.Digest}) {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if want := "agent-pm-broker: kept " + first.Image + ": refreshing it failed: Building the worker image definition failed. (RUN false)\n"; e.progress.String() != want {
+		t.Fatalf("%q", e.progress.String())
+	}
+	if _, err := e.host().Build(context.Background(), e.pkg, 0); err == nil {
+		t.Fatal("a forced rebuild kept the image")
+	}
+	inner := e.fake.respond
+	e.fake.respond = func(args []string) ([]byte, error) {
+		if args[0] == "build" {
+			return nil, docker.ErrUnreachable
+		}
+		return inner(args)
+	}
+	if _, err := e.host().Build(context.Background(), e.pkg, 7*24*time.Hour); err == nil || err.(*protocol.Error).Code != protocol.DockerUnreachable {
+		t.Fatalf("unreachable Docker kept the image: %v", err)
+	}
+}
