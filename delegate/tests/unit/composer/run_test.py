@@ -90,7 +90,9 @@ class Fake(Case):
 
 class Params(Case):
     def test_its_fields(self):
-        self.assertEqual([f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume"])
+        self.assertEqual(
+            [f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume", "docker"]
+        )
 
     def test_the_deliverable_is_out_under_the_real_workdir_else_tmp_deliverable(self):
         tmp = tempfile.TemporaryDirectory()

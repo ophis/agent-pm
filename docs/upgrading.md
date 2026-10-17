@@ -11,6 +11,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | running agent-pm sessions | Close them first. |
 | running Docker Host sessions | Close them before upgrading: their view sessions' old tag and their records' `hidden` field are no longer read. |
 | `mount_roots` in `[session.hosts.docker]` | Delete it: a Docker worker's workspace is now a volume ([Workspace volumes](docker-host.md#workspace-volumes)); left there, the Docker Host refuses it with `unknown key`. |
+| Docker Host workspace volumes `agent-pm-crew-*` with work in them | Push it, or `/usr/local/libexec/agent-pm/agent-pm-broker workspace-rm --volume <volume>`, before upgrading: from then on a session of that name gets a new, empty `agent-pm-ws-<name>` volume; the old one is reclaimed once its cwd leaves the host ([Workspace volumes](docker-host.md#workspace-volumes)). |
 | Docker Host crew workers with work in their host cwd | Commit and push it, or copy it elsewhere, before upgrading: from then on the worker sees an empty workspace volume at that path, even on `resume`. |
 | `workers_per_column` or `grid_retile` in `[session.hosts.tmux]` | Move them to `[session.viewer]`; left there, the tmux Host refuses them with `unknown key`. |
 | running Docker Host sessions whose `session.json` `host_hook.module` is `agent_pm.session.hosts.tmux.docker_hook` | After upgrading, close and reopen each: that module moved to `agent_pm.session.hosts.docker.hook`, so their host hook no longer loads. |

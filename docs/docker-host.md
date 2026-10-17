@@ -30,7 +30,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"4"}` |
+| `"$B" version` | `{"protocol_version":"5"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -106,6 +106,7 @@ removes nothing.
 |---|---|
 | `docker image inspect "$I" --format '{{json .Config.Labels}}'` | `agent-pm.version` equals the plugin's version; `agent-pm.key`, `agent-pm.agent-uid`, `agent-pm.agent-gid` |
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
+| `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (the image's interpreter, which imports agent-pm's Delegate), then `repo.py`'s usage: role runs read the team and run its tools from `/opt/agent-pm/team`, the plugin's own version |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
 | `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
@@ -116,8 +117,8 @@ removes nothing.
 mkdir -p ~/src/demo ~/.agent-pm/docker-state/worker_1/claude
 cat > /tmp/worker_1.json <<EOF
 {"name": "worker_1", "generation": "$(openssl rand -hex 16)", "image": "$I",
- "cwd": "$HOME/src/demo", "workspace": "agent-pm-crew-worker_1",
- "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "labels": {}}
+ "cwd": "$HOME/src/demo", "workspace": "agent-pm-ws-worker_1",
+ "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "github": null, "labels": {}}
 EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
@@ -128,9 +129,9 @@ versions.
 | Check | Expect |
 |---|---|
 | `docker inspect "$C" --format '{{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.Config.User}} {{.HostConfig.Privileged}} {{.HostConfig.NetworkMode}} {{.HostConfig.PidMode}}'` | `[ALL] [no-new-privileges] agent false bridge ` (empty PidMode) |
-| `docker inspect "$C" --format '{{json .Mounts}}'` | the volume `agent-pm-crew-worker_1` at cwd, one bind (claude_dir) and no `docker.sock` |
+| `docker inspect "$C" --format '{{json .Mounts}}'` | the volume `agent-pm-ws-worker_1` at cwd, one bind (claude_dir) and no `docker.sock` |
 | `docker exec "$C" grep -E "$HOME\|/run/agent-pm" /proc/mounts` | the volume at cwd, claude_dir at its host path, and the `/run/agent-pm/secrets` tmpfs; nothing else from the host |
-| `docker volume inspect agent-pm-crew-worker_1 --format '{{json .Labels}}'` | `agent-pm.kind` `crew`, `agent-pm.workspace` `$HOME/src/demo` |
+| `docker volume inspect agent-pm-ws-worker_1 --format '{{json .Labels}}'` | `agent-pm.kind` `ws`, `agent-pm.workspace` `$HOME/src/demo` |
 | `docker exec "$C" sh -c 'touch x; stat -c %U .; echo $npm_config_cache'`, then `ls ~/src/demo` | `agent`, `$HOME/src/demo/.agent-pm-cache`; the host dir stays empty |
 | `docker exec "$C" ps -o comm= -p 1` | `tini` |
 | `docker exec "$C" sh -c 'id -u; command -v sudo; tmux -V; git --version; gh --version; python3 --version; uv --version; node --version; claude --version; codex --version'` | uid not 0, no sudo path, every version prints |
@@ -162,7 +163,7 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 | `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container is untouched |
 | while `C` runs, the same manifest with a new `generation` | 4 `mount_rejected`: its volume is in use |
-| `docker volume create agent-pm-crew-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: the volume has no workspace labels; `docker volume rm agent-pm-crew-worker_3` after |
+| `docker volume create agent-pm-ws-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: the volume has no workspace labels; `docker volume rm agent-pm-ws-worker_3` after |
 
 ## Close
 
@@ -193,6 +194,35 @@ on tmux. The Viewer shows it as it shows a tmux session: `--display none` starts
 `[session.viewer]` shapes its grid, and `ls --descendants` follows the sessions it opened. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
 whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
+### Role runs
+
+Role runs (`agent-pm-crew role` and attended board runs) run their client in a container
+too, their harness staying on the host, which needs a Host of its own:
+
+```toml
+[delegate.delegates]
+harness_host = "tmux"
+```
+
+Only a TUI agent runs there: a headless one (an unattended board run, `agent-pm-delegate
+run` without `--detach`) runs its client on this machine, as before, with none of the rules
+below. The Docker Host treats them as any session: their volume is `agent-pm-ws-<session name>`,
+mounted at `<workdir>/agent`, and a board issue's revision rounds keep its name and volume.
+On the Docker Host the Delegate:
+
+- refuses, before any container and naming the key, a `harness_host` that is empty or the
+  Docker Host, a `read` dir other than the image's team (`{{team}}`, a core role's
+  `{{role_team}}`, the tasks dir), any `write` dir, a role `cwd`, a cwd other than the agent
+  dir (a `trusted_dirs` project cwd included), a `team_dirs` role, and an input whose
+  `Reference:` block names two `Repo:` lines or one off github.com;
+- gives the agent the image's team at `/opt/agent-pm/team` and its `python3`;
+- writes that `Repo:` line as `owner/name`, a local clone's read from its `origin`;
+- sets `AGENT_PM_USERS` in the session env: the configured `users` without any `[bot]`;
+- asks for the deliverable inline in the outcome, never `deliverable_file`; `local` and
+  `orchestrator` outputs still save it to `out`;
+- drops the outcome's `files` before checking it, noting `files_dropped` in `run.jsonl`,
+  so an engineer run posts no spec or plan to Linear.
+
 Each start, restart or resume runs a new generation in a new container, built from the
 current image. `restart` closes the running container and starts the next one; `resume`
 (after `close`, or once the container is gone) starts one in the same cwd. Both keep the
@@ -204,12 +234,12 @@ with `no native history to resume`. The worker's resume command is
 host.
 
 Refused before any container exists, as not supported on the Docker Host yet: a client
-other than Claude, role runs (a cwd under `~/.agent-pm`), detached sessions, and a start
-while a container of that name still exists. The broker's Refusals above apply too.
+other than Claude, detached sessions, and a start while a container of that name still
+exists. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd exists and is not a
-role run's, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds, rebuilding an image built 7 or more days ago
+Every start first runs a preflight: the client is Claude, the cwd exists, the broker
+answers `version` with the expected protocol (else it points to [Install](#install)), and
+`build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
@@ -228,7 +258,7 @@ Just before the broker's `start`, each generation freezes its plan in
 
 ```text
 docker plan NAME GENERATION: image agent-pm-worker:<key> sha256:<digest>
-docker plan NAME GENERATION: workspace agent-pm-crew-NAME at <cwd> rw
+docker plan NAME GENERATION: workspace agent-pm-ws-NAME at <cwd> rw
 docker plan NAME GENERATION: mounts <claude dir> rw
 docker plan NAME GENERATION: credential claude-setup-token
 ```
@@ -326,21 +356,21 @@ flowchart LR
 
 ## Workspace volumes
 
-A worker's workspace is a Docker volume, never a host directory: `agent-pm-crew-<name>`
-for a crew worker. The broker mounts it at the session's cwd, the path it has on the host,
-which stays untouched and unshared. A worker starts in an empty directory and clones what
+A worker's workspace is a Docker volume, never a host directory: `agent-pm-ws-<name>`
+for every session, a crew worker or a [role run](#role-runs). The broker mounts it at the
+session's cwd, the path it has on the host, which stays untouched and unshared. A worker starts in an empty directory and clones what
 it works on; until token delivery lands it can clone only public repos and cannot push.
 npm, uv and pip caches go to `.agent-pm-cache` inside it.
 
-The broker creates the volume at its first start, labelled `agent-pm.kind` (`crew`, or
-`run` for a role run's `agent-pm-run-<dir>-<8 hex>`) and `agent-pm.workspace` (the cwd),
+The broker creates the volume at its first start, labelled `agent-pm.kind` (`ws`) and
+`agent-pm.workspace` (the cwd),
 its root owned by the agent user. A volume of that name with other labels, or mounted by
 another container, fails the start with `mount_rejected`; clear a foreign one with
 `docker volume rm`.
 
 ```sh
-"$B" workspace-rm --volume agent-pm-crew-worker_1           # {"volume":"…","removed":true}
-"$B" workspace-rm --volume agent-pm-crew-worker_1 --force   # skips the check
+"$B" workspace-rm --volume agent-pm-ws-worker_1           # {"volume":"…","removed":true}
+"$B" workspace-rm --volume agent-pm-ws-worker_1 --force   # skips the check
 ```
 
 Without `--force`, `workspace-rm` first runs a check in the newest worker image, offline
@@ -348,10 +378,12 @@ with the volume read-only: any repo up to three levels down with uncommitted, st
 unpushed work, or a directory it cannot list, keeps the volume and fails with exit 12
 `workspace_dirty`, naming each repo and the `--force` command. An absent volume is `removed:false`.
 
-- **New start**: deletes the crew volume first. Unsaved work fails the start before its
-  config dir is cleared, with that message and `or resume it: agent-pm-session resume
-  NAME`; any other failure also stops it.
-- **Reclaim**: each `close`, never a start, runs `workspace-rm` on one `run` volume whose
+- **New start**: keeps the volume, so a session of the same name finds its checkouts again.
+  Only a volume mounted at another cwd (the same name, another `--cwd`) is deleted first;
+  unsaved work there fails the start before its config dir is cleared, with that message
+  and `or start it in <old cwd> again`; any other failure also stops it.
+- **Reclaim**: each `close`, never a start, runs `workspace-rm` on one volume with an
+  `agent-pm.kind` label (protocol 4's `agent-pm-crew-*` and `agent-pm-run-*` ones too) whose
   `agent-pm.workspace` path no longer exists on the host, so a close waits for at most one
   check. A volume whose check fails stays, with one warning `docker workspace <volume>
   kept: …` and a marker `~/.agent-pm/docker-state/.kept/<volume>`: for unsaved work it
@@ -360,7 +392,7 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 
 | Check | Expect |
 |---|---|
-| in `C`, `git clone` a public repo into `src/x` and add a file; close; `"$B" workspace-rm --volume agent-pm-crew-worker_1` | exit 12, naming `src/x`; `docker volume ls` still lists it |
+| in `C`, `git clone` a public repo into `src/x` and add a file; close; `"$B" workspace-rm --volume agent-pm-ws-worker_1` | exit 12, naming `src/x`; `docker volume ls` still lists it |
 | `docker ps -a --filter label=agent-pm.check` during and after | the check container while it runs, nothing after |
 
 ## Risks
@@ -388,7 +420,8 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
   catches it.
 - Docker Desktop file sharing must include `~/.agent-pm/docker-state`
   (Settings > Resources > File sharing); otherwise start fails with `start_failed`.
-- A workspace volume outlives its container: a crew worker's stays until its next new
-  start or `workspace-rm`, and holds whatever the worker cloned.
+- A workspace volume outlives its container: it stays until its cwd leaves the host or
+  `workspace-rm`, and holds whatever the worker cloned. A crew worker whose cwd stays keeps
+  its volume for good.
 - Containers reach the host through `host.docker.internal`: a host service listening on
   all interfaces or on Docker's gateway is reachable from workers.

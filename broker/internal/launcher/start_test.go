@@ -20,7 +20,7 @@ const (
 	digest    = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	imageKey  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	container = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
-	volume    = "agent-pm-crew-worker_1"
+	volume    = "agent-pm-ws-worker_1"
 	fakeToken = "FAKE-TOKEN"
 )
 
@@ -76,9 +76,9 @@ func (w *world) docker() *fakeDocker {
 		case "volume inspect":
 			switch w.volume {
 			case "matching":
-				return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"` + home + `/src/project"}` + "\n"), nil
+				return []byte(`{"agent-pm.kind":"ws","agent-pm.workspace":"` + home + `/src/project"}` + "\n"), nil
 			case "mismatched":
-				return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"/elsewhere"}` + "\n"), nil
+				return []byte(`{"agent-pm.kind":"ws","agent-pm.workspace":"/elsewhere"}` + "\n"), nil
 			case "unlabeled":
 				return []byte("null\n"), nil
 			}
@@ -280,8 +280,20 @@ func detached(d *fakeDocker) []string {
 	return nil
 }
 
+func TestStartRefusesGitHubTokens(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-github-app.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	_, err = h.Start(context.Background(), writeManifest(t, data))
+	if protoErr(t, err).Code != protocol.ManifestRejected || !strings.Contains(err.Error(), "github must be null") || len(d.calls) != 0 {
+		t.Fatalf("%v %q", err, d.verbs())
+	}
+}
+
 func TestStartVolume(t *testing.T) {
-	create := []string{"volume", "create", "--label", "agent-pm.kind=crew", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
+	create := []string{"volume", "create", "--label", "agent-pm.kind=ws", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
 	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
 		"--mount", "type=volume,source=" + volume + ",target=/workspace", "--entrypoint", "/bin/chown", digest, "1001:1002", "/workspace"}
 	has := func(d *fakeDocker, call []string) bool {
@@ -475,7 +487,7 @@ func TestManifestUnreadable(t *testing.T) {
 
 func TestHookUnderUncleanCWD(t *testing.T) {
 	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
-		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-crew-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{}}`
+		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-ws-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","github":null,"labels":{}}`
 	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))
 	if protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run") {

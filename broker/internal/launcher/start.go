@@ -68,6 +68,9 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err != nil {
 		return StartResult{}, err
 	}
+	if m.GitHubApp != "" {
+		return StartResult{}, protocol.New(protocol.ManifestRejected, "Manifest rejected: this broker issues no GitHub tokens; github must be null.")
+	}
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}

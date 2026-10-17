@@ -14,7 +14,7 @@ class DockerBrokerProtocol(Case):
         Draft202012Validator.check_schema(schema)
         index = json.loads((PROTOCOL / "fixtures/index.json").read_text())
         self.assertTrue(index["cases"])
-        self.assertEqual(index["protocol_version"], "4")
+        self.assertEqual(index["protocol_version"], "5")
         names = [case["file"] for case in index["cases"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(
@@ -52,7 +52,16 @@ class DockerBrokerProtocol(Case):
     def test_manifest_required_fields_and_rejected_unknown_fields_are_exercised(self):
         index = json.loads((PROTOCOL / "fixtures/index.json").read_text())
         cases = {case["file"]: case for case in index["cases"]}
-        for field in ("name", "generation", "image", "cwd", "workspace", "claude_dir", "labels"):
+        for field in (
+            "name",
+            "generation",
+            "image",
+            "cwd",
+            "workspace",
+            "claude_dir",
+            "github",
+            "labels",
+        ):
             self.assertFalse(cases[f"manifest-missing-{field}.json"]["valid"])
         self.assertFalse(cases["manifest-unknown-field.json"]["valid"])
         self.assertTrue(cases["manifest-no-hook.json"]["valid"])

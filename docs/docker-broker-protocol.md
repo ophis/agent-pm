@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 4** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"4"}`.
+**Protocol 5** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"5"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -10,7 +10,8 @@ The broker installs the hook stub, so this version also covers the stub's wire f
 Protocol 2 marked the stub's switch to the [relay wire format](docker-relay-protocol.md);
 protocol 3 drops start's `update` (the clients come from the image) and adds build's `--max-age`;
 protocol 4 mounts the manifest's `workspace` volume at `cwd` instead of binding the host cwd,
-drops the mount roots and deny list, and adds `workspace-rm`.
+drops the mount roots and deny list, and adds `workspace-rm`; protocol 5 names every volume
+`agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -60,8 +61,9 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `generation` | 32 lowercase hexadecimal characters, the session generation |
 | `image` | `agent-pm-worker:<key>`; key is 64 lowercase hexadecimal characters computed by broker from both image-definition and agent-pm package contents |
 | `cwd` | Absolute existing host directory: the container path the workspace volume is mounted at and the working directory; never a bind source |
-| `workspace` | The workspace volume: `agent-pm-crew-<name>`, or `agent-pm-run-<dir>-<8 hex>` for a role run |
+| `workspace` | The workspace volume: `agent-pm-ws-<name>` |
 | `claude_dir` | Absolute host directory, mounted read/write at the same container path |
+| `github` | Required: `null`, or `{"app": <App name>}`, whose tokens a later protocol issues; this broker rejects anything but `null` at `start` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
 
@@ -85,8 +87,8 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
   with no symlink component, and not overlapping cwd. It is the only bind mount.
   Reject `hook_path` equal to or below cwd, `claude_dir` or the secrets tmpfs, and a cwd
   below `hook_path`.
-- Ensure the volume: create an absent one with labels `agent-pm.kind` (`crew` or `run`, from
-  its name) and `agent-pm.workspace=<cwd>`, read its labels back, and give its root to the
+- Ensure the volume: create an absent one with labels `agent-pm.kind=ws` and
+  `agent-pm.workspace=<cwd>`, read its labels back, and give its root to the
   image's agent user in a one-shot container with only `CHOWN` (on failure, delete the
   volume it created). Reject an existing volume whose labels differ or that a container
   mounts. Docker's `docker volume rm` is the only way to clear a same-named foreign one.
@@ -103,7 +105,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `4` |
+| `version` | `protocol_version`: exact string `5` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |

@@ -16,28 +16,22 @@ type Manifest struct {
 	Name, Generation, Image, CWD, Workspace, ClaudeDir, HookPath string
 	HasHook                                                      bool
 	Labels                                                       map[string]string
+	GitHubApp                                                    string // the App whose tokens the session gets; "": github null
 }
 
-// A workspace volume's labels: its Kind and its mount point.
+// A workspace volume's labels: its kind (always kind) and its mount point.
 const (
 	kindLabel      = "agent-pm.kind"
+	kind           = "ws"
 	workspaceLabel = "agent-pm.workspace"
 )
-
-// Kind is the workspace volume's kindLabel: run or crew.
-func (m Manifest) Kind() string {
-	if strings.HasPrefix(m.Workspace, "agent-pm-run-") {
-		return "run"
-	}
-	return "crew"
-}
 
 var (
 	namePattern       = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 	generationPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-	runVolumePattern  = regexp.MustCompile(`^agent-pm-run-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`)
+	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
 
 func hasControl(s string) bool {
@@ -116,7 +110,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
 		"cwd": &m.CWD, "workspace": &m.Workspace, "claude_dir": &m.ClaudeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
-		if key == "labels" {
+		if key == "labels" || key == "github" {
 			continue
 		}
 		target, ok := targets[key]
@@ -127,7 +121,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return reject("field %q must be a string without control characters", key)
 		}
 	}
-	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "labels"} {
+	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "github", "labels"} {
 		if _, ok := fields[key]; !ok {
 			return reject("missing field %q", key)
 		}
@@ -140,12 +134,23 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return reject("invalid generation")
 	case !imagePattern.MatchString(m.Image):
 		return reject("image must be agent-pm-worker:<64 hex>")
-	case m.Workspace != "agent-pm-crew-"+m.Name && !runVolumePattern.MatchString(m.Workspace):
-		return reject("workspace must be agent-pm-crew-<name> or agent-pm-run-<dir>-<8 hex>")
+	case m.Workspace != "agent-pm-ws-"+m.Name:
+		return reject("workspace must be agent-pm-ws-<name>")
 	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
 		return reject("paths must be absolute")
 	}
 	m.CWD = filepath.Clean(m.CWD) // Docker mounts at the cleaned target
+	if raw := fields["github"]; string(raw) != "null" {
+		var github map[string]json.RawMessage
+		if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &github) != nil || len(github) != 1 {
+			return reject("github must be null or {\"app\": <name>}")
+		}
+		app, ok := str(github["app"])
+		if !ok || !appPattern.MatchString(app) {
+			return reject("github must be null or {\"app\": <name>}")
+		}
+		m.GitHubApp = app
+	}
 
 	var labels map[string]json.RawMessage
 	if raw := fields["labels"]; len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &labels) != nil {

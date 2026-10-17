@@ -19,6 +19,7 @@ from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback, sweep
 from agent_pm.delegate.engine.config import module_roots, read_config
+from agent_pm.delegate.engine.container import on_docker
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute, say, stopped
@@ -216,6 +217,12 @@ class HarnessDelegate(Delegate):
         self.driver = driver or AgentDriver(
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
+        if self.driver.docker and on_docker(self._settings, harness.name):
+            other = next((n for n in hosts if not on_docker(self._settings, n)), "<a host Host>")
+            raise ConfigError(
+                f"harness_host: an agent on the Docker Host needs its harness on another Host; "
+                f'set [delegate.delegates] harness_host = "{other}"'
+            )
         tui = spec.mode == Mode.TUI
         accepted = plan(
             run,
@@ -350,7 +357,12 @@ class HarnessDelegate(Delegate):
         values = {
             field.name: _encode(getattr(persisted, field.name)) for field in fields(persisted)
         }
-        accepted = {"session": _encode(state.plan.session), "run": _encode(state.plan.run)}
+        accepted = {
+            "session": _encode(state.plan.session),
+            "run": _encode(state.plan.run),
+            "repo": state.plan.repo,
+            "docker": state.plan.docker,
+        }
         spec = {
             field.name: _encode(getattr(state.plan.spec, field.name))
             for field in fields(state.plan.spec)
@@ -387,7 +399,13 @@ class HarnessDelegate(Delegate):
             session["access"] = Access(**access)
             session["flags"] = tuple(session["flags"])
             session["reply_tags"] = tuple(session["reply_tags"])
-            accepted = Plan(spec, SessionSpec(**session), RunConfig(**planned["run"]))
+            accepted = Plan(
+                spec,
+                SessionSpec(**session),
+                RunConfig(**planned["run"]),
+                planned.get("repo"),
+                planned.get("docker", False),
+            )
             result = data.pop("result")
             if result is not None:
                 outcome = result.pop("outcome")

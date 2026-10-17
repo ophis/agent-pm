@@ -50,7 +50,7 @@ func TestManifestDuplicatesTrailingUTF8(t *testing.T) {
 		t.Fatalf("%+v %v", m, err)
 	}
 	base := `"generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` +
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","cwd":"/w","workspace":"agent-pm-crew-w","claude_dir":"/c","labels":{}`
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","cwd":"/w","workspace":"agent-pm-ws-w","claude_dir":"/c","github":null,"labels":{}`
 	if _, err := ParseManifest([]byte(`{"name":"w",` + base + `}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -87,18 +87,38 @@ func TestManifestWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	with := func(workspace string) (Manifest, error) {
-		return ParseManifest([]byte(strings.Replace(string(data), `"agent-pm-crew-worker_1"`, workspace, 1)))
+		return ParseManifest([]byte(strings.Replace(string(data), `"agent-pm-ws-worker_1"`, workspace, 1)))
 	}
-	for workspace, kind := range map[string]string{`"agent-pm-crew-worker_1"`: "crew", `"agent-pm-run-TASK-633-0123abcd"`: "run", `"agent-pm-run-a.b_c-ffffffff"`: "run"} {
-		m, err := with(workspace)
-		if err != nil || m.Kind() != kind || `"`+m.Workspace+`"` != workspace {
-			t.Fatalf("%s: %+v %v", workspace, m, err)
-		}
+	if m, err := with(`"agent-pm-ws-worker_1"`); err != nil || m.Workspace != "agent-pm-ws-worker_1" {
+		t.Fatalf("%+v %v", m, err)
 	}
-	for _, workspace := range []string{`"agent-pm-crew-other"`, `"agent-pm-crew-worker_1x"`, `"agent-pm-run-x-0123abc"`, `"agent-pm-run-x-0123ABCD"`,
-		`"agent-pm-run--0123abcd"`, `"agent-pm-run-a/b-0123abcd"`, `"volume"`, `""`, `1`, `null`} {
+	for _, workspace := range []string{`"agent-pm-ws-other"`, `"agent-pm-ws-worker_1x"`, `"agent-pm-crew-worker_1"`, `"agent-pm-run-TASK-633-0123abcd"`,
+		`"volume"`, `""`, `1`, `null`} {
 		if _, err := with(workspace); code(t, err) != protocol.ManifestRejected {
 			t.Errorf("%s accepted", workspace)
+		}
+	}
+}
+
+func TestManifestGitHub(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-github-app.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ParseManifest(data); err != nil || m.GitHubApp != "agent-pm-bot" {
+		t.Fatalf("%+v %v", m, err)
+	}
+	valid, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ParseManifest(valid); err != nil || m.GitHubApp != "" {
+		t.Fatalf("%+v %v", m, err)
+	}
+	for _, github := range []string{`[]`, `"agent-pm-bot"`, `{"app":null}`, `{"app":"a","app":"b"}`, `{"app":"-a"}`} {
+		doc := strings.Replace(string(valid), `"github": null`, `"github": `+github, 1)
+		if _, err := ParseManifest([]byte(doc)); code(t, err) != protocol.ManifestRejected {
+			t.Errorf("%s accepted", github)
 		}
 	}
 }

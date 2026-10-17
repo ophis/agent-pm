@@ -55,7 +55,7 @@ func (c *check) docker() *fakeDocker {
 }
 
 func labelled(path string) string {
-	return `{"agent-pm.kind":"crew","agent-pm.workspace":"` + path + `"}`
+	return `{"agent-pm.kind":"ws","agent-pm.workspace":"` + path + `"}`
 }
 
 func clean() *check {

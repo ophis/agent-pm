@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from agent_pm.delegate import config
 from agent_pm.delegate.engine.config import read_config
+from agent_pm.delegate.engine.container import on_docker
 from agent_pm.delegate.engine.types import ConfigError, DriverSpec, Instruction
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, Session, Spec
@@ -14,6 +15,7 @@ from agent_pm.utils import Display, save
 
 class Driver(ABC):
     session_based = True
+    docker = False
     session: Session | None = None
     display: Display = None
 
@@ -49,6 +51,7 @@ class AgentDriver(Driver):
         self.session_cls = session_cls
         self.settings = settings
         self.display, self.host = display, host
+        self.docker = settings is not None and on_docker(settings, host)
 
     def policy(self, client: str) -> tuple[tuple[str, ...], dict[str, str]]:
         try:

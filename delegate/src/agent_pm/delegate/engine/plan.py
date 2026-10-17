@@ -10,13 +10,14 @@ import uuid
 from dataclasses import replace
 
 from agent_pm.delegate.composer import Composer, RunConfig
+from agent_pm.delegate.engine.container import reference_repo, repo_lines, users_env, with_repo
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.types import ConfigError, Layout, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import under
+from agent_pm.utils import thaw, under
 
 
 def _own(f):
@@ -104,10 +105,17 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         sid=run_sid(spec.sid),
         team=composition.team,
     )
+    docker = driver.docker and spec.mode == Mode.TUI
+    repo = reference_repo(spec.input) if docker else None
+    if docker:
+        spec = replace(spec, input=_on_docker(run, spec, repo, composition))
     resume = spec.sid if spec.resume else None
     here, project = place(
         run, layout, resume_sid=resume, cwd=spec.cwd, trusted=composition.trusted_dirs()
     )
+    if docker and os.path.realpath(here) != os.path.realpath(layout.agent):
+        key = "trusted_dirs" if project else "cwd"
+        raise ConfigError(f"{key}: a Docker run's cwd is its agent dir, not {here}")
     if (
         driver.session_based
         and not project
@@ -117,7 +125,9 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
             file=sys.stderr,
         )
-    intent = composition.access(run, layout.agent, cwd=here, project=project, repo_dir=spec.repo)
+    intent = composition.access(
+        run, layout.agent, cwd=here, project=project, repo_dir=spec.repo, docker=docker
+    )
     for path in intent.dirs:
         _refuse_overlap("write dir", path, layout)
     access = Access(
@@ -129,6 +139,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         env=intent.env,
     )
     flags, env = driver.policy(client)
+    if docker:
+        env = env | users_env(thaw(composition.config.values).get("users", []))
     session = SessionSpec(
         workdir=layout.run,
         client=client,
@@ -147,10 +159,21 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
     _check_team_dirs(
         composition, intent.writes, client=client, spec=session, layout=layout, driver=driver
     )
-    planned = Plan(spec, session, run)
+    planned = Plan(spec, session, run, repo, docker)
     return replace(
         planned, session=replace(session, prompt=composition.render(run, planned.params))
     )
+
+
+def _on_docker(run: RunConfig, spec: Spec, repo: str | None, composition: Composer) -> str:
+    """A Docker run's input, its Reference repo by name; else ConfigError."""
+    if run.cwd:
+        raise ConfigError(f"cwd {run.cwd}: a Docker run's cwd is its agent dir")
+    if (charter := composition.path_for("roles", run.role)) and composition.team.custom(charter):
+        raise ConfigError(f"team_dirs: role {run.role} ({charter}) cannot run on the Docker Host")
+    if repo is None and (found := repo_lines(spec.input)):
+        raise ConfigError(f"Repo: {found[0]} names no github.com repository a Docker run can reach")
+    return with_repo(spec.input, repo) if repo else spec.input
 
 
 def _check_team_dirs(

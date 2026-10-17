@@ -92,7 +92,27 @@
     },
     "workspace": {
       "type": "string",
-      "pattern": "^agent-pm-(crew-[A-Za-z0-9_-]+|run-[A-Za-z0-9_.-]+-[0-9a-f]{8})$"
+      "pattern": "^agent-pm-ws-[A-Za-z0-9_-]+$"
+    },
+    "github": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "app": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            }
+          },
+          "required": [
+            "app"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "volume": {
       "type": "string",
@@ -155,6 +175,9 @@
         "claude_dir": {
           "$ref": "#/$defs/path"
         },
+        "github": {
+          "$ref": "#/$defs/github"
+        },
         "hook_path": {
           "$ref": "#/$defs/path"
         },
@@ -169,6 +192,7 @@
         "cwd",
         "workspace",
         "claude_dir",
+        "github",
         "labels"
       ],
       "additionalProperties": false
@@ -196,7 +220,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "4"
+          "const": "5"
         }
       },
       "required": [

@@ -65,6 +65,54 @@ class CreateTest(HarnessCase):
         self.assertEqual(attached.workdir, self.work)
 
 
+class ReferenceRepoTest(HarnessCase):
+    def test_a_local_run_records_no_reference_repo_and_writes_no_intent(self):
+        spec = Spec(
+            "Reference: T\nRepo: ophis/agent-pm\n\nHello.",
+            self.work,
+            task="echo",
+            sid=SID,
+            client="fake",
+        )
+        view = self.make(spec=spec)
+        self.assertEqual(self.metadata()["plan"]["repo"], None)
+        self.assertFalse(self.metadata()["plan"]["docker"])
+        view._complete(
+            Result(0, Outcome("needs_input", "Question", "Answer needed", questions=["Which?"]))
+        )
+        view.resume(input="Reference: T\nRepo: ophis/other\n\nThe answer.")
+        self.assertEqual(self.metadata()["plan"]["repo"], None)
+        self.assertNotIn("container-intent.json", os.listdir(os.path.join(self.work, "run")))
+
+
+class DockerHarnessTest(HarnessCase):
+    def test_a_docker_agent_needs_a_harness_on_another_host(self):
+        HarnessSession.hosts["box"] = RecordingHost("box")
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(
+                "[session.hosts.box]\n"
+                'implementation = "agent_pm.session.hosts.docker.host:DockerHost"\n'
+                'docker = "/usr/local/bin/docker"\n'
+            )
+        spec = Spec(
+            "Reference: T\nRepo: ophis/agent-pm\n\nHi.",
+            self.work,
+            mode="tui",
+            client="fake",
+            sid=SID,
+        )
+        for harness in (None, "box"):
+            with self.subTest(harness=harness), self.assertRaises(ConfigError) as cm:
+                self.make(spec=spec, host="box", harness_host=harness)
+            self.assertIn('harness_host = "tmux"', str(cm.exception))
+        self.assertFalse(os.path.exists(self.work))
+        self.make(spec=spec, host="box", harness_host="harness").close()
+        self.assertEqual(self.metadata()["plan"]["docker"], True)
+        self.assertEqual(self.metadata()["plan"]["repo"], "ophis/agent-pm")
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertTrue(view._state.plan.docker and view.driver.docker)
+
+
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)

@@ -101,6 +101,7 @@ class FakeDriver:
     session_based = True
     session = None
     display = None
+    docker = False
 
     def __init__(self, session_cls):
         self.session_cls = session_cls

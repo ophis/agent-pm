@@ -3,7 +3,8 @@
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the
 guide's default text) and {{language}} (unset → each line holding it is dropped); a destination gets
-{{deliverable}}, <Workdir>/<its path in the workdir>. Every other run value is a PARAMETERS name,
+{{deliverable}}, <Workdir>/<its path in the workdir>; on Docker, where the harness cannot read the
+agent's files, a `local` or `orchestrator` one is INLINE and no text names `deliverable_file`. Every other run value is a PARAMETERS name,
 its value given once in # Parameters. The run reports in its replies (RETURN): PROGRESS mark lines
 and one OUTCOME block, which the Delegate parses.
 
@@ -34,7 +35,7 @@ from agent_pm.delegate.composer.base import (
 )
 from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
-from agent_pm.delegate.event.outcome import DEFAULT_HOST
+from agent_pm.delegate.event.outcome import DEFAULT_HOST, SAVES_DELIVERABLE
 from agent_pm.utils import unfenced
 
 RESUME = (
@@ -58,10 +59,15 @@ PARAMETERS = {
     "<out-dir>": "output.dir",
     "<out-host>": "output.host",
 }
+FILE = " A long deliverable goes in a file named by `deliverable_file` instead."
 RETURN = (
     "## Return\n\nYour replies carry your reports:\n\n"
     f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. `[{PROGRESS}:start] <what that line asks you to report>`.\n"
-    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), end your last reply with one fenced code block whose info string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`. A long deliverable goes in a file named by `deliverable_file` instead.\n'
+    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), end your last reply with one fenced code block whose info string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`.{FILE}\n'
+)
+INLINE = (
+    "## Destination\n\nPut the deliverable inline in the outcome's `deliverable`; publish, post or save it "
+    "nowhere else. Leave `url` empty.\n"
 )
 
 
@@ -95,20 +101,22 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     if not os.path.isfile(os.path.join(output, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     inside = os.path.relpath(os.path.realpath(params.deliverable), os.path.realpath(params.workdir))
-    texts |= {
-        "output.md": fill(read_text(os.path.join(output, "output.md")), {}, "output.md"),
-        dest: fill(
-            read_text(os.path.join(output, dest)), {"deliverable": f"<Workdir>/{inside}"}, dest
-        ),
-        "Return": RETURN,
-    }
-    parts += [("output.md", texts["output.md"] + "\n" + texts[dest]), ("Return", RETURN)]
+    rules = fill(read_text(os.path.join(output, "output.md")), {}, "output.md")
+    destination = fill(
+        read_text(os.path.join(output, dest)), {"deliverable": f"<Workdir>/{inside}"}, dest
+    )
+    ret = RETURN.replace(FILE, "") if params.docker else RETURN
+    if params.docker:
+        rules = _without(rules, "`deliverable_file`")
+        destination = INLINE if run.output["type"] in SAVES_DELIVERABLE else destination
+    texts |= {"output.md": rules, dest: destination, "Return": ret}
+    parts += [("output.md", rules + "\n" + destination), ("Return", ret)]
     joined = [part for _, part in parts]
     joined.insert(1, _parameters(run, params, texts, team))
     own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")
     if teams.used(team, run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
-    for command in runs.approved(run, params.workdir, team):
+    for command in runs.approved(run, params.workdir, team, docker=params.docker):
         if command.quoted:
             own = own.replace(command.text, command.rule.removesuffix(" *"))
     return own + f"\n{params.input.strip()}\n"
@@ -253,11 +261,8 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     }
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
-        "tasks": _code(teams.tasks_path(run.role, team)),
-        "team": _code(team.root),
-        "role_team": _code(teams.role_team(team, run.role)),
         "gate": _code(run.gate or "none"),
-    }
+    } | {k: _code(v) for k, v in runs.team_paths(run, team, docker=params.docker).items()}
     values |= {
         f"output.{k}": _code(str(v)) for k, v in ({"host": DEFAULT_HOST} | run.output).items()
     }

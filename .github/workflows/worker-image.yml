@@ -9,6 +9,7 @@ on:
       - broker/**
       - session/src/**
       - utils/src/**
+      - delegate/src/**
       - .claude-plugin/plugin.json
       - .github/workflows/worker-image.yml
   schedule:
@@ -42,7 +43,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           changed=$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
-          if grep -qE '^(broker/|session/src/|utils/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$)' <<<"$changed"; then
+          if grep -qE '^(broker/|session/src/|utils/src/|delegate/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$)' <<<"$changed"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "No image input changed; nothing to build."
@@ -123,4 +124,7 @@ jobs:
             node --version
             claude --version
             codex --version
-            test -x /opt/agent-pm/bin/with-secrets'
+            test -x /opt/agent-pm/bin/with-secrets
+            test "$(command -v python3)" = /opt/agent-pm/bin/python3
+            python3 -c "import agent_pm.delegate"
+            python3 -P /opt/agent-pm/team/tools/repo.py --help'

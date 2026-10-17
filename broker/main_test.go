@@ -44,7 +44,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"4"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"5"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -256,7 +256,7 @@ func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, 
 		return []byte(`[{"Id":"sha256:` + strings.Repeat("b", 64) + `","Config":{"Labels":{"agent-pm.key":"` + strings.Repeat("a", 64) +
 			`","agent-pm.version":"1.2.3","agent-pm.agent-uid":"1001","agent-pm.agent-gid":"1002"}}}]`), nil
 	case strings.HasPrefix(joined, "volume inspect"):
-		return []byte(`{"agent-pm.kind":"crew","agent-pm.workspace":"/Users/example/src/project"}`), nil
+		return []byte(`{"agent-pm.kind":"ws","agent-pm.workspace":"/Users/example/src/project"}`), nil
 	case strings.HasPrefix(joined, "container inspect"):
 		return nil, &docker.CommandError{Exit: 1, Stderr: "No such container"}
 	case strings.HasSuffix(joined, "--version"):

@@ -1,5 +1,5 @@
 {
-  "protocol_version": "4",
+  "protocol_version": "5",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1115,6 +1115,56 @@
         "docker": "reachable"
       },
       "note": "Schema-valid; broker must reject from the supplied fake host state before container creation, except sharing_denied which fails creation."
+    },
+    {
+      "file": "manifest-github-app.json",
+      "definition": "manifest",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-missing-github.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-github-extra-field.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-github-bad-app.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-github-empty.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
     }
   ]
 }

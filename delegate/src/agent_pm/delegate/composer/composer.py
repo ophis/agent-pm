@@ -84,9 +84,16 @@ class Composer:
         cwd: str,
         project: bool,
         repo_dir: str | None = None,
+        docker: bool = False,
     ) -> Intent:
         return run.access(
-            config, workdir, cwd=cwd, project=project, repo_dir=repo_dir, team=self.team
+            config,
+            workdir,
+            cwd=cwd,
+            project=project,
+            repo_dir=repo_dir,
+            team=self.team,
+            docker=docker,
         )
 
     def path_for(self, kind: str, name: str) -> str:
