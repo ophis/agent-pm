@@ -621,7 +621,9 @@ class SessionStore:
                         continue
                     if state is not None and state.sid == sid and state.snapshot.cwd == cwd:
                         matches.append(state)
-        if len(matches) > 1:
+        if len(matches) > 1 and (
+            matches[0].native_id is None or len({state.native_id for state in matches}) > 1
+        ):
             raise RecoveryError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")
         if not matches and skipped:
             raise skipped[0]
@@ -845,12 +847,21 @@ class CodexCommon:
             result["CODEX_HOME"] = inherited.get("CODEX_HOME") or "~/.codex"
         return result
 
+    def _resumed(self, spec: Spec) -> SessionState:
+        """spec's recovery state. One saved under another workdir (a closed issue run resumed as a
+        worker) is copied under spec's, which commit saves.
+        """
+        state = self.load(spec.workdir, spec.sid)
+        if state is None and (found := self.lookup(spec.sid, spec.access.cwd)) is not None:
+            state = replace(found, workdir=session_identity(spec.workdir, spec.sid)[0])
+        if state is None:
+            raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+        return state
+
     @_recover
     def prepare(self, spec: Spec) -> SessionState:
         if spec.resume:
-            state = self.load(spec.workdir, spec.sid)
-            if state is None:
-                raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+            state = self._resumed(spec)
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
             snapshot = state.snapshot
@@ -909,9 +920,7 @@ class CodexCommon:
     @_recover
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
         if spec.resume:
-            state = self.load(spec.workdir, spec.sid)
-            if state is None:
-                raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+            state = self._resumed(spec)
             roots = state.writable_roots
             environment = self.environment(state.snapshot, ambient=True)
         else:
@@ -923,7 +932,8 @@ class CodexCommon:
     def commit(self, state: SessionState | None) -> SessionState:
         if state is None:
             raise ConfigError("Codex launch has not been prepared")
-        return self.save(state) if state.native_id is None else state
+        stored = state.native_id is not None and self.load(state.workdir, state.sid) is not None
+        return state if stored else self.save(state)
 
     @_recover
     def save(self, state: SessionState) -> SessionState:
