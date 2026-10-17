@@ -5,7 +5,7 @@ and appends its events line on the host.
 import os
 
 from agent_pm.session.engine.types import HookCall, HookError
-from agent_pm.session.hosts.docker.daemon import endpoint, exec_runner
+from agent_pm.session.hosts.docker.daemon import container_name, endpoint, exec_runner
 from agent_pm.session.hosts.tmux import transport
 from agent_pm.session.hosts.tmux.hook import mark_launched
 
@@ -21,7 +21,7 @@ def on_hook(word: str, call: HookCall) -> None:
         raise HookError("host state: bad generation")
     if saved.get("endpoint") != endpoint():
         raise HookError("host state: bad endpoint")
-    container = f"agent-pm-{target}-{generation}"
+    container = container_name(target, generation)
     if saved.get("container") != container:
         raise HookError("host state: bad container")
     mark_launched(

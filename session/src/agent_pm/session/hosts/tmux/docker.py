@@ -50,6 +50,7 @@ from agent_pm.session.hosts.docker.daemon import (
     RUN_TIMEOUT,
     account_home,
     capped,
+    container_name,
     docker_call,
     endpoint,
     exec_runner,
@@ -104,10 +105,6 @@ class Row(NamedTuple):
     container: str
     generation: str
     state: str
-
-
-def container_name(name: str, generation: str) -> str:
-    return f"agent-pm-{name}-{generation}"
 
 
 def _attach_argv(docker: str, container: str, name: str) -> list[str]:
