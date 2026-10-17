@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import shutil
+import stat
 import sys
 import time
 import traceback
@@ -504,7 +505,7 @@ class HarnessDelegate(Delegate):
         return Layout(workdir).checkouts()
 
     @classmethod
-    def clean(cls, workdir: str, *, dry: bool = False) -> None:
+    def clean(cls, workdir: str, *, dry: bool = False, scratch: bool = False) -> bool:
         layout = Layout(workdir)
         agent = os.path.lexists(layout.agent)
         if agent and not layout.in_place():
@@ -515,11 +516,22 @@ class HarnessDelegate(Delegate):
             try:
                 view = cls.attach(workdir)
             except ConfigError:
+                if scratch and payload is not None:
+                    raise ConfigError(f"{layout.workdir}: delegate liveness unknown") from None
                 view = cls._bare(layout)
             if view._live(payload):
                 raise ConfigError(f"{layout.workdir}: delegate is still alive")
-            if agent and not dry:
-                shutil.rmtree(layout.agent)
+            if scratch and payload is not None:
+                session = view._agent(view._read())
+                if session is not None and session.alive():
+                    raise ConfigError(f"{layout.workdir}: its agent session is still open")
+            found = [
+                p for p in (layout.scratch if scratch else (layout.agent,)) if os.path.lexists(p)
+            ]
+            if not dry:
+                for path in found:
+                    _remove(path)
+            return bool(found)
 
     @classmethod
     def check_tui(
@@ -776,6 +788,34 @@ class HarnessDelegate(Delegate):
                     if callback is not None:
                         callback(Finished(ended))
                 raise
+            finally:
+                self._clear_tmp()
+
+    def _clear_tmp(self) -> None:
+        """agent/tmp at the run's end, never followed, keeping a deliverable file `out` directly in
+        it; kept whole while its agent session is open; an error printed.
+        """
+        tmp, out = self.layout.tmp, os.path.abspath(self._state.plan.driver_spec.out)
+        try:
+            agent = self._agent(self._read())
+            if agent is not None and agent.alive():
+                return
+            if not (os.path.dirname(out) == tmp and _regular(out) and _regular(tmp, dir=True)):
+                _remove(tmp)
+                return
+            fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                for entry in os.scandir(fd):
+                    if entry.name == os.path.basename(out):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        shutil.rmtree(entry.name, dir_fd=fd)
+                    else:
+                        os.unlink(entry.name, dir_fd=fd)
+            finally:
+                os.close(fd)
+        except (ConfigError, SessionError, OSError) as error:
+            say(f"delegate: {error}")
 
     def ctl(self) -> tuple[str, ...]:
         return self._record(self._read()).ctl
@@ -980,3 +1020,26 @@ class HarnessDelegate(Delegate):
             record = self._launch(previous, state)
         self._started(self._state)
         return record
+
+
+def _remove(path: str) -> None:
+    """`path`, never followed: a directory's tree (shutil.rmtree resists a symlink swap), else
+    the entry itself.
+    """
+    try:
+        found = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(found.st_mode):
+        shutil.rmtree(path)
+    else:
+        os.unlink(path)
+
+
+def _regular(path: str, *, dir: bool = False) -> bool:
+    """`path`, not followed, is a regular file (dir: a directory)."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return False
+    return stat.S_ISDIR(mode) if dir else stat.S_ISREG(mode)

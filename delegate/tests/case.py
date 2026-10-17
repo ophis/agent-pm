@@ -55,7 +55,7 @@ class Case(unittest.TestCase):
             return result
         with (
             tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as self.home,
-            mock.patch.dict(os.environ, {"HOME": self.home}),
+            mock.patch.dict(os.environ, {"HOME": self.home, "AGENT_PM_CONTROL_ROOT": self.home}),
         ):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)

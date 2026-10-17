@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.utils import ProcessControl
-from agent_pm.utils.process_control import TIMEOUT
+from agent_pm.utils.process_control import STATE, TIMEOUT
 
 from utils.tests.case import Case
 from utils.tests.sandbox import clean_env
@@ -312,7 +312,7 @@ class ControllerRetirementTest(Case):
         )
         self.addCleanup(release.touch)
         deadline = time.monotonic() + 10
-        while not os.path.exists(os.path.join(control.path, "started.json")):
+        while not os.path.exists(os.path.join(control.path, STATE)):
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.02)
         shutil.rmtree(control.path)

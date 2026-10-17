@@ -42,7 +42,11 @@ class Case(unittest.TestCase):
             return result
         with (
             tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as self.home,
-            mock.patch.dict(os.environ, {**clean_env(), "HOME": self.home}, clear=True),
+            mock.patch.dict(
+                os.environ,
+                {**clean_env(), "HOME": self.home, "AGENT_PM_CONTROL_ROOT": self.home},
+                clear=True,
+            ),
             ExitStack() as stack,
         ):
             if ".unit." in self.id():

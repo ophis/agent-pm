@@ -1,5 +1,5 @@
-"""A PtyHost session's dir, ~/.agent-pm/pty/<name>/: meta.json (PtyHost's), pid and rc (the
-supervisor's), activity (the tui hook's), output (the pty's), control (the supervisor's input
+"""A PtyHost session's dir, ~/.agent-pm/pty/<name>/: meta.json (PtyHost's), supervisor.json (the
+supervisor's: its pid, then also the program's rc), activity (the tui hook's), output (the pty's), control (the supervisor's input
 socket, a link into the session's ProcessControl dir).
 """
 
@@ -12,8 +12,7 @@ from agent_pm.session.engine.types import StatusState
 from agent_pm.utils import STATE
 
 META = "meta.json"
-PID = "pid"
-RC = "rc"
+SUPERVISOR = "supervisor.json"
 ACTIVITY = "activity"
 OUTPUT = "output"
 CONTROL = "control"
@@ -33,8 +32,16 @@ def read(folder: str, file: str) -> str | None:
 
 
 def meta(folder: str) -> dict:
+    return _object(folder, META)
+
+
+def supervisor(folder: str) -> dict:
+    return _object(folder, SUPERVISOR)
+
+
+def _object(folder: str, file: str) -> dict:
     try:
-        found = json.loads(read(folder, META) or "{}")
+        found = json.loads(read(folder, file) or "{}")
     except ValueError:
         return {}
     return found if isinstance(found, dict) else {}

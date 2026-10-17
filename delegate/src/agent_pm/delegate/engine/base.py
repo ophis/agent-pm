@@ -64,10 +64,12 @@ class Delegate(ABC):
 
     @classmethod
     @abstractmethod
-    def clean(cls, workdir: str, *, dry: bool = False) -> None:
-        """Deletes W's agent files, keeping its run records; idempotent. ConfigError, nothing
-        deleted, while the run is live (agent files or not) or its agent files are not a real dir
-        in place; dry: the checks only.
+    def clean(cls, workdir: str, *, dry: bool = False, scratch: bool = False) -> bool:
+        """Deletes W's agent files, keeping its run records; idempotent; whether it deleted (dry:
+        would delete) any. scratch: only their checkouts and temp files, also refused while the
+        run's agent session is open or, its run recorded, its liveness is unknown. ConfigError,
+        nothing deleted, while the run is live (agent files or not) or its agent files are not a
+        real dir in place; dry: the checks only.
         """
 
     @classmethod

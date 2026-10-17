@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Self
+from typing import BinaryIO, Self
 
 from agent_pm.session.clients.base import Client, Tui
 from agent_pm.session.clients.registry import Registry
@@ -74,6 +74,7 @@ SLICE = 0.1
 OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
 POLL_SCREEN = 0.5
 LOG = logging.getLogger("session")
+Cursor = tuple[int | None, int]  # inode, offset
 
 
 def checked_name(name) -> str:
@@ -169,16 +170,33 @@ class TuiStore:
     def read(self) -> dict:
         return _read_state(self.name, self.state_file)
 
-    def records(self, offset: int) -> tuple[list[tuple[str, dict]], int]:
-        """hooks.jsonl's whole records from byte `offset`; the offset past them."""
-        data = read_regular(os.path.join(self.dir, tui_hook.HOOKS), offset=offset) or b""
-        end = data.rfind(b"\n") + 1
-        found = []
-        for record in json_records(data[:end].split(b"\n")):
-            label, payload = record.get("label"), record.get("payload")
-            if isinstance(label, str) and isinstance(payload, dict):
-                found.append((label, payload))
-        return found, offset + end
+    def records(self, cursor: Cursor | None) -> tuple[list[tuple[str, dict]], Cursor]:
+        """The hook log's records past `cursor` (None: ROTATED's too); the cursor past them.
+        shortcut: two rotations between reads lose the middle file.
+        """
+        try:
+            return self._records(cursor)
+        except OSError:
+            return [], cursor or (None, 0)
+
+    def _records(self, cursor: Cursor | None) -> tuple[list[tuple[str, dict]], Cursor]:
+        with _opened(os.path.join(self.dir, tui_hook.HOOKS)) as (ino, current):
+            older = b""
+            if cursor is None or cursor[0] != ino:
+                with _opened(os.path.join(self.dir, tui_hook.ROTATED)) as (old, stream):
+                    if stream is not None and old != ino and (cursor is None or old == cursor[0]):
+                        stream.seek(0 if cursor is None else cursor[1])
+                        older = stream.read()
+                start = 0
+            else:
+                start = cursor[1]
+            data = b""
+            if current is not None:
+                current.seek(start)
+                data = current.read()
+        found, _ = _parsed(older)
+        new, end = _parsed(data)
+        return found + new, (ino, start + end)
 
     def process(self) -> Process | None:
         if self.name not in self.host.list():
@@ -220,6 +238,7 @@ class TuiStore:
     def close(self) -> None:
         with self._locked():
             self._close()
+            self._forget()
 
     def tracked(self) -> tuple[str, str]:
         return self.dir, os.path.join(self.dir, tui_hook.HOOKS)
@@ -249,6 +268,9 @@ class TuiStore:
                 self._drop()
             elif holder == identity:
                 self._close()
+            else:
+                return
+            self._forget()
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -260,6 +282,10 @@ class TuiStore:
             except OSError as e:
                 raise SessionError(f"{path}: {e.strerror or e}") from None
             yield
+
+    def _forget(self) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tui_lock(self.name))
 
     def _root(self) -> None:
         try:
@@ -322,6 +348,35 @@ class TuiStore:
     def _unmake(self, made: os.stat_result) -> None:
         with contextlib.suppress(OSError):
             self._remove(made)
+
+
+@contextlib.contextmanager
+def _opened(path: str) -> Iterator[tuple[int | None, BinaryIO | None]]:
+    """`path`'s inode and stream if regular, else (None, None); no FIFO wait."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        yield None, None
+        return
+    try:
+        found = os.fstat(fd)
+        if not stat.S_ISREG(found.st_mode):
+            yield None, None
+            return
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield found.st_ino, stream
+    finally:
+        os.close(fd)
+
+
+def _parsed(data: bytes) -> tuple[list[tuple[str, dict]], int]:
+    end = data.rfind(b"\n") + 1
+    found = []
+    for record in json_records(data[:end].split(b"\n")):
+        label, payload = record.get("label"), record.get("payload")
+        if isinstance(label, str) and isinstance(payload, dict):
+            found.append((label, payload))
+    return found, end
 
 
 def _sweep(store: TuiStore) -> None:
@@ -395,15 +450,15 @@ class TuiRuntime(Runtime):
         store: TuiStore,
         generation: str,
         *,
-        offset: int = 0,
+        cursor: Cursor = (None, 0),
         replayed: tuple[SessionEvent | Stderr | ClientBound, ...] = (),
         opening: tuple[str, str] | None = None,
     ) -> None:
-        """offset: its hook log's next record."""
+        """cursor: its next hook record (TuiStore.records)."""
         super().__init__(prepared)
         self.name, self.run, self.host, self._terminal = store.name, run, store.host, terminal
         self._store, self._replayed, self._generation = store, replayed, generation
-        self._offset, self._dialogs, self._limit, self._code = offset, frozenset(), None, None
+        self._cursor, self._dialogs, self._limit, self._code = cursor, frozenset(), None, None
         self._live, self._gone = True, False
         self._opening = opening  # start's: sent once, OPEN_AFTER s after
         self._due: float | None = None  # its label's latest record
@@ -547,7 +602,7 @@ class TuiRuntime(Runtime):
             run.restore(spec, state["client_hook"]["state"] if "client_hook" in state else {})
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
-        records, offset = store.records(0)
+        records, cursor = store.records(None)
         replayed = run.replay(records)
         return cls(
             Prepared(spec, info),
@@ -555,7 +610,7 @@ class TuiRuntime(Runtime):
             terminal,
             store,
             state["generation"],
-            offset=offset,
+            cursor=cursor,
             replayed=(*replayed,),
         )
 
@@ -635,11 +690,11 @@ class TuiRuntime(Runtime):
         """
         if self._gone:
             return []
-        records, end = self._store.records(self._offset)
+        records, end = self._store.records(self._cursor)
         observed = self.run.observe()
-        if end == self._offset and not observed or self._replaced(self._terminal.state()):
+        if end == self._cursor and not observed or self._replaced(self._terminal.state()):
             return []
-        self._offset = end
+        self._cursor = end
         if self._opening is not None and any(label == self._opening[0] for label, _ in records):
             self._due = time.monotonic() + OPEN_AFTER
         found = [*observed, *_translated(self.run, records)]

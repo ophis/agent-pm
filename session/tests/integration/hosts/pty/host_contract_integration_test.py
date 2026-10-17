@@ -2,6 +2,7 @@
 a bracketed paste once the program asks for one, its tui hook's marks and reclaim.
 """
 
+import json
 import os
 import stat
 import sys
@@ -54,9 +55,11 @@ class PtyHostTest(HostContract, Case):
         name = self.fresh()
         self.start("terminal", name, SLEEP)
         folder = self.folder(name)
-        self.assertLessEqual({"meta.json", "pid", "output", "control"}, set(os.listdir(folder)))
+        self.assertLessEqual(
+            {"meta.json", "supervisor.json", "output", "control"}, set(os.listdir(folder))
+        )
         self.assertTrue(stat.S_ISSOCK(os.stat(os.path.join(folder, "control")).st_mode))
-        self.assertFalse(gone(int(read(os.path.join(folder, "pid")) or "0")))
+        self.assertFalse(gone(json.loads(read(os.path.join(folder, "supervisor.json")))["pid"]))
         self.host.attach(name).close()
         self.assertFalse(os.path.exists(folder))
 

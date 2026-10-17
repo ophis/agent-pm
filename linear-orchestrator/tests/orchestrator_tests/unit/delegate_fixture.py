@@ -92,8 +92,9 @@ def provider(api, cfg):
             return api.checkouts.get(workdir)
 
         @classmethod
-        def clean(cls, workdir, *, dry=False):
-            api.cleaned.append(workdir)
+        def clean(cls, workdir, *, dry=False, scratch=False):
+            api.cleaned.append((workdir, scratch) if scratch else workdir)
+            return True
 
         def alive(self):
             if api.live is None:

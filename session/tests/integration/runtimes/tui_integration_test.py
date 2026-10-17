@@ -59,7 +59,7 @@ class CloseTest(Case):
         self.assertEqual(len(hooks), 1)
         self.assertIn(b"session.json", hooks[0].stderr)
         self.assertFalse(os.path.lexists(os.path.join(root, NAME)))
-        self.assertEqual(os.listdir(root), [f"{NAME}.lock"])
+        self.assertEqual(os.listdir(root), [])
 
 
 class RawSessionCloseTest(Live):

@@ -30,6 +30,9 @@ STATE_IDS = {
     "Done": IDS_BY_KEY["done"],
     "Canceled": IDS_BY_KEY["canceled"],
     "In Progress": IDS_BY_KEY["in_progress"],
+    "Todo": IDS_BY_KEY["todo"],
+    "In Review": IDS_BY_KEY["in_review"],
+    "Handoff": IDS_BY_KEY["handoff"],
 }
 
 
@@ -92,6 +95,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
         }
 
     gql.calls, gql.finished, gql.archived, gql.gone = [], [], [], set()
+    gql.issues = issues
     return gql
 
 
@@ -173,7 +177,8 @@ class PruneScenario(Case):
         )
         log.use_logs(self.logs)
 
-    def record(self, ident, sid, sessions, role="engineer", *, agent=True):
+    def record(self, ident, sid, sessions, role="engineer", *, agent=True, hours=None):
+        """hours: its runs.jsonl row that long before NOW, else now."""
         workdir = self.cfg.issue_workdir(ident)
         run = PruneDelegate("dummy", Spec("", workdir, sid=sid))
         if not agent:
@@ -190,6 +195,7 @@ class PruneScenario(Case):
             role=role,
             client="fake",
             delegate_kind="harness",
+            **({} if hours is None else {"now": lambda: NOW - timedelta(hours=hours)}),
         )
 
     def close(self, workdir):
