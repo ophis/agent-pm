@@ -323,6 +323,9 @@ class Segment(TmuxFlow):
         added = self.runs()[lines:]
         self.assertEqual(len(added), 1, f"runs.jsonl lines added: {added}")
         line = added[0]
+        attempt = sum(
+            r["kind"] in ("start", "resume") and r["sid"] == line["sid"] for r in self.runs()
+        )
 
         def started():
             try:
@@ -339,7 +342,7 @@ class Segment(TmuxFlow):
         live_tmux.wait(
             lambda: (
                 self.session_status(ident, line["sid"]) == "running"
-                and line["sid"] in self.ledger(ident)
+                and f"running:{attempt}" in self.ledger(ident).get(line["sid"], [])
             ),
             TIMEOUT,
             f"{line['sid']}'s session comment to say running, ledgered",
@@ -402,7 +405,11 @@ class Segment(TmuxFlow):
             self.expect_session(p.ident, p.sid, report["status"] if report else "no outcome")
             ledgered = want.ledger.get(p.sid, [])
             first = "start" not in ledgered
-            comments, steps, changes = [(account, "start")] if first else [], ["start"], {}
+            comments, steps, changes = (
+                [(account, "start")] if first else [],
+                [*ledgered, *(["start"] if first else [])],
+                {},
+            )
             if report:
                 outcome, url = report["status"], report.get("url")
                 state = "in_review" if outcome != "failed" or p.resumed else task.failed_new
@@ -520,7 +527,7 @@ class Segment(TmuxFlow):
                 ident,
                 state="in_progress",
                 history=[("todo", "in_progress", HARNESS_EMAIL)],
-                ledger={sid: []},  # Begun: its session comment's attempt, no step yet
+                ledger={sid: ["running:1"]},
             )
             self.expect_session(ident, sid, "running")
             self.expect_problem(FIRST_WRITE)
@@ -534,6 +541,9 @@ class Segment(TmuxFlow):
             self.assertEqual(tuple(line[k] for k in RUN_KEYS), ("resume", ident, sid, role, CLIENT))
             self.assertEqual((option(call, "--resume"), option(call, "--session-id")), (sid, None))
             self.expect_runs(("resume", ident, sid, role, CLIENT))
+            ledger = self.want[ident].ledger[sid]
+            attempt = 1 + sum(step.startswith("running:") for step in ledger)
+            self.expect(ident, ledger={sid: [*ledger, f"running:{attempt}"]})
             self.expect_session(ident, sid, "running")
         return sid
 

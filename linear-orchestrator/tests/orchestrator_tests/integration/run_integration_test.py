@@ -130,7 +130,7 @@ class Run(TmuxFlow):
             self.assertRegex(body, rf"\ARun {SID} · {line}{command}\Z")
         return bodies
 
-    def framed(self, *calls, end=DONE, created=True, since=0):
+    def framed(self, *calls, end=DONE, created=True, since=0, reactivate=False):
         """A run's Linear calls: the session comment's first write (created: not found, then created
         by its id), `calls` as the role's account, the session comment's end and repair.
         """
@@ -139,6 +139,19 @@ class Run(TmuxFlow):
         create = ("linear.M_COMMENT_ID", HARNESS_EMAIL, {"c": SESSION, "i": ID, "b": running})
         return [
             *([(*update, "error"), (*create, "ok")] if created else [(*update, "ok")]),
+            (REREAD[0], ACCOUNTS[self.role], REREAD[1], "ok"),
+            *(
+                [
+                    (
+                        "linear.M_STATE",
+                        ACCOUNTS[self.role],
+                        {"i": UUID, "s": STATES["in_progress"]},
+                        "ok",
+                    )
+                ]
+                if reactivate
+                else []
+            ),
             *(made for op, v in calls for made in looked_up(op, ACCOUNTS[self.role], v)),
             ("sessions.M_UPDATE", HARNESS_EMAIL, {"c": SESSION, "b": ended}, "ok"),
             ("linear.Q_COMMENT", HARNESS_EMAIL, {"c": SESSION}, "ok"),
@@ -150,6 +163,7 @@ class Run(TmuxFlow):
 
 class Done(Run):
     def done(self, role, start, outcome, calls, ledger, *, kinds=KINDS):
+        ledger = ["running:1", *ledger]
         self.seed(role)
         self.launch([mark("start", PICK), block(outcome)])
         self.assertEqual(self.wrote(), self.framed(post("start", f"{start} {PICK}"), *calls))
@@ -270,13 +284,16 @@ class Undone(Run):
         self.assertEqual(
             self.said(),
             steps(
+                "running:1",
                 "start",
                 more=[
                     f"writeback no-outcome {ID} sid={SID} error=the agent run returned no outcome"
                 ],
             ),
         )
-        self.assertEqual((self.state(ID), self.ledger(ID)), ("in_progress", {SID: ["start"]}))
+        self.assertEqual(
+            (self.state(ID), self.ledger(ID)), ("in_progress", {SID: ["running:1", "start"]})
+        )
 
     def test_a_usage_limit_moves_to_in_review_once_per_sid(self):
         self.seed("researcher")
@@ -293,7 +310,7 @@ class Undone(Run):
             ),
         )
         self.assertEqual(
-            self.said(), steps("start", "limit", "limit-move:1", "limit-row:1", end=-9)
+            self.said(), steps("running:1", "start", "limit", "limit-move:1", "limit-row:1", end=-9)
         )
         self.assertEqual(self.records(ID)[-3]["kind"], "limit")
         note = {
@@ -320,12 +337,13 @@ class Undone(Run):
         self.assertEqual(self.runs(), [start, note])
         self.assertEqual(self.state(ID), "in_review")
 
-        self.fake.move(ID, "in_progress", actor=self.ids[HARNESS_EMAIL])
         n = len(self.requests())
         self.launch([], mode="resume", resume=[LIMIT], hang=True)
         self.assertEqual(
             self.wrote(n),
-            self.framed(SUBSCRIBE, REREAD, TO_REVIEW, end=LIMITED, created=False, since=n),
+            self.framed(
+                SUBSCRIBE, REREAD, TO_REVIEW, end=LIMITED, created=False, since=n, reactivate=True
+            ),
         )
         resumed = {k: start[k] for k in ("issue", "sid", "role", "client", "delegate_kind")}
         again = {**note, "attempt": 2}
@@ -336,7 +354,7 @@ class Undone(Run):
             self.history(ID),
             [
                 ("in_progress", "in_review", researcher),
-                ("in_review", "in_progress", HARNESS_EMAIL),
+                ("in_review", "in_progress", researcher),
                 ("in_progress", "in_review", researcher),
             ],
         )
@@ -349,10 +367,19 @@ class Undone(Run):
         os.remove(os.path.join(self.rd, "writeback.json"))
         n, said = len(self.requests()), len(self.said())
         self.launch(script, mode="resume", resume=script)
+        ledger[SID][0] = "running:2"
         self.assertEqual(
             self.wrote(n),
             self.framed(
-                find("start"), READ, SUBSCRIBE, find("comment"), REREAD, created=False, since=n
+                find("start"),
+                READ,
+                SUBSCRIBE,
+                find("comment"),
+                REREAD,
+                TO_REVIEW,
+                created=False,
+                since=n,
+                reactivate=True,
             ),
         )
         self.assertEqual(self.said()[said:], steps(*ledger[SID], found=("start", "comment")))
