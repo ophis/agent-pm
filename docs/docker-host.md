@@ -48,14 +48,14 @@ claude setup-token          # copy the token it prints
 
 GitHub: each App's private key must already be a generic-password item in the login
 keychain, service the App name, account its App ID, content the base64 key. Change each
-item's access in place to trust only the broker; content and account stay. Each run reads
-the key once (allow the keychain dialog), then does only the steps not yet in place: the
-entries that read or export the item get only the broker (allow the dialog), then the
-partition list gets only the broker's partition ID, for which the broker asks on its
-terminal, without echo, for the login keychain password (a wrong one fails with
-`keychain status -25293`). It prints its success line only after reading the access back;
-otherwise it exits non-zero saying whether it changed the item, what is done and what is
-not: rerun the same command to finish. The broker is trusted by its code requirement (an ad hoc
+item's access in place to trust only the broker; content and account stay. When a step is
+not yet in place, the broker asks once on its terminal, without echo, for the login keychain
+password (a wrong one fails with `keychain status -25293`) and shows no keychain dialog; it
+then does only those steps: the entries that read or export the item get only the broker,
+then the partition list gets only the broker's partition ID. It reads the access back, then
+the key once to check it is not empty, and only then prints its success line; otherwise it
+exits non-zero saying whether it changed the item, what is done and what is not: rerun the
+same command to finish. The broker is trusted by its code requirement (an ad hoc
 signature's is its cdhash), not its path: after reinstalling it, rerun both `login github` commands.
 
 ```sh
@@ -65,6 +65,7 @@ signature's is its cdhash), not its path: after reinstalling it, rerun both `log
 
 | Check | Expect |
 |---|---|
+| first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal, no macOS dialog before or after it |
 | output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-engineer"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
@@ -366,8 +367,9 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 
 - The token sits in every running container's tmpfs, readable by any process there;
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
-- Each reinstall changes the broker's ad-hoc code identity, so the keychain asks once to
-  allow it again.
+- Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
+  it read the Claude setup-token again, and each `login github` asks for the keychain
+  password once to trust it.
 - Every image build installs npm's latest Claude Code and Codex releases, trusting their
   vendors' npm packages.
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;

@@ -42,7 +42,7 @@ var GitHubApps = map[string]bool{"agent-pm-engineer": true, "agent-pm-docs": tru
 type AppKeychain interface {
 	AppAccount(app string) (string, error)
 	AppKey(app, account string) ([]byte, error)
-	TrustApps(app, account string) error
+	TrustApps(app, account string, password []byte) error
 	TrustPartition(app, account string, password []byte) error
 	AppAccess(app, account string) (AppAccess, error)
 }
@@ -193,11 +193,11 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 	return err
 }
 
-// LoginGitHub reads app's existing private-key item once to confirm it is usable, then changes its ACL in place
-// to trust only the broker; the item is never deleted and its content never changes. Each step runs only when
-// its part is not yet in place: the read and export entries first, through the keychain's own dialog, then the
-// partition list, which needs the login keychain password read with password. The broker can read the item
-// after either step. out never sees the key; the password goes only to the partition step.
+// LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker, then reads the key
+// once to confirm it is usable; the item is never deleted and its content never changes. Each step runs only when
+// its part is not yet in place: the read and export entries first, then the partition list, both with the login
+// keychain password read once with password, so no keychain dialog shows. The key is read only once the item
+// trusts only the broker, so that read needs no dialog either. out never sees the key or the password.
 func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out io.Writer) error {
 	account, err := k.AppAccount(app)
 	switch {
@@ -210,33 +210,14 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 	case !appID.MatchString(account):
 		return fmt.Errorf("keychain item %s: account %q is not an App ID", app, account)
 	}
-	key, err := k.AppKey(app, account)
-	empty := len(key) == 0
-	erase(key)
-	switch {
-	case err != nil:
-		return err
-	case empty:
-		return fmt.Errorf("keychain item %s is empty", app)
-	}
 	before, err := k.AppAccess(app, account)
 	if err != nil {
 		return fmt.Errorf("keychain item %s unchanged: reading its access failed: %w", app, err)
 	}
-	if appsOnlyBroker(before) != nil {
-		if err := k.TrustApps(app, account); err != nil {
-			if err := incomplete(app, account, k, before, fmt.Errorf("changing its read and export entries failed: %w", err)); err != nil {
-				return err
-			}
-		}
-	}
-	if partitionOnlyBroker(before) != nil {
+	if onlyBroker(before) != nil {
 		pw, err := password()
 		if err == nil {
-			err = k.TrustPartition(app, account, pw)
-			if err != nil {
-				err = fmt.Errorf("changing its partition list failed: %w", err)
-			}
+			err = trust(app, account, k, before, pw)
 		} else {
 			err = fmt.Errorf("reading the login keychain password failed: %w", err)
 		}
@@ -250,8 +231,32 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 	if err := incomplete(app, account, k, before, errors.New("checking its access afterwards")); err != nil {
 		return err
 	}
+	key, err := k.AppKey(app, account)
+	empty := len(key) == 0
+	erase(key)
+	switch {
+	case err != nil:
+		return fmt.Errorf("keychain item %s trusts only the broker, but reading it failed: %w", app, err)
+	case empty:
+		return fmt.Errorf("keychain item %s trusts only the broker, but it is empty", app)
+	}
 	_, err = fmt.Fprintf(out, "GitHub App %s private key (App ID %s) now trusts only the broker\n", app, account)
 	return err
+}
+
+// trust runs each step not in place before with the keychain password, stopping at the first that fails.
+func trust(app, account string, k AppKeychain, before AppAccess, password []byte) error {
+	if appsOnlyBroker(before) != nil {
+		if err := k.TrustApps(app, account, password); err != nil {
+			return fmt.Errorf("changing its read and export entries failed: %w", err)
+		}
+	}
+	if partitionOnlyBroker(before) != nil {
+		if err := k.TrustPartition(app, account, password); err != nil {
+			return fmt.Errorf("changing its partition list failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // incomplete reads the item's access back: nil when it trusts only the broker, whatever cause says; else why the

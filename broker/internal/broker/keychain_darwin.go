@@ -214,10 +214,11 @@ static CFStringRef partitions_description(CFStringRef id) {
     return hex;
 }
 // Edits the item's own entries in place: setting an access applies only changed entries, one at a time, so a
-// fresh SecAccessCreate access would be appended beside the old ones. Without a password, entries that read or
-// export the item get only this executable, through the keychain's dialog. With the keychain password, only the
-// partition list changes, to this executable's partition ID: securityd refuses that change through the dialog.
-static OSStatus item_trust_self(const char *path, const char *service, const char *account, const void *password, long length) {
+// fresh SecAccessCreate access would be appended beside the old ones. Either the entries that read or export the
+// item get only this executable, or the partition list gets only its partition ID. Both apply with the keychain
+// password, as security's set-generic-password-partition-list does: SecKeychainItemSetAccess asks by dialog per
+// entry, and securityd refuses the partition change that way.
+static OSStatus item_trust_self(const char *path, const char *service, const char *account, int partition_list, const void *password, long length) {
     SecKeychainItemRef item = NULL;
     SecAccessRef access = NULL;
     SecTrustedApplicationRef self = NULL;
@@ -241,13 +242,13 @@ static OSStatus item_trust_self(const char *path, const char *service, const cha
         if (!auths) s = errSecDecode;
         if (s == errSecSuccess) s = SecACLCopyContents(acl, &old, &description, &selector);
         if (s == errSecSuccess && partition_entry(auths)) {
-            if (password) s = SecACLSetContents(acl, old, partitions, selector);
-        } else if (s == errSecSuccess && reads(auths) && !password) s = SecACLSetContents(acl, apps, description, selector);
+            if (partition_list) s = SecACLSetContents(acl, old, partitions, selector);
+        } else if (s == errSecSuccess && reads(auths) && !partition_list) s = SecACLSetContents(acl, apps, description, selector);
         if (old) CFRelease(old);
         if (description) CFRelease(description);
         if (auths) CFRelease(auths);
     }
-    if (s == errSecSuccess) s = password ? SecKeychainItemSetAccessWithPassword(item, access, (UInt32)length, password) : SecKeychainItemSetAccess(item, access);
+    if (s == errSecSuccess) s = SecKeychainItemSetAccessWithPassword(item, access, (UInt32)length, password);
     if (acls) CFRelease(acls);
     if (apps) CFRelease(apps);
     if (partitions) CFRelease(partitions);
@@ -519,24 +520,27 @@ func (k fileKeychain) AppAccount(app string) (string, error) {
 
 func (k fileKeychain) AppKey(app, account string) ([]byte, error) { return k.get(app, account) }
 
-func (k fileKeychain) TrustApps(app, account string) error { return k.trust(app, account, nil) }
+func (k fileKeychain) TrustApps(app, account string, password []byte) error {
+	return k.trust(app, account, false, password)
+}
 
 func (k fileKeychain) TrustPartition(app, account string, password []byte) error {
+	return k.trust(app, account, true, password)
+}
+
+// trust runs item_trust_self with the keychain password: the partition list when partitionList, else the read
+// and export entries.
+func (k fileKeychain) trust(app, account string, partitionList bool, password []byte) error {
 	if len(password) == 0 {
 		return errors.New("empty keychain password")
 	}
-	return k.trust(app, account, password)
-}
-
-// trust runs item_trust_self: the read and export entries without a password, else the partition list.
-func (k fileKeychain) trust(app, account string, password []byte) error {
 	p, free := cStrings(string(k), app, account)
 	defer free()
-	var pw unsafe.Pointer
-	if password != nil {
-		pw = unsafe.Pointer(&password[0])
+	var list C.int
+	if partitionList {
+		list = 1
 	}
-	return status(C.item_trust_self(p[0], p[1], p[2], pw, C.long(len(password))))
+	return status(C.item_trust_self(p[0], p[1], p[2], list, unsafe.Pointer(&password[0]), C.long(len(password))))
 }
 
 func (k fileKeychain) AppAccess(app, account string) (AppAccess, error) {
@@ -593,11 +597,11 @@ func (k SystemKeychain) AppKey(app, account string) ([]byte, error) {
 	return k.login().AppKey(app, account)
 }
 
-func (k SystemKeychain) TrustApps(app, account string) error {
+func (k SystemKeychain) TrustApps(app, account string, password []byte) error {
 	if err := CheckInstalled(); err != nil {
 		return err
 	}
-	return k.login().TrustApps(app, account)
+	return k.login().TrustApps(app, account, password)
 }
 
 func (k SystemKeychain) TrustPartition(app, account string, password []byte) error {
