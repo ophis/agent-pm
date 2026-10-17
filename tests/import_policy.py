@@ -28,7 +28,7 @@ def violation(importer, imported, policy):
     permitted = []
     for declaration in policy["dependencies"]:
         source, _, targets = declaration.partition(" -> ")
-        if source == own or source != container and _within(importer, source):
+        if source == own or _within(source, own) and _within(importer, source):
             permitted.extend(targets.split())
     return not any(
         _scope(imported, units) == target

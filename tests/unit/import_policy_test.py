@@ -56,6 +56,8 @@ class Units(Case):
                     ("hosts.tmux.host", "clients.registry"),
                     ("clients.base", "runtimes.tui"),
                     ("runtimes.modes.tui", "runtimes.tui"),
+                    ("runtimes.modes.headless", "clients.base"),
+                    ("runtimes.modes.in_process", "hosts.base"),
                     ("runtimes.tui", "engine.hosted_session"),
                     ("runtimes.tui", "engine.base"),
                     ("runtimes.tui", "engine.records"),

@@ -60,8 +60,8 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
 
 Session name and generation match
-[engine/types.py](../session/src/agent_pm/session/engine/types.py#L174) and
-[runtimes/tui.py](../session/src/agent_pm/session/runtimes/tui.py#L510).
+[engine/types.py](../session/src/agent_pm/session/engine/types.py#L193) and
+[runtimes/tui.py](../session/src/agent_pm/session/runtimes/tui.py#L524).
 Broker adds `agent-pm.session=<name>` and `agent-pm.generation=<generation>`.
 Container name is `agent-pm-<name>-<generation>`; close accepts that complete name.
 Paths are literal absolute paths: no `~` or environment expansion. Control characters
