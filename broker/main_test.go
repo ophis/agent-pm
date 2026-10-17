@@ -5,10 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ophis/agent-pm/broker/internal/broker"
+	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/fixtures"
+	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -147,5 +152,78 @@ func TestAccountHomeIgnoresHOME(t *testing.T) {
 	home, err := accountHome()
 	if err != nil || home == "/hostile" || !strings.HasPrefix(home, "/") {
 		t.Fatalf("%q %v", home, err)
+	}
+}
+
+type memKeychain struct{ token []byte }
+
+func (k *memKeychain) Exists() error        { return nil }
+func (k *memKeychain) Get() ([]byte, error) { return append([]byte(nil), k.token...), nil }
+func (k *memKeychain) Put(b []byte) error   { k.token = b; return nil }
+
+type scripted struct {
+	calls [][]string
+	stdin [][]byte
+	fail  string
+}
+
+func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+	s.calls = append(s.calls, args)
+	s.stdin = append(s.stdin, append([]byte(nil), stdin...))
+	joined := strings.Join(args, " ")
+	if s.fail != "" && strings.Contains(joined, s.fail) {
+		return nil, &docker.CommandError{Exit: 1, Stderr: "failed: " + string(stdin)}
+	}
+	switch {
+	case strings.HasPrefix(joined, "image inspect"):
+		return []byte(`[{"Id":"sha256:` + strings.Repeat("b", 64) + `","Config":{"Labels":{"agent-pm.key":"` + strings.Repeat("a", 64) +
+			`","agent-pm.version":"1.2.3","agent-pm.agent-uid":"1001","agent-pm.agent-gid":"1002"}}}]`), nil
+	case strings.HasPrefix(joined, "container inspect"):
+		return nil, &docker.CommandError{Exit: 1, Stderr: "No such container"}
+	case strings.HasSuffix(joined, "--version"):
+		return []byte("1.0.0\n"), nil
+	}
+	return nil, nil
+}
+
+func TestTokenNeverLeaves(t *testing.T) {
+	const token = "sk-ant-oat01-NEVER-PRINT-ME"
+	manifest, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "m.json")
+	if err := os.WriteFile(path, manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const home = "/Users/example"
+	for _, fail := range []string{"", "cat >", "codex --version"} {
+		d := &scripted{fail: fail}
+		h := launcher.Host{
+			Home: home, Endpoint: "unix://" + home + "/.docker/run/docker.sock",
+			Roots:    func() ([]string, error) { return []string{home + "/src"}, nil },
+			RealPath: func(p string) (string, error) { return p, nil },
+			Safe:     func(string) error { return nil },
+			Same:     func(a, b string) bool { return a == b },
+			Docker:   d,
+			Creds:    broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
+		}
+		a := app{start: func(ctx context.Context, m string) (any, error) { return h.Start(ctx, m) }}
+		_, out, errOut := invoke(a, "start", "--manifest", path)
+		if strings.Contains(out+errOut, token) {
+			t.Fatalf("token in output: %q %q", out, errOut)
+		}
+		injected := 0
+		for i, c := range d.calls {
+			if strings.Contains(strings.Join(c, " "), token) {
+				t.Fatalf("token in argv %q", c)
+			}
+			if strings.Contains(string(d.stdin[i]), token) {
+				injected++
+			}
+		}
+		if injected != 1 && fail != "codex --version" {
+			t.Fatalf("%q: token written %d times", fail, injected)
+		}
 	}
 }

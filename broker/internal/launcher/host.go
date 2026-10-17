@@ -3,6 +3,7 @@
 package launcher
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -11,19 +12,30 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
+// Credentials is the broker package's side of start; the launcher never sees the token.
+type Credentials interface {
+	Ready() error // *protocol.Error: login_required or keychain_failed
+	// Inject errors wrap docker.ErrUnreachable or are opaque, carrying no Docker stderr.
+	Inject(ctx context.Context, container string, d docker.Runner) error
+}
+
 type Host struct {
 	Home     string
+	Endpoint string
 	Roots    func() ([]string, error)
 	RealPath func(string) (string, error)
 	Safe     func(string) error
 	Same     func(a, b string) bool
 	Docker   docker.Runner
+	Creds    Credentials
 }
 
 // NewHost wires the real filesystem; tests build Host with fakes.
-func NewHost(home string, d docker.Runner) Host {
+func NewHost(home, endpoint string, d docker.Runner, creds Credentials) Host {
 	return Host{
 		Home:     home,
+		Endpoint: endpoint,
+		Creds:    creds,
 		Roots:    func() ([]string, error) { return LoadRoots(home) },
 		RealPath: filepath.EvalSymlinks,
 		Safe:     realSafe,

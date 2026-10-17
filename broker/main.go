@@ -125,18 +125,28 @@ func host() (launcher.Host, func(), error) {
 	if err != nil {
 		return launcher.Host{}, nil, protocol.New(protocol.DockerUnreachable, err.Error())
 	}
-	return launcher.NewHost(home, d), clean, nil
+	return launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}), clean, nil
+}
+
+func withHost(f func(launcher.Host) (any, error)) (any, error) {
+	h, clean, err := host()
+	if err != nil {
+		return nil, err
+	}
+	defer clean()
+	return f(h)
 }
 
 func system() app {
 	return app{
 		build: func(ctx context.Context, pkg string) (any, error) {
-			h, clean, err := host()
-			if err != nil {
-				return nil, err
-			}
-			defer clean()
-			return h.Build(ctx, pkg)
+			return withHost(func(h launcher.Host) (any, error) { return h.Build(ctx, pkg) })
+		},
+		start: func(ctx context.Context, manifest string) (any, error) {
+			return withHost(func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
+		},
+		close: func(ctx context.Context, container string) (any, error) {
+			return withHost(func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
 		},
 		login: func(out io.Writer) error {
 			home, err := accountHome()

@@ -17,12 +17,14 @@ import (
 type fakeDocker struct {
 	calls   [][]string
 	stdin   [][]byte
+	ctxErrs []error
 	respond func(args []string) ([]byte, error)
 }
 
-func (f *fakeDocker) Run(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+func (f *fakeDocker) Run(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
 	f.calls = append(f.calls, slices.Clone(args))
 	f.stdin = append(f.stdin, slices.Clone(stdin))
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
 	if f.respond != nil {
 		return f.respond(args)
 	}

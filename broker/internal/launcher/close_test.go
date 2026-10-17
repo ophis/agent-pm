@@ -1,0 +1,40 @@
+package launcher
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
+)
+
+func TestClose(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err     error
+		removed bool
+		code    protocol.Code
+	}{
+		"removed":     {nil, true, ""},
+		"absent":      {&docker.CommandError{Exit: 1, Stderr: "Error response from daemon: No such container: " + container}, false, ""},
+		"unreachable": {docker.ErrUnreachable, false, protocol.DockerUnreachable},
+		"failed":      {&docker.CommandError{Exit: 1, Stderr: "removal of container in progress"}, false, protocol.CloseFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &fakeDocker{respond: func([]string) ([]byte, error) { return nil, tc.err }}
+			got, err := Host{Docker: d}.Close(context.Background(), container)
+			if !slices.Equal(d.calls[0], []string{"rm", "--force", container}) {
+				t.Fatalf("%q", d.calls)
+			}
+			if tc.code != "" {
+				if protoErr(t, err).Code != tc.code {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err != nil || got != (CloseResult{Container: container, Removed: tc.removed}) {
+				t.Fatalf("%+v %v", got, err)
+			}
+		})
+	}
+}
