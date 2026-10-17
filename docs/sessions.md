@@ -6,7 +6,7 @@ How the sessions agent-pm starts are set up, how to list and show them, and the 
 
 Every session agent-pm starts, agent runs and workers, loads your user settings with every plugin except `agent-pm` (`[clients.<client>] flags` in `session/src/agent_pm/session/config.toml`): only a client you start, the commander, has `/agent-pm:manage`. Each such session's client also carries `AGENT_PM_AGENT_SESSION=1`, under which `agent-pm-crew` `run`/`hold`/`resume`, `agent-pm-session` `start`/`restart`/`resume`/`client-resume`, `agent-pm-delegate` `run`/`resume` and `agent-pm-linear` `router`/`resume` exit 2 (their forms that start nothing, such as `--dry-run`, `--list` and `--brake`, still run), even run by a checkout's `bin/` path: a guard against slips, not isolation (`env -u` clears it). Agent runs load no MCP servers. A trusted cwd adds its project settings (`trusted_dirs` in `delegate/src/agent_pm/delegate/config.toml`).
 
-In the commander's Claude Code session the plugin's mod (`manager/hooks/quiet.tsx`) hides Monitor notices (each event, the expiry, the stream's end) from the screen; other notices and folded tool lines draw as usual, the model still reads them, and ctrl+o shows them. `/quiet` shows or hides them for the session; the plugin option `quiet_background` off (`/config`) turns the mod off.
+In the commander's Claude Code session the plugin's mod (`manager/hooks/quiet.tsx`) always hides Monitor tool-call rows and notices (each event, the expiry, the stream's end) from the screen. Other tools and notices draw as usual; the model's content is unchanged. Ctrl+o shows Monitor notices; Monitor tool-call rows stay hidden.
 
 ## agent-pm-session
 
