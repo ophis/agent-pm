@@ -1,8 +1,3 @@
-"""The Tui contract: launch(spec, hook) builds a Launch as Headless.launch does; hook_events() turns
-each hook payload into SessionEvents and ClientBound. commit() persists a validated launch before
-starting; failed starts keep diagnostics. Starts no process.
-"""
-
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType

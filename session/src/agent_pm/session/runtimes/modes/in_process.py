@@ -1,6 +1,6 @@
-"""The InProcess contract: check(spec) refuses with ConfigError; run(spec) runs the session on a
-thread of the caller's process, stopped at its next yield, changing no global state (cwd, environ,
-signals): it applies spec.access.cwd, not its env. Starts no process.
+"""check(spec) refuses with ConfigError; run(spec) runs the session on a thread of the caller's
+process, stopped at its next yield, changing no global state (cwd, environ, signals): it applies
+spec.access.cwd, not its env.
 """
 
 from abc import ABC, abstractmethod

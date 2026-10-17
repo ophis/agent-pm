@@ -1,8 +1,6 @@
-"""The Headless contract: launch(spec) (it may keep state for events) builds a Launch whose env,
-never its resume, carries Access.env and Spec.env (the Client is their only owner); events() turns
-the client's output into SessionEvents, Stderr and ClientBound (JsonHeadless: parse(record) per
-JSON line). commit() persists a validated launch before starting; failed starts keep diagnostics.
-Starts no process.
+"""launch(spec) (it may keep state for events) builds a Launch whose env, never its resume, carries
+Access.env and Spec.env (the Client is their only owner); events() turns the client's output into
+SessionEvents, Stderr and ClientBound (JsonHeadless: parse(record) per JSON line).
 """
 
 from abc import ABC, abstractmethod

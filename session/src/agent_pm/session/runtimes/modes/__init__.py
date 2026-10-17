@@ -1,1 +1,3 @@
-"""The contract a Client's mode object implements, one module per Mode."""
+"""Each Mode's contract; none starts a process. commit() persists a validated launch before
+starting; failed starts keep diagnostics.
+"""
