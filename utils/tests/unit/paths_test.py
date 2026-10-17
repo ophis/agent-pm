@@ -14,6 +14,7 @@ from unittest import mock
 from agent_pm.utils.paths import (
     DOCKER_STATE,
     docker_home,
+    docker_home_of,
     import_env,
     module_roots,
     overlaps,
@@ -323,6 +324,15 @@ class DockerHome(Case):
         with mock.patch.dict(os.environ, {"HOME": "/home/u"}):
             self.assertEqual(docker_home("w", "dir"), "/home/u/.agent-pm/docker-state/w/dir")
         self.assertEqual(DOCKER_STATE, "~/.agent-pm/docker-state")
+
+    def test_the_home_holding_a_path_under_the_docker_state_root(self):
+        with mock.patch.dict(os.environ, {"HOME": "/home/u"}):
+            root = "/home/u/.agent-pm/docker-state"
+            self.assertEqual(docker_home_of(f"{root}/w/dir/p/s.jsonl", "dir"), f"{root}/w/dir")
+            self.assertEqual(docker_home_of(f"{root}/w", "dir"), f"{root}/w/dir")
+            for path in ("/home/u/.agent-pm/docker-statex/w/f", root, "/tmp/f"):
+                with self.subTest(path=path):
+                    self.assertIsNone(docker_home_of(path, "dir"))
 
 
 if __name__ == "__main__":
