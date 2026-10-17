@@ -7,5 +7,7 @@
   "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
   "labels": {
     "team": "crew"
-  }
+  },
+  "github": [],
+  "container_config": ""
 }

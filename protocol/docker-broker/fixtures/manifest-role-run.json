@@ -1,0 +1,24 @@
+{
+  "name": "worker_1",
+  "generation": "0123456789abcdef0123456789abcdef",
+  "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cwd": "/Users/example/src/project",
+  "workspace": "agent-pm-run-TASK-634-0123abcd",
+  "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
+  "hook_path": "/usr/local/bin/agent-pm-session",
+  "labels": {
+    "team": "crew"
+  },
+  "github": [
+    {
+      "repo": "ophis/agent-pm",
+      "app": "agent-pm-engineer",
+      "app_id": 5352992,
+      "permissions": {
+        "contents": "write",
+        "pull_requests": "write"
+      }
+    }
+  ],
+  "container_config": "[delegate]\nusers = [\"octocat\"]\ntrusted_dirs = []\n"
+}

@@ -410,6 +410,8 @@ class StartTest(Base):
                     "agent_dir": self.home_dir,
                     "hook_path": os.path.join(REPO, "bin", "agent-pm-session"),
                     "labels": {},
+                    "github": [],
+                    "container_config": "",
                 },
             )
         self.assertEqual(stat.S_IMODE(os.stat(manifest).st_mode), 0o600)

@@ -8,5 +8,7 @@
   "hook_path": "/Users/example/src/project/hook",
   "labels": {
     "team": "crew"
-  }
+  },
+  "github": [],
+  "container_config": ""
 }

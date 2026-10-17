@@ -8,5 +8,7 @@
   "hook_path": "/Users/example/.agent-pm/docker-state/worker_1/claude/hook",
   "labels": {
     "team": "crew"
-  }
+  },
+  "github": [],
+  "container_config": ""
 }

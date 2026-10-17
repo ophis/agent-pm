@@ -8,5 +8,7 @@
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
     "agent-pm.session": "other"
-  }
+  },
+  "github": [],
+  "container_config": ""
 }

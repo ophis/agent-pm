@@ -21,6 +21,7 @@ const (
 	checker   = "/opt/agent-pm/lib/workspace-check"
 	sharing   = "Docker Desktop file sharing must include ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
 	cache     = ".agent-pm-cache"
+	config    = "/home/agent/.agent-pm/config.local.toml" // the container's local agent-pm config, root-owned
 )
 
 // errTaken: another start created the container first, so it is not this start's to roll back.
@@ -67,6 +68,9 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	m, err := ParseManifest(data)
 	if err != nil {
 		return StartResult{}, err
+	}
+	if len(m.GitHub) > 0 {
+		return StartResult{}, protocol.New(protocol.ManifestRejected, "Manifest rejected: this broker issues no GitHub tokens; github must be empty.")
 	}
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
@@ -144,6 +148,12 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	lap("create")
 	if _, err := h.Docker.Run(ctx, asAgent(c, python, "-I", bootstrap, "claude", m.ClaudeDir, m.CWD), nil); err != nil {
 		return StartResult{}, failure(err, protocol.StartFailed, "Writing Claude's bootstrap state failed.")
+	}
+	if m.ContainerConfig != "" {
+		argv := []string{"exec", "--interactive", "--user", "root", c, python, "-I", bootstrap, "config", config}
+		if _, err := h.Docker.Run(ctx, argv, []byte(m.ContainerConfig)); err != nil {
+			return StartResult{}, failure(err, protocol.StartFailed, "Writing the container's agent-pm config failed.")
+		}
 	}
 	if m.HasHook {
 		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, python, "-I", bootstrap, "hook", m.HookPath}, nil); err != nil {

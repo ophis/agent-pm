@@ -7,5 +7,7 @@
   "labels": {
     "team": "crew"
   },
+  "github": [],
+  "container_config": "",
   "workspace": "agent-pm-crew-worker_1"
 }

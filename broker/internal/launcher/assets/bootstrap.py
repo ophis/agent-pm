@@ -42,13 +42,27 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
     destination.chmod(0o755)
 
 
+def write_config(text, destination, owner=0):
+    parent = destination.parent
+    info = parent.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
+        sys.exit(
+            f"bootstrap: {parent} must be a directory owned by {owner} and not group or other writable"
+        )
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
+
+
 def main(argv):
     if len(argv) == 3 and argv[0] == "claude":
         bootstrap_claude(TEMPLATES, Path(argv[1]), argv[2])
     elif len(argv) == 2 and argv[0] == "hook":
         install_hook(STUB, Path(argv[1]))
+    elif len(argv) == 2 and argv[0] == "config":
+        write_config(sys.stdin.read(), Path(argv[1]))
     else:
-        sys.exit("usage: bootstrap.py claude DIR CWD | hook PATH")
+        sys.exit("usage: bootstrap.py claude DIR CWD | hook PATH | config PATH")
 
 
 if __name__ == "__main__":

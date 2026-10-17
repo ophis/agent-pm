@@ -110,7 +110,8 @@ mkdir -p ~/src/demo ~/.agent-pm/docker-state/worker_1/claude
 cat > /tmp/worker_1.json <<EOF
 {"name": "worker_1", "generation": "$(openssl rand -hex 16)", "image": "$I",
  "cwd": "$HOME/src/demo", "workspace": "agent-pm-crew-worker_1",
- "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "labels": {}}
+ "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "labels": {},
+ "github": [], "container_config": ""}
 EOF
 "$B" start --manifest /tmp/worker_1.json
 ```

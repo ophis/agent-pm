@@ -9,5 +9,7 @@
   "labels": {
     "team": "crew"
   },
+  "github": [],
+  "container_config": "",
   "secret": "forbidden"
 }

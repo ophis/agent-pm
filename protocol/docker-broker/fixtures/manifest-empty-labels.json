@@ -6,5 +6,7 @@
   "workspace": "agent-pm-crew-worker_1",
   "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
   "hook_path": "/usr/local/bin/agent-pm-session",
-  "labels": {}
+  "labels": {},
+  "github": [],
+  "container_config": ""
 }

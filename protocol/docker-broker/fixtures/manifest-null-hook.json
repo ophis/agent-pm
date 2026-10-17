@@ -8,5 +8,7 @@
   "hook_path": null,
   "labels": {
     "team": "crew"
-  }
+  },
+  "github": [],
+  "container_config": ""
 }

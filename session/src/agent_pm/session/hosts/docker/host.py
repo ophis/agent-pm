@@ -795,6 +795,8 @@ class DockerHost(Host):
             workspace=volume,
             home=(field, home),
             hook_path=hook,
+            github=[],
+            container_config="",
         )
         _report_plan(
             name,
