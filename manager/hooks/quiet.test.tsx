@@ -80,3 +80,60 @@ test('matches only the Monitor tool name, regardless of input text', async ($, o
   }
   expect(await drawn($, 'ToolUse', { ...MONITOR, input: {} })).toEqual(HIDDEN)
 })
+
+test('hides crew event Bash rows with paths, prefixes, pipes and command chains', async ($, on) => {
+  engine(on)
+  for (const command of [
+    'agent-pm-crew next-event --crew c1',
+    'agent-pm-crew ack --crew c1 --event e1',
+    '/opt/bin/agent-pm-crew next-event --crew c1',
+    '/opt/bin/agent-pm-crew ack --crew c1 --event e1',
+    'CREW=c1 agent-pm-crew next-event --crew c1',
+    'CREW=c1 agent-pm-crew ack --crew c1 --event e1',
+    'agent-pm-crew next-event --crew c1 | cat',
+    'cat event.json | agent-pm-crew ack --crew c1 --event e1',
+    'echo ready && agent-pm-crew next-event --crew c1',
+    'echo ready && agent-pm-crew ack --crew c1 --event e1 && echo done',
+  ]) {
+    expect(await drawn($, 'ToolUse', { ...MONITOR, tool: 'Bash', input: { command } })).toEqual(HIDDEN)
+  }
+})
+
+test('hides crew event Bash rows in every lifecycle state', async ($, on) => {
+  engine(on)
+  for (const command of ['agent-pm-crew next-event --crew c1', 'agent-pm-crew ack --crew c1 --event e1']) {
+    const row = { ...MONITOR, tool: 'Bash', input: { command } }
+    for (const state of [
+      {},
+      { isRunning: false, output: 'ok' },
+      { isRunning: false, isErrored: true },
+      { isRunning: false, isInterrupted: true },
+    ]) {
+      expect(await drawn($, 'ToolUse', { ...row, ...state })).toEqual(HIDDEN)
+    }
+  }
+})
+
+test('leaves unrelated Bash commands and matching input on other tools drawn', async ($, on) => {
+  engine(on)
+  for (const command of ['echo hello', 'agent-pm-crew roster', 'agent-pm-manager roster', '']) {
+    expect(await drawn($, 'ToolUse', { ...MONITOR, tool: 'Bash', input: { command } })).toMatchObject(ENGINE)
+  }
+  for (const tool of ['Read', 'Agent', 'bash', 'mcp__server__Bash']) {
+    for (const command of ['agent-pm-crew next-event', 'agent-pm-crew ack']) {
+      expect(await drawn($, 'ToolUse', { ...MONITOR, tool, input: { command } })).toMatchObject(ENGINE)
+    }
+  }
+})
+
+test('leaves unexpected Bash input shapes drawn', async ($, on) => {
+  engine(on)
+  for (const input of [
+    undefined, null, false, 42, 'agent-pm-crew next-event', [], {},
+    { command: undefined }, { command: null }, { command: 42 },
+    { command: ['agent-pm-crew ack'] }, { command: { text: 'agent-pm-crew ack' } },
+    { description: 'agent-pm-crew next-event' },
+  ]) {
+    expect(await drawn($, 'ToolUse', { ...MONITOR, tool: 'Bash', input })).toMatchObject(ENGINE)
+  }
+})
