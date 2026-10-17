@@ -68,6 +68,7 @@ from agent_pm.utils import (
     docker_home,
     inode_lock,
     module_roots,
+    printable,
     read_beneath,
     read_regular,
     save,
@@ -205,6 +206,11 @@ def _report_plan(name: str, plan: Mapping) -> None:
         f"credential {plan['credential']}",
     ):
         print(f"docker plan {name} {plan['generation']}: {part}", file=sys.stderr)
+
+
+def _text(found: str) -> str:
+    """Container text, which reaches the host terminal, without control characters."""
+    return "\n".join(map(printable, found.split("\n")))
 
 
 def _wait(ready, timeout: float) -> bool:
@@ -819,7 +825,7 @@ class DockerHost(Host, Showable):
             else StatusState(state or StatusState.WORKING),
             display=record.get("display"),
             shown=None,
-            last_lines=row["last_lines"],
+            last_lines=None if row["last_lines"] is None else _text(row["last_lines"]),
             own=False,
         )
 
@@ -886,6 +892,6 @@ class DockerHost(Host, Showable):
         ):
             raise SessionError(f"session {process.name} is not running on host {self.name}")
         try:
-            return process.tmux.read(process._pane, lines)
+            return _text(process.tmux.read(process._pane, lines))
         except TuiError as error:
             raise SessionError(f"docker session {process.name}: {error}") from None

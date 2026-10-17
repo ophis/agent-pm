@@ -793,6 +793,15 @@ class TerminalTest(Base):
         )
         self.assertEqual(self.host_calls, [])
 
+    def test_screen_text_reaches_the_host_without_control_characters(self):
+        process = self.terminal()
+        self.live_supervisor()
+        self.docker.replies = {
+            ("tmux", "display-message"): pane(),
+            ("tmux", "capture-pane"): (0, "a\x1b]0;x\x07b\tc\n\x1b[2Jd\r\n", ""),
+        }
+        self.assertEqual(self.host.screen(process), "a]0;xb\tc\n[2Jd")
+
     def test_dead_pane_returncode(self):
         process = self.terminal()
         for dead, code in (("1 3 ", 3), ("1  9", -9), ("1  kill", -signal.SIGKILL)):
@@ -1272,6 +1281,16 @@ class ListTest(Base):
                 self.assertEqual((row.name, row.state), ("w", StatusState.DEAD))
         self.docker.replies = {(): (1, "", "Error response from daemon: No such container: x")}
         self.assertEqual(self.host.rows()[0].state, StatusState.DEAD)
+
+    def test_a_dead_rows_last_lines_have_no_control_characters(self):
+        self.listed("w")
+        self.record()
+        self.docker.replies = {
+            ("tmux", "-u", "list-sessions"): (0, "w\t1\t\t\t\t\t\t\t\n", ""),
+            ("tmux", "capture-pane"): (0, "bye\x1b[31m\nend\x07\n", ""),
+        }
+        (row,) = self.host.rows()
+        self.assertEqual((row.state, row.last_lines), (StatusState.DEAD, "bye[31m\nend"))
 
     def test_docker_ps_failure_raises(self):
         for run in (
