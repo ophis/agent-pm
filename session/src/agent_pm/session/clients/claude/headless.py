@@ -3,7 +3,6 @@ the prompt last after "--" so a leading "-" stays the prompt. parse turns init, 
 and rate-limit records into events, one LimitHit per run.
 """
 
-from agent_pm.session.clients.base import JsonHeadless
 from agent_pm.session.clients.claude.common import ClaudeCommon
 from agent_pm.session.engine.types import (
     Activity,
@@ -13,6 +12,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
+from agent_pm.session.runtimes.modes.headless import JsonHeadless
 from agent_pm.utils import number
 
 

@@ -9,13 +9,14 @@ import os
 import tempfile
 from unittest import mock
 
-from agent_pm.session.clients.base import Client, Headless
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.runtimes import headless, in_process, tui
 from agent_pm.session.runtimes.base import Runtime, child_env, identity_drop
+from agent_pm.session.runtimes.modes.headless import Headless
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost

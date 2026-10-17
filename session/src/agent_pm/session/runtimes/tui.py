@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import BinaryIO, Self
 
-from agent_pm.session.clients.base import Client, Tui
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
@@ -54,6 +54,7 @@ from agent_pm.session.hosts.base import (
 )
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import Runtime, identity_drop
+from agent_pm.session.runtimes.modes.tui import Tui
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import (
     STALE_AGE,

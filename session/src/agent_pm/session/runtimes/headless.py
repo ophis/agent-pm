@@ -9,7 +9,7 @@ import threading
 from collections.abc import Callable, Iterable
 from typing import Self
 
-from agent_pm.session.clients.base import Client, Headless
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -24,6 +24,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.runtimes.base import Runtime, identity_drop
+from agent_pm.session.runtimes.modes.headless import Headless
 from agent_pm.utils import STOP_WAIT, Display, kill_group
 
 

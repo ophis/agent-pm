@@ -1,43 +1,27 @@
 """The Client interface: a client factory from [clients.<name>] minus `implementation`;
-headless(), tui() and in_process() each give a fresh mode object, None if unsupported. Each mode
-reads what to run from the Spec alone. commit() persists a validated launch before starting;
-failed starts keep diagnostics. Headless launch(spec) (it may keep state for events) and Tui
-launch(spec, hook) build a Launch whose env, never its resume, carries Access.env and Spec.env (the
-Client is their only owner), and turn the client's output into SessionEvents, Stderr and ClientBound
-(JsonHeadless: parse(record) per JSON line). InProcess check(spec) refuses with ConfigError;
-run(spec) runs the session on a thread of the caller's process, stopped at its next yield, changing
-no global state (cwd, environ, signals): it applies spec.access.cwd, not its env. Starts no process.
+headless(), tui() and in_process() each give a fresh mode object, None if unsupported, implementing
+its Mode's contract in runtimes/modes/. Each mode reads what to run from the Spec alone. Starts no
+process.
 """
 
-from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import ClassVar
 
 from agent_pm.session.clients.common import select
 from agent_pm.session.engine.types import (
-    Activity,
-    Blocked,
-    ClientBound,
-    ClientHome,
     ConfigError,
-    HookCallback,
-    HookKind,
-    Key,
     Launch,
-    LimitHit,
-    Paste,
     Resumable,
-    SessionEvent,
     SessionInfo,
     SessionStatus,
     Spec,
-    Stderr,
-    TurnEnd,
-    TurnFailed,
     Usage,
 )
-from agent_pm.utils import json_records, thaw
+from agent_pm.session.runtimes.modes.headless import Headless
+from agent_pm.session.runtimes.modes.in_process import InProcess
+from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.utils import thaw
 
 
 class Client:
@@ -61,13 +45,13 @@ class Client:
     def select_session(self, native: str, *, resume: bool) -> tuple[str, ...]:
         return select(native, self.selection, uuid=self.selection_uuid, resume=resume)
 
-    def headless(self) -> "Headless | None":
+    def headless(self) -> Headless | None:
         return None
 
-    def tui(self) -> "Tui | None":
+    def tui(self) -> Tui | None:
         return None
 
-    def in_process(self) -> "InProcess | None":
+    def in_process(self) -> InProcess | None:
         return None
 
     def usage_probe(self) -> Launch | None:
@@ -92,113 +76,3 @@ class Client:
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
         """Own write dirs (spec.resume: spec.sid's)."""
         return ()
-
-
-class Headless(ABC):
-    def commit(self) -> None:
-        return None
-
-    @abstractmethod
-    def launch(self, spec: Spec) -> Launch: ...
-
-    @abstractmethod
-    def events(self, lines: Iterable[str]) -> Iterator[SessionEvent | Stderr | ClientBound]: ...
-
-
-class JsonHeadless(Headless):
-    @abstractmethod
-    def parse(self, record: dict) -> Iterable[SessionEvent | Stderr | ClientBound]: ...
-
-    def events(self, lines: Iterable[str]) -> Iterator[SessionEvent | Stderr | ClientBound]:
-        for record in json_records(lines):
-            yield from self.parse(record)
-
-
-class Tui(ABC):
-    hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
-    dialogs: tuple[str, ...] = ()
-    opening: tuple[str, str] | None = None  # (hook label, text)
-    client = ""  # last ClientBound's id
-
-    @abstractmethod
-    def launch(self, spec: Spec, hook: tuple[str, ...]) -> Launch:
-        """As Headless.launch, plus each label L of `hooks` and `opening` as a hook running
-        `hook + (L,)`, its payload on stdin.
-        """
-
-    def _home(self) -> ClientHome | None:
-        return None
-
-    def commit(self) -> None:
-        return None
-
-    def hook_callback(self) -> HookCallback | None:
-        return None
-
-    def restore(self, spec: Spec, state: Mapping) -> None:
-        """On attach, before replay; state: hook_callback()'s state."""
-        return None
-
-    @abstractmethod
-    def reply(self, payload: dict) -> str: ...
-
-    def pending(self, payload: dict) -> int:
-        return 0
-
-    def activity(self, payload: dict) -> str:
-        return ""
-
-    def blocked_reason(self, payload: dict) -> str:
-        return ""
-
-    def session_id(self, payload: dict) -> str:
-        native = payload.get("session_id")
-        return native if isinstance(native, str) else ""
-
-    def observe(self) -> list[SessionEvent]:  # its client's own record, since the last call
-        return []
-
-    def replay(self, records: Iterable[tuple[str, dict]]) -> list[SessionEvent | ClientBound]:
-        """On attach: observe(), then the hook log `records`' events."""
-        found: list[SessionEvent | ClientBound] = [*self.observe()]
-        return found + [
-            event for label, payload in records for event in self.hook_events(label, payload)
-        ]
-
-    def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
-        return [TurnFailed("unknown")]
-
-    def shows(self, dialog: str, screen: str) -> bool:
-        return " ".join(dialog.split()) in " ".join(screen.split())
-
-    def limit(self, screen: str) -> LimitHit | None:
-        """The client's usage-limit message on the visible terminal `screen`; None: none shown."""
-        return None
-
-    def submit(self, text: str) -> tuple[Paste | Key, ...]:
-        return Paste(text), Key("Enter")
-
-    def hook_events(self, label: str, payload: dict) -> list[SessionEvent | ClientBound]:
-        found: list[SessionEvent | ClientBound] = []
-        client = self.session_id(payload)
-        if client and client != self.client:
-            self.client = client
-            found.append(ClientBound(client))
-        kind = self.hooks.get(label)
-        if kind == HookKind.TURN_END:
-            found.append(TurnEnd(self.reply(payload), self.pending(payload)))
-        elif kind == HookKind.TURN_FAILED:
-            found.extend(self.failure(payload))
-        elif kind == HookKind.BLOCKED:
-            found.append(Blocked(self.blocked_reason(payload)))
-        elif kind == HookKind.ACTIVITY:
-            found.append(Activity(self.activity(payload)))
-        return found
-
-
-class InProcess(ABC):
-    @abstractmethod
-    def run(self, spec: Spec) -> Iterable[SessionEvent | Stderr | ClientBound]: ...
-
-    def check(self, spec: Spec) -> None:
-        return None

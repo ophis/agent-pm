@@ -12,7 +12,7 @@ import traceback
 from collections.abc import Callable
 from typing import Self
 
-from agent_pm.session.clients.base import Client, InProcess
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -28,6 +28,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.runtimes.base import Runtime
+from agent_pm.session.runtimes.modes.in_process import InProcess
 from agent_pm.utils import Display
 
 END = object()

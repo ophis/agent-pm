@@ -15,7 +15,6 @@ from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
 
 import agent_pm.utils
-from agent_pm.session.clients.base import Tui
 from agent_pm.session.clients.codex.common import (
     LIMIT_PREFIXES,
     VALUED,
@@ -40,6 +39,7 @@ from agent_pm.session.engine.types import (
     SessionEvent,
     Spec,
 )
+from agent_pm.session.runtimes.modes.tui import Tui
 from agent_pm.utils import json_records, module_roots, read_regular, source_path
 
 PASSED = ("-c", "--enable", "--disable")

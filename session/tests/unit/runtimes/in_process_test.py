@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.clients.base import Client, InProcess
+from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -24,6 +24,7 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.runtimes.in_process import InProcessRuntime
+from agent_pm.session.runtimes.modes.in_process import InProcess
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost

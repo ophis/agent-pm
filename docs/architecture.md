@@ -36,7 +36,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/base: Host · Process · Interactive · InteractiveProcess · Showable<br>hosts/reclaimed: ReclaimedGroup<br>hosts/tmux/: host · transport · placement · grid · iterm<br>hosts/pty/: host · supervisor · keys"]
+    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>runtimes/modes: Headless · JsonHeadless · Tui · InProcess<br>hosts/base: Host · Process · Interactive · InteractiveProcess · Showable<br>hosts/reclaimed: ReclaimedGroup<br>hosts/tmux/: host · transport · placement · grid · iterm<br>hosts/pty/: host · supervisor · keys"]
     subgraph AD[clients/]
       CL[claude]
       CX[codex]

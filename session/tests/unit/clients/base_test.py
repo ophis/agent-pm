@@ -7,8 +7,7 @@ import typing
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.session.clients import base
-from agent_pm.session.clients.base import Client, Headless, InProcess, JsonHeadless, Tui
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.tui import ClaudeTui
 from agent_pm.session.clients.codex import CodexClient
@@ -22,11 +21,8 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Effort,
     Exited,
-    HookKind,
-    Key,
     Launch,
     LimitHit,
-    Paste,
     Reply,
     SessionStatus,
     Spec,
@@ -36,9 +32,13 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.session.runtimes.modes.headless import Headless, JsonHeadless
+from agent_pm.session.runtimes.modes.in_process import InProcess
+from agent_pm.session.runtimes.modes.tui import Tui
 from agent_pm.utils import sid_error
 
 from session.tests.case import Case
+from session.tests.modes_support import DetailedTui, StubHeadless, StubInProcess, StubTui
 
 UUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
@@ -51,63 +51,6 @@ class StubClient(Client):
 
     def tui(self):
         return StubTui()
-
-
-class StubHeadless(JsonHeadless):
-    def launch(self, spec: Spec):
-        return Launch(("stub", spec.prompt))
-
-    def parse(self, record):
-        return [Reply(text) for text in record.get("texts", [])]
-
-
-class StreamHeadless(Headless):
-    """Reads its client's lines itself: no parse."""
-
-    def launch(self, spec: Spec):
-        return Launch(("stub", spec.prompt))
-
-    def events(self, lines):
-        for line in lines:
-            yield Reply(line.strip())
-
-
-class StubTui(Tui):
-    def launch(self, spec: Spec, hook):
-        return Launch(("stub", *hook))
-
-    def reply(self, payload):
-        return payload.get("last", "")
-
-
-class StubInProcess(InProcess):
-    def run(self, spec: Spec):
-        yield Reply(spec.prompt)
-
-
-class CheckOnlyInProcess(InProcess):
-    def check(self, spec: Spec):
-        return None
-
-
-class LabeledTui(StubTui):
-    hooks = {"end": HookKind.TURN_END, "wait": HookKind.BLOCKED, "work": HookKind.ACTIVITY}
-
-
-class DetailedTui(LabeledTui):
-    def pending(self, payload):
-        return len(payload.get("tasks", []))
-
-    def activity(self, payload):
-        return payload.get("doing", "")
-
-    def blocked_reason(self, payload):
-        return payload.get("why", "")
-
-
-class NativeIdTui(LabeledTui):
-    def session_id(self, payload):
-        return payload.get("thread", "")
 
 
 class Refusals(Case):
@@ -248,155 +191,6 @@ class ClientTest(Refusals):
         for factory in (client.headless, client.tui):
             with self.subTest(factory=factory.__name__):
                 self.assertIsNot(factory(), factory())
-
-
-class HeadlessTest(Case):
-    def test_the_stream_is_required_and_parse_is_not(self):
-        self.assertEqual(list(StreamHeadless().events(["a\n", "b"])), [Reply("a"), Reply("b")])
-        for interface, method in ((Headless, "events"), (JsonHeadless, "parse")):
-            launch_only = type("LaunchOnly", (interface,), {"launch": StubHeadless.launch})
-            with self.subTest(missing=method), self.assertRaisesRegex(TypeError, method):
-                launch_only()
-
-    def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
-        lines = [
-            '{"texts": ["a"]}\n',
-            "not json\n",
-            "[1, 2]\n",
-            "\n",
-            "",
-            '"text"\n',
-            "null\n",
-            "[" * 100000 + "]" * 100000 + "\n",
-            "{}\n",
-            '{"texts": ["b", "c"]}',
-        ]
-        self.assertEqual(list(StubHeadless().events(lines)), [Reply("a"), Reply("b"), Reply("c")])
-
-
-class InProcessTest(Case):
-    def test_run_is_its_only_required_method(self):
-        spec = Spec(workdir="/w", access=Access(cwd="/w"), prompt="p")
-        self.assertEqual(list(StubInProcess().run(spec)), [Reply("p")])
-        with self.assertRaisesRegex(TypeError, "run"):
-            CheckOnlyInProcess()
-
-    def test_checks_nothing_by_default(self):
-        run = StubInProcess()
-        for resume in (False, True):
-            with self.subTest(resume=resume):
-                self.assertIsNone(
-                    run.check(Spec(workdir="/w", access=Access(cwd="/w"), sid="s", resume=resume))
-                )
-
-
-class TuiTest(Case):
-    def setUp(self):
-        self.run = DetailedTui()
-        self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
-
-    def test_defaults(self):
-        run = StubTui()
-        self.assertEqual(Tui.hooks, {})
-        self.assertEqual(
-            (run.pending(self.end), run.activity({"doing": "x"}), run.blocked_reason({"why": "y"})),
-            (0, "", ""),
-        )
-        for screen in ("", "limit reached\n> "):
-            with self.subTest(screen=screen):
-                self.assertIsNone(run.limit(screen))
-
-    def test_submit_pastes_then_presses_enter(self):
-        self.assertEqual(self.run.submit("x"), (Paste("x"), Key("Enter")))
-
-    def test_session_id_is_the_payloads_session_id_when_a_str(self):
-        for payload, native in (
-            ({"session_id": "n1"}, "n1"),
-            ({"session_id": ""}, ""),
-            ({"session_id": 5}, ""),
-            ({"session_id": None}, ""),
-            ({}, ""),
-        ):
-            with self.subTest(payload=payload):
-                self.assertEqual(self.run.session_id(payload), native)
-
-    def test_a_new_session_id_binds_it_first_once_per_tui(self):
-        self.assertEqual(
-            self.run.hook_events("end", self.end), [ClientBound("n1"), TurnEnd("done", 2)]
-        )
-        self.assertEqual(self.run.hook_events("end", self.end), [TurnEnd("done", 2)])
-        self.assertEqual(
-            self.run.hook_events("end", {**self.end, "session_id": "n2"}),
-            [ClientBound("n2"), TurnEnd("done", 2)],
-        )
-        self.assertEqual(
-            DetailedTui().hook_events("end", self.end),
-            [ClientBound("n1"), TurnEnd("done", 2)],
-        )
-
-    def test_no_session_id_binds_nothing(self):
-        for session in ({}, {"session_id": ""}, {"session_id": 5}):
-            with self.subTest(session=session):
-                self.assertEqual(
-                    self.run.hook_events("end", {"last": "r", **session}), [TurnEnd("r", 0)]
-                )
-
-    def test_each_label_gives_the_event_of_its_kind(self):
-        payload = {"session_id": "n1", "last": "r", "tasks": [1], "doing": "Bash", "why": "ask"}
-        self.run.hook_events("other", payload)
-        for label, event in (
-            ("end", TurnEnd("r", 1)),
-            ("wait", Blocked("ask")),
-            ("work", Activity("Bash")),
-        ):
-            with self.subTest(label=label):
-                self.assertEqual(self.run.hook_events(label, payload), [event])
-
-    def test_the_kinds_default_details(self):
-        run = LabeledTui()
-        payload = {"last": "r", "tasks": [1], "doing": "Bash", "why": "ask"}
-        for label, event in (
-            ("end", TurnEnd("r", 0)),
-            ("wait", Blocked("")),
-            ("work", Activity("")),
-        ):
-            with self.subTest(label=label):
-                self.assertEqual(run.hook_events(label, payload), [event])
-
-    def test_an_unknown_label_gives_nothing_more(self):
-        self.assertEqual(self.run.hook_events("other", {"session_id": "n1"}), [ClientBound("n1")])
-        for label in ("other", "", "End", HookKind.TURN_END, "Stop", "PostToolUse"):
-            with self.subTest(label=label):
-                self.assertEqual(self.run.hook_events(label, {"session_id": "n1", "last": "r"}), [])
-
-    def test_without_hooks_no_label_has_a_kind(self):
-        run = StubTui()
-        payload = {"last": "r", "tool_name": "Bash"}
-        for label in ("Stop", "PostToolUse", "Notification", "PermissionRequest", "end"):
-            with self.subTest(label=label):
-                self.assertEqual(run.hook_events(label, payload), [])
-
-    def test_base_names_no_client_hook(self):
-        source = inspect.getsource(base)
-        for name in (
-            "Stop",
-            "PreToolUse",
-            "PostToolUse",
-            "Notification",
-            "PermissionRequest",
-            "UserPromptSubmit",
-        ):
-            with self.subTest(name=name):
-                self.assertNotRegex(source, rf"\b{name}\b")
-
-    def test_hook_events_binds_the_id_session_id_reads(self):
-        run = NativeIdTui()
-        self.assertEqual(
-            run.hook_events("end", {"thread": "t1", "session_id": "n1", "last": "r"}),
-            [ClientBound("t1"), TurnEnd("r", 0)],
-        )
-        self.assertEqual(run.hook_events("end", {"thread": "t1", "last": "r"}), [TurnEnd("r", 0)])
-        self.assertEqual(run.hook_events("work", {"session_id": "n1"}), [Activity("")])
 
 
 class NoProcessTest(Case):
