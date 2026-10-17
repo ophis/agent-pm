@@ -336,8 +336,8 @@ another container, fails the start with `mount_rejected`; clear a foreign one wi
 
 Without `--force`, `workspace-rm` first runs a check in the newest worker image, offline
 with the volume read-only: any repo up to three levels down with uncommitted, stashed or
-unpushed work, or a directory it cannot list, keeps the volume and fails with exit 12 `workspace_dirty`, naming each repo
-and the `--force` command. An absent volume is `removed:false`.
+unpushed work, or a directory it cannot list, keeps the volume and fails with exit 12
+`workspace_dirty`, naming each repo and the `--force` command. An absent volume is `removed:false`.
 
 - **New start**: deletes the crew volume first. Unsaved work fails the start before its
   config dir is cleared, with that message and `or resume it: agent-pm-session resume
