@@ -26,6 +26,7 @@ from typing import NamedTuple
 import agent_pm.utils
 from agent_pm.session.engine.types import (
     COMMAND,
+    RESUME,
     SESSION_NAME,
     ClientHome,
     ConfigError,
@@ -34,7 +35,6 @@ from agent_pm.session.engine.types import (
     SessionError,
     SessionRow,
     StatusState,
-    resume_argv,
 )
 from agent_pm.session.hosts.base import TUI_DIR, TUI_STATE, Host, Process, Showable, tui_lock
 from agent_pm.session.hosts.docker import supervisor as run_supervisor
@@ -532,7 +532,7 @@ class DockerHost(Host, Showable):
         return {home.env: docker_home(name, home.dir)}
 
     def _resume_argv(self, name: str) -> tuple[str, ...]:
-        return resume_argv(name)
+        return (*RESUME, name)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         """The preflight, before any container: the cwd, the broker handshake and the build."""

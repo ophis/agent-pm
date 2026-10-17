@@ -22,6 +22,7 @@ from typing import Protocol, runtime_checkable
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import (
     COMMAND,
+    RESUME,
     SESSION_NAME,
     SESSION_NAME_RULE,
     Access,
@@ -31,7 +32,6 @@ from agent_pm.session.engine.types import (
     Mode,
     SessionError,
     Spec,
-    resume_argv,
 )
 from agent_pm.session.hosts.base import Process, Showable
 from agent_pm.session.runtimes.tui import TuiStore
@@ -147,7 +147,7 @@ class WorkerState:
             sid=self.sid,
             workdir=self.workdir(),
             ctl=(COMMAND,),
-            resume=resume_argv(self.name),
+            resume=(*RESUME, self.name),
             display=self.display,
             detail=self.client,
         )
