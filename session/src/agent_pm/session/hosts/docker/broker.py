@@ -321,8 +321,6 @@ def write_manifest(
     workspace: str,
     home: tuple[str, str],
     hook_path: str,
-    github: list[dict],
-    container_config: str,
 ) -> None:
     """The start manifest, 0600; home: (its manifest field, the client home's path)."""
     field, home_path = home
@@ -334,8 +332,7 @@ def write_manifest(
         "workspace": workspace,
         field: home_path,
         "hook_path": hook_path,
+        "github": None,  # no App tokens yet
         "labels": {},
-        "github": github,
-        "container_config": container_config,
     }
     save(path, json.dumps(manifest), durable=True)

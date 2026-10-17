@@ -94,6 +94,26 @@
       "type": "string",
       "pattern": "^agent-pm-(crew-[A-Za-z0-9_-]+|run-[A-Za-z0-9_.-]+-[0-9a-f]{8})$"
     },
+    "github": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "app": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            }
+          },
+          "required": [
+            "app"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "volume": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$"
@@ -155,20 +175,14 @@
         "claude_dir": {
           "$ref": "#/$defs/path"
         },
+        "github": {
+          "$ref": "#/$defs/github"
+        },
         "hook_path": {
           "$ref": "#/$defs/path"
         },
         "labels": {
           "$ref": "#/$defs/labels"
-        },
-        "github": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/github_token"
-          }
-        },
-        "container_config": {
-          "$ref": "#/$defs/container_config"
         }
       },
       "required": [
@@ -178,54 +192,10 @@
         "cwd",
         "workspace",
         "claude_dir",
-        "labels",
         "github",
-        "container_config"
+        "labels"
       ],
       "additionalProperties": false
-    },
-    "github_token": {
-      "type": "object",
-      "properties": {
-        "repo": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/(?!\\.\\.?$)[A-Za-z0-9._-]{1,100}$"
-        },
-        "app": {
-          "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
-        },
-        "app_id": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "permissions": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "pattern": "^[a-z][a-z_]{0,62}$"
-          },
-          "additionalProperties": {
-            "enum": [
-              "read",
-              "write"
-            ]
-          }
-        }
-      },
-      "required": [
-        "repo",
-        "app",
-        "app_id",
-        "permissions"
-      ],
-      "additionalProperties": false
-    },
-    "container_config": {
-      "type": "string",
-      "maxLength": 65536,
-      "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f]*$"
     },
     "version_input": {
       "type": "object",

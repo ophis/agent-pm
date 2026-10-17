@@ -280,6 +280,18 @@ func detached(d *fakeDocker) []string {
 	return nil
 }
 
+func TestStartRefusesGitHubTokens(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-github-app.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	_, err = h.Start(context.Background(), writeManifest(t, data))
+	if protoErr(t, err).Code != protocol.ManifestRejected || !strings.Contains(err.Error(), "github must be null") || len(d.calls) != 0 {
+		t.Fatalf("%v %q", err, d.verbs())
+	}
+}
+
 func TestStartVolume(t *testing.T) {
 	create := []string{"volume", "create", "--label", "agent-pm.kind=crew", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
 	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
@@ -475,7 +487,7 @@ func TestManifestUnreadable(t *testing.T) {
 
 func TestHookUnderUncleanCWD(t *testing.T) {
 	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
-		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-crew-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{},"github":[],"container_config":""}`
+		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-crew-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","github":null,"labels":{}}`
 	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))
 	if protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run") {
@@ -544,40 +556,5 @@ func TestStartPhaseTimes(t *testing.T) {
 		if _, err := h.Start(context.Background(), validManifest(t)); err == nil || progress.Len() != 0 {
 			t.Fatalf("%s: %v, progress %q", name, err, progress.String())
 		}
-	}
-}
-
-func TestStartWritesContainerConfig(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config := "[delegate]\nusers = [\"octocat\"]\ntrusted_dirs = []\n"
-	withConfig := strings.Replace(string(data), `"container_config": ""`, `"container_config": "[delegate]\nusers = [\"octocat\"]\ntrusted_dirs = []\n"`, 1)
-	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
-	if _, err := h.Start(context.Background(), writeManifest(t, []byte(withConfig))); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"exec", "--interactive", "--user", "root", container, python, "-I", bootstrap, "config", "/home/agent/.agent-pm/config.local.toml"}
-	i := slices.IndexFunc(d.calls, func(c []string) bool { return slices.Equal(c, want) })
-	if i < 0 || string(d.stdin[i]) != config {
-		t.Fatalf("no config write %q in %q", want, d.calls)
-	}
-	h, d = startHost(&world{labels: goodLabels(), execErr: failOn("config", &docker.CommandError{Exit: 1, Stderr: "boom"})}, &fakeCreds{})
-	_, err = h.Start(context.Background(), writeManifest(t, []byte(withConfig)))
-	if e := protoErr(t, err); e.Code != protocol.StartFailed || e.Cleanup != protocol.Removed || !hasCall(d, "rm") {
-		t.Fatalf("%+v", e)
-	}
-}
-
-func TestStartRefusesGitHubTokens(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-role-run.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
-	_, err = h.Start(context.Background(), writeManifest(t, data))
-	if e := protoErr(t, err); e.Code != protocol.ManifestRejected || len(d.calls) != 0 {
-		t.Fatalf("%+v %q", e, d.calls)
 	}
 }

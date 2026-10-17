@@ -59,9 +59,8 @@ class DockerBrokerProtocol(Case):
             "cwd",
             "workspace",
             "claude_dir",
-            "labels",
             "github",
-            "container_config",
+            "labels",
         ):
             self.assertFalse(cases[f"manifest-missing-{field}.json"]["valid"])
         self.assertFalse(cases["manifest-unknown-field.json"]["valid"])

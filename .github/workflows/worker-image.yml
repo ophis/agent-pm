@@ -127,5 +127,4 @@ jobs:
             test -x /opt/agent-pm/bin/with-secrets
             test "$(command -v python3)" = /opt/agent-pm/bin/python3
             python3 -c "import agent_pm.delegate"
-            python3 -P /opt/agent-pm/team/tools/repo.py --help
-            test "$(stat -c %U:%a /home/agent/.agent-pm)" = root:755'
+            python3 -P /opt/agent-pm/team/tools/repo.py --help'

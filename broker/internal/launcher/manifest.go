@@ -6,7 +6,6 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -17,15 +16,7 @@ type Manifest struct {
 	Name, Generation, Image, CWD, Workspace, ClaudeDir, HookPath string
 	HasHook                                                      bool
 	Labels                                                       map[string]string
-	GitHub                                                       []GitHubToken
-	ContainerConfig                                              string // TOML the container reads as its local agent-pm config
-}
-
-// GitHubToken is one installation token a start requests: an App's, for one repo, with these permissions.
-type GitHubToken struct {
-	Repo, App   string
-	AppID       int64
-	Permissions map[string]string
+	GitHubApp                                                    string // the App whose tokens the session gets; "": github null
 }
 
 // A workspace volume's labels: its Kind and its mount point.
@@ -47,16 +38,8 @@ var (
 	generationPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-	runVolumePattern  = regexp.MustCompile(`^agent-pm-run-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`)
-	repoPattern       = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
 	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	appIDPattern      = regexp.MustCompile(`^[1-9][0-9]{0,15}$`)
-	permissionPattern = regexp.MustCompile(`^[a-z][a-z_]{0,62}$`)
-)
-
-const (
-	maxContainerConfig = 65536
-	maxAppID           = 1<<53 - 1 // the schema's integer bound
+	runVolumePattern  = regexp.MustCompile(`^agent-pm-run-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`)
 )
 
 func hasControl(s string) bool {
@@ -135,7 +118,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
 		"cwd": &m.CWD, "workspace": &m.Workspace, "claude_dir": &m.ClaudeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
-		if key == "labels" || key == "github" || key == "container_config" {
+		if key == "labels" || key == "github" {
 			continue
 		}
 		target, ok := targets[key]
@@ -146,7 +129,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return reject("field %q must be a string without control characters", key)
 		}
 	}
-	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "labels", "github", "container_config"} {
+	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "github", "labels"} {
 		if _, ok := fields[key]; !ok {
 			return reject("missing field %q", key)
 		}
@@ -165,6 +148,17 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return reject("paths must be absolute")
 	}
 	m.CWD = filepath.Clean(m.CWD) // Docker mounts at the cleaned target
+	if raw := fields["github"]; string(raw) != "null" {
+		var github map[string]json.RawMessage
+		if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &github) != nil || len(github) != 1 {
+			return reject("github must be null or {\"app\": <name>}")
+		}
+		app, ok := str(github["app"])
+		if !ok || !appPattern.MatchString(app) {
+			return reject("github must be null or {\"app\": <name>}")
+		}
+		m.GitHubApp = app
+	}
 
 	var labels map[string]json.RawMessage
 	if raw := fields["labels"]; len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &labels) != nil {
@@ -178,59 +172,5 @@ func ParseManifest(data []byte) (Manifest, error) {
 		}
 		m.Labels[key] = value
 	}
-	var config string
-	if raw := fields["container_config"]; len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &config) != nil ||
-		len(config) > maxContainerConfig || strings.ContainsFunc(config, func(r rune) bool { return (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f }) {
-		return reject("container_config must be a string of at most %d bytes without control characters but newline and tab", maxContainerConfig)
-	}
-	m.ContainerConfig = config
-	tokens, err := parseGitHub(fields["github"])
-	if err != nil {
-		return reject("%v", err)
-	}
-	m.GitHub = tokens
 	return m, nil
-}
-
-type manifestError string
-
-func (e manifestError) Error() string { return string(e) }
-
-// parseGitHub validates the github token list; the tokenizer above already refused duplicate keys.
-func parseGitHub(raw json.RawMessage) ([]GitHubToken, error) {
-	var items []map[string]json.RawMessage
-	if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &items) != nil {
-		return nil, manifestError("github must be an array of objects")
-	}
-	tokens := make([]GitHubToken, 0, len(items))
-	for i, item := range items {
-		bad := func(what string) error { return manifestError("github[" + strconv.Itoa(i) + "]: " + what) }
-		if item == nil || len(item) != 4 {
-			return nil, bad("want exactly repo, app, app_id and permissions")
-		}
-		var token GitHubToken
-		var permissions map[string]string
-		repo, app, id := item["repo"], item["app"], string(item["app_id"])
-		switch {
-		case json.Unmarshal(repo, &token.Repo) != nil || !repoPattern.MatchString(token.Repo) || strings.HasSuffix(token.Repo, "/.") || strings.HasSuffix(token.Repo, "/.."):
-			return nil, bad("repo must be owner/name")
-		case json.Unmarshal(app, &token.App) != nil || !appPattern.MatchString(token.App):
-			return nil, bad("invalid app")
-		case !appIDPattern.MatchString(id):
-			return nil, bad("app_id must be a positive integer")
-		case json.Unmarshal(item["permissions"], &permissions) != nil || len(permissions) == 0:
-			return nil, bad("permissions must be a nonempty object")
-		}
-		if token.AppID, _ = strconv.ParseInt(id, 10, 64); token.AppID > maxAppID {
-			return nil, bad("app_id must be a positive integer")
-		}
-		for name, level := range permissions {
-			if !permissionPattern.MatchString(name) || level != "read" && level != "write" {
-				return nil, bad("permission " + strconv.Quote(name) + " must be read or write")
-			}
-		}
-		token.Permissions = permissions
-		tokens = append(tokens, token)
-	}
-	return tokens, nil
 }

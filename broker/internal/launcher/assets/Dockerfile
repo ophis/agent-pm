@@ -21,8 +21,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && ln -s /opt/agent-pm/lib/with-secrets /opt/agent-pm/bin/with-secrets \
     && chmod 755 /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/bin/python3 /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub /opt/agent-pm/lib/workspace-check \
     && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm \
-    && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue \
-    && install -d -o root -g root -m 0755 /home/agent/.agent-pm
+    && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue
 ARG AGENT_PM_VERSION
 LABEL agent-pm.version=${AGENT_PM_VERSION} agent-pm.agent-uid=${AGENT_UID} agent-pm.agent-gid=${AGENT_GID}
 ENV PATH=/opt/agent-pm/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin

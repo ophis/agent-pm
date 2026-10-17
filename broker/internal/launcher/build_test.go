@@ -320,7 +320,6 @@ func TestWorkerImageHasTheRelayAndWorkspaceCheck(t *testing.T) {
 		`printf '%s\n' /opt/agent-pm/delegate/src /opt/agent-pm/session/src /opt/agent-pm/utils/src > "$(/opt/agent-pm/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-pm.pth"`,
 		`printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python "$@"' > /opt/agent-pm/bin/python3`,
 		"ln -s /opt/agent-pm/delegate/src/agent_pm/delegate/team /opt/agent-pm/team",
-		"install -d -o root -g root -m 0755 /home/agent/.agent-pm",
 	} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("Dockerfile lacks %q", want)

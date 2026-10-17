@@ -108,36 +108,6 @@ class InstallHook(Case):
         self.assertTrue(text.rstrip().endswith("exit 0"))
 
 
-class WriteConfig(Case):
-    def setUp(self):
-        self.write = script("bootstrap.py")["write_config"]
-        self.dir = Path(self.home, "conf")
-        self.dir.mkdir(mode=0o755)
-        self.uid = os.getuid()
-
-    def test_write_config_writes_a_read_only_file(self):
-        destination = self.dir / "config.local.toml"
-        self.write("[delegate]\nusers = []\n", destination, owner=self.uid)
-        self.assertEqual(destination.read_text(), "[delegate]\nusers = []\n")
-        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o444)
-
-    def test_write_config_refuses_an_existing_file_or_link(self):
-        destination = self.dir / "config.local.toml"
-        destination.symlink_to(Path(self.home, "elsewhere"))
-        with self.assertRaises(FileExistsError):
-            self.write("x", destination, owner=self.uid)
-        self.assertFalse(Path(self.home, "elsewhere").exists())
-
-    def test_write_config_refuses_an_unsafe_or_foreign_dir(self):
-        self.dir.chmod(0o777)
-        with self.assertRaises(SystemExit):
-            self.write("x", self.dir / "config.local.toml", owner=self.uid)
-        self.dir.chmod(0o755)
-        with self.assertRaises(SystemExit):
-            self.write("x", self.dir / "config.local.toml", owner=self.uid + 1)
-        self.assertFalse((self.dir / "config.local.toml").exists())
-
-
 class WithSecrets(Case):
     def setUp(self):
         self.main = script("with-secrets")["main"]

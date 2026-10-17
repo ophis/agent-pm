@@ -212,8 +212,6 @@ class ManifestTest(Case):
             workspace="agent-pm-crew-w",
             home=("x_dir", "/home/x"),
             hook_path="/plugin/bin/agent-pm-session",
-            github=[],
-            container_config="[delegate]\nusers = []\n",
         )
         with open(path) as f:
             self.assertEqual(
@@ -226,9 +224,8 @@ class ManifestTest(Case):
                     "workspace": "agent-pm-crew-w",
                     "x_dir": "/home/x",
                     "hook_path": "/plugin/bin/agent-pm-session",
+                    "github": None,
                     "labels": {},
-                    "github": [],
-                    "container_config": "[delegate]\nusers = []\n",
                 },
             )
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)

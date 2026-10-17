@@ -10,8 +10,7 @@ The broker installs the hook stub, so this version also covers the stub's wire f
 Protocol 2 marked the stub's switch to the [relay wire format](docker-relay-protocol.md);
 protocol 3 drops start's `update` (the clients come from the image) and adds build's `--max-age`;
 protocol 4 mounts the manifest's `workspace` volume at `cwd` instead of binding the host cwd,
-drops the mount roots and deny list, and adds `workspace-rm`, the manifest's `github` and
-`container_config`.
+drops the mount roots and deny list, and adds `workspace-rm`.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -63,10 +62,9 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `cwd` | Absolute existing host directory: the container path the workspace volume is mounted at and the working directory; never a bind source |
 | `workspace` | The workspace volume: `agent-pm-crew-<name>`, or `agent-pm-run-<dir>-<8 hex>` for a role run |
 | `claude_dir` | Absolute host directory, mounted read/write at the same container path |
+| `github` | Required: `null`, or `{"app": <App name>}`, whose tokens a later protocol issues; this broker rejects anything but `null` at `start` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
-| `github` | Required array of `{repo, app, app_id, permissions}` (`owner/name`, the App's name and id, `{permission: read\|write}`), one installation token each; the broker issues none yet and rejects a nonempty one (`manifest_rejected`) |
-| `container_config` | Required TOML text, at most 65536 bytes, no control characters but newline and tab; a role run's container config, `""` for a crew worker. A nonempty one becomes `/home/agent/.agent-pm/config.local.toml`, root-owned `0444`, written through `bootstrap.py config` as root |
 
 Session name and generation match
 [engine/types.py](../session/src/agent_pm/session/engine/types.py#L193) and
@@ -116,7 +114,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 flowchart LR
     V[Validate] --> W[Ensure volume]
     W --> C[Create secured container]
-    C --> B[Bootstrap, container config and hook stub]
+    C --> B[Bootstrap and hook stub]
     B --> P[Probe both clients' versions]
     P --> T[Inject token through exec stdin]
     T --> O[Return start output]

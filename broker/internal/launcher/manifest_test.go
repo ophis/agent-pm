@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -51,7 +50,7 @@ func TestManifestDuplicatesTrailingUTF8(t *testing.T) {
 		t.Fatalf("%+v %v", m, err)
 	}
 	base := `"generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` +
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","cwd":"/w","workspace":"agent-pm-crew-w","claude_dir":"/c","github":[],"container_config":"","labels":{}`
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","cwd":"/w","workspace":"agent-pm-crew-w","claude_dir":"/c","github":null,"labels":{}`
 	if _, err := ParseManifest([]byte(`{"name":"w",` + base + `}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -104,49 +103,25 @@ func TestManifestWorkspace(t *testing.T) {
 	}
 }
 
-func TestManifestGitHubAndContainerConfig(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-role-run.json"))
+func TestManifestGitHub(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-github-app.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := ParseManifest(data)
-	want := GitHubToken{Repo: "ophis/agent-pm", App: "agent-pm-engineer", AppID: 5352992, Permissions: map[string]string{"contents": "write", "pull_requests": "write"}}
-	if err != nil || len(m.GitHub) != 1 || m.GitHub[0].Repo != want.Repo || m.GitHub[0].App != want.App || m.GitHub[0].AppID != want.AppID ||
-		len(m.GitHub[0].Permissions) != 2 || m.GitHub[0].Permissions["contents"] != "write" || m.ContainerConfig != "[delegate]\nusers = [\"octocat\"]\ntrusted_dirs = []\n" {
+	if m, err := ParseManifest(data); err != nil || m.GitHubApp != "agent-pm-bot" {
 		t.Fatalf("%+v %v", m, err)
 	}
-	with := func(old, new string) error {
-		if !strings.Contains(string(data), old) {
-			t.Fatalf("fixture has no %s", old)
+	valid, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ParseManifest(valid); err != nil || m.GitHubApp != "" {
+		t.Fatalf("%+v %v", m, err)
+	}
+	for _, github := range []string{`[]`, `"agent-pm-bot"`, `{"app":null}`, `{"app":"a","app":"b"}`, `{"app":"-a"}`} {
+		doc := strings.Replace(string(valid), `"github": null`, `"github": `+github, 1)
+		if _, err := ParseManifest([]byte(doc)); code(t, err) != protocol.ManifestRejected {
+			t.Errorf("%s accepted", github)
 		}
-		_, err := ParseManifest([]byte(strings.Replace(string(data), old, new, 1)))
-		return err
-	}
-	if _, err := ParseManifest(regexp.MustCompile(`(?s)"permissions": \{.*?\}`).ReplaceAll(data, []byte(`"permissions": {}`))); code(t, err) != protocol.ManifestRejected {
-		t.Error("empty permissions accepted")
-	}
-	for name, edit := range map[string][2]string{
-		"repo dot":         {`"ophis/agent-pm"`, `"ophis/.."`},
-		"repo host":        {`"ophis/agent-pm"`, `"github.com/ophis/agent-pm"`},
-		"app id zero":      {`5352992`, `0`},
-		"app id float":     {`5352992`, `5352992.5`},
-		"app id string":    {`5352992`, `"5352992"`},
-		"app id too large": {`5352992`, `9007199254740992`},
-		"app upper":        {`"agent-pm-engineer"`, `"Agent"`},
-		"permission name":  {`"pull_requests"`, `"Pull"`},
-		"null item":        {`"github": [`, `"github": [null, `},
-		"not array":        {`"github": [`, `"github": {"a": [`},
-		"config not text":  {`"container_config": "`, `"container_config": 1, "x": "`},
-		"config escape":    {`[delegate]`, `\u001b[delegate]`},
-	} {
-		if code(t, with(edit[0], edit[1])) != protocol.ManifestRejected {
-			t.Errorf("%s accepted", name)
-		}
-	}
-	if err := with(`trusted_dirs = []`, `\ttrusted_dirs = []`); err != nil {
-		t.Errorf("tab rejected: %v", err)
-	}
-	if err := with(`"[delegate]`, `"`+strings.Repeat("x", maxContainerConfig)); code(t, err) != protocol.ManifestRejected {
-		t.Error("oversized container_config accepted")
 	}
 }

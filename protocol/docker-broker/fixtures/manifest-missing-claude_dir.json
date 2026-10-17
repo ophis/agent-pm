@@ -4,10 +4,9 @@
   "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "cwd": "/Users/example/src/project",
   "workspace": "agent-pm-crew-worker_1",
+  "github": null,
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
     "team": "crew"
-  },
-  "github": [],
-  "container_config": ""
+  }
 }

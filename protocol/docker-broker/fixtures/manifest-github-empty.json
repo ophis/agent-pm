@@ -4,20 +4,10 @@
   "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "cwd": "/Users/example/src/project",
   "workspace": "agent-pm-crew-worker_1",
+  "github": {},
   "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
     "team": "crew"
-  },
-  "github": [
-    {
-      "repo": "ophis/agent-pm",
-      "app": "agent-pm-engineer",
-      "app_id": 5352992,
-      "permissions": {
-        "contents": "admin"
-      }
-    }
-  ],
-  "container_config": ""
+  }
 }

@@ -4,11 +4,10 @@
   "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "cwd": "/Users/example/src/project",
   "workspace": "agent-pm-crew-worker_1",
+  "github": null,
   "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
   "hook_path": "/usr/local/bin/agent-pm-session",
   "labels": {
     "team": ""
-  },
-  "github": [],
-  "container_config": ""
+  }
 }
