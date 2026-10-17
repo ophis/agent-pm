@@ -10,9 +10,9 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import Launch, SessionError
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Key, KeyPress, Paste
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.session.hosts.tmux.transport import Tmux
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -93,7 +93,7 @@ class LaunchTest(Case):
     def test_launch_puts_argv_cwd_and_env_on_the_command_line_and_views_are_not_listed(self):
         out = os.path.join(self.home, "launched.json")
         code = "import json, os, sys, time; json.dump([sys.argv[1:], os.getcwd(), os.environ['X']], open(sys.argv[1], 'w')); time.sleep(30)"
-        tmux = Tmux()
+        tmux = TmuxCli()
         tmux.launch(
             "v1",
             [sys.executable, "-I", "-c", code, out, "a b"],

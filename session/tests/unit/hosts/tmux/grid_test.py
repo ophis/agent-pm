@@ -8,10 +8,11 @@ import tempfile
 import time
 from contextlib import redirect_stderr, suppress
 
+from agent_pm.session.engine import tmux_cli
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import layout as layouts
 from agent_pm.session.hosts.tmux import types
-from agent_pm.session.hosts.tmux.transport import Tmux
 
 from session.tests.case import PLUGIN_BIN, Case
 from session.tests.tmux_fixtures import (
@@ -423,7 +424,7 @@ class GridOpenTest(Case):
                     lambda *, bad=bad, fake=fake: placed(fake).open_pane("s", retile=bad),
                 ):
                     with self.assertRaisesRegex(
-                        types.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
+                        tmux_cli.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
                     ):
                         call()
                 self.assertEqual(fake.calls, [])
@@ -457,7 +458,7 @@ class GridOpenTest(Case):
                     lambda *, bad=bad, fake=fake: placed(fake).open_pane("s", per_column=bad),
                 ):
                     with self.assertRaisesRegex(
-                        types.TuiError, "^per_column must be an int from 1 to 9999"
+                        tmux_cli.TuiError, "^per_column must be an int from 1 to 9999"
                     ):
                         call()
                 self.assertEqual(fake.calls, [])
@@ -472,7 +473,9 @@ class RetileTest(Case):
         for bad in ("x", True, 1, "", "ALL"):
             with (
                 self.subTest(retile=bad),
-                self.assertRaisesRegex(types.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))),
+                self.assertRaisesRegex(
+                    tmux_cli.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
+                ),
             ):
                 grids.validate_retile(bad)
 
@@ -621,7 +624,7 @@ class TileApplicationTest(TileFixture):
                     )
         fake = self.tile(layout, panes)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
-        with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_cli.TuiError, "^tmux: boom$"):
             self.tile(layout, panes, recorded="", fail=("set-option",))
 
     def test_if_panes_changed_skips_while_the_pane_set_is_the_recorded_one(self):
@@ -926,7 +929,7 @@ class TileCoordinationTest(TileFixture):
                 release()
 
         slept = clock(self, poll)
-        grids.Grid(Tmux(fake)).tile("@3")
+        grids.Grid(TmuxCli(fake)).tile("@3")
         self.assertEqual(slept, [grids.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
         self.assertEqual(
@@ -945,8 +948,8 @@ class TileCoordinationTest(TileFixture):
         hold(self, self.lock)
         slept = clock(self)
         fake = self.fake(*self.WIDE)
-        with self.assertRaisesRegex(types.TuiError, "^grid @3: busy$"):
-            grids.Grid(Tmux(fake)).tile("@3")
+        with self.assertRaisesRegex(tmux_cli.TuiError, "^grid @3: busy$"):
+            grids.Grid(TmuxCli(fake)).tile("@3")
         self.assertEqual(fake.calls, [self.SOCKET])
         self.assertEqual(set(slept), {grids.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)  # float steps: one poll more
@@ -955,12 +958,12 @@ class TileCoordinationTest(TileFixture):
         os.mkdir(self.lock)
         want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.EISDIR)}$"
         fake = self.fake(*self.WIDE)
-        with self.assertRaisesRegex(types.TuiError, want):
-            grids.Grid(Tmux(fake)).tile("@3")
+        with self.assertRaisesRegex(tmux_cli.TuiError, want):
+            grids.Grid(TmuxCli(fake)).tile("@3")
         self.assertEqual(fake.calls, [self.SOCKET])
         fake = self.fake(*self.WIDE)
         with which():
-            got = grids.Grid(Tmux(fake)).configure("@3", "%0", per_column=3, retile="all")
+            got = grids.Grid(TmuxCli(fake)).configure("@3", "%0", per_column=3, retile="all")
         self.assertRegex(got, want)
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
 
@@ -974,16 +977,16 @@ class TileCoordinationTest(TileFixture):
             with self.subTest(sock=sock):
                 fake = self.fake(*self.WIDE, sock=sock)
                 with self.assertRaisesRegex(
-                    types.TuiError,
+                    tmux_cli.TuiError,
                     f"^grid @3: socket path {re.escape(repr(sock))}: want an absolute path$",
                 ):
-                    grids.Grid(Tmux(fake)).tile("@3")
+                    grids.Grid(TmuxCli(fake)).tile("@3")
                 self.assertEqual(fake.calls, [self.SOCKET])
                 self.assertEqual(os.listdir(cwd.name), [])
 
     def test_a_fifo_at_the_lock_path_does_not_hang(self):
         os.mkfifo(self.lock, 0o600)
-        with deadline(), suppress(types.TuiError):  # flock on a FIFO: ENOTSUP on macOS
+        with deadline(), suppress(tmux_cli.TuiError):  # flock on a FIFO: ENOTSUP on macOS
             self.tile(*self.WIDE)
 
     def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
@@ -1050,7 +1053,9 @@ class TileCoordinationTest(TileFixture):
                 window = (self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
                 fake = self.fake(*window)
                 with which():
-                    got = grids.Grid(Tmux(fake)).configure("@3", "%0", per_column=n, retile="all")
+                    got = grids.Grid(TmuxCli(fake)).configure(
+                        "@3", "%0", per_column=n, retile="all"
+                    )
                 self.assertIsNone(got)
                 sent[n] = fake.calls[1:]
                 self.assertEqual(sent[n], self.tile(*window, per_column=n).calls)
@@ -1064,7 +1069,7 @@ class TileCoordinationTest(TileFixture):
         del fake.calls[:]
         with which():
             self.assertIsNone(
-                grids.Grid(Tmux(fake)).configure("@3", "%0", per_column=3, retile="off")
+                grids.Grid(TmuxCli(fake)).configure("@3", "%0", per_column=3, retile="off")
             )
         self.assertEqual(fake.calls, [grid_set("@3", "%0", retile="off")])
 
@@ -1078,8 +1083,8 @@ class TileCoordinationTest(TileFixture):
         for window, kw, error in cases:
             with self.subTest(window=window, **kw):
                 fake = FakeTmux()
-                with self.assertRaisesRegex(types.TuiError, "^" + re.escape(error)):
-                    grids.Grid(Tmux(fake)).tile(window, **kw)
+                with self.assertRaisesRegex(tmux_cli.TuiError, "^" + re.escape(error)):
+                    grids.Grid(TmuxCli(fake)).tile(window, **kw)
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
@@ -1087,11 +1092,11 @@ class TileCoordinationTest(TileFixture):
         # the lock freed
         fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
         fake = self.fake(*self.WIDE, **fail)
-        with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
-            grids.Grid(Tmux(fake)).tile("@3")
+        with self.assertRaisesRegex(tmux_cli.TuiError, "^tmux: boom$"):
+            grids.Grid(TmuxCli(fake)).tile("@3")
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
         self.assertEqual(self.tile(*self.WIDE, wait=False).calls[:2], [self.SOCKET, self.READ])
-        with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_cli.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
-        with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
-            grids.Grid(Tmux(FakeTmux(fail=("display-message",)))).tile("@3")
+        with self.assertRaisesRegex(tmux_cli.TuiError, "^tmux: boom$"):
+            grids.Grid(TmuxCli(FakeTmux(fail=("display-message",)))).tile("@3")

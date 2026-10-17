@@ -6,6 +6,7 @@ import re
 import tempfile
 from contextlib import redirect_stderr
 
+from agent_pm.session.engine import tmux_cli
 from agent_pm.session.hosts.tmux import types
 
 from session.tests.case import Case
@@ -205,7 +206,7 @@ class PaneAnchorTest(PaneFixture):
             with (
                 self.subTest(env=env, split_from=split_from),
                 environ(**env),
-                self.assertRaisesRegex(types.TuiError, msg),
+                self.assertRaisesRegex(tmux_cli.TuiError, msg),
             ):
                 placed(FakeTmux(results=results)).anchor(split_from)
 
@@ -237,7 +238,7 @@ class PaneAnchorTest(PaneFixture):
         self.assertEqual(fake.calls, [])
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
-            self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
+            self.assertRaisesRegex(tmux_cli.TuiError, "TMUX_PANE"),
         ):
             placed(fake).own_session()
 
@@ -289,7 +290,7 @@ class OpenerTest(Case):
                 self.subTest(env=env),
                 environ(**env),
                 self.assertRaisesRegex(
-                    types.TuiError,
+                    tmux_cli.TuiError,
                     r"^no anchor pane: not in tmux, no iTerm2 pane \(\$ITERM_SESSION_ID\)$",
                 ),
             ):
@@ -310,14 +311,14 @@ class OpenerTest(Case):
             with (
                 self.subTest(value=value),
                 environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"),
-                self.assertRaisesRegex(types.TuiError, r"^bad \$ITERM_SESSION_ID"),
+                self.assertRaisesRegex(tmux_cli.TuiError, r"^bad \$ITERM_SESSION_ID"),
             ):
                 placed(FakeTmux()).opener()
 
     def test_bad_tmux_pane(self):
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
-            self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
+            self.assertRaisesRegex(tmux_cli.TuiError, "TMUX_PANE"),
         ):
             placed(FakeTmux()).opener()
 
@@ -336,7 +337,7 @@ class SplitTest(Case):
             with (
                 self.subTest(split=bad),
                 self.assertRaisesRegex(
-                    types.TuiError,
+                    tmux_cli.TuiError,
                     f"^split must be one of right, below, not {re.escape(repr(bad))}$",
                 ),
             ):
@@ -755,7 +756,7 @@ class PanePlacementTest(PaneFixture):
         ):
             with self.subTest(**kw):
                 fake = FakeTmux()
-                with self.assertRaises(types.TuiError):
+                with self.assertRaises(tmux_cli.TuiError):
                     self.open(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
@@ -1241,6 +1242,6 @@ class StackTest(Case):
         ):
             with self.subTest(opener=opener):
                 fake = self.fake()
-                with self.assertRaisesRegex(types.TuiError, "opener"):
+                with self.assertRaisesRegex(tmux_cli.TuiError, "opener"):
                     self.open(fake, opener=opener)
                 self.assertEqual(fake.calls, [])

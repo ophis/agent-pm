@@ -13,7 +13,7 @@ import time
 import unittest
 from contextlib import suppress
 
-from agent_pm.session.hosts.tmux import transport
+from agent_pm.session.engine import tmux_cli
 
 from session.tests.case import Case
 
@@ -48,7 +48,7 @@ class ExecTest(Case):
 
     def wrapper(self):
         """The shipped wrapper argv, its errpipe self.fifo."""
-        return [*transport._wrapper(self.root)[1][:-2], self.path, self.fifo]
+        return [*tmux_cli._wrapper(self.root)[1][:-2], self.path, self.fifo]
 
     def piped(self):
         """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds

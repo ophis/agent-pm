@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import subprocess
 
-from agent_pm.session.hosts.tmux.transport import (
+from agent_pm.session.engine.tmux_cli import (
     ITERM_ID,
-    error,
-)
-from agent_pm.session.hosts.tmux.types import (
     TuiError,
+    error,
 )
 
 SHOW_TIMEOUT = 30

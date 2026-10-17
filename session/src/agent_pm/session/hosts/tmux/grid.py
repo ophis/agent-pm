@@ -10,6 +10,15 @@ import stat
 import sys
 import time
 
+from agent_pm.session.engine.tmux_cli import (
+    NAME,
+    OPENER,
+    PANE,
+    SESSION_ID,
+    SESSIONS,
+    TmuxCli,
+    TuiError,
+)
 from agent_pm.session.engine.types import COMMAND
 from agent_pm.session.hosts.tmux.layout import (
     grid_layout,
@@ -20,18 +29,9 @@ from agent_pm.session.hosts.tmux.layout import (
     render_layout,
     swaps,
 )
-from agent_pm.session.hosts.tmux.transport import (
-    NAME,
-    OPENER,
-    PANE,
-    SESSION_ID,
-    SESSIONS,
-    Tmux,
-)
 from agent_pm.session.hosts.tmux.types import (
     Cell,
     Retile,
-    TuiError,
 )
 from agent_pm.utils import command_path
 
@@ -159,7 +159,7 @@ def hook_command() -> tuple[str, str | None]:
 
 
 class Grid:
-    def __init__(self, tmux: Tmux) -> None:
+    def __init__(self, tmux: TmuxCli) -> None:
         self.tmux = tmux
 
     def configure(

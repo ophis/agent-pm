@@ -270,7 +270,7 @@ class TmuxCalls(Sample):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
         mode = f"session/{PKG}/session/modes/x.py"
         cli = f"session/{PKG}/session/cli.py"
-        outside = "tmux outside session/hosts/tmux/"
+        outside = "tmux outside session/hosts/tmux/ and engine/tmux_cli.py"
         for files, expected in (
             (
                 {
@@ -351,7 +351,7 @@ class SessionDisplay(Sample):
         source = 'def f(pane, opener, split_from): return "@record"\n'
         for files in (
             {
-                f"session/{PKG}/session/hosts/tmux/transport.py": source,
+                f"session/{PKG}/session/engine/tmux_cli.py": source,
                 f"delegate/{PKG}/delegate/engine/other.py": source,
                 f"linear-orchestrator/{OPKG}/engine/sample.py": source,
                 "session/tests/unit/sample_test.py": source,

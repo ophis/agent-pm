@@ -139,7 +139,6 @@ def _probe_dir() -> str | None:
 
 
 def _host_class(setup: _Setup, name: str) -> tuple[type[Host], dict]:
-    """[hosts.<name>]'s class and its other settings."""
     settings = thaw(setup.hosts.tables[name])
     path = settings.pop("implementation", None)
     try:
@@ -361,7 +360,6 @@ class HostedSession(Session):
 
     @classmethod
     def client_resume(cls, client: str, argv: Sequence[str]) -> int:
-        """Runs `client`'s SessionInfo.resume command."""
         return cls._config().registry.client(client).resume_main(argv)
 
     @classmethod
@@ -485,7 +483,6 @@ class HostedSession(Session):
             raise
 
     def _record(self, event: SessionEvent | Stderr | ClientBound) -> None:
-        """A live event: its client_session or stderr line, then its _fold."""
         if isinstance(event, ClientBound):
             self._log.note(
                 "client_session",

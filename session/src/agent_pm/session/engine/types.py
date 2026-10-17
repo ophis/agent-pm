@@ -45,6 +45,7 @@ __all__ = [
     "NamedKey",
     "NotShowable",
     "NoRecordedSession",
+    "PaneStatus",
     "Paste",
     "Prepared",
     "ProcessOptions",
@@ -83,6 +84,11 @@ class Liveness(StrEnum):
     LIVE = "live"
     ABSENT = "absent"
     UNKNOWN = "unknown"
+
+
+class PaneStatus(StrEnum):
+    RUNNING = "running"
+    UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
 
 
 class Effort(StrEnum):
@@ -204,8 +210,6 @@ def _string_tuple(value) -> bool:
 
 @dataclass(frozen=True)
 class TuiSettings:
-    """A terminal display's status line and grid preferences."""
-
     status_line: bool = False
     per_column: int | None = None
     retile: str | None = None

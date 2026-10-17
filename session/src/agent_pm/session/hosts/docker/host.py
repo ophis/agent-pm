@@ -1,5 +1,5 @@
 """DockerHost runs each tui session in its own broker-made container (docs/docker-host.md): the
-container's tmux through `docker exec` (a Tmux over daemon.exec_runner), a host run supervisor for
+container's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a host run supervisor for
 its hooks, and a host view session, tagged VIEW, for show. What the host knows of a session is its
 Host record (RECORD in its state dir), never the container's tmux options.
 """
@@ -24,6 +24,7 @@ from dataclasses import replace
 from typing import NamedTuple
 
 import agent_pm.utils
+from agent_pm.session.engine.tmux_cli import DIED, VIEW, TmuxCli, TuiError, absent
 from agent_pm.session.engine.types import (
     COMMAND,
     RESUME,
@@ -32,6 +33,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     HookCallback,
     Launch,
+    PaneStatus,
     SessionError,
     SessionRow,
     StatusState,
@@ -60,8 +62,6 @@ from agent_pm.session.hosts.docker.daemon import (
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.tmux.host import TmuxHost, TmuxTerminal
-from agent_pm.session.hosts.tmux.transport import DIED, VIEW, Tmux, absent
-from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 from agent_pm.utils import (
     Display,
     Record,
@@ -256,7 +256,7 @@ class DockerTerminal(TmuxTerminal):
         name: str,
         process: str,
         *,
-        tmux: Tmux,
+        tmux: TmuxCli,
         host: DockerHost,
         container: str,
         generation: str,
@@ -393,7 +393,7 @@ class DockerHost(Host, Showable):
         name: str,
         settings: Mapping | None = None,
         *,
-        tmux: Tmux | None = None,
+        tmux: TmuxCli | None = None,
         run=capped,
         broker: Broker | None = None,
     ) -> None:
@@ -408,14 +408,14 @@ class DockerHost(Host, Showable):
             isinstance(root, str) for root in self.roots
         ):
             raise ConfigError(f"[hosts.{name}] mount_roots: want a list of paths")
-        self.tmux = Tmux() if tmux is None else tmux
+        self.tmux = TmuxCli() if tmux is None else tmux
         self.view = TmuxHost(name, tmux=self.tmux)
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
 
-    def container_tmux(self, container: str) -> Tmux:
-        return Tmux(exec_runner(self.docker, container, run=self.run))
+    def container_tmux(self, container: str) -> TmuxCli:
+        return TmuxCli(exec_runner(self.docker, container, run=self.run))
 
     def _ps(self) -> list[list[str]]:
         """[] with no daemon socket or docker CLI, as tmux with no server: every Host is listed."""

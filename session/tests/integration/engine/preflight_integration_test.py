@@ -12,7 +12,7 @@ from unittest import mock
 from agent_pm.session import Access, ConfigError, Effort, Host, Mode, SessionError, Spec
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.hosts.tmux.types import PaneStatus
+from agent_pm.session.engine.types import PaneStatus
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
 from session.tests.fakes.preflight import PreflightClient

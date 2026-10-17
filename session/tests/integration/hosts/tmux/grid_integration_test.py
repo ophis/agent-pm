@@ -11,10 +11,10 @@ import time
 from unittest import mock
 
 from agent_pm.session import Showable
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
-from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
@@ -240,7 +240,7 @@ class SplitsTest(Live):
 class StartTest(Live):
     def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
         events = os.path.join(self.cwd, "events")
-        Tmux().start(
+        TmuxCli().start(
             "s1",
             Launch(tuple(["/bin/sh", "-c", "exit 3"]), self.server.env(), cwd=self.cwd),
             events=events,
@@ -254,7 +254,7 @@ class StartTest(Live):
             return True
 
         live_tmux.wait(dead, what="s1's dead line")
-        self.assertEqual((Tmux().status("s1"), self.server.option("s1", "@state")), (3, "dead"))
+        self.assertEqual((TmuxCli().status("s1"), self.server.option("s1", "@state")), (3, "dead"))
 
 
 class RetileTest(Live):
@@ -517,7 +517,7 @@ class SettleTest(Live):
         path = {"PATH": os.pathsep.join((PLUGIN_BIN, os.environ.get("PATH", "")))}
         with self.inside(MANAGER), mock.patch.dict(os.environ, path):
             self.assertIsNone(
-                tmux_model.Grid(Tmux()).configure(
+                tmux_model.Grid(TmuxCli()).configure(
                     self.window, self.manager, per_column=1, retile=tmux_model.Retile("all")
                 )
             )

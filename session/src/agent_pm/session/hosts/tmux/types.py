@@ -6,11 +6,6 @@ from enum import StrEnum
 from typing import NamedTuple
 
 
-class PaneStatus(StrEnum):
-    RUNNING = "running"
-    UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
-
-
 class Split(StrEnum):
     RIGHT = "right"
     BELOW = "below"
@@ -20,10 +15,6 @@ class Retile(StrEnum):
     ALL = "all"
     OPEN_CLOSE = "open-close"
     OFF = "off"
-
-
-class TuiError(Exception):
-    pass
 
 
 class TmuxAnchor(NamedTuple):

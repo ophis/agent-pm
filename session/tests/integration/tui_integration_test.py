@@ -19,6 +19,7 @@ from unittest import mock
 
 from agent_pm.session import Session
 from agent_pm.session.engine.records import RunLog
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -31,7 +32,6 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.modes import tui
 
 from session.tests import fake_client, live_tmux
@@ -276,7 +276,7 @@ class SameNameTest(Live):
     def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
         with open(self.clients["fake"]["scenario"], "w") as f:
             json.dump([{"read": True}], f)
-        tmux = Tmux()
+        tmux = TmuxCli()
         real, order, second, first_done = (
             tmux.start,
             itertools.count(),

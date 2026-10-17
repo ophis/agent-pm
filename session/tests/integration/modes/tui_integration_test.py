@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Access, Spec
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.modes import tui
 
 from session.tests import fake_client
@@ -85,7 +85,7 @@ class PollCostTest(Live):
             commands.append(argv[1])
             return subprocess.run(argv, **kwargs)
 
-        host = TmuxHost("tmux", tmux=Tmux(runner=counted))
+        host = TmuxHost("tmux", tmux=TmuxCli(runner=counted))
         scenario = self.clients["fake"]["scenario"]
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:

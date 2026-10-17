@@ -6,8 +6,9 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session.hosts.tmux import TmuxHost, types
-from agent_pm.session.hosts.tmux.transport import Tmux
+from agent_pm.session.engine.tmux_cli import TmuxCli
+from agent_pm.session.engine.types import PaneStatus
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
@@ -30,13 +31,13 @@ PROCESS = "4242 $3 %7 4343"
 
 def fake_tmux(runner: FakeTmux) -> mock.Mock:
     """Recorded session verbs; run, checked and runner (Grid's, Placement's, Iterm's) play runner."""
-    tmux = mock.create_autospec(Tmux, instance=True)
-    tmux.PAUSE = Tmux.PAUSE
+    tmux = mock.create_autospec(TmuxCli, instance=True)
+    tmux.PAUSE = TmuxCli.PAUSE
     tmux.runner = runner
-    tmux.run.side_effect = Tmux(runner).run
-    tmux.checked.side_effect = Tmux(runner).checked
-    tmux.sessions.side_effect = Tmux(runner).sessions
-    tmux.status.return_value = types.PaneStatus.RUNNING
+    tmux.run.side_effect = TmuxCli(runner).run
+    tmux.checked.side_effect = TmuxCli(runner).checked
+    tmux.sessions.side_effect = TmuxCli(runner).sessions
+    tmux.status.return_value = PaneStatus.RUNNING
     tmux.process_status.side_effect = lambda target: (tmux.process(target), tmux.status(target))
     tmux.listing.return_value = []
     tmux.option.return_value = None

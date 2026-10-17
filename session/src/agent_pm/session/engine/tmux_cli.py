@@ -1,6 +1,6 @@
-"""Tmux, tmux inside our program: every tmux call through runner (subprocess.run's signature) and
-sleep, production one Tmux(), tests a fake runner. start and detach hand a launch over to a new
-session's pane (EXEC); launch puts it on tmux's command line. Listings skip sessions tagged VIEW.
+"""TmuxCli: every tmux call through runner (subprocess.run's signature) and sleep. start and
+detach hand a launch to a new pane (EXEC); launch puts it on tmux's command line. Listings skip
+VIEW sessions.
 """
 
 from __future__ import annotations
@@ -21,11 +21,12 @@ import uuid
 from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Launch
-from agent_pm.session.hosts.tmux.types import (
-    PaneStatus,
-    TuiError,
-)
+from agent_pm.session.engine.types import Launch, PaneStatus
+
+
+class TuiError(Exception):
+    pass
+
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -159,7 +160,7 @@ MARK_TIMEOUT = 5
 
 
 def _own_pane(name: str, dead: str, process: str, panes: dict[str, str]) -> tuple[str | None, str]:
-    """The pane to read a session's last lines from, and its pane_dead."""
+    """The pane for a session's last lines, and its pane_dead."""
     if not process:
         return name, dead
     if not PROCESS_ID.fullmatch(process):
@@ -203,9 +204,7 @@ def absent(res: subprocess.CompletedProcess) -> bool:
 
 
 def display_error(value) -> str | None:
-    """Why value cannot be a display (None: it can): one is None or printable text not ending in ;,
-    so a tab-separated listing row stays one row.
-    """
+    """Why value is no display (None: it is), keeping a tab-separated listing row one row."""
     if value is None or (
         isinstance(value, str) and value.isprintable() and not value.endswith(";")
     ):
@@ -214,15 +213,13 @@ def display_error(value) -> str | None:
 
 
 def tmux_path() -> str | None:
-    """The real path of the tmux on PATH, else None."""
+    """The real path (symlinks resolved) of the tmux on PATH, else None."""
     found = shutil.which("tmux")
     return None if found is None else os.path.realpath(found)
 
 
 def _out_of_mode(target: str, *command: str) -> list[str]:
-    """command after `copy-mode -q` in one tmux call: a pane in copy-mode (scrolled back) or another
-    mode would swallow its keys.
-    """
+    """copy-mode -q first: a pane in a mode (scrolled back) would swallow the keys."""
     return ["copy-mode", "-q", "-t", target, ";", *command]
 
 
@@ -293,7 +290,6 @@ def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
 
 
 def _recorded(session: str) -> list[str]:
-    """The creating call's last command: @process, its new pane's PROCESS."""
     return [";", "set-option", "-F", "-t", f"={session}:", "@process", PROCESS]
 
 
@@ -306,7 +302,7 @@ def _identity(res: subprocess.CompletedProcess) -> str:
 
 def _started(path: str, pipe: int, command: str, sleep) -> bool:
     """
-    Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises.
+    Whether the handover went, then execve closed the errpipe, in time; errpipe data raises.
     """
     polls, out = 0, b""
     while os.path.exists(path):
@@ -337,7 +333,7 @@ def _started(path: str, pipe: int, command: str, sleep) -> bool:
 
 
 def validate_events(path: str) -> str:
-    """Check an events destination without opening it for writing or creating it."""
+    """The absolute path, checked; never opens it for writing or creates it (events_file does)."""
     path = os.path.abspath(path)
     if "#" in path or path.endswith(";"):
         raise TuiError(f"events file {path}: tmux would misread it")
@@ -370,9 +366,7 @@ def validate_start(
 
 
 def events_file(path: str) -> str:
-    """The absolute path, created 0600 when missing; TuiError unless a regular file tmux takes
-    verbatim.
-    """
+    """validate_events, then creates it 0600 when missing; TuiError unless a regular file."""
     path = validate_events(path)
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK, 0o600)
@@ -401,7 +395,7 @@ def _decorations(
     ]
 
 
-class Tmux:
+class TmuxCli:
     PAUSE = PAUSE
 
     def __init__(self, runner=subprocess.run, *, sleep=time.sleep) -> None:
@@ -424,9 +418,7 @@ class Tmux:
             raise TuiError(f"tmux: {e}") from e
 
     def read(self, target: str, lines: int | None = None) -> str:
-        """The visible pane's text, or its last `lines` lines with history; trailing blank lines
-        dropped.
-        """
+        """The visible text, or the last `lines` with history; trailing blank lines dropped."""
         args = ["capture-pane", "-p", "-J", "-t", address(target)]
         if lines is not None:
             if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
@@ -438,9 +430,7 @@ class Tmux:
         return "\n".join(text if lines is None else text[-lines:])
 
     def status(self, target: str):
-        """PaneStatus.RUNNING, None (target or server absent), PaneStatus.UNKNOWN, or the dead
-        pane's exit status (signal n: -n).
-        """
+        """RUNNING, None (target or server absent), UNKNOWN, or a dead pane's status (signal n: -n)."""
         target = address(target)
         try:
             res = self.run(["display-message", "-p", "-t", target, DEAD])
@@ -451,7 +441,7 @@ class Tmux:
         return self._dead_status(res.stdout.rstrip("\n"))
 
     def process_status(self, target: str):
-        """(process(), status()) of target's pane from one tmux call; (None, None) when absent."""
+        """(process(), status()) in one tmux call; (None, None) when absent."""
         res = self.run(["display-message", "-p", "-t", address(target), f"{PROCESS}\t{DEAD}"])
         if res.returncode:
             if absent(res):
@@ -484,14 +474,13 @@ class Tmux:
         return int(code) if code.isdecimal() else PaneStatus.UNKNOWN
 
     def kill(self, target: str) -> None:
-        """Kills the pane a pane id names, else the named session."""
+        """Kills the pane a pane id names, else the whole named session."""
         if PANE.fullmatch(target):
             self.checked(["kill-pane", "-t", target])
         else:
             self.checked(["kill-session", "-t", address(target, "")])
 
     def paste(self, target: str, text: str) -> None:
-        """A bracketed paste through a buffer of its own, deleted even on failure."""
         buffer = f"tui-{target}-{uuid.uuid4().hex}"
         target = address(target)
         # load-buffer from stdin keeps text exact: send-keys -l lost long text's head, set-buffer a
@@ -507,7 +496,7 @@ class Tmux:
             raise
 
     def keys(self, target: str, *names: str) -> None:
-        """Presses tmux keys (Enter, Escape, C-c); a name tmux would misread raises first."""
+        """Presses tmux keys (Enter, Escape, C-c); a name tmux would misread raises TuiError first."""
         target = address(target)
         for name in names:
             if name.startswith("-") or name.endswith(";"):
@@ -515,9 +504,7 @@ class Tmux:
         self.checked(_out_of_mode(target, "send-keys", "-t", target, *names))
 
     def press(self, target: str, *names: str) -> None:
-        """Presses tmux key names after `--` (a `-` key is no flag); `;` must come escaped
-        (`\\;`).
-        """
+        """Key names after `--`, so a `-` key is no flag; `;` must come escaped (`\\;`)."""
         target = address(target)
         for name in names:
             if not name or name.endswith(";") and not name.endswith("\\;"):
@@ -525,7 +512,6 @@ class Tmux:
         self.checked(_out_of_mode(target, "send-keys", "-t", target, "--", *names))
 
     def set_option(self, target: str, name: str, value: str) -> None:
-        """Sets user option `name` of target's session."""
         target = address(target)
         if not USER_OPTION.fullmatch(name):
             raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
@@ -546,7 +532,7 @@ class Tmux:
         return res.stdout.removesuffix("\n")
 
     def process(self, target: str) -> str | None:
-        """PROCESS of target's pane (a session's: its active one); None when absent."""
+        """PROCESS of target's pane (a session's active one); None when absent."""
         res = self.run(["display-message", "-p", "-t", address(target), PROCESS])
         if res.returncode:
             if absent(res):
@@ -555,17 +541,15 @@ class Tmux:
         return _process_id(res.stdout.strip())
 
     def sessions(self) -> list[str] | None:
-        """The sessions' names: [] when no server runs, None when tmux fails."""
+        """Names: [] without a server, None when tmux fails."""
         found = self._table(["list-sessions", *VIEWLESS, "-F", "#{session_name}"], 1)
         return None if found is None else [name for (name,) in found if name]
 
     def listing(self, match=None) -> list[dict] | None:
-        """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane
-        state, `shown` (no client: None; else the newest client's host session, "" if none or not
-        NAME), a dead pane's last LAST_LINES lines; a bad or empty field None, a row of the wrong
-        width dropped. [] when no server runs, None when tmux fails. A session with @process is read
-        through the pane its launch recorded, whichever pane is active: dead once that pane is gone,
-        and dead None for a bad @process; any other session through its active pane.
+        """NAME sessions `match` fullmatches (None: all), by name: tags, pane state, `shown` (no
+        client: None; else the newest client's host session, "" if none or not NAME), a dead pane's
+        last LAST_LINES lines; bad or empty fields None, wrong-width rows dropped; [] without a
+        server, None when tmux fails. Reads @process's pane (gone: dead; bad: dead None), else the active.
         """
         found = self._table(["list-sessions", *VIEWLESS, "-F", LISTING], 9)
         if found is None:
@@ -636,9 +620,8 @@ class Tmux:
         tmux: str = "tmux",
         session: str | None = None,
     ) -> None:
-        """Hook protocol: sets the pane ($TMUX_PANE when None) @state to word; done and blocked also
-        append `HH:MM:SS <session> <word>` to events, an existing regular file (None: no line); the
-        session is the pane's unless given.
+        """Hook protocol: pane ($TMUX_PANE when None) @state = word; done and blocked also append
+        `HH:MM:SS <session> <word>` (session: the pane's unless given) to events (None: no line).
         """
         pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
         if not pane:
@@ -691,9 +674,8 @@ class Tmux:
         tags: Mapping[str, str] | None = None,
         died: str = DIED,
     ) -> str:
-        """start's session, decorations and @process in one call, its argv run as given (no PATH
-        lookup, no handover file) with only env's -e values, and pane-died `died`; no events.
-        Returns its pane's process().
+        """start's setup in one call, without events: argv as given (no PATH lookup or handover
+        file), only env's -e values, pane-died `died`. Returns process().
         """
         session_name(session)
         tag_options = _tags(session, tags or {})
@@ -752,13 +734,11 @@ class Tmux:
         status_line: bool = False,
         tags: Mapping[str, str] | None = None,
     ) -> str:
-        """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its
-        terminal keys the pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line
-        to @events), the `<session> <state>` border, the status line and @process set in the same tmux
-        call (an instant death still gets its dead line); opens no pane. An existing session is
-        refused untouched; argv reaches the pane through a 0600 handover file. Returns its pane's
-        process(), read as tmux made it, once argv has exec'd; raising, it leaves no session of its
-        own.
+        """argv in a new detached session keeping its pane after exit, in cwd with env (terminal keys
+        the pane's, PWD cwd). Every option and the pane-died hook (@state dead, dead line to
+        @events) go in that one tmux call, so instant deaths log. Opens no pane; refuses an existing
+        session untouched; argv goes via a 0600 handover file. Returns process() once argv exec'd;
+        raising, leaves no own session.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
@@ -848,12 +828,9 @@ class Tmux:
         sid: str | None = None,
         control: str | None = None,
     ) -> str:
-        """Runs argv as start does; env's full iTerm2
-        $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
-        No decoration; with events, @events and a kept pane whose pane-died hook appends
-        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills that pane. @process set
-        in the same tmux call. An existing session is refused untouched. Returns its pane's
-        process(), read as tmux made it.
+        """As start, keeping env's iTerm2 $ITERM_SESSION_ID; opener, display, record (a line) become
+        @opener, @display, @record. No decoration; events: a kept pane whose pane-died hook appends
+        `HH:MM:SS <session> exited <rc>` (signal n: -n) to them, then kills it.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)

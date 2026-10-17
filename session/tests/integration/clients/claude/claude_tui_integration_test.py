@@ -20,7 +20,9 @@ from unittest import mock
 
 from agent_pm.session import SIGNALS, Session, Showable
 from agent_pm.session.clients.claude.tui import ClaudeTui
+from agent_pm.session.engine import tmux_cli as tmux_model
 from agent_pm.session.engine.records import RunLog
+from agent_pm.session.engine.tmux_cli import TmuxCli, attach_command
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -35,8 +37,6 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux import transport as tmux_model
-from agent_pm.session.hosts.tmux.transport import Tmux, attach_command
 from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
@@ -354,7 +354,7 @@ class BlockedTest(Live):
         )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
-        Tmux().keys("w1", "Enter")
+        TmuxCli().keys("w1", "Enter")
         self.assertEqual(stream.next(), TurnEnd("Trusted.", 0))
         self.lines("w1 blocked", "w1 done")
 

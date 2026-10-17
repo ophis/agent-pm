@@ -11,6 +11,21 @@ import shutil
 import subprocess
 import sys
 
+from agent_pm.session.engine.tmux_cli import (
+    CLIENTS,
+    ITERM_ID,
+    NAME,
+    OPENER,
+    PANE,
+    PANES,
+    SESSION_ID,
+    SESSIONS,
+    TmuxCli,
+    TuiError,
+    attach_command,
+    error,
+    session_name,
+)
 from agent_pm.session.hosts.tmux.grid import (
     GRID_BUSY,
     GRID_PANES,
@@ -27,27 +42,12 @@ from agent_pm.session.hosts.tmux.iterm import (
     SHOW_TIMEOUT,
     Iterm,
 )
-from agent_pm.session.hosts.tmux.transport import (
-    CLIENTS,
-    ITERM_ID,
-    NAME,
-    OPENER,
-    PANE,
-    PANES,
-    SESSION_ID,
-    SESSIONS,
-    Tmux,
-    attach_command,
-    error,
-    session_name,
-)
 from agent_pm.session.hosts.tmux.types import (
     Anchor,
     ItermAnchor,
     Retile,
     Split,
     TmuxAnchor,
-    TuiError,
 )
 
 PLACEHOLDERS = {"session"}
@@ -80,7 +80,7 @@ def _iterm_pane(why: str) -> Anchor:
 
 
 class Placement:
-    def __init__(self, *, tmux: Tmux, grid: Grid, iterm: Iterm) -> None:
+    def __init__(self, *, tmux: TmuxCli, grid: Grid, iterm: Iterm) -> None:
         self.tmux, self.grid, self.iterm = tmux, grid, iterm
 
     def open_pane(

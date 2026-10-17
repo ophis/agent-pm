@@ -4,9 +4,9 @@ and appends its events line on the host.
 
 import os
 
+from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.types import HookCall, HookError
 from agent_pm.session.hosts.docker.daemon import container_name, endpoint, exec_runner
-from agent_pm.session.hosts.tmux import transport
 from agent_pm.session.hosts.tmux.hook import mark_launched
 
 
@@ -15,7 +15,7 @@ def on_hook(word: str, call: HookCall) -> None:
     docker, target, generation = (saved.get(key) for key in ("docker", "target", "generation"))
     if not isinstance(docker, str) or not os.path.isabs(docker):
         raise HookError("host state: bad docker")
-    if not isinstance(target, str) or not transport.NAME.fullmatch(target):
+    if not isinstance(target, str) or not tmux_cli.NAME.fullmatch(target):
         raise HookError("host state: bad target")
     if not isinstance(generation, str) or not generation.isalnum():
         raise HookError("host state: bad generation")

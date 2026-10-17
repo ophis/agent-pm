@@ -20,6 +20,7 @@ from unittest import mock
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.tui import ClaudeTui
 from agent_pm.session.engine.records import RunLog
+from agent_pm.session.engine.tmux_cli import TuiError
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -45,7 +46,6 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
-from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.modes import tui, tui_hook
 from agent_pm.utils import StatusState, inode_lock
 
