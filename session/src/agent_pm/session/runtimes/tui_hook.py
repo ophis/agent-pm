@@ -41,7 +41,7 @@ HOOKS = "hooks.jsonl"
 
 ROTATED = HOOKS + ".1"
 
-HOOKS_MAX = 1 << 20  # bytes of hooks.jsonl, then it becomes ROTATED
+HOOKS_MAX = 1 << 20  # bytes
 
 
 def _abs(value) -> bool:
@@ -285,7 +285,7 @@ def cut(value):
 
 def append(path: str, record: dict) -> None:
     """One write under an exclusive flock to a regular file, created 0600, still at `path` once
-    locked; a non-empty file the line would take past HOOKS_MAX first becomes ROTATED (`path`.1).
+    locked, first rotated if the line takes it past HOOKS_MAX.
     """
     line = (json.dumps(record) + "\n").encode()
     try:

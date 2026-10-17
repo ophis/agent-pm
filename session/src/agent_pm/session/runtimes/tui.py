@@ -74,7 +74,7 @@ SLICE = 0.1
 OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
 POLL_SCREEN = 0.5
 LOG = logging.getLogger("session")
-Cursor = tuple[int | None, int]  # TuiStore.records: hooks.jsonl's inode, offset
+Cursor = tuple[int | None, int]  # inode, offset
 
 
 def checked_name(name) -> str:
@@ -171,10 +171,8 @@ class TuiStore:
         return _read_state(self.name, self.state_file)
 
     def records(self, cursor: Cursor | None) -> tuple[list[tuple[str, dict]], Cursor]:
-        """The hook log's whole records past `cursor` (None: from the start, ROTATED's included),
-        across a rotation since; the cursor past them: hooks.jsonl's inode (None: absent), offset.
-        shortcut: two rotations between reads lose the middle file's tail; HOOKS_MAX makes that
-        need over 1 MiB of hooks between two polls.
+        """The hook log's records past `cursor` (None: ROTATED's too), across a rotation; the
+        cursor past them. shortcut: two rotations between reads lose the middle file.
         """
         with _opened(os.path.join(self.dir, tui_hook.HOOKS)) as (ino, current):
             older = b""
@@ -280,7 +278,7 @@ class TuiStore:
             yield
 
     def _forget(self) -> None:
-        """Unlinks the name's lock, its holder done with the name (inode_lock survives that)."""
+        """Unlinks the name's lock; inode_lock survives it."""
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tui_lock(self.name))
 
@@ -349,7 +347,7 @@ class TuiStore:
 
 @contextlib.contextmanager
 def _opened(path: str) -> Iterator[tuple[int | None, BinaryIO | None]]:
-    """`path` as a regular file and its inode, else (None, None); never waits on a FIFO."""
+    """`path`'s inode and stream if regular, else (None, None); never waits on a FIFO."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
@@ -364,7 +362,6 @@ def _opened(path: str) -> Iterator[tuple[int | None, BinaryIO | None]]:
 
 
 def _parsed(data: bytes) -> tuple[list[tuple[str, dict]], int]:
-    """data's whole records; the offset past them."""
     end = data.rfind(b"\n") + 1
     found = []
     for record in json_records(data[:end].split(b"\n")):
@@ -449,7 +446,7 @@ class TuiRuntime(Runtime):
         replayed: tuple[SessionEvent | Stderr | ClientBound, ...] = (),
         opening: tuple[str, str] | None = None,
     ) -> None:
-        """cursor: its hook log's next record (TuiStore.records); the default, a new log's start."""
+        """cursor: its next hook record (TuiStore.records)."""
         super().__init__(prepared)
         self.name, self.run, self.host, self._terminal = store.name, run, store.host, terminal
         self._store, self._replayed, self._generation = store, replayed, generation
