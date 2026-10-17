@@ -37,7 +37,7 @@ func fakeDocker(t *testing.T, script string) *CLI {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &CLI{path: path, home: dir, config: dir}
+	return &CLI{path: path, buildx: path, home: dir, config: dir}
 }
 
 func TestRunResults(t *testing.T) {
@@ -60,6 +60,24 @@ func TestUnreachable(t *testing.T) {
 		_, err := fakeDocker(t, "echo '"+msg+"' >&2; exit 1").Run(context.Background(), nil, nil)
 		if !errors.Is(err, ErrUnreachable) {
 			t.Fatalf("%q: %v", msg, err)
+		}
+	}
+}
+
+func TestNewNeedsNoDockerDesktop(t *testing.T) {
+	_, clean, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean()
+}
+
+func TestMissingExecutableIsUnreachable(t *testing.T) {
+	present := fakeDocker(t, "touch ran").path
+	for _, c := range []*CLI{{path: "/nonexistent/docker", buildx: present}, {path: present, buildx: "/nonexistent/docker-buildx"}} {
+		_, err := c.Run(context.Background(), []string{"ps"}, nil)
+		if !errors.Is(err, ErrUnreachable) || !strings.Contains(err.Error(), "executable unavailable: /nonexistent/") {
+			t.Fatalf("%q: %v", c.path, err)
 		}
 	}
 }

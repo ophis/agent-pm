@@ -58,17 +58,12 @@ func Absent(err error) bool {
 }
 
 type CLI struct {
-	path, home, config string
+	path, buildx, home, config string
 }
 
-// New checks Docker Desktop's executables and writes a private CLI config that ignores ~/.docker.
+// New writes a private CLI config that ignores ~/.docker; Run checks Docker Desktop's executables,
+// so a command's local validation fails first.
 func New(home string) (*CLI, func(), error) {
-	for _, path := range []string{Path, filepath.Join(pluginDir, "docker-buildx")} {
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-			return nil, nil, fmt.Errorf("Docker Desktop executable unavailable: %s", path)
-		}
-	}
 	dir, err := os.MkdirTemp("", "agent-pm-docker-")
 	if err != nil {
 		return nil, nil, err
@@ -79,7 +74,7 @@ func New(home string) (*CLI, func(), error) {
 		clean()
 		return nil, nil, err
 	}
-	return &CLI{path: Path, home: home, config: dir}, clean, nil
+	return &CLI{path: Path, buildx: filepath.Join(pluginDir, "docker-buildx"), home: home, config: dir}, clean, nil
 }
 
 func (c *CLI) Endpoint() string {
@@ -102,6 +97,12 @@ func (b *capped) Write(p []byte) (int, error) {
 }
 
 func (c *CLI) Run(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
+	for _, path := range []string{c.path, c.buildx} {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			return nil, fmt.Errorf("%w: Docker Desktop executable unavailable: %s", ErrUnreachable, path)
+		}
+	}
 	path, argv, env := c.Command(args)
 	cmd := exec.CommandContext(ctx, path, argv...)
 	cmd.Env = env
