@@ -96,9 +96,12 @@ class InstallHook(Case):
             self.install(self.stub, destination, owner=self.uid, top=Path(self.home))
         self.assertEqual(destination.read_text(), "old")
 
-    def test_hook_stub_is_a_placeholder_that_exits_zero(self):
+    def test_hook_stub_hands_off_to_the_sessions_stub_and_exits_zero(self):
         text = (ASSETS / "hook-stub").read_text()
         self.assertTrue(text.startswith("#!/bin/sh\n"))
+        stub = "session/src/agent_pm/session/hosts/docker/stub.py"
+        self.assertIn(f'/opt/agent-pm/venv/bin/python -I /opt/agent-pm/{stub} "$@"', text)
+        self.assertTrue(os.path.isfile(os.path.join(REPO, stub)))
         self.assertIn(">&2", text)
         self.assertTrue(text.rstrip().endswith("exit 0"))
 
