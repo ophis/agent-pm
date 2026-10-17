@@ -652,6 +652,7 @@ class RestartTest(Base):
         self.handle.wait_exit.return_value = True
         self.worker().restart()
         self.assertEqual(self.calls(), ["close", "close", "wait_exit", "start", "publish"])
+        self.assertTrue(self.session_cls.start.call_args.args[0].resume)
 
     def test_a_start_refused_once_the_old_session_is_gone_is_no_longer_a_config_error(self):
         self.handle.alive.return_value = True

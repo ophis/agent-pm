@@ -655,10 +655,15 @@ class StartTest(Base):
 
     def test_a_result_write_failure_rolls_back(self):
         os.makedirs(os.path.join(self.state, f"{GEN}.result.json", "taken"))
-        with self.assertRaisesRegex(SessionError, "docker session w: "):
-            self.start()
-        self.supervisor.terminate.assert_called()
-        self.assertEqual(self.order[-1], ("close", CONTAINER))
+        for resume in ("0", "1"):
+            with self.subTest(resume=resume):
+                if resume == "1":
+                    self.history()
+                self.supervisor.reset_mock()
+                with self.assertRaisesRegex(SessionError, "docker session w: "):
+                    self.start(resume=resume)
+                self.supervisor.terminate.assert_called()
+                self.assertEqual(self.order[-1], ("close", CONTAINER))
 
     def test_existing_container_refuses_start(self):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
