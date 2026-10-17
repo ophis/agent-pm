@@ -39,7 +39,7 @@ from agent_pm.session.engine.types import (
     SessionEvent,
     Spec,
 )
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import json_records, module_roots, read_regular, source_path
 
 PASSED = ("-c", "--enable", "--disable")

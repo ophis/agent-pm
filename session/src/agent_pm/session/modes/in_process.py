@@ -1,4 +1,4 @@
-"""The in_process Runtime: an InProcess's run iterated on a daemon thread into a queue; no child
+"""The in_process mode: an InProcess's run iterated on a daemon thread into a queue; no child
 process. A run that raises ends with its traceback as Stderr lines and code 1. stop() never
 waits: what came before it is still polled, the code is -SIGKILL unless the run had ended, and the
 run is closed at its next yield.
@@ -27,15 +27,15 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.runtimes.base import Runtime
-from agent_pm.session.runtimes.modes.in_process import InProcess
+from agent_pm.session.modes.base import BaseMode
+from agent_pm.session.modes.client_adapters.in_process import InProcess
 from agent_pm.utils import Display
 
 END = object()
 RUN_THREAD = "in_process run"
 
 
-class InProcessRuntime(Runtime):
+class InProcessMode(BaseMode):
     kind = Mode.IN_PROCESS
 
     def __init__(self, prepared: Prepared):

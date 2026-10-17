@@ -268,7 +268,7 @@ class ClientsKey(Sample):
 class TmuxCalls(Sample):
     def test_tmux_only_in_the_host_package_configuration_and_test_fixtures(self):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
-        runtime = f"session/{PKG}/session/runtimes/x.py"
+        mode = f"session/{PKG}/session/modes/x.py"
         cli = f"session/{PKG}/session/cli.py"
         outside = "tmux outside session/hosts/tmux/"
         for files, expected in (
@@ -278,7 +278,7 @@ class TmuxCalls(Sample):
                     f"session/{PKG}/session/hosts/tmux/commands.py": sample,
                     f"session/{PKG}/session/hosts/tmux/model/validation.py": sample,
                     f"session/{PKG}/session/hosts/tmux_external/x.py": sample,
-                    runtime: sample,
+                    mode: sample,
                     f"delegate/{PKG}/delegate/composer/y.py": 'TOOL = "tmux"\n',
                     "session/src/hosts/tmux/tmux_host.py": sample,
                     "session/tests/z.py": sample,
@@ -287,14 +287,14 @@ class TmuxCalls(Sample):
                     [
                         f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
                         'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
-                        f"{runtime}:2: {outside}",
+                        f"{mode}:2: {outside}",
                         f"session/{PKG}/session/hosts/tmux_external/x.py:2: {outside}",
                     ]
                 ),
             ),
             (
-                {runtime: 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'},
-                [f"{runtime}:{line}: {outside}" for line in (1, 2)],
+                {mode: 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'},
+                [f"{mode}:{line}: {outside}" for line in (1, 2)],
             ),
             (
                 {
@@ -324,7 +324,7 @@ class SessionDisplay(Sample):
     def test_display_names_are_rejected_in_each_scoped_source(self):
         for base in (
             f"session/{PKG}/session/cli.py",
-            f"session/{PKG}/session/runtimes/sample.py",
+            f"session/{PKG}/session/modes/sample.py",
             f"session/{PKG}/session/hosts/other/sample.py",
             f"utils/{PKG}/utils/sample.py",
             CONFIG_FILE,

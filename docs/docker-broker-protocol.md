@@ -61,7 +61,7 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 
 Session name and generation match
 [engine/types.py](../session/src/agent_pm/session/engine/types.py#L193) and
-[runtimes/tui.py](../session/src/agent_pm/session/runtimes/tui.py#L524).
+[modes/tui.py](../session/src/agent_pm/session/modes/tui.py#L524).
 Broker adds `agent-pm.session=<name>` and `agent-pm.generation=<generation>`.
 Container name is `agent-pm-<name>-<generation>`; close accepts that complete name.
 Paths are literal absolute paths: no `~` or environment expansion. Control characters

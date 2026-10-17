@@ -1,4 +1,4 @@
-"""runtimes/in_process.py: its start from a Spec (checks and the InProcess's check, one session line,
+"""modes/in_process.py: its start from a Spec (checks and the InProcess's check, one session line,
 then the run), the run on a daemon thread, its events, a raise as a traceback and code 1, stop's
 drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
 """
@@ -23,8 +23,8 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.runtimes.in_process import InProcessRuntime
-from agent_pm.session.runtimes.modes.in_process import InProcess
+from agent_pm.session.modes.client_adapters.in_process import InProcess
+from agent_pm.session.modes.in_process import InProcessMode
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost
@@ -98,10 +98,10 @@ class Base(Case):
         self.mode, self.recorded = None, []
 
     def start(self, client, spec=SPEC, record=None, display=None) -> Prepared:
-        """self.mode: InProcessRuntime started on spec with client and display, its session line
+        """self.mode: InProcessMode started on spec with client and display, its session line
         given to record, else kept in self.recorded; its Prepared.
         """
-        self.mode = InProcessRuntime.start(
+        self.mode = InProcessMode.start(
             spec,
             client,
             registry=self.session_cls._config().registry,
@@ -373,7 +373,7 @@ class Start(Base):
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         script, reached, release, _ = self.held()
-        mode = InProcessRuntime.start(
+        mode = InProcessMode.start(
             SPEC,
             StubClient(script),
             registry=self.session_cls._config().registry,
@@ -381,7 +381,7 @@ class Start(Base):
             host=MemoryHost(),
         )
         self.addCleanup(mode.stop)
-        self.assertIsInstance(mode, InProcessRuntime)
+        self.assertIsInstance(mode, InProcessMode)
         self.assertEqual(mode.prepared.info, self.recorded[0])
         self.assertTrue(reached.wait(WAIT))
         self.assertEqual((mode.state(), mode.poll(WAIT)), ("live", ([Reply("one")], False)))

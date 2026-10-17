@@ -55,12 +55,12 @@ The agent program a session runs (Claude Code, Codex, a test fake), and the code
 _Avoid_: adapter, runtime (a Mode's class), agent (a role's run), backend, vehicle
 
 **Mode**:
-How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a terminal on its Host, ends when its caller stops it) or in_process (the Client's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
+How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a terminal on its Host, ends when its caller stops it) or in_process (the Client's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its mode class runs it.
 _Avoid_: runtime (the class that runs it)
 
-**Runtime**:
-The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `Runtime` (`session/src/agent_pm/session/runtimes/base.py`) and `HeadlessRuntime`, `TuiRuntime` and `InProcessRuntime` (`runtimes/`).
-_Avoid_: mode (the value it runs), runner
+**Mode class**:
+The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `BaseMode` (`session/src/agent_pm/session/modes/base.py`) and `HeadlessMode`, `TuiMode` and `InProcessMode` (`modes/`), each holding the client adapter its Client gives it (`modes/client_adapters/`).
+_Avoid_: runtime, runner
 
 **Session**:
 One client session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted_session.py`).

@@ -46,8 +46,8 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import Host, Showable
-from agent_pm.session.runtimes import headless, in_process, tui
-from agent_pm.session.runtimes.base import Runtime, child_env
+from agent_pm.session.modes import headless, in_process, tui
+from agent_pm.session.modes.base import BaseMode, child_env
 from agent_pm.utils import (
     STATE,
     Display,
@@ -77,9 +77,8 @@ POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
 PROBE_TIMEOUT = 120
 UNCONFIGURED = "session not configured: call Session.configure first"
-MODES: dict[Mode, type[Runtime]] = {
-    mode.kind: mode
-    for mode in (headless.HeadlessRuntime, tui.TuiRuntime, in_process.InProcessRuntime)
+MODES: dict[Mode, type[BaseMode]] = {
+    mode.kind: mode for mode in (headless.HeadlessMode, tui.TuiMode, in_process.InProcessMode)
 }
 
 HostFactory = Callable[[type[Host], str, Mapping], Host]
@@ -172,7 +171,7 @@ class HostedSession(Session):
         spec: Spec,
         *,
         info: SessionInfo,
-        running: Runtime,
+        running: BaseMode,
         host: Host,
         idle_timeout: float | None = None,
         client: Client,
@@ -261,7 +260,7 @@ class HostedSession(Session):
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
         on.validate_display(display)
-        name = tui.TuiRuntime.resolve_name(spec) if mode == Mode.TUI else spec.name
+        name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
             if any(
@@ -309,12 +308,12 @@ class HostedSession(Session):
         tui.checked_name(name)
         _idle(idle_timeout)
         on = cls.host(host)
-        state = tui.TuiRuntime.snapshot(name)
+        state = tui.TuiMode.snapshot(name)
         try:
             client = setup.registry.client(state["client"])
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
-        running = tui.TuiRuntime.attach(name, state, client, host=on, sid=sid)
+        running = tui.TuiMode.attach(name, state, client, host=on, sid=sid)
         session = cls(
             state["client"],
             Mode.TUI,

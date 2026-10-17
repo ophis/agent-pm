@@ -1,4 +1,4 @@
-"""Runtime, a Mode's running session, and what the Runtimes share to start one. The class's
+"""BaseMode, a Mode's running session, and what the modes share to start one. The class's
 start() fixes a Prepared before anything starts, has `record` write the session line, then starts
 and returns the session, so none exists unstarted. stop() is idempotent.
 """
@@ -79,11 +79,11 @@ def identity_drop(registry: Registry) -> frozenset[str]:
     return frozenset(drop)
 
 
-class Runtime(ABC):
+class BaseMode(ABC):
     kind: ClassVar[Mode]
 
     def __init__(self, prepared: Prepared) -> None:
-        """Built by start (TuiRuntime.attach too) from what it started."""
+        """Built by start (TuiMode.attach too) from what it started."""
         self._prepared = prepared
 
     @property
@@ -116,7 +116,7 @@ class Runtime(ABC):
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """The session started; spec.sid set; registry: tui settings and identity_drop; host: the
-        selected execution Host; display: a tui session's, kept as given (other Runtimes refuse one).
+        selected execution Host; display: a tui session's, kept as given (other modes refuse one).
         """
 
     @property
@@ -126,7 +126,7 @@ class Runtime(ABC):
 
     @abstractmethod
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
-        """Events within `timeout` s and whether they ended; raises the Runtime's own failures."""
+        """Events within `timeout` s and whether they ended; raises the mode's own failures."""
 
     @abstractmethod
     def returncode(self, timeout: float) -> int | None:

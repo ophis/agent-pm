@@ -46,7 +46,7 @@ class SourceSuppressions(Sample):
 
     def test_each_suppression_needs_its_scopes_inventory_entry_and_reason(self):
         (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
-        hook = "session/src/agent_pm/session/runtimes/tui_hook.py"
+        hook = "session/src/agent_pm/session/modes/tui_hook.py"
         hook_comment = f"# noqa: BLE001  # {NOQA_ALLOWED[hook, 'BLE001', 'run']}"
         needs = "suppression needs explicit codes and a recorded reason"
         listed = f"# noqa: {code} # {reason}"
@@ -187,8 +187,8 @@ class SourceSuppressions(Sample):
                 for other in (
                     "other",
                     "Other._pump",
-                    "HeadlessRuntime.other",
-                    "HeadlessRuntime._pump.nested",
+                    "HeadlessMode.other",
+                    "HeadlessMode._pump.nested",
                 )
             ),
             ({}, None, []),

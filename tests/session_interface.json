@@ -266,7 +266,7 @@
  "agent_pm.session.extension.InteractiveProcess.status": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.InteractiveProcess.token": "property",
  "agent_pm.session.extension.InteractiveProcess.wait_exit": "def(self:POSITIONAL_OR_KEYWORD, timeout:POSITIONAL_OR_KEYWORD)",
- "agent_pm.session.extension.JsonHeadless": "class(agent_pm.session.runtimes.modes.headless.Headless)()",
+ "agent_pm.session.extension.JsonHeadless": "class(agent_pm.session.modes.client_adapters.headless.Headless)()",
  "agent_pm.session.extension.JsonHeadless.commit": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.JsonHeadless.events": "def(self:POSITIONAL_OR_KEYWORD, lines:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.JsonHeadless.launch": "def(self:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD)",

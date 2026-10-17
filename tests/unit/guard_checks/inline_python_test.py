@@ -107,13 +107,13 @@ class InlinePython(Sample):
             self.assertIn("run-time value", found)
 
     def test_exceptions_match_exact_code_and_stale_entries_fail(self):
-        code = "from agent_pm.session.runtimes import tui"
+        code = "from agent_pm.session.modes import tui"
         path = "session/tests/example.py"
         allowed = {
             (
                 path,
                 hashlib.sha256(code.encode()).hexdigest(),
-            ): "Isolates the concrete runtime fixture."
+            ): "Isolates the concrete mode fixture."
         }
         root = self.tree({path: f"import sys\nargv = [sys.executable, '-c', {code!r}]"})
         self.assertEqual(inline_python(root, allowed=allowed), [])
@@ -131,8 +131,8 @@ class InlinePython(Sample):
         for source in (
             "import sys\nargv = [sys.executable, '-c', 'from agent_pm.delegate.engine import plan']",
             "PY = ('python3', '-P')\nCODE = 'from agent_pm.delegate' + '.engine import plan'\nargv = (*PY, '-c', CODE)",
-            "def run():\n    code = 'from agent_pm.session.runtimes import tui'\n    argv = ['python3', '-c', code]",
-            "CODE: str = 'from agent_pm.session.runtimes import tui'\nargv = ['python3', '-c', CODE]",
+            "def run():\n    code = 'from agent_pm.session.modes import tui'\n    argv = ['python3', '-c', code]",
+            "CODE: str = 'from agent_pm.session.modes import tui'\nargv = ['python3', '-c', CODE]",
         ):
             with self.subTest(source=source):
                 self.assertEqual(len(self.checked(source)), 1)
@@ -156,7 +156,7 @@ class InlinePython(Sample):
             "from agent_pm.delegate import Delegate as D\nview = D.attach('w')\nview._read()",
             "from agent_pm.delegate import Delegate\nv: Delegate = Delegate.attach('w')\nv._read()",
             "from agent_pm.delegate import Delegate\nv = Delegate.attach('w')\ngetattr(v, '_read')()",
-            "import importlib\nimportlib.import_module('agent_pm.session.runtimes')",
+            "import importlib\nimportlib.import_module('agent_pm.session.modes')",
         ):
             with self.subTest(code=code):
                 self.assertTrue(_violations(code))
@@ -228,7 +228,7 @@ class InlinePython(Sample):
 
     def test_same_file_literal_bindings_resolve_and_parameters_do_not(self):
         source = (
-            "code = 'from agent_pm.session.runtimes import tui'\n"
+            "code = 'from agent_pm.session.modes import tui'\n"
             "def run(code):\n"
             "    return ['python3', '-c', code]\n"
         )

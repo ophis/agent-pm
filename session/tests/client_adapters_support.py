@@ -1,9 +1,9 @@
 """Stub mode objects the Client and mode contract tests share."""
 
 from agent_pm.session.engine.types import HookKind, Launch, Reply, Spec
-from agent_pm.session.runtimes.modes.headless import JsonHeadless
-from agent_pm.session.runtimes.modes.in_process import InProcess
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters.headless import JsonHeadless
+from agent_pm.session.modes.client_adapters.in_process import InProcess
+from agent_pm.session.modes.client_adapters.tui import Tui
 
 
 class StubHeadless(JsonHeadless):

@@ -168,7 +168,7 @@ class Base(Case):
         self.addCleanup(popen.stop)
 
     def tui_session(self, name, gen=GEN):
-        """The tui runtime's session.json for `name`, as start writes it before the Host runs."""
+        """The tui mode's session.json for `name`, as start writes it before the Host runs."""
         path = os.path.join(self.home, ".agent-pm", "tui", name)
         os.makedirs(path, exist_ok=True)
         with open(os.path.join(path, "session.json"), "w") as f:

@@ -12,7 +12,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.runtimes.modes.headless import JsonHeadless
+from agent_pm.session.modes.client_adapters.headless import JsonHeadless
 from agent_pm.utils import number
 
 

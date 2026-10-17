@@ -37,7 +37,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import transport as tmux_model
 from agent_pm.session.hosts.tmux.transport import Tmux, attach_command
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
 from session.tests import tui_support as tui_live

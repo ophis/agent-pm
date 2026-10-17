@@ -15,7 +15,7 @@ from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
 from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
 from session.tests.case import PLUGIN_BIN, Case

@@ -10,8 +10,8 @@ from agent_pm.session import extension
 from agent_pm.session.clients import base as clients_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
-from agent_pm.session.runtimes.base import Runtime
-from agent_pm.session.runtimes.modes import headless, in_process, tui
+from agent_pm.session.modes.base import BaseMode
+from agent_pm.session.modes.client_adapters import headless, in_process, tui
 
 from session.tests.case import Case
 
@@ -122,4 +122,4 @@ class ExtensionTest(Case):
                 with self.subTest(name=name):
                     self.assertIn(name, ABCS)
                     self.assertTrue(inspect.isabstract(value) or value is extension.Client)
-        self.assertNotIn(Runtime, {getattr(extension, n) for n in extension.__all__})
+        self.assertNotIn(BaseMode, {getattr(extension, n) for n in extension.__all__})

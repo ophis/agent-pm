@@ -156,32 +156,32 @@ source_modules = ["utils.tests"]
 forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
 
 [[tool.importlinter.contracts]]
-name = "Runtimes do not import the session API"
+name = "Modes do not import the session API"
 type = "forbidden"
-source_modules = ["agent_pm.session.runtimes"]
+source_modules = ["agent_pm.session.modes"]
 forbidden_modules = ["agent_pm.session.engine.base", "agent_pm.session.engine.hosted_session"]
 
 [[tool.importlinter.contracts]]
 name = "Session units follow the main import rules"
 type = "units"
 container = "agent_pm.session"
-units = ["agent_pm.session.engine.base", "agent_pm.session.engine.config", "agent_pm.session.engine.hosted_session", "agent_pm.session.engine.worker", "agent_pm.session.cli", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.engine.status_log", "agent_pm.session.runtimes", "agent_pm.session.runtimes.modes", "agent_pm.session.clients", "agent_pm.session.hosts", "agent_pm.session.hosts.base", "agent_pm.session.extension"]
+units = ["agent_pm.session.engine.base", "agent_pm.session.engine.config", "agent_pm.session.engine.hosted_session", "agent_pm.session.engine.worker", "agent_pm.session.cli", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.engine.status_log", "agent_pm.session.modes", "agent_pm.session.modes.client_adapters", "agent_pm.session.clients", "agent_pm.session.hosts", "agent_pm.session.hosts.base", "agent_pm.session.extension"]
 dependencies = [
     "agent_pm.session.engine.base -> agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
     "agent_pm.session.engine.config -> agent_pm.utils",
-    "agent_pm.session.engine.hosted_session -> agent_pm.session.engine.config agent_pm.session.engine.base agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.clients agent_pm.session.runtimes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.utils",
-    "agent_pm.session.cli -> agent_pm.session.engine.base agent_pm.session.engine.config agent_pm.session.engine.types agent_pm.session.engine.worker agent_pm.session.hosts.base agent_pm.session.runtimes agent_pm.utils",
-    "agent_pm.session.engine.worker -> agent_pm.session.engine.base agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.session.runtimes agent_pm.utils",
-    "agent_pm.session.runtimes -> agent_pm.session.runtimes.modes agent_pm.session.clients agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
-    "agent_pm.session.runtimes.modes -> agent_pm.session.engine.types agent_pm.utils",
-    "agent_pm.session.clients -> agent_pm.session.runtimes.modes agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.engine.hosted_session -> agent_pm.session.engine.config agent_pm.session.engine.base agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.clients agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.utils",
+    "agent_pm.session.cli -> agent_pm.session.engine.base agent_pm.session.engine.config agent_pm.session.engine.types agent_pm.session.engine.worker agent_pm.session.hosts.base agent_pm.session.modes agent_pm.utils",
+    "agent_pm.session.engine.worker -> agent_pm.session.engine.base agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.session.modes agent_pm.utils",
+    "agent_pm.session.modes -> agent_pm.session.modes.client_adapters agent_pm.session.clients agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.modes.client_adapters -> agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.clients -> agent_pm.session.modes.client_adapters agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.clients.registry -> agent_pm.session.hosts agent_pm.session.hosts.base",
     "agent_pm.session.engine.types -> agent_pm.utils",
     "agent_pm.session.engine.records -> agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.engine.status_log -> agent_pm.utils",
     "agent_pm.session.hosts -> agent_pm.session.hosts.base agent_pm.session.engine.status_log agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.hosts.base -> agent_pm.session.engine.types agent_pm.utils",
-    "agent_pm.session.extension -> agent_pm.session.clients agent_pm.session.runtimes.modes agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+    "agent_pm.session.extension -> agent_pm.session.clients agent_pm.session.modes.client_adapters agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
     "outside -> agent_pm.session.engine.status_log agent_pm.session.engine.base agent_pm.session.engine.config agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
 ]
 

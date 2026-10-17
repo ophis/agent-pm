@@ -1,6 +1,6 @@
 """The Client interface: a client factory from [clients.<name>] minus `implementation`;
 headless(), tui() and in_process() each give a fresh mode object, None if unsupported, implementing
-its Mode's contract in runtimes/modes/. Each mode reads what to run from the Spec alone. Starts no
+its Mode's contract in modes/client_adapters/. Each mode reads what to run from the Spec alone. Starts no
 process.
 """
 
@@ -18,9 +18,9 @@ from agent_pm.session.engine.types import (
     Spec,
     Usage,
 )
-from agent_pm.session.runtimes.modes.headless import Headless
-from agent_pm.session.runtimes.modes.in_process import InProcess
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.session.modes.client_adapters.in_process import InProcess
+from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import thaw
 
 

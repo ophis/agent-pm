@@ -16,7 +16,7 @@ from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
 from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.session.runtimes.in_process import RUN_THREAD
+from agent_pm.session.modes.in_process import RUN_THREAD
 
 from session.tests import fake_client
 from session.tests.case import Case

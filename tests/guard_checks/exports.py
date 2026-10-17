@@ -319,8 +319,8 @@ def _typing(node, *, operand=False):
 def session_interface_snapshot(repo: str) -> list[str]:
     """The session's public interface equals SESSION_INTERFACE. Only TASK-369, TASK-375, TASK-387,
     TASK-414, TASK-420, TASK-427, TASK-433, TASK-435, TASK-467, TASK-471, TASK-485, TASK-486,
-    TASK-504, TASK-508, TASK-526 and TASK-608 change it on purpose, rewriting the file from
-    _interface().
+    TASK-504, TASK-508, TASK-526, TASK-608 and TASK-612 change it on purpose, rewriting the file
+    from _interface().
     """
     return _snapshot_drift(repo, SESSION_INTERFACE, SESSION_INTERFACE_MODULES)
 

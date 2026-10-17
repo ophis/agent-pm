@@ -32,13 +32,13 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.runtimes.modes.headless import Headless, JsonHeadless
-from agent_pm.session.runtimes.modes.in_process import InProcess
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters.headless import Headless, JsonHeadless
+from agent_pm.session.modes.client_adapters.in_process import InProcess
+from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import sid_error
 
 from session.tests.case import Case
-from session.tests.modes_support import DetailedTui, StubHeadless, StubInProcess, StubTui
+from session.tests.client_adapters_support import DetailedTui, StubHeadless, StubInProcess, StubTui
 
 UUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 

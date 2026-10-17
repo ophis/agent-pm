@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent_pm.session import Exited, Launch, SessionStatusLog, TurnEnd
 from agent_pm.session.engine.types import Activity, Blocked
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
 from session.tests.tui_support import Live, Stream
