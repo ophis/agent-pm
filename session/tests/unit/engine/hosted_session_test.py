@@ -900,6 +900,18 @@ class EventsOverARuntimeTest(Case):
         resolver.side_effect = OSError("metadata unavailable")
         self.assertEqual(session.info(), previous)
 
+    def test_late_metadata_keeps_a_hosts_resume_command(self):
+        client = fake_client.FakeClient({})
+        client.session_metadata = lambda info: dataclasses.replace(info, resume="resume n1")
+        session = self.session((0, [ClientBound("n1")], True), client=client, name="w1")
+        RunLog(self.dir).note("session", sid="s1", cwd=self.dir, project=False)
+        argv = ("agent-pm-session", "resume", "w1")
+        wanted = f"cd {shlex.quote(self.dir)} && agent-pm-session resume w1"
+        with mock.patch.object(session._host, "_resume_argv", return_value=argv):
+            self.assertEqual(self.events(session), [Exited(0)])
+            self.assertEqual(session.info().resume, wanted)
+        self.assertEqual(RunLog(self.dir).session("s1").resume, wanted)
+
     def test_binding_record_failure_remains_fatal(self):
         client = fake_client.FakeClient({})
         client.session_metadata = mock.Mock(side_effect=lambda info: info)
@@ -1490,6 +1502,15 @@ class TuiStartTest(HostedTuiBase):
         with self.assertRaisesRegex(ConfigError, r"\[clients\.probe\]"):
             self.tui(client="probe", name="w2")
         self.assertEqual(other.calls.mock_calls, [])
+
+    def test_a_hosts_resume_command_replaces_the_clients_in_its_status(self):
+        self.configure("probe", tui=True)
+        session = self.tui(client="probe", name="w1")
+        argv = ("agent-pm-session", "resume", "w1")
+        with mock.patch.object(self.host, "_resume_argv", return_value=argv):
+            found = session.session_status()
+        wanted = f"cd {shlex.quote(session.info().cwd)} && agent-pm-session resume w1"
+        self.assertEqual(found, SessionStatus("yes", 1.5, wanted))
 
     def test_a_started_sessions_status_gives_the_client_its_launch_env(self):
         self.configure("probe", tui=True)
