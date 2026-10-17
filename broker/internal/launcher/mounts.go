@@ -121,13 +121,13 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 		}
 		return filepath.Clean(p)
 	}
-	var real []string
+	var realRoots []string
 	for _, root := range roots {
 		r := resolve(root)
 		if h.within(h.Home, r) {
 			return reject("mount root %s is the home directory or its ancestor.", root)
 		}
-		real = append(real, r)
+		realRoots = append(realRoots, r)
 	}
 	cwd, err := h.RealPath(m.CWD)
 	if err != nil {
@@ -143,7 +143,7 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 		}
 	}
 	inside := false
-	for _, r := range real {
+	for _, r := range realRoots {
 		inside = inside || h.within(cwd, r)
 	}
 	if !inside {
