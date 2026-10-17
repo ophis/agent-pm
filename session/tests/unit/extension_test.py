@@ -68,6 +68,8 @@ TYPES = {
         ),
         engine_types,
     ),
+    "TmuxView": hosts_base,
+    "CommandView": hosts_base,
     "Record": utils,
     "Status": utils,
     "Display": utils,

@@ -8,6 +8,8 @@ import os
 import signal
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import ClassVar
 
 from agent_pm.session.engine.types import (
     ClientHome,
@@ -44,6 +46,23 @@ TUI_STATE = "session.json"
 
 def tui_lock(name: str) -> str:
     return os.path.join(os.path.expanduser(TUI_DIR), f"{name}.lock")
+
+
+@dataclass(frozen=True)
+class TmuxView:
+    """A host tmux session the Viewer places as it is."""
+
+    session: str
+
+
+@dataclass(frozen=True)
+class CommandView:
+    """A command the Viewer runs in a view session it makes: printed, the attach command shown to
+    the user; argv, what that view session runs.
+    """
+
+    printed: str
+    argv: tuple[str, ...]
 
 
 class Process(ABC):
@@ -169,6 +188,8 @@ class Host(ABC):
     matches ("" none). display: completed in the caller's process.
     """
 
+    attachable: ClassVar[bool] = False
+
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name
         self.settings = thaw(settings or {})
@@ -233,6 +254,10 @@ class Host(ABC):
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list(display)]
+
+    def attach_target(self, name: str) -> TmuxView | CommandView | None:
+        """What the Viewer shows session `name` through; None unless attachable."""
+        return None
 
     def reclaim(self, token: str) -> Process | None:
         """An untrusted token's live process group, else None."""

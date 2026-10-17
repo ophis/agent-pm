@@ -418,6 +418,14 @@ class HostContract:
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "from afar", f"line in {out}")
 
+    def test_an_unattachable_host_names_no_attach_target(self):
+        if self.host.attachable:
+            self.skipTest("applies only to a Host that cannot show")
+        name = self.fresh()
+        self.assertIsNone(self.host.attach_target(name))
+        self.start("detach", name, SLEEP)
+        self.assertIsNone(self.host.attach_target(name))
+
     def test_a_host_that_cannot_show_returns_each_display_as_given(self):
         if isinstance(self.host, Showable):
             self.skipTest("applies only to a Host that cannot show")

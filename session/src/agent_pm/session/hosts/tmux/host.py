@@ -43,7 +43,7 @@ from agent_pm.session.engine.types import (
     StatusState,
     TuiSettings,
 )
-from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
+from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable, TmuxView
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hook
 from agent_pm.session.viewer import hidden as hidden_store
@@ -251,6 +251,8 @@ class TmuxHost(Host, Showable):
     not in FORMAT is kept as given.
     """
 
+    attachable = True
+
     def __init__(
         self, name: str, settings: Mapping | None = None, *, tmux: TmuxCli | None = None
     ) -> None:
@@ -262,6 +264,9 @@ class TmuxHost(Host, Showable):
         self.tmux = TmuxCli() if tmux is None else tmux
         self.grid = Grid(self.tmux)
         self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.runner))
+
+    def attach_target(self, name: str) -> TmuxView:
+        return TmuxView(_session(name))
 
     @classmethod
     def fold(cls, opener, split, split_from, *, hidden=False) -> Display:

@@ -7,6 +7,7 @@ import fcntl
 import io
 import json
 import os
+import shlex
 import signal
 import stat
 import threading
@@ -29,7 +30,7 @@ from agent_pm.session.engine.types import (
     StatusState,
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.base import CommandView, Host
 from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
@@ -1481,6 +1482,20 @@ class ListTest(Base):
                 "generation": GEN,
             },
         )
+
+
+class AttachTargetTest(Base):
+    def test_attach_target_runs_docker_exec_with_tmux_variables_cleared(self):
+        self.terminal()
+        argv = [DOCKER, "--host", self.ep, "exec", "-it", CONTAINER, "tmux", "attach", "-t", "=w"]
+        cleared = tuple(arg for key in CLEARED for arg in ("-u", key))
+        self.assertTrue(DockerHost.attachable)
+        self.assertEqual(
+            self.host.attach_target("w"),
+            CommandView(printed=shlex.join(argv), argv=("/usr/bin/env", *cleared, *argv)),
+        )
+        with self.assertRaisesRegex(SessionError, "^no docker session x$"):
+            self.host.attach_target("x")
 
 
 class ShowTest(Base):

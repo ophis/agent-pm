@@ -46,6 +46,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import (
     TUI_DIR,
     TUI_STATE,
+    CommandView,
     Host,
     InteractiveProcess,
     Process,
@@ -429,6 +430,7 @@ class DockerHost(Host, Showable):
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
+    attachable = True
 
     def __init__(
         self,
@@ -959,6 +961,16 @@ class DockerHost(Host, Showable):
         if found is None:
             raise SessionError(f"no docker session {name}")
         return shlex.join(_attach_argv(self.docker, found.container, name))
+
+    def attach_target(self, name: str) -> CommandView:
+        found = self._containers().get(name)
+        if found is None:
+            raise SessionError(f"no docker session {name}")
+        argv = _attach_argv(self.docker, found.container, name)
+        return CommandView(
+            printed=shlex.join(argv),
+            argv=("/usr/bin/env", *(arg for key in CLEARED for arg in ("-u", key)), *argv),
+        )
 
     def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
         process = self.attach(name)
