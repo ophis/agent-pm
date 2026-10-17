@@ -64,6 +64,11 @@ type CloseResult struct {
 	Removed   bool   `json:"removed"`
 }
 
+type WorkspaceResult struct {
+	Volume  string `json:"volume"`
+	Removed bool   `json:"removed"`
+}
+
 // failure classifies a Docker error: unreachable daemon, else code.
 func failure(err error, code protocol.Code, message string) *protocol.Error {
 	if errors.Is(err, docker.ErrUnreachable) {
@@ -72,7 +77,7 @@ func failure(err error, code protocol.Code, message string) *protocol.Error {
 	return protocol.New(code, message)
 }
 
-// diagnosed is failure with Docker's diagnostic as cause, only for the steps protocol 1 names: build stages and run.
+// diagnosed is failure with Docker's diagnostic as cause, only for the steps the protocol names: build stages, run, and workspace-rm's check and volume rm.
 func diagnosed(err error, code protocol.Code, message string) *protocol.Error {
 	e := failure(err, code, message)
 	if e.Code == code {

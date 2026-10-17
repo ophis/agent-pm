@@ -28,11 +28,12 @@ func recording(calls *[]call) app {
 			return map[string]string{"ok": name}, nil
 		}
 	}
-	build := result("build")
+	build, workspaceRm := result("build"), result("workspace-rm")
 	return app{build: func(ctx context.Context, arg string, _ time.Duration, p io.Writer) (any, error) {
 		return build(ctx, arg, p)
 	},
-		start: result("start"), close: result("close")}
+		start: result("start"), close: result("close"),
+		workspaceRm: func(ctx context.Context, volume string, _ bool) (any, error) { return workspaceRm(ctx, volume, nil) }}
 }
 
 func invoke(a app, args ...string) (int, string, string) {
@@ -54,7 +55,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestInputFixtures(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "close_input") {
+	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "close_input", "workspace_rm_input") {
 		t.Run(c.File, func(t *testing.T) {
 			var in struct{ Argv []string }
 			if err := json.Unmarshal(c.Data, &in); err != nil {
@@ -120,6 +121,13 @@ func TestUsageErrors(t *testing.T) {
 		{"close", []string{"close", "--container", "other"}},
 		{"close", []string{"close", "--container", "agent-pm-x-0123"}},
 		{"version", []string{"version", "x"}},
+		{"workspace-rm", []string{"workspace-rm"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", ".hidden"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", "a/b"}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", strings.Repeat("v", 256)}},
+		{"workspace-rm", []string{"workspace-rm", "--volume", "v", "--forced"}},
+		{"workspace-rm", []string{"workspace-rm", "--force", "--volume", "v"}},
 	} {
 		code, out, errOut := invoke(a, tc.args...)
 		if code != 2 {
@@ -146,6 +154,19 @@ func TestBuildMaxAge(t *testing.T) {
 		}}
 		if code, _, errOut := invoke(a, append([]string{"build", "--agent-pm", "/pkg"}, args...)...); code != 0 || got != want {
 			t.Fatalf("%q: exit %d max age %v want %v: %s", args, code, got, want, errOut)
+		}
+	}
+}
+
+func TestWorkspaceRmForce(t *testing.T) {
+	for want, args := range map[bool][]string{false: {"workspace-rm", "--volume", "v"}, true: {"workspace-rm", "--volume", "v", "--force"}} {
+		got := !want
+		a := app{workspaceRm: func(_ context.Context, volume string, force bool) (any, error) {
+			got = force
+			return map[string]any{"volume": volume, "removed": true}, nil
+		}}
+		if code, out, errOut := invoke(a, args...); code != 0 || got != want || out != `{"removed":true,"volume":"v"}`+"\n" {
+			t.Fatalf("%q: exit %d force %v: %q %s", args, code, got, out, errOut)
 		}
 	}
 }

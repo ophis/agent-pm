@@ -28,18 +28,21 @@ from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 MANIFEST = "/Users/example/.agent-pm/docker-state/worker_1/0123456789abcdef0123456789abcdef.json"
 CONTAINER = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
+VOLUME = "agent-pm-crew-worker_1"
 KEYS = broker.client_keys(REPO)
 CALLS = {
     "version_output": ("version", lambda b: b.version()),
     "build_output": ("build", lambda b: b.build("/opt/agent-pm")),
     "start_output": ("start", lambda b: b.start(MANIFEST, clients=KEYS)),
     "close_output": ("close", lambda b: b.close(CONTAINER)),
+    "workspace_rm_output": ("workspace-rm", lambda b: b.workspace_rm(VOLUME)),
 }
 COMMANDS = {
     "version": CALLS["version_output"],
     "build": CALLS["build_output"],
     "start": CALLS["start_output"],
     "close": CALLS["close_output"],
+    "workspace-rm": CALLS["workspace_rm_output"],
     "unknown": CALLS["version_output"],
 }
 
@@ -114,6 +117,15 @@ class ResponseTest(Case):
             ),
         )
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
+        self.assertTrue(
+            Broker(FakeBroker(success("workspace-rm-output.json"))).workspace_rm(VOLUME)
+        )
+        self.assertFalse(
+            Broker(FakeBroker(success("workspace-rm-absent.json"))).workspace_rm(VOLUME)
+        )
+        other = (0, json.dumps({"volume": "agent-pm-crew-other", "removed": True}), "")
+        with self.assertRaisesRegex(SessionError, "bad response to workspace-rm"):
+            Broker(FakeBroker(other)).workspace_rm(VOLUME)
 
     def test_build_passes_a_max_age(self):
         fake = FakeBroker(success("build-cached.json"))

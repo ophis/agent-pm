@@ -42,6 +42,8 @@ class DockerBrokerProtocol(Case):
             "start_output",
             "close_input",
             "close_output",
+            "workspace_rm_input",
+            "workspace_rm_output",
             "error",
         ):
             for valid in (True, False):

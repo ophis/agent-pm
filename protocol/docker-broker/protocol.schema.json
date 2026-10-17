@@ -94,6 +94,10 @@
       "type": "string",
       "pattern": "^agent-pm-(crew-[A-Za-z0-9_-]+|run-[A-Za-z0-9_.-]+-[0-9a-f]{8})$"
     },
+    "volume": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$"
+    },
     "endpoint": {
       "type": "string",
       "minLength": 1,
@@ -363,6 +367,50 @@
       ],
       "additionalProperties": false
     },
+    "workspace_rm_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "workspace-rm"
+            },
+            {
+              "const": "--volume"
+            },
+            {
+              "$ref": "#/$defs/volume"
+            },
+            {
+              "const": "--force"
+            }
+          ],
+          "items": false,
+          "minItems": 3
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "workspace_rm_output": {
+      "type": "object",
+      "properties": {
+        "volume": {
+          "$ref": "#/$defs/volume"
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "volume",
+        "removed"
+      ],
+      "additionalProperties": false
+    },
     "error": {
       "type": "object",
       "properties": {
@@ -378,6 +426,7 @@
                 "build",
                 "start",
                 "close",
+                "workspace-rm",
                 "unknown"
               ]
             },
@@ -393,6 +442,9 @@
                 "start_failed",
                 "close_failed",
                 "keychain_failed",
+                "workspace_dirty",
+                "workspace_rejected",
+                "workspace_failed",
                 "internal_error"
               ]
             },
@@ -489,6 +541,7 @@
                     "build",
                     "start",
                     "close",
+                    "workspace-rm",
                     "unknown"
                   ]
                 }
@@ -586,7 +639,8 @@
                   "enum": [
                     "build",
                     "start",
-                    "close"
+                    "close",
+                    "workspace-rm"
                   ]
                 }
               }
@@ -672,6 +726,63 @@
         {
           "properties": {
             "exit_code": {
+              "const": 12
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "workspace_dirty"
+                },
+                "command": {
+                  "enum": [
+                    "workspace-rm"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 13
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "workspace_rejected"
+                },
+                "command": {
+                  "enum": [
+                    "workspace-rm"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 14
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "workspace_failed"
+                },
+                "command": {
+                  "enum": [
+                    "workspace-rm"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
               "const": 70
             },
             "error": {
@@ -685,6 +796,7 @@
                     "build",
                     "start",
                     "close",
+                    "workspace-rm",
                     "unknown"
                   ]
                 }

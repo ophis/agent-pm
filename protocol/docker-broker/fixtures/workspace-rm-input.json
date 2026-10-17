@@ -1,0 +1,7 @@
+{
+  "argv": [
+    "workspace-rm",
+    "--volume",
+    "agent-pm-crew-worker_1"
+  ]
+}

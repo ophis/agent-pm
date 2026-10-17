@@ -142,6 +142,12 @@ class FakeBroker:
         self.closed.append(container)
         return True
 
+    def workspace_rm(self, volume):
+        self.order.append(("workspace_rm", volume))
+        if "workspace_rm" in self.failing:
+            raise self.failing["workspace_rm"]
+        return True
+
 
 class Base(Case):
     def setUp(self):
@@ -377,6 +383,7 @@ class StartTest(Base):
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 "version",
                 ("build", REPO),
+                ("workspace_rm", "agent-pm-crew-w"),
                 ("start", manifest, client_keys(REPO)),
                 ["exec", "-d", CONTAINER, RELAY, "serve"],
                 ["exec", "-i", CONTAINER, "test", "-S"],
@@ -521,10 +528,47 @@ class StartTest(Base):
             self.assertEqual(f.read(), "{}\n")
         manifest = os.path.join(self.state, f"{GEN}.json")
         self.assertIn(("start", manifest, client_keys(REPO)), self.order)
+        self.assertNotIn(("workspace_rm", "agent-pm-crew-w"), self.order)
         with open(manifest) as f:
             found = json.load(f)
         self.assertEqual((found["cwd"], found["agent_dir"]), (self.cwd, self.home_dir))
         self.assertIsInstance(process, DockerTerminal)
+
+    def test_a_new_start_whose_workspace_cannot_be_reset_keeps_the_home_and_starts_nothing(self):
+        os.makedirs(self.home_dir)
+        with open(os.path.join(self.home_dir, "keep"), "w"):
+            pass
+        dirty = (
+            "Workspace agent-pm-crew-w has uncommitted or unpushed work in: src/o/a. Delete it"
+            " anyway with agent-pm-broker workspace-rm --volume agent-pm-crew-w --force."
+        )
+        for error, raised, pattern in (
+            (
+                BrokerError(12, "workspace_dirty", dirty, "not_needed", None),
+                ConfigError,
+                re.escape(f"docker session w: {dirty}; or resume it: agent-pm-session resume w"),
+            ),
+            (
+                BrokerError(14, "workspace_failed", "check failed", "not_needed", None),
+                BrokerError,
+                "check failed",
+            ),
+            (
+                BrokerError(7, "docker_unreachable", "no daemon", "not_needed", None),
+                BrokerError,
+                "no daemon",
+            ),
+            (SessionError("broker: workspace-rm timed out"), SessionError, "timed out"),
+        ):
+            with self.subTest(error=error):
+                self.order.clear()
+                self.broker.failing = {"workspace_rm": error}
+                with self.assertRaisesRegex(raised, pattern):
+                    self.start()
+                self.assertEqual(self.order[-1], ("workspace_rm", "agent-pm-crew-w"))
+                self.assertEqual(os.listdir(self.home_dir), ["keep"])
+                self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.json")))
+                self.popen_mock.assert_not_called()
 
     def test_resume_without_native_history_fails_before_the_broker(self):
         missing = os.path.join(self.home_dir, "projects", "p", "s1.jsonl")

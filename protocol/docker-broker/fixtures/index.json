@@ -416,6 +416,77 @@
       }
     },
     {
+      "file": "workspace-rm-input.json",
+      "definition": "workspace_rm_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-input-force.json",
+      "definition": "workspace_rm_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-input-extra.json",
+      "definition": "workspace_rm_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "workspace-rm-input-bad-volume.json",
+      "definition": "workspace_rm_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "workspace-rm-output.json",
+      "definition": "workspace_rm_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-absent.json",
+      "definition": "workspace_rm_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "workspace-rm-output-extra.json",
+      "definition": "workspace_rm_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      },
+      "note": "Malformed broker response; caller fails closed."
+    },
+    {
       "file": "start-output-missing-codex.json",
       "definition": "start_output",
       "valid": false,
@@ -573,6 +644,36 @@
         "stage": "response",
         "exit_code": 11,
         "error_code": "keychain_failed"
+      }
+    },
+    {
+      "file": "error-workspace_dirty.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 12,
+        "error_code": "workspace_dirty"
+      }
+    },
+    {
+      "file": "error-workspace_rejected.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 13,
+        "error_code": "workspace_rejected"
+      }
+    },
+    {
+      "file": "error-workspace_failed.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 14,
+        "error_code": "workspace_failed"
       }
     },
     {

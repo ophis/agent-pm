@@ -26,16 +26,16 @@ func inside(p, base string) bool {
 	return p == base || base == "/" || strings.HasPrefix(p, base+"/")
 }
 
-// checkTree applies the mount-point rules a clean absolute container path can be judged on alone.
-func checkTree(p string) error {
+// checkTree applies the mount-point rules a clean absolute container path can be judged on alone, failing with code.
+func checkTree(p string, code protocol.Code) error {
 	for _, c := range covered {
 		if inside(c, p) {
-			return protocol.Newf(protocol.MountRejected, "Workspace %s equals or contains the container's %s.", p, c)
+			return protocol.Newf(code, "Workspace %s equals or contains the container's %s.", p, c)
 		}
 	}
 	for _, c := range internal {
 		if inside(p, c) {
-			return protocol.Newf(protocol.MountRejected, "Workspace %s lies inside the container's %s.", p, c)
+			return protocol.Newf(code, "Workspace %s lies inside the container's %s.", p, c)
 		}
 	}
 	return nil
@@ -73,7 +73,7 @@ func (h Host) checkMounts(m Manifest) error {
 	if !h.IsDir(m.CWD) {
 		return reject("Workspace %s must be an existing host directory.", m.CWD)
 	}
-	if err := checkTree(m.CWD); err != nil {
+	if err := checkTree(m.CWD, protocol.MountRejected); err != nil {
 		return err
 	}
 	if want := filepath.Join(h.Home, ".agent-pm/docker-state", m.Name, "claude"); m.ClaudeDir != want {

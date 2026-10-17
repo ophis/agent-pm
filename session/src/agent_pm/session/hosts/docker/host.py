@@ -630,6 +630,17 @@ class DockerHost(Host):
         root = plugin_root(hook)
         return hook, root, self.broker.build(root, max_age=max_age)
 
+    def _reset_workspace(self, name: str, volume: str) -> None:
+        """Deletes a new start's workspace volume, unless the broker's check finds unsaved work."""
+        try:
+            self.broker.workspace_rm(volume)
+        except BrokerError as error:
+            if error.code == "workspace_dirty":
+                raise ConfigError(
+                    f"docker session {name}: {error.message}; or resume it: agent-pm-session resume {name}"
+                ) from error
+            raise
+
     def detach(self, name, launch, *, display=None, events=None, record=None) -> Process:
         raise SessionError(f"detach {name}: the Docker Host runs only terminal sessions")
 
@@ -685,18 +696,19 @@ class DockerHost(Host):
                 f"docker session {name}: a container for it exists; close {name} first"
             )
         home = docker_home(name, home_dir)
+        if resume == "1" and read_beneath(home, launch.transcript, limit=0) is None:
+            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
+        laps("checks")
+        hook, root, (image, digest) = self._image(name)
+        volume = crew_volume(name)
         if resume == "0":
+            self._reset_workspace(name, volume)
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
-        elif read_beneath(home, launch.transcript, limit=0) is None:
-            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
-        laps("checks")
-        hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
         cwd = os.path.realpath(launch.cwd)
-        volume = crew_volume(name)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
             manifest,
