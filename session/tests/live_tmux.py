@@ -21,6 +21,7 @@ from session.tests.integration.clients.claude import fake_claude
 IDLE = ("cat", "-")
 TIMEOUT = 10
 POLL = 0.05
+RESEND = 1  # s: a just-listed client may drop input; every POLL would fill its pty
 SOCKET_MAX = 100  # sun_path: 104 bytes (macOS), 108 (Linux)
 HEADROOM = 256
 PANES = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}"
@@ -225,9 +226,14 @@ class Server:
 
         wait(listed, what=f"a control-mode client of {session}")
         width, height = self.size
-        os.write(master, f"refresh-client -C {width}x{height}\n".encode())
-        wait(
-            lambda: (
+        sent = -RESEND
+
+        def sized() -> bool:
+            nonlocal sent
+            if time.monotonic() - sent >= RESEND:
+                os.write(master, f"refresh-client -C {width}x{height}\n".encode())
+                sent = time.monotonic()
+            return (
                 self._out(
                     "display-message",
                     "-p",
@@ -236,9 +242,9 @@ class Server:
                     "#{window_width}x#{window_height}",
                 )
                 == f"{width}x{height}\n"
-            ),
-            what=f"{session}'s window at {width}x{height}",
-        )
+            )
+
+        wait(sized, what=f"{session}'s window at {width}x{height}")
 
     def tmux(self, *args: str) -> subprocess.CompletedProcess:
         # -u: without locale or TMUX, tmux prints tabs and non-ASCII as "_"
