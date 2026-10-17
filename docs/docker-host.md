@@ -189,15 +189,17 @@ whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
 ### Role runs
 
-Role runs (`agent-pm-crew role` and board runs) run their client in a container too, their
-harness staying on the host, which needs a Host of its own:
+Role runs (`agent-pm-crew role` and attended board runs) run their client in a container
+too, their harness staying on the host, which needs a Host of its own:
 
 ```toml
 [delegate.delegates]
 harness_host = "tmux"
 ```
 
-The Docker Host treats them as any session: their volume is `agent-pm-ws-<session name>`,
+Only a TUI agent runs there: a headless one (an unattended board run, `agent-pm-delegate
+run` without `--detach`) runs its client on this machine, as before, with none of the rules
+below. The Docker Host treats them as any session: their volume is `agent-pm-ws-<session name>`,
 mounted at `<workdir>/agent`, and a board issue's revision rounds keep its name and volume.
 On the Docker Host the Delegate:
 
@@ -228,8 +230,9 @@ Refused before any container exists, as not supported on the Docker Host yet: a 
 other than Claude, detached sessions, and a start while a container of that name still
 exists. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd exists, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds, rebuilding an image built 7 or more days ago
+Every start first runs a preflight: the client is Claude, the cwd exists, the broker
+answers `version` with the expected protocol (else it points to [Install](#install)), and
+`build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
@@ -347,8 +350,8 @@ flowchart LR
 ## Workspace volumes
 
 A worker's workspace is a Docker volume, never a host directory: `agent-pm-ws-<name>`
-for every session, a crew worker or a [role run](#role-runs). The broker mounts it at the session's cwd, the path it has on the host,
-which stays untouched and unshared. A worker starts in an empty directory and clones what
+for every session, a crew worker or a [role run](#role-runs). The broker mounts it at the
+session's cwd, the path it has on the host, which stays untouched and unshared. A worker starts in an empty directory and clones what
 it works on; until token delivery lands it can clone only public repos and cannot push.
 npm, uv and pip caches go to `.agent-pm-cache` inside it.
 

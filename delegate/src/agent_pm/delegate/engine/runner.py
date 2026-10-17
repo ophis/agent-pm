@@ -282,7 +282,6 @@ class _Attempts:
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             if p.docker:
-                # The harness cannot read the container's files.
                 block, dropped = drop_files(block)
                 if dropped:
                     self.note("files_dropped", count=dropped)

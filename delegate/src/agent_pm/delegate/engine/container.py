@@ -1,6 +1,4 @@
-"""What the Delegate changes for a run whose agent is on the Docker Host (docs/docker-host.md): the
-test for that Host, the input's Reference repo and the container's users.
-"""
+"""Docker Host runs (docs/docker-host.md): Host test, Reference repo, users."""
 
 import itertools
 import json
@@ -16,7 +14,7 @@ DOCKER_HOST = "agent_pm.session.hosts.docker.host:DockerHost"
 
 
 def on_docker(settings: Mapping, host: str | None) -> bool:
-    """Whether `host` (None: the default) is the Docker Host in the config's [hosts]."""
+    """Whether `host` (None: default) is the Docker Host."""
     try:
         hosts = Host.parse_hosts(settings.get("hosts"))
     except SessionConfigError as error:
@@ -25,7 +23,7 @@ def on_docker(settings: Mapping, host: str | None) -> bool:
 
 
 def _reference(text: str) -> tuple[list[str], int]:
-    """(text's lines, kept ends, after leading blank ones; how many its Reference block holds)."""
+    """(text's lines, kept ends; the Reference block's length)."""
     lines = text.lstrip().splitlines(keepends=True)
     if not lines or not lines[0].startswith("Reference:"):
         return lines, 0
@@ -33,7 +31,7 @@ def _reference(text: str) -> tuple[list[str], int]:
 
 
 def repo_lines(text: str) -> list[str]:
-    """The distinct values of the `Repo:` lines in the input's leading `Reference:` block."""
+    """The distinct `Repo:` values in the leading Reference block."""
     lines, n = _reference(text)
     return sorted(
         {line.removeprefix("Repo:").strip() for line in lines[:n] if line.startswith("Repo:")}
@@ -41,7 +39,7 @@ def repo_lines(text: str) -> list[str]:
 
 
 def with_repo(text: str, repo: str) -> str:
-    """`text`, each `Repo:` line of its Reference block naming `repo`."""
+    """`text`, its Reference `Repo:` lines naming `repo`."""
     lines, n = _reference(text)
     for i in range(n):
         if lines[i].startswith("Repo:"):
@@ -50,9 +48,8 @@ def with_repo(text: str, repo: str) -> str:
 
 
 def reference_repo(text: str, *, run: Runner | None = None) -> str | None:
-    """The github.com owner/name of the one `Repo:` line in the input's leading `Reference:` block (a
-    local clone's from its origin, read with GUARD); None without one, or naming none on github.com.
-    """
+    """The github.com owner/name of the Reference block's one `Repo:` (a clone's from its origin,
+    read with GUARD), else None."""
     found = repo_lines(text)
     if len(found) > 1:
         raise ConfigError(f"the Reference block names more than one Repo: {', '.join(found)}")
@@ -74,7 +71,7 @@ def _github(spec: str, run: Runner) -> str | None:
 
 
 def users_env(users) -> dict[str, str]:
-    """AGENT_PM_USERS for a Docker run's container: the Delegate config's users, no `[bot]` login."""
+    """AGENT_PM_USERS: the config's users without `[bot]` logins."""
     if not isinstance(users, list | tuple) or not all(isinstance(u, str) for u in users):
         raise ConfigError("users must be a list of GitHub logins")
     return {"AGENT_PM_USERS": json.dumps([u for u in users if not u.endswith("[bot]")])}

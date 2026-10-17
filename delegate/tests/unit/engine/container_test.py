@@ -4,13 +4,13 @@ clone's from its origin read with GUARD; AGENT_PM_USERS; the Docker Host test.
 
 import json
 import os
-import subprocess
 
 from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import container
 from agent_pm.utils import GUARD
 
 from delegate.tests.plans import Base
+from delegate.tests.repo import fail, ok
 
 
 def origin(url, code=0):
@@ -18,7 +18,7 @@ def origin(url, code=0):
 
     def run(argv, _timeout):
         calls.append(argv)
-        return subprocess.CompletedProcess(argv, code, url, "fatal: no remote")
+        return fail("fatal: no remote") if code else ok(url)
 
     return run, calls
 
@@ -81,10 +81,13 @@ class UsersEnv(Base):
             with self.subTest(users=users), self.assertRaises(ConfigError):
                 container.users_env(users)
 
-    def test_a_run_whose_reference_names_two_repos_is_refused_before_any_write(self):
-        why = self.refused(input="Reference: T\nRepo: ophis/a\nRepo: ophis/b\n\nResearch X.")
-        self.assertIn("Repo:", why)
-        self.assertFalse(os.path.exists(self.work))
+    def test_a_docker_run_whose_reference_names_two_repos_is_refused_before_any_write(self):
+        text = "Reference: T\nRepo: ophis/a\nRepo: ophis/b\n\nResearch X."
+        got, _ = self.planned(input=text)
+        self.assertIsNone(got.repo)
+        self.driver.docker = True
+        self.assertIn("Repo:", self.refused(input=text, mode="tui", workdir=self.tmp + "/w2"))
+        self.assertFalse(os.path.exists(self.tmp + "/w2"))
 
 
 class OnDocker(Base):

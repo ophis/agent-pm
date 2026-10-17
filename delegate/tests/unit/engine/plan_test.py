@@ -6,7 +6,6 @@ only with team dirs (their other overlap cases: plan_team_integration_test.py).
 import io
 import json
 import os
-import subprocess
 import uuid
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -24,6 +23,7 @@ from agent_pm.session import Access, RunLog
 
 from delegate.tests.case import SRC, packaged
 from delegate.tests.plans import SID, TASKS, Base, write_team
+from delegate.tests.repo import fail, ok
 from delegate.tests.unit.engine.instruction import CLIENTS, GITHUB, ROLES, InstructionCase
 from utils.tests.case import local_section
 
@@ -602,6 +602,15 @@ class Docker(Base):
         self.driver.docker = True
         self.layout = Layout(self.work)
 
+    def planned(self, *args, **kw):
+        return super().planned(*args, **{"mode": "tui", **kw})
+
+    def test_a_headless_run_is_planned_as_on_this_machine(self):
+        got, _ = self.planned(mode="headless", input="Reference: T\nRepo: a/b\nRepo: c/d\n\nX")
+        self.assertEqual((got.docker, got.repo), (False, None))
+        self.assertIn(f"- `<tasks>`: `{TASKS}`", got.prompt)
+        self.assertNotIn("AGENT_PM_USERS", got.session.env)
+
     def test_the_default_core_roles_run_with_the_images_team(self):
         for role, task in (
             ("researcher", "research"),
@@ -637,7 +646,7 @@ class Docker(Base):
 
     def origin(self, url, code=0):
         """subprocess.run answering git's `remote get-url origin` with `url`."""
-        done = subprocess.CompletedProcess((), code, url, "fatal: no remote")
+        done = fail("fatal: no remote") if code else ok(url)
         return mock.patch("subprocess.run", return_value=done)
 
     def test_a_local_reference_repo_is_rewritten_to_its_name(self):

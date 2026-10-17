@@ -218,7 +218,6 @@ class HarnessDelegate(Delegate):
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
         if self.driver.docker and on_docker(self._settings, harness.name):
-            # The first one configured: the shipped config lists its own Hosts first.
             other = next((n for n in hosts if not on_docker(self._settings, n)), "<a host Host>")
             raise ConfigError(
                 f"harness_host: an agent on the Docker Host needs its harness on another Host; "

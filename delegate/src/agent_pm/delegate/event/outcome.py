@@ -69,7 +69,7 @@ def drop_files(body: str) -> tuple[str, int]:
     if not isinstance(data, dict) or "files" not in data:
         return body, 0
     files = data.pop("files")
-    return json.dumps(data), len(files) if isinstance(files, list) else 1
+    return json.dumps(data), len(files) if isinstance(files, list) else int(files is not None)
 
 
 def _autopilot(found) -> Autopilot | None:

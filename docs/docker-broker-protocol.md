@@ -1,6 +1,6 @@
 # Docker broker protocol
 
-**Protocol 4** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+**Protocol 5** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
 (Session's Docker Host, Python). `version` writes `{"protocol_version":"5"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the

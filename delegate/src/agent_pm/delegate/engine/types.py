@@ -130,8 +130,7 @@ class DriverSpec:
 @dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its client, sid and team set, its paths absolute; `session` the session's
-    Spec; `repo` the input's Reference repo (container.reference_repo); `docker` whether the agent
-    runs on the Docker Host.
+    Spec; `docker` whether the agent runs in a container, then `repo` its Reference repo.
     """
 
     spec: Spec

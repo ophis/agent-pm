@@ -49,10 +49,13 @@ def ended(text) -> dict:
 PENDING = turn("Waiting for the build.", pending=1)
 
 
-def executed(config: RunConfig, spec: Spec, *, driver, on_event=None, composition=None) -> Result:
+def executed(
+    config: RunConfig, spec: Spec, *, driver, on_event=None, composition=None, docker=False
+) -> Result:
     """plan() then execute(), a session run's agent and run dirs made between."""
     composition = Composer(team=spec.team) if composition is None else composition
     accepted = plan(config, spec, driver=driver, composition=composition)
+    accepted = replace(accepted, docker=docker or accepted.docker)
     if driver.session_based:
         for made in (Layout(spec.workdir).agent, accepted.session.workdir):
             os.makedirs(made, exist_ok=True)
@@ -91,7 +94,7 @@ class Base(Case):
             }
         )
 
-    def go(self, *steps, fixes=None, output=None, on_event=None, **kw) -> Result:
+    def go(self, *steps, fixes=None, output=None, on_event=None, docker=False, **kw) -> Result:
         """executed() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets
         each callback, self.err the stderr.
         """
@@ -124,6 +127,7 @@ class Base(Case):
                     on_event=on,
                     driver=self.driver,
                     composition=composition,
+                    docker=docker,
                 )
         finally:
             self.err = err.getvalue()

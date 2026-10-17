@@ -105,14 +105,15 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         sid=run_sid(spec.sid),
         team=composition.team,
     )
-    repo = reference_repo(spec.input)
-    if driver.docker:
+    docker = driver.docker and spec.mode == Mode.TUI
+    repo = reference_repo(spec.input) if docker else None
+    if docker:
         spec = replace(spec, input=_on_docker(run, spec, repo, composition))
     resume = spec.sid if spec.resume else None
     here, project = place(
         run, layout, resume_sid=resume, cwd=spec.cwd, trusted=composition.trusted_dirs()
     )
-    if driver.docker and os.path.realpath(here) != os.path.realpath(layout.agent):
+    if docker and os.path.realpath(here) != os.path.realpath(layout.agent):
         key = "trusted_dirs" if project else "cwd"
         raise ConfigError(f"{key}: a Docker run's cwd is its agent dir, not {here}")
     if (
@@ -125,7 +126,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
             file=sys.stderr,
         )
     intent = composition.access(
-        run, layout.agent, cwd=here, project=project, repo_dir=spec.repo, docker=driver.docker
+        run, layout.agent, cwd=here, project=project, repo_dir=spec.repo, docker=docker
     )
     for path in intent.dirs:
         _refuse_overlap("write dir", path, layout)
@@ -138,7 +139,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         env=intent.env,
     )
     flags, env = driver.policy(client)
-    if driver.docker:
+    if docker:
         env = env | users_env(thaw(composition.config.values).get("users", []))
     session = SessionSpec(
         workdir=layout.run,
@@ -158,14 +159,14 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
     _check_team_dirs(
         composition, intent.writes, client=client, spec=session, layout=layout, driver=driver
     )
-    planned = Plan(spec, session, run, repo, driver.docker)
+    planned = Plan(spec, session, run, repo, docker)
     return replace(
         planned, session=replace(session, prompt=composition.render(run, planned.params))
     )
 
 
 def _on_docker(run: RunConfig, spec: Spec, repo: str | None, composition: Composer) -> str:
-    """The input a Docker run gets, its Reference repo by name; else ConfigError naming the key."""
+    """A Docker run's input, its Reference repo by name; else ConfigError."""
     if run.cwd:
         raise ConfigError(f"cwd {run.cwd}: a Docker run's cwd is its agent dir")
     if (charter := composition.path_for("roles", run.role)) and composition.team.custom(charter):

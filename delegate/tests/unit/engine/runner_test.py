@@ -163,11 +163,9 @@ class InProcess(Base):
         self.assertIn("under the workdir", r.error)
 
     def test_on_docker_the_outcomes_files_are_dropped_and_noted(self):
-        self.driver.docker = True
-        r = self.go(said(START, block(DONE | {"files": ["/x/spec.md", "/x/plan.md"]})))
+        r = self.go(said(START, block(DONE | {"files": ["/x/spec.md", "/x/plan.md"]})), docker=True)
         self.assertEqual((r.outcome.status, r.outcome.files), ("done", []))
         self.assertEqual(self.last("files_dropped")["count"], 2)
-        self.driver.docker = False
         r = self.go(said(START, block(DONE | {"files": ["/x/spec.md"]})), fixes=[])
         self.assertEqual(self.kinds().count("files_dropped"), 1)
 
