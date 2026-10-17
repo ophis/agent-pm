@@ -126,6 +126,35 @@ def _listed(containers: Mapping[str, tuple[str, str]], display: Display) -> list
     ]
 
 
+def _strings(text: str | None) -> list[str] | None:
+    """`text`'s JSON array of strings, else None."""
+    try:
+        found = json.loads(text or "")
+    except ValueError:
+        return None
+    return found if isinstance(found, list) and all(isinstance(s, str) for s in found) else None
+
+
+def _report_plan(name: str, plan: Mapping) -> None:
+    """Freeze a generation's plan beside its manifest, then print it to stderr, a line a part."""
+    try:
+        save(
+            os.path.join(state_dir(name), f"{plan['generation']}.plan.json"),
+            json.dumps(plan),
+            durable=True,
+        )
+    except OSError as error:
+        raise SessionError(f"docker session {name}: plan: {error}") from None
+    mounts = ", ".join(f"{mount['path']} rw" for mount in plan["mounts"])
+    for part in (
+        f"image {plan['image']} {plan['image_digest']}",
+        f"mounts {mounts}",
+        f"credential {plan['credential']}",
+        f"approval {shlex.join(plan['approval']) or 'none'}",
+    ):
+        print(f"docker plan {name} {plan['generation']}: {part}", file=sys.stderr)
+
+
 def _wait(ready, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
@@ -366,14 +395,19 @@ class DockerHost(Host, Showable):
         self._check_cwd(name, launch, display=display)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
-        generation, field, home_dir = (
-            metadata.get(key) for key in ("generation", "home_field", "home_dir")
+        generation, field, home_dir, credential = (
+            metadata.get(key) for key in ("generation", "home_field", "home_dir", "credential")
         )
-        if not (generation and field and home_dir):
+        if not (generation and field and home_dir and credential):
             raise SessionError(f"docker session {name}: no client home to mount")
         resume = metadata.get("resume")
         if resume not in ("0", "1"):
             raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
+        approval = _strings(metadata.get("approval"))
+        if approval is None:
+            raise SessionError(
+                f"docker session {name}: bad approval {metadata.get('approval')!r:.40}"
+            )
         if any(row[1:2] == [name] for row in self._ps()):
             raise SessionError(
                 f"docker session {name}: a container for it exists; close {name} first"
@@ -384,7 +418,7 @@ class DockerHost(Host, Showable):
             os.makedirs(home, mode=0o700)
         elif read_beneath(home, launch.transcript, limit=0) is None:
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
-        hook, root, (image, _) = self._image(name)
+        hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
         cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
@@ -396,6 +430,18 @@ class DockerHost(Host, Showable):
             cwd=cwd,
             home=(field, home),
             hook_path=hook,
+        )
+        _report_plan(
+            name,
+            {
+                "name": name,
+                "generation": generation,
+                "image": image,
+                "image_digest": digest,
+                "mounts": [{"path": cwd, "rw": True}, {"path": home, "rw": True}],
+                "credential": credential,
+                "approval": approval,
+            },
         )
         container = container_name(name, generation)
         began = timestamp()
