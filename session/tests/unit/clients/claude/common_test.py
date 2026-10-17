@@ -857,6 +857,16 @@ class ContinuationTest(Base):
             self.assertEqual(launch.transcript, self.target)
             self.assertEqual(launch.resume, reference(self.work))
 
+    def test_a_resume_under_another_workdir_finds_the_conversation_by_cwd_and_sid(self):
+        self.write(self.path, self.marker())
+        self.write(self.target)
+        worker = os.path.join(self.work, "workers", SID)
+        spec = Spec(workdir=worker, access=Access(cwd=self.work), sid=SID, resume=True)
+        client = ClaudeClient({})
+        for launch in (client.headless().launch(spec), client.tui().launch(spec, HOOK)):
+            self.assertEqual(launch.argv[launch.argv.index("--resume") + 1], NEXT)
+            self.assertEqual(launch.transcript, self.target)
+
     def test_session_status_uses_the_latest_file_only(self):
         self.write(self.path, self.marker())
         self.write(self.target)

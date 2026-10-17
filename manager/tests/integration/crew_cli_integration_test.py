@@ -62,6 +62,7 @@ class Commands(Case):
             "hold",
             "run",
             "worker",
+            "reopen",
             "issue",
             "role",
             "attach",

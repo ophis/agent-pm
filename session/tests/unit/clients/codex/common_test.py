@@ -26,7 +26,13 @@ from agent_pm.session.clients.codex.common import (
 )
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo, SessionStatus
 
-from session.tests.unit.clients.codex.support import CHILD, NATIVE, Base, committed_headless
+from session.tests.unit.clients.codex.support import (
+    CHILD,
+    NATIVE,
+    Base,
+    committed_headless,
+    committed_tui,
+)
 
 
 class LaunchLifecycleTest(Base):
@@ -219,6 +225,32 @@ class CommonTest(Base):
                     self.assertIs(launch.project, saved)
                     self.assertEqual(launch.transcript, str(path))
                     self.assertIn(NATIVE, launch.resume)
+
+    def test_both_modes_resume_a_run_saved_under_another_workdir(self):
+        roots = self.prepare().writable_roots
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        path = self.rollout()
+        run = self.common.load(str(self.work), self.spec.sid)
+        for mode in ("headless", "tui"):
+            worker = str(self.root / "workers" / mode)
+            spec = dataclasses.replace(self.spec, workdir=worker, prompt="again", resume=True)
+            with self.subTest(mode=mode), mock.patch("shutil.which", return_value="/fake/codex"):
+                self.assertEqual(self.client.writable_dirs(spec)[: len(roots)], roots)
+                launch = (
+                    committed_headless(self.client, spec)
+                    if mode == "headless"
+                    else committed_tui(self.client, spec, ("/fake/hook",))
+                )
+                self.assertEqual(launch.transcript, str(path))
+                self.assertIn(NATIVE, launch.resume)
+                self.assertEqual(self.common.load(worker, spec.sid), replace(run, workdir=worker))
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid), run)
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "yes")
+        elsewhere = dataclasses.replace(
+            spec, workdir=str(self.root / "workers" / "x"), access=Access(cwd=str(self.extra))
+        )
+        with self.assertRaisesRegex(ConfigError, "missing Codex recovery state"):
+            self.common.prepare(elsewhere)
 
     def test_metadata_resolves_the_sids_binding_from_the_store(self):
         info = SessionInfo(self.spec.sid, str(self.cwd), project=False, transcript="", resume="")
