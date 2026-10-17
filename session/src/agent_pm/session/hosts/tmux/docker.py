@@ -616,6 +616,9 @@ class DockerHost(Host, Showable):
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
+        except SessionError as error:  # a timeout or bad response: the container may exist
+            cleanup = self._roll_back(None, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         ended = timestamp()
         supervisor = lock = None
         try:

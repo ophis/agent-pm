@@ -710,6 +710,18 @@ class StartTest(Base):
             self.start()
         self.assertEqual(self.broker.closed, [CONTAINER])
 
+    def test_a_start_failing_in_transport_closes_the_container(self):
+        for error in (
+            SessionError("broker: start timed out after 1800 s"),
+            SessionError("broker: bad response to start: fields"),
+        ):
+            with self.subTest(error=error):
+                self.broker.error, self.broker.closed = error, []
+                with self.assertRaisesRegex(SessionError, f"^docker session w: {error}$"):
+                    self.start()
+                self.assertEqual(self.broker.closed, [CONTAINER])
+                self.popen_mock.assert_not_called()
+
     def test_login_required_surfaces_message(self):
         self.broker.error = BrokerError(5, "login_required", "log in first", "not_needed", None)
         with self.assertRaisesRegex(SessionError, "broker: log in first"):
