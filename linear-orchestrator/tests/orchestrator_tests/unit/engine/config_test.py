@@ -725,7 +725,7 @@ class CommittedConfiguration(Case):
             + role("pm")
             + role("engineer")
             + "[agent_labels]\n"
-            + "".join(f'{key} = "{value}"\n' for key, value in local["agent_labels"].items())
+            + "".join(f'"{key}" = "{value}"\n' for key, value in local["agent_labels"].items())
         )
         self.assertEqual(
             (cfg.agent_label_group, dict(cfg.agent_labels)),

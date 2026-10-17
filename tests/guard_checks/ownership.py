@@ -9,9 +9,6 @@ import tokenize
 from tests.guard_checks.common import _bindings, _dotted, _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import (
-    AGENT_LABEL_CONFIG,
-    AGENT_LABEL_ENTRY,
-    AGENT_LABEL_TABLE,
     HANDOFF_HOME,
     ORCH,
     ORCH_FILES,
@@ -362,16 +359,7 @@ def orchestrator_text(repo: str) -> list[str]:
     for rel, text in _files(os.path.join(repo, ORCH_PROJECT), (".py", ".toml"), skip="tests/"):
         lines = text.splitlines()
         grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
-        table = ""
         for number, line in enumerate(lines, 1):
-            if line.startswith(("# local: [", "[")):
-                table = line.removeprefix("# local: ").strip()
-            if (
-                rel == AGENT_LABEL_CONFIG
-                and table == AGENT_LABEL_TABLE
-                and re.fullmatch(AGENT_LABEL_ENTRY, line)
-            ):
-                continue
             found.update(
                 f"{rel}:{number}: client name {w}"
                 for w in CLIENT.findall(line.replace("AGENTS.md", " "))
