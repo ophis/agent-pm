@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Launch,
     Liveness,
     Mode,
+    NotShowable,
     Prepared,
     SessionError,
     SessionEvent,
@@ -664,16 +665,11 @@ class TuiMode(BaseMode):
                     final = self._read()
                     self._end()
                     return final, True
-                if isinstance(self.host, Showable):
-                    with contextlib.suppress(SessionError):
-                        screen = self.host.screen(self._terminal)
-                        found = self._read()
-                        if (
-                            not found
-                            and not self._gone
-                            and not self._replaced(self._terminal.state())
-                        ):
-                            found = self._scan(screen)
+                with contextlib.suppress(SessionError):
+                    screen = self._terminal.screen()
+                    found = self._read()
+                    if not found and not self._gone and not self._replaced(self._terminal.state()):
+                        found = self._scan(screen)
         self._open()
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
@@ -689,13 +685,14 @@ class TuiMode(BaseMode):
             return
         if self._held or now < self._checked + POLL_SCREEN:
             return
-        if isinstance(self.host, Showable):
-            self._checked = now
-            try:
-                if self._shown(self.host.screen(self._terminal)):
-                    return
-            except SessionError:
+        self._checked = now
+        try:
+            if self._shown(self._terminal.screen()):
                 return
+        except NotShowable:
+            pass
+        except SessionError:
+            return
         text, self._opening = self._opening[1], None
         with contextlib.suppress(SessionError):
             self.send(text)
@@ -801,9 +798,10 @@ class TuiMode(BaseMode):
 
     def screen(self, lines: int | None = None) -> str:
         self._running()
-        if not isinstance(self.host, Showable):
-            raise SessionError(f"host {self.host.name} cannot show")
-        return self.host.screen(self._terminal, lines)
+        try:
+            return self._terminal.screen(lines)
+        except NotShowable:
+            raise SessionError(f"host {self.host.name} cannot show") from None
 
     def _running(self) -> None:
         self._store.check()
