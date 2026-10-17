@@ -252,7 +252,7 @@ class PolicyReplay(Base):
             with self.subTest(old_client=old_client):
                 saved_env = {"K": "saved"}
                 if old_client is not None:
-                    saved_env["AGENT_PM_RUN_CLIENT"] = old_client
+                    saved_env["AGENT_PM_CLIENT"] = old_client
                 spec = dataclasses.replace(
                     self.spec, client="codex", sid=f"context-{old_client}", env=saved_env
                 )
@@ -263,7 +263,7 @@ class PolicyReplay(Base):
                     spec,
                     prompt="two",
                     resume=True,
-                    env={"K": "changed", "AGENT_PM_RUN_CLIENT": "wrong"},
+                    env={"K": "changed", "AGENT_PM_CLIENT": "wrong"},
                 )
                 with mock.patch(
                     "subprocess.Popen",
@@ -277,7 +277,7 @@ class PolicyReplay(Base):
                         host=MemoryHost(),
                     )
                 env = popen.call_args.kwargs["env"]
-                self.assertEqual(env["AGENT_PM_RUN_CLIENT"], "codex")
+                self.assertEqual(env["AGENT_PM_CLIENT"], "codex")
                 self.assertEqual(env["K"], "saved")
                 self.assertEqual(
                     dict(self.common.load(str(self.work), spec.sid).snapshot.env), saved_env

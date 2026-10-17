@@ -668,7 +668,7 @@ class StartTest(Base):
                 "LAUNCH_SET": "1",
                 "PWD": self.tmp,
                 "AGENT_PM_AGENT_SESSION": "1",
-                "AGENT_PM_RUN_CLIENT": "fake",
+                "AGENT_PM_CLIENT": "fake",
             },
         )
 

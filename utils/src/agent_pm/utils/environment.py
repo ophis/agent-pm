@@ -5,13 +5,14 @@ from collections.abc import Mapping
 
 SID_ENV = "AGENT_PM_SID"
 EVENTS_ENV = "AGENT_PM_EVENTS"
-RUN_CLIENT_ENV = "AGENT_PM_RUN_CLIENT"
 
 # a manager's roster lease: its holder's command alone carries it, no launch below it
 LEASE_ENV = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
 
 # on every agent client a session starts: nothing under it starts a session or run
 AGENT_SESSION_ENV = "AGENT_PM_AGENT_SESSION"
+# and the name of the client it runs, when the session has one
+CLIENT_ENV = "AGENT_PM_CLIENT"
 
 
 def nested_start() -> str | None:

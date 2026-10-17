@@ -143,7 +143,7 @@ class Start(Base):
                     "HM_SET": "1",
                     "PWD": self.dir,
                     "AGENT_PM_AGENT_SESSION": "1",
-                    "AGENT_PM_RUN_CLIENT": "stub",
+                    "AGENT_PM_CLIENT": "stub",
                 },
                 1,
             ),
@@ -154,14 +154,14 @@ class Start(Base):
         self.assertEqual((spec.prompt, spec.sid, spec.client), ("hi", SID, "stub"))
 
     def test_the_spec_client_replaces_the_ambient_and_launch_client(self):
-        for launch_env in ({}, {"AGENT_PM_RUN_CLIENT": "stale"}):
+        for launch_env in ({}, {"AGENT_PM_CLIENT": "stale"}):
             with (
                 self.subTest(launch_env=launch_env),
-                mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "ambient"}),
+                mock.patch.dict(os.environ, {"AGENT_PM_CLIENT": "ambient"}),
                 self.faked() as calls,
             ):
                 self.start(StubClient(Launch(NOTHING, env=launch_env)))
-                self.assertEqual(calls[0][1]["env"]["AGENT_PM_RUN_CLIENT"], "stub")
+                self.assertEqual(calls[0][1]["env"]["AGENT_PM_CLIENT"], "stub")
 
     def test_its_cwd_is_the_launch_cwd_else_the_access_cwd(self):
         given, access = (os.path.join(self.dir, d) for d in ("given", "access"))

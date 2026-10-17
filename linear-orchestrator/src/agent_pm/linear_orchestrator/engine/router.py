@@ -120,7 +120,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import EVENTS_ENV, RUN_CLIENT_ENV, SID_ENV, nested_start, one_line, parse_time
+from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -1093,7 +1093,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
 
 
 def brake(role, cfg):
-    usage = read_usage(role, cfg, client=os.environ.get(RUN_CLIENT_ENV) or None)
+    usage = read_usage(role, cfg, client=os.environ.get(CLIENT_ENV) or None)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 

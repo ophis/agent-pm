@@ -2148,7 +2148,7 @@ class RunBrake(Base):
         for usage, rc in ((reading(70), 0), (reading(80), 1), (None, 1)):
             with self.subTest(usage=usage):
                 self.api.usages, self.api.usage_calls = {"a": reading(95), "b": usage}, []
-                with mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "b"}):
+                with mock.patch.dict(os.environ, {"AGENT_PM_CLIENT": "b"}):
                     self.assertEqual(self.brake("researcher"), (rc, quota.summary(usage) + "\n"))
                 self.assertEqual(self.api.usage_calls, ["b"])
 
