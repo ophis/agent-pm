@@ -43,6 +43,7 @@ class PanelTest(Case):
     def test_used_and_left_wording(self):
         for line, used in (
             ("Current session: 17% used", 17.0),
+            ("Current session: 0% used", 0.0),
             ("Current session: 40% left", 60.0),
             ("Current session: 12.4 % remaining", 88.0),
             ("Current session: 150% used", 100.0),
@@ -103,6 +104,10 @@ class PanelTest(Case):
                 'Failed to load usage data: {"error": {"type": "x", "message": "Nope",'
                 ' "details": {"error_code": "bad_org"}}}',
                 "Nope (bad_org)",
+            ),
+            (
+                "Failed to load usage data: " + "{" * 100000 + "}" * 100000,
+                "could not load usage data",
             ),
             (
                 "You are currently using your subscription to power your Claude Code usage\n",

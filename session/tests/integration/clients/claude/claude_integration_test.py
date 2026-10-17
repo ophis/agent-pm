@@ -461,7 +461,7 @@ class UsageTest(Base):
 
     def test_unknown_is_none(self):
         for name, fields in (
-            ("failed run", {"exit": 1}),
+            ("failed run", {"exit": 1, "usage": ""}),
             ("model reply", {"usage": "Hello! How can I help with /usage?\n"}),
             ("no claude", {"usage": USAGE}),
         ):

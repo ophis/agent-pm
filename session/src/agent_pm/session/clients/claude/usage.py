@@ -147,7 +147,7 @@ def _error(text: str) -> str | None:
     if found := re.search(r"Failed\s*to\s*load\s*usage\s*data:\s*(\{.*\})", text, re.S):
         try:
             error = json.loads(found[1].replace("\r", "").replace("\n", "")).get("error")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             error = None
         if isinstance(error, dict):
             if str(error.get("type", "")).strip().lower() == "rate_limit_error":

@@ -87,7 +87,7 @@ class Lock(Parity):
     def hold(self):
         """A tick in the router lock, its first Linear call (the team) answered HOLD s late."""
         self.fake.fail("linear.Q_TEAM", "hang", seconds=HOLD)
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         first = self.start("router", "--now")
         live_tmux.wait(self.requests, TIMEOUT, "the first router's team query")
         return first
@@ -143,7 +143,7 @@ class MaxRuns(Parity):
         issue's driver session holds a slot while its driver runs, so a full role claims nothing.
         """
         gate = os.path.join(self.root, "gate")
-        self.scene([START, DONE], gate=gate, rate_limit=usage(0.5))
+        self.scene([START, DONE], gate=gate, usage=usage(0.5))
         self.tick()
         [first] = self.runs()
         self.assertEqual((first["kind"], first["issue"]), ("start", ID))
@@ -220,7 +220,7 @@ class Recover(Parity):
         ran Recover by --issue only).
         """
         sid = self.interrupted()
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         self.tick()
         self.assertEqual(
             [(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)]
@@ -244,7 +244,7 @@ class Recover(Parity):
         sid = self.interrupted()
         with self.fake.lock:
             self.fake.find(ID)["assignee"] = self.ids[ACCOUNTS["pm"]]
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         self.tick()
         self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid)])
         self.assertEqual(len(agent_calls(self.calls())), 1)
@@ -272,7 +272,7 @@ class Refusals(Parity):
         self.seed(ID, "ENG: Session registry")
         self.gh["repos"][REPO]["permissions"]["push"] = False
         self.write_gh()
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         self.tick()
         self.assert_nothing_started()
         self.assertEqual(self.state(ID), "in_review")
@@ -315,7 +315,7 @@ class Refusals(Parity):
         self.assertEqual(self.state(SOURCE), "done")
         self.gh["repos"][REPO]["permissions"]["push"] = False
         self.write_gh()
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         self.tick()
         self.assert_nothing_started()
         self.assertEqual((self.state(SOURCE), self.state(child)), ("in_review", "canceled"))
@@ -338,7 +338,7 @@ class Refusals(Parity):
         self.fake.label_group(TASK_GROUP, "Tasks", {MYSTERY: "Mystery"})
         self.seed(ID, "ENG: Session registry", labels=[LIGHT_RESEARCH])
         self.seed(OTHER, "ENG: Session index", labels=[MYSTERY])
-        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.scene([START, DONE], usage=usage(0.5))
         self.tick()
         self.assert_nothing_started()
         for ident, said in (

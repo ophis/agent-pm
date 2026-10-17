@@ -1,7 +1,8 @@
 """A stand-in `claude` for integration tests, `-p --output-format stream-json --verbose` (print),
-`-p /usage` (the usage probe) or neither (interactive); install() puts it on PATH. An option src/agent_pm/session/clients/claude/
-never emits exits 2. Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs
-the next of [steps, *turns] between UserPromptSubmit and Stop hooks. Stdin's end exits `exit`;
+`-p /usage` (the usage probe) or neither (interactive); install() puts it on PATH. An option
+src/agent_pm/session/clients/claude/ never emits exits 2. Interactive: PROMPT, else the first stdin
+line, is turn 1; each later line runs the next of [steps, *turns] between UserPromptSubmit and Stop
+hooks. Stdin's end exits `exit`;
 orphaned or HANG_CAP s idle, 1. Interactive readiness: SessionStart (source startup, or resume on
 --resume; matched on source) fires before turn 1 and after each dialog's answer; input arriving from
 then until READY s after it is dropped, as Claude drops keys before its input box. A stdin line
@@ -21,7 +22,7 @@ turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another 
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
 - rate_limit: print a rate_limit_info after init.
-- usage: `-p /usage`'s stdout, else none.
+- usage: `-p /usage`'s stdout; default: an unused account's panel.
 - exit: the exit code.
 - hang: in print, true sleeps after steps until orphaned or HANG_CAP s, then exits 1.
 - log: a file each start appends {"pid", "argv", "cwd"} to.
@@ -53,7 +54,7 @@ DEFAULTS = {
     "turns": [],
     "background": 0,
     "rate_limit": None,
-    "usage": None,
+    "usage": "Current session: 0% used\n",
     "exit": 0,
     "hang": False,
     "log": None,
@@ -121,7 +122,7 @@ CHECKS = {
     "turns": lambda v: isinstance(v, list) and all(isinstance(t, list) for t in v),
     "background": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "rate_limit": lambda v: v is None or isinstance(v, dict),
-    "usage": lambda v: v is None or isinstance(v, str),
+    "usage": lambda v: isinstance(v, str),
     "exit": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "hang": lambda v: isinstance(v, bool),
     "log": lambda v: v is None or isinstance(v, str),
@@ -526,7 +527,7 @@ def printed(s, a, journal, parent):
 def main(argv: list[str]) -> int:
     parent, s, a, turns = invocation(argv)
     if a.print and a.prompt == "/usage":
-        print(s["usage"] or "", end="", flush=True)
+        print(s["usage"], end="", flush=True)
         return s["exit"]
     sid, cwd = (a.resume or a.session_id or str(uuid.uuid4()), os.getcwd())
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
