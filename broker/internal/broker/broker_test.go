@@ -2,6 +2,7 @@ package broker
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
@@ -71,6 +72,31 @@ type fakeApps struct {
 	trustErr           error
 	trusted            []string
 	got                []byte
+	access             *AppAccess
+	accessErr          error
+}
+
+const brokerPartition = "cdhash:0a1b2c"
+
+// brokerOnly is the agent-pm-claude item's shape: an owner entry, one decrypt entry with only the broker,
+// the partition list with only the broker's partition ID.
+func brokerOnly() AppAccess {
+	return AppAccess{
+		Broker:    InstalledPath,
+		Partition: brokerPartition,
+		Entries: []ACLEntry{
+			{Authorizations: []string{"change_acl"}},
+			{Authorizations: []string{"encrypt", "decrypt", "derive", "export_clear", "export_wrapped"}, Apps: []string{InstalledPath}},
+			{Authorizations: []string{"partition_id"}, Any: true, Partitions: []string{brokerPartition}},
+		},
+	}
+}
+
+func (k *fakeApps) AppAccess(app, account string) (AppAccess, error) {
+	if k.access == nil {
+		return brokerOnly(), k.accessErr
+	}
+	return *k.access, k.accessErr
 }
 
 func (k *fakeApps) AppAccount(app string) (string, error) { return k.account, k.accountErr }
@@ -127,6 +153,95 @@ func TestLoginGitHub(t *testing.T) {
 		}
 		if name == "trust failed" && !strings.Contains(err.Error(), "agent-pm-docs unchanged") {
 			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestLoginGitHubVerifiesAccess(t *testing.T) {
+	const key = "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQ=="
+	security := "/usr/bin/security"
+	with := func(change func(*AppAccess)) *AppAccess {
+		a := brokerOnly()
+		change(&a)
+		return &a
+	}
+	decrypt := []string{"decrypt"}
+	for name, tc := range map[string]struct {
+		access *AppAccess
+		err    error
+		want   string
+	}{
+		"observed": {access: with(func(a *AppAccess) {
+			a.Entries = []ACLEntry{
+				{Authorizations: []string{"change_acl"}},
+				{Authorizations: decrypt, Apps: []string{security}},
+				{Authorizations: decrypt, Apps: []string{InstalledPath}},
+				{Authorizations: []string{"partition_id"}, Any: true, Partitions: []string{"apple-tool:"}},
+			}
+		}), want: security},
+		"security beside broker": {access: with(func(a *AppAccess) { a.Entries[1].Apps = []string{InstalledPath, security} }), want: security},
+		"any application":        {access: with(func(a *AppAccess) { a.Entries[1] = ACLEntry{Authorizations: decrypt, Any: true} }), want: "any application"},
+		"any authorization": {access: with(func(a *AppAccess) {
+			a.Entries = append(a.Entries, ACLEntry{Authorizations: []string{"any"}, Apps: []string{security}})
+		}), want: security},
+		"export to another app": {access: with(func(a *AppAccess) {
+			a.Entries = append(a.Entries, ACLEntry{Authorizations: []string{"export_clear"}, Apps: []string{security}})
+		}), want: security},
+		"no application": {access: with(func(a *AppAccess) { a.Entries[1].Apps = nil }), want: "no application"},
+		"no decrypt entry": {access: with(func(a *AppAccess) {
+			a.Entries = []ACLEntry{a.Entries[0], a.Entries[2]}
+		}), want: "no entry lets the broker read"},
+		"apple-tool partition": {access: with(func(a *AppAccess) { a.Entries[2].Partitions = []string{"apple-tool:"} }), want: "apple-tool:"},
+		"extra partition": {access: with(func(a *AppAccess) {
+			a.Entries[2].Partitions = []string{brokerPartition, "apple:"}
+		}), want: "apple:"},
+		"no partition list": {access: with(func(a *AppAccess) { a.Entries = a.Entries[:2] }), want: "partition lists"},
+		"two partition lists": {access: with(func(a *AppAccess) {
+			a.Entries = append(a.Entries, a.Entries[2])
+		}), want: "partition lists"},
+		"read failed": {err: errors.New("keychain status -25293"), want: "-25293"},
+	} {
+		k := &fakeApps{account: "5352992", key: key, access: tc.access, accessErr: tc.err}
+		var out bytes.Buffer
+		err := LoginGitHub("agent-pm-docs", k, &out)
+		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), key) {
+			t.Fatalf("%s: %v out %q", name, err, out.String())
+		}
+		if !strings.Contains(err.Error(), "keychain item agent-pm-docs") || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestParseAccess(t *testing.T) {
+	h := func(s string) string { return hex.EncodeToString([]byte(s)) }
+	text := strings.Join([]string{
+		"self " + h(InstalledPath) + " " + h(brokerPartition),
+		"acl " + h("change_acl"),
+		"acl " + h("encrypt") + " " + h("decrypt") + " " + h("derive") + " " + h("export_clear") + " " + h("export_wrapped"),
+		"app " + h(InstalledPath),
+		"acl " + h("partition_id"),
+		"any",
+		"partition " + h(brokerPartition),
+		"",
+	}, "\n")
+	got, err := parseAccess([]byte(text))
+	if err != nil || !reflect.DeepEqual(got, brokerOnly()) {
+		t.Fatalf("%v\n%#v", err, got)
+	}
+	for _, bad := range []string{
+		"",
+		"acl " + h("decrypt"),
+		"self " + h(InstalledPath),
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nself " + h(InstalledPath) + " " + h(brokerPartition),
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\napp " + h(InstalledPath),
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl zz",
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nany extra",
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nowner " + h("x"),
+		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\napp " + h("a") + " " + h("b"),
+	} {
+		if _, err := parseAccess([]byte(bad)); err == nil {
+			t.Fatalf("%q accepted", bad)
 		}
 	}
 }
