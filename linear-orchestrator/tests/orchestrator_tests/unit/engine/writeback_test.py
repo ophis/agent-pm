@@ -1566,14 +1566,14 @@ class Events(RunCase):
         self.addCleanup(info.stop)
         self.now = iter((STARTED, RESTARTED, LATER, LATEST))
 
-    def claim(self, sid=RUN_SID, **fields):
+    def claim(self, sid=RUN_SID, role="engineer", **fields):
         runs.note(
             self.cfg.runs_log,
             "start",
             now=lambda: BEFORE,
             issue=RUN_ISSUE,
             sid=sid,
-            role="engineer",
+            role=role,
             client="fake",
             delegate_kind="fake",
             uuid=UUID,
@@ -1650,6 +1650,82 @@ class ForClaim(RunCase):
                 self.assertIs(ctx.resume, resume)
 
 
+class RunningEvents(Events):
+    def test_each_roles_new_or_resumed_attempt_rereads_and_returns_to_in_progress(self):
+        self.now = iter([STARTED] * 100)
+        attempt = 0
+        for role in config.TASKS:
+            with open(self.cfg.runs_log, "w"):
+                pass
+            self.claim(role=role)
+            for state in (*self.cfg.states.values(), "other-state"):
+                with self.subTest(role=role, state=state):
+                    attempt += 1
+                    self.linear.state = state
+                    n = len(self.linear.calls)
+                    self.assertTrue(self.deliver(delegate_event("begun", attempt)))
+                    calls = self.linear.calls[n:]
+                    self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+                    self.assertIn((CLAIM_KEY, "reread", {"i": UUID}), calls)
+                    moved = [c for c in calls if c[1] == "state"]
+                    expected = (
+                        []
+                        if state == self.cfg.states["in_progress"]
+                        else [
+                            (CLAIM_KEY, "state", {"i": UUID, "s": self.cfg.states["in_progress"]})
+                        ]
+                    )
+                    self.assertEqual(moved, expected)
+                    if moved:
+                        self.assertLess(
+                            calls.index((CLAIM_KEY, "reread", {"i": UUID})), calls.index(moved[0])
+                        )
+
+    def test_limit_resume_returns_to_work_and_the_next_limit_ends_it_again(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(-9, limit={"resets_at": None})))
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertTrue(self.deliver(delegate_event("begun", 2)))
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertTrue(self.deliver(self.finished(-9, attempt=2, limit={"resets_at": None})))
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+
+    def test_failed_state_read_or_write_is_retryable_from_progress(self):
+        for op in ("reread", "state"):
+            with self.subTest(op=op):
+                attempt = 1 if op == "reread" else 2
+                self.linear.state = self.cfg.states["in_review"]
+                self.linear.fail = lambda name, _v, op=op: (
+                    LinearError("down") if name == op else None
+                )
+                self.assertFalse(self.deliver(delegate_event("begun", attempt)))
+                self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+                self.linear.fail = lambda _name, _v: None
+                self.assertTrue(
+                    self.deliver(delegate_event("progress", attempt, name="step", text="fix"))
+                )
+                self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+
+    def test_duplicate_or_delayed_events_do_not_reopen_an_ended_attempt(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        n = len(self.linear.writes("state"))
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(delegate_event("progress", name="step", text="late")))
+        self.assertEqual(len(self.linear.writes("state")), n)
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+
+    def test_a_delayed_older_attempt_cannot_move_the_current_attempt(self):
+        self.assertTrue(self.deliver(delegate_event("begun", 2)))
+        self.linear.state = self.cfg.states["in_review"]
+        n = len(self.linear.writes("state"))
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(delegate_event("progress", name="step", text="old")))
+        self.assertEqual(len(self.linear.writes("state")), n)
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+
+
 class BegunEvents(Events):
     def test_posts_the_running_session_comment_as_the_harness_and_records_its_start(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
@@ -1660,10 +1736,17 @@ class BegunEvents(Events):
             [
                 (harness, "update", {"c": RUN_SESSION, "b": body}),
                 (harness, "comment", {"c": RUN_SESSION, "i": RUN_ISSUE, "b": body}),
+                (CLAIM_KEY, "reread", {"i": UUID}),
             ],
         )
         self.assertEqual(
-            self.ledger(), {RUN_SID: {"attempts": {"1": {"started_at": STARTED, "seq": 1}}}}
+            self.ledger(),
+            {
+                RUN_SID: {
+                    "steps": ["running:1"],
+                    "attempts": {"1": {"started_at": STARTED, "seq": 1}},
+                }
+            },
         )
 
     def test_the_same_begun_twice_writes_once(self):
@@ -1722,6 +1805,7 @@ class ProgressEvents(Events):
         self.assertEqual(
             self.linear.calls,
             [
+                (CLAIM_KEY, "reread", {"i": UUID}),
                 (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")}),
                 (
                     CLAIM_KEY,
@@ -1744,22 +1828,27 @@ class ProgressEvents(Events):
                 ),
             ],
         )
-        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start", digest]}})
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["running:1", "start", digest]}})
 
     def test_a_redelivered_start_whose_ledger_write_was_lost_is_found_not_reposted(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
         start = delegate_event("progress", name="start", text="x")
         with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
             self.assertFalse(self.deliver(start))
         self.assertTrue(self.deliver(start))
         posts = [v["c"] for _, op, v in self.linear.calls if op == "comment"]
-        self.assertEqual(posts, [ops.client_id(RUN_SID, "start")])
-        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["start"])
+        self.assertEqual(posts, [RUN_SESSION, ops.client_id(RUN_SID, "start")])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1", "start"])
 
     def test_a_resumed_attempt_finds_a_start_whose_ledger_write_was_lost(self):
         self.linear.comments[ops.client_id(RUN_SID, "start")] = {"body": "x", "service": CLAIM_KEY}
         self.assertTrue(self.deliver(delegate_event("progress", attempt=2, name="start", text="x")))
         self.assertEqual(
-            self.linear.calls, [(CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")})]
+            self.linear.calls,
+            [
+                (CLAIM_KEY, "reread", {"i": UUID}),
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")}),
+            ],
         )
 
     def test_a_failed_post_is_false(self):
@@ -1767,7 +1856,7 @@ class ProgressEvents(Events):
             LinearError("linear api error: down") if op == "comment" else None
         )
         self.assertFalse(self.deliver(delegate_event("progress", name="start", text="x")))
-        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["running:1"]}})
 
 
 class RefusedEvents(Events):
@@ -1844,7 +1933,7 @@ class FinishedEvents(Events):
             self.ledger(),
             {
                 RUN_SID: {
-                    "steps": ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+                    "steps": ["running:1", "comment", f"attach:{PR}", "move:in_review", "outcome"],
                     "attempts": {"1": {"started_at": STARTED, "seq": 2, "ended_at": RESTARTED}},
                 }
             },
@@ -1901,7 +1990,7 @@ class FinishedEvents(Events):
             f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=the client exited 1",
             self.said(),
         )
-        self.assertNotIn("steps", self.ledger()[RUN_SID])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
 
     def test_a_clean_exit_without_an_outcome_ends_the_session_as_no_outcome(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
@@ -2007,7 +2096,9 @@ class LimitEvents(Events):
             ],
         )
         self.assertEqual(self.rows(), [self.row()])
-        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"], ["running:1", "limit", "limit-move:1", "limit-row:1"]
+        )
 
     def test_an_outcome_with_a_limit_writes_both_and_moves_once(self):
         both = self.finished(-9, outcome=outcome_data(), limit={"resets_at": None})
@@ -2213,7 +2304,7 @@ class LimitEvents(Events):
         digest = {t: hashlib.sha256(t.encode()).hexdigest()[:12] for t in ("one", "two")}
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
-            [f"progress:build:{digest['one']}", f"progress:build:{digest['two']}"],
+            ["running:1", f"progress:build:{digest['one']}", f"progress:build:{digest['two']}"],
         )
 
 
@@ -2289,12 +2380,12 @@ class RecoverReplay(Events):
     def test_a_first_event_makes_its_workdir(self):
         shutil.rmtree(self.workdir)
         self.assertTrue(self.deliver(delegate_event("progress", name="build", text="one")))
-        self.assertEqual(len(self.ledger()[RUN_SID]["steps"]), 1)
+        self.assertEqual(len(self.ledger()[RUN_SID]["steps"]), 2)
 
     def test_ledger_and_lock_live_in_the_workdir_root(self):
         before = sorted(os.listdir(self.workdir))
         self.assertTrue(self.deliver(delegate_event("progress", name="start", text="x")))
-        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start"]}})
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["running:1", "start"]}})
         self.assertEqual(
             sorted(os.listdir(self.workdir)),
             sorted([*before, writeback.LEDGER, writeback.LOCK]),

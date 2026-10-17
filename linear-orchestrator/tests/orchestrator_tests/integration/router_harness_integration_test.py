@@ -68,7 +68,7 @@ class MinimalPath(BinFlow):
         )
         self.assertEqual(
             self.ledger(ID),
-            {sid: ["start", "comment", f"attach:{PR}", "move:in_review", "outcome"]},
+            {sid: ["running:1", "start", "comment", f"attach:{PR}", "move:in_review", "outcome"]},
         )
         self.assertEqual(len(self.sent("linear.M_COMMENT_ID", HARNESS_EMAIL)), 1)
 

@@ -25,7 +25,7 @@ from delegate.tests.replies import block, mark
 from session.tests import live_tmux
 
 TUI = f"pm-{ID}-{SID[:8]}"
-LEDGER = ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]
+LEDGER = ["running:1", "start", "retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]
 DONE = {
     "status": "done",
     "title": "Session Registry",

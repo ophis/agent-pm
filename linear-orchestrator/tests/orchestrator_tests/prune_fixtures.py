@@ -14,8 +14,8 @@ from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
+from orchestrator_tests.unit.board_ids import DUPLICATE, FINISHED, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
-from orchestrator_tests.unit.board_ids import TEAM, team_node
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, logged, show
@@ -29,6 +29,7 @@ NOW = tp.NOW
 STATE_IDS = {
     "Done": IDS_BY_KEY["done"],
     "Canceled": IDS_BY_KEY["canceled"],
+    "Duplicate": DUPLICATE,
     "In Progress": IDS_BY_KEY["in_progress"],
     "Todo": IDS_BY_KEY["todo"],
     "In Review": IDS_BY_KEY["in_review"],
@@ -44,7 +45,7 @@ ROLES = {
 }
 
 
-TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY))
+TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED)
 
 
 def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
