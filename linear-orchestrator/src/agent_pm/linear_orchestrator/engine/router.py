@@ -367,6 +367,11 @@ class Board:
         )
         return start.client if moved is None or moved <= start.ts else None
 
+    def select_client(self, labels, role):
+        return client_for(
+            labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
+        )
+
     def client_pinned(self, spec):
         if self.dry or not self.cfg.agent_label_group:
             return
@@ -377,12 +382,7 @@ class Board:
             return
         try:
             current = self.gql(Q_RECHECK, i=spec.uuid)["issue"]
-            selected, _, error = client_for(
-                current["labels"]["nodes"],
-                self.cfg.agent_label_group,
-                self.label_clients,
-                self.cfg.roles[role].run.client,
-            )
+            selected, _, error = self.select_client(current["labels"]["nodes"], role)
             if error:
                 selected = "invalid"
             if selected != spec.client:
@@ -621,12 +621,7 @@ class Board:
         if pinned := self.pinned_client(issue):
             client, source, client_error = pinned, "pinned", None
         else:
-            client, source, client_error = client_for(
-                labels,
-                self.cfg.agent_label_group,
-                self.label_clients,
-                self.cfg.roles[role].run.client,
-            )
+            client, source, client_error = self.select_client(labels, role)
         if self.dry:
             self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
