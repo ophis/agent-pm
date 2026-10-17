@@ -591,7 +591,8 @@ class FixtureOperations(Case):
 class GraphQLQueries(ServerCase):
     def test_the_team_lists_backlog_beside_the_config_states(self):
         query = ops.Q_TEAM.replace(
-            "states(first: 100) { nodes { id } }", "states(first: 100) { nodes { id name type } }"
+            "states(first: 100) { nodes { id type } }",
+            "states(first: 100) { nodes { id name type } }",
         )
         self.fake.ops[query] = "linear.Q_TEAM"
         nodes = self.gql(query, t=TEAM)["teams"]["nodes"][0]["states"]["nodes"]

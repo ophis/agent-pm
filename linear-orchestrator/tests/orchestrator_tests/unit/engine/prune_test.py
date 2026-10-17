@@ -24,7 +24,7 @@ from orchestrator_tests.prune_fixtures import (
     write,
 )
 from orchestrator_tests.unit import promote_fixtures as tp
-from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_tests.unit.board_ids import FINISHED
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
 from delegate.tests.workdir import checkout_path
@@ -317,7 +317,7 @@ class RetentionCleanup(PruneScenario):
         )
         (v,) = gql.finished
         self.assertEqual(sorted(v["a"]), ["u-engineer", "u-pm"])
-        self.assertEqual(sorted(v["s"]), sorted([IDS_BY_KEY["done"], IDS_BY_KEY["canceled"]]))
+        self.assertEqual(sorted(v["s"]), sorted(FINISHED))
 
     def test_archive_failure_others_archived(self):
         done = ("Done", [(30, "Done")])
@@ -803,6 +803,14 @@ class Stalled(PruneScenario):
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
 
+    def test_a_duplicate_issue_is_finished_not_stalled(self):
+        _, gql = self.stalled(state="Duplicate")
+        self.assertEqual(
+            self.prune(gql),
+            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
+        )
+        self.assertIsNone(self.checkouts("TASK-7"))
+
 
 class PruneCommand(PruneScenario):
     """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
@@ -836,6 +844,16 @@ class PruneCommand(PruneScenario):
         self.assertFalse(os.path.exists(clone))
         self.assertEqual(gql.archived, ["id-TASK-49"])
         self.assertOutsideKept()
+
+    def test_a_duplicate_issue_is_finished_by_its_state_type(self):
+        clone = self.mkc("TASK-49")
+        gql = gql_for(
+            {"TASK-49": ("Duplicate", [(30, "In Progress"), (24, "Duplicate")])},
+            owners={"TASK-49": "u-pm"},
+        )
+        self.assertEqual(self.command(gql)[:3], (0, "", ""))
+        self.assertFalse(os.path.exists(clone))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
 
     def test_a_dry_run_plans_and_changes_nothing(self):
         clone = self.mkc("TASK-49")

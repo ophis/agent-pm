@@ -1,4 +1,5 @@
-"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
+"""Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
+such as Duplicate: ops.Team.finished) at least 24 hours ago (its latest move into one; unknown:
 skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
@@ -10,13 +11,13 @@ configured one) reports agent files in (Delegate.checkouts not None):
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
-For each stalled issue (any state but Todo, In Progress, Done, Canceled) whose latest move into its
+For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
 temp files through its Delegate (Delegate.clean scratch; its refusal, a run or agent session still
 open included, skips it), keeping the rest and its run records, closing no run; then only `worktree
 prune` in each worktree's local clone, keeping every branch (it may back an open PR).
 
-For each issue Done or Canceled at least 7 days ago whose workdir is a real dir without agent files
+For each issue finished at least 7 days ago whose workdir is a real dir without agent files
 (and of a configured kind), it deletes the whole workdir (run records, write-back ledger) once its
 Delegate's clean finds no live run (its refusal skips it). An issue without agent files is not
 attached; one of a kind no longer configured is neither queried nor logged. Run inventory unknown: an
@@ -81,11 +82,11 @@ Prerequisites and effects:
   Requires configured Linear/Delegate settings, Linear access, harness_key
   Keychain credentials and access to the configured work_dir/local clones.
   Configuration and executable lookup: agent-pm-linear --help
-  For issues Done/Canceled at least 24 hours (latest transition; unknown age is
-  skipped), close recorded runs and delete agent files, including uncommitted
-  work, through their Delegate. Close/cleanup refusal preserves later steps
-  for a future tick. Unknown run inventory prevents run/file pruning;
-  archival still proceeds.
+  For issues Done/Canceled/Duplicate (any canceled-type state) at least 24
+  hours (latest transition; unknown age is skipped), close recorded runs and
+  delete agent files, including uncommitted work, through their Delegate.
+  Close/cleanup refusal preserves later steps for a future tick. Unknown run
+  inventory prevents run/file pruning; archival still proceeds.
   Prune worktree records in each checkout's local clone and remove pushed
   ISSUE-* branches already contained in origin/branch or origin/default;
   preserve the default branch and unpushed branches. No fetch is performed.
@@ -280,7 +281,7 @@ class Pruner:
                 self.say("prune-archived", ident)
 
     def run(self):
-        finished = {self.team.states["done"], self.team.states["canceled"]}
+        finished = self.team.finished
         found = self.inventory()
         self.views = found or {}
         if found is None:

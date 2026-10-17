@@ -81,6 +81,13 @@ class State(StrEnum):
     CANCELED = "canceled"
 
 
+class FinishedType(StrEnum):
+    """Linear state types finished beside the configured done state: Duplicate is canceled-type."""
+
+    CANCELED = "canceled"
+    DUPLICATE = "duplicate"
+
+
 class ConfigError(Exception):
     def __init__(self, msg: str, logs_dir: str | None = None):
         super().__init__(msg)
