@@ -24,21 +24,34 @@ from dataclasses import replace
 from typing import NamedTuple
 
 import agent_pm.utils
-from agent_pm.session.engine.tmux_cli import DIED, VIEW, TmuxCli, TuiError, absent
+from agent_pm.session.engine.tmux_cli import DIED, VIEW, TmuxCli, TmuxPane, TuiError, absent
+from agent_pm.session.engine.tmux_cli import POLL as TMUX_POLL
 from agent_pm.session.engine.types import (
     COMMAND,
+    MARKS,
     RESUME,
     SESSION_NAME,
     ClientHome,
     ConfigError,
     HookCallback,
+    Key,
     Launch,
+    Liveness,
     PaneStatus,
+    Paste,
     SessionError,
     SessionRow,
     StatusState,
 )
-from agent_pm.session.hosts.base import TUI_DIR, TUI_STATE, Host, Process, Showable, tui_lock
+from agent_pm.session.hosts.base import (
+    TUI_DIR,
+    TUI_STATE,
+    Host,
+    InteractiveProcess,
+    Process,
+    Showable,
+    tui_lock,
+)
 from agent_pm.session.hosts.docker import hook as docker_hook
 from agent_pm.session.hosts.docker import supervisor as run_supervisor
 from agent_pm.session.hosts.docker.broker import (
@@ -61,7 +74,7 @@ from agent_pm.session.hosts.docker.daemon import (
 )
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
-from agent_pm.session.hosts.tmux.host import TmuxHost, TmuxTerminal
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.utils import (
     Display,
     Record,
@@ -239,17 +252,19 @@ class _Stops:
             raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
 
 
-def _wait(ready, timeout: float) -> bool:
+def _wait(ready, timeout: float, poll: float = POLL) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
         if time.monotonic() >= deadline:
             return False
-        time.sleep(POLL)
+        time.sleep(poll)
     return True
 
 
-class DockerTerminal(TmuxTerminal):
-    """Its Record, display, sid and hidden flag: the Host record's, of the container's generation."""
+class DockerTerminal(InteractiveProcess):
+    """The container's pane, a TmuxPane on the container's TmuxCli. Its Record, display, sid and
+    hidden flag: the Host record's, of the container's generation.
+    """
 
     def __init__(
         self,
@@ -262,10 +277,41 @@ class DockerTerminal(TmuxTerminal):
         generation: str,
         current: bool = True,
     ) -> None:
-        self.name, self.tmux, self._process, self._control = name, tmux, process, None
-        _, _, self._pane, self._pane_pid = process.split(" ")
+        self.name, self.tmux, self.pane = name, tmux, TmuxPane(name, process, tmux)
+        self._pane_pid = process.split(" ")[3]
         self.host, self.container, self.generation = host, container, generation
         self.current = current
+
+    @property
+    def identity(self) -> str:
+        return self.pane.process
+
+    def state(self) -> Liveness:
+        return self.pane.state()
+
+    def returncode(self) -> int | None:
+        return self.pane.returncode()
+
+    def activity(self) -> StatusState | None:
+        value = self.pane.option("@state")
+        return StatusState(value) if value in MARKS else None
+
+    def alive(self) -> bool:
+        return self.pane.alive()
+
+    def send(self, action: Paste | Key) -> None:
+        self.pane.send(action, self.alive)
+
+    def press(self, keys) -> None:
+        self.pane.press(keys, self.alive)
+
+    def wait_exit(self, timeout: float) -> bool:
+        return _wait(lambda: not (self.alive() or self._group_live()), timeout, TMUX_POLL)
+
+    def kill(self) -> None:
+        self._kill_group()
+        if not self.wait_exit(KILL_WAIT):
+            raise SessionError(f"process group {self.name}: did not exit")
 
     def _own_record(self) -> dict:
         found = _record(self.name)
@@ -303,7 +349,7 @@ class DockerTerminal(TmuxTerminal):
         if not self.alive():
             raise SessionError(f"session {self.name} is not running on host {self.host.name}")
         try:
-            return _text(self.tmux.read(self._pane, lines))
+            return _text(self.pane.read(lines))
         except TuiError as error:
             raise SessionError(f"docker session {self.name}: {error}") from None
 
@@ -311,14 +357,10 @@ class DockerTerminal(TmuxTerminal):
         self._update(hidden=hidden)
 
     def mark(self, word: StatusState, events: str | None) -> None:
-        if self._own():
-            try:
-                self.tmux.mark(word, events, pane=self._pane, session=self.name)
-            except TuiError as error:
-                raise SessionError(str(error)) from error
+        self.pane.mark(word, events, session=self.name)
 
     def status(self) -> Status:
-        found = Process.status(self)
+        found = super().status()
         attach = shlex.join(_attach_argv(self.host.docker, self.container, self.name))
         return replace(found, attach=attach) if found.alive else found
 
@@ -341,7 +383,7 @@ class DockerTerminal(TmuxTerminal):
         try:
             res = self.tmux.run(
                 [
-                    *("set-hook", "-p", "-u", "-t", self._pane, "pane-died", ";"),
+                    *("set-hook", "-p", "-u", "-t", self.pane.id, "pane-died", ";"),
                     *("kill-session", "-t", f"={self.name}"),
                 ]
             )
