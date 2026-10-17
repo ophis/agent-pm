@@ -15,9 +15,11 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import (
     ClientHome,
     ConfigError,
+    IdleTimeout,
     KeyPress,
     Launch,
     Liveness,
@@ -25,6 +27,7 @@ from agent_pm.session.engine.types import (
     SessionError,
     StatusState,
 )
+from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
@@ -39,6 +42,8 @@ from utils.tests.process_fixtures import TimeoutExpired
 
 DOCKER = "/usr/local/bin/docker"
 GEN = "0123456789abcdef0123456789abcdef"
+SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+NEW = "f" * 32
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
@@ -1020,6 +1025,39 @@ class CloseTest(Base):
             process.close()
         self.assertEqual(self.broker.closed, [CONTAINER])
         self.assertNotIn(["kill-session", "-t", "=w"], self.host_calls)
+
+    def test_a_restart_with_no_host_view_starts_the_next_generation(self):
+        self.listed("w")
+        self.record(sid=SID)
+        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
+        closed = self.broker.close
+
+        def close(container):
+            self.docker.ps, self.docker.replies = (
+                [],
+                {(): (1, "", f"Error response from daemon: No such container: {container}")},
+            )
+            return closed(container)
+
+        def start(*_, **__):
+            self.docker.replies = {}
+            self.listed("w", gen=NEW)
+            self.record(sid=SID, generation=NEW)
+            return session
+
+        self.broker.close = close
+        session_cls = mock.Mock()
+        session_cls.host.return_value = self.host
+        session_cls.start.side_effect = start
+        session = mock.Mock(showable=False, opening_pending=None)
+        session.events.return_value = iter([IdleTimeout(worker.EARLY)])
+        state = WorkerState("w", SID, "agent", self.cwd, "docker", (), {}, None, "lead/below")
+        with mock.patch("os.kill"):
+            record = Worker(state, session_cls=session_cls, say=lambda _: None).restart()
+        self.assertEqual(set(self.broker.closed), {CONTAINER})
+        self.assertTrue(session_cls.start.call_args.args[0].resume)
+        found = self.host_record()
+        self.assertEqual((found["generation"], found["record"]), (NEW, record.to_line()))
 
     def test_close_when_container_gone(self):
         process = self.terminal()

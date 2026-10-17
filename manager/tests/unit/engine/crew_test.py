@@ -58,7 +58,7 @@ class Run(RosterCase):
             ("timeout", TimeoutExpired(ARGV, 30), "no response within 1920 seconds"),
         ):
             with self.subTest(name=name):
-                error, _, _ = self.start(mock.Mock(side_effect=[effect, effect]), name)
+                error, _, _ = self.start(mock.Mock(side_effect=[effect]), name)
                 self.assertEqual(str(error), f"fake-ctl start x: {message}")
                 self.assertIs(self.roster.entries()[name].state, State.LOST)
 

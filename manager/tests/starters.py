@@ -16,13 +16,19 @@ def answered(run, *starts):
     def popen(argv, **options):
         if starts and tuple(argv) not in starts:
             return real(argv, **options)
-        proc = finished()
+        proc, outcome = finished(), []
 
         def communicate(timeout):
-            with mock.patch("subprocess.Popen", real):
-                result = run(argv, timeout=timeout, **options)
-            proc.returncode = result.returncode
-            return None, result.stderr
+            if not outcome:
+                try:
+                    with mock.patch("subprocess.Popen", real):
+                        outcome.append(run(argv, timeout=timeout, **options))
+                except (OSError, subprocess.SubprocessError) as error:
+                    outcome.append(error)
+            if isinstance(outcome[0], BaseException):
+                raise outcome[0]
+            proc.returncode = outcome[0].returncode
+            return None, outcome[0].stderr
 
         proc.communicate.side_effect = communicate
         return proc
