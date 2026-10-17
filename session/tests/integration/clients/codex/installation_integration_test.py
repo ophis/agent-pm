@@ -137,7 +137,7 @@ class Upgrade(UpgradeCase):
         journal_before = len(journal.read_text().splitlines())
         state = json.loads((self.home / ".agent-pm/tui/worker/session.json").read_text())
         self.assertNotIn(str(self.a), json.dumps(state["client_hook"]))
-        self.assertIn(str(self.snapshots), json.dumps(state["client_hook"]))
+        self.assertEqual(state["client_hook"]["module"], "agent_pm.session.clients.codex.tui")
         saved = self.work / "saved.txt"
         saved.write_text("saved work")
         shutil.rmtree(self.a)

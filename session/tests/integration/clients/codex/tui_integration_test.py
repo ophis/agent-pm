@@ -7,6 +7,7 @@ import json
 import os
 import queue
 import select as select_module
+import shlex
 import signal
 import stat
 import subprocess
@@ -239,6 +240,36 @@ class Live(Case):
         self.addCleanup(handle.stop)
         stream = Stream(self, handle)
         return stream.until(Exited)
+
+    def assert_resumed_argv(self, first, second, native):
+        def policy(argv):
+            words = []
+            index = 0
+            while index < len(argv):
+                if argv[index] == "-c" and argv[index + 1].startswith("hooks."):
+                    index += 2
+                else:
+                    words.append(argv[index])
+                    index += 1
+            return words
+
+        self.assertEqual(policy(second["argv"]), ["resume", native, *policy(first["argv"])])
+        configurations, owners = [], []
+        for call in (first, second):
+            argv = call["argv"]
+            config = fake_tui.configure(
+                [argv[i + 1] for i, word in enumerate(argv) if word == "-c"]
+            )
+            rows = fake_tui.catalog(config)
+            self.assertEqual(len(rows), 6)
+            self.assertEqual({row["trustStatus"] for row in rows}, {"trusted"})
+            owner = str(Path(shlex.split(rows[0]["command"])[0]).parent.parent)
+            self.assertTrue(owner.startswith(str(self.home / ".agent-pm/installations/run-")))
+            hooks = {key: value for key, value in config["hooks"].items() if key != "state"}
+            configurations.append(json.dumps(hooks, sort_keys=True).replace(owner, "<owner>"))
+            owners.append(owner)
+        self.assertNotEqual(*owners)
+        self.assertEqual(*configurations)
 
 
 class HookTrustIntegrationTest(Live):
@@ -642,7 +673,7 @@ class TuiLaunchIntegrationTest(Live):
             str(self.extra),
         ]
         self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
-        self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
+        self.assert_resumed_argv(first, second, native)
         self.assertEqual(self.bound().snapshot.flags[1], "workspace-write")
 
     def test_session_start_waits_for_first_submission_fresh_and_resumed(self):
@@ -1007,7 +1038,7 @@ class TuiRecoveryIntegrationTest(Live):
         found = Stream(self, resumed).until(TurnEnd)
         self.assertEqual(found, [Activity(), Activity(), TurnEnd("resumed")])
         first, second = self.calls()
-        self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
+        self.assert_resumed_argv(first, second, native)
         self.assertEqual(
             (second["cwd"], second["env"]["CODEX_HOME"]), (str(self.cwd), str(self.codex_home))
         )

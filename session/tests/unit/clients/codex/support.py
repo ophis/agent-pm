@@ -1,7 +1,9 @@
 """Isolated Codex unit fixtures with recovery records and native session files."""
 
+import contextlib
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -11,6 +13,7 @@ from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.codex.common import SessionStore
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import Access, Launch, Spec
+from agent_pm.utils import installation_root
 
 from session.tests.case import REPO, Case
 
@@ -76,6 +79,24 @@ class Base(Case):
             effort="low",
             access=Access(cwd=str(self.cwd), dirs=(str(self.extra),), commands=("git status",)),
         )
+
+    @contextlib.contextmanager
+    def plugin(self):
+        fixture = self.root / "plugin"
+        for part in ("bin", "utils/src", "session/src"):
+            (fixture / part).mkdir(parents=True, exist_ok=True)
+        (fixture / "bin/agent-pm-session").write_text("")
+        module = sys.modules[installation_root.__module__].__file__
+        abspath = os.path.abspath
+        with mock.patch(
+            "os.path.abspath",
+            side_effect=lambda path: (
+                str(fixture / "utils/src/agent_pm/utils/paths.py")
+                if path == module
+                else abspath(path)
+            ),
+        ):
+            yield fixture
 
     def prepare(self):
         return self.common.save(self.common.prepare(self.spec))

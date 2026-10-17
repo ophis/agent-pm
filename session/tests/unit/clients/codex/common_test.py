@@ -62,43 +62,46 @@ class LaunchLifecycleTest(Base):
 
 class CommonTest(Base):
     def test_saved_runtime_paths_rebind_without_changing_identity_or_user_paths(self):
-        current = installation_root()
-        self.assertIsNotNone(current)
-        for legacy in (False, True):
-            with self.subTest(legacy=legacy):
-                if list(Path(SessionStore().root).glob("*.json")):
-                    self.record().unlink()
-                self.prepare()
-                data = json.loads(self.record().read_text())
-                origin = str(self.root / "removed-installation")
-                data["snapshot"]["env"] = {
-                    "PYTHONPATH": origin + "/utils/src:" + origin + "/session/src",
-                    "HOME": str(self.home),
-                }
-                data["snapshot"]["flags"] = [
-                    "-c",
-                    'mcp_servers.example.command="' + origin + '/bin/command"',
-                ]
-                if legacy:
-                    data.pop("installations", None)
-                else:
-                    data["installations"] = [origin, str(self.root / "removed-alias")]
-                self.record().write_text(json.dumps(data))
-                state = self.common.load(str(self.work), self.spec.sid)
-                self.assertEqual(state.workdir, str(self.work))
-                self.assertEqual(state.sid, self.spec.sid)
-                self.assertEqual(state.snapshot.env["HOME"], str(self.home))
-                self.assertEqual(
-                    state.snapshot.env["PYTHONPATH"],
-                    current + "/utils/src:" + current + "/session/src",
-                )
-                self.assertIn(current + "/bin/command", state.snapshot.flags[1])
-                bound = self.common.bind(str(self.work), self.spec.sid, NATIVE)
-                self.assertEqual(bound.native_id, NATIVE)
-                persisted = json.loads(self.record().read_text())
-                self.assertIn(origin + "/utils/src", persisted["snapshot"]["env"]["PYTHONPATH"])
-                self.assertNotIn(current + "/utils/src", persisted["snapshot"]["env"]["PYTHONPATH"])
-                self.assertIn(origin + "/bin/command", persisted["snapshot"]["flags"][1])
+        with self.plugin():
+            current = installation_root()
+            self.assertIsNotNone(current)
+            for legacy in (False, True):
+                with self.subTest(legacy=legacy):
+                    if list(Path(SessionStore().root).glob("*.json")):
+                        self.record().unlink()
+                    self.prepare()
+                    data = json.loads(self.record().read_text())
+                    origin = str(self.root / "removed-installation")
+                    data["snapshot"]["env"] = {
+                        "PYTHONPATH": origin + "/utils/src:" + origin + "/session/src",
+                        "HOME": str(self.home),
+                    }
+                    data["snapshot"]["flags"] = [
+                        "-c",
+                        'mcp_servers.example.command="' + origin + '/bin/command"',
+                    ]
+                    if legacy:
+                        data.pop("installations", None)
+                    else:
+                        data["installations"] = [origin, str(self.root / "removed-alias")]
+                    self.record().write_text(json.dumps(data))
+                    state = self.common.load(str(self.work), self.spec.sid)
+                    self.assertEqual(state.workdir, str(self.work))
+                    self.assertEqual(state.sid, self.spec.sid)
+                    self.assertEqual(state.snapshot.env["HOME"], str(self.home))
+                    self.assertEqual(
+                        state.snapshot.env["PYTHONPATH"],
+                        current + "/utils/src:" + current + "/session/src",
+                    )
+                    self.assertIn(current + "/bin/command", state.snapshot.flags[1])
+                    bound = self.common.bind(str(self.work), self.spec.sid, NATIVE)
+                    self.assertEqual(bound.native_id, NATIVE)
+                    persisted = json.loads(self.record().read_text())
+                    self.assertIn(origin + "/utils/src", persisted["snapshot"]["env"]["PYTHONPATH"])
+                    self.assertNotIn(
+                        current + "/utils/src", persisted["snapshot"]["env"]["PYTHONPATH"]
+                    )
+                    self.assertIn(origin + "/bin/command", persisted["snapshot"]["flags"][1])
 
     def test_invalid_installation_metadata_is_refused(self):
         self.prepare()

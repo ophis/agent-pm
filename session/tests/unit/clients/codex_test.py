@@ -22,7 +22,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.utils import installations_root
 
-from session.tests.case import REPO, Case
+from session.tests.case import Case
 from session.tests.unit.clients.codex.support import CHILD, NATIVE, Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
@@ -318,26 +318,27 @@ class InstallationTest(Base):
         self.assertFalse(Path(root).exists())
 
     def test_scope_relocates_encoded_hook_and_callback_roots_and_cleans_failed_start(self):
-        source = Path(REPO)
-        hook = str(source / "bin/agent-pm-session")
-        launch = Launch(
-            ("python3", "-m", "start", json.dumps({"hook": [hook]})),
-            env={"PATH": str(source / "bin")},
-        )
-        with (
-            self.assertRaisesRegex(RuntimeError, "failed start"),
-            self.client._launch_scope(self.spec, launch) as (kept, relocate),
-        ):
-            encoded = json.loads(kept.argv[-1])[-1]
-            copy = next(Path(installations_root()).iterdir())
-            self.assertEqual(json.loads(encoded)["hook"], [str(copy / "bin/agent-pm-session")])
-            self.assertEqual(
-                relocate({"roots": [str(source / "utils/src")]}),
-                {"roots": [str(copy / "utils/src")]},
+        with self.plugin() as fixture:
+            source = fixture
+            hook = str(source / "bin/agent-pm-session")
+            launch = Launch(
+                ("python3", "-m", "start", json.dumps({"hook": [hook]})),
+                env={"PATH": str(source / "bin")},
             )
-            self.assertTrue(kept.env["PATH"].startswith(str(copy / "bin")))
-            raise RuntimeError("failed start")
-        self.assertEqual(list(Path(installations_root()).iterdir()), [])
+            with (
+                self.assertRaisesRegex(RuntimeError, "failed start"),
+                self.client._launch_scope(self.spec, launch) as (kept, relocate),
+            ):
+                encoded = json.loads(kept.argv[-1])[-1]
+                copy = next(Path(installations_root()).iterdir())
+                self.assertEqual(json.loads(encoded)["hook"], [str(copy / "bin/agent-pm-session")])
+                self.assertEqual(
+                    relocate({"roots": [str(source / "utils/src")]}),
+                    {"roots": [str(copy / "utils/src")]},
+                )
+                self.assertTrue(kept.env["PATH"].startswith(str(copy / "bin")))
+                raise RuntimeError("failed start")
+            self.assertEqual(list(Path(installations_root()).iterdir()), [])
 
     def test_non_plugin_installs_preserve_launch_and_preflight_creates_no_copy(self):
         self.common.prepare(self.spec)
