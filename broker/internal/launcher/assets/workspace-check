@@ -1,0 +1,80 @@
+#!/opt/agent-pm/venv/bin/python
+"""Prints {"dirty": [...]}: the repos at most three levels under a workspace mount point with
+uncommitted, stashed or unpushed work, relative to it. Run by agent-pm-broker workspace-rm on a
+read-only mount with no network.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+CACHE = ".agent-pm-cache"
+DEPTH = 3
+GIT = (
+    "git",
+    "--no-optional-locks",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "safe.directory=*",
+)
+CHECKS = (
+    ("status", "--porcelain", "--untracked-files=all", "--", ".", f":(exclude){CACHE}"),
+    ("rev-list", "--all", "--not", "--remotes"),
+)
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def repos(root):
+    """root and the directories up to DEPTH below it holding .git, skipping .git and CACHE."""
+    found, todo = [], [(root, 0)]
+    while todo:
+        path, level = todo.pop()
+        if os.path.lexists(os.path.join(path, ".git")):
+            found.append(path)
+        if level == DEPTH:
+            continue
+        try:
+            entries = list(os.scandir(path))
+        except OSError:
+            continue
+        todo += [
+            (entry.path, level + 1)
+            for entry in entries
+            if entry.name not in (".git", CACHE) and entry.is_dir(follow_symlinks=False)
+        ]
+    return sorted(found)
+
+
+def unsaved(path, run):
+    """Whether git reports work in path, or cannot tell."""
+    for check in CHECKS:
+        try:
+            res = run([*GIT, *check], cwd=path, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return True
+        if res.returncode or res.stdout.strip():
+            return True
+    return False
+
+
+def dirty(root, run=subprocess.run):
+    return [
+        CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", os.path.relpath(path, root))
+        for path in repos(root)
+        if unsaved(path, run)
+    ]
+
+
+def main(argv):
+    if len(argv) != 1 or not os.path.isabs(argv[0]):
+        sys.exit("usage: workspace-check MOUNT_POINT")
+    print(json.dumps({"dirty": dirty(argv[0])}))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
