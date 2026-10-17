@@ -70,6 +70,7 @@ Recovery and next help:
 import contextlib
 import fcntl
 import functools
+import itertools
 import os
 import re
 import subprocess
@@ -427,6 +428,12 @@ class Board:
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
+    def bounce(self, issue, body):
+        """A Todo issue that cannot be claimed: comment body and move it to In Review."""
+        if self.dry:
+            self.say("would comment", issue["identifier"], body=body, to="in_review")
+        self.comment_and_move(issue, body, "in_review", "todo", "claim")
+
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
@@ -562,24 +569,32 @@ class Board:
                 sid=sid,
             )
 
+    def first(self, found):
+        """found's first item not None; a dry run goes through all of found, previewing each."""
+        selected = None
+        for item in found:
+            if item is not None and selected is None:
+                selected = item
+                if not self.dry:
+                    break
+        return selected
+
     def take(self, only=None, full=()):
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
-        selected = None
-        for issue in queue:
+
+        def pick(issue):
             ident = issue["identifier"]
             if self.attempts(issue) >= CAP:
                 self.say("claim-skip", ident, to="in_review", reason=f"reached {CAP} attempts")
                 self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick")
-                continue
+                return None
             self.say("pick", ident, queue=len(queue))
-            if taken := self.claim(issue, full):
-                if not self.dry:
-                    return taken
-                selected = selected or taken
-        if selected is not None:
-            return selected
+            return self.claim(issue, full)
+
+        if (taken := self.first(map(pick, queue))) is not None:
+            return taken
         if queue:
             self.say("pick-none", reason="nothing claimable")
         else:
@@ -632,19 +647,14 @@ class Board:
             else:
                 reason = "bad task and Agent labels"
             self.say("claim-skip", ident, to="in_review", reason=reason)
-            if self.dry:
-                self.say("would comment", ident, body="\n\n".join(comments), to="in_review")
-            self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
+            self.bounce(issue, "\n\n".join(comments))
             return None
         try:
             if self.gated(role, ident, client, source):
                 return None
         except delegate.ConfigError as error:
             self.say("launch-error", ident, client=client, error=one_line(error))
-            body = _label_client_message(client, error)
-            if self.dry:
-                self.say("would comment", ident, body=body, to="in_review")
-            self.comment_and_move(issue, body, "in_review", "todo", "claim")
+            self.bounce(issue, _label_client_message(client, error))
             return None
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         if self.dry:
@@ -941,32 +951,39 @@ def other_sid(spec, launch_sid):
 
 
 def choose(board, gate, live_ids, full, counts, *, new_sid):
-    selected = None
-    for issue, sid in board.recover(live_ids):
-        if not board.available(issue, full):
-            continue
-        client = client_of(board.entries, sid)
-        board.preview_resume(issue, sid)
-        if not gate.blocked(
-            board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), client)
-        ):
-            board.plan(("resume", issue, sid), counts)
-            spec = Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
-            if not board.dry:
-                return spec
-            selected = selected or spec
-    if not (queue := board.queue(full)):
-        return selected
-    board.plan(("new", len(queue)), counts)
-    if not (taken := board.take(full=full)):
-        if selected is not None:
-            return selected
+    unclaimed = False
+
+    def resumes():
+        for issue, sid in board.recover(live_ids):
+            if not board.available(issue, full):
+                continue
+            client = client_of(board.entries, sid)
+            board.preview_resume(issue, sid)
+            if not gate.blocked(
+                board.role(issue),
+                issue["identifier"],
+                key=(delegate_of(board.entries, sid), client),
+            ):
+                board.plan(("resume", issue, sid), counts)
+                yield Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+
+    def claimed():
+        nonlocal unclaimed
+        if not (queue := board.queue(full)):
+            return
+        board.plan(("new", len(queue)), counts)
+        if not (taken := board.take(full=full)):
+            unclaimed = True
+            return
+        issue, task, _, client, source = taken
+        yield Spec.from_issue(
+            issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
+        )
+
+    spec = board.first(itertools.chain(resumes(), claimed()))
+    if spec is None and unclaimed:
         board.say("skip", reason="nothing claimed")
-        return None
-    issue, task, _, client, source = taken
-    return selected or Spec.from_issue(
-        issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
-    )
+    return spec
 
 
 def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, launch_sid=None):
