@@ -1,11 +1,15 @@
 package launcher
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -13,8 +17,50 @@ import (
 // Fixed in the broker; configuration cannot change it.
 var denied = []string{".agent-pm", ".codex", ".claude", ".ssh", ".config", ".docker", "Library", ".aws", ".gnupg", ".kube", ".npmrc"}
 
+// LoadRoots reads session.hosts.docker.mount_roots from <home>/.agent-pm/config.local.toml; absent means none.
+func LoadRoots(home string) ([]string, error) {
+	var config map[string]any
+	if _, err := toml.DecodeFile(filepath.Join(home, ".agent-pm/config.local.toml"), &config); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var node any = config
+	for _, key := range []string{"session", "hosts", "docker", "mount_roots"} {
+		table, ok := node.(map[string]any)
+		if !ok {
+			return nil, errors.New("session.hosts.docker must be a table")
+		}
+		if node, ok = table[key]; !ok {
+			return nil, nil
+		}
+	}
+	list, ok := node.([]any)
+	if !ok {
+		return nil, errors.New("mount_roots must be an array of paths")
+	}
+	var roots []string
+	for _, item := range list {
+		root, ok := item.(string)
+		switch {
+		case !ok:
+			return nil, errors.New("mount_roots must be an array of paths")
+		case root == "~":
+			root = home
+		case strings.HasPrefix(root, "~/"):
+			root = filepath.Join(home, root[2:])
+		}
+		if !strings.HasPrefix(root, "/") || hasControl(root) {
+			return nil, fmt.Errorf("mount root %q must be absolute or start with ~/", root)
+		}
+		roots = append(roots, filepath.Clean(root))
+	}
+	return roots, nil
+}
+
 // within reports whether a or one of its ancestors is the same file as b.
-func within(h Host, a, b string) bool {
+func (h Host) within(a, b string) bool {
 	b = filepath.Clean(b)
 	for x := filepath.Clean(a); ; x = filepath.Dir(x) {
 		if h.Same(x, b) {
@@ -55,13 +101,8 @@ func realSafe(path string) error {
 	return nil
 }
 
-// lexWithin is the container's view: mounts sit at literal paths there.
-func lexWithin(a, b string) bool {
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/")
-}
-
 // checkMounts applies the mount rules and returns cwd's real path, the bind source.
-func checkMounts(h Host, m Manifest) (string, error) {
+func (h Host) checkMounts(m Manifest) (string, error) {
 	reject := func(format string, args ...any) (string, error) {
 		return "", protocol.Newf(protocol.MountRejected, format, args...)
 	}
@@ -83,7 +124,7 @@ func checkMounts(h Host, m Manifest) (string, error) {
 	var real []string
 	for _, root := range roots {
 		r := resolve(root)
-		if within(h, h.Home, r) {
+		if h.within(h.Home, r) {
 			return reject("mount root %s is the home directory or its ancestor.", root)
 		}
 		real = append(real, r)
@@ -92,18 +133,18 @@ func checkMounts(h Host, m Manifest) (string, error) {
 	if err != nil {
 		return reject("cwd %s cannot be resolved.", m.CWD)
 	}
-	if within(h, h.Home, cwd) {
+	if h.within(h.Home, cwd) {
 		return reject("cwd %s is the home directory or its ancestor (denied).", m.CWD)
 	}
 	for _, name := range denied {
 		d := resolve(filepath.Join(h.Home, name))
-		if within(h, cwd, d) || within(h, d, cwd) {
+		if h.within(cwd, d) || h.within(d, cwd) {
 			return reject("cwd %s overlaps denied path %s.", m.CWD, d)
 		}
 	}
 	inside := false
 	for _, r := range real {
-		inside = inside || within(h, cwd, r)
+		inside = inside || h.within(cwd, r)
 	}
 	if !inside {
 		return reject("cwd %s is outside every mount root.", m.CWD)
@@ -121,10 +162,40 @@ func checkMounts(h Host, m Manifest) (string, error) {
 			}
 		}
 		for _, mount := range []string{m.CWD, cwd, m.ClaudeDir, docker.SecretsDir} {
-			if lexWithin(m.HookPath, mount) {
+			// The container's view: mounts sit at literal paths there.
+			if m.HookPath == mount || strings.HasPrefix(m.HookPath, strings.TrimSuffix(mount, "/")+"/") {
 				return reject("hook_path %s lies inside the mount %s.", m.HookPath, mount)
 			}
 		}
 	}
 	return cwd, nil
+}
+
+// checkNesting refuses a cwd strictly inside a running worker's bind source: that worker could swap
+// a directory for a symlink between this check and Docker's mount.
+func (h Host) checkNesting(ctx context.Context, cwd string) error {
+	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "label=agent-pm.session", "--format", "{{.ID}}"}, nil)
+	if err != nil {
+		return failure(err, protocol.StartFailed, "Cannot list running workers.")
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return nil
+	}
+	out, err = h.Docker.Run(ctx, append([]string{"inspect", "--format", "{{json .Mounts}}"}, ids...), nil)
+	if err != nil {
+		return failure(err, protocol.StartFailed, "Cannot inspect running workers.")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var mounts []struct{ Type, Source string }
+		if err := json.Unmarshal([]byte(line), &mounts); err != nil {
+			return protocol.New(protocol.StartFailed, "Cannot read running workers' mounts.")
+		}
+		for _, m := range mounts {
+			if m.Type == "bind" && m.Source != "" && h.within(cwd, m.Source) && !h.Same(cwd, m.Source) {
+				return protocol.Newf(protocol.MountRejected, "cwd %s is inside running worker mount %s.", cwd, m.Source)
+			}
+		}
+	}
+	return nil
 }

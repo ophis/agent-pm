@@ -35,6 +35,28 @@ func (e *CommandError) Error() string {
 	return fmt.Sprintf("docker exited %d: %s", e.Exit, strings.TrimSpace(e.Stderr))
 }
 
+// Diagnostic is Docker's diagnostic: the last stderr line that is not the CLI's --help trailer.
+func Diagnostic(err error) string {
+	var ce *CommandError
+	if !errors.As(err, &ce) {
+		return err.Error()
+	}
+	lines := strings.Split(ce.Stderr, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" && !strings.HasPrefix(line, "Run 'docker ") && !strings.HasPrefix(line, "See 'docker ") {
+			return line
+		}
+	}
+	return err.Error()
+}
+
+// Absent reports whether Docker says the image, object or container does not exist.
+func Absent(err error) bool {
+	var ce *CommandError
+	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
+}
+
 type CLI struct {
 	path, home, config string
 }

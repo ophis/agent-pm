@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -74,22 +73,6 @@ type CloseResult struct {
 	Removed   bool   `json:"removed"`
 }
 
-// lastLine is Docker's diagnostic: the last stderr line that is not the CLI's --help trailer.
-func lastLine(err error) string {
-	var ce *docker.CommandError
-	if !errors.As(err, &ce) {
-		return err.Error()
-	}
-	lines := strings.Split(ce.Stderr, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" && !strings.HasPrefix(line, "Run 'docker ") && !strings.HasPrefix(line, "See 'docker ") {
-			return line
-		}
-	}
-	return err.Error()
-}
-
 // failure classifies a Docker error: unreachable daemon, else code.
 func failure(err error, code protocol.Code, message string) *protocol.Error {
 	if errors.Is(err, docker.ErrUnreachable) {
@@ -102,12 +85,7 @@ func failure(err error, code protocol.Code, message string) *protocol.Error {
 func diagnosed(err error, code protocol.Code, message string) *protocol.Error {
 	e := failure(err, code, message)
 	if e.Code == code {
-		e.Cause = lastLine(err)
+		e.Cause = docker.Diagnostic(err)
 	}
 	return e
-}
-
-func absent(err error) bool {
-	var ce *docker.CommandError
-	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
 }

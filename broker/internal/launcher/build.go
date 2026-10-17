@@ -123,9 +123,9 @@ func treeDigest(root string) (string, error) {
 }
 
 // inspectImage returns found=false when Docker reports the image absent.
-func inspectImage(ctx context.Context, d docker.Runner, image string) (imageInfo, bool, error) {
-	out, err := d.Run(ctx, []string{"image", "inspect", image}, nil)
-	if absent(err) {
+func (h Host) inspectImage(ctx context.Context, image string) (imageInfo, bool, error) {
+	out, err := h.Docker.Run(ctx, []string{"image", "inspect", image}, nil)
+	if docker.Absent(err) {
 		return imageInfo{}, false, nil
 	}
 	if err != nil {
@@ -138,17 +138,23 @@ func inspectImage(ctx context.Context, d docker.Runner, image string) (imageInfo
 	return infos[0], true, nil
 }
 
-func probeIDs(out []byte) (string, string, bool) {
-	fields := strings.Fields(string(out))
-	if len(fields) != 2 {
-		return "", "", false
+func numeric(s string) bool {
+	n, err := strconv.ParseUint(s, 10, 31)
+	return err == nil && n > 0
+}
+
+// checkImage requires a broker-built image: matching key, version and agent ids in its labels.
+func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
+	info, found, err := h.inspectImage(ctx, image)
+	if err != nil {
+		return imageInfo{}, failure(err, protocol.ImageRejected, "Cannot inspect image "+image+".")
 	}
-	for _, f := range fields {
-		if n, err := strconv.ParseUint(f, 10, 31); err != nil || n == 0 {
-			return "", "", false
-		}
+	l := info.Config.Labels
+	if !found || l["agent-pm.key"] != strings.TrimPrefix(image, "agent-pm-worker:") || l["agent-pm.version"] == "" ||
+		!numeric(l["agent-pm.agent-uid"]) || !numeric(l["agent-pm.agent-gid"]) {
+		return imageInfo{}, protocol.New(protocol.ImageRejected, "Image "+image+" is not a broker-built worker image; run agent-pm-broker build.")
 	}
-	return fields[0], fields[1], true
+	return info, nil
 }
 
 // Build produces agent-pm-worker:<key> in two stages; an image with this key and version is reused.
@@ -199,7 +205,7 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 		return failed("Cannot hash the build context.")
 	}
 	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
-	info, found, err := inspectImage(ctx, h.Docker, image)
+	info, found, err := h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the worker image.")
 	}
@@ -214,16 +220,17 @@ func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "The worker image has no usable user agent.")
 	}
-	uid, gid, ok := probeIDs(out)
-	if !ok {
+	ids := strings.Fields(string(out))
+	if len(ids) != 2 || !numeric(ids[0]) || !numeric(ids[1]) {
 		return failed("The worker image's user agent must be a non-root user.")
 	}
+	uid, gid := ids[0], ids[1]
 	args := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=" + userImage, "--build-arg", "AGENT_PM_VERSION=" + meta.Version,
 		"--build-arg", "AGENT_UID=" + uid, "--build-arg", "AGENT_GID=" + gid, "--label", "agent-pm.key=" + key, "--tag", image, packageDir}
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the agent-pm image stage failed.")
 	}
-	info, found, err = inspectImage(ctx, h.Docker, image)
+	info, found, err = h.inspectImage(ctx, image)
 	if err != nil {
 		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the built image.")
 	}
