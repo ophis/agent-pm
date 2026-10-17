@@ -141,7 +141,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install pinned test dependencies
-        run: python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9
+        run: python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9 jsonschema==4.26.0
       - name: Protect shipped source
         run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Repository integration tests
@@ -182,6 +182,8 @@ jobs:
       - name: Install pinned coverage
         if: ${{ github.event_name == 'pull_request' }}
         run: python3 -m pip install coverage=="$COVERAGE_VERSION"
+      - name: Install protocol test dependency
+        run: python3 -m pip install jsonschema==4.26.0
       - name: Unit tests
         id: unit
         env:
