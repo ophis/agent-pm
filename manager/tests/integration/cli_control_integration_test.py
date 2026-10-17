@@ -12,6 +12,7 @@ from agent_pm.manager.engine.crew import DESCENDANTS
 from agent_pm.manager.engine.roster import Roster
 
 from manager.tests.cli_case import CliCase
+from manager.tests.starters import answered
 from utils.tests.fakes import ctl
 
 
@@ -61,6 +62,9 @@ class CliTest(CliCase):
                     },
                 ),
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch(
+                    "subprocess.Popen", side_effect=answered(run, (command, "start", "worker"))
+                ),
             ):
                 result, stdout, stderr = self.invoke(
                     "run", "worker", "--manager", "mgr", "--", command, "start", "worker"
@@ -94,6 +98,9 @@ class CliTest(CliCase):
                     },
                 ),
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch(
+                    "subprocess.Popen", side_effect=answered(run, (command, "resume", "worker"))
+                ),
             ):
                 result, stdout, stderr = self.invoke("resume", "worker", "--manager", "mgr")
             self.assertEqual(result, 1, stderr)

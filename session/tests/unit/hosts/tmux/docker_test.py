@@ -9,14 +9,17 @@ import json
 import os
 import signal
 import stat
+import threading
 import tomllib
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import (
     ClientHome,
     ConfigError,
+    IdleTimeout,
     KeyPress,
     Launch,
     Liveness,
@@ -24,6 +27,7 @@ from agent_pm.session.engine.types import (
     SessionError,
     StatusState,
 )
+from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
@@ -38,9 +42,12 @@ from utils.tests.process_fixtures import TimeoutExpired
 
 DOCKER = "/usr/local/bin/docker"
 GEN = "0123456789abcdef0123456789abcdef"
+SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+NEW = "f" * 32
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
+STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 DIGEST = "sha256:" + "c" * 64
 HOME = ClientHome("agent_dir", "agent", "AGENT_HOME", "agent-token")
 RECORD = Record(
@@ -734,6 +741,78 @@ class StartTest(Base):
                 self.assertEqual(self.broker.closed, [CONTAINER])
                 self.popen_mock.assert_not_called()
 
+    def caught(self):
+        """The STOPS delivered to a recorder in place of their handlers, until the test ends."""
+        delivered = []
+        for sig in STOPS:
+            self.addCleanup(
+                signal.signal, sig, signal.signal(sig, lambda n, _: delivered.append(n))
+            )
+        return delivered
+
+    def signalled_at(self, step, signum):
+        """`signum` sent to this thread as `step` (a broker method or a docker exec prefix) runs."""
+
+        def stop():
+            signal.pthread_kill(threading.get_ident(), signum)
+
+        if isinstance(step, tuple):
+            self.docker.replies = {
+                **self.docker.replies,
+                step: lambda cmd: (stop(), pane()(cmd))[1],
+            }
+        else:
+            real = getattr(self.broker, step)
+            setattr(self.broker, step, lambda *a, **k: (stop(), real(*a, **k))[1])
+
+    def stopped_at(self, step, signum=signal.SIGTERM):
+        """start() with `signum` sent as `step` runs fails, and the signal arrives after it."""
+        delivered, mask = self.caught(), signal.pthread_sigmask(signal.SIG_BLOCK, ())
+        self.signalled_at(step, signum)
+        name = signal.Signals(signum).name
+        with self.assertRaisesRegex(SessionError, f"^docker session w: stopped by {name}$"):
+            self.start()
+        self.assertEqual(delivered, [signum])
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, ()), mask)
+
+    def test_a_signal_during_the_broker_start_closes_its_container(self):
+        for signum in STOPS:
+            with self.subTest(signum=signum):
+                self.broker = self.host.broker = FakeBroker(self.order, self.broker.started)
+                self.stopped_at("start", signum)
+                self.assertEqual(self.broker.closed, [CONTAINER])
+                self.popen_mock.assert_not_called()
+
+    def test_a_signal_before_the_broker_start_starts_nothing(self):
+        self.stopped_at("build")
+        self.assertNotIn("start", [step[0] for step in self.order if isinstance(step, tuple)])
+        self.assertEqual(self.broker.closed, [])
+
+    def test_a_signal_while_the_client_starts_stops_the_supervisor_and_closes(self):
+        self.stopped_at(("tmux", "display-message"))
+        self.supervisor.terminate.assert_called()
+        self.assertEqual(self.order[-1], ("close", CONTAINER))
+
+    def test_a_start_blocks_no_signal_and_restores_the_handlers(self):
+        mask, before = signal.pthread_sigmask(signal.SIG_BLOCK, ()), self.caught()
+        handlers = {sig: signal.getsignal(sig) for sig in STOPS}
+        masks = []
+        real = self.broker.start
+        self.broker.start = lambda *a, **k: (
+            masks.append(signal.pthread_sigmask(signal.SIG_BLOCK, ())),
+            real(*a, **k),
+        )[1]
+        self.start()
+        self.assertEqual(masks, [mask])
+        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, handlers)
+        self.assertEqual(before, [])
+
+    def test_an_ignored_signal_stays_ignored(self):
+        self.addCleanup(signal.signal, signal.SIGHUP, signal.signal(signal.SIGHUP, signal.SIG_IGN))
+        self.signalled_at("start", signal.SIGHUP)
+        self.start()
+        self.assertEqual(self.broker.closed, [])
+
     def test_login_required_surfaces_message(self):
         self.broker.error = BrokerError(5, "login_required", "log in first", "not_needed", None)
         with self.assertRaisesRegex(SessionError, "broker: log in first"):
@@ -938,6 +1017,47 @@ class CloseTest(Base):
         )
         self.assertEqual(self.host_calls[-1], ["kill-session", "-t", "=w"])
         self.assertTrue(os.path.isdir(self.state))
+
+    def test_close_with_no_host_view_succeeds(self):
+        process = self.terminal()
+        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
+        with mock.patch("os.kill"):
+            process.close()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertNotIn(["kill-session", "-t", "=w"], self.host_calls)
+
+    def test_a_restart_with_no_host_view_starts_the_next_generation(self):
+        self.listed("w")
+        self.record(sid=SID)
+        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
+        closed = self.broker.close
+
+        def close(container):
+            self.docker.ps, self.docker.replies = (
+                [],
+                {(): (1, "", f"Error response from daemon: No such container: {container}")},
+            )
+            return closed(container)
+
+        def start(*_, **__):
+            self.docker.replies = {}
+            self.listed("w", gen=NEW)
+            self.record(sid=SID, generation=NEW)
+            return session
+
+        self.broker.close = close
+        session_cls = mock.Mock()
+        session_cls.host.return_value = self.host
+        session_cls.start.side_effect = start
+        session = mock.Mock(showable=False, opening_pending=None)
+        session.events.return_value = iter([IdleTimeout(worker.EARLY)])
+        state = WorkerState("w", SID, "agent", self.cwd, "docker", (), {}, None, "lead/below")
+        with mock.patch("os.kill"):
+            record = Worker(state, session_cls=session_cls, say=lambda _: None).restart()
+        self.assertEqual(set(self.broker.closed), {CONTAINER})
+        self.assertTrue(session_cls.start.call_args.args[0].resume)
+        found = self.host_record()
+        self.assertEqual((found["generation"], found["record"]), (NEW, record.to_line()))
 
     def test_close_when_container_gone(self):
         process = self.terminal()

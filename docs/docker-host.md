@@ -180,6 +180,13 @@ closed and `resume` continues it once fixed. A missing setup-token surfaces at t
 broker's `start`, still before any container: the start fails with the broker's own
 `agent-pm-broker login claude` message and is not retried.
 
+`agent-pm-crew` waits up to 1920 s for a start or resume, as the build alone may take
+1800 s (the first start after an upgrade rebuilds the image), then sends SIGTERM and,
+60 s later, SIGKILL. From just before the broker's `start` until the client runs, a
+start holds SIGTERM, SIGINT and SIGHUP back (an ignored one stays ignored); on one it
+removes its container, then the signal takes effect. A start stopped after that leaves
+its worker running.
+
 Just before the broker's `start`, each generation freezes its plan in
 `<generation>.plan.json` and prints it to the starting command's stderr, one line each:
 

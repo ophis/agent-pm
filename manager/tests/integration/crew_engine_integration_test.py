@@ -17,10 +17,11 @@ from unittest import mock
 
 from agent_pm.manager.engine.crew import (
     DESCENDANTS,
+    GRACE,
     HERE,
     RECOVERY_AGE,
     RECOVERY_MARGIN,
-    TIMEOUT,
+    START_TIMEOUT,
     Crew,
 )
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
@@ -28,6 +29,7 @@ from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State,
 from agent_pm.utils import Status
 
 from manager.tests.case import Case, with_ctl
+from manager.tests.starters import answered
 from utils.tests.fakes import ctl
 
 MISSING = "agent-pm-delegate"  # a layer command off setup_ctl's PATH
@@ -141,7 +143,10 @@ class CrewTest(Case):
 
         with (
             mock.patch("subprocess.run", side_effect=run),
-            self.assertRaisesRegex(RuntimeError, "30 seconds"),
+            mock.patch(
+                "subprocess.Popen", side_effect=answered(run, (self.command, "start", "lost"))
+            ),
+            self.assertRaisesRegex(RuntimeError, "1920 seconds"),
         ):
             self.crew.run(Spec("lost", (self.command, "start", "lost")))
         self.assertEqual(self.roster.entries()["lost"].state, State.LOST)
@@ -156,7 +161,8 @@ class CrewTest(Case):
 
         with (
             mock.patch("subprocess.run", side_effect=timeout_resume),
-            self.assertRaisesRegex(RuntimeError, "30 seconds"),
+            mock.patch("subprocess.Popen", side_effect=answered(timeout_resume, resume)),
+            self.assertRaisesRegex(RuntimeError, "1920 seconds"),
         ):
             self.crew.resume("gone")
         self.assertEqual(self.roster.entries()["gone"].state, State.GONE)
@@ -187,6 +193,12 @@ class CrewTest(Case):
                 os.environ, {"AGENT_PM_EVENTS": "/parent/events", "AGENT_PM_SID": "parent"}
             ),
             mock.patch("subprocess.run", side_effect=run),
+            mock.patch(
+                "subprocess.Popen",
+                side_effect=answered(
+                    run, (self.command, "start", "worker"), (self.command, "resume", "worker")
+                ),
+            ),
         ):
             record = self.start("worker")
             ctl.set_session(self.ctl_dir, "worker", showable=True)
@@ -271,7 +283,11 @@ class CrewTest(Case):
                 return subprocess.CompletedProcess(argv, 0, None, "")
             return real_run(argv, **options)
 
-        with mock.patch("subprocess.run", side_effect=run), self.assertRaises(RosterError):
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("subprocess.Popen", side_effect=answered(run, original.resume)),
+            self.assertRaises(RosterError),
+        ):
             self.crew.resume("worker")
         entry = self.roster.entries()["worker"]
         self.assertEqual(
@@ -415,7 +431,7 @@ class CrewTest(Case):
 
     def test_attach_preserves_commit_during_legitimate_delayed_launch_and_resume(self):
         origin = datetime(2026, 10, 13, 12, microsecond=999999, tzinfo=UTC)
-        duration = TIMEOUT + 4 * LOCK_TIMEOUT
+        duration = START_TIMEOUT + GRACE + 4 * LOCK_TIMEOUT
         for state in (State.STARTING, State.RESUMING):
             name = f"delayed-{state}"
             original = None if state == State.STARTING else self.gone(name)
@@ -448,6 +464,12 @@ class CrewTest(Case):
 
                     with (
                         mock.patch("subprocess.run", side_effect=run),
+                        mock.patch(
+                            "subprocess.Popen",
+                            side_effect=answered(
+                                run, (self.command, "start", name), (self.command, "resume", name)
+                            ),
+                        ),
                         ThreadPoolExecutor(max_workers=1) as pool,
                     ):
                         crew = Crew(Roster(self.directory))
@@ -536,7 +558,10 @@ class CrewTest(Case):
                     receipts.append(path)
                 return result
 
-            with mock.patch("subprocess.run", side_effect=run):
+            with (
+                mock.patch("subprocess.run", side_effect=run),
+                mock.patch("subprocess.Popen", side_effect=answered(run, original.resume)),
+            ):
                 resumed = self.crew.resume("worker")
         self.assertEqual(resumed, original)
         self.assertEqual(self.roster.entries()["worker"].state, State.LIVE)
@@ -833,6 +858,7 @@ class CrewTest(Case):
 
             with (
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch("subprocess.Popen", side_effect=answered(run, command)),
                 self.assertRaisesRegex(RuntimeError, "starter failed") as raised,
             ):
                 crew.run(Spec("worker", command))
@@ -863,6 +889,7 @@ class CrewTest(Case):
         try:
             with (
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch("subprocess.Popen", side_effect=answered(run, original.resume)),
                 self.assertRaisesRegex(RuntimeError, "resume starter failed") as raised,
             ):
                 self.crew.resume("worker")
@@ -899,6 +926,7 @@ class CrewTest(Case):
 
             with (
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch("subprocess.Popen", side_effect=answered(run, command)),
                 self.assertRaisesRegex(RuntimeError, command[0]) as raised,
             ):
                 crew.run(Spec("worker", command))
@@ -934,6 +962,7 @@ class CrewTest(Case):
         try:
             with (
                 mock.patch("subprocess.run", side_effect=run),
+                mock.patch("subprocess.Popen", side_effect=answered(run, original.resume)),
                 self.assertRaisesRegex(RuntimeError, missing[0]) as raised,
             ):
                 self.crew.resume("worker")
@@ -962,6 +991,7 @@ class CrewTest(Case):
 
         with (
             mock.patch("subprocess.run", side_effect=run),
+            mock.patch("subprocess.Popen", side_effect=answered(run, original.resume)),
             self.assertRaisesRegex(RuntimeError, "cannot resume"),
         ):
             self.crew.resume("worker")
@@ -1087,10 +1117,10 @@ class CrewTest(Case):
                         "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
                     },
                 ),
-                mock.patch("subprocess.run", wraps=subprocess.run) as run,
+                mock.patch("subprocess.Popen", wraps=subprocess.Popen) as popen,
             ):
                 record = crew.run(Spec("worker", (self.command, "start", "worker")))
-            env = run.call_args.kwargs["env"]
+            env = popen.call_args.kwargs["env"]
             self.assertEqual(env["AGENT_PM_SID"], record.sid)
             for key in ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"):
                 self.assertNotIn(key, env)

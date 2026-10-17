@@ -19,6 +19,7 @@ from agent_pm.utils import Record, Status, StatusState
 
 from manager.tests.case import Case
 from manager.tests.cli_case import CliCase
+from manager.tests.starters import answered, finished
 from utils.tests.cli_help import examples, parse_only
 from utils.tests.fakes import ctl
 
@@ -195,7 +196,7 @@ class Launch(CliCase):
             os.write(options["stdout"].fileno(), text.encode())
             return SimpleNamespace(returncode=code, stderr="layer message\n")
 
-        with mock.patch("subprocess.run", side_effect=run):
+        with mock.patch("subprocess.Popen", side_effect=answered(run)):
             return self.invoke(*arguments)
 
     def test_worker_and_issue_forward_every_word_after_the_key(self):
@@ -299,9 +300,7 @@ class ResumeInput(CliCase):
         self.roster.begin(Spec("r1", ("start",)), sid=record.sid)
         self.roster.commit("r1", record)
         self.roster.mark("r1", State.WAITING)
-        with mock.patch(
-            "subprocess.run", return_value=SimpleNamespace(returncode=2, stderr="refused")
-        ):
+        with mock.patch("subprocess.Popen", return_value=finished(2, "refused")):
             code, stdout, stderr = self.invoke("resume", "--manager", "mgr", "r1", "--input", "")
         self.assertEqual((code, stdout), (2, ""))
         self.assertIn("refused", stderr)

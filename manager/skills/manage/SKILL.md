@@ -67,7 +67,7 @@ Content is whatever the owning ctl returns at read time; the event word does not
 
 ## Launch
 
-Use the three commands below. Crew options (`--note`, `--manager`, role's `--name`) go before the name, issue ID or role; every word after it, including `--`, goes unchanged to the layer. Crew supplies a fresh sid, your events file as `AGENT_PM_EVENTS`, and no stdin. A valid Record makes the entry `live`. Refusal (exit 2 with empty stdout), or exit 0 without a final Record, returns exit 2 and leaves no entry: read stderr, fix and reuse the name. Other failures leave it `lost`. `--note` sets the entry's note (Direct). Run launches as plain Bash commands, not `run_in_background`: the work outlives this conversation.
+Use the three commands below. Crew options (`--note`, `--manager`, role's `--name`) go before the name, issue ID or role; every word after it, including `--`, goes unchanged to the layer. Crew supplies a fresh sid, your events file as `AGENT_PM_EVENTS`, and no stdin. A valid Record makes the entry `live`. Refusal (exit 2 with empty stdout), or exit 0 without a final Record, returns exit 2 and leaves no entry: read stderr, fix and reuse the name. Other failures leave it `lost`. `--note` sets the entry's note (Direct). Run launches as plain Bash commands with the longest timeout the tool allows (a Docker start may first rebuild its image), not `run_in_background`: the work outlives this conversation.
 
 Placement: `--display D`, `D` in the format of the Host the session runs on; `agent-pm-session --help` prints each Host's (tmux: `<opener>[/<split>[/<split_from>]]`). Default: your session, in its grid (Grid). `--display none`: in the background, no pane, `hidden` until shown (Direct).
 

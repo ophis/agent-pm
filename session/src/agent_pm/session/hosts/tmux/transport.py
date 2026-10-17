@@ -46,7 +46,7 @@ SESSION_ID = re.compile(r"\$[0-9]+")
 
 
 ABSENT = re.compile(
-    r"can't find (session|pane).*|no server running.*|"
+    r"can't find (session|pane).*|no such session: .*|no server running.*|"
     r"error connecting to .* \(No such file or directory\)",
     re.S,
 )
