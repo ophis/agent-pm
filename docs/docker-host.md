@@ -172,7 +172,7 @@ Session checks the same cwd rules first.
 
 Every start first runs a preflight: the client is Claude, the cwd exists and passes the
 mount rules, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds. `resume` runs it before it touches anything;
+[Install](#install)), and `build` succeeds (Docker's build progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
 broker's `start`, still before any container: the start fails with the broker's own

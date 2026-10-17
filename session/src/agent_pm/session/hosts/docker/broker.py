@@ -6,7 +6,10 @@ a valid error response is a BrokerError.
 import json
 import os
 import re
+import select
 import subprocess
+import sys
+import time
 from dataclasses import fields
 
 from agent_pm.session.engine.types import ConfigError, SessionError
@@ -132,16 +135,49 @@ def _update(update) -> bool:
     )
 
 
+def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:
+    """argv's text result, copying each stderr line to ours as it arrives (build's progress) but a
+    failing run's last: its error object. TimeoutExpired past `timeout`.
+    """
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(
+        argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    ) as proc:
+        try:
+            out, err = bytearray(), bytearray()
+            found = {proc.stdout.fileno(): out, proc.stderr.fileno(): err}
+            shown = 0
+            while found:
+                ready = select.select(list(found), [], [], max(0.0, deadline - time.monotonic()))
+                if not ready[0]:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                for fd in ready[0]:
+                    chunk = os.read(fd, 1 << 16)
+                    found[fd] += chunk
+                    if not chunk:
+                        del found[fd]
+                held = err.rfind(b"\n", 0, len(err) - 1) + 1
+                if held > shown:
+                    sys.stderr.write(err[shown:held].decode(errors="replace"))
+                    sys.stderr.flush()
+                    shown = held
+            code = proc.wait(max(0.0, deadline - time.monotonic()))
+        except BaseException:
+            proc.kill()
+            raise
+    if code == 0 and len(err) > shown:
+        sys.stderr.write(err[shown:].decode(errors="replace"))
+    return subprocess.CompletedProcess(argv, code, out.decode(), err.decode())
+
+
 class Broker:
-    def __init__(self, runner=subprocess.run) -> None:
+    def __init__(self, runner=_stream) -> None:
         self.runner = runner
 
     def _run(self, command: str, *args: str) -> dict:
         try:
             res = self.runner(
                 [BROKER, command, *args],
-                capture_output=True,
-                text=True,
                 stdin=subprocess.DEVNULL,
                 env={"PATH": os.defpath},
                 timeout=TIMEOUT,
@@ -155,7 +191,10 @@ class Broker:
         try:
             if res.returncode == 0:
                 return _object(res.stdout)
-            raise _error(command, res.returncode, _object(res.stderr))
+            err = res.stderr
+            if command == "build":  # its progress lines come before the error object
+                err = err[err.rfind("\n{") + 1 :]
+            raise _error(command, res.returncode, _object(err))
         except _Bad as why:
             raise SessionError(f"broker: bad response to {command}: {why}") from None
 
