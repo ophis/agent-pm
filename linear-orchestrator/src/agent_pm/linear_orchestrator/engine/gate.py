@@ -28,11 +28,21 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(role, cfg):
+def read_usage(role, cfg, *, client=None, kind=None):
     try:
-        return cfg.delegate_cls.usage(role, overlays=(cfg.core,))
+        return _read_usage(role, cfg, client, kind)
     except (delegate.ConfigError, delegate.SessionError):
         return None
+
+
+def _read_usage(role, cfg, client, kind):
+    provider = cfg.delegate_cls if kind is None else cfg.delegates.get(kind)
+    if provider is None:
+        return None
+    overlays = (cfg.core,)
+    if client is not None:
+        overlays += ({"roles": {role: {"client": client}}},)
+    return provider.usage(role, overlays=overlays)
 
 
 class Gate:
@@ -41,7 +51,7 @@ class Gate:
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
 
-    def blocked(self, role, ident, *, key=None):
+    def blocked(self, role, ident, *, key=None, reject_config=False):
         configured = self.cfg.roles.get(role)
         current = (self.cfg.delegate_kind, configured and configured.run.client)
         key = current if key is None else key
@@ -50,29 +60,27 @@ class Gate:
             reason, fields = "limit", {"until": self.limits[key].isoformat()}
             if self.dry:
                 self.say("usage", client=client, **fields, allowed=False)
-        elif key != current:
-            self.say(
-                "usage-drift",
-                ident,
-                client=client,
-                delegate_kind=kind,
-                current_client=current[1],
-                current_delegate_kind=current[0],
-            )
-            return False
         else:
-            if key not in self.seen:
-                self.seen[key] = self._check(role, client)
-            reason, fields = self.seen[key]
+            if client not in self.seen:
+                self.seen[client] = self._check(role, client, kind)
+            reason, fields, error = self.seen[client]
+            if reject_config and error is not None:
+                raise error
         if reason:
             self.say("usage-skip", ident, once=True, client=client, reason=reason, **fields)
         return reason is not None
 
-    def _check(self, role, client):
-        usage = read_usage(role, self.cfg)
+    def _check(self, role, client, kind):
+        error = None
+        try:
+            usage = _read_usage(role, self.cfg, client, kind)
+        except delegate.ConfigError as caught:
+            usage, error = None, caught
+        except delegate.SessionError:
+            usage = None
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}
         if self.dry:
             self.say("usage", client=client, **shown, allowed=reason is None)
-        return reason, fields
+        return reason, fields, error

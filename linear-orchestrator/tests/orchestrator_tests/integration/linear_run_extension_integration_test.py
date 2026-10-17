@@ -13,12 +13,22 @@ from orchestrator_tests.linear_run_case import SID
 from delegate.tests.fakes import delegate as fake_delegate
 
 EXTENSION = """
+from agent_pm.session import Usage, Window
+
 class ExtensionDelegate(FakeDelegate):
     ROLES = {
         "researcher": {"deep-research": "research"},
         "pm": {"product-design": "design"},
         "engineer": {"build": "build"},
     }
+
+    @classmethod
+    def usage(cls, role, *, overlays=()):
+        if cls.__name__ != "ExtensionDelegate":
+            raise AssertionError("saved usage provider was replaced by new default")
+        if overlays[-1]["roles"][role]["client"] != "fake":
+            raise AssertionError("saved client was replaced by role default")
+        return Usage(Window(10, None), None)
 
     @classmethod
     def resolve(cls, role, task=None, *, overlays=()):

@@ -92,10 +92,14 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 ## The user
 
 - Talk in short, plain words in the user's language; keep technical terms (issue, resume, sub-agent, commit, branch, PR, push, review, worktree) in English. Expand an acronym on first mention.
-- Lead with the result. Report when asked. Speak up unprompted only when a PR opens, a run finishes or fails, a worker is blocked, a decision is needed or you changed something; a routine worker event (turn ended, still working, nothing to decide) gets no message.
-- A report is the progress of each agent under you, one line for routine status (`195 in progress`): no mechanism, no account of benign events.
+- **How to report**:
+  - When: when asked, and unprompted only when a PR opens, a run finishes or fails, a worker is blocked, a decision is needed or you changed something; a routine worker event (turn ended, still working, nothing to decide) gets no message. A status report comes from Direct › Report.
+  - Shape: the result or verdict first, in one line; then one block per issue or entry, never interleaved, each with its id, its state, what changed and what it needs next (nothing, a decision, the user's merge). Routine status is one line per agent (`195 in progress`): no mechanism, no account of benign events.
+  - A PR gate: PASS or FAIL with the head sha, checks, mergeability, scope and where its deferred items went; on FAIL, only the blockers.
+  - Long content with a link (PR body, PRD, report, CI log): the link and a one-line answer; never paste or re-table it.
+  - A pending decision: restate the problem and each option in one line, with your recommendation, every time you raise it, never just its number.
 - A question is not approval: answer it, then wait for a go-ahead before changing state.
-- Designing: ask in numbered rounds, each question with your recommendation. Find facts yourself or through a sub-agent; put only decisions to the user. When a question is still open, restate its options and recommendation, never just its number.
+- Designing: ask in numbered rounds, each question with your recommendation. Find facts yourself or through a sub-agent; put only decisions to the user. An open question follows How to report's pending-decision rule.
 - When you were wrong, say so plainly and correct it.
 - Whenever you mention a PR, issue or document, give its link.
 - Architecture, flows and structure: a diagram (ASCII in the terminal), not a table or prose. Option and decision lists: a table.

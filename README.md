@@ -1,13 +1,23 @@
-# agent-pm
+<div align="center">
+
+# <img src="docs/images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
+
+English · [中文](docs/readme/README.zh-CN.md) · [日本語](docs/readme/README.ja.md) · [한국어](docs/readme/README.ko.md) · [Español](docs/readme/README.es.md) · [Français](docs/readme/README.fr.md) · [Português](docs/readme/README.pt.md)
 
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+</div>
+
 Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
 
-| Part | What it does | Start at |
+| Layer | What it does | Start at |
 |---|---|---|
-| Core | Runs a role, which picks its task unless given one. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
-| Linear orchestrator | Runs the core from the board. | [Linear board](docs/board.md) |
+| Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
+| Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
+| Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
+| Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
+
+The bottom two layers, Session and Delegate, are general building blocks: take them and build your own flow on top. The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). Use it as is, skip it, or change it; the roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
 Developers: `AGENTS.md`.
 
@@ -18,9 +28,26 @@ flowchart LR
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
 
+## Why agent-pm
+
+![Working with coding agents: one agent, many agents by hand, agent-pm](docs/images/compare.svg)
+
+One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
+
+## Demo: one manager, many workers
+
+Without the board, you can run agent-pm by talking to one agent, the manager. Open its session with `ctmux <name>`, start Claude Code or Codex in it and invoke `/agent-pm:manage`. You give it work in plain words; it launches a worker for each task, watches their events, checks their pull requests and reports back.
+
+![A manager session (left) coordinating engineer workers in a tmux grid](docs/images/demo.jpg)
+
+- **Left:** the manager, here Claude Code. It lists which issues are running, waiting or not started, and reports what each worker just did.
+- **Right:** one pane per engineer worker, each building one issue in its own worktree. Workers mix clients: most panes are Claude Code (`auto mode on` at the bottom), and the middle-left one is Codex (`GPT-6.1-Sol xhigh`, `Ask Codex to do anything`). Panes fill a grid as workers start and close when their work is done.
+
+Commands: [Quick start](#quick-start).
+
 ## Install
 
-Each client installs the plugin itself, with your git credentials (the repo is private). Before upgrading, see [Upgrading](docs/upgrading.md).
+Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/upgrading.md).
 
 | Client | Install |
 |---|---|
@@ -31,9 +58,10 @@ Nothing checks these. A missing one fails the agent run.
 
 | Requirement | For |
 |---|---|
-| `claude` CLI, Python 3.11+, the `autopilot` plugin | every agent run |
+| `claude` CLI, Python 3.11+ | every agent run |
+| the [`autopilot`](https://github.com/ophis/claude-autopilot) plugin, in each client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, then `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, then `codex plugin add autopilot@claude-autopilot` | coding: the engineer's build tasks (`/autopilot:build`, `/autopilot:light-build`). Not needed otherwise. |
 | tmux 3.3+ | tui runs on the `tmux` Host |
-| `git`, `gh` logged in | checkouts, GitHub and pull-request destinations |
+| `git`, `gh` logged in | coding (checkouts, pull requests) and GitHub destinations. Not needed otherwise. |
 | iTerm2 running | the default iTerm2 split |
 
 How the sessions agent-pm starts load your settings, and why some commands refuse inside them: [Session settings](docs/sessions.md#session-settings).

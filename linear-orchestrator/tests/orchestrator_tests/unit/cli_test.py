@@ -304,19 +304,16 @@ class Queries(RunCase):
         self.assertEqual(ReadyDelegate.usage_calls, [])
         self.assertFalse(FakeDelegate.attach(self.cfg.issue_workdir("TASK-1")).alive())
 
-    def test_config_drift_without_a_limit_resumes_and_logs_without_probe(self):
+    def test_config_drift_without_a_limit_probes_before_resuming(self):
         self.start()
         FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.configure(default="other")
         result, output, errors = _call(["resume", "TASK-1"])
         self.assertEqual((result, errors), (0, ""))
         self.assertEqual(Record.parse(output).name, "TASK-1")
-        self.assertEqual(ReadyDelegate.usage_calls, [])
-        records = [
-            json.loads(line)
-            for line in (Path(self.cfg.logs_dir) / "orchestrator.jsonl").read_text().splitlines()
-        ]
-        self.assertEqual([record["kind"] for record in records], ["usage-drift"])
+        self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
+        path = Path(self.cfg.logs_dir) / "orchestrator.jsonl"
+        self.assertFalse(path.exists())
 
     def test_close_controls_only_selected_issue_and_show_failure_names_it(self):
         one, _ = self.start("TASK-1")

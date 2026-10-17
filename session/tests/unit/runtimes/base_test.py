@@ -103,6 +103,18 @@ def registry(**clients) -> Registry:
 
 
 class RuntimeTest(Case):
+    def test_actual_client_replaces_ambient_and_launch_context(self):
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), client="selected", sid="s1")
+        for launch_env in ({}, {"AGENT_PM_RUN_CLIENT": "stale"}):
+            with (
+                self.subTest(launch_env=launch_env),
+                mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "ambient"}),
+            ):
+                got = Runtime._launched(
+                    spec, lambda _spec, saved=launch_env: Launch(("x",), env=saved), ()
+                )
+                self.assertEqual(got.env["AGENT_PM_RUN_CLIENT"], "selected")
+
     def test_its_abstract_members_are_one_start_and_the_six_session_calls(self):
         self.assertTrue(inspect.isabstract(Runtime))
         self.assertEqual(sorted(Runtime.__abstractmethods__), MEMBERS)

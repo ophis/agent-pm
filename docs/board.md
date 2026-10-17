@@ -119,7 +119,7 @@ Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [l
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [router.py](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py). The `claim` log records `client` and `client_source=pinned|label|default`. A label-selected client's construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry; fix it → move back to Todo.
+Selection: [router.py:593](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L593). The `claim` log records `client` and `client_source=pinned|label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([router.py:830](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L830)); fix it → move back to Todo.
 
 **Pin:** the issue's latest `runs.jsonl` `start` client, retained across automatic retries until an account outside the harness viewer and all role accounts later moves the issue to Todo. This does not depend on `human_members`; `failed` rows never establish or replace a pin. Same-session resumes keep their recorded client. If the retained client differs from the current label selection (or labels are invalid), `client-pinned` logs the issue, sid and both values; one idempotent comment per sid explains the switch rule.
 
@@ -134,7 +134,9 @@ flowchart LR
 
 Switch only with no agent run live.
 
-Scheduled new-run quota checks and `--brake` still use the role default; `--dry-run` does not inspect Agent labels. Actual-client quota checks, brake and previews follow in 294-c ([gate.py:44](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L44)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:54](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L54)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_RUN_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([runtimes/base.py:177](../session/src/agent_pm/session/runtimes/base.py#L177), [router.py:1058](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1058)).
+
+`--dry-run` re-reads all candidate labels and prints `client` and `client_source` (`label`, `default`, or `pinned` for a retained client). Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:525](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L525), [router.py:565](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L565)).
 
 Rollout:
 
@@ -145,4 +147,4 @@ flowchart LR
     C --> D[Enable scheduled ticks]
 ```
 
-Use the installed `agent-pm-linear` absolute path. `--issue` skips the usage gate; it starts a real run. A dry run currently validates configuration without previewing label selection.
+Use the installed `agent-pm-linear` absolute path. `--issue` skips the usage gate; it starts a real run. Use `--dry-run --issue ID` first to inspect label selection without starting a run.
