@@ -716,6 +716,94 @@ class WorkdirRetention(PruneScenario):
         self.assertTrue(os.path.isfile(os.path.join(self.work, "TASK-8")))
 
 
+class Stalled(PruneScenario):
+    """A stalled issue's checkouts and temp files go STALL after its latest move or run."""
+
+    WEEK = 7 * 24
+
+    def stalled(self, ident="TASK-7", *, hours=8 * 24, run=None, state="In Review"):
+        """A W with agent files of an ended run, its issue moved to `state` `hours` ago."""
+        workdir = self.cfg.issue_workdir(ident)
+        self.record(ident, SID, [A], hours=hours if run is None else run)
+        PruneDelegate.end(workdir)
+        agent = os.path.join(workdir, "agent")
+        for path in ("tmp/msg", "publish/Research/r.md", "prd.md"):
+            os.makedirs(os.path.dirname(os.path.join(agent, path)), exist_ok=True)
+            write(os.path.join(agent, path), "x")
+        write(os.path.join(workdir, "writeback.json"), "{}")
+        return workdir, gql_for({ident: (state, [(hours + 1, "In Progress"), (hours, state)])})
+
+    def test_stalled_week_drops_scratch_keeps_logs(self):
+        clone = self.fake_clone()
+        workdir, gql = self.stalled(state="Handoff")
+        wt = self.mkg("TASK-7")
+        calls = []
+
+        def git(argv, _timeout):
+            calls.append(argv)
+            return CompletedProcess(argv, 0, "", "")
+
+        run = tree(os.path.join(workdir, "run"))
+        self.assertEqual(
+            self.prune(gql, git=git, writable=(self.work,)),
+            (0, "prune-removed TASK-7 what=scratch"),
+        )
+        self.assertFalse(os.path.lexists(wt))
+        self.assertEqual(sorted(os.listdir(workdir)), ["agent", "run", "writeback.json"])
+        self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
+        self.assertEqual(tree(os.path.join(workdir, "run")), run)
+        self.assertEqual(
+            [argv[5:] for argv in calls],
+            [["-C", clone, f"--git-dir={clone}/.git", "worktree", "prune"]],
+        )
+        self.assertEqual(self.api.order, [])
+
+    def test_recent_or_active_or_unknown_kept(self):
+        issues = {}
+        for n, (hours, run, state) in enumerate(
+            (
+                (self.WEEK - 1 / 3600, None, "In Review"),
+                (9 * 24, self.WEEK - 1, "In Review"),
+                (9 * 24, None, "Todo"),
+                (9 * 24, None, "In Progress"),
+            )
+        ):
+            issues.update(
+                self.stalled(f"TASK-{n + 10}", hours=hours, run=run, state=state)[1].issues
+            )
+        self.stalled("TASK-20")
+        issues["TASK-20"] = ("In Review", [(9 * 24, "In Progress")])
+        files = tree(self.work)
+        gql = gql_for(issues)
+        self.assertEqual(self.prune(gql), (0, "prune-skip TASK-20 reason=stall time unknown"))
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(tree(self.work), files)
+
+    def test_live_refused_and_dry_run_plans(self):
+        workdir, gql = self.stalled()
+        files = tree(workdir)
+        self.assertEqual(
+            self.prune(gql, dry=True),
+            (0, "prune-plan TASK-7 what=delete the checkouts and temp files"),
+        )
+        self.assertEqual(tree(workdir), files)
+        PruneDelegate.attach(workdir).detach()
+        files = tree(workdir)
+        self.assertEqual(
+            self.prune(gql),
+            (0, f"prune-skip TASK-7 reason=ConfigError: {workdir}: delegate is still alive"),
+        )
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(tree(workdir), files)
+        self.assertEqual(self.api.order, [])
+
+    def test_no_event_once_scratch_gone(self):
+        workdir, gql = self.stalled()
+        self.assertEqual(self.prune(gql), (0, "prune-removed TASK-7 what=scratch"))
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
+
+
 class PruneCommand(PruneScenario):
     """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
 

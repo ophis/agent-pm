@@ -10,6 +10,12 @@ configured one) reports agent files in (Delegate.checkouts not None):
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
+For each stalled issue (any state but Todo, In Progress, Done, Canceled) whose latest move into its
+state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
+temp files through its Delegate (Delegate.clean scratch; its refusal, a run or agent session still
+open included, skips it), keeping the rest and its run records, closing no run; then only `worktree
+prune` in each worktree's local clone, keeping every branch (it may back an open PR).
+
 For each issue Done or Canceled at least 7 days ago whose workdir is a real dir without agent files
 (and of a configured kind), it deletes the whole workdir (run records, write-back ledger) once its
 Delegate's clean finds no live run (its refusal skips it). An issue without agent files is not
@@ -46,7 +52,9 @@ from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
 RETENTION = timedelta(days=7)
+STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
+DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = (
@@ -84,6 +92,11 @@ Prerequisites and effects:
   Clones under work_dir/work or temporary directories are skipped.
   Archive team issues finished at least 24 hours ago and assigned to
   pm/engineer role accounts; unknown finish times are skipped.
+  For issues in any other state but Todo/In Progress, 7 days after both their
+  latest move into it and their latest recorded run, delete their checkouts
+  and temp files through their Delegate, keeping the other agent files and the
+  run records; an open run or agent session skips it. Prune worktree records
+  only; every branch is kept.
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
@@ -118,7 +131,7 @@ class Pruner:
         self.errors += 1
         self.say("prune-error", issue, **fields)
 
-    def clean_clone(self, ident, common):
+    def clean_clone(self, ident, common, *, branches=True):
         clone = os.path.dirname(common)
         if root := under(common, self.writable):
             self.say(
@@ -129,15 +142,14 @@ class Pruner:
             )
             return
         if self.dry:
-            self.say(
-                "prune-plan",
-                ident,
-                what=f"prune {clone}'s worktree records and pushed {ident}-* branches",
-            )
+            pushed = f" and pushed {ident}-* branches" if branches else ""
+            self.say("prune-plan", ident, what=f"prune {clone}'s worktree records{pushed}")
             return
         at = ["git", *GUARD, "-C", clone, f"--git-dir={common}"]
         try:
             git(clone, at[-1], "worktree", "prune", run=self.run_git, pre=GUARD)
+            if not branches:
+                return
             head = self.run_git(
                 [*at, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], SHORT
             )
@@ -295,7 +307,13 @@ class Pruner:
         except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
-        if not issue or issue["state"]["id"] not in finished:
+        if not issue:
+            return
+        state = issue["state"]["id"]
+        if state in (self.team.states["todo"], self.team.states["in_progress"]):
+            return
+        if state not in finished:
+            self.prune_stalled(ident, last_move(issue["history"]["nodes"], {state}))
             return
         since = last_move(issue["history"]["nodes"], finished)
         if since is None:
@@ -305,6 +323,14 @@ class Pruner:
                 self.remove_agent(ident)
         elif self.now - since >= RETENTION:
             self.remove_workdir(ident)
+
+    def prune_stalled(self, ident, since):
+        if since is None:
+            self.say("prune-skip", ident, once=True, reason="stall time unknown")
+            return
+        since = max([since, *(e.ts for e in self.log().get(ident, ()))])
+        if self.now - since >= STALL and self.has_agent(ident, quiet=True):
+            self.remove_agent(ident, scratch=True)
 
     def log(self):
         """runs.jsonl's entries by issue, read once per tick."""
@@ -367,12 +393,15 @@ class Pruner:
         else:
             self.say("prune-removed", ident, what="workdir")
 
-    def remove_agent(self, ident):
+    def remove_agent(self, ident, *, scratch=False):
         found, workdir = self.delegate(ident), os.path.join(self.work, ident)
         commons = {c for wt in found.checkouts(workdir) or () if (c := common_dir(wt))}
         view = self.views.get(ident)
         try:
-            if not (self.dry and view is not None and view.delegate.alive()):
+            if scratch:
+                if not found.clean(workdir, dry=self.dry, scratch=True):
+                    return
+            elif not (self.dry and view is not None and view.delegate.alive()):
                 found.clean(workdir, dry=self.dry)
         except (config.ConfigError, DelegateConfigError) as error:
             self.say("prune-skip", ident, once=True, reason=one_line(error))
@@ -381,11 +410,11 @@ class Pruner:
             self.error(ident, error=f"clean: {one_line(error)}")
             return
         if self.dry:
-            self.say("prune-plan", ident, what="delete the agent dir")
+            self.say("prune-plan", ident, what=f"delete the {DELETES[scratch]}")
         else:
-            self.say("prune-removed", ident, what="agent dir")
+            self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
-            self.clean_clone(ident, common)
+            self.clean_clone(ident, common, branches=not scratch)
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
