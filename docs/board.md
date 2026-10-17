@@ -70,7 +70,7 @@ flowchart LR
     R -->|you| C[Canceled]
     P -->|"failed repo check of a handed-off build; its source → In Review"| C
     H -->|"promote, after the 10-min undo window: the next role's Todo issue"| D[Done]
-    D & C -->|"Finish, 24 h later"| X[cleaned up]
+    D & C -->|"Finish, 2 h later; Duplicate too"| X[cleaned up]
 ```
 
 - **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[project_repos]` entry.
