@@ -15,7 +15,7 @@ from unittest import mock
 from agent_pm.session import ConfigError, Launch, SessionError, Showable
 from agent_pm.session.hosts.base import tui_lock
 from agent_pm.session.hosts.pty import PtyHost, state
-from agent_pm.session.hosts.pty.host import SUPERVISOR
+from agent_pm.session.hosts.pty.host import SUPERVISOR, PtyProcess
 from agent_pm.utils import Record, StatusState, inode_lock
 
 from session.tests.case import Case
@@ -224,6 +224,24 @@ class Start(Starting):
         supervised(folder, rc=0)
         found = PtyHost("pty").attach("x").status()
         self.assertEqual((found.alive, found.state), (False, StatusState.DEAD))
+
+
+class Close(Starting):
+    def test_closing_the_names_session_removes_its_dir_and_lock(self):
+        process, _, _ = self.start(ended=True)
+        process.close()
+        self.assertEqual(os.listdir(state.root()), [])
+
+    def test_closing_a_session_whose_root_is_gone_is_a_no_op(self):
+        PtyProcess("x", os.path.join(self.home, "gone", "x")).close()
+        self.assertFalse(os.path.exists(os.path.join(self.home, "gone")))
+
+    def test_closing_an_earlier_generation_keeps_the_later_ones_dir_and_lock(self):
+        process, _, _ = self.start(ended=True)
+        later = {**state.meta(process.folder), "id": "later"}
+        state.put(process.folder, state.META, json.dumps(later))
+        process.close()
+        self.assertEqual(sorted(os.listdir(state.root())), ["x", "x.lock"])
 
 
 class Sweep(Starting):

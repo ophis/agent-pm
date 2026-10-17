@@ -127,7 +127,24 @@ class PtyProcess(Process):
             raise SessionError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
-        """SIGTERM to its process group, SIGKILL after KILL_WAIT; then its dir goes."""
+        """SIGTERM to its process group, SIGKILL after KILL_WAIT; then its dir goes, and the name's
+        lock once no dir is left.
+        """
+        lock: str | None = f"{self.folder}.lock"
+        with contextlib.ExitStack() as stack:
+            try:
+                stack.enter_context(inode_lock(lock))
+            except FileNotFoundError:
+                lock = None  # no pty root: nothing to lock or unlink
+            except OSError as error:
+                raise SessionError(f"close {self.name}: {error}") from error
+            self._close()
+            if lock is not None and not os.path.lexists(self.folder):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(lock)
+
+    def _close(self) -> None:
+        """close's work, by a holder of the name's lock."""
         if self._group_live():
             self._signal(ProcessControl.terminate)
             if not self.wait_exit(KILL_WAIT):
@@ -372,7 +389,7 @@ class PtyHost(Host):
             previous = PtyProcess(name, folder)
             if previous.alive():
                 raise SessionError(f"{self.name} session {name} is live")
-            previous.close()
+            previous._close()
             shutil.rmtree(folder, ignore_errors=True)
         os.mkdir(folder, mode=0o700)
         control = ProcessControl.prepare(
@@ -477,6 +494,6 @@ def _expire(name: str) -> None:
             supervised = "pid" in state.supervisor(folder) and process._supervised()
             if process.alive() or process._group_live() or supervised:
                 return
-            process.close()
+            process._close()
             shutil.rmtree(folder, ignore_errors=True)
         os.unlink(lock)
