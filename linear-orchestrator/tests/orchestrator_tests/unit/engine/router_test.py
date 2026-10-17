@@ -1447,6 +1447,22 @@ class LabelClients(TickBase):
                         tuple(restart[k] for k in ("issue", "sid", "client", "resumed")),
                         ("TASK-1", old_sid, "a", "b"),
                     )
+                    said = self.said()
+                    plan = said.index("plan TASK-1 mode=new client=a")
+                    self.assertEqual(
+                        said[plan + 1],
+                        f"restart TASK-1 sid=old client=a client_source={source} resumed=b",
+                    )
+
+    def test_a_usage_blocked_restart_logs_only_its_usage_skip(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        self.api.usages = {"a": reading(95), "b": reading(10)}
+        _, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
+        self.assertEqual(self.tick(fake), 0)
+        self.assertEqual(
+            self.said(), ["usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%"]
+        )
+        self.assertEqual(self.start.launches, [])
 
     def test_a_resume_keeps_its_session_when_the_label_agrees_or_is_invalid(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
@@ -3344,8 +3360,8 @@ class ExplicitIssueRuns(TickBase):
                 "resume",
                 resumable,
                 [
-                    "plan TASK-1 mode=resume sid=a",
                     "preview TASK-1 client=a mode=resume sid=a",
+                    "plan TASK-1 mode=resume sid=a",
                 ],
             ),
         ]

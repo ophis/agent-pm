@@ -491,10 +491,25 @@ class Board:
         )
 
     def plan(self, run, live=None):
-        if run[0] == "resume":
-            self.say("plan", run[1]["identifier"], mode="resume", sid=run[2], live=live)
-        else:
+        """Log the planned run: ("new", queue length) or ("resume", spec, sid), sid the issue's
+        session; a resumption spec of mode new is a restart, logged here as it is about to start.
+        """
+        if run[0] == "new":
             self.say("plan", mode="new", queue=run[1], live=live)
+            return
+        spec, sid = run[1:]
+        if spec.mode == "resume":
+            self.say("plan", spec.issue, mode="resume", sid=sid, live=live)
+            return
+        self.say("plan", spec.issue, mode="new", client=spec.client, live=live)
+        self.say(
+            "restart",
+            spec.issue,
+            sid=sid,
+            client=spec.client,
+            client_source=spec.client_source,
+            resumed=client_of(self.entries, sid),
+        )
 
     def gated(self, issue, role, client, source, frm="todo"):
         """Whether the usage gate blocks a new run of client; a label-selected client's quota
@@ -525,7 +540,6 @@ class Board:
             if self.dry:
                 self.say("preview", ident, client=resumed, mode="resume", sid=sid)
             return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=resumed)
-        self.say("restart", ident, sid=sid, client=client, client_source=source, resumed=resumed)
         return Spec.from_issue(
             issue,
             mode="new",
@@ -923,7 +937,7 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
                 key = (delegate_of(board.entries, sid), spec.client)
                 blocked = gate.blocked(role, issue["identifier"], key=key)
             if not blocked:
-                board.plan(("resume", issue, sid), counts)
+                board.plan(("resume", spec, sid), counts)
                 yield spec
 
     def claimed():
@@ -1020,8 +1034,8 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             sid = board.current_sid(issue)
             if not board.settle(issue, sid, wait=False):
                 return 0 if board.replays.get(ident) else stop
-            board.plan(("resume", issue, sid))
             spec = board.resumption(issue, sid, launch_sid or str(uuid.uuid4()))
+            board.plan(("resume", spec, sid))
             if not dry and other_sid(spec, launch_sid):
                 return 2
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
