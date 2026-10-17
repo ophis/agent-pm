@@ -22,7 +22,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME"
+const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-engineer|agent-pm-docs | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -34,6 +34,7 @@ type app struct {
 	build        func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error)
 	start, close step
 	login        func(out io.Writer) error
+	loginGitHub  func(app string, out io.Writer) error
 }
 
 func main() {
@@ -62,8 +63,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		case "version", "build", "start", "close":
 			command = args[0]
 		case "login":
-			if len(args) == 2 && args[1] == "claude" {
-				if err := a.login(stdout); err != nil {
+			var login func() error
+			switch {
+			case len(args) == 2 && args[1] == "claude":
+				login = func() error { return a.login(stdout) }
+			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
+				login = func() error { return a.loginGitHub(args[2], stdout) }
+			}
+			if login != nil {
+				if err := login(); err != nil {
 					fmt.Fprintln(stderr, "agent-pm-broker:", err)
 					return 1
 				}
@@ -166,6 +174,16 @@ func system() app {
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, broker.SystemKeychain{Home: home}, out)
+		},
+		loginGitHub: func(app string, out io.Writer) error {
+			home, err := accountHome()
+			if err != nil {
+				return err
+			}
+			if err := broker.CheckInstalled(); err != nil {
+				return err
+			}
+			return broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, out)
 		},
 	}
 }
