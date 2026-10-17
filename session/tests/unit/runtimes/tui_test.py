@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -637,19 +638,44 @@ class StartTest(Base):
                 return super().launch(spec, hook)
 
         run, calls = Homed(self.client), []
+        run.launched = {"transcript": "/home/fake/projects/p/s.jsonl"}
 
         def client_env(name, client, home, *, resume):
             calls.append((name, client, home, resume))
             return {"FAKE_HOME": "/home/fake"}
 
-        with mock.patch.object(self.host, "_client_env", client_env):
-            self.start(run=run, env={"OTHER": "1"})
+        for resume, flag in ((False, "0"), (True, "1")):
+            with self.subTest(resume=resume):
+                calls.clear()
+                self.host.processes.clear()
+                with mock.patch.object(self.host, "_client_env", client_env):
+                    self.start(run=run, env={"OTHER": "1"}, resume=resume)
+                self.assertEqual(
+                    calls, [(NAME, "fake", ClientHome("fake_dir", "fake", "FAKE_HOME"), resume)]
+                )
+                self.assertEqual(dict(run.spec.env), {"OTHER": "1", "FAKE_HOME": "/home/fake"})
+                args, kwargs = self.host.calls.terminal.call_args
+                metadata = kwargs["metadata"]
+                self.assertEqual(
+                    (metadata["home_field"], metadata["home_dir"], metadata["resume"]),
+                    ("fake_dir", "fake", flag),
+                )
+                self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
+
+    def test_a_host_resume_argv_replaces_the_clients_resume_command(self):
+        run = ScanTui(self.client)
+        run.launched = {"resume": "cd /w && agent-pm-session client-resume fake /w s"}
+        lines = []
+        self.start(run=run, record=lines.append)
+        self.assertEqual(lines[-1].resume, run.launched["resume"])
+        argv = ("agent-pm-session", "resume", NAME)
+        self.host.processes.clear()
+        with mock.patch.object(self.host, "_resume_argv", return_value=argv):
+            self.start(run=run, record=lines.append)
+        wanted = f"cd {shlex.quote(self.tmp)} && agent-pm-session resume {NAME}"
         self.assertEqual(
-            calls, [(NAME, "fake", ClientHome("fake_dir", "fake", "FAKE_HOME"), False)]
+            (lines[-1].resume, tui.TuiRuntime.snapshot(NAME)["resume"]), (wanted, wanted)
         )
-        self.assertEqual(dict(run.spec.env), {"OTHER": "1", "FAKE_HOME": "/home/fake"})
-        metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
-        self.assertEqual((metadata["home_field"], metadata["home_dir"]), ("fake_dir", "fake"))
 
     def test_a_host_that_inherits_no_env_launches_with_only_its_launch_env(self):
         self.host._inherit_env = False

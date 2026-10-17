@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import LOCAL_ENV_VARS
+from agent_pm.utils import LOCAL_ENV_VARS, docker_home
 
 from session.tests.case import SPAWNS, Case
 from session.tests.unit.clients.claude.support import (
@@ -1008,6 +1008,26 @@ class ContinuationTest(Base):
         self.assertEqual(
             self.common.walk(self.path, SID, self.config_dir)[-1][:2], (NEXT, self.target)
         )
+
+    def test_a_linked_target_under_a_docker_home_is_absent(self):
+        config_dir = docker_home("w", "claude")
+        path = os.path.join(config_dir, "projects", "p", f"{SID}.jsonl")
+        self.write(path, self.marker())
+        inside = os.path.join(config_dir, "projects", "p", "real.jsonl")
+        outside = os.path.join(self.work, "host.jsonl")
+        self.write(inside, self.marker(NEXT, LAST))
+        self.write(outside, self.marker(NEXT, LAST))
+        target = os.path.join(config_dir, "projects", "elsewhere", f"{NEXT}.jsonl")
+        os.makedirs(os.path.dirname(target))
+        for real in (inside, outside):
+            with self.subTest(real=real):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(target)
+                os.symlink(real, target)
+                self.assertEqual(
+                    self.common.walk(path, SID, config_dir),
+                    [(SID, path, None), (NEXT, None, "2026-10-15T12:00:00Z")],
+                )
 
     def test_resume_launch_uses_the_latest_file_in_both_modes(self):
         self.write(self.path, self.marker())

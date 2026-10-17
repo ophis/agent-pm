@@ -252,13 +252,16 @@ class Host(ABC):
         return None
 
     _inherit_env = True
-    _resume_refused: str | None = None
 
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
     ) -> Mapping[str, str]:
         """Env for `client`'s launch as `name`; ConfigError: not on this Host."""
         return {}
+
+    def _resume_argv(self, name: str) -> tuple[str, ...] | None:
+        """None: the client's."""
+        return None
 
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()

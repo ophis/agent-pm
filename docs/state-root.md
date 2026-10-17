@@ -30,7 +30,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:manage role runs
 ├── docker/worker/                your worker image definition (Dockerfile), seeded by broker/install.sh
-├── docker-state/<name>/          a Docker Host session's client config dir, manifests and hook supervisor files
+├── docker-state/<name>/          a Docker Host session's client config dir, manifests, results and hook supervisor files
 ├── probe/                        the empty cwd of the client usage check
 └── bin/                          ctmux --install's launchers
 ```
@@ -53,7 +53,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody: your working directory | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
 | `docker/worker/` | nobody | never: your image definition; with it gone, `install.sh` seeds the default again |
-| `docker-state/<name>/` | each Docker start of that name remakes its client config dir | once that session is closed |
+| `docker-state/<name>/` | each new Docker start of that name remakes its client config dir; restart and resume keep it | once you won't restart or resume that session |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
 Each tui start runs the tui sweep and each pty start the pty sweep, over the other names of their dir whose files all went unchanged for 30 days: the tui sweep drops a name its host has no session of, the pty sweep one with no process left; a name whose lock is held stays.

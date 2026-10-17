@@ -64,8 +64,10 @@ from agent_pm.utils import (
     command_path,
     docker_home,
     module_roots,
+    read_beneath,
     save,
     source_path,
+    timestamp,
 )
 
 KIND = "docker"
@@ -259,7 +261,6 @@ class DockerHost(Host, Showable):
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
-    _resume_refused = "resume and restart are not supported on the Docker Host yet"
 
     def __init__(
         self,
@@ -322,9 +323,10 @@ class DockerHost(Host, Showable):
             raise ConfigError(
                 f"client {client or '(unnamed)'}: not supported on the Docker Host yet"
             )
-        if resume:
-            raise ConfigError(self._resume_refused)
         return {home.env: docker_home(name, home.dir)}
+
+    def _resume_argv(self, name: str) -> tuple[str, ...]:
+        return (COMMAND, "resume", name)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         super().validate(name, launch, display=display)
@@ -352,10 +354,19 @@ class DockerHost(Host, Showable):
         )
         if not (generation and field and home_dir):
             raise SessionError(f"docker session {name}: no client home to mount")
+        resume = metadata.get("resume")
+        if resume not in ("0", "1"):
+            raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
         if any(row[1:2] == [name] for row in self._ps()):
             raise SessionError(
                 f"docker session {name}: a container for it exists; close {name} first"
             )
+        home = docker_home(name, home_dir)
+        if resume == "0":
+            shutil.rmtree(home, ignore_errors=True)
+            os.makedirs(home, mode=0o700)
+        elif read_beneath(home, launch.transcript, limit=0) is None:
+            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
         hook = command_path(COMMAND)
         if hook is None:
             raise ConfigError(f"docker session {name}: {COMMAND} is not on PATH (its hooks run it)")
@@ -364,9 +375,6 @@ class DockerHost(Host, Showable):
         clients = client_keys(root)
         image = self.broker.build(root)
         cwd = os.path.realpath(launch.cwd)
-        home = docker_home(name, home_dir)
-        shutil.rmtree(home, ignore_errors=True)
-        os.makedirs(home, mode=0o700)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
             manifest,
@@ -378,6 +386,7 @@ class DockerHost(Host, Showable):
             hook_path=hook,
         )
         container = container_name(name, generation)
+        began = timestamp()
         try:
             started = self.broker.start(manifest, clients=clients)
         except BrokerError as error:
@@ -385,6 +394,7 @@ class DockerHost(Host, Showable):
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
+        ended = timestamp()
         supervisor = None
         try:
             if (started.endpoint, started.container) != (endpoint(), container):
@@ -419,6 +429,20 @@ class DockerHost(Host, Showable):
             _save_record(name, {**_record(name), "process": process})
             if not _wait(lambda: tmux.status(name) == PaneStatus.RUNNING, READY_WAIT):
                 raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
+            result = {
+                "container": started.container,
+                "image": image,
+                "image_digest": started.image_digest,
+                "client_versions": dict(started.clients),
+                "update": dict(started.update),
+                "started_at": began,
+                "ended_at": ended,
+            }
+            save(
+                os.path.join(state_dir(name), f"{generation}.result.json"),
+                json.dumps(result),
+                durable=True,
+            )
         except (SessionError, TuiError, OSError) as error:
             cleanup = self._roll_back(supervisor, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
