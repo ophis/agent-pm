@@ -28,7 +28,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 
 | Check | Expect |
 |---|---|
-| `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, flags include `runtime` |
+| `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
 | `"$B" version` | `{"protocol_version":"4"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
@@ -55,7 +55,8 @@ partition list gets only the broker's partition ID, for which the broker asks on
 terminal, without echo, for the login keychain password (a wrong one fails with
 `keychain status -25293`). It prints its success line only after reading the access back;
 otherwise it exits non-zero saying whether it changed the item, what is done and what is
-not: rerun the same command to finish.
+not: rerun the same command to finish. The broker is trusted by its code requirement (an ad hoc
+signature's is its cdhash), not its path: after reinstalling it, rerun both `login github` commands.
 
 ```sh
 "$B" login github agent-pm-engineer

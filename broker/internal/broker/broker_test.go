@@ -62,8 +62,8 @@ func TestLogin(t *testing.T) {
 	if !bytes.Equal(read, make([]byte, len(read))) {
 		t.Fatal("token buffer not erased")
 	}
-	if err := Login(func() ([]byte, error) { return nil, errors.New("no tty") }, &fakeKeychain{}, &out); err == nil {
-		t.Fatal("read error ignored")
+	if err := Login(func() ([]byte, error) { return nil, errors.New("needs an interactive terminal") }, &fakeKeychain{}, &out); err == nil || err.Error() != "reading the setup-token failed: needs an interactive terminal" {
+		t.Fatalf("read error: %v", err)
 	}
 }
 
@@ -85,6 +85,8 @@ type fakeApps struct {
 
 const (
 	brokerPartition = "cdhash:0a1b2c"
+	brokerReq       = `cdhash H"0a1b2c"`
+	brokerApp       = InstalledPath + " (" + brokerReq + ")"
 	security        = "/usr/bin/security"
 	keychainPass    = "login-keychain-password"
 )
@@ -93,11 +95,11 @@ const (
 // the partition list with only the broker's partition ID.
 func brokerOnly() AppAccess {
 	return AppAccess{
-		Broker:    InstalledPath,
+		Broker:    brokerApp,
 		Partition: brokerPartition,
 		Entries: []ACLEntry{
 			{Authorizations: []string{"change_acl"}},
-			{Authorizations: []string{"encrypt", "decrypt", "derive", "export_clear", "export_wrapped"}, Apps: []string{InstalledPath}},
+			{Authorizations: []string{"encrypt", "decrypt", "derive", "export_clear", "export_wrapped"}, Apps: []string{brokerApp}},
 			{Authorizations: []string{"partition_id"}, Any: true, Partitions: []string{brokerPartition}},
 		},
 	}
@@ -115,6 +117,14 @@ func added() *AppAccess {
 func halfDone() *AppAccess {
 	a := brokerOnly()
 	a.Entries[2].Partitions = []string{"apple-tool:"}
+	return &a
+}
+
+// reinstalled is that item after the broker is rebuilt and reinstalled: same path, another cdhash.
+func reinstalled() *AppAccess {
+	a := brokerOnly()
+	a.Entries[1].Apps = []string{InstalledPath + ` (cdhash H"1ce471")`}
+	a.Entries[2].Partitions = []string{"cdhash:1ce471"}
 	return &a
 }
 
@@ -151,7 +161,7 @@ func (k *fakeApps) TrustApps(app, account string) error {
 	}
 	for i, e := range k.access.Entries {
 		if slices.ContainsFunc(e.Authorizations, func(x string) bool { return slices.Contains(readAuthorizations, x) }) {
-			k.access.Entries[i].Any, k.access.Entries[i].Apps = false, []string{InstalledPath}
+			k.access.Entries[i].Any, k.access.Entries[i].Apps = false, []string{brokerApp}
 		}
 	}
 	return nil
@@ -196,6 +206,7 @@ func TestLoginGitHub(t *testing.T) {
 		"added":        {access: added(), steps: []string{"apps", "partition"}, asks: 1},
 		"half done":    {access: halfDone(), steps: []string{"partition"}, asks: 1},
 		"already done": {steps: nil},
+		"reinstalled":  {access: reinstalled(), steps: []string{"apps", "partition"}, asks: 1},
 	} {
 		k := &fakeApps{account: "5352992", key: appKey, access: tc.access}
 		ask := &askOnce{}
@@ -346,11 +357,12 @@ func TestLoginGitHubVerifiesAccess(t *testing.T) {
 			a.Entries = []ACLEntry{
 				{Authorizations: []string{"change_acl"}},
 				{Authorizations: decrypt, Apps: []string{security}},
-				{Authorizations: decrypt, Apps: []string{InstalledPath}},
+				{Authorizations: decrypt, Apps: []string{brokerApp}},
 				{Authorizations: []string{"partition_id"}, Any: true, Partitions: []string{"apple-tool:"}},
 			}
 		}), want: security},
-		"security beside broker": {access: with(func(a *AppAccess) { a.Entries[1].Apps = []string{InstalledPath, security} }), want: security},
+		"stale broker":           {access: with(func(a *AppAccess) { a.Entries[1].Apps = reinstalled().Entries[1].Apps }), want: `(cdhash H\"1ce471\")`},
+		"security beside broker": {access: with(func(a *AppAccess) { a.Entries[1].Apps = []string{brokerApp, security} }), want: security},
 		"any application":        {access: with(func(a *AppAccess) { a.Entries[1] = ACLEntry{Authorizations: decrypt, Any: true} }), want: "any application"},
 		"any authorization": {access: with(func(a *AppAccess) {
 			a.Entries = append(a.Entries, ACLEntry{Authorizations: []string{"any"}, Apps: []string{security}})
@@ -388,10 +400,10 @@ func TestLoginGitHubVerifiesAccess(t *testing.T) {
 func TestParseAccess(t *testing.T) {
 	h := func(s string) string { return hex.EncodeToString([]byte(s)) }
 	text := strings.Join([]string{
-		"self " + h(InstalledPath) + " " + h(brokerPartition),
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition),
 		"acl " + h("change_acl"),
 		"acl " + h("encrypt") + " " + h("decrypt") + " " + h("derive") + " " + h("export_clear") + " " + h("export_wrapped"),
-		"app " + h(InstalledPath),
+		"app " + h(InstalledPath) + " " + h(brokerReq),
 		"acl " + h("partition_id"),
 		"any",
 		"partition " + h(brokerPartition),
@@ -404,13 +416,13 @@ func TestParseAccess(t *testing.T) {
 	for _, bad := range []string{
 		"",
 		"acl " + h("decrypt"),
-		"self " + h(InstalledPath),
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nself " + h(InstalledPath) + " " + h(brokerPartition),
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\napp " + h(InstalledPath),
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl zz",
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nany extra",
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nowner " + h("x"),
-		"self " + h(InstalledPath) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\napp " + h("a") + " " + h("b"),
+		"self " + h(InstalledPath) + " " + h(brokerPartition),
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nself " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition),
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\napp " + h(InstalledPath) + " " + h(brokerReq),
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nacl zz",
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nany extra",
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\nowner " + h("x"),
+		"self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\napp " + h("a") + " " + h("b") + " " + h("c"),
 	} {
 		if _, err := parseAccess([]byte(bad)); err == nil {
 			t.Fatalf("%q accepted", bad)

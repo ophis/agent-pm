@@ -47,7 +47,7 @@ type AppKeychain interface {
 	AppAccess(app, account string) (AppAccess, error)
 }
 
-// ACLEntry is one entry of a keychain item's access. Apps are the paths of the applications it trusts
+// ACLEntry is one entry of a keychain item's access. Apps are the identities of the applications it trusts
 // unless Any; Partitions is the partition list a partition_id entry holds.
 type ACLEntry struct {
 	Authorizations []string
@@ -56,7 +56,7 @@ type ACLEntry struct {
 	Partitions     []string
 }
 
-// AppAccess is a private-key item's access, beside the broker's own path and partition ID.
+// AppAccess is a private-key item's access, beside the broker's own identity and partition ID.
 type AppAccess struct {
 	Entries           []ACLEntry
 	Broker, Partition string
@@ -110,9 +110,18 @@ func appsOnlyBroker(a AppAccess) error {
 	return nil
 }
 
+// identity names an application by its path and, when it records one, its code requirement, so a rebuilt
+// broker at the same path is another application.
+func identity(path, requirement string) string {
+	if requirement == "" {
+		return path
+	}
+	return path + " (" + requirement + ")"
+}
+
 // parseAccess reads the access text keychain_darwin.go writes: one record per line, each field lowercase hex
-// so no stored string can forge a record. "self <path> <partition ID>" once; "acl <authorization>..." starts an
-// entry, and "any", "app <path>" and "partition <ID>" add to the last one.
+// so no stored string can forge a record. "self <path> <requirement> <partition ID>" once; "acl <authorization>..."
+// starts an entry, and "any", "app <path> <requirement>" and "partition <ID>" add to the last one.
 func parseAccess(text []byte) (AppAccess, error) {
 	var a AppAccess
 	self := false
@@ -134,14 +143,14 @@ func parseAccess(text []byte) (AppAccess, error) {
 			last = &a.Entries[len(a.Entries)-1]
 		}
 		switch kind := fields[0]; {
-		case kind == "self" && len(values) == 2 && !self:
-			a.Broker, a.Partition, self = values[0], values[1], true
+		case kind == "self" && len(values) == 3 && !self:
+			a.Broker, a.Partition, self = identity(values[0], values[1]), values[2], true
 		case kind == "acl":
 			a.Entries = append(a.Entries, ACLEntry{Authorizations: values})
 		case kind == "any" && len(values) == 0 && last != nil:
 			last.Any = true
-		case kind == "app" && len(values) == 1 && last != nil:
-			last.Apps = append(last.Apps, values[0])
+		case kind == "app" && len(values) == 2 && last != nil:
+			last.Apps = append(last.Apps, identity(values[0], values[1]))
 		case kind == "partition" && len(values) == 1 && last != nil:
 			last.Partitions = append(last.Partitions, values[0])
 		default:
@@ -167,7 +176,7 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 	token, err := read()
 	defer erase(token)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading the setup-token failed: %w", err)
 	}
 	if len(token) == 0 || len(token) > maxToken {
 		return fmt.Errorf("setup-token must be 1 to %d bytes", maxToken)
