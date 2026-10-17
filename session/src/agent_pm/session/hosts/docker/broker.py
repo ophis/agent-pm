@@ -20,7 +20,7 @@ RELAY = (
     "-I",
     "/opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py",
 )
-PROTOCOL = "1"
+PROTOCOL = "2"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
