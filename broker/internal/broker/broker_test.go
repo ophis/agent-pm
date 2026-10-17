@@ -413,6 +413,11 @@ func TestParseAccess(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, brokerOnly()) {
 		t.Fatalf("%v\n%#v", err, got)
 	}
+	unsigned := "self " + h(InstalledPath) + " " + h(brokerReq) + " " + h(brokerPartition) + "\nacl " + h("decrypt") + "\napp " + h("/opt/tool") + " "
+	got, err = parseAccess([]byte(unsigned))
+	if err != nil || !slices.Equal(got.Entries[0].Apps, []string{"/opt/tool"}) {
+		t.Fatalf("app without requirement: %v %#v", err, got)
+	}
 	for _, bad := range []string{
 		"",
 		"acl " + h("decrypt"),

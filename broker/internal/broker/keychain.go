@@ -126,8 +126,8 @@ func parseAccess(text []byte) (AppAccess, error) {
 	var a AppAccess
 	self := false
 	for line := range strings.Lines(string(text)) {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		fields := strings.Split(strings.TrimSuffix(line, "\n"), " ") // not Fields: an empty requirement is an empty field
+		if fields[0] == "" {
 			continue
 		}
 		values := make([]string, len(fields)-1)
