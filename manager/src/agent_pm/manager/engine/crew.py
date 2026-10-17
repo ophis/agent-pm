@@ -191,8 +191,8 @@ class Crew:
                 f"{shlex.join(argv)}: no response within {START_TIMEOUT} seconds"
             ) from error
 
-    def run(self, spec: Spec) -> Record:
-        return self._run(spec, str(uuid.uuid4()), shorthand=False)
+    def run(self, spec: Spec, *, resume: str | None = None) -> Record:
+        return self._run(spec, resume or str(uuid.uuid4()), shorthand=False)
 
     def launch(
         self,
@@ -202,11 +202,13 @@ class Crew:
         *,
         note: str | None = None,
         name: str | None = None,
+        resume: str | None = None,
     ) -> Record:
-        sid = str(uuid.uuid4())
+        sid = resume or str(uuid.uuid4())
         if kind == "worker":
             name = key
-            command = ("agent-pm-session", "start", key, *argv)
+            resumed = ("--resume", resume) if resume else ()
+            command = ("agent-pm-session", "start", key, *resumed, *argv)
         elif kind == "issue":
             name = key
             command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)

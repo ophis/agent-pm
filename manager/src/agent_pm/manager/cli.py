@@ -56,13 +56,18 @@ def _hold(args) -> int:
 
 
 def _run(args) -> int:
-    print(_crew(args).run(Spec(args.name, args.command, args.note)).to_line())
+    print(_crew(args).run(Spec(args.name, args.command, args.note), resume=args.resume).to_line())
     return 0
 
 
 def _launch(args) -> int:
     record = _crew(args).launch(
-        args.kind, args.key, tuple(args.arguments), note=args.note, name=args.entry_name
+        args.kind,
+        args.key,
+        tuple(args.arguments),
+        note=args.note,
+        name=args.entry_name,
+        resume=args.resume,
     )
     print(record.to_line())
     return 0
@@ -278,8 +283,9 @@ Recovery and next help:
         """Prerequisites and effects:
   COMMAND [ARG ...] after -- is required; no shell expansion is performed.
   The starter must finish with a Record on stdout and honor AGENT_PM_SID.
-  Crew supplies a new identity and roster events file, records launch intent
-  before executing, then prints the Record. A failed launch may remain lost.
+  Crew supplies an identity (--resume SID, else a new one) and roster events
+  file, records launch intent before executing, then prints the Record.
+  A failed launch may remain lost.
   Put Crew options before NAME, then --, then the starter and its options.
   Outer help: agent-pm-crew run --help. Help after -- runs the starter path.
 
@@ -292,10 +298,13 @@ Recovery and next help:
   Inspect/reconcile failed launches: agent-pm-crew attach --help
   Starter options: agent-pm-session start --help
 """,
-        usage="%(prog)s [--manager MANAGER] [--note TEXT] NAME -- COMMAND [ARG ...]",
+        usage="%(prog)s [--manager MANAGER] [--note TEXT] [--resume SID] NAME -- COMMAND [ARG ...]",
     )
     run.add_argument("name", metavar="NAME", help="new roster entry name")
     run.add_argument("--note", metavar="TEXT", help="optional roster note; default: none")
+    run.add_argument(
+        "--resume", metavar="SID", help="AGENT_PM_SID to give the starter; default: a new one"
+    )
     run.set_defaults(func=_run)
     for kind, key, purpose, owner, details in (
         (
@@ -306,6 +315,8 @@ Recovery and next help:
             """NAME is both the worker's session name and roster entry name.
 Session options go after NAME; --client CLIENT is required there.
 Session passes CLIENT_FLAGS after its -- verbatim to the client.
+--resume SID resumes conversation SID (agent-pm-session start --resume SID)
+under that same session identity.
 
 Examples:
   With Codex configured and no helper session/entry:
@@ -372,6 +383,10 @@ Examples:
                 metavar="NAME",
                 help="roster/session name; default: ROLE-<new session id's first 8 characters>",
             )
+        if kind == "worker":
+            launch.add_argument(
+                "--resume", metavar="SID", help="resume conversation SID; default: a new one"
+            )
         launch.add_argument("key", metavar=key, help=f"required {key.lower()}; see below")
         launch.add_argument(
             "arguments",
@@ -379,7 +394,7 @@ Examples:
             metavar="DOWNSTREAM_OPTIONS",
             help=f"forwarded verbatim to {owner}; defaults/values: its --help",
         )
-        launch.set_defaults(func=_launch, kind=kind, entry_name=None)
+        launch.set_defaults(func=_launch, kind=kind, entry_name=None, resume=None)
     attach = page(
         "attach",
         "Reconcile a roster and print recovery/monitoring commands",

@@ -224,6 +224,27 @@ class Launch(CliCase):
                 self.assertEqual(entry.note, "Crew note")
                 self.assertEqual(entry.record, Record.parse(stdout))
 
+    def test_worker_and_run_resume_pass_the_given_sid(self):
+        sid = str(uuid.uuid4())
+        for arguments, argv in (
+            (
+                ("worker", "--manager", "mgr", "--resume", sid, "w1", "--client", "claude"),
+                ("agent-pm-session", "start", "w1", "--resume", sid, "--client", "claude"),
+            ),
+            (
+                ("run", "--manager", "mgr", "--resume", sid, "r1", "--", "start", "--resume", sid),
+                ("start", "--resume", sid),
+            ),
+        ):
+            with self.subTest(verb=arguments[0]):
+                result, stdout, stderr = self.start(*arguments)
+                self.assertEqual(result, 0, stderr)
+                self.assertEqual(self.calls[0][0], argv)
+                self.assertEqual(self.calls[0][1]["AGENT_PM_SID"], sid)
+                self.assertEqual(Record.parse(stdout).sid, sid)
+                self.assertEqual(self.roster.entries()[arguments[5]].sid, sid)
+                self.roster.remove(arguments[5])
+
     def test_role_names_share_the_generated_launch_sid(self):
         for explicit in ((), ("--name", "chosen")):
             with self.subTest(explicit=explicit):
