@@ -155,7 +155,7 @@ class Base(Case):
         os.makedirs(self.cwd)
         self.order = []
         self.docker = FakeDocker(self.ep, self.order)
-        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, {"status": "updated"})
+        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {})
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
@@ -575,9 +575,7 @@ class StartTest(Base):
                 self.assertEqual(os.listdir(self.home_dir), ["keep"])
 
     def test_each_start_writes_its_generation_result(self):
-        self.broker.started = Started(
-            CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"}, {"status": "updated"}
-        )
+        self.broker.started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"})
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
             with self.subTest(resume=resume):
@@ -597,7 +595,6 @@ class StartTest(Base):
                         "image": IMAGE,
                         "image_digest": "sha256:" + "b" * 64,
                         "client_versions": {"claude": "2.1.0"},
-                        "update": {"status": "updated"},
                     },
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))

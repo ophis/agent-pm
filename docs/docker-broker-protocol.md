@@ -1,14 +1,14 @@
 # Docker broker protocol
 
-**Protocol 2** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"2"}`.
+**Protocol 3** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"3"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
 
 The broker installs the hook stub, so this version also covers the stub's wire format.
-Protocol 2 changes no broker field: it marks the stub's switch to the
-[relay wire format](docker-relay-protocol.md).
+Protocol 2 marked the stub's switch to the [relay wire format](docker-relay-protocol.md);
+protocol 3 drops start's `update`: the clients come from the image.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -35,7 +35,7 @@ stdin. `login claude` reads a token interactively without echo and has no JSON c
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|
-| Success, including update fallback or absent container on close | `0` | One success JSON object plus LF | Empty; build: Docker's build progress, then one `agent-pm-broker: …` line per older image removed or kept; start: one `agent-pm-broker: start <phase> <seconds> s` line per phase, then `total` ([Docker Host](docker-host.md#start-timing)) |
+| Success, including an absent container on close | `0` | One success JSON object plus LF | Empty; build: Docker's build progress, then one `agent-pm-broker: …` line per older image removed or kept; start: one `agent-pm-broker: start <phase> <seconds> s` line per phase, then `total` ([Docker Host](docker-host.md#start-timing)) |
 | Failure | Table below | Empty | One `error` JSON object plus LF; build: after Docker's build progress, as the last line |
 
 Use UTF-8. Reject duplicate object keys, non-JSON numeric constants, trailing JSON values,
@@ -91,29 +91,20 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `2` |
+| `version` | `protocol_version`: exact string `3` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after update or restoration; `update`: below |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
-
-`update` is either `{"status":"updated"}` or
-`{"status":"fallback","reason":"timeout","message":"..."}`.
-Fallback reasons: `network`, `timeout` (180 seconds), `command_failed`, `version_failed`.
-Use `network` only when identified; otherwise use `command_failed`. Any update failure
-restores **both** image versions, verifies both `--version` commands, then continues
-start with exit 0. Failure to restore or determine either actual version is
-`start_failed`. A fallback is reported in stdout, not as a fatal stderr error.
 
 ```mermaid
 flowchart LR
     V[Validate] --> C[Create secured container]
     C --> B[Bootstrap and hook stub]
-    B --> U[Update clients without secrets]
-    U -->|success| T[Inject token through exec stdin]
-    U -->|failure| R[Restore both image clients]
-    R --> T
+    B --> P[Probe both clients' versions]
+    P --> T[Inject token through exec stdin]
     T --> O[Return start output]
 ```
+Failure to determine either version is `start_failed`.
 Any fatal failure after creation attempts container deletion before returning an error.
 
 ## Errors
@@ -133,7 +124,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/close | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
 | `8` | `build_failed` | build | Package directory/version invalid, context hashing or either build stage failed |
-| `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client restoration/version probing or token injection failed |
+| `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client version probing or token injection failed |
 | `10` | `close_failed` | close | Daemon reachable but container deletion failed |
 | `11` | `keychain_failed` | start | Keychain access denied, locked or otherwise failed; distinguish from absent entry |
 | `70` | `internal_error` | All, or `unknown` | Unexpected broker failure |

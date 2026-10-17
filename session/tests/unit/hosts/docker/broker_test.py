@@ -111,7 +111,6 @@ class ResponseTest(Case):
                 endpoint="unix:///Users/example/.docker/run/docker.sock",
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "0.100.0"},
-                update={"status": "updated"},
             ),
         )
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
@@ -160,6 +159,7 @@ class ResponseTest(Case):
     def test_wrong_protocol_or_missing_broker_fails_before_build(self):
         for result in (
             (0, '{"protocol_version": "1"}\n', ""),
+            (0, '{"protocol_version": "2"}\n', ""),
             FileNotFoundError(2, "No such file", BROKER),
             PermissionError(13, "Permission denied", BROKER),
         ):
@@ -170,9 +170,8 @@ class ResponseTest(Case):
                 self.assertIn(BROKER, str(raised.exception))
                 self.assertEqual(fake.calls, [argv("version")])
 
-    def test_an_unhashable_update_reason_is_bad(self):
-        started = data("start-fallback-timeout.json")
-        started["update"]["reason"] = []
+    def test_a_protocol_2_update_field_is_bad(self):
+        started = {**data("start-output.json"), "update": {"status": "updated"}}
         result = (0, json.dumps(started), "")
         with self.assertRaisesRegex(SessionError, "bad response"):
             Broker(FakeBroker(result)).start(MANIFEST, clients=KEYS)

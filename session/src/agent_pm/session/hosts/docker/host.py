@@ -788,7 +788,6 @@ class DockerHost(Host):
                 "image": image,
                 "image_digest": started.image_digest,
                 "client_versions": dict(started.clients),
-                "update": dict(started.update),
                 "started_at": began,
                 "ended_at": ended,
                 "phases": laps.phases,

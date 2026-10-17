@@ -24,6 +24,26 @@ const (
 // errTaken: another start created the container first, so it is not this start's to roll back.
 var errTaken = errors.New("container name taken")
 
+func asAgent(container string, argv ...string) []string {
+	return append([]string{"exec", "--user", "agent", container}, argv...)
+}
+
+// probe reads both clients' versions; the image installed them.
+func (h Host) probe(ctx context.Context, container string) (Clients, error) {
+	var versions [2]string
+	var errs []error
+	for i, client := range []string{"claude", "codex"} {
+		out, err := h.Docker.Run(ctx, asAgent(container, client, "--version"), nil)
+		line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+		versions[i] = strings.TrimSpace(line)
+		if err == nil && (versions[i] == "" || hasControl(versions[i])) {
+			err = errors.New(client + " --version gave no usable version")
+		}
+		errs = append(errs, err)
+	}
+	return Clients{Claude: versions[0], Codex: versions[1]}, errors.Join(errs...)
+}
+
 func taken(c string) *protocol.Error {
 	return protocol.New(protocol.StartFailed, "Container "+c+" already exists; close it first.")
 }
@@ -135,11 +155,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		}
 	}
 	lap("bootstrap")
-	clients, update, err := h.updateClients(ctx, c)
+	clients, err := h.probe(ctx, c)
 	if err != nil {
-		return StartResult{}, err
+		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
-	lap("update")
+	lap("clients")
 	exec := func(argv []string, stdin []byte) error {
 		_, err := h.Docker.Run(ctx, append([]string{"exec", "--interactive", "--user", "agent", c}, argv...), stdin)
 		return err
@@ -155,7 +175,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		return StartResult{}, protocol.New(protocol.StartFailed, "Injecting the Claude token failed.")
 	}
 	lap("credentials")
-	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, Update: update}, nil
+	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients}, nil
 }
 
 // rollback deletes c on a fresh context so a signal or cancelled caller still cleans up.

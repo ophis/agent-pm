@@ -267,7 +267,7 @@ func TestStartOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
-		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, Update: Update{Status: "updated"}}
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}}
 	if got != want {
 		t.Fatalf("%+v", got)
 	}
@@ -288,7 +288,7 @@ func TestStartOrder(t *testing.T) {
 	wantSteps := []string{"image inspect", "ps --filter", "container inspect", "run --detach",
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
-		"agent timeout --kill-after=10 180", "agent claude --version", "agent codex --version",
+		"agent claude --version", "agent codex --version",
 		"--interactive --user inject"}
 	if !slices.Equal(steps, wantSteps) {
 		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
@@ -300,10 +300,6 @@ func TestStartOrder(t *testing.T) {
 	if !slices.Equal(boot[len(boot)-3:], []string{"claude", home + "/.agent-pm/docker-state/worker_1/claude", home + "/src/project"}) ||
 		!slices.Equal(hook[len(hook)-2:], []string{"hook", "/usr/local/bin/agent-pm-session"}) {
 		t.Fatalf("%q %q", boot, hook)
-	}
-	update := d.calls[6]
-	if !slices.Equal(update[4:], []string{"timeout", "--kill-after=10", "180", "npm", "install", "-g", "--prefix", "/home/agent/.npm-global", "@anthropic-ai/claude-code@latest", "@openai/codex@latest"}) {
-		t.Fatalf("%q", update)
 	}
 	noHook, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-no-hook.json"))
 	if err != nil {
@@ -339,6 +335,8 @@ func TestRollback(t *testing.T) {
 	}{
 		"bootstrap":           {&world{execErr: failOn("claude", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
 		"hook":                {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"clients":             {&world{versions: []string{"2.1.0\n", ""}}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"clients unreachable": {&world{execErr: failOn("--version", docker.ErrUnreachable)}, &fakeCreds{}, protocol.DockerUnreachable, protocol.Removed},
 		"inject":              {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
 		"inject unreachable":  {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
 		"inject keychain":     {&world{}, &fakeCreds{injectErr: protocol.New(protocol.KeychainFailed, "denied")}, protocol.KeychainFailed, protocol.Removed},
@@ -418,12 +416,7 @@ func TestCauseOnlyWhereNamed(t *testing.T) {
 	cmdErr := &docker.CommandError{Exit: 1, Stderr: "boom detail"}
 	for name, w := range map[string]*world{
 		"bootstrap": {execErr: failOn("claude", cmdErr)},
-		"restore": {execErr: func(a []string) error {
-			if slices.Contains(a, "npm") || slices.Contains(a, "/bin/sh") {
-				return cmdErr
-			}
-			return nil
-		}},
+		"clients":   {execErr: failOn("--version", cmdErr)},
 	} {
 		w.labels = goodLabels()
 		h, _ := startHost(w, &fakeCreds{})
@@ -466,7 +459,7 @@ func TestStartPhaseTimes(t *testing.T) {
 		}
 		phases = append(phases, m[1])
 	}
-	if want := []string{"preflight", "image", "checks", "create", "bootstrap", "update", "credentials", "total"}; !slices.Equal(phases, want) {
+	if want := []string{"preflight", "image", "checks", "create", "bootstrap", "clients", "credentials", "total"}; !slices.Equal(phases, want) {
 		t.Fatalf("phases %q want %q", phases, want)
 	}
 	for name, w := range map[string]*world{

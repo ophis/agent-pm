@@ -57,18 +57,11 @@ type Clients struct {
 	Codex  string `json:"codex"`
 }
 
-type Update struct {
-	Status  string `json:"status"`
-	Reason  string `json:"reason,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
 type StartResult struct {
 	Container   string  `json:"container"`
 	Endpoint    string  `json:"endpoint"`
 	ImageDigest string  `json:"image_digest"`
 	Clients     Clients `json:"clients"`
-	Update      Update  `json:"update"`
 }
 
 type CloseResult struct {

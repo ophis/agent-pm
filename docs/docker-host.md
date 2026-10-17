@@ -28,7 +28,7 @@ To upgrade, rerun the same command; your Dockerfile is never overwritten.
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, flags include `runtime` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"2"}` |
+| `"$B" version` | `{"protocol_version":"3"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Configure
@@ -92,8 +92,8 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest`, the `clients` versions and
-`update` (`updated`, or `fallback` with a `reason`).
+It prints `container` (`C` below), `endpoint`, `image_digest` and the image's `clients`
+versions.
 
 | Check | Expect |
 |---|---|
@@ -116,10 +116,6 @@ trust prompt and answers one sentence.
 `touch /tmp/fake-docker-ran` first on `PATH`, `"$B" build --agent-pm "$PKG"` still
 reports `"rebuilt":false` and `/tmp/fake-docker-ran` does not exist. Restore
 `~/.docker/config.json` after.
-
-**Client update:** with the network off (Wi-Fi off), a new start still succeeds with
-`"update":{"status":"fallback","reason":"network",…}` and the image's versions in
-`clients`. With the network on, `clients.claude` is npm's latest Claude Code.
 
 ## Refusals
 
@@ -211,8 +207,7 @@ token, and the broker reads only the manifest.
 `~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
 start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
-(`<generation>.result.json`: container, image and digest, client versions, update
-result, when the broker's start began and ended, and the [start timing](#start-timing)
+(`<generation>.result.json`: container, image and digest, client versions, when the broker's start began and ended, and the [start timing](#start-timing)
 `phases` and `launched_at`),
 `host.json` (what the host knows of the session, with its events path), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
@@ -250,7 +245,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | | `checks` | the nesting check and the container-name check |
 | | `create` | `docker run`: the new container |
 | | `bootstrap` | Claude's bootstrap state and the hook stub |
-| | `update` | the client update in the container, a fallback included |
+| | `clients` | both clients' `--version` in the container |
 | | `credentials` | the token injection |
 | | `total` | the broker's whole `start` |
 | `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check, the client home |
@@ -303,8 +298,8 @@ flowchart LR
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
 - Each reinstall changes the broker's ad-hoc code identity, so the keychain asks once to
   allow it again.
-- Every start installs npm's latest Claude Code and Codex releases into the container,
-  trusting their vendors' npm packages.
+- Every image build installs npm's latest Claude Code and Codex releases, trusting their
+  vendors' npm packages.
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running
@@ -317,7 +312,7 @@ flowchart LR
 - The first supervisor restart a container needs after a plugin upgrade runs `build`,
   which rebuilds the image before that command finishes; once per generation, as
   `<generation>.stale` records an older image.
-- Claude may still show an onboarding prompt after an update; the Claude check above
+- Claude may still show an onboarding prompt after an image rebuild upgrades it; the Claude check above
   catches it.
 - A cwd that covers the agent-pm plugin directory lets the worker change what the next
   `build` copies into `/opt/agent-pm`.
