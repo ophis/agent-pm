@@ -9,6 +9,7 @@ import json
 import os
 import signal
 import stat
+import threading
 import tomllib
 from dataclasses import replace
 from types import SimpleNamespace
@@ -735,16 +736,20 @@ class StartTest(Base):
                 self.assertEqual(self.broker.closed, [CONTAINER])
                 self.popen_mock.assert_not_called()
 
-    def stopped_at(self, step, signum=signal.SIGTERM):
-        """start() with `signum`'s handler called as `step` (a broker method or a docker exec
-        prefix) runs, as a signal would.
-        """
-        before = {sig: signal.getsignal(sig) for sig in STOPS}
+    def caught(self):
+        """The STOPS delivered to a recorder in place of their handlers, until the test ends."""
+        delivered = []
+        for sig in STOPS:
+            self.addCleanup(
+                signal.signal, sig, signal.signal(sig, lambda n, _: delivered.append(n))
+            )
+        return delivered
+
+    def signalled_at(self, step, signum):
+        """`signum` sent to this thread as `step` (a broker method or a docker exec prefix) runs."""
 
         def stop():
-            handler = signal.getsignal(signum)
-            self.assertIsNot(handler, before[signum])
-            handler(signum, None)
+            signal.pthread_kill(threading.get_ident(), signum)
 
         if isinstance(step, tuple):
             self.docker.replies = {
@@ -754,10 +759,16 @@ class StartTest(Base):
         else:
             real = getattr(self.broker, step)
             setattr(self.broker, step, lambda *a, **k: (stop(), real(*a, **k))[1])
+
+    def stopped_at(self, step, signum=signal.SIGTERM):
+        """start() with `signum` sent as `step` runs fails, and the signal arrives after it."""
+        delivered, mask = self.caught(), signal.pthread_sigmask(signal.SIG_BLOCK, ())
+        self.signalled_at(step, signum)
         name = signal.Signals(signum).name
         with self.assertRaisesRegex(SessionError, f"^docker session w: stopped by {name}$"):
             self.start()
-        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, before)
+        self.assertEqual(delivered, [signum])
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, ()), mask)
 
     def test_a_signal_during_the_broker_start_closes_its_container(self):
         for signum in STOPS:
@@ -777,10 +788,16 @@ class StartTest(Base):
         self.supervisor.terminate.assert_called()
         self.assertEqual(self.order[-1], ("close", CONTAINER))
 
-    def test_a_start_restores_the_signal_handlers(self):
-        before = {sig: signal.getsignal(sig) for sig in STOPS}
+    def test_a_start_restores_the_signal_mask(self):
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, ())
         self.start()
-        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, before)
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, ()), mask)
+
+    def test_an_ignored_signal_stays_ignored(self):
+        self.addCleanup(signal.signal, signal.SIGHUP, signal.signal(signal.SIGHUP, signal.SIG_IGN))
+        self.signalled_at("start", signal.SIGHUP)
+        self.start()
+        self.assertEqual(self.broker.closed, [])
 
     def test_login_required_surfaces_message(self):
         self.broker.error = BrokerError(5, "login_required", "log in first", "not_needed", None)

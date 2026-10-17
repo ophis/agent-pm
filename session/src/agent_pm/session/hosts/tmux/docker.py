@@ -213,29 +213,21 @@ def _text(found: str) -> str:
 
 
 class _Stops:
-    """Holds STOPS back while a start owns its container, so its rollback still runs: check()
-    raises for the first one received. Only the main thread can set handlers.
+    """Blocks STOPS but ignored ones while a start owns its container, so its rollback still runs:
+    check() raises for one pending, which takes effect as usual once unblocked.
     """
 
-    def __init__(self) -> None:
-        self.signum, self.previous = 0, {}
-
     def __enter__(self) -> _Stops:
-        if threading.current_thread() is threading.main_thread():
-            for signum in STOPS:
-                self.previous[signum] = signal.signal(signum, self._receive)
+        self.held = {sig for sig in STOPS if signal.getsignal(sig) is not signal.SIG_IGN}
+        self.mask = signal.pthread_sigmask(signal.SIG_BLOCK, self.held)
         return self
 
     def __exit__(self, *_) -> None:
-        for signum, handler in self.previous.items():
-            signal.signal(signum, handler)
-
-    def _receive(self, signum, _frame) -> None:
-        self.signum = self.signum or signum
+        signal.pthread_sigmask(signal.SIG_SETMASK, self.mask)
 
     def check(self, prefix: str = "") -> None:
-        if self.signum:
-            raise SessionError(f"{prefix}stopped by {signal.Signals(self.signum).name}")
+        if pending := signal.sigpending() & self.held:
+            raise SessionError(f"{prefix}stopped by {min(pending).name}")
 
 
 def _wait(ready, timeout: float) -> bool:
