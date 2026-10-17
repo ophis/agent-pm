@@ -1,6 +1,7 @@
 """The Docker Host's live gate, run by hand from a manager session: `python3
 session/tests/live_docker.py CWD [NAME]` times build, worker start and first event, then kills
-the hook supervisor and checks the next command restarts it and the next turn's event comes once.
+the hook supervisor during a turn and checks that the turn's event waits in the relay queue, that
+`read` restarts the supervisor, and that the event then comes exactly once.
 """
 
 import fcntl
@@ -55,6 +56,13 @@ def kill_supervisor(name: str) -> None:
         time.sleep(0.2)
 
 
+def quiet(events: tuple[str, ...], after: str) -> str:
+    try:
+        return run(*events, "--after", after, timeout=QUIET)
+    except subprocess.TimeoutExpired:
+        return ""
+
+
 def timed(times: dict, step: str, action):
     started = time.monotonic()
     found = action()
@@ -94,17 +102,16 @@ def main(argv: list[str]) -> int:
             "client ready (first event)",
             lambda: run(*events, "--after", after.group(1)),
         )
+        cursor = first.split()[0]
+        run("agent-pm-session", "send", name, "Count from 1 to 200, one number per line.")
         kill_supervisor(name)
+        if quiet(events, cursor):
+            raise SystemExit("an event arrived while the supervisor was gone")
         run("agent-pm-session", "read", name)
         if not supervisor_running(name):
             raise SystemExit("read did not restart the supervisor")
-        run("agent-pm-session", "send", name, "Reply with the single word again.")
-        line = run(*events, "--after", first.split()[0]).split()[0]
-        try:
-            extra = run(*events, "--after", line, timeout=QUIET)
-        except subprocess.TimeoutExpired:
-            extra = ""
-        if extra:
+        line = run(*events, "--after", cursor).split()[0]
+        if extra := quiet(events, line):
             raise SystemExit(f"a second event after the restart: {extra!r:.200}")
         print(run("agent-pm-session", "read", name))
     finally:

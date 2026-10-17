@@ -176,7 +176,8 @@ start, kept by restart and resume), each generation's start manifest
 digest, client versions, update result, and when the broker's start began and ended),
 `host.json` (what the host knows of the session, with its events path), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
-generation's `<generation>.seq` (the last hook event it delivered) and `rejected.jsonl`
+generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
+(its image is older than the current plugin's) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
 ### Recovery
@@ -228,8 +229,9 @@ flowchart LR
 - While the relay daemon is gone and no command has restarted it, the hook stub gives up
   after 10 s and that event is lost; `status` still shows the worker running, and its
   replies are still read from the transcript.
-- The first restart of a supervisor after a plugin upgrade runs `build`, which rebuilds
-  the image before that command finishes.
+- The first supervisor restart a container needs after a plugin upgrade runs `build`,
+  which rebuilds the image before that command finishes; once per generation, as
+  `<generation>.stale` records an older image.
 - Claude may still show an onboarding prompt after an update; the Claude check above
   catches it.
 - A cwd that covers the agent-pm plugin directory lets the worker change what the next

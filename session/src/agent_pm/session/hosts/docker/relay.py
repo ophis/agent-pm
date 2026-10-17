@@ -151,8 +151,8 @@ class Queue:
             message = {"id": request["id"], "gen": gen, "seq": seq}
             message.update(argv=request["argv"], payload=request["payload"])
             self._write(f"{seq}.json", _line(message))
-            self._write("counter", str(seq).encode())
             self.last = seq
+            self._write("counter", str(seq).encode())
             self.changed.notify_all()
         return seq
 
@@ -187,10 +187,13 @@ def pump(queue: Queue, reader, writer, idle: float | None = None) -> None:
     """
     while (found := queue.first(idle)) is not None:
         seq, message = found
+        sent = relay_request(message)
+        if sent is None:
+            queue.drop(seq)
+            continue
         writer.write(message)
         writer.flush()
         reply = relay_reply(reader.readline(LINE_MAX + 1))
-        sent = json.loads(message)
         if reply is None or (
             len(reply) == 3 and (reply["gen"], reply["seq"]) != (sent["gen"], seq)
         ):
@@ -220,6 +223,8 @@ class Daemon:
 
     def close(self) -> None:
         for listener in self.listeners:
+            with contextlib.suppress(OSError):
+                listener.shutdown(socket.SHUT_RDWR)  # Linux: close alone leaves accept() running
             listener.close()
 
     def _listen(self, path: str) -> socket.socket:

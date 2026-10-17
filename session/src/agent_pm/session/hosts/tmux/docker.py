@@ -408,9 +408,11 @@ class DockerHost(Host, Showable):
                 lock = tui_lock(row.name)
                 with inode_lock(lock, wait=False) as held:
                     if held:
-                        self._sweep_row(row)
-                        if not os.path.lexists(_state_file(row.name)):
-                            os.unlink(lock)
+                        try:
+                            self._sweep_row(row)
+                        finally:
+                            if not os.path.lexists(_state_file(row.name)):
+                                os.unlink(lock)
             except (SessionError, OSError) as error:
                 LOG.warning("docker sweep %s: %s", row.name, error)
 
@@ -450,17 +452,21 @@ class DockerHost(Host, Showable):
         record = _record(row.name)
         if row.state != "running" or record.get("generation") != row.generation:
             return True
-        lock = _take_lock(row.name)
-        if lock is None:
-            return True
-        events = record.get("events")
+        state = state_dir(row.name)
+        stale = os.path.join(state, f"{row.generation}.stale")
+        lock = None
         try:
+            if not _lock_free(os.path.join(state, "supervisor.lock")):
+                return True
             hook = command_path(COMMAND)
             if hook is None:
                 raise ConfigError(f"{COMMAND} is not on PATH")
-            self.broker.version()
-            _, digest = self.broker.build(plugin_root(hook))
-            if _image_digest(row) != digest:
+            if not os.path.lexists(stale):
+                self.broker.version()
+                _, digest = self.broker.build(plugin_root(hook))
+                if _image_digest(row) != digest:
+                    save(stale, digest)
+            if os.path.lexists(stale):
                 if row.name not in self._warned:
                     self._warned.add(row.name)
                     LOG.warning(
@@ -469,9 +475,13 @@ class DockerHost(Host, Showable):
                         row.name,
                     )
                 return False
+            lock = _take_lock(row.name)
+            if lock is None:
+                return True
             os.ftruncate(lock, 0)
             os.write(lock, row.generation.encode())
             self._serve_relay(row.container, row.generation)
+            events = record.get("events")
             self._spawn_supervisor(
                 row.name,
                 row.container,
@@ -483,7 +493,8 @@ class DockerHost(Host, Showable):
         except (ConfigError, SessionError, OSError) as error:
             LOG.warning("docker session %s: no supervisor restart: %s", row.name, error)
         finally:
-            os.close(lock)
+            if lock is not None:
+                os.close(lock)
         return True
 
     def _client_env(

@@ -117,6 +117,21 @@ class QueueTest(Case):
         with mock.patch("os.replace", side_effect=OSError(28, "No space left")):
             self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": False})
 
+    def test_a_failed_counter_write_never_reuses_the_queued_seq(self):
+        replace = os.replace
+        with mock.patch(
+            "os.replace",
+            side_effect=lambda a, b: (
+                (_ for _ in ()).throw(OSError(28, "full"))
+                if b.endswith("counter")
+                else replace(a, b)
+            ),
+        ):
+            self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": False})
+        relay.answer(request(6), self.queue, GEN)
+        self.assertEqual(self.queue.last, 2)
+        self.assertEqual(json.loads(self.queue.first(0)[1])["id"], 5)
+
     def test_first_waits_at_most_its_limit(self):
         self.assertIsNone(self.queue.first(0))
 
@@ -152,8 +167,121 @@ class PumpTest(Case):
                 self.assertEqual(self.queue.first(0)[0], 1)
         self.assertEqual(self.pump(self.reply(1), self.reply(2), self.reply(3)), [1, 2, 3])
 
+    def test_a_queue_file_that_is_no_relay_request_is_dropped_unsent(self):
+        with open(os.path.join(self.queue.path, "1.json"), "wb") as f:
+            f.write(b"not json\n")
+        self.assertEqual(self.pump(self.reply(2), self.reply(3)), [2, 3])
+        self.assertIsNone(self.queue.first(0))
+
+
+def fake_socket(*, connect=None, accept=(), recv=(), reply=b""):
+    """A socket.socket whose connect, accept and recv follow the lists given."""
+    sock = mock.MagicMock()
+    sock.__enter__.return_value = sock
+    sock.connect.side_effect = connect
+    sock.accept.side_effect = [*accept, OSError("closed")]
+    sock.recv.side_effect = [*recv, b""]
+    sock.written = Writer()
+    sock.written.close = lambda: None
+    sock.makefile.side_effect = lambda mode: io.BytesIO(reply) if mode == "rb" else sock.written
+    return sock
+
+
+class DaemonTest(Case):
+    def setUp(self):
+        self.run = os.path.join(self.home, "run")
+        os.mkdir(self.run)
+
+    def daemon(self, *sockets):
+        daemon = relay.Daemon(GEN, self.run)
+        with (
+            mock.patch("socket.socket", side_effect=list(sockets)),
+            mock.patch("threading.Thread") as thread,
+        ):
+            started = daemon.start()
+        return daemon, started, [c.kwargs["target"] for c in thread.call_args_list]
+
+    def test_start_binds_nothing_while_a_daemon_answers(self):
+        daemon, started, threads = self.daemon(fake_socket())
+        self.assertFalse(started)
+        self.assertEqual((daemon.listeners, threads), ([], []))
+
+    def test_start_replaces_stale_sockets_and_close_shuts_both_listeners(self):
+        for name in ("relay.sock", "relay-up.sock"):
+            open(os.path.join(self.run, name), "w").close()
+        uplink, stubs = fake_socket(), fake_socket()
+        probe = fake_socket(connect=FileNotFoundError(2, "gone"))
+        daemon, started, threads = self.daemon(probe, uplink, stubs)
+        self.assertTrue(started)
+        self.assertEqual(threads, [daemon._uplinks, daemon._stubs])
+        uplink.bind.assert_called_once_with(daemon.uplink)
+        stubs.bind.assert_called_once_with(daemon.socket)
+        self.assertEqual(os.listdir(self.run), ["relay-queue"])
+        daemon.close()
+        for listener in (uplink, stubs):
+            listener.shutdown.assert_called_once()
+            listener.close.assert_called_once()
+
+    def test_a_stub_connection_is_answered_and_an_uplink_is_pumped(self):
+        daemon, _, _ = self.daemon(
+            fake_socket(connect=OSError("none")), fake_socket(), fake_socket()
+        )
+        stub_conn = fake_socket(reply=request(4))
+        daemon._stub(stub_conn)
+        stub_conn.sendall.assert_called_once_with(b'{"id":4,"queued":true}\n')
+        up = fake_socket(reply=json.dumps({"gen": GEN, "seq": 1, "ok": True}).encode() + b"\n")
+        relay.answer(request(5), daemon.queue, GEN)
+        daemon._uplinks(fake_socket(accept=[(up, None)]))
+        self.assertEqual([m["seq"] for m in up.written.lines()], [1, 2])
+        self.assertEqual(daemon.queue.first(0)[0], 2)
+        with mock.patch("threading.Thread") as thread:
+            daemon._stubs(fake_socket(accept=[(stub_conn, None)]))
+        thread.assert_called_once_with(target=daemon._stub, args=(stub_conn,), daemon=True)
+
+
+class ConnectTest(Case):
+    def test_forwards_both_ways_until_either_side_ends(self):
+        stdin_r, stdin_w = os.pipe()
+        stdout_r, stdout_w = os.pipe()
+        self.addCleanup(lambda: [os.close(fd) for fd in (stdin_r, stdout_r, stdout_w)])
+        os.write(stdin_w, b"reply\n")
+        os.close(stdin_w)
+        conn = fake_socket(recv=[b"message\n"])
+        with (
+            mock.patch("socket.socket", return_value=conn),
+            mock.patch("select.select", side_effect=lambda r, *_: (r, [], [])),
+        ):
+            self.assertEqual(relay.connect("/up", stdin_r, stdout_w), 0)
+        conn.connect.assert_called_once_with("/up")
+        conn.sendall.assert_called_once_with(b"reply\n")
+        self.assertEqual(os.read(stdout_r, 100), b"message\n")
+
+    def test_retries_until_its_wait_then_exits_1(self):
+        conns = [fake_socket(connect=FileNotFoundError(2, "No such file")) for _ in range(3)]
+        clock = iter([0, 0, 5, 11])
+        err = io.StringIO()
+        with (
+            mock.patch("socket.socket", side_effect=conns),
+            mock.patch("time.monotonic", side_effect=lambda: next(clock)),
+            mock.patch("time.sleep"),
+            mock.patch("sys.stderr", err),
+        ):
+            self.assertEqual(relay.connect("/up", wait=10), 1)
+        self.assertIn("agent-pm relay connect: [Errno 2] No such file", err.getvalue())
+
 
 class MainTest(Case):
+    def test_serve_exits_0_when_a_daemon_answers_and_connect_runs_the_connector(self):
+        with mock.patch("socket.socket", return_value=fake_socket()):
+            self.assertEqual(relay.main(["serve", GEN]), 0)
+        with (
+            mock.patch("socket.socket", return_value=fake_socket(connect=OSError("none"))),
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            self.assertEqual(relay.main(["connect"]), 1)
+        self.assertIn("agent-pm relay connect: none", err.getvalue())
+
     def test_bad_arguments_exit_2(self):
         for argv in ([], ["serve"], ["serve", "XYZ"], ["connect", "x"], ["other"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr", io.StringIO()):

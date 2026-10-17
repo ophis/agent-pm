@@ -922,13 +922,20 @@ class RecoverTest(Base):
         for digest in ("sha256:" + "c" * 64, None):
             with self.subTest(digest=digest):
                 self.host._warned.clear()
+                stale = os.path.join(self.state, f"{GEN}.stale")
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(stale)
                 if digest is None:
                     os.unlink(os.path.join(self.state, f"{GEN}.result.json"))
                 else:
                     self.result(digest)
                 with self.assertLogs("session", "WARNING") as logs:
                     process = self.host.attach("w")
+                    builds = self.order.count(("build", REPO))
                     self.host.attach("w")
+                self.assertEqual(self.order.count(("build", REPO)), builds)
+                with open(stale) as f:
+                    self.assertEqual(f.read(), DIGEST)
                 self.assertEqual(
                     logs.output,
                     [
@@ -938,13 +945,29 @@ class RecoverTest(Base):
                 )
                 self.assertFalse(process.current)
                 self.assertEqual((self.serves(), self.spawned), ([], []))
-                self.assertTrue(_free(self.lock))
+                self.assertFalse(os.path.exists(self.lock))
         self.live_supervisor()
         self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
         with mock.patch("os.kill") as kill:
             process.close()
         kill.assert_not_called()
         self.assertEqual(self.broker.closed, [CONTAINER])
+
+    def test_recovery_builds_before_taking_the_lock_and_a_lock_error_only_logs(self):
+        held = []
+        build = self.broker.build
+        self.broker.build = lambda package: (
+            held.append(os.path.exists(self.lock) and not _free(self.lock)) or build(package)
+        )
+        self.host.attach("w")
+        self.assertEqual((held, len(self.spawned)), ([False], 1))
+        self.spawned.clear()
+        os.unlink(self.lock)
+        os.mkdir(self.lock)
+        with self.assertLogs("session", "WARNING") as logs:
+            self.assertTrue(self.host.attach("w").current)
+        self.assertIn("no supervisor restart", logs.output[0])
+        self.assertEqual((len(self.serves()), self.spawned), (1, []))
 
     def test_a_failing_recovery_logs_and_close_still_removes_the_container(self):
         for case, replies in (
@@ -1068,6 +1091,7 @@ class SweepTest(Base):
             self.host.sweep("w")
         self.assertEqual(self.broker.closed, [f"agent-pm-a-{GEN}", f"agent-pm-b-{GEN}"])
         self.assertIn("docker sweep a: broker: boom", logs.output[0])
+        self.assertEqual(os.listdir(os.path.join(self.home, ".agent-pm", "tui")), ["w"])
         self.host.run = mock.Mock(return_value=done(1, "", "Cannot connect"))
         with self.assertLogs("session", "WARNING"):
             self.host.sweep("w")
