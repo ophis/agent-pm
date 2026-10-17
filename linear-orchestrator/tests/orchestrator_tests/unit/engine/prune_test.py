@@ -380,6 +380,17 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(self.prune(gql), (0, "prune-archived TASK-1"))
         self.assertEqual(gql.archived, ["id-TASK-1"])
 
+    def test_an_open_grandchild_keeps_its_done_grandparent(self):
+        gql = gql_for(
+            {"TASK-1": ("Done", [(30, "Done")])},
+            owners={"TASK-1": "u-pm"},
+            children={"TASK-1": {"TASK-2": "completed"}, "TASK-2": {"TASK-3": "started"}},
+        )
+        self.assertEqual(
+            self.prune(gql), (0, "prune-skip TASK-1 reason=archive: sub-issue TASK-3 not finished")
+        )
+        self.assertEqual((gql.archived, gql.subs), ([], ["id-TASK-2"]))
+
     def test_candidate_query_failure_keeps_clone_step(self):
         clone = self.mkc("TASK-49")
         issues = gql_for({"TASK-49": ("Done", [(30, "Done")])})
