@@ -206,7 +206,9 @@ class Recover(Parity):
         os.kill(int(pane.stdout), signal.SIGTERM)
         self.wait_end(sid, ID)
         live_tmux.wait(lambda: gone(agent["pid"]), TIMEOUT, f"fake claude {agent['pid']} to end")
-        self.assertEqual((self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["start"]}))
+        self.assertEqual(
+            (self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["running:1", "start"]})
+        )
         idle = time.time() - 2 * LIVE.total_seconds()
         for path in self.transcript(sid):
             os.utime(path, (idle, idle))

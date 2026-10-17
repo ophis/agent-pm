@@ -124,7 +124,7 @@ class Attended(Segment):
             live_tmux.wait(
                 lambda: "start" in self.ledger(ident).get(sid, []), TIMEOUT, "the start step"
             )
-            self.expect(ident, comments=[(account, "start")], ledger={sid: ["start"]})
+            self.expect(ident, comments=[(account, "start")], ledger={sid: ["running:1", "start"]})
             self.expect_problem(lookup(account))
         with self.step("harness stopped"):
             stop(ident, sid)

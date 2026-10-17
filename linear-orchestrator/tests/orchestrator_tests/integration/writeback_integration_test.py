@@ -90,7 +90,7 @@ class BegunAndProgress(Writeback):
             [(HARNESS_EMAIL, SESSION), (researcher, ops.client_id(SID, "start"))],
         )
         self.assertEqual(self.comments(ID)[-1], (researcher, f"Research started: {PICK}"))
-        self.assertEqual(self.ledger(ID), {SID: ["start"]})
+        self.assertEqual(self.ledger(ID), {SID: ["running:1", "start"]})
         # not found: the session comment's first write, the start's lookup before its post
         self.assertEqual(
             self.problems(),
@@ -140,7 +140,8 @@ class Finished(Writeback):
         self.assertEqual(self.attachments(ID), [{"url": DOC, "title": "Queue options"}])
         self.assertEqual(self.history(ID), [("in_progress", "in_review", researcher)])
         self.assertEqual(
-            self.ledger(ID), {SID: ["comment", f"attach:{DOC}", "move:in_review", "outcome"]}
+            self.ledger(ID),
+            {SID: ["running:1", "comment", f"attach:{DOC}", "move:in_review", "outcome"]},
         )
 
     def test_no_outcome_ends_the_session_and_stays_in_progress(self):
@@ -150,7 +151,7 @@ class Finished(Writeback):
         [session] = [b for _, b in self.comments(ID) if b.startswith(f"Run {SID}")]
         self.assertRegex(session, rf"\ARun {SID} · interrupted · #2 · \S+ → \S+ · exit 1\Z")
         self.assertEqual((self.state(ID), self.history(ID)), ("in_progress", []))
-        self.assertEqual(self.ledger(ID), {SID: []})
+        self.assertEqual(self.ledger(ID), {SID: ["running:1"]})
 
 
 class Limit(Writeback):
@@ -178,14 +179,14 @@ class Limit(Writeback):
         }
         self.assertEqual(self.limit_rows(), [row])
 
-        self.fake.move(ID, "in_progress", actor=self.ids[HARNESS_EMAIL])
         self.ok("begun", attempt=2)
+        self.assertEqual(self.state(ID), "in_progress")
         self.ok("finished", attempt=2, **limit)
         self.assertEqual(
             self.history(ID),
             [
                 ("in_progress", "in_review", researcher),
-                ("in_review", "in_progress", HARNESS_EMAIL),
+                ("in_review", "in_progress", researcher),
                 ("in_progress", "in_review", researcher),
             ],
         )

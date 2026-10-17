@@ -18,13 +18,11 @@ from datetime import datetime
 from traceback import format_exception
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
-from agent_pm.linear_orchestrator.engine import run_comments, runs
+from agent_pm.linear_orchestrator.engine import ops, run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
-    M_STATE,
-    Q_ISSUE_STATE,
     call,
     client_id,
     comment,
@@ -614,9 +612,9 @@ def _running(ctx, attempt) -> bool:
         return True
 
     def activate():
-        state = ctx.gql(Q_ISSUE_STATE, i=ctx.issue_id)["issue"]["state"]["id"]
+        state = ctx.gql(ops.Q_ISSUE_STATE, i=ctx.issue_id)["issue"]["state"]["id"]
         if state != ctx.states["in_progress"]:
-            call(ctx.gql, M_STATE, "issueUpdate", i=ctx.issue_id, s=ctx.states["in_progress"])
+            call(ctx.gql, ops.M_STATE, "issueUpdate", i=ctx.issue_id, s=ctx.states["in_progress"])
 
     return _step(ctx, f"running:{attempt}", activate) is None
 

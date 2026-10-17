@@ -47,7 +47,7 @@ DONE = block(
         "autopilot": AUTOPILOT,
     }
 )
-LEDGER = ["start", "comment", f"attach:{PR}", "move:in_review", "outcome"]
+LEDGER = ["running:1", "start", "comment", f"attach:{PR}", "move:in_review", "outcome"]
 ATTACHMENT = {"url": PR, "title": "Session registry"}
 LONG = "\n".join(f"Requirement {n}: the registry keeps session {n} → its run." for n in range(400))
 HARNESS_OPS = {
@@ -145,7 +145,7 @@ class Router(TmuxFlow):
         at = next(i for i, r in enumerate(records) if r["kind"] == "session" and r["sid"] == sid)
         return next(r["text"] for r in records[at:] if r["kind"] == "input")
 
-    def assert_built(self, sid):
+    def assert_built(self, sid, *, resumed=False):
         self.assertEqual(self.state(ID), "in_review")
         self.assertEqual(
             self.history(ID),
@@ -159,7 +159,8 @@ class Router(TmuxFlow):
         )
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         self.assertEqual(self.subscribers(ID), [HUMAN])
-        self.assertEqual(self.ledger(ID), {sid: LEDGER})
+        ledger = [*LEDGER[:2], *(["running:2"] if resumed else []), *LEDGER[2:]]
+        self.assertEqual(self.ledger(ID), {sid: ledger})
         [running] = [v["b"] for v in self.sent("linear.M_COMMENT_ID", HARNESS_EMAIL)]
         self.assertTrue(running.startswith(f"Run {sid} · running · "), running)
 
@@ -221,7 +222,7 @@ class Router(TmuxFlow):
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertTrue(session.startswith(f"Run {sid} · running · "), session)
-        self.assertEqual(self.ledger(ID), {sid: ["start"]})
+        self.assertEqual(self.ledger(ID), {sid: ["running:1", "start"]})
         self.assertEqual([e for e in self.logged() if e["kind"] == "end"], [])
 
         self.scene([START, DONE])
@@ -233,7 +234,7 @@ class Router(TmuxFlow):
         first, second = self.started(2)
         self.assertEqual(option(first, "--session-id"), sid)
         self.assertEqual((option(second, "--resume"), option(second, "--session-id")), (sid, None))
-        self.assert_built(sid)
+        self.assert_built(sid, resumed=True)
         started = [
             v
             for v in self.sent("linear.M_COMMENT_ID", ENGINEER)
@@ -248,7 +249,7 @@ class Router(TmuxFlow):
         sid = self.claim()
         self.wait_end(sid, ID)
         self.assertEqual(self.state(ID), "in_progress")
-        self.assertEqual(self.ledger(ID), {sid: LEDGER[:3]})
+        self.assertEqual(self.ledger(ID), {sid: LEDGER[:4]})
         self.assertEqual(self.comments(ID)[-1], (ENGINEER, f"Build ready: {READY}"))
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         [error] = [e for e in self.logged() if e["kind"] == "step-error"]
@@ -368,7 +369,9 @@ class Router(TmuxFlow):
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertRegex(session, rf"^Run {sid} · interrupted · .* · exit {128 + signal.SIGTERM}\n")
-        self.assertEqual((self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["start"]}))
+        self.assertEqual(
+            (self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["running:1", "start"]})
+        )
 
 
 class Gate(Flow):

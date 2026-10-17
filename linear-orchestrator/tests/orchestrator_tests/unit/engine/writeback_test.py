@@ -1566,14 +1566,14 @@ class Events(RunCase):
         self.addCleanup(info.stop)
         self.now = iter((STARTED, RESTARTED, LATER, LATEST))
 
-    def claim(self, sid=RUN_SID, **fields):
+    def claim(self, sid=RUN_SID, role="engineer", **fields):
         runs.note(
             self.cfg.runs_log,
             "start",
             now=lambda: BEFORE,
             issue=RUN_ISSUE,
             sid=sid,
-            role="engineer",
+            role=role,
             client="fake",
             delegate_kind="fake",
             uuid=UUID,
@@ -1655,15 +1655,15 @@ class RunningEvents(Events):
         self.now = iter([STARTED] * 100)
         attempt = 0
         for role in config.TASKS:
+            with open(self.cfg.runs_log, "w"):
+                pass
+            self.claim(role=role)
             for state in (*self.cfg.states.values(), "other-state"):
                 with self.subTest(role=role, state=state):
                     attempt += 1
                     self.linear.state = state
                     n = len(self.linear.calls)
-                    with mock.patch.object(
-                        writeback, "_claim", return_value=replace(CLAIM, role=role)
-                    ):
-                        self.assertTrue(self.deliver(delegate_event("begun", attempt)))
+                    self.assertTrue(self.deliver(delegate_event("begun", attempt)))
                     calls = self.linear.calls[n:]
                     self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
                     self.assertIn((CLAIM_KEY, "reread", {"i": UUID}), calls)
