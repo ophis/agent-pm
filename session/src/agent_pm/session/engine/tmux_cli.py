@@ -1,6 +1,6 @@
 """TmuxCli: every tmux call through runner (subprocess.run's signature) and sleep. start and
 detach hand a launch to a new pane (EXEC); launch puts it on tmux's command line. Listings skip
-VIEW sessions.
+VIEW sessions. TmuxPane: a TmuxCli aimed at one session's captured pane.
 """
 
 from __future__ import annotations
@@ -18,10 +18,20 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Launch, PaneStatus
+from agent_pm.session.engine.types import (
+    ConfigError,
+    Key,
+    KeyPress,
+    Launch,
+    Liveness,
+    NamedKey,
+    PaneStatus,
+    Paste,
+    SessionError,
+)
 
 
 class TuiError(Exception):
@@ -66,6 +76,12 @@ USER_OPTION = re.compile(r"@[A-Za-z0-9_-]+")
 
 
 PAUSE = 0.5
+
+
+TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
+# tmux 3.4 (CI) and 3.5+ both send these as the same C0 or DEL byte; other punctuation and digits
+# lose Ctrl, send nothing or differ between them
+CTRL_PUNCTUATION = frozenset(" /?@[\\]^_")
 
 
 PROCESS = "#{pid} #{session_id} #{pane_id} #{pane_pid}"
@@ -914,3 +930,121 @@ class TmuxCli:
             if may_run:
                 with contextlib.suppress(TuiError):
                     self.kill(session)
+
+
+def _tmux_key(key) -> str:
+    """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
+    if not isinstance(key, KeyPress):
+        raise ConfigError(f"key {key!r:.80}: want a KeyPress")
+    char = len(key.key) == 1
+    letter = key.key.isascii() and key.key.isalpha()
+    if char and (key.shift or key.ctrl and not (letter or key.key in CTRL_PUNCTUATION)):
+        raise ConfigError(f"key {key}: tmux cannot send it")  # it would lose its modifier
+    prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
+    return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
+
+
+class TmuxPane:
+    """Session name's captured pane (id), owned while it still runs process (its PROCESS)."""
+
+    def __init__(self, name: str, process: str, tmux: TmuxCli) -> None:
+        self.name, self.process, self.tmux = name, process, tmux
+        _, _, self.id, _ = process.split(" ")
+        self._pasted = False
+
+    def own(self) -> bool:
+        try:
+            return self.tmux.process(self.id) == self.process
+        except TuiError as e:
+            raise SessionError(f"tmux session {self.name}: {e}") from None
+
+    def _state(self):
+        """Whether it is still owned, and the pane's status(): one call."""
+        try:
+            found, value = self.tmux.process_status(self.id)
+        except TuiError as e:
+            raise SessionError(f"tmux session {self.name}: {e}") from None
+        return found == self.process, value
+
+    def state(self) -> Liveness:
+        try:
+            own, value = self._state()
+        except SessionError:
+            return Liveness.UNKNOWN
+        if not own or value is None:
+            return Liveness.ABSENT
+        return Liveness.UNKNOWN if value == PaneStatus.UNKNOWN else Liveness.LIVE
+
+    def returncode(self) -> int | None:
+        try:
+            own, value = self._state()
+        except SessionError:
+            return None
+        if not own or value is None:
+            return -signal.SIGHUP
+        return value if isinstance(value, int) else None
+
+    def alive(self) -> bool:
+        own, state = self._state()
+        if not own:
+            return False
+        if state == PaneStatus.UNKNOWN:
+            raise SessionError(f"tmux session {self.name}: tmux failed")
+        return state == PaneStatus.RUNNING
+
+    def option(self, key: str) -> str | None:
+        if not self.own():
+            return None
+        try:
+            return self.tmux.option(self.id, key)
+        except TuiError as e:
+            raise SessionError(f"tmux session {self.name}: {e}") from None
+
+    def send(self, action: Paste | Key, alive: Callable[[], bool]) -> None:
+        """alive: its Process's, checked first."""
+        self._running(alive)
+        try:
+            if isinstance(action, Paste):
+                self.tmux.paste(self.id, action.text)
+                self._pasted = True
+            else:
+                if self._pasted:
+                    time.sleep(self.tmux.PAUSE)
+                self.tmux.keys(self.id, action.name)
+                self._pasted = False
+        except TuiError as error:
+            raise SessionError(f"send to tui session {self.name}: {error}") from error
+
+    def press(self, keys: Sequence[KeyPress], alive: Callable[[], bool]) -> None:
+        names = [_tmux_key(key) for key in keys]
+        self._running(alive)
+        try:
+            if self._pasted:
+                time.sleep(self.tmux.PAUSE)
+            self.tmux.press(self.id, *names)
+            self._pasted = False
+        except TuiError as error:
+            raise SessionError(f"send to tui session {self.name}: {error}") from error
+
+    def _running(self, alive: Callable[[], bool]) -> None:
+        if not alive():
+            raise SessionError(f"tui session {self.name} is not running")
+
+    def read(self, lines: int | None = None) -> str:
+        return self.tmux.read(self.id, lines)
+
+    def mark(self, word: str, events: str | None, *, session: str | None = None) -> None:
+        if self.own():
+            try:
+                self.tmux.mark(word, events, pane=self.id, session=session)
+            except TuiError as error:
+                raise SessionError(str(error)) from error
+
+    def kill(self) -> None:
+        if not self.own():
+            return
+        try:
+            self.tmux.kill(self.id)
+        except TuiError as e:
+            if self.own():
+                raise SessionError(str(e)) from None

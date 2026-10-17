@@ -23,10 +23,11 @@ from agent_pm.session.engine.tmux_cli import (
     POLL,
     TERMINAL_KEYS,
     TmuxCli,
+    TmuxPane,
     events_file,
     validate_events,
 )
-from agent_pm.session.engine.types import PaneStatus
+from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste, SessionError
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -61,7 +62,7 @@ from session.tests.tmux_fixtures import (
     tabbed,
     which,
 )
-from session.tests.tmux_host_support import LINE
+from session.tests.tmux_host_support import LINE, PROCESS
 from utils.tests.process_fixtures import TimeoutExpired
 
 
@@ -1911,3 +1912,62 @@ class MarkTest(Case):
             with self.subTest(error=error), self.assertRaisesRegex(tmux_cli.TuiError, error):
                 tmux_cli.TmuxCli(fake).mark("done", self.events, **kw)
         self.assertEqual(self.text(), "old\n")
+
+
+class TmuxPaneTest(Case):
+    def setUp(self):
+        self.tmux = unittest.mock.Mock(spec=TmuxCli, PAUSE=tmux_cli.PAUSE)
+        self.tmux.process.return_value = PROCESS
+        self.pane = TmuxPane("w1", PROCESS, self.tmux)
+
+    def test_alive_only_while_its_pane_runs_its_process(self):
+        for found, status, alive in (
+            (PROCESS, PaneStatus.RUNNING, True),
+            (PROCESS, 0, False),
+            ("4242 $3 %7 9999", PaneStatus.RUNNING, False),
+            (None, None, False),
+        ):
+            with self.subTest(found=found, status=status):
+                self.tmux.process_status.return_value = (found, status)
+                self.assertIs(self.pane.alive(), alive)
+        self.tmux.process_status.assert_called_with("%7")
+
+    def test_alive_raises_when_tmux_cannot_tell(self):
+        self.tmux.process_status.return_value = (PROCESS, PaneStatus.UNKNOWN)
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux failed$"):
+            self.pane.alive()
+
+    def test_a_key_after_a_paste_waits_the_pause_once(self):
+        with unittest.mock.patch.object(tmux_cli.time, "sleep") as sleep:
+            self.pane.press([KeyPress("a")], lambda: True)
+            sleep.assert_not_called()
+            self.pane.send(Paste("hi"), lambda: True)
+            self.pane.press([KeyPress("c", ctrl=True), KeyPress(" ")], lambda: True)
+            self.pane.send(Key("Enter"), lambda: True)
+        sleep.assert_called_once_with(tmux_cli.PAUSE)
+        self.tmux.paste.assert_called_once_with("%7", "hi")
+        self.tmux.press.assert_called_with("%7", "C-c", "Space")
+        self.tmux.keys.assert_called_once_with("%7", "Enter")
+
+    def test_a_key_tmux_cannot_send_is_refused_before_the_liveness_check(self):
+        with self.assertRaisesRegex(ConfigError, "tmux cannot send it"):
+            self.pane.press([KeyPress("1", ctrl=True)], lambda: False)
+        self.tmux.press.assert_not_called()
+
+    def test_nothing_is_sent_to_a_process_not_running(self):
+        for send in (
+            lambda: self.pane.send(Paste("hi"), lambda: False),
+            lambda: self.pane.press([KeyPress("a")], lambda: False),
+        ):
+            with self.assertRaisesRegex(SessionError, "^tui session w1 is not running$"):
+                send()
+        self.tmux.paste.assert_not_called()
+        self.tmux.press.assert_not_called()
+
+    def test_kill_leaves_a_pane_another_process_now_runs(self):
+        self.tmux.process.return_value = "4242 $3 %7 9999"
+        self.pane.kill()
+        self.tmux.kill.assert_not_called()
+        self.tmux.process.return_value = PROCESS
+        self.pane.kill()
+        self.tmux.kill.assert_called_once_with("%7")

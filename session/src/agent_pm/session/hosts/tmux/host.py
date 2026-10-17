@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import signal
 import time
 from collections.abc import Mapping
 from dataclasses import replace
@@ -21,6 +20,7 @@ from agent_pm.session.engine.tmux_cli import (
     POLL,
     PROCESS_ID,
     TmuxCli,
+    TmuxPane,
     TuiError,
     attach_command,
     display_error,
@@ -34,10 +34,8 @@ from agent_pm.session.engine.types import (
     ConfigError,
     HookCallback,
     Key,
-    KeyPress,
     Launch,
     Liveness,
-    NamedKey,
     PaneStatus,
     Paste,
     SessionError,
@@ -62,10 +60,6 @@ KILL_WAIT = 5
 LOG = logging.getLogger("session")
 
 Parts = tuple[str | None, str | None, str | None, bool]
-TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
-# tmux 3.4 (CI) and 3.5+ both send these as the same C0 or DEL byte; other punctuation and digits
-# lose Ctrl, send nothing or differ between them
-CTRL_PUNCTUATION = frozenset(" /?@[\\]^_")
 
 
 TERMINAL_IDENTITY = ("TMUX", "TMUX_PANE", "TERM")  # a terminal program's are its pane's (FR-47)
@@ -83,8 +77,8 @@ def _checked(display) -> None:
 
 
 class TmuxProcess(Process):
-    """The captured pane and its generation's controller. A pane can set its Record and display
-    options: consumers must re-validate a Record's ctl or resume before running it.
+    """The captured pane (a TmuxPane) and its generation's controller. A pane can set its Record and
+    display options: consumers must re-validate a Record's ctl or resume before running it.
     """
 
     def __init__(
@@ -92,10 +86,9 @@ class TmuxProcess(Process):
     ) -> None:
         self.name = name
         self.tmux = tmux
-        self._process = process
-        _, _, self._pane, _ = process.split(" ")
-        path = self._option("@control") if control is None else None
-        if control is None and self._option("@kind") in ("detach", "terminal") and not path:
+        self.pane = TmuxPane(name, process, tmux)
+        path = self.pane.option("@control") if control is None else None
+        if control is None and self.pane.option("@kind") in ("detach", "terminal") and not path:
             raise SessionError(
                 f"tmux session {name}: missing @control; close sessions before upgrading"
             )
@@ -109,7 +102,7 @@ class TmuxProcess(Process):
 
     @property
     def identity(self) -> str:
-        return self._process
+        return self.pane.process
 
     @property
     def token(self) -> str | None:
@@ -118,36 +111,24 @@ class TmuxProcess(Process):
     def publish(self, record: Record) -> None:
         if not isinstance(record, Record):
             raise ConfigError(f"record: want a Record, got {type(record).__name__}")
-        if not self._own():
+        if not self.pane.own():
             raise SessionError(f"tmux session {self.name} is gone")
         try:
-            self.tmux.set_option(self._pane, "@record", record.to_line())
+            self.tmux.set_option(self.pane.id, "@record", record.to_line())
         except TuiError as error:
             raise SessionError(f"tmux session {self.name}: {error}") from error
 
     def state(self) -> Liveness:
-        try:
-            own, value = self._pane_state()
-        except SessionError:
-            return Liveness.UNKNOWN
-        if not own or value is None:
-            return Liveness.ABSENT
-        return Liveness.UNKNOWN if value == PaneStatus.UNKNOWN else Liveness.LIVE
+        return self.pane.state()
 
     def returncode(self) -> int | None:
-        try:
-            own, value = self._pane_state()
-        except SessionError:
-            return None
-        if not own or value is None:
-            return -signal.SIGHUP
-        return value if isinstance(value, int) else None
+        return self.pane.returncode()
 
     def session_identity(self) -> tuple[str | None, str | None]:
-        return self._option("@sid"), self._option("@generation")
+        return self.pane.option("@sid"), self.pane.option("@generation")
 
     def activity(self) -> StatusState | None:
-        value = self._option("@state")
+        value = self.pane.option("@state")
         return StatusState(value) if value in MARKS else None
 
     def hidden(self) -> bool:
@@ -159,10 +140,10 @@ class TmuxProcess(Process):
         return replace(found, attach=attach_command(self.name)) if found.alive else found
 
     def screen(self, lines: int | None = None) -> str:
-        if not self._own():
+        if not self.pane.own():
             raise SessionError(f"tmux session {self.name} is gone")
         try:
-            return self.tmux.read(self._pane, lines)
+            return self.pane.read(lines)
         except TuiError as e:
             raise SessionError(f"tmux session {self.name}: {e}") from None
 
@@ -178,19 +159,10 @@ class TmuxProcess(Process):
                 ) from error
 
     def mark(self, word: StatusState, events: str | None) -> None:
-        if self._own():
-            try:
-                self.tmux.mark(word, events, pane=self._pane)
-            except TuiError as error:
-                raise SessionError(str(error)) from error
+        self.pane.mark(word, events)
 
     def alive(self) -> bool:
-        own, state = self._pane_state()
-        if not own:
-            return False
-        if state == PaneStatus.UNKNOWN:
-            raise SessionError(f"tmux session {self.name}: tmux failed")
-        return state == PaneStatus.RUNNING and (self._control is None or self._control.running())
+        return self.pane.alive() and (self._control is None or self._control.running())
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -210,7 +182,7 @@ class TmuxProcess(Process):
         is in the one SessionError raised.
         """
         failures = []
-        for step in (self._close_pane, self._end_group):
+        for step in (self.pane.kill, self._end_group):
             try:
                 step()
             except SessionError as error:
@@ -240,38 +212,15 @@ class TmuxProcess(Process):
             time.sleep(POLL)
         return True
 
-    def _close_pane(self) -> None:
-        if not self._own():
-            return
-        try:
-            self.tmux.kill(self._pane)
-        except TuiError as e:
-            if self._own():
-                raise SessionError(str(e)) from None
-
     def record(self) -> Record | None:
-        line = self._option("@record")
+        line = self.pane.option("@record")
         if line is not None:
             with contextlib.suppress(ValueError):
                 return Record.parse(line)
         return None
 
     def display(self) -> Display:
-        return self._option("@display")
-
-    def _pane_state(self):
-        """Whether its captured pane still runs this process, and the pane's status(): one call."""
-        try:
-            found, value = self.tmux.process_status(self._pane)
-        except TuiError as e:
-            raise SessionError(f"tmux session {self.name}: {e}") from None
-        return found == self._process, value
-
-    def _own(self) -> bool:
-        try:
-            return self.tmux.process(self._pane) == self._process
-        except TuiError as e:
-            raise SessionError(f"tmux session {self.name}: {e}") from None
+        return self.pane.option("@display")
 
     def _group_live(self) -> bool:
         try:
@@ -281,63 +230,20 @@ class TmuxProcess(Process):
 
     def _kill_group(self) -> None:
         if self._control is None:
-            self._close_pane()
+            self.pane.kill()
             return
         try:
             self._control.kill()
         except OSError as error:
             raise SessionError(f"process group {self.name}: {error}") from error
 
-    def _option(self, key: str) -> str | None:
-        if not self._own():
-            return None
-        try:
-            return self.tmux.option(self._pane, key)
-        except TuiError as e:
-            raise SessionError(f"tmux session {self.name}: {e}") from None
-
 
 class TmuxTerminal(TmuxProcess, InteractiveProcess):
-    _pasted = False
-
     def send(self, action: Paste | Key) -> None:
-        if not self.alive():
-            raise SessionError(f"tui session {self.name} is not running")
-        try:
-            if isinstance(action, Paste):
-                self.tmux.paste(self._pane, action.text)
-                self._pasted = True
-            else:
-                if self._pasted:
-                    time.sleep(self.tmux.PAUSE)
-                self.tmux.keys(self._pane, action.name)
-                self._pasted = False
-        except TuiError as error:
-            raise SessionError(f"send to tui session {self.name}: {error}") from error
+        self.pane.send(action, self.alive)
 
     def press(self, keys) -> None:
-        names = [_tmux_key(key) for key in keys]
-        if not self.alive():
-            raise SessionError(f"tui session {self.name} is not running")
-        try:
-            if self._pasted:
-                time.sleep(self.tmux.PAUSE)
-            self.tmux.press(self._pane, *names)
-            self._pasted = False
-        except TuiError as error:
-            raise SessionError(f"send to tui session {self.name}: {error}") from error
-
-
-def _tmux_key(key) -> str:
-    """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
-    if not isinstance(key, KeyPress):
-        raise ConfigError(f"key {key!r:.80}: want a KeyPress")
-    char = len(key.key) == 1
-    letter = key.key.isascii() and key.key.isalpha()
-    if char and (key.shift or key.ctrl and not (letter or key.key in CTRL_PUNCTUATION)):
-        raise ConfigError(f"key {key}: tmux cannot send it")  # it would lose its modifier
-    prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
-    return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
+        self.pane.press(keys, self.alive)
 
 
 class TmuxHost(Host, Showable):
