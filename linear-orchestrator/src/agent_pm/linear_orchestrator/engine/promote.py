@@ -29,22 +29,46 @@ class Promotion:
     child: dict[str, Any] | None = None
 
 
-HELP = """usage: agent-pm-linear promote [--dry-run] [--now]
+HELP = """Promote Handoff issues to their configured next role, then prune finished work.
 
-Promote issues in Handoff to the next role.
+Usage: agent-pm-linear promote [--dry-run] [--now]
 
-For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in linear-orchestrator/config.toml has a next:
-create that role's issue in the same project, assigned to its account, in Todo with the source links and the
-human instructions, relate it, and move the source to Done.
---dry-run   Change nothing; print what would happen.
---now       Skip the 10-minute wait in Handoff (for a manual run).
---help      Print this; exit 0.
-Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (event_log.log, src promote); an idle run writes none; a
-config error or Linear unavailable exits 1, logged once a day (event_log.config_error, event_log.linear_error).
+Arguments and options:
+  --dry-run   Print the plan; no board changes, session closes or file deletion.
+              Still read Linear, configuration, local run/checkout inventory and
+              Delegate status; requires access to those resources.
+  --now       Skip the default 10-minute wait in Handoff for a manual run.
+  -h, --help  Print this help alone; exit 0.
+  Boolean flags may repeat; repeating them has no further effect.
 
-At the end of every tick, prune.py's Pruner deletes the agent dirs of finished issues (TASK-49), closes
-their left-open TUI sessions and archives finished pm and engineer issues; a prune failure is logged and never breaks
-the Handoff work.
+Prerequisites and effects:
+  Requires Python 3.11+, configured Linear/Delegate settings, Linear access and
+  the harness_key Keychain service. Configuration: agent-pm-linear --help
+  For each Handoff issue in a project, assigned to a configured role with next:
+  create that next role's issue in the same project, assigned to its account,
+  in Todo with source links and human instructions; relate the issues and move
+  the source to Done. Existing next-stage issues are reused. Required human
+  instructions absent: return the source to In Review with a comment.
+  Every tick also prunes: close finished runs, delete agent files and archive
+  finished pm/engineer issues. This includes uncommitted agent work. Cleanup
+  ages, safeguards and retention: agent-pm-linear prune --help
+  A prune failure is logged without breaking Handoff work.
+  Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
+  plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear
+  error (logged once a day); 2: bad arguments. Individual Handoff errors do
+  not prevent other promotions; prolonged failures can return an issue to
+  In Review with a comment.
+
+Example (configured Linear access and Handoff issues):
+  agent-pm-linear promote --dry-run --now
+  Preview promotion and cleanup without waiting for Handoff maturity.
+
+Recovery and next help:
+  Review the plan before executing: agent-pm-linear promote
+  Inspect logged Handoff errors and fix the reported configuration, credentials
+  or missing human instructions before retrying.
+  Cleanup details: agent-pm-linear prune --help
+  Command discovery: agent-pm-linear --help
 """
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)

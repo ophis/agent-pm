@@ -1,9 +1,11 @@
 """Pure logic over fake objects and in-process clients."""
 
+import contextlib
 import io
 import json
 import os
 import re
+import shlex
 import sys
 import types
 import uuid
@@ -40,6 +42,7 @@ from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, tu
 from session.tests import fake_client
 from session.tests.modules import client_loader
 from utils.tests.case import local_section
+from utils.tests.cli_help import examples, parse_only
 
 
 class Detaching:
@@ -969,13 +972,13 @@ class Prompt(Case):
                 self.assertIn("unrecognized arguments:", err)
                 self.assertFalse(os.path.exists(self.work))
 
-    def test_list_is_rejected_and_absent_from_prompt_help(self):
+    def test_list_is_rejected_and_absent_from_prompt_options(self):
         code, out, err = self.prompt("--list")
         self.assertEqual((code, out), (2, ""))
         self.assertIn("unrecognized arguments: --list", err)
         code, out, err = self.prompt("--help")
         self.assertEqual((code, err), (0, ""))
-        self.assertNotIn("--list", out)
+        self.assertNotRegex(out, r"(?m)^  --list(?:[ =]|$)")
         self.assertFalse(os.path.exists(self.work))
 
     def test_out_dash_is_refused(self):
@@ -1322,3 +1325,102 @@ class AdhocWorkdir(Base):
         code, out, err = self.runs("--sid", SID, "--dry-run")
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["workdir"], self.work)
+
+
+HELP_COMMANDS = [
+    "run",
+    "status",
+    "content",
+    "outcome",
+    "resume",
+    "show",
+    "hide",
+    "close",
+    "attach-command",
+    "prompt",
+]
+
+
+class HelpContracts(Case):
+    def test_published_operation_examples_use_real_parser_before_dispatch(self):
+        for name in [None, *HELP_COMMANDS]:
+            published = list(examples(self.help(name)))
+            self.assertTrue(published, name)
+            for command in published:
+                with (
+                    self.subTest(name=name, command=command),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    args = parse_only(cli.main, command[1:])
+                    if args is not None and args.command == "run" and not args.list:
+                        cli._check(args)
+
+    def help(self, command=None, flag="--help"):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+            cli.main(([] if command is None else [command]) + [flag])
+        self.assertEqual(raised.exception.code, 0)
+        return out.getvalue()
+
+    def test_all_help_ignores_stdin_guards_configuration_and_services(self):
+        before = sorted(Path(self.home).rglob("*"))
+        source = mock.Mock()
+        source.read.side_effect = AssertionError("help read stdin")
+        with (
+            mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
+            mock.patch("sys.stdin", source),
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("subprocess.run") as run,
+        ):
+            for command in [None, *HELP_COMMANDS]:
+                for flag in ("--help", "-h"):
+                    with self.subTest(command=command, flag=flag):
+                        text = self.help(command, flag)
+                        if command:
+                            self.assertIn("Examples:", text)
+                            self.assertIn("agent-pm-delegate --help", text)
+            for boundary in (popen, run):
+                boundary.assert_not_called()
+        self.assertEqual(sorted(Path(self.home).rglob("*")), before)
+
+    def test_run_help_explains_conditional_inputs_discovery_and_placement(self):
+        text = self.help("run")
+        for phrase in (
+            "--role and --input",
+            "--list takes no other",
+            "--detach needs --events",
+            "AGENT_PM_EVENTS",
+            "agent-pm-delegate run --list",
+            "agent-pm-session --help",
+            "--events and --on-event require --detach",
+        ):
+            self.assertIn(phrase, text)
+        self.assertIn("--input, --out and --workdir", self.help("prompt"))
+
+    def test_every_query_explains_cardinality_and_record_input(self):
+        for name in HELP_COMMANDS:
+            if name in {"run", "prompt"}:
+                continue
+            with self.subTest(name=name):
+                text = self.help(name)
+                self.assertIn("Record", text)
+                self.assertIn("workdir", text)
+                if name in {"content", "outcome", "resume", "attach-command"}:
+                    self.assertIn("exactly one", text)
+                else:
+                    self.assertIn("batch", text)
+
+    def test_detached_example_uses_real_validation_with_fake_delegate(self):
+        Detaching.made, Detaching.failure = [], None
+        argv = shlex.split(
+            "run --role pm --input 'Plan a feature' --detach --display none "
+            "--events /tmp/agent-pm-events.jsonl"
+        )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(argv, delegate_cls=Detaching), 0)
+        role, spec, placement = Detaching.made[0]
+        self.assertEqual(
+            (role, spec.input, spec.mode, placement),
+            ("pm", "Plan a feature", "tui", {"display": "none"}),
+        )
+        self.assertEqual(spec.events, "/tmp/agent-pm-events.jsonl")

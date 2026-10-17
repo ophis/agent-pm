@@ -185,6 +185,42 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
+    def test_help_exemptions_preserve_same_line_code_and_interpolated_expressions(self):
+        path = "manager/src/agent_pm/manager/cli.py"
+        for text in (
+            'HELP = "Examples: Codex"; CLIENT = "codex"\n',
+            "HELP = f\"Examples: Codex {choose('codex')}\"\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    ownership.client_names(self.tree({path: text})),
+                    [f"{path}:1: client name codex"],
+                )
+
+    def test_display_help_exempts_returned_text_only(self):
+        path = "session/src/agent_pm/session/hosts/tmux/host.py"
+        text = 'def display_help(client):\n    if client == "codex":\n        return "Codex placement"\n    return client_help("codex")\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({path: text})),
+            [f"{path}:2: client name codex", f"{path}:4: client name codex"],
+        )
+
+    def test_cli_help_examples_can_name_a_client_without_allowing_runtime_names(self):
+        path = "manager/src/agent_pm/manager/cli.py"
+        text = 'HELP = """Examples:\n  With Codex configured:\n  agent-pm-session start helper --client codex\n"""\nCLIENT = "codex"\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({path: text})), [f"{path}:5: client name codex"]
+        )
+        other = "manager/src/agent_pm/manager/engine/crew.py"
+        self.assertTrue(ownership.client_names(self.tree({other: text})))
+
+    def test_host_display_help_examples_do_not_exempt_runtime_client_names(self):
+        path = "session/src/agent_pm/session/hosts/tmux/host.py"
+        text = 'def display_help():\n    return "Codex placement example"\nCLIENT = "codex"\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({path: text})), [f"{path}:3: client name codex"]
+        )
+
     def test_a_client_name_outside_clients_policy_tables_and_client_lines(self):
         config = "delegate/src/agent_pm/delegate/config.toml"
         api = f"session/{PKG}/session/engine/api.py"

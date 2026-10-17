@@ -677,11 +677,28 @@ class TmuxHost(Host, Showable):
 
     def display_help(self) -> str:
         return (
-            f"{FORMAT}: opener a tmux session name or $ITERM_SESSION_ID's value (empty: the "
-            f"caller's), split {' or '.join(Split)}, split_from the tmux session whose "
-            f"pane it goes beside; {NO_DISPLAY}: start without a pane, the caller still its opener "
-            f"(recorded as the part {HIDDEN}, which only {NO_DISPLAY} sets); any other printable "
-            "value not ending in ; is kept as given"
+            "[OPENER][/SPLIT[/ANCHOR]] or none\n"
+            "    OPENER: tmux session name or ITERM_SESSION_ID value; empty means caller.\n"
+            f"    SPLIT: {' or '.join(Split)}; ANCHOR: tmux session with a visible pane.\n"
+            f"    {NO_DISPLAY}: start without a pane, the caller still its opener.\n"
+            "    Omitted display uses caller context. Placement can reuse a grid or stack;\n"
+            "    a grid overrides split/anchor choices. Outside tmux, visible placement\n"
+            "    needs usable iTerm2 context (ITERM_SESSION_ID) or a visible ANCHOR.\n"
+            "    No anchor: use a visible terminal/ANCHOR or start with --display none.\n"
+            "    Example prerequisites: Codex configured, default Host tmux, no helper\n"
+            "    session, and tmux session commander visible:\n"
+            "      agent-pm-session start helper --client codex --display /below/commander\n"
+            "    Requests placement below commander; an existing grid can control it.\n"
+            "      agent-pm-session hide helper\n"
+            "      agent-pm-session show helper\n"
+            "    Hide closes the view while work runs; show uses saved display, with no\n"
+            "    new --display option. If show cannot open a view:\n"
+            "      agent-pm-session attach-command helper\n"
+            "    Run the printed command to attach. close terminates the session.\n"
+            f"    Stored metadata format: {FORMAT}\n"
+            f"    {HIDDEN} is set only by {NO_DISPLAY}, never supplied as a display part.\n"
+            "    Other printable values not ending\n"
+            "    in ; remain opaque and are kept as given; showing needs this grammar."
         )
 
     def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:

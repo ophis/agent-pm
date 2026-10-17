@@ -36,9 +36,79 @@ def main(
 ) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     sid, events = (os.environ.pop(key, "") or None for key in (SID_ENV, EVENTS_ENV))
-    parser = argparse.ArgumentParser(prog="agent-pm-delegate", allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        prog="agent-pm-delegate",
+        allow_abbrev=False,
+        description="Run a role, generate its instruction file, or control an existing run.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Role: persona; task: optional work type, otherwise the role chooses it.
+Discover configured roles/tasks and their sources: agent-pm-delegate run --list
+Client, Host, display and Record schema: agent-pm-session --help
+A Record is a serialized control/identity line, not a workdir or session name.
+
+Prerequisites and effects:
+  Configure the role and its client executable. Text user interface (TUI) runs
+  need its Host tools and usable placement: agent-pm-session --help.
+  Missing configuration: use run --list to identify the failing role/source.
+  Query keys are run workdirs, never agent session names. Omitted keys read
+  one Record per stdin line; explicit keys ignore stdin. Duplicate targets
+  are rejected before controls run. Batch failures retain valid results.
+  Exit 0: success; 2: usage/config error; 1: operational failure.
+
+Environment and options:
+  run --sid overrides AGENT_PM_SID only when equal; otherwise refused.
+  resume refuses another AGENT_PM_SID. These and AGENT_PM_EVENTS are consumed
+  by this command. AGENT_PM_AGENT_SESSION refuses real run/resume; use a
+  user-started commander. Help, --list and --dry-run remain available.
+  Options --role/--out/--workdir/--cwd/--client/--mode/--name/--on-event accept
+  one occurrence only. Other scalars use the last value; flags may repeat.
+
+Examples:
+  agent-pm-delegate run --list
+  agent-pm-delegate run --help
+""",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="run a role in an agent session", allow_abbrev=False)
+    run = commands.add_parser(
+        "run",
+        help="run a role in an agent session",
+        allow_abbrev=False,
+        description="Run a role on the configured client, or inspect its launch plan.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""Prerequisites and effects:
+  --role and --input are required unless --list; --list takes no other option.
+  --input TEXT is literal, even if it names a file; --input - reads stdin.
+  --detach needs --events FILE or AGENT_PM_EVENTS (flag wins); in_process
+  cannot detach. --events and --on-event require --detach.
+  --on-event CMD is shell-tokenized once, never run through a shell; each
+  event's JSON (JavaScript Object Notation) line goes to that command's stdin.
+  Default workdir: {STATE}/adhoc/DATE-ROLE[-TASK]-SID8.
+  Creates agent/run directories; session runs save to <workdir>/run/out.md
+  unless --out changes it. Configured role destinations govern publication.
+  Foreground waits and reports outcome status/deliverable path on stderr;
+  a valid outcome (including failed/needs_input) exits 0, no outcome exits 1.
+  Detached mode starts agent/harness sessions and prints a Record when live.
+  Modes: headless runs without a terminal; tui is a text user interface (TUI);
+  in_process uses the configured in-process client runtime.
+  --dry-run prints a JSON preview, writes nothing and skips launch preflight;
+  it still requires valid configuration and conditional inputs.
+
+Examples:
+  Discover roles/tasks before choosing one:
+  agent-pm-delegate run --list
+  With the built-in pm role/client configured, start hidden and detached:
+  agent-pm-delegate run --role pm --input 'Plan a feature' --detach \\
+    --display none --events /tmp/agent-pm-events.jsonl
+  Inspect the plan without launching:
+  agent-pm-delegate run --role pm --input 'Plan a feature' --dry-run
+
+Recovery and next help:
+  Save the returned Record or workdir. Inspect/recover with
+  agent-pm-delegate status --help and agent-pm-delegate resume --help.
+  Placement and missing-anchor recovery: agent-pm-session --help
+  Role/environment/option rules: agent-pm-delegate --help
+""",
+    )
     _run_options(run)
     for name, many, what in (
         ("status", True, "one Status line per run"),
@@ -50,17 +120,74 @@ def main(
         ("close", True, "close each run's sessions"),
         ("attach-command", False, "the command attaching to the run"),
     ):
-        query = commands.add_parser(name, help=what, allow_abbrev=False)
+        single = not many
+        effect = {
+            "status": "Prints a Status JSON line per target; does not launch or show sessions.",
+            "content": "Prints the run's current content; does not resume it.",
+            "outcome": "Prints outcome JSON, or null when no outcome is recorded.",
+            "resume": "Live/completed runs return their Record; interrupted runs restart.\n"
+            "--input answers a needs_input role run; pipeline answers belong on the\n"
+            "issue board. Requires the original workdir, client and session identity.",
+            "show": "Shows the agent session using saved display; accepts no new --display.",
+            "hide": "Closes agent/harness panes; the run continues in the background.",
+            "close": "Terminates the run's sessions; keeps its workdir and recorded outcome.",
+            "attach-command": "Prints an attachment command; run that printed command to attach.\n"
+            "Fails when the run has no live showable session.",
+        }[name]
+        query = commands.add_parser(
+            name,
+            help=what,
+            description=what[0].upper() + what[1:] + ".",
+            allow_abbrev=False,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=(
+                "Selection and effects:\n  "
+                + (
+                    "Requires exactly one workdir or one Record on stdin.\n"
+                    if single
+                    else "Accepts a batch of workdirs or Records on stdin.\n"
+                )
+                + "  A workdir identifies a run, not its agent session name.\n"
+                + effect
+                + "\n\nExamples:\n"
+                "  With a recorded run at /tmp/agent-pm-role:\n"
+                f"  agent-pm-delegate {name} /tmp/agent-pm-role\n\n"
+                "Recovery and next help:\n"
+                "  No live view: agent-pm-delegate attach-command --help\n"
+                "  Interrupted run: agent-pm-delegate resume --help\n"
+                "  Placement: agent-pm-session --help\n"
+                "  Selection, environment and exits: agent-pm-delegate --help\n"
+            ),
+        )
         if name == "resume":
             query.add_argument("--input", metavar="TEXT", help="answer a needs_input run")
         query.add_argument(
             "keys",
             nargs="*" if many else "?",
             metavar="WORKDIR",
-            help="none: one Record per stdin line",
+            help="existing run workdir; omit for one Record per stdin line; see cardinality below",
         )
     prompt = commands.add_parser(
-        "prompt", help="write a role's prompt as an instruction file", allow_abbrev=False
+        "prompt",
+        help="write a role's prompt as an instruction file",
+        allow_abbrev=False,
+        description="Generate and write a role's instruction file without starting an agent.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Prerequisites and effects:
+  Requires configured role/task and --role, --input, --out and --workdir.
+  Input is literal text; - reads stdin. --out must be a path, never -.
+  Writes the composed instruction and reports its path on stderr.
+
+Examples:
+  With the built-in pm role configured:
+  agent-pm-delegate prompt --role pm --input 'Plan a feature' \\
+    --workdir /tmp/agent-pm-role --out /tmp/agent-pm-prompt.md
+
+Recovery and next help:
+  Discover roles/tasks: agent-pm-delegate run --list
+  Run the role: agent-pm-delegate run --help
+  Environment, option rules and exits: agent-pm-delegate --help
+""",
     )
     _common_options(prompt, out="where the prompt is written")
     a = parser.parse_args(argv)
@@ -76,27 +203,43 @@ def main(
 
 
 def _common_options(ap: argparse.ArgumentParser, *, out: str) -> None:
-    ap.add_argument("--role", action=Once)
-    ap.add_argument("--task")
+    ap.add_argument(
+        "--role", action=Once, help="required persona; discover: agent-pm-delegate run --list"
+    )
+    ap.add_argument("--task", help="work type; default: role chooses; discover: run --list")
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
     )
     ap.add_argument("--out", action=Once, metavar="PATH", help=out)
-    ap.add_argument("--workdir", action=Once)
-    ap.add_argument("--repo")
+    ap.add_argument(
+        "--workdir",
+        action=Once,
+        metavar="PATH",
+        help="run directory; run default: generated, prompt: required",
+    )
+    ap.add_argument(
+        "--repo", metavar="PATH", help="directory for role's configured repo access; default: unset"
+    )
 
 
 def _run_options(ap: argparse.ArgumentParser) -> None:
     _common_options(ap, out="where the deliverable is saved; default <workdir>/run/out.md")
     ap.add_argument(
-        "--cwd", action=Once, metavar="PATH", help="the agent's cwd; default <workdir>/agent"
+        "--cwd",
+        action=Once,
+        metavar="PATH",
+        help="agent directory; default: role's cwd, else <workdir>/agent",
     )
     ap.add_argument(
         "--list",
         action="store_true",
         help="list each role, its destination type and tasks, with their sources",
     )
-    ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
+    ap.add_argument(
+        "--client",
+        action=Once,
+        help="configured client name; default: role's client in Delegate config",
+    )
     ap.add_argument("--sid", help=f"default ${SID_ENV}; the two must agree")
     ap.add_argument(
         "--mode",
@@ -127,7 +270,9 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         metavar="D",
         help="where its sessions show, completed on its agent's Host: agent-pm-session --help",
     )
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="print launch preview without starting or writing"
+    )
 
 
 def _run(

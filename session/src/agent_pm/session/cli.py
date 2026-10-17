@@ -20,6 +20,7 @@ import functools
 import os
 import re
 import sys
+import textwrap
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -95,32 +96,85 @@ def _display_help(hosts: Hosts | None) -> str:
             return "display (--display D), per configured Host:\n" + "\n".join(found)
     except ConfigError:
         pass
-    return "display (--display D): the session config could not be read"
+    return (
+        "display (--display D): the session config could not be read.\n"
+        "Repair session configuration and rerun agent-pm-session --help for configured\n"
+        "Host syntax and defaults. --display none starts hidden without an anchor.\n"
+        "Visible placement needs usable caller context or a visible anchor in that\n"
+        "Host's syntax. For an existing session whose view cannot open, run\n"
+        "agent-pm-session attach-command NAME, then run the printed command."
+    )
 
 
 def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=PROG,
-        description="Start and reach agent sessions: workers (plain tui sessions by name),\n"
-        "and any session for status, show, hide, close, attach-command, ls, send, read and tile.",
-        epilog=_display_help(hosts),
+        description="Start and control agent sessions. A Worker is a plain client session;\n"
+        "a Client is the configured agent program. A Host runs processes; display\n"
+        "is its placement value. TUI means text user interface.",
+        epilog=(
+            "Prerequisites and effects\n"
+            "  Commands need valid session configuration and their Client/Host tools.\n"
+            "  Packaged defaults are overlaid by ~/.agent-pm/config.local.toml's\n"
+            "  [session] tables. --client names [session.clients.NAME]; the default\n"
+            "  Host is [session.hosts].default. Help needs no running tools/services.\n"
+            "  Query commands print stdout; failures print stderr. Exit 0: success;\n"
+            "  1: session/Host operation failed; 2: usage/configuration or nested start.\n"
+            "  A Record is a serialized JSON control/identity line: name, session ids,\n"
+            "  display and control/resume commands. Pass original Records unchanged,\n"
+            "  one per stdin line, only to commands whose help permits them. Explicit\n"
+            "  names select current sessions; Records guard against replaced sessions.\n\n"
+            "Examples (configured Codex; no session named helper)\n"
+            "  agent-pm-session start helper --client codex --display none\n"
+            "  Starts hidden; prints a Record. Starting needs a user-started terminal;\n"
+            "  AGENT_PM_AGENT_SESSION forbids nested starts/restarts/resumes.\n\n"
+            "Recovery and next help\n"
+            "  Discover names: agent-pm-session ls\n"
+            "  Inspect launch options: agent-pm-session start --help\n"
+            "  Recover a missing view: agent-pm-session attach-command --help\n\n"
+            + _display_help(hosts)
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
     p = sub.add_parser(
         "start",
         help="start worker NAME; print its Record",
-        description="Start worker NAME, a plain tui session of CLIENT; everything after -- is "
-        "its client's flags, verbatim. Its session id: --resume SID (resumes that "
-        f"conversation), else ${SID_ENV}, else a new one; the two must agree. Prints its "
-        "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
-        "pending).",
+        description=textwrap.fill(
+            "Start worker NAME, a plain text user interface session of CLIENT; everything after -- is "
+            "its client's flags, verbatim. Its session id: --resume SID (resumes that "
+            f"conversation), else ${SID_ENV}, else a new one; the two must agree. Prints its "
+            "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
+            "pending).",
+            width=77,
+        ),
+        epilog="Prerequisites and effects\n"
+        "  Requires configured CLIENT and default Host tools, an existing cwd, and a\n"
+        "  free NAME. Names match [A-Za-z0-9_-]+ except none. Creates a worker and\n"
+        f"  prints its Record. ${EVENTS_ENV}, when nonempty, is its events file.\n"
+        "  Scalar options repeated: last wins; --env accumulates by variable name.\n\n"
+        "Examples (Codex configured; no helper session)\n"
+        "  agent-pm-session start helper --client codex --display none\n"
+        "  Starts hidden; no visible anchor needed.\n"
+        "  Form: agent-pm-session start NAME [SESSION_OPTIONS] -- CLIENT_FLAGS\n"
+        "  Before --: Session options; after --: client flags, preserved verbatim.\n"
+        "  Outer help: agent-pm-session start --help, before --. Help after --\n"
+        "  belongs to CLIENT and may start the outer operation; use CLIENT --help.\n\n"
+        "Recovery and Next help\n"
+        "  Existing name: agent-pm-session status helper, or choose another name.\n"
+        "  Placement/defaults: agent-pm-session --help\n"
+        "  Missing view: agent-pm-session attach-command --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("name", type=_name)
-    p.add_argument("--client", required=True, help="its client, a [clients.<name>]")
+    p.add_argument("name", type=_name, help="required new worker name; not none")
+    p.add_argument(
+        "--client", required=True, help="required [session.clients.NAME] configuration name"
+    )
     p.add_argument("--cwd", help="its directory (default: this one)")
-    p.add_argument("--resume", metavar="SID", help="resume conversation SID")
-    p.add_argument("--prompt", default="", help="its first prompt")
+    p.add_argument(
+        "--resume", metavar="SID", help=f"resume conversation SID; else ${SID_ENV}, else new id"
+    )
+    p.add_argument("--prompt", default="", help="first prompt text (default: empty)")
     p.add_argument(
         "--env",
         action="append",
@@ -132,17 +186,51 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument(
         "--display",
         metavar="D",
-        help=f"where its Host shows it; {NO_DISPLAY}: shown nowhere until show (see below)",
+        help=f"Host placement; {NO_DISPLAY}: hidden; omitted: caller context. See agent-pm-session --help",
     )
     for cmd, text in (
         ("restart", "restart a worker's session in place; print its Record"),
         ("resume", "print a live worker's Record, else resume it; print its Record"),
-        ("reply", "print a tui session's latest reply"),
+        ("reply", "print a text user interface session's latest reply"),
     ):
-        p = sub.add_parser(cmd, help=text, description=text)
-        p.add_argument("name", type=_name)
+        effects = {
+            "restart": "Terminates/restarts the saved worker in place; prints its Record.",
+            "resume": "Prints a live worker's Record, else resumes its saved conversation.",
+            "reply": "Prints the latest reply text, or nothing if no reply is available.",
+        }
+        p = sub.add_parser(
+            cmd,
+            help=text,
+            description=text + ".",
+            epilog="Prerequisites and effects\n"
+            + (
+                "  Requires a named worker's saved metadata and configured Client/Host.\n"
+                if cmd != "reply"
+                else "  Requires a live TUI (text user interface) session and configured Host.\n"
+            )
+            + (f"  ${SID_ENV}, when set, must match the saved worker.\n" if cmd != "reply" else "")
+            + f"  {effects[cmd]}\n"
+            + (
+                "  Uses saved cwd, flags and display; no new --display option.\n"
+                if cmd != "reply"
+                else ""
+            )
+            + f"\nExamples (existing worker helper)\n  agent-pm-session {cmd} helper\n\n"
+            "Recovery and Next help\n"
+            "  Find current names: agent-pm-session ls\n"
+            "  Placement and configuration: agent-pm-session --help\n"
+            "  Missing metadata: agent-pm-session start --help",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        p.add_argument(
+            "name",
+            type=_name,
+            help="required saved worker name" if cmd != "reply" else "required TUI session name",
+        )
         if cmd == "reply":
-            p.add_argument("--sid", help="require this session id")
+            p.add_argument(
+                "--sid", help="require this session id (default: no identity guard; last wins)"
+            )
     for cmd, text in (
         ("status", "one Status JSON line per session"),
         ("content", "print one session's content"),
@@ -151,25 +239,82 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         ("close", "close each session; absent is fine"),
         ("attach-command", "print each session's attach command"),
     ):
-        p = sub.add_parser(cmd, help=text, description=f"{text}: names, else Records on stdin.")
-        p.add_argument("names", nargs="*", type=_name, metavar="NAME")
+        details = {
+            "status": "Prints one Status JSON line per key, including gone sessions.",
+            "content": "Exactly one key; prints content from its first carried session.",
+            "show": "Uses saved display; no new --display option. Work already exists.",
+            "hide": "Closes only the view while work continues; requires a showable Host.",
+            "close": "Terminates sessions; absent or replaced Record targets are harmless.",
+            "attach-command": "Prints an attachment command for the first session of each key.",
+        }
+        p = sub.add_parser(
+            cmd,
+            help=text,
+            description=textwrap.fill(f"{text}: names, else Records on stdin.", width=77),
+            epilog="Prerequisites and effects\n"
+            "  Requires configured target Hosts; show/hide/attach-command need a\n"
+            "  showable Host. Names override stdin; otherwise read one Record per line.\n"
+            "  Duplicate keys are rejected before effects. Batch commands continue\n"
+            "  other valid keys after a failure; exit 2 for invalid input, 1 for\n"
+            "  operational failures. Records carry session identity and display.\n"
+            + f"  {details[cmd]}\n"
+            + f"\nExamples (existing session helper)\n  agent-pm-session {cmd} helper\n"
+            + ("  Run the printed command to attach.\n" if cmd == "attach-command" else "")
+            + "\nRecovery and Next help\n"
+            "  Discover sessions: agent-pm-session ls\n"
+            "  Record schema and placement: agent-pm-session --help\n"
+            + ("  View failure: agent-pm-session attach-command --help\n" if cmd == "show" else ""),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        p.add_argument(
+            "names",
+            nargs="*",
+            type=_name,
+            metavar="NAME",
+            help="session names; omitted: Records on stdin; content accepts one key",
+        )
         if cmd == "hide":
             p.add_argument(
                 "--if-closed",
                 action="store_true",
-                help="only once what show opened was closed by hand (hooks)",
+                help="only after the view was closed by hand (automation); default: hide now",
             )
     p = sub.add_parser(
         "ls",
         help="list sessions",
-        description="List sessions (see docs/sessions.md › agent-pm-session) or, with --records, the "
-        "Record of each that has one.",
+        description="List sessions as a tab-separated table, or emit their Records.",
+        epilog="Prerequisites and effects\n"
+        "  Reads configured Hosts. Default: all sessions; header and columns name,\n"
+        "  state, client, sid, display (- means absent). --records instead prints\n"
+        "  one Record per session that has one, sorted by name. No state changes.\n"
+        "  --here and --display exclude each other. --descendants requires both\n"
+        "  --here and --records. Repeated scalar options use the last value.\n\n"
+        "Examples (visible caller with sessions it opened)\n"
+        "  agent-pm-session ls --here --records\n"
+        "  Prints Records for those sessions; no caller display yields no matches.\n\n"
+        "Recovery and Next help\n"
+        "  No matches: remove --here/--display/--match to inspect all sessions.\n"
+        "  Display filtering and Record schema: agent-pm-session --help\n"
+        "  Record consumers: agent-pm-session status --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--match", metavar="RE", help="names fullmatching RE")
+    p.add_argument(
+        "--match", metavar="RE", help="name regular expression, full match (default: all names)"
+    )
     where = p.add_mutually_exclusive_group()
-    where.add_argument("--display", metavar="D", help="those each Host matches to display D")
-    where.add_argument("--here", action="store_true", help="those this caller opened")
-    p.add_argument("--records", action="store_true", help="print their Records")
+    where.add_argument(
+        "--display",
+        metavar="D",
+        help="Host-specific display filter (default: none); agent-pm-session --help",
+    )
+    where.add_argument(
+        "--here", action="store_true", help="only those this caller opened (default: all)"
+    )
+    p.add_argument(
+        "--records",
+        action="store_true",
+        help="print original Records instead of table (default: table)",
+    )
     p.add_argument(
         "--descendants",
         action="store_true",
@@ -178,39 +323,132 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "send",
         help="send TEXT (then Enter), or keys",
-        description="Send TEXT as a paste then Enter, or --key K…: keys in a Host-independent "
-        "notation: one character, or Enter Escape Tab BTab BSpace Up Down Left Right Home End "
-        "PageUp PageDown F1-F12, after any of C- M- S- (C-c, S-Up).",
+        description=textwrap.fill(
+            "Send TEXT as a paste then Enter, or --key K…: keys in a Host-independent "
+            "notation: one character, or Enter Escape Tab BTab BSpace Up Down Left Right Home End "
+            "PageUp PageDown F1-F12, after any of C- M- S- (C-c, S-Up).",
+            width=77,
+        ),
+        epilog="Prerequisites and effects\n"
+        "  Requires a live session and configured Host. Supply exactly one of TEXT\n"
+        "  or --key; no stdin input. All keys are validated before sending any.\n"
+        "  Sends to the running program, prints nothing. Scalar repeats: last wins.\n\n"
+        "Examples (live session helper)\n"
+        "  agent-pm-session send helper 'hello'\n"
+        "  Pastes hello and sends Enter.\n"
+        "  agent-pm-session send helper --key C-c\n"
+        "  Sends Ctrl-C, which may interrupt its running program.\n\n"
+        "Recovery and Next help\n"
+        "  Check target identity: agent-pm-session status --help\n"
+        "  Inspect its screen: agent-pm-session read --help\n"
+        "  Configuration: agent-pm-session --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("name", type=_name)
-    p.add_argument("text", nargs="?")
-    p.add_argument("--sid", help="require this session id")
-    p.add_argument("--key", nargs="+", metavar="K", help="keys, all checked before any is sent")
-    p = sub.add_parser("read", help="print a session's screen")
-    p.add_argument("name", type=_name)
-    p.add_argument("--sid", help="require this session id")
-    p.add_argument("--lines", type=_lines, metavar="N", help="the last N lines, with history")
-    p = sub.add_parser("tile", help="lay out a window's sessions (the default Host's)")
+    p.add_argument("name", type=_name, help="required live session name")
+    p.add_argument("text", nargs="?", help="literal paste text; required unless --key is given")
+    p.add_argument("--sid", help="require this session id (default: no identity guard)")
+    p.add_argument(
+        "--key",
+        nargs="+",
+        metavar="K",
+        help="one or more keys instead of TEXT; repeated --key: last group wins",
+    )
+    p = sub.add_parser(
+        "read",
+        help="print a session's screen",
+        description="Print a session's visible screen or recent history.",
+        epilog="Prerequisites and effects\n"
+        "  Requires a live session and showable configured Host. Prints screen text\n"
+        "  to stdout without changing the session. Scalar repeats: last wins.\n\n"
+        "Examples (live session helper)\n"
+        "  agent-pm-session read helper --lines 20\n"
+        "  Prints the last 20 lines including history.\n\n"
+        "Recovery and Next help\n"
+        "  Find a live name: agent-pm-session status --help\n"
+        "  Latest structured reply: agent-pm-session reply --help\n"
+        "  Host configuration: agent-pm-session --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("name", type=_name, help="required session name")
+    p.add_argument("--sid", help="require this session id (default: no identity guard)")
+    p.add_argument(
+        "--lines",
+        type=_lines,
+        metavar="N",
+        help="positive number of last lines, with history (default: visible screen)",
+    )
+    p = sub.add_parser(
+        "tile",
+        help="lay out a window's sessions (the default Host's)",
+        description="Specialist/automation: retile a window on the default Host.",
+        epilog="Prerequisites and effects\n"
+        "  Requires a showable default Host and an existing Host window. Changes\n"
+        "  window layout, prints nothing; normally waits for another tile to finish.\n\n"
+        "Examples: invocation form (substitute an existing Host window)\n"
+        "  agent-pm-session tile WINDOW [--no-wait] [--if-panes-changed]\n\n"
+        "Recovery and Next help\n"
+        "  Host syntax and configuration: agent-pm-session --help\n"
+        "  Open saved views: agent-pm-session show --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("window", help="the window, as its Host names it")
     p.add_argument(
-        "--no-wait", action="store_true", help="return at once while another tile runs (hooks)"
+        "--no-wait",
+        action="store_true",
+        help="return at once while another tile runs (default: wait)",
     )
     p.add_argument(
         "--if-panes-changed",
         action="store_true",
-        help="only when the window's panes changed since its last tile (hooks)",
-    )
-    sub.add_parser(
-        "hook",
-        help="a tui client's hook call (its hook config runs it)",
-        description="DIR LABEL, the hook's payload on stdin; never fails, never prints stdout.",
+        help="only when panes changed since last tile (default: retile now)",
     )
     p = sub.add_parser(
-        "client-resume",
-        help="resume a client's own session (its session info's resume command runs this)",
+        "hook",
+        help="automation: record a TUI client's hook payload",
+        description="Automation: consume a TUI (text user interface) client's hook payload.",
+        epilog="Prerequisites and effects\n"
+        "  Requires the existing absolute session directory with valid session.json\n"
+        "  and its declared callbacks. Drains stdin to EOF; parses a JSON object\n"
+        "  up to 64 MiB (invalid/oversized payload becomes {}). Client callbacks may\n"
+        "  transform/drop it; otherwise appends hooks.jsonl and notifies an optional\n"
+        "  Host callback. Operational calls always exit 0 with no stdout; failures\n"
+        "  print stderr and retain hook.log where possible.\n\n"
+        "Examples: invocation form (generated by client hook configuration)\n"
+        "  agent-pm-session hook /absolute/session/dir LABEL < payload.json\n"
+        "  Only exact hook --help and hook -h print help without reading stdin.\n"
+        "  All other arguments retain the callback contract.\n\n"
+        "Recovery and Next help\n"
+        "  Inspect DIR/hook.log for failures; repair the callback configuration.\n"
+        "  Session configuration: agent-pm-session --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("client")
-    p.add_argument("arguments", nargs=argparse.REMAINDER)
+    p.add_argument("directory", metavar="DIR", help="required existing absolute session directory")
+    p.add_argument("label", metavar="LABEL", help="required hook label: [A-Za-z0-9_.-]{1,64}")
+    p = sub.add_parser(
+        "client-resume",
+        help="specialist: run a client's own saved resume command",
+        description="Specialist: resume a Client conversation using its native argument contract.",
+        epilog="Prerequisites and effects\n"
+        "  Requires configured CLIENT, its executable and saved conversation. Runs\n"
+        "  that Client's resume handler and propagates its exit status; may replace\n"
+        "  this process. Prefer the resume command saved in session information.\n\n"
+        "Examples: annotated invocation form\n"
+        "  agent-pm-session client-resume CLIENT CLIENT_ARGUMENTS...\n"
+        "  CLIENT selects [session.clients.NAME]; all later tokens, including --\n"
+        "  and --help, belong to its resume handler, without delimiter removal.\n"
+        "  Outer help: agent-pm-session client-resume --help, before CLIENT.\n\n"
+        "Recovery and Next help\n"
+        "  Native arguments: CLIENT --help (replace CLIENT with its executable).\n"
+        "  Worker recovery: agent-pm-session resume --help\n"
+        "  Client configuration: agent-pm-session --help",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("client", help="required configured Client name")
+    p.add_argument(
+        "arguments",
+        nargs=argparse.REMAINDER,
+        help="Client-specific resume arguments, verbatim after CLIENT",
+    )
     return ap
 
 
@@ -501,6 +739,8 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    if argv in (["hook", "--help"], ["hook", "-h"]):
+        _parser(None).parse_args(argv)
     if argv[:1] == ["hook"]:
         tui_hook.run(argv[1:], sys.stdin, roots=module_roots(agent_pm.session, agent_pm.utils))
         return 0

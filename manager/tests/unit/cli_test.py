@@ -1,8 +1,10 @@
 """Crew CLI lease identity validation and holder command shape."""
 
+import argparse
 import contextlib
 import io
 import os
+import shlex
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -10,12 +12,14 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Spec, State
+from agent_pm.manager import Spec, State, cli
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState
 
+from manager.tests.case import Case
 from manager.tests.cli_case import CliCase
+from utils.tests.cli_help import examples, parse_only
 from utils.tests.fakes import ctl
 
 
@@ -719,3 +723,120 @@ class InsideAnAgentSession(CliCase):
                 main(["--help"])
             self.assertEqual(raised.exception.code, 0)
             self.assertNotIn("refused", self.invoke("status", "--manager", "mgr")[2])
+
+
+HELP_COMMANDS = [
+    "hold",
+    "run",
+    "worker",
+    "issue",
+    "role",
+    "attach",
+    "status",
+    "report",
+    "resume",
+    "hide",
+    "show",
+    "close",
+    "forget",
+    "close-all",
+    "note",
+    "release",
+    "pending",
+    "ack",
+    "next-event",
+]
+
+
+class HelpContracts(Case):
+    def test_visibility_help_does_not_require_roster_ownership(self):
+        for command in ("show", "hide"):
+            text = self.help(command)
+            self.assertNotIn("lease access", text)
+            self.assertIn("no holder lease", text)
+
+    def test_published_operation_examples_use_real_parser_before_dispatch(self):
+        for name in [None, *HELP_COMMANDS]:
+            published = list(examples(self.help(name)))
+            self.assertTrue(published, name)
+            for command in published:
+                with (
+                    self.subTest(name=name, command=command),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    parse_only(cli.main, command[1:])
+
+    def help(self, command=None, flag="--help"):
+        out = io.StringIO()
+        argv = ([] if command is None else [command]) + [flag]
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+            cli.main(argv)
+        self.assertEqual(raised.exception.code, 0)
+        return out.getvalue()
+
+    def test_every_surface_has_purpose_and_safe_help_under_invalid_runtime_context(self):
+        before = sorted(Path(self.home).rglob("*"))
+        source = mock.Mock()
+        source.read.side_effect = AssertionError("help read stdin")
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AGENT_PM_AGENT_SESSION": "1", "AGENT_PM_HOLDER_ID": "invalid"},
+            ),
+            mock.patch("sys.stdin", source),
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            for command in [None, *HELP_COMMANDS]:
+                for flag in ("--help", "-h"):
+                    with self.subTest(command=command, flag=flag):
+                        text = self.help(command, flag)
+                        self.assertIn("agent-pm-crew", text)
+                        if command is not None:
+                            self.assertIn("Examples:", text)
+                            self.assertIn("agent-pm-crew --help", text)
+            run.assert_not_called()
+            popen.assert_not_called()
+        self.assertEqual(sorted(Path(self.home).rglob("*")), before)
+
+    def test_root_lists_each_command_with_a_purpose(self):
+        parser = cli._parser()
+        sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+        self.assertEqual(set(sub.choices), set(HELP_COMMANDS))
+        self.assertEqual({a.dest for a in sub._choices_actions}, set(HELP_COMMANDS))
+        self.assertTrue(all(a.help for a in sub._choices_actions))
+
+    def test_boundary_help_and_recovery_are_explicit(self):
+        for verb, owner in (
+            ("worker", "agent-pm-session start --help"),
+            ("issue", "agent-pm-linear router --help"),
+            ("role", "agent-pm-delegate run --help"),
+        ):
+            with self.subTest(verb=verb):
+                text = self.help(verb)
+                self.assertIn(owner, text)
+                self.assertIn("before", text)
+                self.assertIn("Forwarded --help", text)
+        self.assertIn("-- COMMAND [ARG ...]", self.help("hold"))
+        self.assertIn("-- COMMAND [ARG ...]", self.help("run"))
+        self.assertNotIn("--after", self.help("attach"))
+        self.assertIn("does not acknowledge events", self.help("attach"))
+        self.assertIn("monitor expired", self.help("next-event"))
+
+    def test_published_worker_example_keeps_session_and_client_tokens(self):
+        parser = cli._parser()
+        argv = shlex.split(
+            "worker --manager demo helper --client codex --display none -- --model 'a b'"
+        )
+        parsed = parser.parse_args(argv)
+        self.assertEqual((parsed.manager, parsed.key), ("demo", "helper"))
+        self.assertEqual(
+            parsed.arguments, ["--client", "codex", "--display", "none", "--", "--model", "a b"]
+        )
+        self.assertEqual(parser.parse_args(["worker", "helper", "--help"]).arguments, ["--help"])
+
+    def test_command_tail_is_not_interpreted_as_outer_help(self):
+        with mock.patch("subprocess.Popen") as popen:
+            popen.return_value.wait.return_value = 0
+            self.assertEqual(cli.main(["hold", "--manager", "demo", "--", "codex", "--help"]), 0)
+        self.assertEqual(popen.call_args.args[0], ("codex", "--help"))
