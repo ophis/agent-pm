@@ -625,16 +625,13 @@ class Board:
         if self.dry:
             self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
-            self.say(
-                "claim-skip",
-                ident,
-                to="in_review",
-                reason="bad task label"
-                if client_error is None
-                else "bad Agent label"
-                if task_error is None
-                else "bad task and Agent labels",
-            )
+            if client_error is None:
+                reason = "bad task label"
+            elif task_error is None:
+                reason = "bad Agent label"
+            else:
+                reason = "bad task and Agent labels"
+            self.say("claim-skip", ident, to="in_review", reason=reason)
             if self.dry:
                 self.say("would comment", ident, body="\n\n".join(comments), to="in_review")
             self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
