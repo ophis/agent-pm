@@ -86,20 +86,22 @@ def done(rc=0, out="", err=""):
 
 
 class FakeDocker:
-    """The docker CLI: `ps` prints `ps`; an exec answers from `replies`, {command prefix: (rc, out,
+    """The docker CLI: `ps` prints `ps`, `volume ls` prints `volumes`; an exec answers from `replies`, {command prefix: (rc, out,
     err), an exception or a callable of the command}, the first matching prefix; else success.
     """
 
     def __init__(self, ep, order):
         self.ep, self.order, self.ps, self.replies, self.inputs = ep, order, [], {}, []
+        self.volumes = []
 
     def __call__(self, argv, env, *, input=None, timeout):
         assert argv[:3] == [DOCKER, "--host", self.ep], argv
         assert not set(CLEARED) & env.keys() and timeout <= RUN_TIMEOUT
         self.order.append(argv[3:])
         self.inputs.append(input)
-        if argv[3] == "ps":
-            return done(0, "".join(f"{line}\n" for line in self.ps))
+        if argv[3] in ("ps", "volume"):
+            rows = self.ps if argv[3] == "ps" else self.volumes
+            return done(0, "".join(f"{line}\n" for line in rows))
         cmd = argv[6:]
         for prefix, reply in self.replies.items():
             if tuple(cmd[: len(prefix)]) == prefix:
@@ -380,6 +382,7 @@ class StartTest(Base):
             [step if isinstance(step, str | tuple) else step[:5] for step in self.order],
             [
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
+                ["volume", "ls", "--filter", "label=agent-pm.kind=run", "--format"],
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 "version",
                 ("build", REPO),
@@ -751,7 +754,7 @@ class StartTest(Base):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
         with self.assertRaisesRegex(SessionError, "a container for it exists"):
             self.start()
-        self.assertEqual({step[0] for step in self.order}, {"ps"})
+        self.assertEqual({step[0] for step in self.order}, {"ps", "volume"})
 
     def test_a_role_run_cwd_fails_before_any_docker_call(self):
         cwd = os.path.join(self.account, ".agent-pm", "adhoc", "x", "agent")
@@ -1078,6 +1081,7 @@ class CloseTest(Base):
             [
                 ["ps", "-a", "--filter", "label=agent-pm.session"],
                 ["exec", "-i", CONTAINER, "tmux"],
+                ["volume", "ls", "--filter", "label=agent-pm.kind=run"],
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
@@ -1453,6 +1457,99 @@ class SweepTest(Base):
         self.host.run = mock.Mock(return_value=done(1, "", "Cannot connect"))
         with self.assertLogs("session", "WARNING"):
             self.host.sweep("w")
+
+
+class ReclaimTest(Base):
+    GONE = "agent-pm-run-TASK-1-0123abcd"
+
+    def setUp(self):
+        super().setUp()
+        self.kept = os.path.join(self.home, ".agent-pm", "docker-state", ".kept")
+        self.docker.volumes = [
+            f"{self.GONE}\t{self.account}/gone/TASK-1",
+            f"agent-pm-run-TASK-2-0123abcd\t{self.cwd}",
+            f"other\t{self.account}/gone/x",
+            "agent-pm-run-TASK-3-0123abcd\trelative",
+            "agent-pm-run-TASK-4-0123abcd",
+        ]
+
+    def removed(self):
+        return [
+            step[1] for step in self.order if isinstance(step, tuple) and step[0] == "workspace_rm"
+        ]
+
+    def test_a_run_volume_whose_workdir_is_gone_is_removed_and_others_are_left(self):
+        self.host.sweep("w")
+        self.assertEqual(self.removed(), [self.GONE])
+        self.assertIn(
+            [
+                "volume",
+                "ls",
+                "--filter",
+                "label=agent-pm.kind=run",
+                "--format",
+                '{{.Name}}\t{{.Label "agent-pm.workspace"}}',
+            ],
+            self.order,
+        )
+
+    def test_unsaved_work_keeps_the_volume_and_warns_once(self):
+        message = f"Workspace {self.GONE} has uncommitted or unpushed work in: publish."
+        self.broker.failing = {
+            "workspace_rm": BrokerError(12, "workspace_dirty", message, "not_needed", None)
+        }
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host.sweep("w")
+        self.assertEqual(
+            logs.output, [f"WARNING:session:docker workspace {self.GONE} kept: {message}"]
+        )
+        self.assertTrue(os.path.isfile(os.path.join(self.kept, self.GONE)))
+        self.order.clear()
+        with self.assertNoLogs("session", "WARNING"):
+            self.host.sweep("w")
+        self.assertEqual(self.removed(), [])
+
+    def test_a_failing_check_warns_at_each_sweep_and_keeps_no_marker(self):
+        for error in (
+            BrokerError(14, "workspace_failed", "check failed", "not_needed", None),
+            SessionError("broker: workspace-rm timed out"),
+        ):
+            with self.subTest(error=error):
+                self.broker.failing = {"workspace_rm": error}
+                for _ in range(2):
+                    self.order.clear()
+                    with self.assertLogs("session", "WARNING") as logs:
+                        self.host.sweep("w")
+                    self.assertEqual(self.removed(), [self.GONE])
+                    self.assertIn(f"docker workspace {self.GONE} kept: ", logs.output[0])
+                self.assertEqual(os.listdir(self.kept), [".lock"])
+
+    def test_a_marker_whose_volume_is_gone_is_deleted(self):
+        os.makedirs(self.kept)
+        for name in ("agent-pm-run-old-0123abcd", "agent-pm-run-TASK-2-0123abcd"):
+            open(os.path.join(self.kept, name), "w").close()
+        self.docker.volumes = self.docker.volumes[1:]
+        self.host.sweep("w")
+        self.assertEqual(sorted(os.listdir(self.kept)), [".lock", "agent-pm-run-TASK-2-0123abcd"])
+        self.assertEqual(self.removed(), [])
+
+    def test_a_held_lock_or_no_daemon_socket_skips_reclaim(self):
+        os.makedirs(self.kept)
+        busy = os.open(os.path.join(self.kept, ".lock"), os.O_RDWR | os.O_CREAT)
+        self.addCleanup(os.close, busy)
+        fcntl.flock(busy, fcntl.LOCK_EX)
+        self.host.sweep("w")
+        self.assertEqual(self.removed(), [])
+        fcntl.flock(busy, fcntl.LOCK_UN)
+        os.remove(self.ep.removeprefix("unix://"))
+        self.order.clear()
+        self.host.sweep("w")
+        self.assertEqual(self.order, [])
+
+    def test_no_orphan_creates_no_file(self):
+        self.docker.volumes = self.docker.volumes[1:]
+        self.host.sweep("w")
+        self.assertFalse(os.path.exists(self.kept))
 
 
 class ListTest(Base):

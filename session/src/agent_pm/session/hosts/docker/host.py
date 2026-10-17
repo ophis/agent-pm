@@ -79,10 +79,11 @@ from agent_pm.session.hosts.docker.daemon import (
     endpoint,
     exec_runner,
 )
-from agent_pm.session.hosts.docker.mounts import check_cwd, crew_volume, state_dir
+from agent_pm.session.hosts.docker.mounts import RUN_VOLUME, check_cwd, crew_volume, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
+    DOCKER_STATE,
     Display,
     Record,
     command_path,
@@ -113,6 +114,9 @@ PS_FORMAT = "\t".join(
     )
 )
 LOG = logging.getLogger("session")
+KEPT = f"{DOCKER_STATE}/.kept"  # a marker per run volume kept for unsaved work
+KEPT_LOCK = ".lock"
+VOLUME_FORMAT = '{{.Name}}\t{{.Label "agent-pm.workspace"}}'
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
@@ -453,20 +457,23 @@ class DockerHost(Host):
         return TmuxCli(exec_runner(self.docker, container, run=self.run))
 
     def _ps(self) -> list[list[str]]:
-        """[] with no daemon socket or docker CLI, as tmux with no server: every Host is listed."""
+        return self._listed("ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT)
+
+    def _listed(self, *args: str) -> list[list[str]]:
+        """docker `args`' tab-separated rows; [] with no daemon socket or docker CLI, as tmux with no
+        server: every Host is listed.
+        """
         if not os.path.exists(endpoint().removeprefix("unix://")):
             return []
-        argv, env = docker_call(
-            self.docker, "ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT
-        )
+        argv, env = docker_call(self.docker, *args)
         try:
             res = self.run(argv, env, timeout=RUN_TIMEOUT)
         except FileNotFoundError:
             return []
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise SessionError(f"docker ps: {error}") from None
+            raise SessionError(f"docker {args[0]}: {error}") from None
         if res.returncode:
-            raise SessionError(f"docker ps: {res.stderr.strip()}")
+            raise SessionError(f"docker {args[0]}: {res.stderr.strip()}")
         return [line.split("\t") for line in res.stdout.splitlines()]
 
     def _rows(self) -> list[Row]:
@@ -513,6 +520,46 @@ class DockerHost(Host):
                                 os.unlink(lock)
             except (SessionError, OSError) as error:
                 LOG.warning("docker sweep %s: %s", row.name, error)
+        try:
+            self._reclaim()
+        except (SessionError, OSError) as error:
+            LOG.warning("docker sweep: %s", error)
+
+    def _reclaim(self) -> None:
+        """Removes the run workspace volumes whose workdir is gone, after the broker's check; one with
+        unsaved work is kept, warned about once and marked. Listed before the lock, so no orphan
+        writes no file.
+        """
+        rows = self._listed(
+            "volume", "ls", "--filter", "label=agent-pm.kind=run", "--format", VOLUME_FORMAT
+        )
+        gone = [
+            volume
+            for volume, anchor in (row for row in rows if len(row) == 2)
+            if RUN_VOLUME.fullmatch(volume)
+            and os.path.isabs(anchor)
+            and not os.path.lexists(anchor)
+        ]
+        kept = os.path.expanduser(KEPT)
+        if not gone and not os.path.isdir(kept):
+            return
+        os.makedirs(kept, mode=0o700, exist_ok=True)
+        with inode_lock(os.path.join(kept, KEPT_LOCK), wait=False) as held:
+            if not held:
+                return
+            for marker in set(os.listdir(kept)) - {row[0] for row in rows} - {KEPT_LOCK}:
+                os.unlink(os.path.join(kept, marker))
+            for volume in gone:
+                if os.path.lexists(os.path.join(kept, volume)):
+                    continue
+                try:
+                    self.broker.workspace_rm(volume)
+                except BrokerError as error:
+                    if error.code == "workspace_dirty":
+                        save(os.path.join(kept, volume), "")
+                    LOG.warning("docker workspace %s kept: %s", volume, error.message)
+                except SessionError as error:
+                    LOG.warning("docker workspace %s kept: %s", volume, error)
 
     def _sweep_row(self, row: Row) -> None:
         path = _state_file(row.name)
