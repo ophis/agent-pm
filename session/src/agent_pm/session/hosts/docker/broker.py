@@ -137,7 +137,6 @@ class Broker:
         self.runner = runner
 
     def _run(self, command: str, *args: str) -> dict:
-        """The success object of `<BROKER> <command> <args>`; BrokerError, else SessionError."""
         try:
             res = self.runner(
                 [BROKER, command, *args],
@@ -161,7 +160,6 @@ class Broker:
             raise SessionError(f"broker: bad response to {command}: {why}") from None
 
     def version(self) -> None:
-        """Requires protocol PROTOCOL; SessionError naming BROKER and INSTALL otherwise."""
         found = self._parsed("version", lambda d: set(d) == {"protocol_version"})
         if found["protocol_version"] != PROTOCOL:
             raise SessionError(
