@@ -29,7 +29,7 @@ type Host struct {
 	Same     func(a, b string) bool
 	Docker   docker.Runner
 	Creds    Credentials
-	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress
+	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
 }
 
 // NewHost wires the real filesystem; tests build Host with fakes.

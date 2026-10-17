@@ -24,7 +24,7 @@ const usage = "usage: agent-pm-broker version | login claude | build --agent-pm 
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 
-// step runs a command; progress is the broker's stderr, for build's Docker progress.
+// step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
 type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 
 type app struct {
@@ -135,8 +135,8 @@ func system() app {
 		build: func(ctx context.Context, pkg string, progress io.Writer) (any, error) {
 			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg) })
 		},
-		start: func(ctx context.Context, manifest string, _ io.Writer) (any, error) {
-			return withHost(nil, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
+		start: func(ctx context.Context, manifest string, progress io.Writer) (any, error) {
+			return withHost(progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
