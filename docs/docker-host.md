@@ -170,10 +170,31 @@ other than Claude, role runs (a cwd under `~/.agent-pm`), detached sessions, and
 while a container of that name still exists. The broker's Refusals above apply too, and
 Session checks the same cwd rules first.
 
+Every start first runs a preflight: the client is Claude, the cwd exists and passes the
+mount rules, the broker answers `version` with the expected protocol (else it points to
+[Install](#install)), and `build` succeeds. `resume` runs it before it touches anything;
+`restart` closes the running container first, so a failed preflight leaves the worker
+closed and `resume` continues it once fixed. A missing setup-token surfaces at the
+broker's `start`, still before any container: the start fails with the broker's own
+`agent-pm-broker login claude` message and is not retried.
+
+Just before the broker's `start`, each generation freezes its plan in
+`<generation>.plan.json` and prints it to the starting command's stderr, one line each:
+
+```text
+docker plan NAME GENERATION: image agent-pm-worker:<key> sha256:<digest>
+docker plan NAME GENERATION: mounts <cwd> rw, <claude dir> rw
+docker plan NAME GENERATION: credential claude-setup-token
+```
+
+The plan is for you to check against `docker inspect`; it holds no env values, flags or
+token, and the broker reads only the manifest.
+
 `~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
 start, kept by restart and resume), each generation's start manifest
-(`<generation>.json`) and result (`<generation>.result.json`: container, image and
-digest, client versions, update result, and when the broker's start began and ended),
+(`<generation>.json`), plan (`<generation>.plan.json`, above) and result
+(`<generation>.result.json`: container, image and digest, client versions, update
+result, and when the broker's start began and ended),
 `host.json` (what the host knows of the session) and the hook supervisor's
 `supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
 

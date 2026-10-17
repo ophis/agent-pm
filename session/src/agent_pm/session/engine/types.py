@@ -153,13 +153,15 @@ class HookCallback:
 
 @dataclass(frozen=True)
 class ClientHome:
-    """A client's per-session state dir that a Host may give it: `field`, its name in the Host's
-    records; `dir`, the dir's last path part; `env`, the variable that points the client at it.
+    """What a container Host needs to run a client: its per-session state dir (`field`, its name in
+    the Host's records; `dir`, the dir's last path part; `env`, the variable that points the client
+    at it) and `credential`, the kind of credential the Host injects for it.
     """
 
     field: str
     dir: str
     env: str
+    credential: str
 
 
 @dataclass(frozen=True)

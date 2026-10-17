@@ -171,8 +171,8 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def build(self, package: str) -> str:
-        """The image tag built for `package`."""
+    def build(self, package: str) -> tuple[str, str]:
+        """`package`'s image tag and digest."""
         found = self._parsed(
             "build",
             lambda d: (
@@ -184,7 +184,7 @@ class Broker:
             "--agent-pm",
             package,
         )
-        return found["image"]
+        return found["image"], found["digest"]
 
     def start(self, manifest: str, *, clients: frozenset[str]) -> Started:
         """`clients`: the client names the protocol requires in the response."""

@@ -3,6 +3,7 @@ record, listing, close and show, over a fake docker CLI, a fake broker and a rec
 """
 
 import fcntl
+import io
 import json
 import os
 import signal
@@ -39,7 +40,8 @@ GEN = "0123456789abcdef0123456789abcdef"
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
-HOME = ClientHome("agent_dir", "agent", "AGENT_HOME")
+DIGEST = "sha256:" + "c" * 64
+HOME = ClientHome("agent_dir", "agent", "AGENT_HOME", "agent-token")
 RECORD = Record(
     1,
     "agent",
@@ -98,15 +100,22 @@ class FakeDocker:
 
 
 class FakeBroker:
+    """`failing`: {command: the error it raises}."""
+
     def __init__(self, order, started):
         self.order, self.started, self.error, self.closed = order, started, None, []
+        self.failing = {}
 
     def version(self):
         self.order.append("version")
+        if "version" in self.failing:
+            raise self.failing["version"]
 
     def build(self, package):
         self.order.append(("build", package))
-        return IMAGE
+        if "build" in self.failing:
+            raise self.failing["build"]
+        return IMAGE, DIGEST
 
     def start(self, manifest, *, clients):
         self.order.append(("start", manifest, clients))
@@ -245,6 +254,7 @@ class StartTest(Base):
         "home_field": "agent_dir",
         "home_dir": "agent",
         "resume": "0",
+        "credential": "agent-token",
     }
 
     def setUp(self):
@@ -477,6 +487,66 @@ class StartTest(Base):
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
 
+    def test_each_start_freezes_its_plan_before_the_broker_start(self):
+        self.launch = replace(self.launch, env={**self.launch.env, "TOKEN": "sk-secret"})
+        plan = os.path.join(self.state, f"{GEN}.plan.json")
+        for resume in ("0", "1"):
+            with self.subTest(resume=resume):
+                if resume == "1":
+                    self.history()
+                    os.remove(plan)
+                self.broker.error = BrokerError(5, "login_required", "log in", "not_needed", None)
+                with (
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                    self.assertRaises(BrokerError),
+                ):
+                    self.start(resume=resume)
+                with open(plan) as f:
+                    text = f.read()
+                self.assertEqual(
+                    json.loads(text),
+                    {
+                        "name": "w",
+                        "generation": GEN,
+                        "image": IMAGE,
+                        "image_digest": DIGEST,
+                        "mounts": [
+                            {"path": self.cwd, "rw": True},
+                            {"path": self.home_dir, "rw": True},
+                        ],
+                        "credential": "agent-token",
+                    },
+                )
+                head = f"docker plan w {GEN}:"
+                self.assertEqual(
+                    stderr.getvalue().splitlines(),
+                    [
+                        f"{head} image {IMAGE} {DIGEST}",
+                        f"{head} mounts {self.cwd} rw, {self.home_dir} rw",
+                        f"{head} credential agent-token",
+                    ],
+                )
+                for absent in ("sk-secret", "--flag", "approval"):
+                    self.assertNotIn(absent, text + stderr.getvalue())
+                self.assertFalse(plan.startswith(self.home_dir + os.sep))
+
+    def test_a_plan_write_failure_starts_nothing(self):
+        os.makedirs(os.path.join(self.state, f"{GEN}.plan.json", "taken"))
+        with self.assertRaisesRegex(SessionError, "docker session w: plan: "):
+            self.start()
+        self.assertFalse(any(isinstance(step, tuple) and step[0] == "start" for step in self.order))
+
+    def test_bad_plan_metadata_is_refused_untouched(self):
+        for changes, pattern in (
+            ({"credential": None}, "no client home"),
+            ({"credential": ""}, "no client home"),
+        ):
+            with self.subTest(changes=changes):
+                self.order.clear()
+                with self.assertRaisesRegex(SessionError, f"docker session w: {pattern}"):
+                    self.start(**changes)
+                self.assertEqual(self.order, [])
+
     def test_a_result_write_failure_rolls_back(self):
         os.makedirs(os.path.join(self.state, f"{GEN}.result.json", "taken"))
         with self.assertRaisesRegex(SessionError, "docker session w: "):
@@ -539,6 +609,8 @@ class StartTest(Base):
         with self.assertRaisesRegex(SessionError, "broker: log in first"):
             self.start()
         self.assertEqual(self.broker.closed, [])
+        self.assertEqual(sum(isinstance(s, tuple) and s[0] == "start" for s in self.order), 1)
+        self.popen_mock.assert_not_called()
 
     def test_no_client_home_is_refused(self):
         with self.assertRaisesRegex(SessionError, "no client home"):
@@ -547,6 +619,37 @@ class StartTest(Base):
     def test_detach_is_refused(self):
         with self.assertRaisesRegex(SessionError, "only terminal sessions"):
             self.host.detach("w", self.launch)
+
+
+class PreflightTest(Base):
+    def validate(self):
+        self.host.validate("w", Launch(("agent",), cwd=self.cwd, env={}))
+
+    def test_preflight_runs_version_then_build_and_writes_nothing(self):
+        self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_a_failed_handshake_stops_before_build(self):
+        self.broker.failing["version"] = SessionError("broker: protocol '1', want '2'")
+        with self.assertRaisesRegex(SessionError, "protocol '1', want '2'"):
+            self.validate()
+        self.assertEqual(self.order, ["version"])
+
+    def test_a_failed_build_stops_before_any_file(self):
+        self.broker.failing["build"] = BrokerError(
+            8, "build_failed", "no image", "not_needed", None
+        )
+        with self.assertRaisesRegex(SessionError, "broker: no image"):
+            self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_a_missing_cwd_is_refused_before_the_broker(self):
+        self.cwd = os.path.join(self.account, "src", "gone")
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.cwd}: no such directory"):
+            self.validate()
+        self.assertEqual(self.order, [])
 
 
 class TerminalTest(Base):

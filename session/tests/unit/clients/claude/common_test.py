@@ -14,6 +14,7 @@ from functools import partial
 from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
+from agent_pm.session.clients.claude.common import HOME
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -76,6 +77,11 @@ class ModelEffortTest(Base):
         self.refused(
             lambda: self.launch(effort="high"), "no effort for 'high' in [clients.claude].efforts"
         )
+
+
+class HomeTest(Case):
+    def test_the_credential_kind_a_container_host_injects(self):
+        self.assertEqual(HOME.credential, "claude-setup-token")
 
 
 class SettingSourcesTest(Base):

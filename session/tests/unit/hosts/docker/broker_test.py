@@ -98,7 +98,7 @@ class ResponseTest(Case):
     def test_parsed_successes(self):
         self.assertEqual(
             Broker(FakeBroker(success("build-cached.json"))).build("/opt/agent-pm"),
-            data("build-cached.json")["image"],
+            (data("build-cached.json")["image"], data("build-cached.json")["digest"]),
         )
         started = Broker(FakeBroker(success("start-output.json"))).start(MANIFEST, clients=KEYS)
         self.assertEqual(
