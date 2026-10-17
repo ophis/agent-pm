@@ -109,12 +109,12 @@ class Names(Case):
             self.assertTrue(os.path.isfile(path), path)
         self.assertTrue(os.access(os.path.join(SKILLS, "manage", "scripts", "ctmux"), os.X_OK))
 
-    def test_the_grid_keys_it_names_are_the_tmux_hosts(self):
+    def test_the_grid_keys_it_names_are_the_viewers(self):
         [config] = {p for p in paths("manage") if p.endswith("config.toml")}
         with open(config, "rb") as f:
-            tmux = tomllib.load(f)["hosts"]["tmux"]
+            viewer = tomllib.load(f)["viewer"]
         for key in ("workers_per_column", "grid_retile"):
-            self.assertIn(key, tmux)
+            self.assertIn(key, viewer)
             self.assertIn(f"`{key}`", body("manage"))
 
     def test_only_the_commander_has_it_as_the_session_config_turns_it_off(self):

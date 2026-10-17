@@ -15,9 +15,10 @@ import uuid
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.session import Access, Host, Mode, NotShowable, SessionError, Showable, Spec
+from agent_pm.session import Access, Host, Mode, NotShowable, SessionError, Spec, Viewer
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
+from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record
 
 from session.tests import fake_client
@@ -273,11 +274,12 @@ class HostContract:
     def test_a_foreign_display_is_kept_and_listed_only_under_itself(self):
         name = self.fresh()
         self.start("detach", name, SLEEP, display=OTHER_DISPLAY)
-        self.assertIn(name, self.host.list(OTHER_DISPLAY))
+        viewer = Viewer()
+        self.assertIn(name, displays.names(viewer, self.host, OTHER_DISPLAY))
         self.assertEqual(self.host.attach(name).display(), OTHER_DISPLAY)
         for display in ("other", ""):
             with self.subTest(display=display):
-                self.assertNotIn(name, self.host.list(display))
+                self.assertNotIn(name, displays.names(viewer, self.host, display))
 
     def test_list_without_a_display_names_every_session_sorted(self):
         first, second = self.fresh(), self.fresh()
@@ -418,15 +420,23 @@ class HostContract:
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "from afar", f"line in {out}")
 
+    def test_an_unattachable_host_names_no_attach_target(self):
+        if self.host.attachable:
+            self.skipTest("applies only to a Host that cannot show")
+        name = self.fresh()
+        self.assertIsNone(self.host.attach_target(name))
+        self.start("detach", name, SLEEP)
+        self.assertIsNone(self.host.attach_target(name))
+
     def test_a_host_that_cannot_show_returns_each_display_as_given(self):
-        if isinstance(self.host, Showable):
+        if self.host.attachable:
             self.skipTest("applies only to a Host that cannot show")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
-                self.assertEqual(self.host.display(value), value)
+                self.assertEqual(displays.display(Viewer(), value, self.host), value)
 
     def test_a_session_on_a_host_that_cannot_show_refuses_show_attach_command_and_screen(self):
-        if isinstance(self.host, Showable):
+        if self.host.attachable:
             self.skipTest("applies only to a Host that cannot show")
         scenario, kind = self.file("scenario"), type(self.host)
         with open(scenario, "w", encoding="utf-8") as f:

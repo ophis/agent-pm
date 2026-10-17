@@ -23,6 +23,7 @@ from agent_pm.session import (
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
+from agent_pm.session.modes.tui import TuiStore
 from agent_pm.utils import Record, Status, StatusState, file_lock
 
 from session.tests.case import Case
@@ -80,6 +81,9 @@ class Base(Case):
         self.host.reclaim.return_value = None
         self.session_cls = mock.Mock()
         self.session_cls.host.return_value = self.host
+        self.session_cls.retire.side_effect = lambda name, **_: TuiStore.attach(
+            name, host=self.host
+        ).close()
         self.session = self.session_cls.start.return_value
         self.session.showable = False
         self.session.opening_pending = None
@@ -626,6 +630,7 @@ class ResumeTest(Base):
         )
         self.assertFalse(os.path.lexists(self.tui))
         self.handle.wait_exit.assert_called_once_with(worker.WAIT)
+        self.session_cls.retire.assert_called_once_with("w1", host=state().host)
         spec = self.session_cls.start.call_args.args[0]
         self.assertEqual((spec.prompt, spec.resume, spec.sid), ("", True, SID))
 

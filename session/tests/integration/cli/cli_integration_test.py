@@ -11,6 +11,7 @@ import re
 import shlex
 
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.viewer import display as displays
 
 from session.tests.case import REPO
 from session.tests.cli_support import MANAGER, CliCase
@@ -101,7 +102,7 @@ class HelpTest(SessionCliCase):
         self.assertEqual(result.stderr, "")
         self.assertTrue(result.stdout.startswith(f"usage: {PROG} [-h] COMMAND ..."), result.stdout)
         self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
-        tmux = TmuxHost("tmux").display_help()
+        tmux = displays.display_help(TmuxHost("tmux"))
         self.assertTrue(tmux)
         self.assertTrue(
             result.stdout.endswith(
@@ -113,7 +114,7 @@ class HelpTest(SessionCliCase):
     def test_help_gives_a_second_configured_hosts_display_line_too(self):
         self.fake_host()
         result = self.ok(self.session("--help", cwd=self.elsewhere(), module=True))
-        tmux = TmuxHost("tmux").display_help()
+        tmux = displays.display_help(TmuxHost("tmux"))
         self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
         self.assertTrue(
             result.stdout.endswith(
@@ -223,8 +224,12 @@ class ConfigTest(SessionCliCase):
             ),
             ('[session.hosts.tmux]\nstatus_line = "yes"\n', "status_line: want true or false"),
             (
-                '[session.hosts.tmux]\ngrid_retile = "never"\n',
+                '[session.viewer]\ngrid_retile = "never"\n',
                 "grid_retile: want one of all, open-close, off",
+            ),
+            (
+                "[session.hosts.tmux]\nworkers_per_column = 2\n",
+                "unknown key 'workers_per_column' in [hosts.tmux]",
             ),
             (
                 "[session.hosts.tmux]\nno_such_key = 2\n",

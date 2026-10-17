@@ -1,5 +1,5 @@
-"""Host, where processes live, keeping each one's Record and Display; Showable, a Host that shows
-them.
+"""Host, where processes live, keeping each one's Record and Display; an attachable one names the
+attach target the Viewer shows a session through.
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ import os
 import signal
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from typing import ClassVar
 
 from agent_pm.session.engine.types import (
     ClientHome,
@@ -25,6 +26,7 @@ from agent_pm.session.engine.types import (
     StatusState,
     TuiSettings,
 )
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import (
     CLASS_PATH,
     CONFIG_NAME,
@@ -89,9 +91,6 @@ class Process(ABC):
     def activity(self) -> StatusState | None:
         return None
 
-    def hidden(self) -> bool:
-        return False
-
     def screen(self, lines: int | None = None) -> str:
         raise NotShowable(f"session {self.name}: its host cannot show")
 
@@ -111,11 +110,10 @@ class Process(ABC):
         try:
             alive = liveness == Liveness.LIVE and self.alive()
             state = (self.activity() or StatusState.WORKING) if alive else StatusState.DEAD
-            hidden = self.hidden()
         except SessionError:
             return unknown
         return Status(
-            name=self.name, alive=alive, state=state, outcome=None, attach=None, hidden=hidden
+            name=self.name, alive=alive, state=state, outcome=None, attach=None, hidden=False
         )
 
     def mark(self, word: StatusState, events: str | None) -> None:
@@ -165,9 +163,11 @@ def check_sid(name: str, process: Process | None, sid: str | None) -> None:
 class Host(ABC):
     """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
     on exit, events gets `exited <rc>` / `dead`.
-    attach: a Process, unknown → SessionError. list: sorted display
-    matches ("" none). display: completed in the caller's process.
+    attach: a Process, unknown → SessionError. list: its sessions' names, sorted. A display is kept
+    as given; the Viewer reads it.
     """
+
+    attachable: ClassVar[bool] = False
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name
@@ -229,18 +229,18 @@ class Host(ABC):
     def attach(self, name: str) -> Process: ...
 
     @abstractmethod
-    def list(self, display: Display = None) -> list[str]: ...
+    def list(self) -> list[str]: ...
 
-    def rows(self, display: Display = None) -> list[SessionRow]:
-        return [self.attach(name).row() for name in self.list(display)]
+    def rows(self) -> list[SessionRow]:
+        return [self.attach(name).row() for name in self.list()]
+
+    def attach_target(self, name: str) -> SessionView | CommandView | None:
+        """What the Viewer shows session `name` through; None unless attachable."""
+        return None
 
     def reclaim(self, token: str) -> Process | None:
         """An untrusted token's live process group, else None."""
         return None
-
-    def descendants(self, display: Display = None) -> list[str]:
-        """list(display) and, transitively, those they opened."""
-        return self.list(display)
 
     def events_path(self, events: str | None) -> str | None:
         return None if events is None else os.path.abspath(events)
@@ -271,44 +271,8 @@ class Host(ABC):
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()
 
-    def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
-        self.validate_display(display)
+    def validate(self, name: str, launch: Launch) -> None:
         if not launch.argv:
             raise ConfigError("no command")
         if not printable_abs(launch.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {launch.cwd!r:.80}")
-
-    def validate_display(self, value: Display) -> None:
-        if value is not None and not isinstance(value, str):
-            raise ConfigError(f"display {value!r:.80}: want text")
-
-    def display(self, value: Display) -> Display:
-        self.validate_display(value)
-        return value
-
-    def display_help(self) -> str:
-        return ""
-
-
-class Showable(ABC):
-    """show: None once shown, else an attach command; command: a shell command the Host runs
-    instead, `{{session}}` the session name; hide: undoes show, hidden until a show (if_closed:
-    only once closed by hand); layout: display completed once its destination is found.
-    """
-
-    @abstractmethod
-    def show(
-        self, name: str, *, display: Display = None, command: str | None = None
-    ) -> str | None: ...
-
-    @abstractmethod
-    def hide(self, name: str, *, if_closed: bool = False) -> None: ...
-
-    @abstractmethod
-    def attach_command(self, name: str) -> str: ...
-
-    @abstractmethod
-    def layout(self, *, display: Display = None) -> str | None: ...
-
-    @abstractmethod
-    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None: ...

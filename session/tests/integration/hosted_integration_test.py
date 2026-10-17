@@ -108,7 +108,6 @@ class DisplayTest(Live):
             with self.subTest(name=name):
                 self.assertEqual(self.server.option(name, "@display"), display)
                 self.assertEqual(host.attach(name).display(), display)
-                self.assertEqual(host.list(display), [name])
                 self.assertEqual([row.name for row in configured.list(display=display)], [name])
 
 

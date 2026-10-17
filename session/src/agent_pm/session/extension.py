@@ -41,7 +41,8 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import Host, Interactive, InteractiveProcess, Process, Showable
+from agent_pm.session.hosts.base import Host, Interactive, InteractiveProcess, Process
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.session.modes.client_adapters.headless import Headless, JsonHeadless
 from agent_pm.session.modes.client_adapters.in_process import InProcess
 from agent_pm.session.modes.client_adapters.tui import Tui
@@ -54,7 +55,8 @@ __all__ = [
     "Tui",
     "InProcess",
     "Host",
-    "Showable",
+    "SessionView",
+    "CommandView",
     "Process",
     "Interactive",
     "InteractiveProcess",

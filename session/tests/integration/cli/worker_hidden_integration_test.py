@@ -60,7 +60,7 @@ class HiddenStartTest(HiddenCase):
         record = self.record(self.start("w1", "--display", "none"))
         self.assertEqual(record.display, f"{MANAGER}///hidden")
         self.assertEqual((self.count(), self.viewer()), (before, ""))
-        self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
+        self.assertEqual(self.server.option("w1", "@opener"), "")
         self.assertTrue(self.hidden())
         listed = self.ok(self.session("ls", "--here", "--records")).stdout.splitlines()
         self.assertIn(record, [Record.parse(line) for line in listed])

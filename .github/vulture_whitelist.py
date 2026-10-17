@@ -11,7 +11,7 @@ from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
-from agent_pm.session.hosts.tmux.types import Split
+from agent_pm.session.viewer.types import Split
 from agent_pm.utils import LayerCommand, OutcomeStatus
 
 # team/tools/html_check.py's checker overrides these HTMLParser callbacks.

@@ -1,9 +1,9 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
 (engine/hosted_session.py, modes/), runs agent sessions through each Client (clients/)
-on a Host (hosts/); `__all__` is its API for Session users.
+on a Host (hosts/); the Viewer (viewer/) shows them. `__all__` is its API for Session users.
 """
 
-from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.base import Session, hosted_viewer
 from agent_pm.session.engine.config import CONFIG_RESOURCES
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.status_log import SessionStatusLog
@@ -31,7 +31,8 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import SIGNALS, Host, Process, Showable
+from agent_pm.session.hosts.base import SIGNALS, Host, Process
+from agent_pm.session.viewer.viewer import Viewer
 
 __all__ = [
     "CONFIG_RESOURCES",
@@ -48,7 +49,8 @@ __all__ = [
     "RunLog",
     "Host",
     "Process",
-    "Showable",
+    "Viewer",
+    "get_viewer",
     "NotShowable",
     "NoRecordedSession",
     "SessionStatusLog",
@@ -65,3 +67,8 @@ __all__ = [
     "SessionError",
     "ConfigError",
 ]
+
+
+def get_viewer() -> Viewer:
+    """The Viewer Session.configure_from built from [viewer]."""
+    return hosted_viewer()

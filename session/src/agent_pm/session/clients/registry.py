@@ -23,12 +23,18 @@ PACKAGE = "agent_pm.session"
 
 
 def settings(config: Mapping, *, hosts: Hosts | None = None) -> dict:
-    """A read session config's [clients], and its [hosts] parsed once (`hosts`: parsed already)."""
+    """A read session config's [clients] and [viewer], and its [hosts] parsed once (`hosts`: parsed
+    already).
+    """
     if not isinstance(config, Mapping):
         raise ConfigError("session config: want a table")
     if hosts is None:
         hosts = Host.parse_hosts(config.get("hosts"))
-    return {"clients": config.get("clients", {}), "hosts": hosts}
+    return {
+        "clients": config.get("clients", {}),
+        "hosts": hosts,
+        "viewer": config.get("viewer", {}),
+    }
 
 
 class Registry:

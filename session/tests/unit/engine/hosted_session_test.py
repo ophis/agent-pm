@@ -55,12 +55,13 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
+from agent_pm.session.viewer import hidden as hidden_store
 from agent_pm.utils import Record, StatusState, inode_lock, load_class
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
 from session.tests.fakes.host import FakeHost
-from session.tests.fakes.terminal import MemoryHost, ScreenHost
+from session.tests.fakes.terminal import MemoryHost, MemoryViewer, ScreenHost
 from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
@@ -370,7 +371,7 @@ class HostTest(Case):
             built.append((cls, name, settings))
             return cls(name, settings)
 
-        tables = {"tmux": {**HOSTS["tmux"], "workers_per_column": 2}, **FAKE_HOSTS}
+        tables = {"tmux": {**HOSTS["tmux"], "status_line": True}, **FAKE_HOSTS}
         configured = HostedSession.configured(
             clients={}, hosts=parsed(tables, "tmux"), host_factory=factory
         )
@@ -380,11 +381,30 @@ class HostTest(Case):
         self.assertIsInstance(configured.host("fake"), FakeHost)
         self.assertEqual(
             [(cls, name, settings) for cls, name, settings in built],
-            [(TmuxHost, "tmux", {"workers_per_column": 2}), (FakeHost, "fake", {})],
+            [(TmuxHost, "tmux", {"status_line": True}), (FakeHost, "fake", {})],
         )
-        self.assertEqual((default.name, default.settings), ("tmux", {"workers_per_column": 2}))
+        self.assertEqual((default.name, default.settings), ("tmux", {"status_line": True}))
         other = HostedSession.configured(clients={}, hosts=parsed(tables, "tmux"))
         self.assertIsNot(other.host(), default)
+
+    def test_the_viewer_built_once_per_class_from_its_viewer_table(self):
+        built = []
+
+        def factory(settings):
+            built.append(settings)
+            return mock.sentinel.viewer
+
+        configured = HostedSession.configured(
+            clients={},
+            hosts=parsed(HOSTS, "tmux"),
+            viewer={"grid_retile": "off"},
+            viewer_factory=factory,
+        )
+        self.assertIs(configured.viewer(), mock.sentinel.viewer)
+        self.assertIs(configured.viewer(), mock.sentinel.viewer)
+        self.assertEqual(built, [{"grid_retile": "off"}])
+        with self.assertRaisesRegex(ConfigError, r"^\[viewer\]: want a table$"):
+            HostedSession.configured(clients={}, hosts=parsed(HOSTS, "tmux"), viewer=[])
 
     def test_each_built_host_gets_its_own_settings_copy(self):
         hosts = parsed({"fake": {**FAKE_HOSTS["fake"], "sizes": [1]}}, "fake")
@@ -502,23 +522,22 @@ class ClassRootsTest(Case):
 
 class DisplayTest(HostedTuiBase):
     def test_a_non_tmux_host_accepts_an_opaque_display_ending_in_semicolon(self):
+        self.enterContext(mock.patch.object(ScreenHost, "attachable", new=False))
         self.assertEqual(self.session.display("opaque;"), "opaque;")
         session = self.tui(name="w1", display="opaque;")
         self.assertEqual(self.host.calls.terminal.call_args.kwargs["display"], "opaque;")
         self.assertEqual(session.name, "w1")
 
-    def test_display_is_completed_by_its_host(self):
+    def test_display_is_completed_by_the_viewer_for_its_host(self):
+        self.session.viewer().placement.opener.return_value = "mgr"
         for value, completed in (
             ("/below", "mgr/below"),
             (None, "mgr"),
+            ("other/right", "other/right"),
             ("foreign value", "foreign value"),
         ):
-            self.host.calls.display.return_value = completed
             self.assertEqual(self.session.display(value, host="tmux"), completed)
-        self.assertEqual(
-            self.host.calls.display.call_args_list,
-            [mock.call("/below"), mock.call(None), mock.call("foreign value")],
-        )
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_a_display_not_printable_or_ending_in_a_semicolon_is_refused(self):
         transport = fake_tmux(self)
@@ -548,9 +567,11 @@ class DisplayTest(HostedTuiBase):
         self.assertFalse(os.path.lexists(self.root))
 
     def test_layout_is_the_default_hosts_completed_display(self):
-        self.host.calls.layout.return_value = "mgr/below"
+        placement = self.session.viewer().placement
+        placement.opener.return_value = "mgr"
         self.assertEqual(self.session.layout(display="/below"), "mgr/below")
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.layout(display="/below")])
+        placement.anchor.assert_called_once_with(None)
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_layout_without_a_showable_default_host_is_none(self):
         configured = HostedSession.configured(clients={}, hosts=parsed(FAKE_HOSTS, "fake"))
@@ -1233,11 +1254,14 @@ class WritableDirsTest(Base):
 
 
 class ListTest(HostedTuiBase):
-    def test_a_row_per_listed_session_in_its_order(self):
+    def test_a_row_per_listed_session_in_its_order_shown_where_the_viewer_placed_it(self):
+        self.session.viewer()._tmux.listing.side_effect = lambda _match=None, *, views=False: (
+            [] if views else [{"name": "w2", "shown": "shown"}]
+        )
         first = self.host.create("w2", SID)
         second = self.host.create("w1", "other")
         first.calls.row.return_value = SessionRow(
-            "w2", SID, "fake", StatusState.DONE, None, "shown", "bye", own=False
+            "w2", SID, "fake", StatusState.DONE, None, None, "bye", own=False
         )
         second.calls.row.return_value = SessionRow(
             "w1",
@@ -1249,8 +1273,10 @@ class ListTest(HostedTuiBase):
             None,
             own=False,
         )
-        self.assertEqual(self.session.list(), [second.row(), first.row()])
-        self.host.calls.list.assert_called_once_with(None)
+        self.assertEqual(
+            self.session.list(), [second.row(), dataclasses.replace(first.row(), shown="shown")]
+        )
+        self.host.calls.list.assert_called_once_with()
 
     def test_display_keeps_the_sessions_stored_with_it_and_empty_none(self):
         for name, display in (("w1", "mgr/below"), ("w2", "mgr"), ("w3", None)):
@@ -1269,7 +1295,9 @@ class ListTest(HostedTuiBase):
                     None,
                 ),
             )
-        self.assertEqual([r.name for r in self.session.list(display="mgr/below")], ["w1"])
+        self.assertEqual([r.name for r in self.session.list(display="mgr/below")], ["w1", "w2"])
+        with mock.patch.object(ScreenHost, "attachable", new=False):
+            self.assertEqual([r.name for r in self.session.list(display="mgr/below")], ["w1"])
         self.assertEqual([r.name for r in self.session.list(display=None)], ["w1", "w2", "w3"])
         self.host.calls.reset_mock()
         self.assertEqual(self.session.list(display=""), [])
@@ -1279,11 +1307,11 @@ class ListTest(HostedTuiBase):
         for name in ("w1", "w12", "xw1", "w1x"):
             self.host.create(name)
         self.assertEqual([r.name for r in self.session.list(r"w[0-9]+")], ["w1", "w12"])
-        self.host.calls.list.assert_called_once_with(None)
+        self.host.calls.list.assert_called_once_with()
 
     def test_no_server_is_no_rows_without_reading_tmux_pane(self):
         self.assertEqual(self.session.list(), [])
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None)])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list()])
 
     def test_a_non_str_or_invalid_match_is_refused(self):
         for bad, message in (
@@ -1459,12 +1487,14 @@ class TuiStartTest(HostedTuiBase):
             ],
         )
 
-    def test_hide_asks_its_host_and_status_reports_the_hosts_hidden_flag(self):
-        session = self.tui(name="w1")
+    def test_hide_asks_the_viewer_and_status_reports_the_hidden_store(self):
+        session = self.tui(name="w1", sid=SID)
         session.hide()
         self.host.calls.hide.assert_called_once_with("w1")
+        sid = self.host.processes["w1"].session_identity()[0]
+        self.assertIsNotNone(sid)
         for flag in (True, False):
-            self.host.processes["w1"].calls.hidden.return_value = flag
+            hidden_store.write("w1", sid, hidden=flag, live=None)
             self.assertEqual(session.status().hidden, flag)
 
     def test_its_record_is_its_hosts(self):
@@ -1479,8 +1509,39 @@ class TuiStartTest(HostedTuiBase):
         self.host.calls.reset_mock()
         session.close()
         terminal.calls.close.assert_called_once_with()
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach("w1")])
+        self.assertEqual(
+            self.host.calls.mock_calls,
+            [mock.call.list(), mock.call.attach("w1"), mock.call.close_view("w1")],
+        )
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+    def test_a_start_with_display_none_is_hidden_after_any_leftover_view_closes(self):
+        session = self.tui(name="w1", sid=SID, display="none")
+        self.assertIn(mock.call.close_view("w1"), self.host.calls.mock_calls)
+        self.assertTrue(session.status().hidden)
+        self.assertFalse(self.tui(name="w2", sid="other").status().hidden)
+
+    def test_a_bad_viewer_table_refuses_preflight_and_start_before_launch(self):
+        refused = ConfigError("grid_retile: want one of all, open-close, off")
+        self.session_dependencies["viewer_factory"] = mock.Mock(side_effect=refused)
+        self.configure(tui=True)
+        for call in (
+            lambda: self.session.preflight(self.spec(client="fake", mode=Mode.TUI)),
+            lambda: self.tui(name="w1"),
+        ):
+            with self.assertRaises(ConfigError) as caught:
+                call()
+            self.assertIs(caught.exception, refused)
+        self.host.calls.terminal.assert_not_called()
+
+    def test_a_failed_started_mark_closes_the_session_it_started(self):
+        store = os.path.join(self.agent_pm, "hidden")
+        os.makedirs(store, 0o500)
+        self.addCleanup(os.chmod, store, 0o700)
+        with self.assertRaisesRegex(SessionError, "^tui session w1: hidden state: "):
+            self.tui(name="w1", sid=SID, display="none")
+        self.host.calls.terminal.assert_called_once()
+        self.assertNotIn("w1", self.host.processes)
 
     def test_a_session_keeps_its_client_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)
@@ -1561,7 +1622,7 @@ class AttachTest(HostedTuiBase):
         )
         self.assertEqual(
             self.host.calls.mock_calls,
-            [mock.call.list(None), mock.call.attach("w1")],
+            [mock.call.list(), mock.call.attach("w1")],
         )
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(
@@ -1763,6 +1824,7 @@ class MultipleHostsTest(HostedTuiBase):
             hosts=parsed(tables, "tmux"),
             class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
+            viewer_factory=MemoryViewer,
         )
 
     def test_start_and_attach_use_the_named_host(self):
@@ -1776,7 +1838,7 @@ class MultipleHostsTest(HostedTuiBase):
         with self.assertRaises(SessionError):
             self.session.attach("w1")
 
-    def test_list_combines_all_hosts_sorted_and_passes_the_display_unchanged(self):
+    def test_list_combines_all_hosts_sorted_and_matches_the_display_on_each(self):
         for host, name, display in (
             (self.host, "z1", "elsewhere:1.2"),
             (self.other, "a1", "elsewhere:1.2"),
@@ -1802,8 +1864,6 @@ class MultipleHostsTest(HostedTuiBase):
             [row.name for row in self.session.list(display="elsewhere:1.2")], ["a1", "z1"]
         )
         self.assertEqual([row.name for row in self.session.list(r"a.*")], ["a1"])
-        for host in self.hosts.values():
-            self.assertIn(mock.call("elsewhere:1.2"), host.calls.list.call_args_list)
 
     def test_start_refuses_a_name_owned_by_another_configured_host(self):
         self.other.create("w1", SID)
@@ -1875,6 +1935,7 @@ class MultipleHostsTest(HostedTuiBase):
             hosts=Hosts("second", setup.hosts.tables),
             class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
+            viewer_factory=MemoryViewer,
         )
         self.assertIs(self.session.host(), self.other)
         self.assertEqual([row.name for row in self.session.list()], ["w1", "w2"])
@@ -1889,7 +1950,7 @@ class MultipleHostsTest(HostedTuiBase):
             if not release.wait(WAIT):
                 raise AssertionError("first launch was not released")
 
-        def listing(_display):
+        def listing():
             if threading.current_thread() is later and not lookups:
                 lookups.append("second checked first host before its terminal existed")
                 checked.set()
@@ -2095,6 +2156,13 @@ class SessionIdentityTest(HostedTuiBase):
                 self.assertIn(str(actual), str(caught.exception))
                 terminal.calls.close.assert_not_called()
 
+    def test_retire_closes_the_viewers_view_after_the_session(self):
+        self.host.create("plain", sid=SID)
+        self.host.calls.reset_mock()
+        self.session.retire("plain", sid=SID)
+        self.assertNotIn("plain", self.host.processes)
+        self.assertEqual(self.host.calls.mock_calls[-1], mock.call.close_view("plain"))
+
     def test_retire_checks_private_identity_before_closing(self):
         current = self.host.create("plain", sid="replacement")
         with self.assertRaises(SessionError) as caught:
@@ -2134,8 +2202,7 @@ class SessionIdentityTest(HostedTuiBase):
         current.calls.send.assert_not_called()
         current.calls.press.assert_not_called()
         current.calls.close.assert_not_called()
-        self.host.calls.show.assert_not_called()
-        self.host.calls.hide.assert_not_called()
+        self.assertNotIn(mock.call.close_view("w1"), self.host.calls.mock_calls)
         self.assertTrue(current.alive())
         self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
 

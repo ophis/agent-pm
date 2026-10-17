@@ -107,6 +107,7 @@ DIED = "set-option @state dead"
 
 VIEW = "@view"
 VIEWLESS = ["-f", f"#{{==:#{{{VIEW}}},}}"]
+VIEWS = ["-f", f"#{{!=:#{{{VIEW}}},}}"]
 
 
 CLOCK = f'"$(date +{SessionStatusLog.CLOCK})"'
@@ -561,13 +562,14 @@ class TmuxCli:
         found = self._table(["list-sessions", *VIEWLESS, "-F", "#{session_name}"], 1)
         return None if found is None else [name for (name,) in found if name]
 
-    def listing(self, match=None) -> list[dict] | None:
+    def listing(self, match=None, *, views: bool = False) -> list[dict] | None:
         """NAME sessions `match` fullmatches (None: all), by name: tags, pane state, `shown` (no
         client: None; else the newest client's host session, "" if none or not NAME), a dead pane's
         last LAST_LINES lines; bad or empty fields None, wrong-width rows dropped; [] without a
         server, None when tmux fails. Reads @process's pane (gone: dead; bad: dead None), else the active.
+        views: only VIEW sessions, else none.
         """
-        found = self._table(["list-sessions", *VIEWLESS, "-F", LISTING], 9)
+        found = self._table(["list-sessions", *(VIEWS if views else VIEWLESS), "-F", LISTING], 9)
         if found is None:
             return None
         rows = sorted(
@@ -837,26 +839,20 @@ class TmuxCli:
         session: str,
         launch: Launch,
         *,
-        opener: str | None = None,
         display: str | None = None,
         events: str | None = None,
         record: str | None = None,
         sid: str | None = None,
         control: str | None = None,
     ) -> str:
-        """As start, keeping env's iTerm2 $ITERM_SESSION_ID; opener, display, record (a line) become
-        @opener, @display, @record. No decoration; events: a kept pane whose pane-died hook appends
+        """As start, keeping env's iTerm2 $ITERM_SESSION_ID; display, record (a line) become
+        @display, @record. No decoration; events: a kept pane whose pane-died hook appends
         `HH:MM:SS <session> exited <rc>` (signal n: -n) to them, then kills it.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
-        if opener is not None and not OPENER.fullmatch(opener):
-            raise TuiError(
-                f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
-            )
         named = {
             "@kind": "detach",
-            "@opener": opener,
             "@display": display,
             "@record": record,
             "@sid": sid,

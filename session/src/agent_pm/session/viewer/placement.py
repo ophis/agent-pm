@@ -26,7 +26,7 @@ from agent_pm.session.engine.tmux_cli import (
     error,
     session_name,
 )
-from agent_pm.session.hosts.tmux.grid import (
+from agent_pm.session.viewer.grid import (
     GRID_BUSY,
     GRID_PANES,
     GRID_ROW,
@@ -38,11 +38,11 @@ from agent_pm.session.hosts.tmux.grid import (
     validate_per_column,
     validate_retile,
 )
-from agent_pm.session.hosts.tmux.iterm import (
+from agent_pm.session.viewer.iterm import (
     SHOW_TIMEOUT,
     Iterm,
 )
-from agent_pm.session.hosts.tmux.types import (
+from agent_pm.session.viewer.types import (
     Anchor,
     ItermAnchor,
     Retile,

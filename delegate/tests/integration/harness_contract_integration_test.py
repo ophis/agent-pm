@@ -6,19 +6,19 @@ import sys
 
 from agent_pm.delegate import Spec
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.types import Begun
 from agent_pm.session import Exited, NotShowable, Reply
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import (
+    FakeViewer,
     HarnessSession,
     RecordingHost,
     ShowingHost,
     harness_launches,
 )
-from delegate.tests.harness import SID, HarnessCase
+from delegate.tests.harness import SID, HarnessCase, ViewedHarnessDelegate
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
 
@@ -50,7 +50,7 @@ sys.exit(not result.wasSuccessful())
 
 
 class HarnessContract(DelegateContract, HarnessCase):
-    delegate_cls = HarnessDelegate
+    delegate_cls = ViewedHarnessDelegate
     ROLE = "dummy-tester"
     SHOWABLE = False
 
@@ -70,7 +70,7 @@ class HarnessContract(DelegateContract, HarnessCase):
     def make(self, workdir, **kw):
         role = kw.pop("role", self.ROLE)
         spec = Spec("Hello.", workdir, client="fake", mode="tui", **kw)
-        return HarnessDelegate(
+        return ViewedHarnessDelegate(
             role, spec, session_cls=HarnessSession, host="agent", harness_host="harness"
         )
 
@@ -78,7 +78,7 @@ class HarnessContract(DelegateContract, HarnessCase):
         self.stop(record)
 
     def finish(self, record):
-        view = HarnessDelegate.attach(record)
+        view = ViewedHarnessDelegate.attach(record)
         view.close()
         view.run()
         view.close()
@@ -87,7 +87,7 @@ class HarnessContract(DelegateContract, HarnessCase):
         workdir = self.workdir()
         needed = {**DONE, "status": "needs_input", "questions": ["Which answer?"]}
         HarnessSession.script = (Reply(block(needed)), Exited(0))
-        first = HarnessDelegate(
+        first = ViewedHarnessDelegate(
             self.ROLE,
             Spec("Hello.", workdir, sid=SID, client="fake"),
             session_cls=HarnessSession,
@@ -100,7 +100,7 @@ class HarnessContract(DelegateContract, HarnessCase):
         self.assertEqual(seen[0], Begun(SID))
         HarnessSession.script = (Reply(block(DONE)), Exited(0))
         answer = "Continue with option B."
-        continued = HarnessDelegate(
+        continued = ViewedHarnessDelegate(
             self.ROLE,
             Spec(answer, workdir, sid=SID, resume=True, client="fake"),
             session_cls=HarnessSession,
@@ -151,7 +151,7 @@ class Ownership(HarnessCase):
             display="target",
         )
         record = delegate.detach()
-        return record, HarnessDelegate.attach(record)
+        return record, ViewedHarnessDelegate.attach(record)
 
     def test_harness_owns_liveness_and_state_while_agent_owns_display_target(self):
         record, view = self.pair()
@@ -182,7 +182,7 @@ class Ownership(HarnessCase):
     def test_show_reaches_only_the_live_agent(self):
         _, view = self.pair()
         view.show()
-        self.assertEqual(ShowingHost.shown, [(self.metadata()["agent_name"], "target", None)])
+        self.assertEqual(FakeViewer.shown, [(self.metadata()["agent_name"], "target", None)])
 
     def test_hidden_agent_uses_harness_target_and_hidden_pair_has_no_attach(self):
         _, view = self.pair(agent_showable=False)

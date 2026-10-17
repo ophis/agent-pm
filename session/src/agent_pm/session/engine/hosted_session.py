@@ -45,9 +45,11 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.session.hosts.base import Host, Showable
+from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.session.modes.base import BaseMode, child_env
+from agent_pm.session.viewer import display as displays
+from agent_pm.session.viewer.viewer import Viewer
 from agent_pm.utils import (
     STATE,
     Display,
@@ -82,6 +84,7 @@ MODES: dict[Mode, type[BaseMode]] = {
 }
 
 HostFactory = Callable[[type[Host], str, Mapping], Host]
+ViewerFactory = Callable[[Mapping], Viewer]
 
 
 def _built(cls: type[Host], name: str, settings: Mapping) -> Host:
@@ -96,7 +99,10 @@ class _Setup:
     probe: Callable[..., str | None]
     clock: Callable[[], float]
     host_factory: HostFactory
+    viewer: Mapping
+    viewer_factory: ViewerFactory
     built: dict[str, Host] = field(default_factory=dict, compare=False)
+    viewers: list[Viewer] = field(default_factory=list, compare=False)
 
 
 def _idle(idle_timeout) -> None:
@@ -179,6 +185,7 @@ class HostedSession(Session):
         self._running, self._host, self._info, self._idle = running, host, info, idle_timeout
         self._client = client
         self._clock = type(self)._config().clock
+        self._viewer = type(self).viewer()
         self._log = RunLog(spec.workdir)
         self._reply: str | None = None
         self._queue: deque = deque()
@@ -197,12 +204,25 @@ class HostedSession(Session):
         probe=probe,
         clock: Callable[[], float] = time.monotonic,
         host_factory: HostFactory | None = None,
+        viewer: Mapping | None = None,
+        viewer_factory: ViewerFactory = Viewer,
     ) -> None:
         """host_factory(cls, name, settings) builds a configured Host."""
         if not isinstance(hosts, Hosts):
             raise ConfigError("hosts: want parsed Hosts (Host.parse_hosts)")
+        if viewer is not None and not isinstance(viewer, Mapping):
+            raise ConfigError("[viewer]: want a table")
         registry = Registry(clients=clients, hosts=hosts, class_loader=class_loader)
-        cls._setup = _Setup(registry, hosts, class_loader, probe, clock, host_factory or _built)
+        cls._setup = _Setup(
+            registry,
+            hosts,
+            class_loader,
+            probe,
+            clock,
+            host_factory or _built,
+            viewer or {},
+            viewer_factory,
+        )
 
     @classmethod
     def configure_from(cls, config: Mapping, *, hosts: Hosts | None = None) -> None:
@@ -234,7 +254,8 @@ class HostedSession(Session):
         client = setup.registry.client(client_name)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
-        on.validate_display(display)
+        cls.viewer()
+        displays.validate_display(display, on)
         MODES[mode].preflight(
             spec,
             client,
@@ -258,7 +279,8 @@ class HostedSession(Session):
         client = setup.registry.client(client_name)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
-        on.validate_display(display)
+        viewer = cls.viewer()
+        displays.validate_display(display, on)
         name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
@@ -280,6 +302,8 @@ class HostedSession(Session):
             display=display,
             check_name=check_name,
         )
+        if mode == Mode.TUI and name is not None:
+            cls._started(viewer, name, running, on, display)
         return cls(
             client_name,
             mode,
@@ -290,6 +314,17 @@ class HostedSession(Session):
             idle_timeout=idle_timeout,
             client=client,
         )
+
+    @classmethod
+    def _started(
+        cls, viewer: Viewer, name: str, running: BaseMode, on: Host, display: Display
+    ) -> None:
+        try:
+            viewer.close(name, on)
+            displays.started(viewer, name, on, display)
+        except SessionError:
+            running.close()
+            raise
 
     @classmethod
     def attach(
@@ -332,7 +367,9 @@ class HostedSession(Session):
 
     @classmethod
     def retire(cls, name: str, *, sid: str | None = None, host: str | None = None) -> None:
-        tui.TuiStore.attach(name, host=cls.host(host), sid=sid).close()
+        on = cls.host(host)
+        tui.TuiStore.attach(name, host=on, sid=sid).close()
+        cls.viewer().close(name, on)
 
     @classmethod
     def list(
@@ -352,7 +389,7 @@ class HostedSession(Session):
             (
                 row
                 for name in setup.hosts.tables
-                for row in cls.host(name).rows(display)
+                for row in displays.rows(cls.viewer(), cls.host(name), display)
                 if pattern is None or pattern.fullmatch(row.name)
             ),
             key=lambda row: row.name,
@@ -385,8 +422,8 @@ class HostedSession(Session):
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
         on = cls.host()
-        on.validate_display(display)
-        return on.layout(display=display) if isinstance(on, Showable) else None
+        displays.validate_display(display, on)
+        return displays.layout(cls.viewer(), on, display) if on.attachable else None
 
     @classmethod
     def writable_dirs(cls, spec: Spec) -> tuple[str, ...]:
@@ -405,8 +442,16 @@ class HostedSession(Session):
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
         on = cls.host(host)
-        on.validate_display(value)
-        return on.display(value)
+        displays.validate_display(value, on)
+        return displays.display(cls.viewer(), value, on) if on.attachable else value
+
+    @classmethod
+    def viewer(cls) -> Viewer:
+        """The Viewer [viewer] configures, built once per class."""
+        setup = cls._config()
+        if not setup.viewers:
+            setup.viewers.append(setup.viewer_factory(setup.viewer))
+        return setup.viewers[0]
 
     @classmethod
     def host(cls, name: str | None = None) -> Host:
@@ -529,7 +574,8 @@ class HostedSession(Session):
         liveness, name = self._running.state(), self._tui()
         if liveness == Liveness.LIVE and name is not None:
             try:
-                return replace(self._host.attach(name).status(), cwd=self._info.cwd)
+                found = displays.status(self._viewer, self._host, self._host.attach(name))
+                return replace(found, cwd=self._info.cwd)
             except SessionError:
                 liveness = Liveness.ABSENT
         return Status(
@@ -581,7 +627,10 @@ class HostedSession(Session):
         return self._reply
 
     def close(self) -> None:
+        name = self._tui()
         self._running.close()
+        if name is not None:
+            self._viewer.close(name, self._host)
 
     def session_status(self) -> SessionStatus:
         info = self.info()
@@ -603,21 +652,19 @@ class HostedSession(Session):
     @property
     def showable(self) -> bool:
         self._running.state()
-        return self._tui() is not None and isinstance(self._host, Showable)
+        return self._tui() is not None and self._host.attachable
 
     def show(self, *, display: Display = None, command: str | None = None) -> str | None:
-        host, name = self._shown("show")
-        if display is None:
-            display = self._host.attach(name).display()
-        return host.show(name, display=display, command=command)
+        viewer, name = self._shown("show")
+        return viewer.show(name, self._host, display=display, command=command)
 
     def hide(self) -> None:
-        host, name = self._shown("hide")
-        host.hide(name)
+        viewer, name = self._shown("hide")
+        viewer.hide(name, self._host)
 
     def attach_command(self) -> str:
-        host, name = self._shown("attach_command")
-        return host.attach_command(name)
+        viewer, name = self._shown("attach_command")
+        return viewer.attach_command(name, self._host)
 
     def content(self) -> str:
         if self.status().state == StatusState.DONE and self.reply:
@@ -632,11 +679,11 @@ class HostedSession(Session):
     def _tui(self) -> str | None:
         return self.name if self.mode == Mode.TUI else None
 
-    def _shown(self, call: str) -> tuple[Showable, str]:
+    def _shown(self, call: str) -> tuple[Viewer, str]:
         self._running.state()
-        if not isinstance(self._host, Showable):
+        if not self._host.attachable:
             raise NotShowable(f"host {self._host.name} cannot show")
         name = self._tui()
         if name is None:
             raise NotShowable(f"{call}: tui mode only")
-        return self._host, name
+        return self._viewer, name

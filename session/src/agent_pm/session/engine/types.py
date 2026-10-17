@@ -211,8 +211,6 @@ def _string_tuple(value) -> bool:
 @dataclass(frozen=True)
 class TuiSettings:
     status_line: bool = False
-    per_column: int | None = None
-    retile: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -583,7 +581,9 @@ class NoRecordedSession(SessionError):
 
 
 class NotShowable(SessionError):
-    """From a Host that is not Showable: `host <name> cannot show`."""
+    """A session its Host names no attach target for (`host <name> cannot show`), or a caller with
+    nothing to show (the Delegate's `no showable session`).
+    """
 
 
 @dataclass(frozen=True)

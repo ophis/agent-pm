@@ -1,12 +1,14 @@
 """Session public exports."""
 
 import inspect
+from unittest import mock
 
 from agent_pm import session
 from agent_pm.session import (
     Access,
     Effort,
     Exited,
+    Host,
     IdleTimeout,
     Launch,
     LimitHit,
@@ -21,11 +23,13 @@ from agent_pm.session import (
     TurnEnd,
     TurnFailed,
     Usage,
+    Viewer,
     Window,
 )
 from agent_pm.session.engine import types
+from agent_pm.session.engine.hosted_session import HostedSession
 
-from session.tests.case import Case
+from session.tests.case import HOSTS, Case
 
 EVENTS = {Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
 
@@ -41,6 +45,7 @@ ALLOWED_CONCRETE = {
     Effort,
     Resumable,
     RunLog,
+    Viewer,
     *EVENTS,
 }
 
@@ -51,6 +56,15 @@ class Exports(Case):
             if hasattr(types, name):
                 with self.subTest(name=name):
                     self.assertIs(getattr(session, name), getattr(types, name))
+
+    def test_get_viewer_is_the_one_viewer_session_configure_built(self):
+        self.addCleanup(setattr, HostedSession, "_setup", None)
+        HostedSession.configure(
+            clients={},
+            hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
+            viewer_factory=lambda _settings: mock.sentinel.viewer,
+        )
+        self.assertIs(session.get_viewer(), mock.sentinel.viewer)
 
     def test_the_only_concrete_classes_are_the_helpers_and_exceptions(self):
         concrete = {

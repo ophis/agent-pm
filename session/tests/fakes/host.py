@@ -258,15 +258,13 @@ class FakeHost(Host):
             raise SessionError(f"no {self.name} session {name}")
         return cls(name, folder)
 
-    def list(self, display=None) -> list[str]:
+    def list(self) -> list[str]:
         root = self.root()
-        names = sorted(os.listdir(root)) if os.path.isdir(root) and display != "" else []
+        names = sorted(os.listdir(root)) if os.path.isdir(root) else []
         return [
             name
             for name in names
-            if NAME.fullmatch(name)
-            and (meta := _meta(os.path.join(root, name))).get("kind") in KINDS
-            and (display is None or meta.get("display") == display)
+            if NAME.fullmatch(name) and _meta(os.path.join(root, name)).get("kind") in KINDS
         ]
 
     def _start(self, kind, name, launch: Launch, *, display, events, record, metadata=None):

@@ -29,6 +29,7 @@ from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.engine.types import Liveness
 
 from delegate.tests.fakes.harness_session import (
+    FakeViewer,
     HarnessSession,
     RecordingHost,
     ShowingHost,
@@ -586,11 +587,11 @@ class CheckTuiTest(HarnessCase):
 
     def test_the_agents_host_places_the_display_and_the_harness_takes_the_events(self):
         with (
-            mock.patch.object(ShowingHost, "layout", autospec=True) as layout,
+            mock.patch.object(FakeViewer, "layout", autospec=True) as layout,
             mock.patch.object(ShowingHost, "events_path", autospec=True) as events_path,
         ):
             self.check(display="opener/right", events=self.events)
-        [(host,)] = [call.args for call in layout.call_args_list]
+        [(_, host)] = [call.args for call in layout.call_args_list]
         self.assertEqual(
             (host.name, layout.call_args.kwargs), ("agent", {"display": "opener/right"})
         )
@@ -599,15 +600,23 @@ class CheckTuiTest(HarnessCase):
         self.assertFalse(os.path.exists(self.events))
 
     def test_a_host_refusing_the_display_or_the_events_is_a_config_error(self):
-        for method, error in (
-            ("layout", SessionError("no pane to show the TUI beside (not in tmux)")),
-            ("layout", SessionConfigError("no tmux session absent")),
-            ("layout", SessionConfigError("display 'a/sideways': not <opener>[/<split>]")),
-            ("events_path", SessionConfigError(f"events file {self.events}: Permission denied")),
+        for owner, method, error in (
+            (FakeViewer, "layout", SessionError("no pane to show the TUI beside (not in tmux)")),
+            (FakeViewer, "layout", SessionConfigError("no tmux session absent")),
+            (
+                FakeViewer,
+                "layout",
+                SessionConfigError("display 'a/sideways': not <opener>[/<split>]"),
+            ),
+            (
+                ShowingHost,
+                "events_path",
+                SessionConfigError(f"events file {self.events}: Permission denied"),
+            ),
         ):
             with (
                 self.subTest(method=method, error=error),
-                mock.patch.object(ShowingHost, method, side_effect=error),
+                mock.patch.object(owner, method, side_effect=error),
                 self.assertRaises(ConfigError) as caught,
             ):
                 self.check(display="d", events=self.events)
@@ -955,34 +964,46 @@ class ViewTest(HarnessCase):
     def test_show_opens_only_the_agent_and_hide_closes_the_agent_and_the_harness(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         names = [self.metadata()[key] for key in ("agent_name", "harness_name")]
         view.show()
-        self.assertEqual([name for name, _, _ in ShowingHost.shown], names[:1])
+        self.assertEqual([name for name, _, _ in FakeViewer.shown], names[:1])
         self.assertFalse(view.status().hidden)
         self.assertIsNone(view.hide())
-        self.assertEqual(ShowingHost.hidden, names)
+        self.assertEqual(FakeViewer.hidden, names)
         self.assertTrue(view.status().hidden)
         view.show()
-        self.assertEqual([name for name, _, _ in ShowingHost.shown], names[:1] * 2)
+        self.assertEqual([name for name, _, _ in FakeViewer.shown], names[:1] * 2)
 
     def test_show_without_a_live_agent_is_not_showable_and_opens_no_harness(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         HarnessSession.live[self.metadata()["agent_name"]].stop()
         with self.assertRaisesRegex(NotShowable, "delegate has no live showable agent session"):
             view.show()
-        self.assertEqual(ShowingHost.shown, [])
+        self.assertEqual(FakeViewer.shown, [])
+
+    def test_close_closes_the_viewers_harness_view_only_on_an_attachable_host(self):
+        for showable in (True, False):
+            with self.subTest(showable=showable):
+                HarnessSession.reset(showable=showable)
+                spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+                self.make(spec=spec).detach()
+                HarnessDelegate.attach(
+                    self.work, session_cls=HarnessSession, viewer=FakeViewer()
+                ).close()
+                harness = self.metadata()["harness_name"]
+                self.assertEqual(FakeViewer.closed, [harness] if showable else [])
 
     def test_hide_after_close_is_not_showable(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         view.close()
         with self.assertRaisesRegex(NotShowable, "delegate has no live showable session"):
             view.hide()
-        self.assertEqual(ShowingHost.hidden, [])
+        self.assertEqual(FakeViewer.hidden, [])
 
 
 class CrashTest(HarnessCase):

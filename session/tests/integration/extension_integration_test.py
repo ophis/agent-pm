@@ -79,7 +79,11 @@ class OutsideTest(Case):
         self.addCleanup(process.close)
         self.assertIs(host.attach("j1"), process)
         self.assertEqual((process.record(), process.display()), (record, "d"))
-        self.assertEqual((host.list("d"), host.list("e"), host.list("")), (["j1"], [], []))
+        self.assertEqual(host.list(), ["j1"])
+        self.assertEqual(
+            [[row.name for row in self.session.list(display=d)] for d in ("d", "e", "")],
+            [["j1"], [], []],
+        )
         self.assertTrue(process.alive())
         process.kill()
         self.assertTrue(process.wait_exit(WAIT))

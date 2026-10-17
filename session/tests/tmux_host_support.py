@@ -9,6 +9,7 @@ from unittest import mock
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import PaneStatus
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.viewer.viewer import Viewer
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
@@ -55,7 +56,8 @@ class Base(Case):
         self.enterContext(which(self.tool))
         self.runner = FakeTmux()
         self.tmux = fake_tmux(self.runner)
-        self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
+        self.host = TmuxHost("tmux", tmux=self.tmux)
+        self.viewer = Viewer({"workers_per_column": 2}, tmux=self.tmux)
         self.killpg = self.enterContext(
             mock.patch("os.killpg", side_effect=AssertionError("unsafe signal"))
         )

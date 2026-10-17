@@ -16,9 +16,9 @@ from types import SimpleNamespace
 
 from agent_pm.session.engine.tmux_cli import EXEC, TmuxCli
 from agent_pm.session.engine.types import Launch
-from agent_pm.session.hosts.tmux import grid as grids
-from agent_pm.session.hosts.tmux import iterm, placement, types
-from agent_pm.session.hosts.tmux import layout as layouts
+from agent_pm.session.viewer import grid as grids
+from agent_pm.session.viewer import iterm, placement, types
+from agent_pm.session.viewer import layout as layouts
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL

@@ -270,7 +270,7 @@ class TmuxCalls(Sample):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
         mode = f"session/{PKG}/session/modes/x.py"
         cli = f"session/{PKG}/session/cli.py"
-        outside = "tmux outside session/hosts/tmux/ and engine/tmux_cli.py"
+        outside = "tmux outside session/hosts/tmux/, viewer/ and engine/tmux_cli.py"
         for files, expected in (
             (
                 {

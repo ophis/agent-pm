@@ -37,7 +37,7 @@
  "agent_pm.delegate.HarnessDelegate": "class(agent_pm.delegate.engine.base.Delegate)(role:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD, placement:VAR_KEYWORD)",
  "agent_pm.delegate.HarnessDelegate.alive": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.HarnessDelegate.announce": "def(self:POSITIONAL_OR_KEYWORD, result:POSITIONAL_OR_KEYWORD)",
- "agent_pm.delegate.HarnessDelegate.attach": "classmethod(cls:POSITIONAL_OR_KEYWORD, record_or_workdir:POSITIONAL_OR_KEYWORD, sid:KEYWORD_ONLY=None, session_cls:KEYWORD_ONLY=None, composer:KEYWORD_ONLY=None)",
+ "agent_pm.delegate.HarnessDelegate.attach": "classmethod(cls:POSITIONAL_OR_KEYWORD, record_or_workdir:POSITIONAL_OR_KEYWORD, sid:KEYWORD_ONLY=None, session_cls:KEYWORD_ONLY=None, viewer:KEYWORD_ONLY=None, composer:KEYWORD_ONLY=None)",
  "agent_pm.delegate.HarnessDelegate.attach_command": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.HarnessDelegate.check_tui": "classmethod(cls:POSITIONAL_OR_KEYWORD, display:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None, session_cls:KEYWORD_ONLY=agent_pm.session.engine.base.Session)",
  "agent_pm.delegate.HarnessDelegate.checkouts": "classmethod(cls:POSITIONAL_OR_KEYWORD, workdir:POSITIONAL_OR_KEYWORD)",

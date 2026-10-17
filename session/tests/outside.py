@@ -106,7 +106,5 @@ class OutsideHost(Host):
             raise SessionError(f"no process {name}")
         return self.processes[name]
 
-    def list(self, display=None):
-        if display == "":
-            return []
-        return sorted(n for n, p in self.processes.items() if display in (None, p.display()))
+    def list(self):
+        return sorted(self.processes)

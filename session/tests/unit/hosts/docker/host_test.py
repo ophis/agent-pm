@@ -7,6 +7,7 @@ import fcntl
 import io
 import json
 import os
+import shlex
 import signal
 import stat
 import threading
@@ -15,6 +16,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session import Viewer
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import (
@@ -35,6 +37,8 @@ from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
+from agent_pm.session.hosts.types import CommandView
+from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
@@ -148,15 +152,13 @@ class Base(Case):
         open(self.ep.removeprefix("unix://"), "w").close()
         self.cwd = os.path.join(self.account, "src", "repo")
         os.makedirs(self.cwd)
-        self.order, self.host_calls = [], []
+        self.order = []
         self.docker = FakeDocker(self.ep, self.order)
         started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, {"status": "updated"})
         self.broker = FakeBroker(self.order, started)
-        self.host_replies = {}
         self.host = DockerHost(
             "docker",
             {"docker": DOCKER, "mount_roots": [os.path.join(self.account, "src")]},
-            tmux=TmuxCli(self.host_tmux),
             run=self.docker,
             broker=self.broker,
         )
@@ -184,13 +186,6 @@ class Base(Case):
         self.spawned.append((argv, kw, held))
         return proc
 
-    def host_tmux(self, argv, **kw):
-        self.host_calls.append(argv[1:])
-        for prefix, reply in self.host_replies.items():
-            if tuple(argv[1 : 1 + len(prefix)]) == prefix:
-                return done(*reply)
-        return done(1, "", "no server running on /tmp/tmux-501/default")
-
     def record(self, **changes):
         found = {
             "generation": GEN,
@@ -198,7 +193,6 @@ class Base(Case):
             "client": "agent",
             "display": "lead/below",
             "record": None,
-            "hidden": False,
             "process": PROCESS,
             **changes,
         }
@@ -412,7 +406,6 @@ class StartTest(Base):
                 "client": "agent",
                 "display": "lead/below",
                 "record": RECORD.to_line(),
-                "hidden": False,
                 "events": os.path.join(self.home, "events"),
                 "process": PROCESS,
             },
@@ -882,7 +875,6 @@ class TerminalTest(Base):
         self.assertTrue(
             all(c[:3] == ["exec", "-i", CONTAINER] for c in self.order if c[0] == "exec")
         )
-        self.assertEqual(self.host_calls, [])
 
     def test_screen_text_reaches_the_host_without_control_characters(self):
         process = self.terminal()
@@ -940,13 +932,13 @@ class TerminalTest(Base):
         process = self.terminal()
         self.docker.replies = {("tmux", "display-message"): pane()}
         self.assertEqual(
-            (process.display(), process.session_identity(), process.hidden(), process.record()),
-            ("lead/below", ("s1", GEN), False, None),
+            (process.display(), process.session_identity(), process.record()),
+            ("lead/below", ("s1", GEN), None),
         )
         record = RECORD
         process.publish(record)
-        process.mark_hidden(hidden=True)
-        self.assertEqual((process.record(), process.hidden()), (record, True))
+        self.assertEqual(process.record(), record)
+        self.assertNotIn("hidden", self.host_record())
         self.assertFalse(any("show-options" in call for call in self.docker.execs()))
         self.record(generation="f" * 32)
         self.assertEqual(
@@ -967,12 +959,16 @@ class TerminalTest(Base):
         with open(events) as f:
             self.assertRegex(f.read(), r"^\d\d:\d\d:\d\d w done\n$")
 
-    def test_status_attach_is_the_docker_command(self):
+    def test_the_viewers_status_attach_is_the_docker_command(self):
         process = self.terminal()
         self.docker.replies = {("tmux", "display-message"): pane()}
         want = f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t =w"
-        self.assertEqual(process.status().attach, want)
-        self.assertEqual(self.host.attach_command("w"), want)
+        self.assertIsNone(process.status().attach)
+        tmux = mock.create_autospec(TmuxCli, instance=True)
+        tmux.runner = mock.Mock()
+        viewer = Viewer(tmux=tmux)
+        self.assertEqual(displays.status(viewer, self.host, process).attach, want)
+        self.assertEqual(viewer.attach_command("w", self.host), want)
 
 
 class CloseTest(Base):
@@ -987,7 +983,6 @@ class CloseTest(Base):
     def test_close_order(self):
         process = self.terminal()
         fd = self.hold_lock()
-        self.host_replies = {("show-options",): (0, "docker\n", ""), ("kill-session",): (0, "", "")}
 
         def kill(pid, sig):
             self.order.append(("signal", pid, sig))
@@ -1022,21 +1017,17 @@ class CloseTest(Base):
                 "=w",
             ],
         )
-        self.assertEqual(self.host_calls[-1], ["kill-session", "-t", "=w"])
         self.assertTrue(os.path.isdir(self.state))
 
-    def test_close_with_no_host_view_succeeds(self):
+    def test_close_succeeds_without_a_host_tmux(self):
         process = self.terminal()
-        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
         with mock.patch("os.kill"):
             process.close()
         self.assertEqual(self.broker.closed, [CONTAINER])
-        self.assertNotIn(["kill-session", "-t", "=w"], self.host_calls)
 
-    def test_a_restart_with_no_host_view_starts_the_next_generation(self):
+    def test_a_restart_starts_the_next_generation(self):
         self.listed("w")
         self.record(sid=SID)
-        self.host_replies = {("show-options",): (1, "", "no such session: =w:")}
         closed = self.broker.close
 
         def close(container):
@@ -1169,7 +1160,6 @@ class RecoverTest(Base):
     def test_close_right_after_a_recovering_attach_stops_the_new_supervisor(self):
         self.inherit = True
         process = self.host.attach("w")
-        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
 
         def kill(pid, sig):
             self.order.append(("signal", pid, sig))
@@ -1226,7 +1216,6 @@ class RecoverTest(Base):
                 self.assertEqual((self.serves(), self.spawned), ([], []))
                 self.assertFalse(os.path.exists(self.lock))
         self.live_supervisor()
-        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
         with mock.patch("os.kill") as kill:
             process.close()
         kill.assert_not_called()
@@ -1269,7 +1258,6 @@ class RecoverTest(Base):
                 " agent-pm-session is not on PATH (its hooks run it)"
             ],
         )
-        self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
         process.close()
         self.assertEqual(self.broker.closed, [CONTAINER])
 
@@ -1397,8 +1385,6 @@ class ListTest(Base):
         ]
         self.record()
         self.assertEqual(self.host.list(), ["v", "w"])
-        self.assertEqual(self.host.list("lead"), ["w"])
-        self.assertEqual(self.host.list(""), [])
         listing = "w\t0\tforged\tforged\tdone\t\t\tforged\t\n"
         self.docker.replies = {("tmux", "-u", "list-sessions"): (0, listing, "")}
         before = len(self.docker.order)
@@ -1483,63 +1469,15 @@ class ListTest(Base):
         )
 
 
-class ShowTest(Base):
-    def setUp(self):
-        super().setUp()
+class AttachTargetTest(Base):
+    def test_attach_target_runs_docker_exec_with_tmux_variables_cleared(self):
         self.terminal()
-        self.host.view = mock.Mock()
-        self.host.view.show.return_value = None
-        self.host.view.placement.shown.return_value = "%9"
-
-    def test_show_creates_view_and_places_it(self):
-        self.host_replies = {("new-session",): (0, "", "")}
-        self.assertIsNone(self.host.show("w", display="lead/below"))
-        new = self.host_calls[-1]
-        self.assertEqual(new[:5], ["new-session", "-d", "-s", "w", "--"])
-        self.assertIn(
-            f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t =w", " ".join(new)
+        argv = [DOCKER, "--host", self.ep, "exec", "-it", CONTAINER, "tmux", "attach", "-t", "=w"]
+        cleared = tuple(arg for key in CLEARED for arg in ("-u", key))
+        self.assertTrue(DockerHost.attachable)
+        self.assertEqual(
+            self.host.attach_target("w"),
+            CommandView(printed=shlex.join(argv), argv=("/usr/bin/env", *cleared, *argv)),
         )
-        self.assertEqual(new[-4:], ["-t", "=w:", "@view", "docker"])
-        for key in CLEARED:
-            self.assertIn(key, new)
-        self.host.view.show.assert_called_once_with("w", display="lead/below", command=None)
-        self.assertFalse(self.host_record()["hidden"])
-
-    def test_show_refuses_a_foreign_host_session(self):
-        self.host_replies = {
-            ("display-message",): (0, "0  \n", ""),
-            ("show-options",): (1, "", "invalid option: @view"),
-        }
-        with self.assertRaisesRegex(SessionError, "a host tmux session w exists"):
-            self.host.show("w")
-        self.host.view.show.assert_not_called()
-
-    def test_a_failed_show_returns_the_attach_command(self):
-        self.host_replies = {
-            ("display-message",): (0, "0  \n", ""),
-            ("show-options",): (0, "docker\n", ""),
-        }
-        self.host.view.show.return_value = "tmux attach -t '=w'"
-        self.host.view.placement.shown.return_value = None
-        self.assertEqual(self.host.show("w"), self.host.attach_command("w"))
-        self.assertTrue(self.host_record()["hidden"])
-
-    def test_hide_marks_hidden(self):
-        self.host.view.placement.shown.return_value = None
-        self.host.hide("w")
-        self.host.view.hide.assert_not_called()
-        self.assertTrue(self.host_record()["hidden"])
-        self.host_replies = {("display-message",): (0, "0  \n", "")}
-        self.host.hide("w", if_closed=True)
-        self.host.view.hide.assert_called_once_with("w", if_closed=True)
-
-    def test_display_layout_and_tile_are_the_tmux_hosts(self):
-        for method, args, kw in (
-            ("display", ("x",), {}),
-            ("display_help", (), {}),
-            ("layout", (), {"display": "x"}),
-            ("tile", ("@1",), {"wait": True, "if_panes_changed": False}),
-        ):
-            with self.subTest(method=method):
-                getattr(self.host, method)(*args, **kw)
-                getattr(self.host.view, method).assert_called_once_with(*args, **kw)
+        with self.assertRaisesRegex(SessionError, "^no docker session x$"):
+            self.host.attach_target("x")

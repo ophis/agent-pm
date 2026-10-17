@@ -1,4 +1,4 @@
-"""Host process and display interfaces and defaults, SIGNALS; Host.parse_hosts, the one [hosts]
+"""Host process interfaces and defaults, attach targets, SIGNALS; Host.parse_hosts, the one [hosts]
 parser.
 """
 
@@ -16,10 +16,10 @@ from agent_pm.session import (
     NotShowable,
     Process,
     SessionError,
-    Showable,
 )
 from agent_pm.session.engine.types import Hosts, Liveness
 from agent_pm.session.hosts.base import Interactive, InteractiveProcess
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import Status, StatusState
 
 from session.tests.case import Case
@@ -43,7 +43,6 @@ ABSTRACT = {
     Process: PROCESS,
     Interactive: {"send", "press"},
     InteractiveProcess: PROCESS | {"send", "press"},
-    Showable: {"show", "hide", "attach_command", "layout", "tile"},
 }
 
 
@@ -65,18 +64,15 @@ class Abstract(Case):
         self.assertTrue(issubclass(InteractiveProcess, Process))
         self.assertTrue(issubclass(InteractiveProcess, Interactive))
 
-    def test_showable_placement_is_keyword_only(self):
-        key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
+    def test_list_rows_and_validate_take_no_display(self):
         for method, parameters in (
-            (
-                Showable.show,
-                [("self", either), ("name", either), ("display", key), ("command", key)],
-            ),
-            (Showable.layout, [("self", either), ("display", key)]),
+            (Host.list, ["self"]),
+            (Host.rows, ["self"]),
+            (Host.validate, ["self", "name", "launch"]),
         ):
             with self.subTest(method=method.__name__):
-                found = inspect.signature(method).parameters.values()
-                self.assertEqual([(p.name, p.kind) for p in found], parameters)
+                found = inspect.signature(method).parameters
+                self.assertEqual(list(found), parameters)
 
 
 class HostDefaults(Case):
@@ -96,15 +92,15 @@ class HostDefaults(Case):
                 Process.screen(process, lines)
             self.assertEqual(str(caught.exception), "session p: its host cannot show")
 
-    def test_a_process_status_is_its_liveness_activity_and_hidden(self):
+    def test_a_process_status_is_its_liveness_and_activity(self):
         process = mock.create_autospec(Process, instance=True)
-        process.name, process.hidden.return_value = "p", True
-        for liveness, alive, activity, state, hidden in (
-            (Liveness.LIVE, True, None, StatusState.WORKING, True),
-            (Liveness.LIVE, True, StatusState.BLOCKED, StatusState.BLOCKED, True),
-            (Liveness.LIVE, False, None, StatusState.DEAD, True),
-            (Liveness.ABSENT, False, None, StatusState.DEAD, True),
-            (Liveness.UNKNOWN, False, None, StatusState.UNKNOWN, False),
+        process.name = "p"
+        for liveness, alive, activity, state in (
+            (Liveness.LIVE, True, None, StatusState.WORKING),
+            (Liveness.LIVE, True, StatusState.BLOCKED, StatusState.BLOCKED),
+            (Liveness.LIVE, False, None, StatusState.DEAD),
+            (Liveness.ABSENT, False, None, StatusState.DEAD),
+            (Liveness.UNKNOWN, False, None, StatusState.UNKNOWN),
         ):
             with self.subTest(liveness=liveness, alive=alive, activity=activity):
                 process.state.return_value, process.alive.return_value = liveness, alive
@@ -117,14 +113,14 @@ class HostDefaults(Case):
                         state=state,
                         outcome=None,
                         attach=None,
-                        hidden=hidden,
+                        hidden=False,
                     ),
                 )
 
     def test_a_host_failing_after_telling_liveness_is_unknown(self):
         process = mock.create_autospec(Process, instance=True)
         process.name, process.state.return_value = "p", Liveness.LIVE
-        for failing in (process.alive, process.activity, process.hidden):
+        for failing in (process.alive, process.activity):
             with self.subTest(failing=failing):
                 process.reset_mock()
                 process.state.return_value, process.alive.return_value = Liveness.LIVE, True
@@ -134,11 +130,12 @@ class HostDefaults(Case):
                     (found.alive, found.state, found.hidden), (False, "unknown", False)
                 )
 
-    def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
+    def test_a_host_is_not_attachable_and_names_no_attach_target(self):
         host = MinimalHost("m")
-        with mock.patch.object(host, "list", return_value=["a", "b"]) as listed:
-            self.assertEqual(host.descendants("d"), ["a", "b"])
-        listed.assert_called_once_with("d")
+        self.assertFalse(host.attachable)
+        self.assertIsNone(host.attach_target("a"))
+        self.assertEqual(SessionView("a"), SessionView(session="a"))
+        self.assertEqual(CommandView("p", ("x",)), CommandView(printed="p", argv=("x",)))
 
     def test_name_and_a_copy_of_settings(self):
         settings = {"root": "/x"}
@@ -153,13 +150,6 @@ class HostDefaults(Case):
         first.settings["sizes"][1].append(3)
         first.settings["grid"]["b"] = 2
         self.assertEqual(second.settings, {"sizes": (1, [2]), "grid": {"a": 1}})
-
-    def test_display_returns_its_value_and_display_help_is_empty(self):
-        host = MinimalHost("m")
-        self.assertFalse(isinstance(host, Showable))
-        self.assertEqual(host.display("elsewhere:1.2"), "elsewhere:1.2")
-        self.assertIsNone(host.display(None))
-        self.assertEqual(host.display_help(), "")
 
     def test_signals_a_detached_run_blocks_are_hup_term_and_int(self):
         self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))

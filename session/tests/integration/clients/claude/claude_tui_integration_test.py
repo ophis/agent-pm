@@ -18,7 +18,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.session import SIGNALS, Session, Showable
+from agent_pm.session import SIGNALS, Session
 from agent_pm.session.clients.claude.tui import ClaudeTui
 from agent_pm.session.engine import tmux_cli as tmux_model
 from agent_pm.session.engine.records import RunLog
@@ -149,11 +149,11 @@ class Live(tui_live.Live):
         return handle
 
     def show(self, name: str) -> str | None:
-        """The default Host's show(name)."""
+        """The Viewer's show(name) on the default Host."""
         host = self.session_cls.host()
-        if not isinstance(host, Showable):
+        if not host.attachable:
             self.fail(f"host {host.name} cannot show")
-        return host.show(name)
+        return self.session_cls.viewer().show(name, host)
 
     def stream(self, handle: Session, *, replies: bool = False) -> Stream:
         """handle's Stream (a HookStream unless `replies`); at cleanup the handle stops and the
@@ -497,7 +497,7 @@ class ShowTest(Live):
             what="the grid [['w1']], the detached session in no cell",
         )
         self.assertEqual(
-            [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER]
+            [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, ""]
         )
         tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
 

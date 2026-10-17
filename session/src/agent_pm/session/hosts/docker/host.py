@@ -1,7 +1,7 @@
 """DockerHost runs each tui session in its own broker-made container (docs/docker-host.md): the
 container's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a host run supervisor for
-its hooks, and a host view session, tagged VIEW, for show. What the host knows of a session is its
-Host record (RECORD in its state dir), never the container's tmux options.
+its hooks; the Viewer shows a session through `docker exec` (a CommandView). What the host knows of
+a session is its Host record (RECORD in its state dir), never the container's tmux options.
 """
 
 from __future__ import annotations
@@ -20,11 +20,17 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import NamedTuple
 
 import agent_pm.utils
-from agent_pm.session.engine.tmux_cli import DIED, VIEW, TmuxCli, TmuxPane, TuiError, absent
+from agent_pm.session.engine.tmux_cli import (
+    DIED,
+    TmuxCli,
+    TmuxPane,
+    TuiError,
+    absent,
+    display_error,
+)
 from agent_pm.session.engine.tmux_cli import POLL as TMUX_POLL
 from agent_pm.session.engine.types import (
     COMMAND,
@@ -49,7 +55,6 @@ from agent_pm.session.hosts.base import (
     Host,
     InteractiveProcess,
     Process,
-    Showable,
     tui_lock,
 )
 from agent_pm.session.hosts.docker import hook as docker_hook
@@ -74,11 +79,10 @@ from agent_pm.session.hosts.docker.daemon import (
 )
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
-from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
     Display,
     Record,
-    Status,
     command_path,
     docker_home,
     inode_lock,
@@ -191,16 +195,6 @@ def _image_digest(row: Row) -> str | None:
     return found.get("image_digest") if isinstance(found, dict) else None
 
 
-def _listed(containers: Mapping[str, Row], display: Display) -> list[str]:
-    if display == "":
-        return []
-    return [
-        name
-        for name in sorted(containers)
-        if display is None or TmuxHost.listed(display, _record(name).get("display"))
-    ]
-
-
 def _report_plan(name: str, plan: Mapping) -> None:
     """Freeze a generation's plan beside its manifest, then print it to stderr, a line a part."""
     try:
@@ -262,8 +256,8 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
 
 
 class DockerTerminal(InteractiveProcess):
-    """The container's pane, a TmuxPane on the container's TmuxCli. Its Record, display, sid and
-    hidden flag: the Host record's, of the container's generation.
+    """The container's pane, a TmuxPane on the container's TmuxCli. Its Record, display and sid: the
+    Host record's, of the container's generation.
     """
 
     def __init__(
@@ -342,9 +336,6 @@ class DockerTerminal(InteractiveProcess):
         found = self._own_record()
         return found.get("sid"), found.get("generation")
 
-    def hidden(self) -> bool:
-        return self._own_record().get("hidden") is True
-
     def screen(self, lines: int | None = None) -> str:
         if not self.alive():
             raise SessionError(f"session {self.name} is not running on host {self.host.name}")
@@ -353,16 +344,8 @@ class DockerTerminal(InteractiveProcess):
         except TuiError as error:
             raise SessionError(f"docker session {self.name}: {error}") from None
 
-    def mark_hidden(self, *, hidden: bool) -> None:
-        self._update(hidden=hidden)
-
     def mark(self, word: StatusState, events: str | None) -> None:
         self.pane.mark(word, events, session=self.name)
-
-    def status(self) -> Status:
-        found = super().status()
-        attach = shlex.join(_attach_argv(self.host.docker, self.container, self.name))
-        return replace(found, attach=attach) if found.alive else found
 
     def _signal(self, sig: str) -> bool:
         res = self.tmux.runner(["kill", f"-{sig}", "--", f"-{self._pane_pid}"])
@@ -376,7 +359,7 @@ class DockerTerminal(InteractiveProcess):
 
     def close(self) -> None:
         """Kills the client (pane-died disarmed), the supervisor (unless the image is another
-        version's), the container, then the view.
+        version's), then the container.
         """
         self.host.sweep(self.name)
         failures = []
@@ -398,11 +381,6 @@ class DockerTerminal(InteractiveProcess):
             self.host.broker.close(self.container)
         except SessionError as error:
             failures.append(str(error))
-        try:
-            if self.host.tmux.option(self.name, VIEW) == KIND:
-                self.host.tmux.kill(self.name)
-        except TuiError as error:
-            failures.append(f"view: {error}")
         if failures:
             raise SessionError(f"docker session {self.name}: {'; '.join(failures)}")
 
@@ -423,19 +401,19 @@ def _stop_supervisor(name: str) -> str | None:
     return f"supervisor {pid}: still holds {lock}"
 
 
-class DockerHost(Host, Showable):
+class DockerHost(Host):
     """settings: [hosts.<name>]'s docker (the CLI's absolute path) and mount_roots (the dirs a
     session's cwd may lie under). Only terminal sessions run here.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
+    attachable = True
 
     def __init__(
         self,
         name: str,
         settings: Mapping | None = None,
         *,
-        tmux: TmuxCli | None = None,
         run=capped,
         broker: Broker | None = None,
     ) -> None:
@@ -450,8 +428,6 @@ class DockerHost(Host, Showable):
             isinstance(root, str) for root in self.roots
         ):
             raise ConfigError(f"[hosts.{name}] mount_roots: want a list of paths")
-        self.tmux = TmuxCli() if tmux is None else tmux
-        self.view = TmuxHost(name, tmux=self.tmux)
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
@@ -612,13 +588,13 @@ class DockerHost(Host, Showable):
     def _resume_argv(self, name: str) -> tuple[str, ...]:
         return (*RESUME, name)
 
-    def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
+    def validate(self, name: str, launch: Launch) -> None:
         """The preflight, before any container: the cwd, the broker handshake and the build."""
-        self._check_cwd(name, launch, display=display)
+        self._check_cwd(name, launch)
         self._image(name)
 
-    def _check_cwd(self, name: str, launch: Launch, *, display: Display) -> None:
-        super().validate(name, launch, display=display)
+    def _check_cwd(self, name: str, launch: Launch) -> None:
+        super().validate(name, launch)
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
@@ -669,7 +645,9 @@ class DockerHost(Host, Showable):
         record: Record | None,
         metadata: Mapping[str, str] | None,
     ) -> DockerTerminal:
-        self._check_cwd(name, launch, display=display)
+        if why := display_error(display):
+            raise ConfigError(why)
+        self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
         generation, field, home_dir, credential = (
@@ -755,7 +733,6 @@ class DockerHost(Host, Showable):
                     "client": metadata.get("client"),
                     "display": display,
                     "record": None if record is None else record.to_line(),
-                    "hidden": False,
                     "events": events,
                 },
             )
@@ -901,10 +878,10 @@ class DockerHost(Host, Showable):
             current=current,
         )
 
-    def list(self, display: Display = None) -> list[str]:
-        return _listed(self._containers(), display)
+    def list(self) -> list[str]:
+        return sorted(self._containers())
 
-    def rows(self, display: Display = None) -> list[SessionRow]:
+    def rows(self) -> list[SessionRow]:
         """[] with a warning when docker fails, so the other Hosts' rows still list; list() raises,
         as its callers act on absence.
         """
@@ -915,7 +892,7 @@ class DockerHost(Host, Showable):
             return []
         return [
             self._row(name, containers[name].container, containers[name].generation)
-            for name in _listed(containers, display)
+            for name in sorted(containers)
         ]
 
     def _row(self, name: str, container: str, generation: str) -> SessionRow:
@@ -939,56 +916,12 @@ class DockerHost(Host, Showable):
             own=False,
         )
 
-    def validate_display(self, value: Display) -> None:
-        self.view.validate_display(value)
-
-    def display(self, value: Display) -> Display:
-        return self.view.display(value)
-
-    def display_help(self) -> str:
-        return self.view.display_help()
-
-    def layout(self, *, display: Display = None) -> str | None:
-        return self.view.layout(display=display)
-
-    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None:
-        self.view.tile(window, wait=wait, if_panes_changed=if_panes_changed)
-
-    def attach_command(self, name: str) -> str:
+    def attach_target(self, name: str) -> CommandView:
         found = self._containers().get(name)
         if found is None:
             raise SessionError(f"no docker session {name}")
-        return shlex.join(_attach_argv(self.docker, found.container, name))
-
-    def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
-        process = self.attach(name)
-        try:
-            if self.tmux.status(name) is None:
-                self.tmux.checked(
-                    [
-                        *("new-session", "-d", "-s", name, "--", "/usr/bin/env"),
-                        *(arg for key in CLEARED for arg in ("-u", key)),
-                        *_attach_argv(self.docker, process.container, name),
-                        *(";", "set-option", "-t", f"={name}:", VIEW, KIND),
-                    ]
-                )
-            elif self.tmux.option(name, VIEW) != KIND:
-                raise SessionError(f"show {name}: a host tmux session {name} exists")
-        except TuiError as error:
-            raise SessionError(f"show {name}: {error}") from None
-        why = self.view.show(name, display=display, command=command)
-        self._shown(process)
-        return None if why is None else self.attach_command(name)
-
-    def hide(self, name: str, *, if_closed: bool = False) -> None:
-        process = self.attach(name)
-        if self.tmux.status(name) is not None:
-            self.view.hide(name, if_closed=if_closed)
-        self._shown(process)
-
-    def _shown(self, process: DockerTerminal) -> None:
-        try:
-            shown = self.view.placement.shown(process.name) is not None
-        except TuiError as error:
-            raise SessionError(f"show {process.name}: {error}") from None
-        process.mark_hidden(hidden=not shown)
+        argv = _attach_argv(self.docker, found.container, name)
+        return CommandView(
+            printed=shlex.join(argv),
+            argv=("/usr/bin/env", *(arg for key in CLEARED for arg in ("-u", key)), *argv),
+        )

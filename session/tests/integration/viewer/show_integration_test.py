@@ -7,6 +7,7 @@ import sys
 from contextlib import redirect_stderr
 from unittest import mock
 
+from agent_pm.session import Viewer
 from agent_pm.session.engine.types import Launch
 from agent_pm.session.hosts.tmux import TmuxHost
 
@@ -102,7 +103,8 @@ class ShowTest(Case):
     def test_a_command_runs_in_place_of_a_pane_with_the_session_name(self):
         shown = os.path.join(self.home, "shown")
         before = set(self.server.panes("=mgr:"))
-        self.assertIsNone(self.host.show("worker", command=f"printf %s {{{{session}}}} > {shown}"))
+        command = f"printf %s {{{{session}}}} > {shown}"
+        self.assertIsNone(Viewer().show("worker", self.host, command=command))
         with open(shown) as f:
             self.assertEqual(f.read(), "worker")
         self.assertEqual(set(self.server.panes("=mgr:")), before)

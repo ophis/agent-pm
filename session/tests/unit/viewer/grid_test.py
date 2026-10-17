@@ -10,9 +10,9 @@ from contextlib import redirect_stderr, suppress
 
 from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.tmux_cli import TmuxCli
-from agent_pm.session.hosts.tmux import grid as grids
-from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux import types
+from agent_pm.session.viewer import grid as grids
+from agent_pm.session.viewer import layout as layouts
+from agent_pm.session.viewer import types
 
 from session.tests.case import PLUGIN_BIN, Case
 from session.tests.tmux_fixtures import (

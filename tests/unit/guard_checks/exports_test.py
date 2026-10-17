@@ -365,7 +365,7 @@ class ObjectExports(Sample):
     SESSION = f"session/{PKG}/session/"
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
-    ENTRY_EXPORTS = ("SESSION_NAME", "SESSION_NAME_RULE")
+    ENTRY_EXPORTS = ("SESSION_NAME", "SESSION_NAME_RULE", "get_viewer")
     BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
@@ -381,6 +381,7 @@ class ObjectExports(Sample):
         imported = (
             "from agent_pm.session.engine.config import read_config\n"
             "import re\nSESSION_NAME = re.compile('x')\nSESSION_NAME_RULE = str('x')\n"
+            "def get_viewer(): pass\n"
         )
         return f"{imported}{source}__all__ = {[*self.ENTRY_EXPORTS, *names]!r}\n"
 

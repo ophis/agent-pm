@@ -10,12 +10,23 @@ from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Exited, Reply
 
 from delegate.tests.case import REPO, Case
-from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.fakes.harness_session import FakeViewer, HarnessSession, RecordingHost
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
 from utils.tests.sandbox import owned_directory
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+class ViewedHarnessDelegate(HarnessDelegate):
+    """A HarnessDelegate whose views show through a FakeViewer unless given a Viewer."""
+
+    def __init__(self, role, spec, **placement):
+        super().__init__(role, spec, **{"viewer": FakeViewer(), **placement})
+
+    @classmethod
+    def attach(cls, record_or_workdir, **kw):
+        return super().attach(record_or_workdir, **{"viewer": FakeViewer(), **kw})
 
 
 class HarnessCase(Case):
@@ -65,6 +76,7 @@ class HarnessCase(Case):
         return os.path.realpath(team)
 
     def make(self, *, role="dummy-tester", spec=None, session_cls=HarnessSession, **kw):
+        kw.setdefault("viewer", FakeViewer())
         spec = spec or Spec(
             "Hello.\nLiteral input.", self.work, task="echo", sid=SID, client="fake"
         )

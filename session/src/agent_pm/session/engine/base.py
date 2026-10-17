@@ -30,7 +30,7 @@ HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
 class Session(ABC):
     """show, hide, attach_command, screen: NotShowable unless showable (its Host is
-    Showable). alive: False while its host cannot tell (status: unknown).
+    attachable). alive: False while its host cannot tell (status: unknown).
     """
 
     sid: str
@@ -189,3 +189,7 @@ class Session(ABC):
         each configured Host's, without repeats.
         """
         return cls._hosted("class_roots")(client)
+
+
+def hosted_viewer():
+    return load_class(HOSTED, Session).viewer()
