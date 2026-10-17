@@ -156,14 +156,26 @@ Then `agent-pm-crew worker NAME --client claude` starts NAME in its own containe
 on tmux. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
 whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
-Refused before any container exists, as not supported on the Docker Host yet: a client
-other than Claude, `restart` and `resume`, role runs (a cwd under `~/.agent-pm`), detached
-sessions, and a start while a container of that name still exists. The broker's
-Refusals above apply too, and Session checks the same cwd rules first.
+Each start, restart or resume runs a new generation in a new container, built from the
+current image. `restart` closes the running container and starts the next one; `resume`
+(after `close`, or once the container is gone) starts one in the same cwd. Both keep the
+Claude config dir and continue its conversation; only a new start clears it. A resume
+whose conversation file is missing, or is a symlink, fails before any container exists
+with `no native history to resume`. The worker's resume command is
+`agent-pm-session resume <name>`, never `client-resume`, which would start Claude on the
+host.
 
-`~/.agent-pm/docker-state/<name>/` holds the client's config dir (remade at each start),
-the start manifests, `host.json` (what the host knows of the session) and the hook
-supervisor's `supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
+Refused before any container exists, as not supported on the Docker Host yet: a client
+other than Claude, role runs (a cwd under `~/.agent-pm`), detached sessions, and a start
+while a container of that name still exists. The broker's Refusals above apply too, and
+Session checks the same cwd rules first.
+
+`~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
+start, kept by restart and resume), each generation's start manifest
+(`<generation>.json`) and result (`<generation>.result.json`: container, image and
+digest, client versions, update result, and when the broker's start began and ended),
+`host.json` (what the host knows of the session) and the hook supervisor's
+`supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
 
 A container left behind (for example after a crash) blocks a new start of its name.
 Remove it by hand:
@@ -183,6 +195,10 @@ docker --host "unix://$HOME/.docker/run/docker.sock" rm -f agent-pm-NAME-GENERAT
   allow it again.
 - Every start installs npm's latest Claude Code and Codex releases into the container,
   trusting their vendors' npm packages.
+- A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
+  if it cannot read it, the resume fails rather than starting a new conversation.
+- Every restart and resume writes the token into a new container: one copy per running
+  container, each deleted with it.
 - Claude may still show an onboarding prompt after an update; the Claude check above
   catches it.
 - A cwd that covers the agent-pm plugin directory lets the worker change what the next
