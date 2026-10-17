@@ -373,7 +373,7 @@ class DockerHost(Host, Showable):
         self.broker.version()
         root = plugin_root(hook)
         clients = client_keys(root)
-        image = self.broker.build(root)
+        image, _ = self.broker.build(root)
         cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(

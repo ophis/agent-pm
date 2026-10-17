@@ -39,6 +39,7 @@ GEN = "0123456789abcdef0123456789abcdef"
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
+DIGEST = "sha256:" + "c" * 64
 HOME = ClientHome("agent_dir", "agent", "AGENT_HOME", "agent-token")
 RECORD = Record(
     1,
@@ -106,7 +107,7 @@ class FakeBroker:
 
     def build(self, package):
         self.order.append(("build", package))
-        return IMAGE
+        return IMAGE, DIGEST
 
     def start(self, manifest, *, clients):
         self.order.append(("start", manifest, clients))
