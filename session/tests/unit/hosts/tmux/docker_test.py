@@ -8,6 +8,7 @@ import os
 import signal
 import stat
 import tomllib
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
@@ -217,9 +218,12 @@ class ClientEnvTest(Base):
             ):
                 self.host._client_env("w", client, None, resume=False)
 
-    def test_resume_and_restart_are_refused_and_the_launch_env_starts_clean(self):
-        with self.assertRaisesRegex(ConfigError, "resume and restart are not supported"):
-            self.host._client_env("w", "agent", HOME, resume=True)
+    def test_resume_gets_the_same_env_and_touches_no_file(self):
+        self.assertEqual(
+            self.host._client_env("w", "agent", HOME, resume=True),
+            {"AGENT_HOME": os.path.join(self.home, ".agent-pm", "docker-state", "w", "agent")},
+        )
+        self.assertFalse(os.path.exists(self.state))
         self.assertFalse(self.host._inherit_env)
 
     def test_client_env_points_at_the_home(self):
@@ -236,6 +240,7 @@ class StartTest(Base):
         "generation": GEN,
         "home_field": "agent_dir",
         "home_dir": "agent",
+        "resume": "0",
     }
 
     def setUp(self):
@@ -266,8 +271,26 @@ class StartTest(Base):
             display="lead/below",
             events=os.path.join(self.home, "events"),
             record=RECORD,
-            metadata={**self.METADATA, **metadata},
+            metadata={k: v for k, v in {**self.METADATA, **metadata}.items() if v is not None},
         )
+
+    def history(self):
+        """A native transcript in the home, which the launch names."""
+        transcript = os.path.join(self.home_dir, "projects", "p", "s1.jsonl")
+        os.makedirs(os.path.dirname(transcript))
+        with open(transcript, "w") as f:
+            f.write("{}\n")
+        self.launch = replace(self.launch, transcript=transcript)
+        return transcript
+
+    def refused_untouched(self, error, pattern):
+        """start(resume="1") fails with `pattern`, before any broker call, file or supervisor."""
+        self.order.clear()
+        with self.assertRaisesRegex(error, pattern):
+            self.start(resume="1")
+        self.assertNotIn("version", self.order)
+        self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.json")))
+        self.popen_mock.assert_not_called()
 
     def test_start_order(self):
         os.makedirs(self.home_dir)
@@ -358,6 +381,70 @@ class StartTest(Base):
         kw = self.popen_mock.call_args.kwargs
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
+
+    def test_resume_keeps_the_home_and_starts_a_new_container(self):
+        transcript = self.history()
+        process = self.start(resume="1")
+        with open(transcript) as f:
+            self.assertEqual(f.read(), "{}\n")
+        manifest = os.path.join(self.state, f"{GEN}.json")
+        self.assertIn(("start", manifest, client_keys(REPO)), self.order)
+        with open(manifest) as f:
+            found = json.load(f)
+        self.assertEqual((found["cwd"], found["agent_dir"]), (self.cwd, self.home_dir))
+        self.assertIsInstance(process, DockerTerminal)
+
+    def test_resume_without_native_history_fails_before_the_broker(self):
+        missing = os.path.join(self.home_dir, "projects", "p", "s1.jsonl")
+        outside = os.path.join(self.cwd, "s1.jsonl")
+        with open(outside, "w") as f:
+            f.write("{}\n")
+        for case, transcript, keep in (
+            ("no home", missing, False),
+            ("no transcript", missing, True),
+            ("outside the home", outside, True),
+            ("none named", "", True),
+        ):
+            with self.subTest(case=case):
+                if keep:
+                    os.makedirs(self.home_dir, exist_ok=True)
+                    with open(os.path.join(self.home_dir, "keep"), "w"):
+                        pass
+                self.launch = replace(self.launch, transcript=transcript)
+                self.refused_untouched(
+                    ConfigError, f"docker session w: no native history to resume in {self.home_dir}"
+                )
+                if keep:
+                    self.assertEqual(os.listdir(self.home_dir), ["keep"])
+
+    def test_resume_through_a_link_fails_before_the_broker(self):
+        secret = os.path.join(self.account, "secret.jsonl")
+        with open(secret, "w") as f:
+            f.write("host only\n")
+        transcript = self.history()
+        os.remove(transcript)
+        os.symlink(secret, transcript)
+        self.refused_untouched(ConfigError, "no native history")
+        project = os.path.dirname(transcript)
+        os.remove(transcript)
+        os.rmdir(project)
+        elsewhere = os.path.join(self.account, "elsewhere")
+        os.makedirs(elsewhere)
+        os.symlink(secret, os.path.join(elsewhere, "s1.jsonl"))
+        os.symlink(elsewhere, project)
+        self.refused_untouched(ConfigError, "no native history")
+
+    def test_a_missing_or_bad_resume_flag_is_refused_untouched(self):
+        os.makedirs(self.home_dir)
+        with open(os.path.join(self.home_dir, "keep"), "w"):
+            pass
+        for flag in (None, "", "yes", "2"):
+            with self.subTest(flag=flag):
+                self.order.clear()
+                with self.assertRaisesRegex(SessionError, "docker session w: bad resume flag"):
+                    self.start(resume=flag)
+                self.assertEqual(self.order, [])
+                self.assertEqual(os.listdir(self.home_dir), ["keep"])
 
     def test_existing_container_refuses_start(self):
         self.docker.ps = ["agent-pm-w-other\tw\tother"]

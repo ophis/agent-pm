@@ -70,7 +70,6 @@ class Base(Case):
         self.host.list.return_value = ["w1"]
         self.host.attach.return_value = self.handle
         self.host.reclaim.return_value = None
-        self.host._resume_refused = None
         self.session_cls = mock.Mock()
         self.session_cls.host.return_value = self.host
         self.session = self.session_cls.start.return_value
@@ -666,13 +665,6 @@ class RestartTest(Base):
                     SessionError, "^w1: old session closed, none started: unknown client claude$"
                 ):
                     getattr(self.worker(), call)()
-
-    def test_a_host_that_cannot_restart_refuses_before_closing_anything(self):
-        self.handle.alive.return_value = True
-        self.host._resume_refused = "restart is not supported here"
-        with self.assertRaisesRegex(SessionError, "^w1: restart is not supported here$"):
-            self.worker().restart()
-        self.assertEqual(self.calls(), [])
 
     def test_no_session_is_refused_untouched(self):
         self.host.list.return_value = []
