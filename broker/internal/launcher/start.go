@@ -3,11 +3,9 @@ package launcher
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,54 +26,6 @@ func bindMount(source, target string) string {
 	_ = w.Write([]string{"type=bind", "source=" + source, "target=" + target})
 	w.Flush()
 	return strings.TrimSuffix(b.String(), "\n")
-}
-
-func numeric(s string) bool {
-	n, err := strconv.ParseUint(s, 10, 31)
-	return err == nil && n > 0
-}
-
-// checkImage requires a broker-built image: matching key, version and agent ids in its labels.
-func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
-	info, found, err := h.inspectImage(ctx, image)
-	if err != nil {
-		return imageInfo{}, failure(err, protocol.ImageRejected, "Cannot inspect image "+image+".")
-	}
-	l := info.Config.Labels
-	if !found || l["agent-pm.key"] != strings.TrimPrefix(image, "agent-pm-worker:") || l["agent-pm.version"] == "" ||
-		!numeric(l["agent-pm.agent-uid"]) || !numeric(l["agent-pm.agent-gid"]) {
-		return imageInfo{}, protocol.New(protocol.ImageRejected, "Image "+image+" is not a broker-built worker image; run agent-pm-broker build.")
-	}
-	return info, nil
-}
-
-// checkNesting refuses a cwd strictly inside a running worker's bind source: that worker could swap
-// a directory for a symlink between this check and Docker's mount.
-func (h Host) checkNesting(ctx context.Context, cwd string) error {
-	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "label=agent-pm.session", "--format", "{{.ID}}"}, nil)
-	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot list running workers.")
-	}
-	ids := strings.Fields(string(out))
-	if len(ids) == 0 {
-		return nil
-	}
-	out, err = h.Docker.Run(ctx, append([]string{"inspect", "--format", "{{json .Mounts}}"}, ids...), nil)
-	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot inspect running workers.")
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		var mounts []struct{ Type, Source string }
-		if err := json.Unmarshal([]byte(line), &mounts); err != nil {
-			return protocol.New(protocol.StartFailed, "Cannot read running workers' mounts.")
-		}
-		for _, m := range mounts {
-			if m.Type == "bind" && m.Source != "" && h.within(cwd, m.Source) && !h.Same(cwd, m.Source) {
-				return protocol.Newf(protocol.MountRejected, "cwd %s is inside running worker mount %s.", cwd, m.Source)
-			}
-		}
-	}
-	return nil
 }
 
 func (h Host) Start(ctx context.Context, path string) (StartResult, error) {

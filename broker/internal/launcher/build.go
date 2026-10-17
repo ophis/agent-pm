@@ -138,6 +138,25 @@ func (h Host) inspectImage(ctx context.Context, image string) (imageInfo, bool, 
 	return infos[0], true, nil
 }
 
+func numeric(s string) bool {
+	n, err := strconv.ParseUint(s, 10, 31)
+	return err == nil && n > 0
+}
+
+// checkImage requires a broker-built image: matching key, version and agent ids in its labels.
+func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
+	info, found, err := h.inspectImage(ctx, image)
+	if err != nil {
+		return imageInfo{}, failure(err, protocol.ImageRejected, "Cannot inspect image "+image+".")
+	}
+	l := info.Config.Labels
+	if !found || l["agent-pm.key"] != strings.TrimPrefix(image, "agent-pm-worker:") || l["agent-pm.version"] == "" ||
+		!numeric(l["agent-pm.agent-uid"]) || !numeric(l["agent-pm.agent-gid"]) {
+		return imageInfo{}, protocol.New(protocol.ImageRejected, "Image "+image+" is not a broker-built worker image; run agent-pm-broker build.")
+	}
+	return info, nil
+}
+
 func probeIDs(out []byte) (string, string, bool) {
 	fields := strings.Fields(string(out))
 	if len(fields) != 2 {
