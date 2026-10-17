@@ -48,9 +48,14 @@ claude setup-token          # copy the token it prints
 
 GitHub: each App's private key must already be a generic-password item in the login
 keychain, service the App name, account its App ID, content the base64 key. Change each
-item's access in place to trust only the broker (allow the keychain prompts); content
-and account stay. Each prints its success line only after reading the access back:
-otherwise it exits non-zero naming what still trusts another application.
+item's access in place to trust only the broker; content and account stay. Each run reads
+the key once (allow the keychain dialog), then does only the steps not yet in place: the
+entries that read or export the item get only the broker (allow the dialog), then the
+partition list gets only the broker's partition ID, for which the broker asks on its
+terminal, without echo, for the login keychain password (a wrong one fails with
+`keychain status -25293`). It prints its success line only after reading the access back;
+otherwise it exits non-zero saying whether it changed the item, what is done and what is
+not: rerun the same command to finish.
 
 ```sh
 "$B" login github agent-pm-engineer
@@ -62,7 +67,7 @@ otherwise it exits non-zero naming what still trusts another application.
 | output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-engineer"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
-| rerun `login github agent-pm-engineer` | same output |
+| rerun `login github agent-pm-engineer` | same output, no password question |
 
 ## Build
 
