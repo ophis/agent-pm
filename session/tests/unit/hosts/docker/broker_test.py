@@ -232,12 +232,19 @@ class StreamTest(Case):
         self.assertEqual((res.returncode, res.stderr), (8, '#1 load\n{"exit_code": 8}\n'))
         self.assertEqual(shown, "#1 load\n")
 
-    def test_bad_utf8_is_a_decode_error(self):
+    def test_bad_utf8_is_a_decode_error_only_on_stdout(self):
         with self.assertRaises(UnicodeDecodeError):
             self.run_stream(b"\xff", b"", 0)
+        _, shown, res = self.run_stream(b"{}\n", b"#3 caf\xe9\n", 0)
+        self.assertEqual((res.stderr, shown), ("#3 caf\ufffd\n", "#3 caf\ufffd\n"))
 
-    def test_a_silent_process_times_out_and_is_killed(self):
-        proc = FakeProc(["b"], hang=True)
-        with mock.patch("subprocess.Popen", return_value=proc), self.assertRaises(TimeoutExpired):
+    def test_a_silent_step_shows_its_header_then_times_out_and_is_killed(self):
+        proc, shown = FakeProc(["b"], err=b"#5 [2/3] RUN make\n", hang=True), io.StringIO()
+        with (
+            mock.patch("subprocess.Popen", return_value=proc),
+            mock.patch("sys.stderr", shown),
+            self.assertRaises(TimeoutExpired),
+        ):
             broker._stream(["b"], stdin=DEVNULL, env={}, timeout=0.1)
         self.assertTrue(proc.killed)
+        self.assertEqual(shown.getvalue(), "#5 [2/3] RUN make\n")

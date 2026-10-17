@@ -136,38 +136,54 @@ def _update(update) -> bool:
 
 
 def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:
-    """argv's text result, copying each stderr line to ours as it arrives (build's progress) but a
-    failing run's last: its error object. TimeoutExpired past `timeout`.
+    """argv's text result, copying stderr (build's progress) to ours line by line as it arrives,
+    but a failing run's error object. TimeoutExpired past `timeout`.
     """
     deadline = time.monotonic() + timeout
     with subprocess.Popen(
         argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
     ) as proc:
         try:
-            out, err = bytearray(), bytearray()
-            found = {proc.stdout.fileno(): out, proc.stderr.fileno(): err}
-            shown = 0
-            while found:
-                ready = select.select(list(found), [], [], max(0.0, deadline - time.monotonic()))
-                if not ready[0]:
-                    raise subprocess.TimeoutExpired(argv, timeout)
-                for fd in ready[0]:
-                    chunk = os.read(fd, 1 << 16)
-                    found[fd] += chunk
-                    if not chunk:
-                        del found[fd]
-                held = err.rfind(b"\n", 0, len(err) - 1) + 1
-                if held > shown:
-                    sys.stderr.write(err[shown:held].decode(errors="replace"))
-                    sys.stderr.flush()
-                    shown = held
+            out, err, shown = _copy(proc, deadline, timeout)
             code = proc.wait(max(0.0, deadline - time.monotonic()))
         except BaseException:
             proc.kill()
             raise
-    if code == 0 and len(err) > shown:
-        sys.stderr.write(err[shown:].decode(errors="replace"))
-    return subprocess.CompletedProcess(argv, code, out.decode(), err.decode())
+    rest = err[shown:]
+    if code == 0 or not rest.startswith(b"{"):
+        _show(rest)
+    return subprocess.CompletedProcess(argv, code, out.decode(), err.decode(errors="replace"))
+
+
+def _copy(proc, deadline: float, timeout: float) -> tuple[bytes, bytes, int]:
+    """proc's stdout and stderr, and how much of stderr it showed: every complete line but a last
+    one starting with `{`, which may be the error object.
+    """
+    out, err = bytearray(), bytearray()
+    found = {proc.stdout.fileno(): out, proc.stderr.fileno(): err}
+    shown = 0
+    while found:
+        ready = select.select(list(found), [], [], max(0.0, deadline - time.monotonic()))[0]
+        if not ready:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        for fd in ready:
+            chunk = os.read(fd, 1 << 16)
+            found[fd] += chunk
+            if not chunk:
+                del found[fd]
+        end = err.rfind(b"\n") + 1
+        last = err.rfind(b"\n", 0, max(end - 1, 0)) + 1
+        if err.startswith(b"{", last):
+            end = last
+        if end > shown:
+            _show(err[shown:end])
+            shown = end
+    return bytes(out), bytes(err), shown
+
+
+def _show(progress: bytes | bytearray) -> None:
+    sys.stderr.write(progress.decode(errors="replace"))
+    sys.stderr.flush()
 
 
 class Broker:
