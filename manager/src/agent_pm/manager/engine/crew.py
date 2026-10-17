@@ -28,6 +28,7 @@ from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
     SID_ENV,
+    STATE,
     OutcomeStatus,
     Record,
     Status,
@@ -97,6 +98,30 @@ def _reconciled(entry: Entry, status: Status) -> State:
     if status.outcome == OutcomeStatus.NEEDS_INPUT:
         return State.WAITING
     return State.GONE
+
+
+def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str]:
+    """An issue run's role, client, session id and cwd from its run record,
+    `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
+    agent can append to.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", issue):
+        raise ValueError(f"{issue!r}: want an issue identifier")
+    run = os.path.join(os.path.expanduser(work_dir), "work", issue, "run")
+    path = os.path.join(run, "delegate.json")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            state = json.load(stream)
+        role, session = state["role"], state["plan"]["session"]
+        client, sid, workdir = session["client"], session["sid"], session["workdir"]
+        cwd = session["access"]["cwd"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(f"{issue}: no run record at {path}: {error!r}") from None
+    if not all(isinstance(value, str) and value for value in (role, client, sid, workdir, cwd)):
+        raise RuntimeError(f"{issue}: {path}: no role, client, session id or cwd")
+    if os.path.realpath(workdir) != os.path.realpath(run):
+        raise RuntimeError(f"{issue}: {path} records another run, {workdir}")
+    return role, client, sid, cwd
 
 
 class Crew:
@@ -203,12 +228,28 @@ class Crew:
         note: str | None = None,
         name: str | None = None,
         resume: str | None = None,
+        work_dir: str = STATE,
     ) -> Record:
         sid = resume or str(uuid.uuid4())
         if kind == "worker":
             name = key
             resumed = ("--resume", resume) if resume else ()
             command = ("agent-pm-session", "start", key, *resumed, *argv)
+        elif kind == "reopen":
+            role, client, sid, cwd = _closed_run(work_dir, key)
+            name = f"{role}-{key}"
+            command = (
+                "agent-pm-session",
+                "start",
+                name,
+                "--client",
+                client,
+                "--cwd",
+                cwd,
+                "--resume",
+                sid,
+                *argv,
+            )
         elif kind == "issue":
             name = key
             command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)

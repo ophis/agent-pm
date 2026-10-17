@@ -68,6 +68,7 @@ def _launch(args) -> int:
         note=args.note,
         name=args.entry_name,
         resume=args.resume,
+        work_dir=args.work_dir,
     )
     print(record.to_line())
     return 0
@@ -216,9 +217,9 @@ Prerequisites and effects:
   hold gives its child AGENT_PM_MANAGER and the paired AGENT_PM_HOLDER_ID /
   AGENT_PM_HOLDER_GENERATION. Keep that pair together. An active holder fences
   ownership-sensitive roster updates; run those from its commander environment.
-  AGENT_PM_AGENT_SESSION blocks hold/run/worker/issue/role/resume; use a
+  AGENT_PM_AGENT_SESSION blocks hold/run/worker/reopen/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
-  run/worker/issue/role give starters empty stdin; supply literal input.
+  run/worker/reopen/issue/role give starters empty stdin; supply literal input.
   hold instead inherits the caller's input for its foreground command.
   Exit 0: success; 2: usage/invalid value; 1: operational/lease failure.
   hold instead propagates its child's status, signals as 128 + signal number.
@@ -328,6 +329,25 @@ Examples:
 """,
         ),
         (
+            "reopen",
+            "ISSUE",
+            "Resume a closed issue run's conversation as a worker and track its Record",
+            f"{LayerCommand.SESSION} start",
+            """ISSUE is a board issue identifier with a recorded run.
+Crew reads the run's role, client, session id and cwd from its run record,
+WORK_DIR/work/ISSUE/run/delegate.json, then starts worker ROLE-ISSUE:
+agent-pm-session start ROLE-ISSUE --client CLIENT --cwd CWD --resume SID,
+under that session identity. No record or session id: exit 1.
+The worker is tracked like any other; the board is not touched.
+
+Examples:
+  With TASK-123's run closed:
+  agent-pm-crew reopen --manager demo TASK-123
+  Form: reopen [CREW_OPTIONS] ISSUE [SESSION_OPTIONS] [-- CLIENT_FLAGS]
+  Placement: agent-pm-session --help
+""",
+        ),
+        (
             "issue",
             "ISSUE",
             "Start an attended issue run and track its Record",
@@ -387,6 +407,13 @@ Examples:
             launch.add_argument(
                 "--resume", metavar="SID", help="resume conversation SID; default: a new one"
             )
+        if kind == "reopen":
+            launch.add_argument(
+                "--work-dir",
+                metavar="WORK_DIR",
+                default=STATE,
+                help=f"the board's configured work_dir; default: {STATE}",
+            )
         launch.add_argument("key", metavar=key, help=f"required {key.lower()}; see below")
         launch.add_argument(
             "arguments",
@@ -394,7 +421,7 @@ Examples:
             metavar="DOWNSTREAM_OPTIONS",
             help=f"forwarded verbatim to {owner}; defaults/values: its --help",
         )
-        launch.set_defaults(func=_launch, kind=kind, entry_name=None, resume=None)
+        launch.set_defaults(func=_launch, kind=kind, entry_name=None, resume=None, work_dir=STATE)
     attach = page(
         "attach",
         "Reconcile a roster and print recovery/monitoring commands",

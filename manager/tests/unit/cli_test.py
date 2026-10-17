@@ -3,8 +3,10 @@
 import argparse
 import contextlib
 import io
+import json
 import os
 import shlex
+import shutil
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -307,6 +309,81 @@ class Launch(CliCase):
                 result, stdout, _ = self.start(*arguments, code=code, output=output)
                 self.assertEqual((result, stdout), (1, ""))
         self.assertEqual({e.state.value for e in self.roster.entries().values()}, {"lost"})
+
+
+class Reopen(CliCase):
+    start = Launch.start
+
+    def record(self, client="claude", base=None, **session):
+        work = Path(base or self.agent_pm, "work", "TASK-9")
+        self.agent, run = work / "agent", work / "run"
+        self.agent.mkdir(parents=True)
+        run.mkdir()
+        self.sid = str(uuid.uuid4())
+        plan = {
+            "client": client,
+            "sid": self.sid,
+            "workdir": str(run),
+            "access": {"cwd": str(self.agent)},
+            **session,
+        }
+        (run / "delegate.json").write_text(
+            json.dumps({"role": "researcher", "plan": {"session": plan}})
+        )
+        return run
+
+    def reopen(self, *extra, crew=()):
+        with mock.patch("subprocess.run") as run:
+            result = self.start("reopen", "--manager", "mgr", *crew, "TASK-9", *extra)
+        run.assert_not_called()
+        return result
+
+    def test_reopen_resumes_the_recorded_session_with_its_client(self):
+        for client, base, option in (
+            ("claude", self.agent_pm, ()),
+            ("codex", self.home, ("--work-dir", self.home)),
+        ):
+            with self.subTest(client=client):
+                self.record(client, base)
+                result, stdout, stderr = self.reopen("--display", "none", crew=option)
+                self.assertEqual(result, 0, stderr)
+                self.assertEqual(
+                    self.calls[0][0],
+                    (
+                        "agent-pm-session",
+                        "start",
+                        "researcher-TASK-9",
+                        "--client",
+                        client,
+                        "--cwd",
+                        str(self.agent),
+                        "--resume",
+                        self.sid,
+                        "--display",
+                        "none",
+                    ),
+                )
+                self.assertEqual(self.calls[0][1]["AGENT_PM_SID"], self.sid)
+                entry = self.roster.entries()["researcher-TASK-9"]
+                self.assertEqual((entry.sid, entry.record), (self.sid, Record.parse(stdout)))
+                self.roster.remove("researcher-TASK-9")
+                shutil.rmtree(Path(base, "work"))
+
+    def test_reopen_without_a_run_record_or_session_id_fails_clearly(self):
+        for case, prepare, message in (
+            ("no run", lambda: Path(self.agent_pm, "work").mkdir(), "no run record"),
+            ("no record", lambda: os.remove(self.record() / "delegate.json"), "no run record"),
+            ("no sid", lambda: self.record(sid=""), "no role, client, session id or cwd"),
+            ("other run", lambda: self.record(workdir="/elsewhere"), "records another run"),
+        ):
+            with self.subTest(case=case):
+                prepare()
+                result, stdout, stderr = self.reopen()
+                self.assertEqual((result, stdout), (1, ""))
+                self.assertIn("TASK-9", stderr)
+                self.assertIn(message, stderr)
+                self.assertEqual((self.calls, self.roster.entries()), ([], {}))
+                shutil.rmtree(Path(self.agent_pm, "work"))
 
 
 class ResumeInput(CliCase):
@@ -783,6 +860,7 @@ class InsideAnAgentSession(CliCase):
             ("hold", "--manager", "mgr", "--", "true"),
             ("resume", "--manager", "mgr", "w1"),
             ("worker", "--manager", "mgr", "w1", "--client", "claude"),
+            ("reopen", "--manager", "mgr", "TASK-12"),
             ("issue", "--manager", "mgr", "TASK-12"),
             ("role", "--manager", "mgr", "pm", "--input", "x"),
         ):
@@ -810,6 +888,7 @@ HELP_COMMANDS = [
     "hold",
     "run",
     "worker",
+    "reopen",
     "issue",
     "role",
     "attach",
@@ -890,6 +969,7 @@ class HelpContracts(Case):
     def test_boundary_help_and_recovery_are_explicit(self):
         for verb, owner in (
             ("worker", "agent-pm-session start --help"),
+            ("reopen", "agent-pm-session start --help"),
             ("issue", "agent-pm-linear router --help"),
             ("role", "agent-pm-delegate run --help"),
         ):
