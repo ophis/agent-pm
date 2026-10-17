@@ -28,6 +28,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
 | `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
 | scripts or notes calling `agent-pm-crew attach --after` or `--gen` | Switch to `agent-pm-crew ack --through <line> --gen <gen>`; reading events no longer marks them handled. |
+| `[linear_orchestrator.option_labels]` (the `visual` key) in `~/.agent-pm/config.local.toml` | Delete that table: research reports now carry figures on their own, so the Visual label does nothing; left there, the router refuses it with `unknown key 'option_labels' in [linear_orchestrator]`. |
 
 ### Workdir split
 

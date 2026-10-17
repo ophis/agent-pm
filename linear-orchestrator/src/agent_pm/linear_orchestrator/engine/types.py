@@ -41,7 +41,6 @@ class Config:
     task_labels: Mapping[str, str]
     agent_label_group: str
     agent_labels: Mapping[str, str]
-    option_labels: Mapping[str, str]
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]
