@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -64,26 +63,28 @@ func TestFileKeychain(t *testing.T) {
 	}
 	// -A lets the test binary read the seed without a prompt, as the user allows once.
 	security("add-generic-password", "-A", "-s", app, "-a", "4242", "-w", key, path)
-	created := regexp.MustCompile(`"cdat"<timedate>=\S+`).FindString(security("find-generic-password", "-s", app, path))
-	self, err := os.Executable()
-	if err != nil || created == "" {
-		t.Fatalf("%q %v", created, err)
+	item := func() string {
+		return security("find-generic-password", "-s", app, path) + security("dump-keychain", "-a", path)
 	}
-	for range 2 {
-		var out bytes.Buffer
-		if err := LoginGitHub(app, k, &out); err != nil || strings.Contains(out.String(), key) {
-			t.Fatalf("%v %q", err, out.String())
-		}
-		if got, err := k.AppKey(app, "4242"); err != nil || string(got) != key {
-			t.Fatalf("AppKey %q %v", got, err)
-		}
-		// Changed in place: the item keeps its creation date, and no entry trusts every application.
-		if now := security("find-generic-password", "-s", app, path); !strings.Contains(now, created) {
-			t.Fatalf("item re-created: %s, was %s", now, created)
-		}
-		if acl := security("dump-keychain", "-a", path); strings.Contains(acl, "applications: <null>") || !strings.Contains(acl, self) {
-			t.Fatalf("ACL not broker-only:\n%s", acl)
-		}
+	before := item()
+	// Changing an ACL always needs the user's authorization, which a headless runner cannot give:
+	// with prompts off it must fail and leave the item exactly as it was. The success path is checked on a host.
+	if err := setInteraction(false); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err := LoginGitHub(app, k, &out)
+	if err := setInteraction(true); err != nil {
+		t.Fatal(err)
+	}
+	if err == nil || !strings.Contains(err.Error(), app+" unchanged") || strings.Contains(err.Error(), key) || out.Len() != 0 {
+		t.Fatalf("%v %q", err, out.String())
+	}
+	if after := item(); after != before {
+		t.Fatalf("item changed:\n%s\nwas:\n%s", after, before)
+	}
+	if got, err := k.AppKey(app, "4242"); err != nil || string(got) != key {
+		t.Fatalf("AppKey %q %v", got, err)
 	}
 	security("add-generic-password", "-A", "-s", app, "-a", "4343", "-w", key, path)
 	if _, err := k.AppAccount(app); !errors.Is(err, ErrAmbiguous) {

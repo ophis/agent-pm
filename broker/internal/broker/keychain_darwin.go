@@ -116,15 +116,15 @@ static OSStatus self_access(const char *label, SecAccessRef *access) {
     return s;
 }
 // An existing item is deleted, never updated, so a pre-planted permissive ACL does not survive.
-static OSStatus item_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length) {
+static OSStatus token_put(const char *path, const void *bytes, long length) {
     SecKeychainRef kc = NULL;
     OSStatus s;
-    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
+    CFMutableDictionaryRef q = item_query(path, "agent-pm-claude", "setup-token", &kc, &s);
     if (!q) return s;
     s = SecItemDelete(q);
     if (s != errSecSuccess && s != errSecItemNotFound) goto done;
     SecAccessRef access = NULL;
-    s = self_access(label, &access);
+    s = self_access("agent-pm Claude setup-token", &access);
     if (s != errSecSuccess) goto done;
     CFDictionaryRemoveValue(q, kSecMatchSearchList);
     CFDataRef data = CFDataCreate(NULL, bytes, length);
@@ -263,15 +263,6 @@ func (k fileKeychain) get(service, account string) ([]byte, error) {
 	return b, nil
 }
 
-func (k fileKeychain) put(service, account, label string, data []byte) error {
-	if len(data) == 0 {
-		return fmt.Errorf("empty value for keychain item %s", service)
-	}
-	p, free := cStrings(string(k), service, account, label)
-	defer free()
-	return status(C.item_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data))))
-}
-
 func (k fileKeychain) Exists() error {
 	p, free := cStrings(string(k), tokenService, tokenAccount)
 	defer free()
@@ -281,7 +272,21 @@ func (k fileKeychain) Exists() error {
 func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount) }
 
 func (k fileKeychain) Put(token []byte) error {
-	return k.put(tokenService, tokenAccount, "agent-pm Claude setup-token", token)
+	if len(token) == 0 {
+		return errors.New("empty setup-token")
+	}
+	p := C.CString(string(k))
+	defer C.free(unsafe.Pointer(p))
+	return status(C.token_put(p, unsafe.Pointer(&token[0]), C.long(len(token))))
+}
+
+// setInteraction turns keychain prompts on or off for this process; off, a call that needs one fails.
+func setInteraction(allowed bool) error {
+	var b C.Boolean
+	if allowed {
+		b = 1
+	}
+	return status(C.SecKeychainSetUserInteractionAllowed(b))
 }
 
 func (k fileKeychain) AppAccount(app string) (string, error) {
