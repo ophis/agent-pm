@@ -1,0 +1,717 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Docker broker protocol 1",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^/[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "session_name": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "not": {
+        "const": "none"
+      }
+    },
+    "generation": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^agent-pm-worker:[0-9a-f]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "container": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$"
+    },
+    "endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      ],
+      "pattern": "^unix:///[^\\u0000-\\u001f\\u007f]+/\\.docker/run/docker\\.sock$"
+    },
+    "labels": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "allOf": [
+          {
+            "not": {
+              "pattern": "[\\u0000-\\u001f\\u007f]"
+            }
+          }
+        ],
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        "not": {
+          "pattern": "^agent-pm\\."
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "not": {
+          "pattern": "[\\u0000-\\u001f\\u007f]"
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/session_name"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "cwd": {
+          "$ref": "#/$defs/path"
+        },
+        "claude_dir": {
+          "$ref": "#/$defs/path"
+        },
+        "hook_path": {
+          "$ref": "#/$defs/path"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        }
+      },
+      "required": [
+        "name",
+        "generation",
+        "image",
+        "cwd",
+        "claude_dir",
+        "labels"
+      ],
+      "additionalProperties": false
+    },
+    "version_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "version"
+            }
+          ],
+          "items": false,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "version_output": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "const": "1"
+        }
+      },
+      "required": [
+        "protocol_version"
+      ],
+      "additionalProperties": false
+    },
+    "build_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "build"
+            },
+            {
+              "const": "--agent-pm"
+            },
+            {
+              "$ref": "#/$defs/path"
+            }
+          ],
+          "items": false,
+          "minItems": 3
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "build_output": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "rebuilt": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "image",
+        "digest",
+        "rebuilt"
+      ],
+      "additionalProperties": false
+    },
+    "start_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "start"
+            },
+            {
+              "const": "--manifest"
+            },
+            {
+              "$ref": "#/$defs/path"
+            }
+          ],
+          "items": false,
+          "minItems": 3
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "start_output": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/container"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/endpoint"
+        },
+        "image_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "clients": {
+          "type": "object",
+          "properties": {
+            "claude": {
+              "$ref": "#/$defs/text"
+            },
+            "codex": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "required": [
+            "claude",
+            "codex"
+          ],
+          "additionalProperties": false
+        },
+        "update": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "updated"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "fallback"
+                },
+                "reason": {
+                  "enum": [
+                    "network",
+                    "timeout",
+                    "command_failed",
+                    "version_failed"
+                  ]
+                },
+                "message": {
+                  "$ref": "#/$defs/text"
+                }
+              },
+              "required": [
+                "status",
+                "reason",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "container",
+        "endpoint",
+        "image_digest",
+        "clients",
+        "update"
+      ],
+      "additionalProperties": false
+    },
+    "close_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "close"
+            },
+            {
+              "const": "--container"
+            },
+            {
+              "$ref": "#/$defs/container"
+            }
+          ],
+          "items": false,
+          "minItems": 3
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "close_output": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/container"
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "container",
+        "removed"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "enum": [
+                "version",
+                "build",
+                "start",
+                "close",
+                "unknown"
+              ]
+            },
+            "code": {
+              "enum": [
+                "usage",
+                "manifest_rejected",
+                "mount_rejected",
+                "login_required",
+                "image_rejected",
+                "docker_unreachable",
+                "build_failed",
+                "start_failed",
+                "close_failed",
+                "keychain_failed",
+                "internal_error"
+              ]
+            },
+            "message": {
+              "$ref": "#/$defs/text"
+            },
+            "cleanup": {
+              "enum": [
+                "not_needed",
+                "removed",
+                "failed"
+              ]
+            },
+            "cause": {
+              "$ref": "#/$defs/text"
+            },
+            "cleanup_error": {
+              "$ref": "#/$defs/text"
+            },
+            "container": {
+              "$ref": "#/$defs/container"
+            }
+          },
+          "required": [
+            "command",
+            "code",
+            "message",
+            "cleanup"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "cleanup": {
+                    "const": "failed"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "cleanup_error",
+                  "container"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "cleanup_error"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "command": {
+                    "not": {
+                      "const": "start"
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "cleanup": {
+                    "const": "not_needed"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "exit_code",
+        "error"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "exit_code": {
+              "const": 2
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "usage"
+                },
+                "command": {
+                  "enum": [
+                    "version",
+                    "build",
+                    "start",
+                    "close",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 3
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "manifest_rejected"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 4
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "mount_rejected"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 5
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "login_required"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 6
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "image_rejected"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 7
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "docker_unreachable"
+                },
+                "command": {
+                  "enum": [
+                    "build",
+                    "start",
+                    "close"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 8
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "build_failed"
+                },
+                "command": {
+                  "enum": [
+                    "build"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 9
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "start_failed"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 10
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "close_failed"
+                },
+                "command": {
+                  "enum": [
+                    "close"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 11
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "keychain_failed"
+                },
+                "command": {
+                  "enum": [
+                    "start"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "exit_code": {
+              "const": 70
+            },
+            "error": {
+              "properties": {
+                "code": {
+                  "const": "internal_error"
+                },
+                "command": {
+                  "enum": [
+                    "version",
+                    "build",
+                    "start",
+                    "close",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

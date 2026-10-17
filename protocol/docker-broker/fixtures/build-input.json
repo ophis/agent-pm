@@ -1,0 +1,7 @@
+{
+  "argv": [
+    "build",
+    "--agent-pm",
+    "/opt/agent-pm"
+  ]
+}
