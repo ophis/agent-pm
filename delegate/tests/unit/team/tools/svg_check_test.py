@@ -27,6 +27,7 @@ FIGURE = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rect width="10" height="10" fill="url(#g)" style="stroke: url(&quot;#g&quot;)"/>
 <line marker-end="url(#m)"/>
 <use href="#m"/><use xlink:href="#m"/>
+<a><animate attributeName="href" values="#m; #g;"/></a>
 <text>See https://example.com and url(http://example.com) &amp; onload</text>
 </svg>
 """

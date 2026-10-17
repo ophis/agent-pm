@@ -77,7 +77,9 @@ def _check(data):
             elif local == "href" or (animates_href and local in ANIMATED):
                 failures += [
                     f"external reference: {ref.strip()}"
-                    for ref in (value.split(";") if local == "values" else [value])
+                    for ref in (
+                        [v for v in value.split(";") if v.strip()] if local == "values" else [value]
+                    )
                     if not ref.strip().startswith("#")
                 ]
             else:
