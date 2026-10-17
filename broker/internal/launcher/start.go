@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -35,7 +37,16 @@ func bindMount(source, target string) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
+// Start writes each phase's seconds to Progress only once it succeeds, so a failure's stderr stays one error object.
 func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
+	var times strings.Builder
+	began := time.Now()
+	last := began
+	lap := func(phase string) {
+		now := time.Now()
+		fmt.Fprintf(&times, "agent-pm-broker: start %s %.2f s\n", phase, now.Sub(last).Seconds())
+		last = now
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return StartResult{}, protocol.New(protocol.ManifestRejected, "Cannot read manifest "+path+".")
@@ -51,10 +62,12 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err := h.Creds.Ready(); err != nil {
 		return StartResult{}, err
 	}
+	lap("preflight")
 	info, err := h.checkImage(ctx, m.Image)
 	if err != nil {
 		return StartResult{}, err
 	}
+	lap("image")
 	if err := h.checkNesting(ctx, cwd); err != nil {
 		return StartResult{}, err
 	}
@@ -65,7 +78,8 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		}
 		return StartResult{}, taken(c)
 	}
-	result, err := h.create(ctx, c, m, cwd, info)
+	lap("checks")
+	result, err := h.create(ctx, c, m, cwd, info, lap)
 	if errors.Is(err, errTaken) {
 		return StartResult{}, taken(c)
 	}
@@ -77,11 +91,15 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		h.rollback(ctx, c, e)
 		return StartResult{}, e
 	}
+	fmt.Fprintf(&times, "agent-pm-broker: start total %.2f s\n", time.Since(began).Seconds())
+	if h.Progress != nil {
+		_, _ = io.WriteString(h.Progress, times.String())
+	}
 	return result, nil
 }
 
 // create runs every step after the absence check; any error makes Start roll back.
-func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info imageInfo) (StartResult, error) {
+func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info imageInfo, lap func(phase string)) (StartResult, error) {
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", m.CWD, "--env", "CLAUDE_CONFIG_DIR=" + m.ClaudeDir,
@@ -107,6 +125,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		}
 		return StartResult{}, e
 	}
+	lap("create")
 	if _, err := h.Docker.Run(ctx, asAgent(c, python, "-I", bootstrap, "claude", m.ClaudeDir, m.CWD), nil); err != nil {
 		return StartResult{}, failure(err, protocol.StartFailed, "Writing Claude's bootstrap state failed.")
 	}
@@ -115,10 +134,12 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 			return StartResult{}, failure(err, protocol.StartFailed, "Installing the hook stub failed.")
 		}
 	}
+	lap("bootstrap")
 	clients, update, err := h.updateClients(ctx, c)
 	if err != nil {
 		return StartResult{}, err
 	}
+	lap("update")
 	exec := func(argv []string, stdin []byte) error {
 		_, err := h.Docker.Run(ctx, append([]string{"exec", "--interactive", "--user", "agent", c}, argv...), stdin)
 		return err
@@ -133,6 +154,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		}
 		return StartResult{}, protocol.New(protocol.StartFailed, "Injecting the Claude token failed.")
 	}
+	lap("credentials")
 	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, Update: update}, nil
 }
 

@@ -212,7 +212,8 @@ token, and the broker reads only the manifest.
 start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
 (`<generation>.result.json`: container, image and digest, client versions, update
-result, and when the broker's start began and ended),
+result, when the broker's start began and ended, and the [start timing](#start-timing)
+`phases` and `launched_at`),
 `host.json` (what the host knows of the session, with its events path), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
@@ -225,6 +226,44 @@ else `~/.claude/settings.json`), so the worker runs the host's default model and
 other host setting, credential, hook or permission reaches it. Without readable host
 settings it runs on Claude's default. `--model`/`--effort` and role config still win, as on
 tmux.
+
+### Start timing
+
+Every start, restart or resume reports where its time went to the starting command's
+stderr, in three blocks, each once its part succeeded (a failed broker or Session start
+reports no block of its own). Each phase's seconds count from the end of the one before:
+
+```text
+docker timing NAME: preflight 41.20 s
+agent-pm-broker: start preflight 0.01 s
+…
+agent-pm-broker: start total 38.75 s
+docker timing NAME GENERATION: checks 0.12 s
+…
+```
+
+| Line | Phase | Covers |
+|---|---|---|
+| `docker timing NAME` | `preflight` | cwd rules, broker `version` and `build`: a rebuild after an upgrade lands here |
+| `agent-pm-broker: start` | `preflight` | manifest, mount rules, setup-token present |
+| | `image` | the image check |
+| | `checks` | the nesting check and the container-name check |
+| | `create` | `docker run`: the new container |
+| | `bootstrap` | Claude's bootstrap state and the hook stub |
+| | `update` | the client update in the container, a fallback included |
+| | `credentials` | the token injection |
+| | `total` | the broker's whole `start` |
+| `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check, the client home |
+| | `image` | `version` and `build` again (cached), the manifest and the plan |
+| | `start` | the broker's `start`, as broken down above |
+| | `relay` | the supervisor lock, the hook relay serving in the container |
+| | `tmux` | the supervisor and the container's tmux session with the client |
+| | `client` | until the client's pane runs |
+
+`<generation>.result.json` keeps the last block as `phases` (phase → seconds) and the
+moment the client's pane ran as `launched_at` (milliseconds). The client is ready when its
+first hook arrives: the first record in `~/.agent-pm/tui/NAME/hooks.jsonl` whose `ts` is
+after `launched_at`; their difference is the time from a running client to a ready one.
 
 ### Recovery
 

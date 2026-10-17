@@ -7,6 +7,7 @@ import fcntl
 import io
 import json
 import os
+import re
 import shlex
 import signal
 import stat
@@ -588,6 +589,7 @@ class StartTest(Base):
                     found = json.load(f)
                 began, ended = found.pop("started_at"), found.pop("ended_at")
                 self.assertLessEqual(parse_time(began), parse_time(ended))
+                found.pop("phases"), found.pop("launched_at")
                 self.assertEqual(
                     found,
                     {
@@ -599,6 +601,35 @@ class StartTest(Base):
                     },
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
+
+    def test_each_start_records_and_reports_its_phase_times(self):
+        result = os.path.join(self.state, f"{GEN}.result.json")
+        phases = ["checks", "image", "start", "relay", "tmux", "client"]
+        for resume in ("0", "1"):
+            with self.subTest(resume=resume):
+                if resume == "1":
+                    self.history()
+                with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                    self.start(resume=resume)
+                with open(result) as f:
+                    found = json.load(f)
+                self.assertEqual(list(found["phases"]), phases)
+                for seconds in found["phases"].values():
+                    self.assertIsInstance(seconds, float)
+                    self.assertGreaterEqual(seconds, 0)
+                launched = found["launched_at"]
+                self.assertRegex(launched, r"T\d\d:\d\d:\d\d\.\d{3}[+-]")
+                self.assertLessEqual(
+                    parse_time(found["ended_at"]), parse_time(launched).replace(microsecond=0)
+                )
+                timed = [
+                    re.fullmatch(rf"docker timing w {GEN}: ([a-z]+) (\d+\.\d\d) s", line)
+                    for line in stderr.getvalue().splitlines()
+                    if line.startswith("docker timing")
+                ]
+                self.assertEqual(
+                    [(m[1], float(m[2])) for m in timed], list(found["phases"].items())
+                )
 
     def test_each_start_freezes_its_plan_before_the_broker_start(self):
         self.launch = replace(self.launch, env={**self.launch.env, "TOKEN": "sk-secret"})
@@ -826,6 +857,11 @@ class StartTest(Base):
 class PreflightTest(Base):
     def validate(self):
         self.host.validate("w", Launch(("agent",), cwd=self.cwd, env={}))
+
+    def test_preflight_reports_its_time(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.validate()
+        self.assertRegex(stderr.getvalue(), r"\Adocker timing w: preflight \d+\.\d\d s\n\Z")
 
     def test_preflight_runs_version_then_build_and_writes_nothing(self):
         self.validate()

@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from datetime import datetime
 from typing import NamedTuple
 
 import agent_pm.utils
@@ -244,6 +245,23 @@ class _Stops:
     def check(self, prefix: str = "") -> None:
         if self.received:
             raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
+
+
+class _Laps:
+    """Seconds per phase, since the previous one ended (docs/docker-host.md › Start timing)."""
+
+    def __init__(self) -> None:
+        self.phases: dict[str, float] = {}
+        self._last = time.monotonic()
+
+    def __call__(self, phase: str) -> None:
+        now = time.monotonic()
+        self.phases[phase] = round(now - self._last, 2)
+        self._last = now
+
+    def report(self, head: str) -> None:
+        for phase, seconds in self.phases.items():
+            print(f"{head}: {phase} {seconds:.2f} s", file=sys.stderr)
 
 
 def _wait(ready, timeout: float, poll: float = POLL) -> bool:
@@ -590,8 +608,11 @@ class DockerHost(Host):
 
     def validate(self, name: str, launch: Launch) -> None:
         """The preflight, before any container: the cwd, the broker handshake and the build."""
+        laps = _Laps()
         self._check_cwd(name, launch)
         self._image(name)
+        laps("preflight")
+        laps.report(f"docker timing {name}")
 
     def _check_cwd(self, name: str, launch: Launch) -> None:
         super().validate(name, launch)
@@ -647,6 +668,7 @@ class DockerHost(Host):
     ) -> DockerTerminal:
         if why := display_error(display):
             raise ConfigError(why)
+        laps = _Laps()
         self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
@@ -671,6 +693,7 @@ class DockerHost(Host):
                 save(os.path.join(home, file), text)
         elif read_beneath(home, launch.transcript, limit=0) is None:
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
+        laps("checks")
         hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
         cwd = os.path.realpath(launch.cwd)
@@ -695,6 +718,7 @@ class DockerHost(Host):
                 "credential": credential,
             },
         )
+        laps("image")
         container = container_name(name, generation)
         stops.check(f"docker session {name}: ")
         began = timestamp()
@@ -709,6 +733,7 @@ class DockerHost(Host):
             cleanup = self._roll_back(None, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         ended = timestamp()
+        laps("start")
         supervisor = lock = None
         try:
             stops.check()
@@ -740,6 +765,7 @@ class DockerHost(Host):
             tmux = self.container_tmux(container)
             if not _wait(lambda: tmux.runner(["test", "-S", SOCKET]).returncode == 0, READY_WAIT):
                 raise SessionError(f"no hook relay in {container} after {READY_WAIT} s")
+            laps("relay")
             supervisor = self._spawn_supervisor(
                 name, container, generation=generation, events=events, hook=hook, lock=lock
             )
@@ -752,8 +778,11 @@ class DockerHost(Host):
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
             )
             _save_record(name, {**_record(name), "process": process})
+            laps("tmux")
             if not _wait(lambda: tmux.status(name) == PaneStatus.RUNNING, READY_WAIT):
                 raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
+            laps("client")
+            launched = datetime.now().astimezone().isoformat(timespec="milliseconds")
             result = {
                 "container": started.container,
                 "image": image,
@@ -762,6 +791,8 @@ class DockerHost(Host):
                 "update": dict(started.update),
                 "started_at": began,
                 "ended_at": ended,
+                "phases": laps.phases,
+                "launched_at": launched,
             }
             save(
                 os.path.join(state_dir(name), f"{generation}.result.json"),
@@ -775,6 +806,7 @@ class DockerHost(Host):
         finally:
             if lock is not None:
                 os.close(lock)
+        laps.report(f"docker timing {name} {generation}")
         return DockerTerminal(
             name, process, tmux=tmux, host=self, container=container, generation=generation
         )

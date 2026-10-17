@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -446,5 +447,38 @@ func TestNameConflictSkipsRollback(t *testing.T) {
 	e := protoErr(t, err)
 	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "close it first") || hasCall(d, "rm") {
 		t.Fatalf("%+v %q", e, d.verbs())
+	}
+}
+
+func TestStartPhaseTimes(t *testing.T) {
+	var progress strings.Builder
+	h, _ := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	h.Progress = &progress
+	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
+		t.Fatal(err)
+	}
+	line := regexp.MustCompile(`^agent-pm-broker: start ([a-z]+) [0-9]+\.[0-9]{2} s$`)
+	var phases []string
+	for _, l := range strings.Split(strings.TrimSuffix(progress.String(), "\n"), "\n") {
+		m := line.FindStringSubmatch(l)
+		if m == nil {
+			t.Fatalf("line %q in %q", l, progress.String())
+		}
+		phases = append(phases, m[1])
+	}
+	if want := []string{"preflight", "image", "checks", "create", "bootstrap", "update", "credentials", "total"}; !slices.Equal(phases, want) {
+		t.Fatalf("phases %q want %q", phases, want)
+	}
+	for name, w := range map[string]*world{
+		"image":     {labels: goodLabels(), imageMissing: true},
+		"run":       {labels: goodLabels(), runErr: &docker.CommandError{Exit: 1, Stderr: "boom"}},
+		"bootstrap": {labels: goodLabels(), execErr: failOn("claude", &docker.CommandError{Exit: 1, Stderr: "boom"})},
+	} {
+		progress.Reset()
+		h, _ := startHost(w, &fakeCreds{})
+		h.Progress = &progress
+		if _, err := h.Start(context.Background(), validManifest(t)); err == nil || progress.Len() != 0 {
+			t.Fatalf("%s: %v, progress %q", name, err, progress.String())
+		}
 	}
 }

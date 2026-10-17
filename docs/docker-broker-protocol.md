@@ -35,7 +35,7 @@ stdin. `login claude` reads a token interactively without echo and has no JSON c
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|
-| Success, including update fallback or absent container on close | `0` | One success JSON object plus LF | Empty; build: Docker's build progress, then one `agent-pm-broker: …` line per older image removed or kept |
+| Success, including update fallback or absent container on close | `0` | One success JSON object plus LF | Empty; build: Docker's build progress, then one `agent-pm-broker: …` line per older image removed or kept; start: one `agent-pm-broker: start <phase> <seconds> s` line per phase, then `total` ([Docker Host](docker-host.md#start-timing)) |
 | Failure | Table below | Empty | One `error` JSON object plus LF; build: after Docker's build progress, as the last line |
 
 Use UTF-8. Reject duplicate object keys, non-JSON numeric constants, trailing JSON values,
