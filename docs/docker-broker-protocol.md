@@ -107,7 +107,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
-| `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside) keeps the volume |
+| `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
 
 ```mermaid
 flowchart LR

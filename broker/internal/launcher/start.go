@@ -18,6 +18,7 @@ import (
 const (
 	python    = "/opt/agent-pm/venv/bin/python"
 	bootstrap = "/opt/agent-pm/lib/bootstrap.py"
+	checker   = "/opt/agent-pm/lib/workspace-check"
 	sharing   = "Docker Desktop file sharing must include ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
 	cache     = ".agent-pm-cache"
 )

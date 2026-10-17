@@ -48,6 +48,7 @@ type world struct {
 	volume          string // "" absent, "matching", "mismatched" or "unlabeled"
 	createUnlabeled bool   // a racing create leaves the volume unlabeled
 	inUse           string // docker ps --filter volume= output
+	psErr           error
 	chownErr        error
 	exists          bool // container already present
 	runErr          error
@@ -71,7 +72,7 @@ func (w *world) docker() *fakeDocker {
 			}
 			return inspectJSON(digest, w.labels, time.Time{}), nil
 		case "ps --filter":
-			return []byte(w.inUse), nil
+			return []byte(w.inUse), w.psErr
 		case "volume inspect":
 			switch w.volume {
 			case "matching":
@@ -311,10 +312,18 @@ func TestStartVolume(t *testing.T) {
 			t.Fatalf("in use: %q", e.Message)
 		}
 	}
-	h, d = startHost(&world{labels: goodLabels(), chownErr: &docker.CommandError{Exit: 1, Stderr: "boom"}}, &fakeCreds{})
-	_, err := h.Start(context.Background(), validManifest(t))
-	if e := protoErr(t, err); e.Code != protocol.StartFailed || !has(d, []string{"volume", "rm", volume}) || detached(d) != nil {
-		t.Fatalf("chown: %+v %q", e, d.calls)
+	boom := &docker.CommandError{Exit: 1, Stderr: "boom"}
+	for name, w := range map[string]*world{"chown": {chownErr: boom}, "ps after create": {psErr: boom}} {
+		w.labels = goodLabels()
+		h, d := startHost(w, &fakeCreds{})
+		_, err := h.Start(context.Background(), validManifest(t))
+		if e := protoErr(t, err); e.Code != protocol.StartFailed || !has(d, []string{"volume", "rm", volume}) || detached(d) != nil {
+			t.Fatalf("%s: %+v %q", name, e, d.calls)
+		}
+	}
+	h, d = startHost(&world{labels: goodLabels(), volume: "matching", psErr: boom}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), validManifest(t)); protoErr(t, err).Code != protocol.StartFailed || hasCall(d, "volume rm") {
+		t.Fatalf("ps on an existing volume: %v %q", err, d.verbs())
 	}
 	h, d = startHost(&world{labels: goodLabels(), unreachable: true}, &fakeCreds{})
 	if _, err := h.Start(context.Background(), validManifest(t)); protoErr(t, err).Code != protocol.DockerUnreachable {

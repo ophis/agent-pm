@@ -3,8 +3,8 @@ import json
 import os
 import runpy
 import stat
-import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.case import REPO, Case
@@ -182,7 +182,7 @@ class WorkspaceCheck(Case):
             if rel in failing:
                 raise OSError("no git")
             out = "?? x\n" if rel in dirty and argv[8] == "status" else ""
-            return subprocess.CompletedProcess(argv, 0, out, "")
+            return SimpleNamespace(returncode=0, stdout=out)
 
         return run
 
@@ -198,7 +198,7 @@ class WorkspaceCheck(Case):
             self.repo(rel)
         (self.root / "src" / "link").symlink_to(self.root / "a")
         self.assertEqual(
-            [os.path.relpath(p, self.root) for p in self.check["repos"](str(self.root))],
+            [os.path.relpath(p, self.root) for p in self.check["repos"](str(self.root))[0]],
             [".", "publish", "src/o/a"],
         )
 
@@ -235,6 +235,20 @@ class WorkspaceCheck(Case):
                 [*guard, "rev-list", "--all", "--not", "--remotes"],
             ],
         )
+
+    def test_a_dir_it_cannot_list_counts_as_dirty(self):
+        self.repo("src/o/a")
+        locked = str(self.root / "src" / "o")
+        scandir = os.scandir
+
+        def denied(path):
+            if path == locked:
+                raise PermissionError(13, "Permission denied", path)
+            return scandir(path)
+
+        with mock.patch("os.scandir", side_effect=denied):
+            found = self.check["dirty"](str(self.root), run=self.run())
+        self.assertEqual(found, ["src/o"])
 
     def test_paths_have_control_characters_escaped(self):
         self.repo("src/o/bad\x1b[31m")

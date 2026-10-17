@@ -457,19 +457,18 @@ class DockerHost(Host):
         return TmuxCli(exec_runner(self.docker, container, run=self.run))
 
     def _ps(self) -> list[list[str]]:
-        return self._listed("ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT)
+        """[] with no daemon socket or docker CLI, as tmux with no server: every Host is listed."""
+        return self._listed("ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT) or []
 
-    def _listed(self, *args: str) -> list[list[str]]:
-        """docker `args`' tab-separated rows; [] with no daemon socket or docker CLI, as tmux with no
-        server: every Host is listed.
-        """
+    def _listed(self, *args: str) -> list[list[str]] | None:
+        """docker `args`' tab-separated rows; None with no daemon socket or docker CLI."""
         if not os.path.exists(endpoint().removeprefix("unix://")):
-            return []
+            return None
         argv, env = docker_call(self.docker, *args)
         try:
             res = self.run(argv, env, timeout=RUN_TIMEOUT)
         except FileNotFoundError:
-            return []
+            return None
         except (OSError, subprocess.TimeoutExpired) as error:
             raise SessionError(f"docker {args[0]}: {error}") from None
         if res.returncode:
@@ -533,6 +532,8 @@ class DockerHost(Host):
         rows = self._listed(
             "volume", "ls", "--filter", "label=agent-pm.kind=run", "--format", VOLUME_FORMAT
         )
+        if rows is None:
+            return
         gone = [
             volume
             for volume, anchor in (row for row in rows if len(row) == 2)

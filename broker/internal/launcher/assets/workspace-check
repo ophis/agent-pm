@@ -30,8 +30,10 @@ CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def repos(root):
-    """root and the directories up to DEPTH below it holding .git, skipping .git and CACHE."""
-    found, todo = [], [(root, 0)]
+    """(root and the directories up to DEPTH below it holding .git, skipping .git and CACHE; the
+    directories it cannot list, which may hide work).
+    """
+    found, blocked, todo = [], [], [(root, 0)]
     while todo:
         path, level = todo.pop()
         if os.path.lexists(os.path.join(path, ".git")):
@@ -41,13 +43,14 @@ def repos(root):
         try:
             entries = list(os.scandir(path))
         except OSError:
+            blocked.append(path)
             continue
         todo += [
             (entry.path, level + 1)
             for entry in entries
             if entry.name not in (".git", CACHE) and entry.is_dir(follow_symlinks=False)
         ]
-    return sorted(found)
+    return sorted(found), blocked
 
 
 def unsaved(path, run):
@@ -63,10 +66,10 @@ def unsaved(path, run):
 
 
 def dirty(root, run=subprocess.run):
+    found, blocked = repos(root)
     return [
         CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", os.path.relpath(path, root))
-        for path in repos(root)
-        if unsaved(path, run)
+        for path in sorted({*blocked, *(path for path in found if unsaved(path, run))})
     ]
 
 

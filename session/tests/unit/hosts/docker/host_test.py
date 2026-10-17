@@ -1546,6 +1546,18 @@ class ReclaimTest(Base):
         self.host.sweep("w")
         self.assertEqual(self.order, [])
 
+    def test_without_the_daemon_or_the_cli_a_kept_marker_stays(self):
+        os.makedirs(self.kept)
+        marker = os.path.join(self.kept, self.GONE)
+        open(marker, "w").close()
+        os.remove(self.ep.removeprefix("unix://"))
+        self.host.sweep("w")
+        open(self.ep.removeprefix("unix://"), "w").close()
+        self.host.run = mock.Mock(side_effect=FileNotFoundError(2, "No such file", DOCKER))
+        self.host.sweep("w")
+        self.assertTrue(os.path.exists(marker))
+        self.assertEqual(self.removed(), [])
+
     def test_no_orphan_creates_no_file(self):
         self.docker.volumes = self.docker.volumes[1:]
         self.host.sweep("w")

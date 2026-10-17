@@ -263,7 +263,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | Line | Phase | Covers |
 |---|---|---|
 | `docker timing NAME` | `preflight` | cwd checks, broker `version` and `build`: a rebuild (after an upgrade, or of an image 7 days old) lands here |
-| `agent-pm-broker: start` | `preflight` | manifest, mount rules, setup-token present |
+| `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token present |
 | | `image` | the image check |
 | | `checks` | the container-name check and the workspace volume (created and given to the agent user on first use) |
 | | `create` | `docker run`: the new container |
@@ -336,7 +336,7 @@ another container, fails the start with `mount_rejected`; clear a foreign one wi
 
 Without `--force`, `workspace-rm` first runs a check in the newest worker image, offline
 with the volume read-only: any repo up to three levels down with uncommitted, stashed or
-unpushed work keeps the volume and fails with exit 12 `workspace_dirty`, naming each repo
+unpushed work, or a directory it cannot list, keeps the volume and fails with exit 12 `workspace_dirty`, naming each repo
 and the `--force` command. An absent volume is `removed:false`.
 
 - **New start**: deletes the crew volume first. Unsaved work fails the start before its

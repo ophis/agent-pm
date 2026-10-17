@@ -151,8 +151,17 @@ func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) erro
 		// create succeeds on a name a racing start made first, so read back what exists.
 		labels, err = h.volumeLabels(ctx, v)
 	}
+	// Until its root is the agent's, a volume this start created is removed on failure: a later start would skip the chown.
+	undo := func(e *protocol.Error) error {
+		if created {
+			if _, rmErr := h.Docker.Run(context.WithoutCancel(ctx), []string{"volume", "rm", v}, nil); rmErr != nil {
+				e.Message += " Remove it with docker volume rm " + v + " before retrying."
+			}
+		}
+		return e
+	}
 	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot inspect workspace volume "+v+".")
+		return undo(failure(err, protocol.StartFailed, "Cannot inspect workspace volume "+v+"."))
 	}
 	if labels["agent-pm.kind"] != m.Kind() || labels["agent-pm.workspace"] != m.CWD {
 		return protocol.Newf(protocol.MountRejected, "Volume %s is not the workspace for %s (agent-pm.kind %q, agent-pm.workspace %q).",
@@ -160,7 +169,7 @@ func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) erro
 	}
 	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
 	if err != nil {
-		return failure(err, protocol.StartFailed, "Cannot list the containers using "+v+".")
+		return undo(failure(err, protocol.StartFailed, "Cannot list the containers using "+v+"."))
 	}
 	if users := strings.Fields(string(out)); len(users) > 0 {
 		return protocol.Newf(protocol.MountRejected, "Workspace volume %s is mounted by running container %s; close it first.", v, users[0])
@@ -172,11 +181,7 @@ func (h Host) ensureVolume(ctx context.Context, m Manifest, info imageInfo) erro
 	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
 		"--mount", volumeMount(v, "/workspace", false), "--entrypoint", "/bin/chown", info.ID, l["agent-pm.agent-uid"] + ":" + l["agent-pm.agent-gid"], "/workspace"}
 	if _, err := h.Docker.Run(ctx, chown, nil); err != nil {
-		e := failure(err, protocol.StartFailed, "Giving workspace volume "+v+" to agent failed.")
-		if _, rmErr := h.Docker.Run(context.WithoutCancel(ctx), []string{"volume", "rm", v}, nil); rmErr != nil {
-			e.Message += " Remove it with docker volume rm " + v + " before retrying."
-		}
-		return e
+		return undo(failure(err, protocol.StartFailed, "Giving workspace volume "+v+" to agent failed."))
 	}
 	return nil
 }

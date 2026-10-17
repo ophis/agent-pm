@@ -67,6 +67,13 @@ class WorkspaceCheck(Case):
                 self.assertEqual(self.dirty(str(self.root)), [f"src/o/{name}"])
                 shutil.rmtree(repo)
 
+    def test_a_repo_under_a_dir_it_cannot_read_is_dirty(self):
+        self.clone("src/o/a")
+        locked = self.root / "src" / "o"
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o755)
+        self.assertEqual(self.dirty(str(self.root)), ["src/o"])
+
     def test_an_empty_init_is_clean_and_a_broken_repo_is_dirty(self):
         self.git("init", "-q", str(self.root / "publish"))
         self.assertEqual(self.dirty(str(self.root)), [])
