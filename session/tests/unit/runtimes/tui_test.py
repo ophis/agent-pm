@@ -1439,6 +1439,29 @@ class CloseStopTest(Base):
         mode._terminal.calls.close.assert_called_once_with()
         self.assertNoSessionDir()
 
+    def test_close_and_stop_remove_the_names_lock_unless_another_holds_the_name(self):
+        lock = os.path.join(self.root, f"{NAME}.lock")
+        self.started()
+        tui.TuiStore.attach(NAME, host=self.host).close()
+        self.assertFalse(os.path.lexists(lock))
+        self.started().stop()
+        self.assertFalse(os.path.lexists(lock))
+        mode = self.started()
+        self.host.processes.clear()
+        mode.stop()
+        self.assertFalse(os.path.lexists(lock))
+        mode = self.started()
+        self.host.create(NAME, SID)
+        mode.stop()
+        self.assertTrue(os.path.exists(lock))
+
+    def test_a_failed_close_keeps_the_names_lock(self):
+        mode = self.started()
+        mode._terminal.calls.close.side_effect = SessionError("host close failed")
+        with self.assertRaises(SessionError):
+            tui.TuiStore.attach(NAME, host=self.host).close()
+        self.assertTrue(os.path.exists(os.path.join(self.root, f"{NAME}.lock")))
+
 
 class PollTest(Base):
     def test_records_become_the_runs_events_in_order_bound_once(self):

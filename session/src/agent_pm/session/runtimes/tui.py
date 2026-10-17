@@ -220,6 +220,7 @@ class TuiStore:
     def close(self) -> None:
         with self._locked():
             self._close()
+            self._forget()
 
     def tracked(self) -> tuple[str, str]:
         return self.dir, os.path.join(self.dir, tui_hook.HOOKS)
@@ -249,6 +250,9 @@ class TuiStore:
                 self._drop()
             elif holder == identity:
                 self._close()
+            else:
+                return
+            self._forget()
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -260,6 +264,11 @@ class TuiStore:
             except OSError as e:
                 raise SessionError(f"{path}: {e.strerror or e}") from None
             yield
+
+    def _forget(self) -> None:
+        """Unlinks the name's lock, its holder done with the name (inode_lock survives that)."""
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tui_lock(self.name))
 
     def _root(self) -> None:
         try:
