@@ -153,6 +153,16 @@ class Start(Base):
         self.assertEqual(prepared, Prepared(spec, info, NOTHING, kwargs["env"]))
         self.assertEqual((spec.prompt, spec.sid, spec.client), ("hi", SID, "stub"))
 
+    def test_the_spec_client_replaces_the_ambient_and_launch_client(self):
+        for launch_env in ({}, {"AGENT_PM_RUN_CLIENT": "stale"}):
+            with (
+                self.subTest(launch_env=launch_env),
+                mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "ambient"}),
+                self.faked() as calls,
+            ):
+                self.start(StubClient(Launch(NOTHING, env=launch_env)))
+                self.assertEqual(calls[0][1]["env"]["AGENT_PM_RUN_CLIENT"], "stub")
+
     def test_its_cwd_is_the_launch_cwd_else_the_access_cwd(self):
         given, access = (os.path.join(self.dir, d) for d in ("given", "access"))
         for launched, cwd, want in (

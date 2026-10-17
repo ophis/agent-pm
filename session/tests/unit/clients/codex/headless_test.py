@@ -1,9 +1,11 @@
 """Codex headless launches, native events and usage limits."""
 
 import dataclasses
+import io
 import json
 import sys
 from datetime import UTC, datetime
+from unittest import mock
 
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.engine.types import (
@@ -15,8 +17,9 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.runtimes.base import Runtime
+from agent_pm.session.runtimes.headless import HeadlessRuntime
 
+from session.tests.fakes.terminal import MemoryHost
 from session.tests.unit.clients.codex.support import (
     NATIVE,
     PLUGIN_OFF,
@@ -262,11 +265,20 @@ class PolicyReplay(Base):
                     resume=True,
                     env={"K": "changed", "AGENT_PM_RUN_CLIENT": "wrong"},
                 )
-                prepared = Runtime._launched(
-                    resumed, lambda requested: committed_headless(self.client, requested), ()
-                )
-                self.assertEqual(prepared.env["AGENT_PM_RUN_CLIENT"], "codex")
-                self.assertEqual(prepared.env["K"], "saved")
+                with mock.patch(
+                    "subprocess.Popen",
+                    return_value=mock.Mock(stdout=io.StringIO(), stderr=io.StringIO()),
+                ) as popen:
+                    HeadlessRuntime.start(
+                        resumed,
+                        self.client,
+                        registry=self.session_cls._config().registry,
+                        record=lambda _info: None,
+                        host=MemoryHost(),
+                    )
+                env = popen.call_args.kwargs["env"]
+                self.assertEqual(env["AGENT_PM_RUN_CLIENT"], "codex")
+                self.assertEqual(env["K"], "saved")
                 self.assertEqual(
                     dict(self.common.load(str(self.work), spec.sid).snapshot.env), saved_env
                 )
