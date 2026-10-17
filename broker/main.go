@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,22 @@ func command(ctx context.Context, args []string, out io.Writer) error {
 		_, err := fmt.Fprintln(out, protocol)
 		return err
 	}
+	if len(args) == 3 && args[0] == "build" && args[1] == "--agent-pm" {
+		home, err := accountHome()
+		if err != nil {
+			return err
+		}
+		d, clean, err := newDocker(home)
+		if err != nil {
+			return err
+		}
+		defer clean()
+		result, err := (builder{home: home, docker: d}).Build(ctx, args[2])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(result)
+	}
 	if len(args) == 2 && args[0] == "login" && args[1] == "claude" {
 		if err := checkInstalled(); err != nil {
 			return err
@@ -48,7 +65,7 @@ func command(ctx context.Context, args []string, out io.Writer) error {
 		_, err = fmt.Fprintln(out, "Claude setup-token saved")
 		return err
 	}
-	return errors.New("usage: agent-pm-broker version | login claude")
+	return errors.New("usage: agent-pm-broker version | login claude | build --agent-pm DIR")
 }
 
 func erase(b []byte) {

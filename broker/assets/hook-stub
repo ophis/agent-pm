@@ -1,0 +1,21 @@
+#!/opt/agent-pm/venv/bin/python
+import base64
+import json
+import socket
+import sys
+
+try:
+    payload = sys.stdin.buffer.read(64 * 1024 * 1024 + 1)
+    if len(payload) > 64 * 1024 * 1024:
+        raise ValueError("payload exceeds 64 MiB")
+    request = {"id": 1, "argv": sys.argv[1:], "payload": base64.b64encode(payload).decode()}
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(10)
+        connection.connect("/run/agent-pm/relay.sock")
+        connection.sendall(json.dumps(request).encode() + b"\n")
+        with connection.makefile("rb") as stream:
+            reply = json.loads(stream.readline(65536))
+        if reply.get("id") != 1 or reply.get("ok") is not True:
+            raise ValueError("relay rejected hook")
+except (OSError, ValueError) as error:
+    print(f"agent-pm hook: {error}", file=sys.stderr)
