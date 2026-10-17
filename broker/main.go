@@ -22,7 +22,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-engineer|agent-pm-docs | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-bot | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)

@@ -35,8 +35,8 @@ var (
 	ErrAmbiguous = errors.New("more than one keychain item")
 )
 
-// GitHubApps are the keychain services of the GitHub App private keys login github accepts.
-var GitHubApps = map[string]bool{"agent-pm-engineer": true, "agent-pm-docs": true}
+// GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
+var GitHubApps = map[string]bool{"agent-pm-bot": true}
 
 // AppKeychain holds GitHub App private keys as generic-password items: service the App, account its App ID.
 type AppKeychain interface {

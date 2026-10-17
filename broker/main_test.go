@@ -131,7 +131,9 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login"}},
 		{"unknown", []string{"login", "github"}},
 		{"unknown", []string{"login", "github", "agent-pm-other"}},
-		{"unknown", []string{"login", "github", "agent-pm-engineer", "x"}},
+		{"unknown", []string{"login", "github", "agent-pm-engineer"}},
+		{"unknown", []string{"login", "github", "agent-pm-docs"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
 		{"unknown", []string{"login", "claude", "x"}},
 	} {
 		code, out, errOut := invoke(a, tc.args...)
@@ -146,7 +148,7 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestLoginGitHubDispatch(t *testing.T) {
-	for _, name := range []string{"agent-pm-engineer", "agent-pm-docs"} {
+	for _, name := range []string{"agent-pm-bot"} {
 		var got string
 		a := app{loginGitHub: func(app string, out io.Writer) error {
 			got = app
@@ -158,7 +160,7 @@ func TestLoginGitHubDispatch(t *testing.T) {
 		}
 	}
 	a := app{loginGitHub: func(string, io.Writer) error { return errors.New("no item") }}
-	if code, out, errOut := invoke(a, "login", "github", "agent-pm-docs"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
+	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
 }
