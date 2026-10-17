@@ -1,10 +1,10 @@
 """InProcess contract tests."""
 
 from agent_pm.session.engine.types import Access, Reply, Spec
-from agent_pm.session.runtimes.modes.in_process import InProcess
+from agent_pm.session.modes.client_adapters.in_process import InProcess
 
 from session.tests.case import Case
-from session.tests.modes_support import StubInProcess
+from session.tests.client_adapters_support import StubInProcess
 
 
 class CheckOnlyInProcess(InProcess):

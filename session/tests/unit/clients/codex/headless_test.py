@@ -17,7 +17,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.runtimes.headless import HeadlessRuntime
+from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.unit.clients.codex.support import (
@@ -269,7 +269,7 @@ class PolicyReplay(Base):
                     "subprocess.Popen",
                     return_value=mock.Mock(stdout=io.StringIO(), stderr=io.StringIO()),
                 ) as popen:
-                    HeadlessRuntime.start(
+                    HeadlessMode.start(
                         resumed,
                         self.client,
                         registry=self.session_cls._config().registry,

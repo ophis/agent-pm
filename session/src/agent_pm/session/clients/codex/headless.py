@@ -21,7 +21,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.runtimes.modes.headless import Headless
+from agent_pm.session.modes.client_adapters.headless import Headless
 
 
 class CodexHeadless(Headless):

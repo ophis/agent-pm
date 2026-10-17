@@ -1,4 +1,4 @@
-"""The tui Runtime: a Client command on a Host terminal; events from its client's own record,
+"""The tui mode: a Client command on a Host terminal; events from its client's own record,
 then the hook records appended to its session directory, and from its terminal.
 """
 
@@ -52,9 +52,9 @@ from agent_pm.session.hosts.base import (
     check_sid,
     tui_lock,
 )
-from agent_pm.session.runtimes import tui_hook
-from agent_pm.session.runtimes.base import Runtime, identity_drop
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes import tui_hook
+from agent_pm.session.modes.base import BaseMode, identity_drop
+from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import (
     STALE_AGE,
@@ -437,7 +437,7 @@ class _Start:
         )
 
 
-class TuiRuntime(Runtime):
+class TuiMode(BaseMode):
     """One tui session holding its terminal generation."""
 
     kind = Mode.TUI

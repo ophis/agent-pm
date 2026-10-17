@@ -169,7 +169,7 @@ class LiteralImports(Sample):
     def test_dynamic_calls_cannot_bypass_unit_contracts(self):
         for sample in (
             "import importlib\nimportlib.import_module('agent_pm.session.hosts.tmux.tmux_host')",
-            "from importlib import import_module as load\nload('agent_pm.session.runtimes.tui')",
+            "from importlib import import_module as load\nload('agent_pm.session.modes.tui')",
             "__import__('agent_pm.manager')",
         ):
             with self.subTest(sample=sample):
@@ -246,7 +246,7 @@ class ImportHygiene(Sample):
         for files, expected in (
             *(
                 ({path: script}, [f"{path}:3: sys.path mutation", f"{path}:5: sys.path mutation"])
-                for path in (f"{SESSION_SRC}runtimes/tui_hook.py", "tests/other.py")
+                for path in (f"{SESSION_SRC}modes/tui_hook.py", "tests/other.py")
             ),
             (
                 {
@@ -283,7 +283,7 @@ class ImportHygiene(Sample):
 
 class StandaloneImports(Sample):
     def test_the_tui_hook_and_tmux_host_use_package_imports(self):
-        for path in (f"{SESSION_SRC}runtimes/tui_hook.py", TMUX_HOST):
+        for path in (f"{SESSION_SRC}modes/tui_hook.py", TMUX_HOST):
             with self.subTest(path=path):
                 self.assertNotIn(path, STANDALONE)
 

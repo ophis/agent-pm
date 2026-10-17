@@ -32,7 +32,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import fake_client, live_tmux
 from session.tests.case import PY, SPAWNS
@@ -95,7 +95,7 @@ class TuiTest(Live):
             [(r["kind"], r["sid"]) for r in RunLog(self.workdir).read()],
             [("session", SID)],
         )
-        self.assertEqual(tui.TuiRuntime.snapshot("w1")["sid"], SID)
+        self.assertEqual(tui.TuiMode.snapshot("w1")["sid"], SID)
         stream = Stream(self, handle)
         self.assertEqual(
             [stream.next() for _ in range(3)], [Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)]
@@ -326,7 +326,7 @@ class SameNameTest(Live):
         threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
         self.addCleanup(handle.stop)
-        self.assertEqual(tui.TuiRuntime.snapshot("w6")["sid"], handle.sid)
+        self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
             (
@@ -362,7 +362,7 @@ class SameNameTest(Live):
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
-        self.assertEqual((new.alive(), tui.TuiRuntime.snapshot("w7")["sid"]), (True, new.sid))
+        self.assertEqual((new.alive(), tui.TuiMode.snapshot("w7")["sid"]), (True, new.sid))
 
 
 if __name__ == "__main__":

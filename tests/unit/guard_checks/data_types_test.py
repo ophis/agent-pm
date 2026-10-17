@@ -299,7 +299,7 @@ class OptionTuples(Sample):
 
     def test_module_level_tuples_of_option_words_fail_in_src_and_standalone_scripts(self):
         rel = f"delegate/{PKG}/delegate/x.py"
-        hook = f"session/{PKG}/session/runtimes/tui_hook.py"
+        hook = f"session/{PKG}/session/modes/tui_hook.py"
         for extra, expected in (
             (
                 {

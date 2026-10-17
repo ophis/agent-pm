@@ -1,6 +1,6 @@
-"""runtimes/headless.py: its start from a Spec (checks, one session line, then the launch's command
+"""modes/headless.py: its start from a Spec (checks, one session line, then the launch's command
 with the child env; start failures), send and screen refused, over a fake Popen that starts no
-process. Real children: session/tests/integration/runtimes/headless_integration_test.py.
+process. Real children: session/tests/integration/modes/headless_integration_test.py.
 """
 
 import contextlib

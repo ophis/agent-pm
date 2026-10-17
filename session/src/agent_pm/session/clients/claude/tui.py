@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import number
 
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")

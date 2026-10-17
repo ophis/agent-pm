@@ -1,5 +1,5 @@
-"""runtimes/base.py: Runtime, the ABC each Mode's running session implements (a class start
-returning it started, then its session calls), and the start helpers the Runtimes share: child_env
+"""modes/base.py: BaseMode, the ABC each Mode's running session implements (a class start
+returning it started, then its session calls), and the start helpers the modes share: child_env
 and identity_drop.
 """
 
@@ -14,18 +14,18 @@ from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.runtimes import headless, in_process, tui
-from agent_pm.session.runtimes.base import Runtime, child_env, identity_drop
-from agent_pm.session.runtimes.modes.headless import Headless
+from agent_pm.session.modes import headless, in_process, tui
+from agent_pm.session.modes.base import BaseMode, child_env, identity_drop
+from agent_pm.session.modes.client_adapters.headless import Headless
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost
 
 MEMBERS = ["poll", "returncode", "screen", "send", "start", "state", "stop"]
 KINDS = {
-    headless.HeadlessRuntime: Mode.HEADLESS,
-    in_process.InProcessRuntime: Mode.IN_PROCESS,
-    tui.TuiRuntime: Mode.TUI,
+    headless.HeadlessMode: Mode.HEADLESS,
+    in_process.InProcessMode: Mode.IN_PROCESS,
+    tui.TuiMode: Mode.TUI,
 }
 LEASE = {"AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"}
 IDENTITIES = {
@@ -103,31 +103,31 @@ def registry(**clients) -> Registry:
     )
 
 
-class RuntimeTest(Case):
+class BaseModeTest(Case):
     def test_its_abstract_members_are_one_start_and_the_six_session_calls(self):
-        self.assertTrue(inspect.isabstract(Runtime))
-        self.assertEqual(sorted(Runtime.__abstractmethods__), MEMBERS)
+        self.assertTrue(inspect.isabstract(BaseMode))
+        self.assertEqual(sorted(BaseMode.__abstractmethods__), MEMBERS)
 
     def test_each_mode_subclasses_it_with_its_parameters_and_its_kind(self):
         for mode, name in itertools.product(KINDS, MEMBERS):
             with self.subTest(mode=mode.__name__, name=name):
-                self.assertTrue(issubclass(mode, Runtime))
+                self.assertTrue(issubclass(mode, BaseMode))
                 self.assertFalse(inspect.isabstract(mode))
-                self.assertEqual(params(getattr(mode, name)), params(getattr(Runtime, name)))
+                self.assertEqual(params(getattr(mode, name)), params(getattr(BaseMode, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
     def test_close_stops_the_run_unless_a_mode_overrides_it(self):
         run = mock.Mock()
-        Runtime.close(run)
+        BaseMode.close(run)
         self.assertEqual(run.mock_calls, [mock.call.stop()])
 
-    def test_only_a_tui_runtime_may_have_a_launch_input_pending(self):
-        for cls in (headless.HeadlessRuntime, in_process.InProcessRuntime):
+    def test_only_a_tui_mode_may_have_a_launch_input_pending(self):
+        for cls in (headless.HeadlessMode, in_process.InProcessMode):
             with self.subTest(cls=cls.__name__):
                 self.assertIsNone(object.__new__(cls).opening_pending)
 
     def test_start_is_the_class_entry_and_no_session_is_built_without_its_prepared(self):
-        for mode in (Runtime, *KINDS):
+        for mode in (BaseMode, *KINDS):
             with self.subTest(mode=mode.__name__):
                 self.assertIsInstance(inspect.getattr_static(mode, "start"), classmethod)
                 self.assertIsInstance(inspect.getattr_static(mode, "prepared"), property)
@@ -160,7 +160,7 @@ class RuntimeTest(Case):
             mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
             self.assertRaises(ConfigError) as caught,
         ):
-            headless.HeadlessRuntime.start(
+            headless.HeadlessMode.start(
                 spec, client, registry=registry(), record=recorded.append, host=MemoryHost()
             )
         self.assertTrue(str(caught.exception).startswith("refused inside an agent session"))

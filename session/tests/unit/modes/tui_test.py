@@ -46,7 +46,7 @@ from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.hosts.tmux.types import TuiError
-from agent_pm.session.runtimes import tui, tui_hook
+from agent_pm.session.modes import tui, tui_hook
 from agent_pm.utils import StatusState, inode_lock
 
 from session.tests import fake_client
@@ -170,8 +170,8 @@ class Base(Case):
         self.client = TuiClient({"tui": True})
         self.run, self.recorded = self.client.run, []
 
-    def start(self, run=None, record=None, **fields) -> tui.TuiRuntime:
-        """A TuiRuntime started with self.client (its tui `run` if given) on Spec(workdir self.tmp,
+    def start(self, run=None, record=None, **fields) -> tui.TuiMode:
+        """A TuiMode started with self.client (its tui `run` if given) on Spec(workdir self.tmp,
         name NAME, client fake, sid SID, events self.events, **fields), its Prepared in
         self.prepared; its session line given to record, else kept in self.recorded.
         """
@@ -188,7 +188,7 @@ class Base(Case):
                 **fields,
             }
         )
-        mode = tui.TuiRuntime.start(
+        mode = tui.TuiMode.start(
             spec,
             self.client,
             registry=self.session_cls._config().registry,
@@ -298,19 +298,19 @@ class AttachTest(Base):
         process.record.return_value = self.process.record()
         self.host.processes[NAME] = process
         with self.assertRaisesRegex(SessionError, "session w1 has no terminal"):
-            tui.TuiRuntime.attach(NAME, state, self.client, host=self.host)
+            tui.TuiMode.attach(NAME, state, self.client, host=self.host)
         process.close.assert_not_called()
 
-    def attach(self, *lines, client=None) -> tui.TuiRuntime:
-        """TuiRuntime.attach of self.client (else `client`) on a session dir with session.json and
+    def attach(self, *lines, client=None) -> tui.TuiMode:
+        """TuiMode.attach of self.client (else `client`) on a session dir with session.json and
         hooks.jsonl's lines, the host's calls cleared first.
         """
         self.write_state(self.state())
         self.append(*lines)
         self.host.calls.reset_mock()
-        return tui.TuiRuntime.attach(
+        return tui.TuiMode.attach(
             NAME,
-            tui.TuiRuntime.snapshot(NAME),
+            tui.TuiMode.snapshot(NAME),
             client or self.client,
             host=self.host,
         )
@@ -375,7 +375,7 @@ class AttachTest(Base):
 
     def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_host_access(self):
         with self.assertRaises(SessionError) as caught:
-            tui.TuiRuntime.attach(NAME, self.state(cwd=""), self.client, host=self.host)
+            tui.TuiMode.attach(NAME, self.state(cwd=""), self.client, host=self.host)
         path = os.path.join(self.dir, "session.json")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
         self.assertEqual(self.host.calls.mock_calls, [])
@@ -398,8 +398,8 @@ class AttachTest(Base):
                 self.write_state(self.state(**{field: value}))
                 path = os.path.join(self.dir, "session.json")
                 for call in (
-                    lambda: tui.TuiRuntime.snapshot(NAME),
-                    lambda *, field=field, value=value: tui.TuiRuntime.attach(
+                    lambda: tui.TuiMode.snapshot(NAME),
+                    lambda *, field=field, value=value: tui.TuiMode.attach(
                         NAME, self.state(**{field: value}), self.client, host=self.host
                     ),
                 ):
@@ -429,7 +429,7 @@ class AttachTest(Base):
         self.append(*lines)
         polled, _ = live.poll(0)
         fresh = FreshClient({"tui": True})
-        attached = tui.TuiRuntime.attach(NAME, tui.TuiRuntime.snapshot(NAME), fresh, host=self.host)
+        attached = tui.TuiMode.attach(NAME, tui.TuiMode.snapshot(NAME), fresh, host=self.host)
         self.assertEqual(attached.replayed, tuple(polled))
         self.assertEqual(len(polled), 6)
 
@@ -440,9 +440,7 @@ class AttachTest(Base):
                 client = FreshClient({"tui": True})
                 self.write_state(self.state(**extra))
                 self.append(record("tool"), record("stop"))
-                mode = tui.TuiRuntime.attach(
-                    NAME, tui.TuiRuntime.snapshot(NAME), client, host=self.host
-                )
+                mode = tui.TuiMode.attach(NAME, tui.TuiMode.snapshot(NAME), client, host=self.host)
                 self.assertEqual(client.made, [mode.run])
                 self.assertEqual(
                     client.calls,
@@ -550,7 +548,7 @@ class StartTest(Base):
         self.assertEqual(self.recorded, [])
 
     def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
-        mode = tui.TuiRuntime.start(
+        mode = tui.TuiMode.start(
             Spec(workdir=self.tmp, access=Access(cwd=self.tmp), name=NAME, client="fake", sid=SID),
             self.client,
             registry=self.session_cls._config().registry,
@@ -597,7 +595,7 @@ class StartTest(Base):
             lines.append(
                 (
                     info,
-                    tui.TuiRuntime.snapshot(NAME)["sid"],
+                    tui.TuiMode.snapshot(NAME)["sid"],
                     self.host.calls.terminal.called,
                     self.locked(),
                 )
@@ -686,9 +684,7 @@ class StartTest(Base):
         with mock.patch.object(self.host, "_resume_argv", return_value=argv):
             self.start(run=run, record=lines.append)
         wanted = f"cd {shlex.quote(self.tmp)} && agent-pm-session resume {NAME}"
-        self.assertEqual(
-            (lines[-1].resume, tui.TuiRuntime.snapshot(NAME)["resume"]), (wanted, wanted)
-        )
+        self.assertEqual((lines[-1].resume, tui.TuiMode.snapshot(NAME)["resume"]), (wanted, wanted))
 
     def test_a_host_that_inherits_no_env_launches_with_only_its_launch_env(self):
         self.host._inherit_env = False
@@ -906,7 +902,7 @@ class StartTest(Base):
 
     def test_start_returns_its_session_live_at_once_with_its_prepared(self):
         mode = self.start(events=None)
-        self.assertIsInstance(mode, tui.TuiRuntime)
+        self.assertIsInstance(mode, tui.TuiMode)
         self.assertEqual((mode.prepared.info, mode.prepared.spec.name), (self.recorded[0], NAME))
         self.assertEqual((mode.state(), mode.poll(0)), (Liveness.LIVE, ([], False)))
         process = mode._terminal
@@ -1064,7 +1060,7 @@ class SweepTest(Base):
                 with self.assertLogs("session") as logs:
                     mode = self.start()
                 self.host.processes.clear()
-                self.assertIsInstance(mode, tui.TuiRuntime)
+                self.assertIsInstance(mode, tui.TuiMode)
                 self.assertEqual(self.names(), ["a", "a.lock", "b", "b.lock", NAME, f"{NAME}.lock"])
                 self.assertEqual(logs.output, [f"WARNING:session:tui sweep: {failure}"])
 
@@ -1096,11 +1092,11 @@ class SweepTest(Base):
 class SnapshotTest(Base):
     def test_a_valid_state(self):
         self.start()
-        self.assertEqual(tui.TuiRuntime.snapshot(NAME), self.state())
+        self.assertEqual(tui.TuiMode.snapshot(NAME), self.state())
         self.write_state(
             self.state(events=None, transcript="/t", project=True, resume="r", words={}, later=1)
         )
-        self.assertEqual(tui.TuiRuntime.snapshot(NAME)["later"], 1)
+        self.assertEqual(tui.TuiMode.snapshot(NAME)["later"], 1)
 
     def test_a_client_is_lowercase_word_characters_led_by_a_letter(self):
         for client, ok in (
@@ -1118,10 +1114,10 @@ class SnapshotTest(Base):
             with self.subTest(client=client):
                 self.write_state(self.state(client=client))
                 if ok:
-                    self.assertEqual(tui.TuiRuntime.snapshot(NAME)["client"], client)
+                    self.assertEqual(tui.TuiMode.snapshot(NAME)["client"], client)
                 else:
                     with self.assertRaises(SessionError) as caught:
-                        tui.TuiRuntime.snapshot(NAME)
+                        tui.TuiMode.snapshot(NAME)
                     path = os.path.join(self.dir, "session.json")
                     self.assertEqual(
                         str(caught.exception), f"no tui session w1: {path}: bad client"
@@ -1129,7 +1125,7 @@ class SnapshotTest(Base):
 
     def test_missing_or_invalid_is_a_driver_error(self):
         with self.assertRaisesRegex(SessionError, r"\Ano tui session w1: "):
-            tui.TuiRuntime.snapshot(NAME)
+            tui.TuiMode.snapshot(NAME)
         bad = {
             "words": {"stop": "dead"},
             "events": "rel",
@@ -1148,7 +1144,7 @@ class SnapshotTest(Base):
                     with self.assertRaisesRegex(
                         SessionError, rf"\Ano tui session w1: .*bad {field}"
                     ):
-                        tui.TuiRuntime.snapshot(NAME)
+                        tui.TuiMode.snapshot(NAME)
         path = os.path.join(self.dir, "session.json")
         for state, field in (
             (self.state(cwd="rel"), "cwd"),
@@ -1160,13 +1156,13 @@ class SnapshotTest(Base):
             with self.subTest(state=state):
                 self.write_state(state)
                 with self.assertRaises(SessionError) as caught:
-                    tui.TuiRuntime.snapshot(NAME)
+                    tui.TuiMode.snapshot(NAME)
                 self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad {field}")
         for data in (b"", b"[]", b"not json"):
             with self.subTest(data):
                 self.write_state(data)
                 with self.assertRaisesRegex(SessionError, r"\Ano tui session w1: "):
-                    tui.TuiRuntime.snapshot(NAME)
+                    tui.TuiMode.snapshot(NAME)
 
     def test_a_session_json_that_is_no_regular_file_is_refused_without_blocking(self):
         path = os.path.join(self.dir, "session.json")
@@ -1189,7 +1185,7 @@ class SnapshotTest(Base):
 
     def refused(self) -> bool:
         try:
-            tui.TuiRuntime.snapshot(NAME)
+            tui.TuiMode.snapshot(NAME)
         except SessionError:
             return True
         return False
@@ -1688,7 +1684,7 @@ class Opening(ScanTui):
 
 
 class OpeningTest(Base):
-    def opened(self) -> tui.TuiRuntime:
+    def opened(self) -> tui.TuiMode:
         self.client.run = Opening(self.client)
         mode = self.started()
         self.sent_at = []
@@ -1763,9 +1759,7 @@ class OpeningTest(Base):
 
     def test_attached_never_sends(self):
         mode = self.opened()
-        attached = tui.TuiRuntime.attach(
-            NAME, tui.TuiRuntime.snapshot(NAME), self.client, host=self.host
-        )
+        attached = tui.TuiMode.attach(NAME, tui.TuiMode.snapshot(NAME), self.client, host=self.host)
         self.assertIsNone(attached.opening_pending)
         self.append(record("ready"))
         attached.poll(0)
@@ -1791,7 +1785,7 @@ class OpeningTest(Base):
         mode.poll(2)
         mode._terminal.calls.send.assert_not_called()
 
-    def test_an_ended_runtime_is_not_pending(self):
+    def test_an_ended_mode_is_not_pending(self):
         mode = self.opened()
         mode.stop()
         self.assertIsNone(mode.opening_pending)
@@ -2000,7 +1994,7 @@ class PrepareTest(Base):
     def test_its_identity_is_the_session_infos_persisted_fields_and_reads_back(self):
         self.run.launched = {"cwd": "/cwd", "project": True, "transcript": "/t", "resume": "r"}
         self.start()
-        state, info = tui.TuiRuntime.snapshot(NAME), self.prepared.info
+        state, info = tui.TuiMode.snapshot(NAME), self.prepared.info
         persisted = info.persisted()
         self.assertEqual({key: state[key] for key in persisted}, persisted)
         self.assertEqual(set(persisted) & set(tui_hook.SESSION_STATE), {"sid"})
@@ -2022,7 +2016,7 @@ class PrepareTest(Base):
 
         self.start(run=Labels(self.client), events=None)
         self.assertEqual(
-            tui.TuiRuntime.snapshot(NAME),
+            tui.TuiMode.snapshot(NAME),
             self.state(
                 events=None,
                 words={
@@ -2103,7 +2097,7 @@ class PrepareTest(Base):
                 f.write("old")
         self.start()
         self.assertEqual(os.listdir(self.dir), ["session.json"])
-        self.assertEqual(tui.TuiRuntime.snapshot(NAME), self.state())
+        self.assertEqual(tui.TuiMode.snapshot(NAME), self.state())
 
     def test_an_old_entry_that_is_no_real_directory_is_refused(self):
         os.mkdir(self.root, 0o700)
@@ -2260,7 +2254,7 @@ class TmuxErrorTest(TmuxBase):
         client = TuiClient({"tui": True})
         client.run = Launchable(client)
         with self.assertRaises(SessionError) as caught:
-            tui.TuiRuntime.start(
+            tui.TuiMode.start(
                 Spec(
                     workdir=workdir, access=Access(cwd=workdir), name=NAME, client="fake", sid=SID
                 ),

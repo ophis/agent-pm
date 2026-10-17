@@ -390,7 +390,7 @@ class SessionInfo:
 
 @dataclass(frozen=True)
 class Prepared:
-    """A Runtime's start, fixed before it starts: the Spec as started, its SessionInfo, argv and
+    """A mode's start, fixed before it starts: the Spec as started, its SessionInfo, argv and
     child env (in_process, or a tui session attached: none).
     """
 
@@ -571,7 +571,7 @@ class KeyPress:
 
 
 class SessionError(Exception):
-    """A failed start, or a call its Runtime lacks."""
+    """A failed start, or a call its mode lacks."""
 
 
 class NoRecordedSession(SessionError):

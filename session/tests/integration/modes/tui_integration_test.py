@@ -11,7 +11,7 @@ from unittest import mock
 from agent_pm.session.engine.types import Access, Spec
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import fake_client
 from session.tests.case import Case
@@ -26,7 +26,7 @@ class CloseTest(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root, host = os.path.join(self.agent_pm, "tui"), ScreenHost()
-        tui.TuiRuntime.start(
+        tui.TuiMode.start(
             Spec(
                 workdir=tmp.name,
                 access=Access(cwd=tmp.name),
@@ -90,7 +90,7 @@ class PollCostTest(Live):
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:
             json.dump([{"read": True}], f)
-        mode = tui.TuiRuntime.start(
+        mode = tui.TuiMode.start(
             Spec(
                 workdir=self.workdir,
                 access=Access(cwd=self.workdir),

@@ -34,7 +34,7 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.hosts.base import Process, Showable
-from agent_pm.session.runtimes.tui import TuiStore
+from agent_pm.session.modes.tui import TuiStore
 from agent_pm.utils import (
     CONFIG_NAME,
     STALE_AGE,

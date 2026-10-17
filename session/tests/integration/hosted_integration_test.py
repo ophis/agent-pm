@@ -11,7 +11,7 @@ import unittest
 
 from agent_pm.session import Access, Host, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, PY
@@ -22,7 +22,7 @@ DISPLAYS = {"w4": f"{MANAGER}/right", "w5": "elsewhere:1.2"}
 UNCONFIGURED_CALLS = """import json
 from agent_pm.session import ConfigError, Session
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.runtimes.tui import TuiStore
+from agent_pm.session.modes.tui import TuiStore
 found = []
 for call in (
     lambda: HostedSession.list("w.*"),

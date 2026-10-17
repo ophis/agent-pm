@@ -1,5 +1,5 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
-(engine/hosted_session.py, runtimes/), runs agent sessions through each Client (clients/)
+(engine/hosted_session.py, modes/), runs agent sessions through each Client (clients/)
 on a Host (hosts/); `__all__` is its API for Session users.
 """
 

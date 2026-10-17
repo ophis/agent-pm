@@ -11,11 +11,11 @@ from agent_pm.session.engine.types import (
     Paste,
     TurnEnd,
 )
-from agent_pm.session.runtimes.modes import tui
-from agent_pm.session.runtimes.modes.tui import Tui
+from agent_pm.session.modes.client_adapters import tui
+from agent_pm.session.modes.client_adapters.tui import Tui
 
 from session.tests.case import Case
-from session.tests.modes_support import DetailedTui, LabeledTui, StubTui
+from session.tests.client_adapters_support import DetailedTui, LabeledTui, StubTui
 
 
 class NativeIdTui(LabeledTui):

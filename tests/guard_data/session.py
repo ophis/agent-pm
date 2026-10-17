@@ -38,7 +38,7 @@ SESSION_INTERFACE_MODULES = ("agent_pm.session", "agent_pm.session.extension")
 
 
 SUBPACKAGES = {
-    SESSION: {"clients", "hosts", "runtimes"},
+    SESSION: {"clients", "hosts", "modes"},
 }
 
 
@@ -64,17 +64,17 @@ STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("clients/codex/common
 
 NOQA_ALLOWED = {
     (
-        f"{SESSION_SRC}runtimes/headless.py",
+        f"{SESSION_SRC}modes/headless.py",
         "BLE001",
-        "HeadlessRuntime._pump",
+        "HeadlessMode._pump",
     ): "Forward failures to the caller thread.",
     (
-        f"{SESSION_SRC}runtimes/in_process.py",
+        f"{SESSION_SRC}modes/in_process.py",
         "BLE001",
-        "InProcessRuntime._pump",
+        "InProcessMode._pump",
     ): "Forward failures to the caller thread.",
     (
-        f"{SESSION_SRC}runtimes/tui_hook.py",
+        f"{SESSION_SRC}modes/tui_hook.py",
         "BLE001",
         "run",
     ): "the hook must never fail the client",
@@ -137,7 +137,7 @@ PYTHON_CODE_ALLOWED = {
     ): "Codex tui launch (argv, PYTHONPATH) from an installed-layout site through HostedSession's client registry; no public API returns a configured Client's launch, and only a fresh interpreter on the copied site sees that layout.",
     (
         "session/tests/integration/hosted_integration_test.py",
-        "07c8a73e333aa13d8539abe7be6ff1eeaf46e1f133322ef4cb368f765b4a9208",
+        "83b587e3233f7f777638398b45702e083168dd6725d5df94589486d2a28cbd9f",
     ): "HostedSession.list, Session.list and TuiStore.attach refused while HostedSession is unconfigured; tests may not patch HostedSession._setup (test_boundaries), and another test may have configured it in-process, so only a fresh interpreter has it unconfigured.",
     (
         "session/src/agent_pm/session/hosts/tmux/transport.py",

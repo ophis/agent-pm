@@ -44,8 +44,8 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Host, Showable, check_sid
-from agent_pm.session.runtimes import tui_hook
-from agent_pm.session.runtimes.tui import TuiRuntime
+from agent_pm.session.modes import tui_hook
+from agent_pm.session.modes.tui import TuiMode
 from agent_pm.utils import (
     EVENTS_ENV,
     SID_ENV,
@@ -505,7 +505,7 @@ def _state(name: str, hosts: Hosts, sid: str | None = None) -> Status:
 def _cwd(name: str) -> str | None:
     """Tui session `name`'s cwd as its start recorded it; None for any other session."""
     try:
-        info = SessionInfo.from_fields(TuiRuntime.snapshot(name))
+        info = SessionInfo.from_fields(TuiMode.snapshot(name))
     except SessionError:
         return None
     return None if info is None else info.cwd

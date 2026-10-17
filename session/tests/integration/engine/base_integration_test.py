@@ -5,7 +5,7 @@ import subprocess
 import unittest
 
 from agent_pm.session import SessionError
-from agent_pm.session.runtimes import tui
+from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
 from session.tests.case import PY, Case
@@ -59,7 +59,7 @@ class SessionClassMethods(Case):
         found = json.loads(res.stdout)
         self.assertEqual(found["unconfigured"], {name: UNCONFIGURED for name in CALLED})
         with self.assertRaises(SessionError) as caught:
-            tui.TuiRuntime.snapshot("w1")
+            tui.TuiMode.snapshot("w1")
         read_state = [type(caught.exception).__name__, str(caught.exception)]
         self.assertEqual(read_state[0], "SessionError")
         no_fake = ["ConfigError", "no [clients.fake] table in the configured clients"]
