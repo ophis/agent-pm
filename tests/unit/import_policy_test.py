@@ -57,6 +57,10 @@ class Units(Case):
                     ("viewer.viewer", "engine.tmux_cli"),
                     ("viewer.viewer", "hosts.base"),
                     ("viewer.display", "engine.types"),
+                    ("hosts.base", "hosts.types"),
+                    ("hosts.tmux.host", "hosts.types"),
+                    ("viewer.viewer", "hosts.types"),
+                    ("extension", "hosts.types"),
                 )
             ),
             *(
@@ -95,6 +99,9 @@ class Units(Case):
                     ("viewer.viewer", "hosts.tmux.host"),
                     ("engine.worker", "viewer.display"),
                     ("extension", "viewer.viewer"),
+                    ("hosts.types", "engine.types"),
+                    ("hosts.types", "hosts.base"),
+                    ("engine.hosted_session", "hosts.types"),
                 )
             ),
         )

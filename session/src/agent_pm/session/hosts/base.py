@@ -1,5 +1,5 @@
 """Host, where processes live, keeping each one's Record and Display; an attachable one names the
-attach target (TmuxView, CommandView) the Viewer shows a session through.
+attach target (SessionView, CommandView) the Viewer shows a session through.
 """
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ import os
 import signal
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import ClassVar
 
 from agent_pm.session.engine.types import (
@@ -27,6 +26,7 @@ from agent_pm.session.engine.types import (
     StatusState,
     TuiSettings,
 )
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import (
     CLASS_PATH,
     CONFIG_NAME,
@@ -46,23 +46,6 @@ TUI_STATE = "session.json"
 
 def tui_lock(name: str) -> str:
     return os.path.join(os.path.expanduser(TUI_DIR), f"{name}.lock")
-
-
-@dataclass(frozen=True)
-class TmuxView:
-    """A host tmux session the Viewer places as it is."""
-
-    session: str
-
-
-@dataclass(frozen=True)
-class CommandView:
-    """A command the Viewer runs in a view session it makes: printed, the attach command shown to
-    the user; argv, what that view session runs.
-    """
-
-    printed: str
-    argv: tuple[str, ...]
 
 
 class Process(ABC):
@@ -251,7 +234,7 @@ class Host(ABC):
     def rows(self) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list()]
 
-    def attach_target(self, name: str) -> TmuxView | CommandView | None:
+    def attach_target(self, name: str) -> SessionView | CommandView | None:
         """What the Viewer shows session `name` through; None unless attachable."""
         return None
 

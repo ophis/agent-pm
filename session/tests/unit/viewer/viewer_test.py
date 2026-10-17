@@ -8,7 +8,8 @@ from unittest import mock
 from agent_pm.session import ConfigError, NotShowable, SessionError
 from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.types import PaneStatus
-from agent_pm.session.hosts.base import CommandView, Host, TmuxView
+from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.session.viewer import display as displays
 from agent_pm.session.viewer import hidden
 from agent_pm.session.viewer.viewer import VIEW_TAG, Viewer
@@ -449,11 +450,11 @@ class CommandViewTest(Base):
             self.viewer.close("d1", self.docker)
 
 
-class TmuxViewCloseTest(Base):
+class SessionViewCloseTest(Base):
     def test_close_on_a_host_whose_target_is_its_own_tmux_session_touches_no_tmux(self):
         host = mock.create_autospec(Host, instance=True)
         host.name, host.attachable = "tmux", True
-        host.attach_target.return_value = TmuxView("w1")
+        host.attach_target.return_value = SessionView("w1")
         self.viewer.close("w1", host)
         self.tmux.option.assert_not_called()
         self.tmux.kill.assert_not_called()

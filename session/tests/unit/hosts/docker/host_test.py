@@ -31,12 +31,13 @@ from agent_pm.session.engine.types import (
     StatusState,
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
-from agent_pm.session.hosts.base import CommandView, Host
+from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
+from agent_pm.session.hosts.types import CommandView
 from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 

@@ -10,6 +10,7 @@ from agent_pm.session import extension
 from agent_pm.session.clients import base as clients_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
+from agent_pm.session.hosts import types as hosts_types
 from agent_pm.session.modes.base import BaseMode
 from agent_pm.session.modes.client_adapters import headless, in_process, tui
 
@@ -67,8 +68,8 @@ TYPES = {
         ),
         engine_types,
     ),
-    "TmuxView": hosts_base,
-    "CommandView": hosts_base,
+    "SessionView": hosts_types,
+    "CommandView": hosts_types,
     "Record": utils,
     "Status": utils,
     "Display": utils,

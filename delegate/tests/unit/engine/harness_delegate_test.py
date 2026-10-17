@@ -964,7 +964,7 @@ class ViewTest(HarnessCase):
     def test_show_opens_only_the_agent_and_hide_closes_the_agent_and_the_harness(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         names = [self.metadata()[key] for key in ("agent_name", "harness_name")]
         view.show()
         self.assertEqual([name for name, _, _ in FakeViewer.shown], names[:1])
@@ -978,7 +978,7 @@ class ViewTest(HarnessCase):
     def test_show_without_a_live_agent_is_not_showable_and_opens_no_harness(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         HarnessSession.live[self.metadata()["agent_name"]].stop()
         with self.assertRaisesRegex(NotShowable, "delegate has no live showable agent session"):
             view.show()
@@ -990,14 +990,16 @@ class ViewTest(HarnessCase):
                 HarnessSession.reset(showable=showable)
                 spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
                 self.make(spec=spec).detach()
-                HarnessDelegate.attach(self.work, session_cls=HarnessSession).close()
+                HarnessDelegate.attach(
+                    self.work, session_cls=HarnessSession, viewer=FakeViewer()
+                ).close()
                 harness = self.metadata()["harness_name"]
                 self.assertEqual(FakeViewer.closed, [harness] if showable else [])
 
     def test_hide_after_close_is_not_showable(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
-        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
         view.close()
         with self.assertRaisesRegex(NotShowable, "delegate has no live showable session"):
             view.hide()

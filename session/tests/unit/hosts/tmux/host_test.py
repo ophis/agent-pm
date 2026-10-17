@@ -17,9 +17,10 @@ from agent_pm.session.engine.tmux_cli import (
     TmuxCli,
 )
 from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste
-from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess, TmuxView
+from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
+from agent_pm.session.hosts.types import SessionView
 from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
@@ -343,7 +344,7 @@ class TerminalTest(Base):
 class AttachTargetTest(Base):
     def test_attach_target_is_the_session_itself_and_refuses_a_bad_name(self):
         self.assertTrue(TmuxHost.attachable)
-        self.assertEqual(self.host.attach_target("w1"), TmuxView("w1"))
+        self.assertEqual(self.host.attach_target("w1"), SessionView("w1"))
         with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
             self.host.attach_target("a b")
 

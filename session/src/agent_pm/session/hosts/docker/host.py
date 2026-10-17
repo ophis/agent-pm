@@ -52,7 +52,6 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import (
     TUI_DIR,
     TUI_STATE,
-    CommandView,
     Host,
     InteractiveProcess,
     Process,
@@ -80,6 +79,7 @@ from agent_pm.session.hosts.docker.daemon import (
 )
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
+from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
     Display,
     Record,

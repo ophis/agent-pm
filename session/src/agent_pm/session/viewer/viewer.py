@@ -1,5 +1,5 @@
 """Viewer, the one display of every Host's sessions, on the host tmux through the TmuxCli it holds
-and its Grid and Placement. It places a session through its Host's attach target: a TmuxView as
+and its Grid and Placement. It places a session through its Host's attach target: a SessionView as
 it is, a CommandView in a view session it makes (tagged VIEW = VIEW_TAG). The display format,
 FORMAT, has one encoder (fold) and one decoder (unfold); whether a session is hidden is in the
 hidden store (hidden.py), by name and sid.
@@ -19,7 +19,8 @@ from agent_pm.session.engine.types import (
     NotShowable,
     SessionError,
 )
-from agent_pm.session.hosts.base import CommandView, Host, TmuxView
+from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.session.viewer import hidden as hidden_store
 from agent_pm.session.viewer.grid import Grid
 from agent_pm.session.viewer.iterm import Iterm
@@ -85,16 +86,16 @@ def listed(display: Display, value: Display) -> bool:
     )
 
 
-def printed(target: TmuxView | CommandView) -> str:
+def printed(target: SessionView | CommandView) -> str:
     """The attach command shown for an attach target."""
-    if isinstance(target, TmuxView):
+    if isinstance(target, SessionView):
         return tmux_cli.attach_command(target.session)
     return target.printed
 
 
 class Viewer:
     """settings: [viewer]'s workers_per_column and grid_retile shape show's grid. Each session is
-    placed in the host tmux session of its name: its own (TmuxView) or its view session.
+    placed in the host tmux session of its name: its own (SessionView) or its view session.
     """
 
     def __init__(self, settings: Mapping | None = None, *, tmux: TmuxCli | None = None) -> None:
@@ -161,7 +162,7 @@ class Viewer:
         """Undoes show: hidden until a show (if_closed: only once its pane was closed by hand)."""
         target = self._target(name, host)
         if self._tmux.status(name) is None:
-            if isinstance(target, TmuxView):
+            if isinstance(target, SessionView):
                 raise SessionError(f"no tmux session {name}")
             if not if_closed:
                 self._mark(name, host, hidden=True)
@@ -199,7 +200,7 @@ class Viewer:
             target = host.attach_target(name)
         except SessionError:
             target = None  # its session gone, the view it showed may remain
-        if isinstance(target, TmuxView):
+        if isinstance(target, SessionView):
             return
         try:
             if self._tmux.option(name, VIEW) == VIEW_TAG:
@@ -228,7 +229,7 @@ class Viewer:
         except SessionError:
             return None
 
-    def _target(self, name: str, host: Host) -> TmuxView | CommandView:
+    def _target(self, name: str, host: Host) -> SessionView | CommandView:
         target = host.attach_target(name)
         if target is None:
             raise NotShowable(f"host {host.name} cannot show")

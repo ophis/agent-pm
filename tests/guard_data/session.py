@@ -58,6 +58,7 @@ OBJECT_EXPORT_MODULES = (
 OBJECT_EXPORTS_ALLOWED = {
     (f"{PKG}.{SESSION}", "SESSION_NAME"): "TASK-526 shared session-name validation pattern",
     (f"{PKG}.{SESSION}", "SESSION_NAME_RULE"): "TASK-526 shared session-name validation message",
+    (f"{PKG}.{SESSION}", "get_viewer"): "TASK-616 the decided public entry to the Viewer",
 }
 
 

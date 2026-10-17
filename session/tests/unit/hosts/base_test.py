@@ -18,7 +18,8 @@ from agent_pm.session import (
     SessionError,
 )
 from agent_pm.session.engine.types import Hosts, Liveness
-from agent_pm.session.hosts.base import CommandView, Interactive, InteractiveProcess, TmuxView
+from agent_pm.session.hosts.base import Interactive, InteractiveProcess
+from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import Status, StatusState
 
 from session.tests.case import Case
@@ -133,7 +134,7 @@ class HostDefaults(Case):
         host = MinimalHost("m")
         self.assertFalse(host.attachable)
         self.assertIsNone(host.attach_target("a"))
-        self.assertEqual(TmuxView("a"), TmuxView(session="a"))
+        self.assertEqual(SessionView("a"), SessionView(session="a"))
         self.assertEqual(CommandView("p", ("x",)), CommandView(printed="p", argv=("x",)))
 
     def test_name_and_a_copy_of_settings(self):

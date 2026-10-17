@@ -7,7 +7,8 @@ from unittest import mock
 from agent_pm.session import Host, SessionError, Viewer
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Launch, Liveness, SessionRow, StatusState
-from agent_pm.session.hosts.base import InteractiveProcess, TmuxView
+from agent_pm.session.hosts.base import InteractiveProcess
+from agent_pm.session.hosts.types import SessionView
 from agent_pm.session.viewer.placement import Placement
 
 
@@ -179,7 +180,7 @@ class ScreenHost(MemoryHost):
         self.calls.attach_command.return_value = None
 
     def attach_target(self, name):
-        return TmuxView(name)
+        return SessionView(name)
 
 
 class MemoryViewer(Viewer):

@@ -1,5 +1,5 @@
 """TmuxHost, the Host on tmux, runs every tmux call through the TmuxCli it holds; the Viewer shows
-its sessions as they are (TmuxView). TmuxProcess, a session it hosts, keeps its Record and display
+its sessions as they are (SessionView). TmuxProcess, a session it hosts, keeps its Record and display
 in the tmux options @record and @display.
 """
 
@@ -37,9 +37,10 @@ from agent_pm.session.engine.types import (
     StatusState,
     TuiSettings,
 )
-from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, TmuxView
+from agent_pm.session.hosts.base import Host, InteractiveProcess, Process
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hook
+from agent_pm.session.hosts.types import SessionView
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, sid_error
 
 KILL_WAIT = 5
@@ -218,8 +219,8 @@ class TmuxHost(Host):
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
         self.tmux = TmuxCli() if tmux is None else tmux
 
-    def attach_target(self, name: str) -> TmuxView:
-        return TmuxView(_session(name))
+    def attach_target(self, name: str) -> SessionView:
+        return SessionView(_session(name))
 
     def detach(
         self,
