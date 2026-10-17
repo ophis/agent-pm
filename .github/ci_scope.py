@@ -59,19 +59,32 @@ def _owner(path: str) -> str | None:
     return parts[0]
 
 
+def _docs(path: str) -> bool:
+    # Root *.md and docs/**; skills and team text live under projects, so they are not docs.
+    return _owner(path) == "docs" or (_owner(path) == path and path.endswith(".md"))
+
+
 def classify(root: Path, paths: list[str], event: str) -> dict:
     projects = layer_map(root)
-    full = {"full": True, "projects": list(projects), "reason": ""}
+    full = {"full": True, "docs": False, "projects": list(projects), "reason": ""}
     if event != "pull_request":
         return {**full, "reason": f"Event {event} requires every layer"}
     if not paths:
         return {**full, "reason": "Empty change list requires every layer"}
     boundary = list(projects.values()).index("agent_pm.delegate")
     upper = list(projects)[:boundary]
+    if all(_docs(path) for path in paths):
+        # Upper unit tests check the docs the skills cite; nothing else reads docs.
+        return {"full": False, "docs": True, "projects": upper, "reason": "Docs-only changes"}
     for path in paths:
         if _owner(path) not in upper:
             return {**full, "reason": f"Shared, lower-layer or unsafe path: {path!r}"}
-    return {"full": False, "projects": upper, "reason": "Changes touch only upper-layer projects"}
+    return {
+        "full": False,
+        "docs": False,
+        "projects": upper,
+        "reason": "Changes touch only upper-layer projects",
+    }
 
 
 def changed_paths(root: Path, base: str, head: str) -> list[str]:
@@ -115,13 +128,18 @@ def gate(needs: dict, event: str) -> list[str]:
         failures.append("changes.outputs.full must be exactly true or false")
     if event == "push" and full != "true":
         failures.append("changes.outputs.full must be true on push")
+    docs = output.get("docs") if isinstance(output, dict) else None
+    if docs not in ("true", "false") or not isinstance(docs, str):
+        failures.append("changes.outputs.docs must be exactly true or false")
+    if docs == "true" and full != "false":
+        failures.append("changes.outputs.docs requires full false")
     expected = {
         "changes": "success",
         "lint": "success",
         "repository": "skipped" if full == "false" else "success",
         "unit": "success",
         "coverage": "success" if event == "pull_request" else "skipped",
-        "integration": "success",
+        "integration": "skipped" if docs == "true" else "success",
     }
     for job, wanted in expected.items():
         data = needs.get(job)
@@ -168,7 +186,8 @@ def main(argv=None, *, root=None) -> int:
         if args.github_output:
             with args.github_output.open("a", encoding="utf-8") as output:
                 output.write(
-                    f"full={str(result['full']).lower()}\nprojects={json.dumps(result['projects'])}\n"
+                    f"full={str(result['full']).lower()}\ndocs={str(result['docs']).lower()}\n"
+                    f"projects={json.dumps(result['projects'])}\n"
                 )
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"CI scope failed: {error}", file=sys.stderr)

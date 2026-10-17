@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       full: ${{ steps.scope.outputs.full }}
+      docs: ${{ steps.scope.outputs.docs }}
       projects: ${{ steps.scope.outputs.projects }}
     steps:
       - name: Check out
@@ -54,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [style, types, design]
+        group: ${{ fromJSON(needs.changes.outputs.docs == 'true' && '["style"]' || '["style", "types", "design"]') }}
     steps:
       - name: Check out
         uses: actions/checkout@v7.0.1
@@ -251,6 +252,7 @@ jobs:
     name: Integration ${{ matrix.job }}
     runs-on: ubuntu-24.04
     needs: [changes]
+    if: ${{ needs.changes.outputs.docs == 'false' }}
     timeout-minutes: 15
     env:
       INTEGRATION_WORKERS: "4"
