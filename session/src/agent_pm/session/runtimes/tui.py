@@ -484,7 +484,7 @@ class TuiRuntime(Runtime):
             try:
                 return host.terminal(
                     store.name,
-                    pending.launch,
+                    owned_launch,
                     display=display,
                     events=prepared.spec.events,
                     metadata=pending.metadata,
@@ -496,7 +496,8 @@ class TuiRuntime(Runtime):
             run.commit()
             record(prepared.info)
 
-        terminal = store.start(pending.state, commit, launch, check_name=check_name)
+        with client._launch_scope(prepared.spec, pending.launch) as (owned_launch, relocate):
+            terminal = store.start(relocate(pending.state), commit, launch, check_name=check_name)
         _sweep(store)
         generation = pending.state["generation"]
         return cls(prepared, run, terminal, store, generation, opening=run.opening)

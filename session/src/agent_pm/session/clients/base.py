@@ -11,6 +11,7 @@ no global state (cwd, environ, signals): it applies spec.access.cwd, not its env
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from types import MappingProxyType
 from typing import ClassVar
 
@@ -40,6 +41,7 @@ from agent_pm.utils import json_records, thaw
 
 
 class Client:
+    _keep_installation = False
     selection: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
     forbidden_selection: tuple[str, ...] = ()
     valued_flags: tuple[str, ...] = ()
@@ -91,6 +93,10 @@ class Client:
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
         """Own write dirs (spec.resume: spec.sid's)."""
         return ()
+
+    @contextmanager
+    def _launch_scope(self, spec: Spec, launch: Launch):
+        yield launch, dict
 
 
 class Headless(ABC):

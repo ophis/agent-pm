@@ -13,6 +13,7 @@ from agent_pm.session.clients.base import Client, Headless
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
+    Launch,
     Liveness,
     Mode,
     Prepared,
@@ -82,17 +83,19 @@ class HeadlessRuntime(Runtime):
         run.commit()
         record(prepared.info)
         try:
-            proc = subprocess.Popen(
-                prepared.argv,
-                cwd=prepared.info.cwd,
-                env=dict(prepared.env),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                process_group=0,
-            )
+            launch = Launch(prepared.argv, env=prepared.env, cwd=prepared.info.cwd)
+            with client._launch_scope(prepared.spec, launch) as (owned, _relocate):
+                proc = subprocess.Popen(
+                    owned.argv,
+                    cwd=owned.cwd,
+                    env=dict(owned.env),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    errors="replace",
+                    process_group=0,
+                )
             mode = cls(prepared, proc)
             out, err = proc.stdout, proc.stderr
             assert out is not None and err is not None

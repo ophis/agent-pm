@@ -434,6 +434,22 @@ class HostedSession(Session):
         return tuple(dict.fromkeys(_class_root(kind, table) for table, kind in loaded))
 
     @classmethod
+    def _launch_scope(cls, spec: Spec, launch):
+        if spec.client is None:
+            raise ConfigError("client: required for launch")
+        return cls._config().registry.client(spec.client)._launch_scope(spec, launch)
+
+    @classmethod
+    def _installation(cls, client: str) -> str | None:
+        from agent_pm.utils import installation_root
+
+        return (
+            installation_root()
+            if cls._config().registry.client_class(client)._keep_installation
+            else None
+        )
+
+    @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:
         setup = cls._config()
         if not isinstance(spec, Spec):

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import nullcontext
 from typing import Any
 
 from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     KeyPress,
+    Launch,
     Mode,
     ProcessOptions,
     SessionEvent,
@@ -189,3 +191,15 @@ class Session(ABC):
         each configured Host's, without repeats.
         """
         return cls._hosted("class_roots")(client)
+
+    @classmethod
+    def _launch_scope(cls, spec: Spec, launch: Launch):
+        return (
+            cls._hosted("_launch_scope")(spec, launch)
+            if cls is Session
+            else nullcontext((launch, dict))
+        )
+
+    @classmethod
+    def _installation(cls, client: str) -> str | None:
+        return cls._hosted("_installation")(client) if cls is Session else None

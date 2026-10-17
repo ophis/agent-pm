@@ -15,6 +15,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 import agent_pm.utils as utils_package
 from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback, sweep
 from agent_pm.delegate.engine.config import module_roots, read_config
@@ -66,7 +67,9 @@ from agent_pm.utils import (
     Record,
     Status,
     StatusState,
+    installation_root,
     load_class,
+    relocate,
     source_path,
     thaw,
     under,
@@ -373,6 +376,11 @@ class HarnessDelegate(Delegate):
         }
         spec["team"] = None if team is None else {"root": team.root, "dirs": team.dirs}
         values["plan"], values["spec"], values["version"] = accepted, spec, 1
+        origin = getattr(self, "_installation_origin", None)
+        current = installation_root()
+        if origin is not None and current is not None:
+            values = relocate(values, current, origin)
+            values["installation"] = origin
         self.store.write(json.dumps(values))
 
     def _read(self) -> _State:
@@ -387,6 +395,28 @@ class HarnessDelegate(Delegate):
                 raise ValueError("metadata must be an object")
             if data.pop("version") != 1:
                 raise ValueError("unsupported metadata version")
+            origin = data.pop("installation", None)
+            if origin is not None and (not isinstance(origin, str) or not os.path.isabs(origin)):
+                raise ValueError("invalid installation origin")
+            current = installation_root()
+            if origin is None and current is not None and hasattr(self, "_settings"):
+                team = data["spec"]["team"]
+                suffix = os.sep + os.path.relpath(TEAM, current)
+                if (
+                    isinstance(team, dict)
+                    and isinstance(team.get("root"), str)
+                    and team["root"].endswith(suffix)
+                ):
+                    candidate = team["root"].removesuffix(suffix)
+                    if (
+                        not os.path.exists(candidate)
+                        and self.session_cls._installation(data["plan"]["session"]["client"])
+                        is not None
+                    ):
+                        origin = candidate
+            self._installation_origin = origin
+            if origin is not None and current is not None:
+                data = relocate(data, origin, current)
             given = data.pop("spec")
             team = given.pop("team")
             spec = Spec(
@@ -451,19 +481,22 @@ class HarnessDelegate(Delegate):
         if sid is not None and sid != view._state.plan.sid:
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
         try:
-            view.composer = composer or Composer(
-                config=DelegateConfig(read_config()),
-                team=None
-                if view._state.plan.spec.team is None
-                else _team(view._state.plan.spec.team),
-            )
-            view._settings = thaw(view.composer.config.values)
+            configured = composer.config if composer is not None else DelegateConfig(read_config())
+            view._settings = thaw(configured.values)
             view.session_cls = session_cls or (
                 Session
                 if view._state.session_cls in (None, f"{Session.__module__}:{Session.__qualname__}")
                 else load_class(view._state.session_cls, Session)
             )
             view._configure()
+            view._state = view._read()
+            view.composer = composer or Composer(
+                config=configured,
+                team=None
+                if view._state.plan.spec.team is None
+                else _team(view._state.plan.spec.team),
+            )
+            view._settings = thaw(view.composer.config.values)
             view.session_cls.host(view._state.host)
             view.session_cls.host(view._state.harness_host)
             view._harness_override = None
@@ -837,15 +870,19 @@ class HarnessDelegate(Delegate):
         state = replace(state, detached=True)
         record = self._record(state)
         launch = self._harness_launch(state)
-        self._save(state)
         try:
-            self._harness_host.detach(
-                state.harness_name,
-                launch,
-                display=state.display,
-                events=state.events,
-                record=record,
-            )
+            with self.session_cls._launch_scope(state.plan.session, launch) as (owned, _relocate):
+                root = self.session_cls._installation(state.plan.client)
+                if root is not None:
+                    self._installation_origin = getattr(self, "_installation_origin", None) or root
+                self._save(state)
+                self._harness_host.detach(
+                    state.harness_name,
+                    owned,
+                    display=state.display,
+                    events=state.events,
+                    record=record,
+                )
         except BaseException as error:
             self._save(previous)
             if isinstance(error, SessionConfigError):

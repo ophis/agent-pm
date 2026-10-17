@@ -46,7 +46,9 @@ from agent_pm.utils import (
     STATE,
     drop_stale,
     environment_ok,
+    installations_root,
     number,
+    overlaps,
     resume_command,
 )
 
@@ -856,6 +858,7 @@ class CodexCommon:
             snapshot = state.snapshot
             refuse(snapshot.flags)
             environment = self.environment(snapshot, ambient=True)
+            self.check_installation((*state.writable_roots, *implicit_writable_roots(environment)))
             check_writable_roots(self.store.root, implicit_writable_roots(environment))
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
@@ -876,6 +879,7 @@ class CodexCommon:
         cwd, home, *_ = roots
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home, roots[2:])
+        self.check_installation((*roots, *implicit_writable_roots(environment)))
         snapshot = _snapshot(
             {
                 "cwd": cwd,
@@ -890,6 +894,13 @@ class CodexCommon:
             }
         )
         return self.store.create(workdir, sid, snapshot, roots)
+
+    @staticmethod
+    def check_installation(roots: Sequence[str]) -> None:
+        root = installations_root()
+        for writable in roots:
+            if overlaps(root, writable):
+                raise ConfigError(f"retained installation {root} overlaps writable root {writable}")
 
     def _new_roots(self, spec: Spec, environment: Mapping[str, str]) -> list[str]:
         cwd = absolute_path(spec.access.cwd, "cwd")

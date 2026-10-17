@@ -51,7 +51,6 @@ class InstallationTest(Case):
             env = kept.environment({"PATH": "/usr/bin", "PYTHONPATH": str(self.resource.parent)})
             self.assertEqual(env["PATH"], kept.root + "/bin:/usr/bin")
             self.assertEqual(env["PYTHONPATH"], mapped["roots"][0])
-            self.assertEqual(env[installation.ORIGIN_ENV], str(self.source))
             command = kept.command(("python3", "-m", "module", json.dumps(original)))
             self.assertEqual(json.loads(command[-1])[-1], encoded)
             kept.discard()

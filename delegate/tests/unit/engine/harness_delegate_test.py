@@ -18,6 +18,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome, Spec
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
@@ -27,6 +28,7 @@ from agent_pm.session import Access, Exited, Launch, Mode, NotShowable, Reply, S
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.engine.types import Liveness
+from agent_pm.utils import installation_root, relocate
 
 from delegate.tests.fakes.harness_session import (
     HarnessSession,
@@ -39,6 +41,54 @@ from delegate.tests.replies import block
 from delegate.tests.unit.engine.orphans import Clock, Orphan
 
 ORPHAN = 4242
+
+
+class InstallationMetadataTest(HarnessCase):
+    def test_protected_metadata_rebinds_old_paths_and_serializes_the_original_origin(self):
+        view = self.make()
+        current = installation_root()
+        old = os.path.join(self.home, "missing-installation-A")
+        data = self.metadata()
+        data["installation"] = old
+        data["callback"] = [old + "/bin/agent-pm-linear", "writeback"]
+        data["spec"]["team"]["root"] = relocate(TEAM, current, old)
+        state = view._parse(json.dumps(data).encode())
+        self.assertEqual(state.callback, (current + "/bin/agent-pm-linear", "writeback"))
+        self.assertEqual(state.plan.spec.team.root, TEAM)
+        view._save(state)
+        self.assertEqual(self.metadata()["callback"], data["callback"])
+        self.assertEqual(self.metadata()["installation"], old)
+
+    def test_legacy_default_team_rebinds_only_for_a_protected_client(self):
+        current = installation_root()
+
+        class Protected(HarnessSession):
+            @classmethod
+            def _installation(cls, _client):
+                return current
+
+        view = self.make()
+        data = self.metadata()
+        self.assertNotIn("installation", data)
+        old = os.path.join(self.home, "missing-installation-A")
+        data["spec"]["team"]["root"] = relocate(TEAM, current, old)
+        data["callback"] = [old + "/bin/agent-pm-linear"]
+        payload = json.dumps(data).encode()
+        self.assertEqual(view._parse(payload).callback, tuple(data["callback"]))
+        view.session_cls = Protected
+        state = view._parse(payload)
+        self.assertEqual(state.plan.spec.team.root, TEAM)
+        self.assertEqual(state.callback, (current + "/bin/agent-pm-linear",))
+        view._save(state)
+        self.assertEqual(self.metadata()["installation"], old)
+
+    def test_custom_legacy_team_and_live_installation_are_unchanged(self):
+        view = self.make()
+        original = self.metadata()
+        self.assertEqual(
+            view._parse(json.dumps(original).encode()).plan.spec.team.root,
+            original["spec"]["team"]["root"],
+        )
 
 
 class CreateTest(HarnessCase):

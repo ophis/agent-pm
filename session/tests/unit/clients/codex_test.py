@@ -5,11 +5,14 @@ import io
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.engine.types import (
+    Access,
     ConfigError,
     Launch,
     SessionInfo,
@@ -17,8 +20,9 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.utils import installations_root
 
-from session.tests.case import Case
+from session.tests.case import REPO, Case
 from session.tests.unit.clients.codex.support import CHILD, NATIVE, Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
@@ -273,3 +277,74 @@ class ConfigurationPolicy(Base):
         for key in ("sandbox", "shell_network"):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, "unknown key"):
                 CodexClient(self.client.config | {key: "workspace-write"})
+
+
+class InstallationTest(Base):
+    def test_other_client_scope_is_identity_without_writes(self):
+        launch = Launch(("client",), env={"A": "B"})
+        with Client({})._launch_scope(self.spec, launch) as (actual, relocate):
+            self.assertIs(actual, launch)
+            self.assertEqual(relocate({"payload": 1}), {"payload": 1})
+        self.assertFalse(Path(installations_root()).exists())
+
+    def test_preflight_rejects_writable_snapshot_root_and_symlink_aliases(self):
+        root = Path(installations_root())
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root.mkdir(mode=0o700)
+        alias = self.root / "alias"
+        alias.symlink_to(root, target_is_directory=True)
+        for directory in (root, root.parent, root / "child", alias):
+            with self.subTest(directory=directory):
+                spec = replace(self.spec, access=replace(self.spec.access, dirs=(str(directory),)))
+                with self.assertRaisesRegex(
+                    ConfigError, "(retained installation|recovery state).*writable"
+                ):
+                    self.common.prepare(spec)
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_cwd_codex_home_and_add_dir_overlap_are_rejected(self):
+        root = installations_root()
+        specs = (
+            replace(self.spec, access=Access(cwd=root)),
+            replace(self.spec, flags=("--add-dir", root)),
+            replace(self.spec, env={"CODEX_HOME": root}),
+        )
+        for spec in specs:
+            with (
+                self.subTest(spec=spec),
+                self.assertRaisesRegex(ConfigError, "retained installation"),
+            ):
+                self.common.prepare(spec)
+        self.assertFalse(Path(root).exists())
+
+    def test_scope_relocates_encoded_hook_and_callback_roots_and_cleans_failed_start(self):
+        source = Path(REPO)
+        hook = str(source / "bin/agent-pm-session")
+        launch = Launch(
+            ("python3", "-m", "start", json.dumps({"hook": [hook]})),
+            env={"PATH": str(source / "bin")},
+        )
+        with (
+            self.assertRaisesRegex(RuntimeError, "failed start"),
+            self.client._launch_scope(self.spec, launch) as (kept, relocate),
+        ):
+            encoded = json.loads(kept.argv[-1])[-1]
+            copy = next(Path(installations_root()).iterdir())
+            self.assertEqual(json.loads(encoded)["hook"], [str(copy / "bin/agent-pm-session")])
+            self.assertEqual(
+                relocate({"roots": [str(source / "utils/src")]}),
+                {"roots": [str(copy / "utils/src")]},
+            )
+            self.assertTrue(kept.env["PATH"].startswith(str(copy / "bin")))
+            raise RuntimeError("failed start")
+        self.assertEqual(list(Path(installations_root()).iterdir()), [])
+
+    def test_non_plugin_installs_preserve_launch_and_preflight_creates_no_copy(self):
+        self.common.prepare(self.spec)
+        self.assertFalse(Path(installations_root()).exists())
+        launch = Launch(("client",))
+        with (
+            mock.patch("os.path.isfile", return_value=False),
+            self.client._launch_scope(self.spec, launch) as (actual, _map),
+        ):
+            self.assertIs(actual, launch)

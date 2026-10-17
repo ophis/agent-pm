@@ -1,17 +1,20 @@
 """Codex's abstract factory."""
 
 from collections.abc import Mapping
+from contextlib import contextmanager
+from dataclasses import replace
 from types import MappingProxyType
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.codex.common import CodexCommon
 from agent_pm.session.clients.codex.headless import CodexHeadless
 from agent_pm.session.clients.codex.tui import CodexTui
-from agent_pm.session.engine.types import SessionInfo, Spec
-from agent_pm.utils import LOCAL_ENV_VARS
+from agent_pm.session.engine.types import ConfigError, SessionInfo, Spec
+from agent_pm.utils import LOCAL_ENV_VARS, Installation, installation_root
 
 
 class CodexClient(Client):
+    _keep_installation = True
     selection = ((), ("resume",))
     valued_flags = (
         "-c",
@@ -63,3 +66,21 @@ class CodexClient(Client):
 
     def writable_dirs(self, spec: Spec):
         return self.common.writable_dirs(spec)
+
+    @contextmanager
+    def _launch_scope(self, spec: Spec, launch):
+        self.common.check_installation(self.common.writable_dirs(spec))
+        root = installation_root()
+        if root is None:
+            yield launch, dict
+            return
+        try:
+            with Installation(root) as kept:
+                yield (
+                    replace(
+                        launch, argv=kept.command(launch.argv), env=kept.environment(launch.env)
+                    ),
+                    kept.relocate,
+                )
+        except (OSError, ValueError) as error:
+            raise ConfigError(f"retained installation: {error}") from error

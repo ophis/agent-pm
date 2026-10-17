@@ -17,7 +17,6 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import TypeVar, cast
 
-ORIGIN_ENV = "AGENT_PM_INSTALLATION_ORIGIN"
 HANDOFF = 60
 IGNORED = shutil.ignore_patterns(
     "tests",
@@ -184,7 +183,6 @@ class Installation:
         mapped["PATH"] = (
             self.root + "/bin" + os.pathsep + mapped.get("PATH", os.environ.get("PATH", os.defpath))
         )
-        mapped[ORIGIN_ENV] = os.environ.get(ORIGIN_ENV, self.source)
         return mapped
 
     def command(self, argv: Sequence[str]) -> tuple[str, ...]:
