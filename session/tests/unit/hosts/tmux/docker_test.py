@@ -1302,6 +1302,15 @@ class ListTest(Base):
                 with self.assertRaisesRegex(SessionError, "docker ps"):
                     self.host.list()
 
+    def test_a_daemon_that_does_not_answer_lists_no_rows_but_fails_list(self):
+        self.listed("w")
+        self.host.run = mock.Mock(side_effect=TimeoutExpired("docker", RUN_TIMEOUT))
+        with self.assertLogs("session", "WARNING") as logs:
+            self.assertEqual(self.host.rows(), [])
+        self.assertIn("docker ps", logs.output[0])
+        with self.assertRaisesRegex(SessionError, "docker ps"):
+            self.host.list()
+
     def test_no_daemon_socket_or_cli_lists_nothing(self):
         self.listed("w")
         self.host.run = mock.Mock(side_effect=FileNotFoundError(2, "no docker"))

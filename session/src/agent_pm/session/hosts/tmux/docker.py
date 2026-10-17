@@ -802,7 +802,14 @@ class DockerHost(Host, Showable):
         return _listed(self._containers(), display)
 
     def rows(self, display: Display = None) -> list[SessionRow]:
-        containers = self._containers()
+        """[] with a warning when docker fails, so the other Hosts' rows still list; list() raises,
+        as its callers act on absence.
+        """
+        try:
+            containers = self._containers()
+        except SessionError as error:
+            LOG.warning("docker rows: %s", error)
+            return []
         return [
             self._row(name, containers[name].container, containers[name].generation)
             for name in _listed(containers, display)
