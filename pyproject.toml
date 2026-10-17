@@ -208,6 +208,8 @@ dependencies = []
 
 [tool.typos.files]
 ignore-hidden = false
+# Translated READMEs: typos checks English spelling only.
+extend-exclude = ["docs/readme/"]
 
 [tool.typos.default.extend-words]
 # Escaped café filenames test Unicode handling.
