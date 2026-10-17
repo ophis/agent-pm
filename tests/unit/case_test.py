@@ -110,6 +110,15 @@ class Checks:
         self.assertEqual(seen["entries"], ([".agent-pm"], []))
         self.assertFalse(os.path.exists(home))
 
+    def test_process_control_dirs_live_in_the_temp_home(self):
+        seen = []
+        result = self.run_inner(
+            lambda inner: seen.append((os.environ.get("AGENT_PM_CONTROL_ROOT"), inner.home))
+        )
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        ((root, home),) = seen
+        self.assertEqual(root, home)
+
     def test_a_set_up_without_super_runs_in_the_temp_home(self):
         seen = []
         result = self.run_inner(

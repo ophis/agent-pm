@@ -68,6 +68,7 @@ class Case(unittest.TestCase):
                 {
                     **clean_env(None, *ROOTS),
                     "HOME": self.home,
+                    "AGENT_PM_CONTROL_ROOT": self.home,
                     "TUI_ATTACH_PREFIX": "",
                     "PATH": os.pathsep.join((PLUGIN_BIN, os.environ.get("PATH", os.defpath))),
                 },
