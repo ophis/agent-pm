@@ -803,9 +803,9 @@ class TerminalTest(Base):
         self.live_supervisor()
         self.docker.replies = {
             ("tmux", "display-message"): pane(),
-            ("tmux", "capture-pane"): (0, "a\x1b]0;x\x07b\tc\n\x1b[2Jd\r\n", ""),
+            ("tmux", "capture-pane"): (0, "a\x1b]0;x\x07b\tc\n\x1b[2Jd\u3000e\u200d\x9b\r\n", ""),
         }
-        self.assertEqual(self.host.screen(process), "a]0;xb\tc\n[2Jd")
+        self.assertEqual(self.host.screen(process), "a]0;xb\tc\n[2Jd\u3000e\u200d")
 
     def test_dead_pane_returncode(self):
         process = self.terminal()

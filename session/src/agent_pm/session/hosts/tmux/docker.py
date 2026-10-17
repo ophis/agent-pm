@@ -70,7 +70,6 @@ from agent_pm.utils import (
     docker_home,
     inode_lock,
     module_roots,
-    printable,
     read_beneath,
     read_regular,
     save,
@@ -96,6 +95,7 @@ PS_FORMAT = "\t".join(
 )
 LOG = logging.getLogger("session")
 STATE_MAX = 1 << 20
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
 
 
@@ -207,8 +207,8 @@ def _report_plan(name: str, plan: Mapping) -> None:
 
 
 def _text(found: str) -> str:
-    """Container text, which reaches the host terminal, without control characters."""
-    return "\n".join(map(printable, found.split("\n")))
+    """Container text, which reaches the host terminal, without C0 or C1 controls but tab."""
+    return CONTROL.sub("", found)
 
 
 def _wait(ready, timeout: float) -> bool:

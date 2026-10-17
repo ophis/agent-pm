@@ -477,8 +477,10 @@ class Tmux:
                 self.run(["run-shell", "-b", "true"])
             return PaneStatus.RUNNING
         if sig:  # libc's sys_signame (macOS: "kill"), else the number
-            name = "SIG" + sig.upper()
-            return -(int(sig) if sig.isdecimal() else signal.Signals.__members__.get(name, 0))
+            found = (
+                int(sig) if sig.isdecimal() else signal.Signals.__members__.get(f"SIG{sig.upper()}")
+            )
+            return PaneStatus.UNKNOWN if found is None else -found
         return int(code) if code.isdecimal() else PaneStatus.UNKNOWN
 
     def kill(self, target: str) -> None:
