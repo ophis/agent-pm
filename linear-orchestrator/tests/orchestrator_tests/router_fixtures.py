@@ -258,8 +258,6 @@ class FakeLinear:
         raise AssertionError(query)
 
     def _identity(self, query, v):
-        if query == "query { viewer { id } }":
-            return {"viewer": {"id": "harness-viewer"}}
         if query == ops.Q_COMMENT:
             return {"comment": self.comments.get(v["c"])}
         if query in (related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS):

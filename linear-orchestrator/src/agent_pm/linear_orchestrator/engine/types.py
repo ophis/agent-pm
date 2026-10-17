@@ -10,7 +10,7 @@ from typing import Literal
 from agent_pm import delegate
 from agent_pm.utils import Stopped as Stopped
 
-ClientSource = Literal["pinned", "label", "default"]
+ClientSource = Literal["label", "default"]
 
 
 @dataclass(frozen=True)
