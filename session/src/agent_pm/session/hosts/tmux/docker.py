@@ -11,6 +11,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -34,7 +35,7 @@ from agent_pm.session.engine.types import (
     SessionRow,
     StatusState,
 )
-from agent_pm.session.hosts.base import TUI_DIR, Host, Process, Showable
+from agent_pm.session.hosts.base import TUI_DIR, TUI_STATE, Host, Process, Showable, tui_lock
 from agent_pm.session.hosts.docker import supervisor as run_supervisor
 from agent_pm.session.hosts.docker.broker import (
     RELAY,
@@ -65,8 +66,10 @@ from agent_pm.utils import (
     Status,
     command_path,
     docker_home,
+    inode_lock,
     module_roots,
     read_beneath,
+    read_regular,
     save,
     source_path,
     timestamp,
@@ -89,6 +92,8 @@ PS_FORMAT = "\t".join(
     )
 )
 LOG = logging.getLogger("session")
+STATE_MAX = 1 << 20
+NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
 
 
 class Row(NamedTuple):
@@ -155,6 +160,10 @@ def _lock_free(path: str) -> bool:
     finally:
         os.close(fd)
     return True
+
+
+def _state_file(name: str) -> str:
+    return os.path.join(os.path.expanduser(TUI_DIR), name, TUI_STATE)
 
 
 def _image_digest(row: Row) -> str | None:
@@ -268,6 +277,7 @@ class DockerTerminal(TmuxTerminal):
         """Kills the client (pane-died disarmed), the supervisor (unless the image is another
         version's), the container, then the view.
         """
+        self.host.sweep(self.name)
         failures = []
         res = self.tmux.run(
             [
@@ -380,6 +390,58 @@ class DockerHost(Host, Showable):
                 found[row.name] = row
         return found
 
+    def sweep(self, own: str) -> None:
+        """Closes leftover containers: ones whose session has no session.json, another generation
+        in it, or (running) a tmux that positively answers it has no such session. Other names are
+        judged only under their tui lock taken without waiting; `own`'s caller holds its lock.
+        """
+        try:
+            rows = self._rows()
+        except SessionError as error:
+            LOG.warning("docker sweep: %s", error)
+            return
+        for row in rows:
+            try:
+                if row.name == own:
+                    self._sweep_row(row)
+                    continue
+                lock = tui_lock(row.name)
+                with inode_lock(lock, wait=False) as held:
+                    if held:
+                        self._sweep_row(row)
+                        if not os.path.lexists(_state_file(row.name)):
+                            os.unlink(lock)
+            except (SessionError, OSError) as error:
+                LOG.warning("docker sweep %s: %s", row.name, error)
+
+    def _sweep_row(self, row: Row) -> None:
+        path = _state_file(row.name)
+        if os.path.lexists(path):
+            try:
+                found = json.loads(read_regular(path, limit=STATE_MAX) or b"")
+            except (ValueError, RecursionError):
+                return
+            generation = found.get("generation") if isinstance(found, dict) else None
+            if not isinstance(generation, str) or (
+                generation == row.generation
+                and not (row.state == "running" and self._no_session(row))
+            ):
+                return
+        self.broker.close(row.container)
+
+    def _no_session(self, row: Row) -> bool:
+        """tmux in row's container answered that it has no session row.name; a timeout or any other
+        answer is no proof.
+        """
+        argv, env = docker_call(
+            self.docker, "exec", "-i", row.container, "tmux", "has-session", "-t", f"={row.name}"
+        )
+        try:
+            res = self.run(argv, env, timeout=RUN_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return res.returncode == 1 and NO_SESSION.fullmatch(res.stderr.strip()) is not None
+
     def _recover(self, row: Row) -> bool:
         """False when row's image is not the one the current plugin builds. With its live container
         host.json's generation and supervisor.lock free, it checks that, then restarts the relay
@@ -465,6 +527,7 @@ class DockerHost(Host, Showable):
         resume = metadata.get("resume")
         if resume not in ("0", "1"):
             raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
+        self.sweep(name)
         if any(row[1:2] == [name] for row in self._ps()):
             raise SessionError(
                 f"docker session {name}: a container for it exists; close {name} first"

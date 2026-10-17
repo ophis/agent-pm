@@ -147,9 +147,17 @@ class Base(Case):
         )
         self.state = os.path.join(self.home, ".agent-pm", "docker-state", "w")
         self.spawned, self.inherit = [], False
+        self.tui_session("w")
         popen = mock.patch("subprocess.Popen", side_effect=self.spawn)
         self.spawn_mock = popen.start()
         self.addCleanup(popen.stop)
+
+    def tui_session(self, name, gen=GEN):
+        """The tui runtime's session.json for `name`, as start writes it before the Host runs."""
+        path = os.path.join(self.home, ".agent-pm", "tui", name)
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, "session.json"), "w") as f:
+            json.dump({"generation": gen}, f)
 
     def spawn(self, argv, **kw):
         """A supervisor that holds the lock fd it inherits while `inherit` is set."""
@@ -352,6 +360,7 @@ class StartTest(Base):
         self.assertEqual(
             [step if isinstance(step, str | tuple) else step[:5] for step in self.order],
             [
+                ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 "version",
                 ("build", REPO),
@@ -586,7 +595,7 @@ class StartTest(Base):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]
         with self.assertRaisesRegex(SessionError, "a container for it exists"):
             self.start()
-        self.assertEqual(len(self.order), 1)
+        self.assertEqual({step[0] for step in self.order}, {"ps"})
 
     def test_bad_cwd_fails_before_any_docker_call(self):
         self.launch = Launch(("agent",), cwd=self.account, env={})
@@ -768,13 +777,16 @@ class CloseTest(Base):
         self.assertEqual(
             [step[:4] if isinstance(step, list) else step for step in self.order[1:]],
             [
+                ["ps", "-a", "--filter", "label=agent-pm.session"],
+                ["exec", "-i", CONTAINER, "tmux"],
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
             ],
         )
+        self.assertEqual(self.docker.execs()[0], ["tmux", "has-session", "-t", "=w"])
         self.assertEqual(
-            self.docker.execs()[0],
+            self.docker.execs()[1],
             [
                 "tmux",
                 "set-hook",
@@ -949,6 +961,116 @@ class RecoverTest(Base):
         self.host_replies = {("show-options",): (1, "", "no server running on /tmp/x")}
         process.close()
         self.assertEqual(self.broker.closed, [CONTAINER])
+
+
+class SweepTest(Base):
+    OLD = "f" * 32
+
+    def setUp(self):
+        super().setUp()
+        self.tui = os.path.join(self.home, ".agent-pm", "tui")
+        self.answers = {}
+        self.docker.replies = {("tmux", "has-session"): self.has_session}
+
+    def has_session(self, cmd):
+        container = self.docker.order[-1][2]
+        found = self.answers.get(container, (0, "", ""))
+        if isinstance(found, BaseException):
+            raise found
+        return done(*found)
+
+    def row(self, name, gen=GEN, state="running"):
+        return f"agent-pm-{name}-{gen}\t{name}\t{gen}\t{state}"
+
+    def files(self):
+        return {
+            os.path.relpath(os.path.join(root, name), self.home)
+            for root, dirs, names in os.walk(self.home)
+            for name in names + dirs
+        }
+
+    def test_sweep_removes_leftovers_and_skips_busy_invalid_and_live_ones(self):
+        for name, gen in (("b", self.OLD), ("c", GEN), ("d", GEN), ("e", GEN), ("f", GEN)):
+            self.tui_session(name, gen)
+        busy = os.open(os.path.join(self.tui, "f.lock"), os.O_RDWR | os.O_CREAT)
+        self.addCleanup(os.close, busy)
+        fcntl.flock(busy, fcntl.LOCK_EX)
+        self.answers = {
+            f"agent-pm-c-{GEN}": (1, "", "can't find session: c"),
+            f"agent-pm-w-{self.OLD}": (1, "", "no server running on /tmp/tmux-1000/default"),
+        }
+        self.docker.ps = [
+            self.row("w", self.OLD),  # own session, older generation
+            self.row("a"),  # no session.json
+            self.row("b"),  # session.json of another generation
+            self.row("c"),  # its tmux has no session c
+            self.row("d"),  # live
+            self.row("e", state="exited"),  # stopped, still its generation: shows dead
+            self.row("f"),  # starting or closing elsewhere
+            f"agent-pm-g-{GEN}\t\t{GEN}\trunning",
+            f"agent-pm-..-{GEN}\t../x\t{GEN}\trunning",
+            f"agent-pm-h-{GEN}\ti\t{GEN}\trunning",
+            f"agent-pm-j-{GEN.upper()}\tj\t{GEN.upper()}\trunning",
+        ]
+        self.host.sweep("w")
+        self.assertEqual(
+            self.broker.closed,
+            [
+                f"agent-pm-w-{self.OLD}",
+                f"agent-pm-a-{GEN}",
+                f"agent-pm-b-{GEN}",
+                f"agent-pm-c-{GEN}",
+            ],
+        )
+        probed = [call[2] for call in self.docker.order if call[:2] == ["exec", "-i"]]
+        self.assertEqual(probed, [f"agent-pm-c-{GEN}", f"agent-pm-d-{GEN}"])
+        self.assertEqual(
+            sorted(n for n in os.listdir(self.tui) if n.endswith(".lock")),
+            ["b.lock", "c.lock", "d.lock", "e.lock", "f.lock"],
+        )
+
+    def test_sweep_skips_a_container_whose_tmux_does_not_answer(self):
+        self.tui_session("c")
+        for answer in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over"),
+            (1, "", f"Error response from daemon: Container agent-pm-c-{GEN} is not running"),
+            (1, "", "no server running on agent-pm-c: timed out"),
+            (0, "", ""),
+            (2, "", "can't find session: c"),
+        ):
+            with self.subTest(answer=answer):
+                self.answers = {f"agent-pm-c-{GEN}": answer}
+                self.docker.ps = [self.row("c")]
+                self.host.sweep("w")
+                self.assertEqual(self.broker.closed, [])
+
+    def test_sweep_creates_nothing_outside_tui_and_drops_orphan_locks(self):
+        self.docker.ps = [self.row("a"), self.row("x", state="exited")]
+        before = self.files()
+        self.host.sweep("w")
+        self.assertEqual(self.broker.closed, [f"agent-pm-a-{GEN}", f"agent-pm-x-{GEN}"])
+        self.assertEqual(self.files(), before)
+
+    def test_a_failing_close_or_listing_skips_and_logs(self):
+        self.docker.ps = [self.row("a"), self.row("b")]
+        closes = iter([SessionError("broker: boom"), True])
+
+        def close(container):
+            self.broker.closed.append(container)
+            found = next(closes)
+            if isinstance(found, BaseException):
+                raise found
+            return found
+
+        self.broker.close = close
+        with self.assertLogs("session", "WARNING") as logs:
+            self.host.sweep("w")
+        self.assertEqual(self.broker.closed, [f"agent-pm-a-{GEN}", f"agent-pm-b-{GEN}"])
+        self.assertIn("docker sweep a: broker: boom", logs.output[0])
+        self.host.run = mock.Mock(return_value=done(1, "", "Cannot connect"))
+        with self.assertLogs("session", "WARNING"):
+            self.host.sweep("w")
 
 
 class ListTest(Base):
