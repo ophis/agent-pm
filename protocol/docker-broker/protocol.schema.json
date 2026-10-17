@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 1",
+  "title": "Docker broker protocol 2",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -184,7 +184,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "1"
+          "const": "2"
         }
       },
       "required": [

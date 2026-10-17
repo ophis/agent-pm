@@ -118,9 +118,9 @@ class ResponseTest(Case):
             failure("error-login_required.json", rc=9),
             (0, "", ""),
             (0, "not json\n", ""),
-            (0, '{"protocol_version": "1", "protocol_version": "1"}\n', ""),
+            (0, '{"protocol_version": "2", "protocol_version": "2"}\n', ""),
             (0, '{"protocol_version": NaN}\n', ""),
-            (0, '{"protocol_version": "1"} {}\n', ""),
+            (0, '{"protocol_version": "2"} {}\n', ""),
             (5, "", "not json\n"),
             (5, "", '{"exit_code": true, "error": {}}\n'),
             (
@@ -138,7 +138,7 @@ class ResponseTest(Case):
 
     def test_wrong_protocol_or_missing_broker_fails_before_build(self):
         for result in (
-            (0, '{"protocol_version": "2"}\n', ""),
+            (0, '{"protocol_version": "1"}\n', ""),
             FileNotFoundError(2, "No such file", BROKER),
             PermissionError(13, "Permission denied", BROKER),
         ):

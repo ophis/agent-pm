@@ -1,10 +1,16 @@
 # Docker broker protocol
 
-**Protocol 1** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"1"}`.
+**Protocol 2** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"2"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
+
+The broker installs the hook stub, so this version also covers the stub's wire format.
+Protocol 2 changes no broker field: it marks the stub's switch to the
+[relay wire format](docker-relay-protocol.md).
+Bump the version whenever that wire format changes. A plugin upgraded without
+reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
 This change supplies protocol artifacts only. Broker installation, interactive
 `login claude`, image construction and Docker Host implementation belong to those
@@ -84,7 +90,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `1` |
+| `version` | `protocol_version`: exact string `2` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after update or restoration; `update`: below |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
