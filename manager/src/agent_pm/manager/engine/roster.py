@@ -19,7 +19,7 @@ from agent_pm.manager.engine.events import Events
 from agent_pm.manager.engine.types import Entry, Held, Lease, RosterError, Spec, Stale, State
 from agent_pm.utils import Record, file_lock, printable, read_regular, save
 
-VERSION = 3
+VERSION = 2
 NOTE_MAX = 500
 ROSTER_MAX = 1 << 20
 LOCK_TIMEOUT = 30
@@ -51,40 +51,6 @@ def _uuid4(value) -> bool:
     except ValueError:
         return False
     return str(parsed) == value and parsed.version == 4
-
-
-def _monitor(value) -> None:
-    if value is None:
-        return
-    if not isinstance(value, dict) or set(value) != {
-        "mode",
-        "probe",
-        "started",
-        "receipt",
-        "confirmed",
-        "holder",
-        "lease_gen",
-        "gen",
-    }:
-        raise ValueError("monitor: invalid fields")
-    if value["mode"] not in {"automatic", "manual", "unavailable"}:
-        raise ValueError("monitor: invalid mode")
-    if value["probe"] is not None and not _uuid4(value["probe"]):
-        raise ValueError("monitor: invalid probe")
-    if type(value["confirmed"]) is not bool:
-        raise ValueError("monitor: invalid confirmation")
-    if value["holder"] is not None and not _uuid4(value["holder"]):
-        raise ValueError("monitor: invalid holder")
-    for field in ("started", "receipt"):
-        instant = value[field]
-        if instant is not None and (
-            not isinstance(instant, str)
-            or datetime.datetime.fromisoformat(instant).utcoffset() is None
-        ):
-            raise ValueError(f"monitor: invalid {field}")
-    for field in ("lease_gen", "gen"):
-        if type(value[field]) is not int or value[field] < 0:
-            raise ValueError(f"monitor: invalid {field}")
 
 
 def _entry(data: dict) -> Entry:
@@ -207,14 +173,11 @@ class Roster:
                 "cursor": 0,
                 "gen": 0,
                 "entries": {},
-                "monitor": None,
             }
         if len(raw) > ROSTER_MAX:
             raise RosterError(f"{self.path}: over {ROSTER_MAX} bytes")
         try:
             data = json.loads(raw)
-            if isinstance(data, dict) and type(data.get("version")) is int and data["version"] == 2:
-                data = {**data, "version": VERSION, "monitor": None}
             if not isinstance(data, dict) or set(data) != {
                 "version",
                 "holder",
@@ -222,7 +185,6 @@ class Roster:
                 "cursor",
                 "gen",
                 "entries",
-                "monitor",
             }:
                 raise ValueError("want roster fields")
             if type(data["version"]) is not int or data["version"] != VERSION:
@@ -240,7 +202,6 @@ class Roster:
                     _name(holder["session"])
             if not isinstance(data["entries"], dict):
                 raise ValueError("entries: want an object")
-            _monitor(data["monitor"])
         except (ValueError, TypeError, RecursionError) as error:
             raise RosterError(f"{self.path}: {error}") from error
         entries = {}
@@ -670,118 +631,6 @@ class Roster:
     def backlog(self) -> tuple[int, int, list[str]]:
         with self._locked() as data:
             return data["cursor"], data["gen"], self._events.following(data["cursor"])
-
-    def _reader_alive(self) -> bool | None:
-        path = os.path.join(self.directory, "reader.lock")
-        try:
-            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-        except FileNotFoundError:
-            return None
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise RosterError(f"{path}: not a regular reader lock")
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return True
-            return False
-        finally:
-            os.close(fd)
-
-    @contextlib.contextmanager
-    def notification_reader(self, gen: int) -> Iterator[str]:
-        fd = None
-        try:
-            with self._locked(create=True) as data:
-                self._lease(data)
-                self._cursor(data, 0, gen)
-                path = os.path.join(self.directory, "reader.lock")
-                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
-                if not stat.S_ISREG(os.fstat(fd).st_mode):
-                    raise RosterError(f"{path}: not a regular reader lock")
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    raise RosterError(
-                        "notification reader already running; stop it before rearming"
-                    ) from None
-                probe = str(uuid4())
-                previous = data["monitor"]
-                data["monitor"] = {
-                    "mode": "automatic",
-                    "probe": probe,
-                    "started": _now(),
-                    "confirmed": False,
-                    "receipt": None if previous is None else previous["receipt"],
-                    "lease_gen": data["lease_gen"],
-                    "gen": data["gen"],
-                    "holder": None if data["holder"] is None else data["holder"]["id"],
-                }
-            yield probe
-        finally:
-            if fd is not None:
-                os.close(fd)
-
-    def monitoring(self, *, mode: str | None = None, receipt: str | None = None) -> dict:
-        if mode is not None and (mode not in {"manual", "unavailable"} or receipt is not None):
-            raise ValueError("select manual/unavailable or confirm a receipt")
-        with self._locked(create=mode is not None) as data:
-            monitor = data["monitor"]
-            alive = self._reader_alive()
-            current = (
-                monitor is not None
-                and monitor["mode"] == "automatic"
-                and monitor["lease_gen"] == data["lease_gen"]
-                and monitor["gen"] == data["gen"]
-                and monitor["holder"] == (None if data["holder"] is None else data["holder"]["id"])
-                and (data["holder"] is None or self._active_holder())
-            )
-            if mode is not None:
-                self._lease(data)
-                monitor = data["monitor"] = {
-                    "mode": mode,
-                    "probe": None,
-                    "started": None,
-                    "confirmed": False,
-                    "receipt": None if monitor is None else monitor["receipt"],
-                    "lease_gen": data["lease_gen"],
-                    "gen": data["gen"],
-                    "holder": None if data["holder"] is None else data["holder"]["id"],
-                }
-                current = False
-            if receipt is not None:
-                self._lease(data)
-                if (
-                    not current
-                    or alive is not True
-                    or monitor is None
-                    or receipt != monitor["probe"]
-                    or monitor["started"] is None
-                    or (
-                        datetime.datetime.now(datetime.UTC)
-                        - datetime.datetime.fromisoformat(monitor["started"])
-                    ).total_seconds()
-                    > 30
-                ):
-                    raise Stale(
-                        "unconfirmed, expired or stale notification probe; rearm or use manual mode"
-                    )
-                monitor["receipt"] = _now()
-                monitor["confirmed"] = True
-            confirmed = current and alive is True and monitor is not None and monitor["confirmed"]
-            return {
-                "mode": "automatic"
-                if confirmed
-                else "unavailable"
-                if monitor is not None and monitor["mode"] == "unavailable"
-                else "manual",
-                "ready": bool(confirmed),
-                "reader": "unknown" if alive is None else "running" if alive else "stopped",
-                "latest_receipt": None if monitor is None else monitor["receipt"],
-                "cursor": data["cursor"],
-                "gen": data["gen"],
-                "pending": len(self._events.following(data["cursor"])),
-            }
 
     def _cursor(self, data: dict, after: int | None, gen: int) -> int:
         if gen != data["gen"]:

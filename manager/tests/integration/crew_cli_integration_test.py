@@ -77,7 +77,6 @@ class Commands(Case):
             "next-event",
             "pending",
             "ack",
-            "monitor",
             "release",
         }
         self.assertEqual(set(result.stdout.split("{")[1].split("}")[0].split(",")), expected)
@@ -295,7 +294,7 @@ class Commands(Case):
             self.succeeded("next-event", "--manager", "mgr", "--after", "0", "--gen", "0"),
             "1 12:00:00 a done\n",
         )
-        self.succeeded("attach", "--manager", "mgr", "--after", "1", "--gen", "0")
+        self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")
         self.assertEqual(crew.roster.backlog(), (1, 0, []))
         with open(crew.roster.events, "a", encoding="utf-8") as stream:
             stream.write("diagnostic\n12:00:01 a blocked\ngarbage\n")
@@ -320,7 +319,7 @@ class Commands(Case):
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
         self.assertIn(
-            "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow --notify\n",
+            "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow\n",
             output,
         )
         self.assertIn("monitor expired: agent-pm-crew attach --manager mgr\n", output)
@@ -349,8 +348,7 @@ class Commands(Case):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("worker done", output.read_text())
-        status = json.loads(self.succeeded("monitor", "--manager", "mgr"))
-        self.assertEqual((status["mode"], status["ready"], status["pending"]), ("manual", False, 1))
+        self.assertEqual(roster.backlog(), (0, 0, ["12:00:00 worker done"]))
         self.assertIn("worker done", self.succeeded("pending", "--manager", "mgr", "--content"))
         for _ in range(2):
             self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")

@@ -1,8 +1,6 @@
 """agent-pm-crew: command-based launches and a manager's persistent roster."""
 
 import argparse
-import contextlib
-import json
 import os
 import re
 import shlex
@@ -72,7 +70,7 @@ def _launch(args) -> int:
 
 def _attach(args) -> int:
     crew = _crew(args)
-    lines = crew.attach(after=args.after, gen=args.gen).splitlines()
+    lines = crew.attach().splitlines()
     trailer = lines.pop()
     cursor, generation = (field.partition("=")[2] for field in trailer.split())
     manager = os.path.basename(crew.roster.directory)
@@ -84,7 +82,7 @@ def _attach(args) -> int:
             print(f"resume: {shlex.join(command)}")
     if os.path.isdir(crew.roster.directory):
         for label, verb, after, *extra in (
-            ("monitor", "next-event", cursor, "--content", "--follow", "--notify"),
+            ("monitor", "next-event", cursor, "--content", "--follow"),
             ("next-event", "next-event", cursor, "--content"),
         ):
             command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation, *extra)
@@ -171,23 +169,15 @@ def _release(args) -> int:
 def _next_event(args) -> int:
     crew = _crew(args)
     after = args.after
-    reader = crew.roster.notification_reader(args.gen) if args.notify else contextlib.nullcontext()
-    with reader as probe:
-        if probe is not None:
-            print(f"readiness {probe}", flush=True)
-        while True:
-            after, event = crew.next_event(after=after, gen=args.gen)
-            block = f"{after} {event}\n"
-            if args.content:
-                block += crew.event_content(event)
-            print(block, end="", flush=True)
-            if not args.follow:
-                return 0
-
-
-def _monitor(args) -> int:
-    print(json.dumps(_crew(args).roster.monitoring(mode=args.mode, receipt=args.receipt)))
-    return 0
+    while True:
+        after, event = crew.next_event(after=after, gen=args.gen)
+        block = f"{after} {event}\n"
+        if args.content:
+            block += crew.event_content(event)
+        # One write per event: Monitor groups lines written within 200 ms into one notification.
+        print(block, end="", flush=True)
+        if not args.follow:
+            return 0
 
 
 def _pending(args) -> int:
@@ -229,12 +219,6 @@ def _parser() -> argparse.ArgumentParser:
         launch.add_argument("arguments", nargs=argparse.REMAINDER)
         launch.set_defaults(func=_launch, kind=kind, entry_name=None)
     attach = subs.add_parser("attach", parents=[common])
-    attach.add_argument(
-        "--after",
-        type=_number,
-        help="legacy acknowledgment of handled prefix, with --gen; omit for recovery",
-    )
-    attach.add_argument("--gen", type=_number)
     attach.set_defaults(func=_attach)
     status = subs.add_parser("status", parents=[common])
     status.add_argument("names", nargs="*")
@@ -273,19 +257,6 @@ def _parser() -> argparse.ArgumentParser:
     note.add_argument("text", help="empty text clears the note")
     note.set_defaults(func=_note)
     subs.add_parser("release", parents=[common]).set_defaults(func=_release)
-    monitor = subs.add_parser(
-        "monitor",
-        parents=[common],
-        help="inspect mode, reader, last receipt and pending count; a running reader is not readiness",
-        description="Confirm a readiness token only after its automatic runtime notification reaches "
-        "the commander. Foreground stdout or an explicit task read is not notification evidence.",
-    )
-    selection = monitor.add_mutually_exclusive_group()
-    selection.add_argument("--mode", choices=("manual", "unavailable"), help="reset readiness")
-    selection.add_argument(
-        "--receipt", help="probe received through a notifying runtime (within 30 s)"
-    )
-    monitor.set_defaults(func=_monitor)
     pending = subs.add_parser(
         "pending", parents=[common], help="read unhandled events without waiting or acknowledging"
     )
@@ -312,11 +283,6 @@ def _parser() -> argparse.ArgumentParser:
     next_event.add_argument(
         "--follow", action="store_true", help="keep printing events until stopped or failing"
     )
-    next_event.add_argument(
-        "--notify",
-        action="store_true",
-        help="emit isolated readiness probe; requires --follow and a documented notifying runtime",
-    )
     next_event.set_defaults(func=_next_event)
     return parser
 
@@ -338,10 +304,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("only run and hold accept a command after --")
     if args.func is _view and bool(args.names) == args.all:
         parser.error(f"{args.verb} takes entry names or --all")
-    if args.func is _attach and (args.after is None) != (args.gen is None):
-        parser.error("--after and --gen go together")
-    if args.func is _next_event and args.notify and not args.follow:
-        parser.error("--notify requires --follow; one-shot reads use manual monitoring")
     if args.func is _resume and args.input is not None and len(args.names) != 1:
         parser.error("resume --input requires exactly one name")
     if args.func in {_run, _hold, _resume, _launch} and (refused := nested_start()):

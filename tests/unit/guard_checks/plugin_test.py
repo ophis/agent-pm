@@ -74,7 +74,7 @@ class PluginManifests(Sample):
 
 
 class PluginSkills(Sample):
-    def test_the_real_plugin_ships_exactly_its_declared_skills(self):
+    def test_the_real_plugin_ships_exactly_its_two_skills(self):
         self.assertEqual(plugin.plugin_skills(REPO), [])
 
     def test_a_missing_extra_or_repeated_skill(self):
@@ -90,7 +90,6 @@ class PluginSkills(Sample):
             [
                 "skill manage: shipped 2 times",
                 "skill act-as: missing",
-                "skill tmux: missing",
-                "skill extra: not one of act-as, manage, tmux",
+                "skill extra: not one of act-as, manage",
             ],
         )

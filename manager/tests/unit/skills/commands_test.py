@@ -85,8 +85,6 @@ class Commands(Case):
             self.assertNotIn(retired, body("manage"))
 
     def test_only_manage_owns_commands_permissions_and_scripts(self):
-        self.assertTrue(os.path.isfile(os.path.join(SKILLS, "tmux", "SKILL.md")))
-        self.assertEqual(rules("tmux"), [])
         self.assertTrue(rules("manage"))
 
     def test_role_launch_has_no_separate_dry_run(self):
@@ -189,8 +187,11 @@ class Flows(Case):
             "`monitor expired:`",
         ):
             self.assertIn(phrase, start)
-        self.assertIn("manager/skills/tmux/SKILL.md", body("manage"))
-        self.assertNotIn("run_in_background", start)
+        self.assertIn("Monitoring mode", start)
+        self.assertIn(
+            "qualifies only when its runtime contract promises a notification to this commander",
+            start,
+        )
         self.assertNotIn("marks each printed event handled", body("manage"))
 
     def test_direct_names_every_daily_operation(self):

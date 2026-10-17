@@ -337,12 +337,10 @@ class Crew:
             sys.stderr.write(result.stderr)
         return failures
 
-    def attach(self, *, after: int | None = None, gen: int | None = None) -> str:
+    def attach(self) -> str:
         self._listed = None
         self.roster.check_lease()
         here = self._here()
-        if gen is not None:
-            self.roster.advance(after, gen)
         instant = datetime.datetime.now(datetime.UTC)
         for name, entry in self.roster.entries().items():
             age = (instant - datetime.datetime.fromisoformat(entry.started)).total_seconds()

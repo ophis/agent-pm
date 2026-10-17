@@ -2,7 +2,6 @@
 
 import contextlib
 import io
-import json
 import os
 import uuid
 from dataclasses import replace
@@ -21,53 +20,19 @@ from utils.tests.fakes import ctl
 
 
 class CliTest(CliCase):
-    def test_monitor_defaults_manual_and_reports_unavailable(self):
-        result, output, error = self.invoke("monitor", "--manager", "mgr")
-        self.assertEqual(result, 0, error)
-        self.assertEqual(json.loads(output)["mode"], "manual")
+    def test_ack_is_the_only_handling_verb_without_notification_attestation(self):
+        for argv in (
+            ("attach", "--after", "1", "--gen", "0"),
+            ("monitor", "--receipt", str(uuid.uuid4())),
+            ("next-event", "--after", "0", "--gen", "0", "--follow", "--notify"),
+        ):
+            with (
+                self.subTest(argv=argv),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                self.invoke(*argv, "--manager", "mgr")
         self.assertFalse(Path(self.directory).exists())
-        result, output, error = self.invoke("monitor", "--manager", "mgr", "--mode", "unavailable")
-        self.assertEqual(result, 0, error)
-        self.assertEqual(json.loads(output)["mode"], "unavailable")
-
-    def test_notify_stdout_and_reader_start_do_not_confirm_receipt(self):
-        def wait(delay):
-            self.assertEqual(delay, 0.5)
-            self.assertEqual(self.roster.monitoring()["reader"], "running")
-            self.assertFalse(self.roster.monitoring()["ready"])
-            raise RuntimeError("reader exited")
-
-        with mock.patch("time.sleep", side_effect=wait):
-            result, output, error = self.invoke(
-                "next-event",
-                "--manager",
-                "mgr",
-                "--after",
-                "0",
-                "--gen",
-                "0",
-                "--follow",
-                "--notify",
-            )
-        self.assertEqual(result, 1)
-        self.assertTrue(output.startswith("readiness "))
-        self.assertIn("reader exited", error)
-        probe = output.split()[1]
-        result, _, _ = self.invoke("monitor", "--manager", "mgr", "--receipt", probe)
-        self.assertEqual(result, 1)
-        self.assertFalse(self.roster.monitoring()["ready"])
-
-    def test_notify_requires_streaming(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            self.invoke("next-event", "--manager", "mgr", "--after", "0", "--gen", "0", "--notify")
-
-    def test_monitor_records_receipt_separately_from_event_ack(self):
-        Path(self.roster.events).write_text("12:00:00 w1 done\n")
-        with self.roster.notification_reader(0) as probe:
-            result, output, error = self.invoke("monitor", "--manager", "mgr", "--receipt", probe)
-            self.assertEqual(result, 0, error)
-            self.assertTrue(json.loads(output)["ready"])
-            self.assertEqual(self.roster.backlog()[0], 0)
 
     def test_invalid_or_partial_holder_environment_is_usage_error_without_writes(self):
         identity = str(uuid.uuid4())
