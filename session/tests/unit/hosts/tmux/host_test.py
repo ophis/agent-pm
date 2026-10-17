@@ -13,13 +13,14 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Host, Launch, SessionError, Showable
-from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
-from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
-from agent_pm.session.hosts.tmux import TmuxHost, hidden, transport, types
-from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
-from agent_pm.session.hosts.tmux.transport import (
-    Tmux,
+from agent_pm.session.engine import tmux_cli
+from agent_pm.session.engine.tmux_cli import (
+    TmuxCli,
 )
+from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste, SessionRow
+from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
+from agent_pm.session.hosts.tmux import TmuxHost, hidden
+from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.utils import STALE_AGE, ProcessControl, StatusState, load_class
 
 from session.tests.case import Case
@@ -35,7 +36,7 @@ from session.tests.tmux_fixtures import (
 )
 from session.tests.tmux_host_support import LINE, PROCESS, Base
 
-TuiError = types.TuiError
+TuiError = tmux_cli.TuiError
 NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
 OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
 FOLDS = (
@@ -71,7 +72,7 @@ class ClassTest(Case):
         self.assertTrue(issubclass(cls, Showable))
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
-        self.assertIsInstance(host.tmux, Tmux)
+        self.assertIsInstance(host.tmux, TmuxCli)
         self.assertEqual(
             (f"{host.tmux.runner.__module__}.{host.tmux.runner.__name__}", host.tmux.sleep),
             ("subprocess.run", time.sleep),
@@ -182,7 +183,7 @@ class DisplayTest(Base):
         for value in ("mgr\tx", "mgr\nx", "mgr;", 5):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
                 self.host.display(value)
-            self.assertEqual(str(caught.exception), transport.display_error(value))
+            self.assertEqual(str(caught.exception), tmux_cli.display_error(value))
         self.assertEqual(self.runner.calls, [])
 
 
@@ -547,7 +548,7 @@ class ShowableTest(Base):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
             self.host.show("w1")
-        self.tmux.status.return_value = types.PaneStatus.RUNNING
+        self.tmux.status.return_value = PaneStatus.RUNNING
         with self.assertRaisesRegex(ConfigError, r"^display 'elsewhere:1\.2': not <opener>"):
             self.host.show("w1", display="elsewhere:1.2")
         for key, value, want in (
@@ -1037,7 +1038,7 @@ class TileTest(TileFixture):
     """TmuxHost.tile over a fake runner (TileFixture's window @3)."""
 
     def tile(self, fake, *args, **kw):
-        TmuxHost("tmux", tmux=Tmux(fake)).tile(*args, **kw)
+        TmuxHost("tmux", tmux=TmuxCli(fake)).tile(*args, **kw)
         return fake
 
     def test_tile_lays_out_the_window_unless_its_pane_set_is_unchanged(self):
@@ -1180,10 +1181,10 @@ class ReturncodeTest(Base):
     def test_absence_unknown_and_running_status_are_distinct(self):
         process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
         for identity, status, expected in (
-            (None, types.PaneStatus.RUNNING, -signal.SIGHUP),
+            (None, PaneStatus.RUNNING, -signal.SIGHUP),
             (PROCESS, None, -signal.SIGHUP),
-            (PROCESS, types.PaneStatus.UNKNOWN, None),
-            (PROCESS, types.PaneStatus.RUNNING, None),
+            (PROCESS, PaneStatus.UNKNOWN, None),
+            (PROCESS, PaneStatus.RUNNING, None),
             (PROCESS, 0, 0),
         ):
             with self.subTest(identity=identity, status=status):

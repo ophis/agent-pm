@@ -13,6 +13,7 @@ TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 TMUX_HOME = (
     f"{SESSION_SRC}hosts/tmux/",
+    f"{SESSION_SRC}engine/tmux_cli.py",
     # The Docker Host drives its container's tmux: its Host and hook callback are tmux code too.
     f"{SESSION_SRC}hosts/docker/host.py",
     f"{SESSION_SRC}hosts/docker/hook.py",
@@ -140,7 +141,7 @@ PYTHON_CODE_ALLOWED = {
         "83b587e3233f7f777638398b45702e083168dd6725d5df94589486d2a28cbd9f",
     ): "HostedSession.list, Session.list and TuiStore.attach refused while HostedSession is unconfigured; tests may not patch HostedSession._setup (test_boundaries), and another test may have configured it in-process, so only a fresh interpreter has it unconfigured.",
     (
-        "session/src/agent_pm/session/hosts/tmux/transport.py",
+        "session/src/agent_pm/session/engine/tmux_cli.py",
         "2353827626a3c6e192d6841bde2f5dfdcdbbc4a8bff857d91303607d99299413",
     ): "Shipped tmux pane wrapper: stdlib-only f-string interpolating TERMINAL_KEYS (one home), run with -I; production code, no agent_pm import.",
     (

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.engine import worker
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import (
     ClientHome,
     ConfigError,
@@ -34,7 +35,6 @@ from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
-from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
@@ -156,7 +156,7 @@ class Base(Case):
         self.host = DockerHost(
             "docker",
             {"docker": DOCKER, "mount_roots": [os.path.join(self.account, "src")]},
-            tmux=Tmux(self.host_tmux),
+            tmux=TmuxCli(self.host_tmux),
             run=self.docker,
             broker=self.broker,
         )

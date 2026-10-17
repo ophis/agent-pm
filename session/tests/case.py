@@ -33,7 +33,7 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 def configured(clients, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:
     """A HostedSession class of `clients`, HOSTS with `tmux` in [hosts.tmux]; each TmuxHost holds
-    Tmux `host` (None: its own); dependencies: class_loader, probe, clock.
+    TmuxCli `host` (None: its own); dependencies: class_loader, probe, clock.
     """
     hosts = Host.parse_hosts({"tmux": {**HOSTS["tmux"], **(tmux or {})}, "default": "tmux"})
 

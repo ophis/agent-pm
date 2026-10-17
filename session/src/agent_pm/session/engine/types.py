@@ -45,6 +45,7 @@ __all__ = [
     "NamedKey",
     "NotShowable",
     "NoRecordedSession",
+    "PaneStatus",
     "Paste",
     "Prepared",
     "ProcessOptions",
@@ -83,6 +84,11 @@ class Liveness(StrEnum):
     LIVE = "live"
     ABSENT = "absent"
     UNKNOWN = "unknown"
+
+
+class PaneStatus(StrEnum):
+    RUNNING = "running"
+    UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
 
 
 class Effort(StrEnum):

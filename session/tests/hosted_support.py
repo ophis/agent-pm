@@ -14,8 +14,8 @@ from agent_pm.session import Host, Session
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
-from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.modes.in_process import RUN_THREAD
 
 from session.tests import fake_client
@@ -288,7 +288,7 @@ class Base(Case):
 
 def fake_tmux(case=None) -> mock.Mock:
     """Recorded tmux responses; defaults: status None, listing [], PAUSE 0."""
-    host = mock.create_autospec(Tmux, instance=True)
+    host = mock.create_autospec(TmuxCli, instance=True)
     host.PAUSE = 0
     host.runner = mock.Mock(side_effect=AssertionError("a direct runner call"))
     host.status.return_value = None

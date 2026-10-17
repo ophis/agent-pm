@@ -1,12 +1,12 @@
-"""The Host callback that runs Tmux.mark for tui hooks, using the launch's trusted executable."""
+"""The Host callback that runs TmuxCli.mark for tui hooks, using the launch's trusted executable."""
 
 import os
 import stat
 import subprocess
 
+from agent_pm.session.engine import tmux_cli
+from agent_pm.session.engine.tmux_cli import TuiError
 from agent_pm.session.engine.types import HookCall, HookError
-from agent_pm.session.hosts.tmux import transport
-from agent_pm.session.hosts.tmux.types import TuiError
 
 
 def on_hook(word: str, call: HookCall) -> None:
@@ -21,7 +21,7 @@ def on_hook(word: str, call: HookCall) -> None:
     if not stat.S_ISREG(info.st_mode) or not os.access(executable, os.X_OK):
         raise HookError(f"tmux {executable}: not a regular executable file")
     target, generation = saved.get("target"), saved.get("generation")
-    if not isinstance(target, str) or not transport.NAME.fullmatch(target):
+    if not isinstance(target, str) or not tmux_cli.NAME.fullmatch(target):
         raise HookError("host state: bad target")
     if not isinstance(generation, str) or not generation:
         raise HookError("host state: bad generation")
@@ -59,25 +59,25 @@ def mark_launched(
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
-            timeout=transport.MARK_TIMEOUT,
+            timeout=tmux_cli.MARK_TIMEOUT,
         )
         if result.returncode:
-            if transport.absent(result):
+            if tmux_cli.absent(result):
                 return
-            raise HookError(f"tmux: {transport.error(result)}")
+            raise HookError(f"tmux: {tmux_cli.error(result)}")
         fields = result.stdout.strip().split("\t")
         if len(fields) != 3:
             return
         process, sid, actual_generation = fields
-        if not transport.PROCESS_ID.fullmatch(process):
+        if not tmux_cli.PROCESS_ID.fullmatch(process):
             return
         if sid != call.sid or actual_generation != generation:
             return
-        transport.Tmux(run).mark(
+        tmux_cli.TmuxCli(run).mark(
             word, call.events, pane=process.split(" ")[2], tmux=tmux, session=session
         )
     except subprocess.TimeoutExpired:
-        raise HookError(f"tmux: timed out after {transport.MARK_TIMEOUT} s") from None
+        raise HookError(f"tmux: timed out after {tmux_cli.MARK_TIMEOUT} s") from None
     except OSError as error:
         raise HookError(f"tmux: {error}") from error
     except TuiError as error:

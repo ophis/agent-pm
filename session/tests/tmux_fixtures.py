@@ -14,11 +14,11 @@ import unittest.mock
 from contextlib import contextmanager, redirect_stderr
 from types import SimpleNamespace
 
+from agent_pm.session.engine.tmux_cli import EXEC, TmuxCli
 from agent_pm.session.engine.types import Launch
 from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import iterm, placement, types
 from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux.transport import EXEC, Tmux
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
@@ -533,14 +533,14 @@ class StartFixture(Case):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            return Tmux(fake, sleep=self.sleep).start(
+            return TmuxCli(fake, sleep=self.sleep).start(
                 session, Launch(tuple(argv), env, cwd=self.cwd), **kw
             )
 
 
 def placed(fake) -> placement.Placement:
-    """A Placement whose Tmux, Grid and Iterm run fake."""
-    tmux = Tmux(fake)
+    """A Placement whose TmuxCli, Grid and Iterm run fake."""
+    tmux = TmuxCli(fake)
     return placement.Placement(tmux=tmux, grid=grids.Grid(tmux), iterm=iterm.Iterm(fake))
 
 
@@ -712,7 +712,7 @@ class TileFixture(Case):
     ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(layout, panes, rows, **kw)
-        grids.Grid(Tmux(fake)).tile(
+        grids.Grid(TmuxCli(fake)).tile(
             "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed
         )
         return fake

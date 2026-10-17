@@ -15,9 +15,8 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import SIGNALS, Process
+from agent_pm.session.engine.tmux_cli import TmuxCli, TuiError
 from agent_pm.session.engine.types import Launch, SessionError
-from agent_pm.session.hosts.tmux.transport import Tmux
-from agent_pm.session.hosts.tmux.types import TuiError
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -79,7 +78,7 @@ class DetachTest(Case):
     def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
         self.detach("d1", display=MANAGER)
         self.assertEqual([r.name for r in self.session_cls.list("d1")], ["d1"])
-        Tmux().detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
+        TmuxCli().detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
         signals = {int(s) for s in SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
@@ -110,7 +109,7 @@ class DetachTest(Case):
     def test_a_cwd_it_cannot_enter_is_refused_never_a_success(self):
         missing = os.path.join(self.dir, "missing")
         with self.assertRaisesRegex(TuiError, "^session d2 did not start$"):
-            Tmux(sleep=lambda seconds: time.sleep(seconds / 10)).detach(
+            TmuxCli(sleep=lambda seconds: time.sleep(seconds / 10)).detach(
                 "d2", Launch(tuple(self.argv("d2")), self.server.env(), cwd=missing)
             )
         live_tmux.wait(self.gone, what="no session left")

@@ -1,5 +1,5 @@
-"""TmuxHost, the Host on tmux, runs every tmux call through the Tmux it holds, directly or through
-its Grid and Placement, which share that Tmux. TmuxHost's display format, FORMAT, has one
+"""TmuxHost, the Host on tmux, runs every tmux call through the TmuxCli it holds, directly or through
+its Grid and Placement, which share that TmuxCli. TmuxHost's display format, FORMAT, has one
 encoder (fold) and one decoder (unfold). TmuxProcess, a session it hosts, keeps its Record and
 display in the tmux options @record and @display, and whether it is hidden in the hidden store (hidden.py).
 """
@@ -14,6 +14,20 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace
 
+from agent_pm.session.engine import tmux_cli
+from agent_pm.session.engine.tmux_cli import (
+    NAME,
+    OPENER,
+    POLL,
+    PROCESS_ID,
+    TmuxCli,
+    TuiError,
+    attach_command,
+    display_error,
+    events_file,
+    validate_events,
+    validate_start,
+)
 from agent_pm.session.engine.types import (
     MARKS,
     NO_DISPLAY,
@@ -24,6 +38,7 @@ from agent_pm.session.engine.types import (
     Launch,
     Liveness,
     NamedKey,
+    PaneStatus,
     Paste,
     SessionError,
     SessionRow,
@@ -33,23 +48,11 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hidden as hidden_store
-from agent_pm.session.hosts.tmux import hook, transport
+from agent_pm.session.hosts.tmux import hook
 from agent_pm.session.hosts.tmux.grid import Grid
 from agent_pm.session.hosts.tmux.iterm import Iterm
 from agent_pm.session.hosts.tmux.placement import Placement
-from agent_pm.session.hosts.tmux.transport import (
-    NAME,
-    OPENER,
-    POLL,
-    PROCESS_ID,
-    Tmux,
-    attach_command,
-    display_error,
-    events_file,
-    validate_events,
-    validate_start,
-)
-from agent_pm.session.hosts.tmux.types import PaneStatus, Retile, Split, TuiError
+from agent_pm.session.hosts.tmux.types import Retile, Split
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, Status, sid_error
 
 FORMAT = "<opener>[/<split>[/<split_from>[/hidden]]]"
@@ -85,7 +88,7 @@ class TmuxProcess(Process):
     """
 
     def __init__(
-        self, name: str, process: str, *, tmux: Tmux, control: ProcessControl | None = None
+        self, name: str, process: str, *, tmux: TmuxCli, control: ProcessControl | None = None
     ) -> None:
         self.name = name
         self.tmux = tmux
@@ -335,14 +338,14 @@ class TmuxHost(Host, Showable):
     """
 
     def __init__(
-        self, name: str, settings: Mapping | None = None, *, tmux: Tmux | None = None
+        self, name: str, settings: Mapping | None = None, *, tmux: TmuxCli | None = None
     ) -> None:
         super().__init__(name, settings)
         if extra := sorted(
             set(self.settings) - {"status_line", "workers_per_column", "grid_retile"}
         ):
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
-        self.tmux = Tmux() if tmux is None else tmux
+        self.tmux = TmuxCli() if tmux is None else tmux
         self.grid = Grid(self.tmux)
         self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.runner))
 
@@ -526,7 +529,7 @@ class TmuxHost(Host, Showable):
         )
 
     def _executable(self) -> str:
-        path = transport.tmux_path()
+        path = tmux_cli.tmux_path()
         if path is None:
             raise SessionError("tmux not found")
         return path
