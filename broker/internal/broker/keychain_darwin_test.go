@@ -1,11 +1,13 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,6 +54,25 @@ func TestFileKeychain(t *testing.T) {
 	}
 	if _, err := k.Get(); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted item: Get %v", err)
+	}
+	const app, key = "agent-pm-test-app", "dGhyb3dhd2F5LWtleQ=="
+	if _, err := k.AppAccount(app); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing app item: %v", err)
+	}
+	// -A lets the test binary read the seed without a prompt, as the user allows once.
+	security("add-generic-password", "-A", "-s", app, "-a", "4242", "-w", key, path)
+	for range 2 {
+		var out bytes.Buffer
+		if err := LoginGitHub(app, k, &out); err != nil || strings.Contains(out.String(), key) {
+			t.Fatalf("%v %q", err, out.String())
+		}
+		if got, err := k.AppKey(app, "4242"); err != nil || string(got) != key {
+			t.Fatalf("AppKey %q %v", got, err)
+		}
+	}
+	security("add-generic-password", "-A", "-s", app, "-a", "4343", "-w", key, path)
+	if _, err := k.AppAccount(app); !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("two app items: %v", err)
 	}
 	security("delete-keychain", path)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

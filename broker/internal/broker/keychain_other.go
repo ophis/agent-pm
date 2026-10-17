@@ -11,6 +11,9 @@ func ReadHidden() ([]byte, error) { return nil, errPlatform }
 
 type SystemKeychain struct{ Home string }
 
-func (SystemKeychain) Exists() error        { return errPlatform }
-func (SystemKeychain) Get() ([]byte, error) { return nil, errPlatform }
-func (SystemKeychain) Put([]byte) error     { return errPlatform }
+func (SystemKeychain) Exists() error                          { return errPlatform }
+func (SystemKeychain) Get() ([]byte, error)                   { return nil, errPlatform }
+func (SystemKeychain) Put([]byte) error                       { return errPlatform }
+func (SystemKeychain) AppAccount(string) (string, error)      { return "", errPlatform }
+func (SystemKeychain) AppKey(string, string) ([]byte, error)  { return nil, errPlatform }
+func (SystemKeychain) PutAppKey(string, string, []byte) error { return errPlatform }

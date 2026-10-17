@@ -31,7 +31,8 @@ manifest. References are internal, so Go and Python can load it without network 
 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
 order. They are test data, not JSON sent to the broker. These commands consume no
-stdin. `login claude` reads a token interactively without echo and has no JSON contract.
+stdin. `login claude` reads a token interactively without echo; it and `login github <app>`
+have no JSON contract.
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|

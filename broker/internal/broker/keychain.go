@@ -1,4 +1,5 @@
-// Package broker owns the Claude setup-token: login, keychain access and injection into a container.
+// Package broker owns the broker's keychain secrets: the Claude setup-token (login, access, injection into a container)
+// and the GitHub App private keys (login).
 // It never decides how a container starts: the launcher calls it through Credentials with an exec bound to one container.
 package broker
 
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"unicode"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
@@ -24,7 +26,22 @@ type Keychain interface {
 	Put([]byte) error
 }
 
-var ErrNotFound = errors.New("setup-token item not found")
+var (
+	ErrNotFound  = errors.New("keychain item not found")
+	ErrAmbiguous = errors.New("more than one keychain item")
+)
+
+// GitHubApps are the keychain services of the GitHub App private keys login github accepts.
+var GitHubApps = map[string]bool{"agent-pm-engineer": true, "agent-pm-docs": true}
+
+// AppKeychain holds GitHub App private keys as generic-password items: service the App, account its App ID.
+type AppKeychain interface {
+	AppAccount(app string) (string, error)
+	AppKey(app, account string) ([]byte, error)
+	PutAppKey(app, account string, key []byte) error
+}
+
+var appID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 func erase(b []byte) {
 	for i := range b {
@@ -51,6 +68,35 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 		return err
 	}
 	_, err = fmt.Fprintln(out, "Claude setup-token saved")
+	return err
+}
+
+// LoginGitHub re-creates app's existing private-key item, same account and content, trusting only the broker.
+// out never sees the key.
+func LoginGitHub(app string, k AppKeychain, out io.Writer) error {
+	account, err := k.AppAccount(app)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return fmt.Errorf("no keychain item with service %s: add the App private key first", app)
+	case errors.Is(err, ErrAmbiguous):
+		return fmt.Errorf("more than one keychain item with service %s: keep only the App private key", app)
+	case err != nil:
+		return err
+	case !appID.MatchString(account):
+		return fmt.Errorf("keychain item %s: account %q is not an App ID", app, account)
+	}
+	key, err := k.AppKey(app, account)
+	defer erase(key)
+	if err != nil {
+		return err
+	}
+	if len(key) == 0 {
+		return fmt.Errorf("keychain item %s is empty", app)
+	}
+	if err := k.PutAppKey(app, account, key); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "GitHub App %s private key (App ID %s) now trusts only the broker\n", app, account)
 	return err
 }
 
