@@ -37,7 +37,6 @@ from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import KEPT_RETRY, DockerHost, DockerTerminal
-from agent_pm.session.hosts.docker.mounts import run_volume
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
@@ -759,49 +758,11 @@ class StartTest(Base):
             self.start()
         self.assertEqual({step[0] for step in self.order}, {"ps"})
 
-    def role_run(self, workdir, config='[delegate]\nusers = ["octocat"]\ntrusted_dirs = []\n'):
-        """A launch in `workdir`'s agent dir, its run intent beside it holding `config`."""
-        for sub in ("agent", "run"):
-            os.makedirs(os.path.join(workdir, sub), exist_ok=True)
-        intent = {"role": "pm", "repo": None, "output_repo": None, "delegate_config": config}
-        with open(os.path.join(workdir, "run", "container-intent.json"), "w") as f:
-            json.dump(intent, f)
-        self.launch = replace(self.launch, cwd=os.path.join(workdir, "agent"))
-        return self.launch.cwd
-
-    def manifest(self):
-        with open(os.path.join(self.state, f"{GEN}.json")) as f:
-            return json.load(f)
-
-    def assert_role_run(self, workdir):
-        """A start in `workdir`'s agent dir runs on its run volume with its container config."""
-        cwd = self.role_run(workdir)
-        self.start()
-        found = self.manifest()
-        self.assertEqual(
-            (found["cwd"], found["workspace"], found["github"], found["container_config"]),
-            (cwd, run_volume(cwd), [], '[delegate]\nusers = ["octocat"]\ntrusted_dirs = []\n'),
-        )
-        self.assertNotIn("workspace_rm", {step[0] for step in self.order})
-
-    def test_a_role_run_under_the_agent_pm_dir_keeps_its_run_volume(self):
-        self.assert_role_run(os.path.join(self.account, ".agent-pm", "adhoc", "x"))
-
-    def test_an_agent_dir_elsewhere_is_a_crew_worker_whatever_its_siblings(self):
-        self.role_run(os.path.join(self.account, "src", "x"))
-        self.start()
-        found = self.manifest()
-        self.assertEqual((found["workspace"], found["container_config"]), ("agent-pm-crew-w", ""))
-        self.assertIn(("workspace_rm", "agent-pm-crew-w"), self.order)
-
-    def test_a_broken_run_intent_fails_before_any_docker_call(self):
-        self.role_run(os.path.join(self.account, ".agent-pm", "adhoc", "x"))
-        intent = os.path.join(
-            self.account, ".agent-pm", "adhoc", "x", "run", "container-intent.json"
-        )
-        with open(intent, "w") as f:
-            f.write("{")
-        with self.assertRaisesRegex(ConfigError, "is not a run intent"):
+    def test_a_role_run_cwd_fails_before_any_docker_call(self):
+        cwd = os.path.join(self.account, ".agent-pm", "adhoc", "x", "agent")
+        os.makedirs(cwd)
+        self.launch = Launch(("agent",), cwd=cwd, env={})
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: role runs are not supported"):
             self.start()
         self.assertEqual(self.order, [])
 

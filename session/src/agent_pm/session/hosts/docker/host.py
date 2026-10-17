@@ -83,9 +83,8 @@ from agent_pm.session.hosts.docker.mounts import (
     KIND_LABEL,
     RUN_VOLUME,
     WORKSPACE_LABEL,
+    check_cwd,
     crew_volume,
-    role_run,
-    run_volume,
     state_dir,
 )
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
@@ -694,6 +693,7 @@ class DockerHost(Host):
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
+        check_cwd(cwd, os.path.realpath(account_home()))
 
     def _image(
         self, name: str, *, max_age: int | None = REFRESH
@@ -756,8 +756,6 @@ class DockerHost(Host):
             raise ConfigError(why)
         laps = _Laps()
         self._check_cwd(name, launch)
-        cwd = os.path.realpath(launch.cwd)
-        intent = role_run(cwd, [os.path.realpath(os.path.join(account_home(), ".agent-pm"))])
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
         generation, field, home_dir, credential = (
@@ -778,15 +776,15 @@ class DockerHost(Host):
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
         laps("checks")
         hook, root, (image, digest) = self._image(name)
-        volume = crew_volume(name) if intent is None else run_volume(cwd)
+        volume = crew_volume(name)
         if resume == "0":
-            if intent is None:  # a role run's volume holds its checkouts across its sessions
-                self._reset_workspace(name, volume)
+            self._reset_workspace(name, volume)
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
         clients = client_keys(root)
+        cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
             manifest,
@@ -798,7 +796,7 @@ class DockerHost(Host):
             home=(field, home),
             hook_path=hook,
             github=[],
-            container_config="" if intent is None else intent["delegate_config"],
+            container_config="",
         )
         _report_plan(
             name,

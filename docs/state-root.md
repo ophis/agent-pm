@@ -11,7 +11,6 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   │   └── tmp/                  the run's temp files, cleared at its end
 │   ├── run/                      the harness's files, kept as the run's record
 │   │   ├── delegate.json         the run's state, beside its locks
-│   │   ├── container-intent.json  what the Docker Host builds the run's container from
 │   │   ├── run.jsonl             session records; resume reads them
 │   │   └── out.md                the deliverable
 │   └── writeback.json            the write-back ledger, beside its lock
