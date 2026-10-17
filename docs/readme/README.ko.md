@@ -83,7 +83,7 @@ Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 �
 | 요구 사항 | 용도 |
 |---|---|
 | `claude` CLI, Python 3.11+ | 모든 에이전트 run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, 각 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot` | 코딩: engineer의 build task(`/autopilot:build`, `/autopilot:light-build`). 그 외에는 필요 없음. |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, 각 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot` | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
 | tmux 3.3+ | `tmux` Host의 tui run |
 | `git`, 로그인된 `gh` | 코딩(checkout, pull request)과 GitHub 대상. 그 외에는 필요 없음. |
 | 실행 중인 iTerm2 | 기본 iTerm2 분할 |

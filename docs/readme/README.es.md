@@ -83,7 +83,7 @@ Nada de esto se comprueba. Si falta algo, el run del agente falla.
 | Requisito | Para |
 |---|---|
 | CLI `claude`, Python 3.11+ | cada run de agente |
-| el plugin [`autopilot`](https://github.com/ophis/claude-autopilot), en cada client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, luego `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, luego `codex plugin add autopilot@claude-autopilot` | programar: las build tasks del engineer (`/autopilot:build`, `/autopilot:light-build`). No hace falta en otro caso. |
+| el plugin [`autopilot`](https://github.com/ophis/claude-autopilot), en cada client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, luego `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, luego `codex plugin add autopilot@claude-autopilot` | las build tasks del engineer (`/autopilot:build`, `/autopilot:light-build`) y la revisión del PRD del PM (`/autopilot:review`). No hace falta en otro caso. |
 | tmux 3.3+ | tui runs en el Host `tmux` |
 | `git`, `gh` con sesión iniciada | programar (checkouts, pull requests) y destinos de GitHub. No hace falta en otro caso. |
 | iTerm2 en ejecución | la división de iTerm2 por defecto |
