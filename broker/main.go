@@ -14,12 +14,11 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const installedPath = "/usr/local/libexec/agent-pm/agent-pm-broker"
-const upgradeCommand = "sh <agent-pm plugin directory>/broker/install.sh"
 const usage = "usage: agent-pm-broker version | login claude | build --agent-pm DIR | start --manifest FILE | close --container NAME"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
@@ -134,34 +133,20 @@ func system() app {
 			return result, nil
 		},
 		login: func(out io.Writer) error {
-			if err := checkInstalled(); err != nil {
-				return err
-			}
-			fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
-			token, err := terminalToken()
-			fmt.Fprintln(os.Stderr)
+			home, err := accountHome()
 			if err != nil {
 				return err
 			}
-			defer erase(token)
-			if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(string(token), "\r\n\x00") {
-				return errors.New("invalid setup-token")
-			}
-			if err := (keychainStore{}).Put(token); err != nil {
+			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(out, "Claude setup-token saved")
-			return err
+			return broker.Login(func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, broker.SystemKeychain{Home: home}, out)
 		},
 	}
 }
-
-func erase(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
-
-type keychainStore struct{}
 
 type runner = docker.Runner
