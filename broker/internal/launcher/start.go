@@ -124,6 +124,10 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		return err
 	}
 	if err := h.Creds.Inject(exec); err != nil {
+		var e *protocol.Error
+		if errors.As(err, &e) {
+			return StartResult{}, e
+		}
 		if errors.Is(err, docker.ErrUnreachable) {
 			return StartResult{}, failure(err, protocol.StartFailed, "")
 		}

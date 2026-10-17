@@ -108,7 +108,6 @@ func TestInject(t *testing.T) {
 	}{
 		{&docker.CommandError{Exit: 1, Stderr: "cat: " + token}, nil, false},
 		{errors.Join(docker.ErrUnreachable, errors.New(token)), nil, true},
-		{nil, errors.New("locked " + token), false},
 	} {
 		e := &fakeExec{err: tc.dockerErr}
 		err := Credentials{Keychain: &fakeKeychain{token: []byte(token), getErr: tc.keyErr}}.Inject(e.run)
@@ -118,6 +117,17 @@ func TestInject(t *testing.T) {
 		var ce *docker.CommandError
 		if errors.As(err, &ce) {
 			t.Fatal("Docker stderr kept")
+		}
+	}
+}
+
+func TestInjectKeychainFailure(t *testing.T) {
+	for keyErr, code := range map[error]protocol.Code{errors.New("locked " + token): protocol.KeychainFailed, ErrNotFound: protocol.LoginRequired} {
+		e := &fakeExec{}
+		err := Credentials{Keychain: &fakeKeychain{getErr: keyErr}}.Inject(e.run)
+		var pe *protocol.Error
+		if !errors.As(err, &pe) || pe.Code != code || pe.Cause != "" || strings.Contains(err.Error(), token) || len(e.argv) != 0 {
+			t.Fatalf("%v: %v %q", keyErr, err, e.argv)
 		}
 	}
 }

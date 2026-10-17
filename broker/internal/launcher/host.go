@@ -14,7 +14,8 @@ import (
 type Credentials interface {
 	Ready() error // *protocol.Error: login_required or keychain_failed
 	// Inject writes the token through exec, which runs argv as agent in the container being started.
-	// Its errors wrap docker.ErrUnreachable or are opaque, carrying no Docker stderr.
+	// Its errors are *protocol.Error (login_required, keychain_failed), wrap docker.ErrUnreachable
+	// or are opaque, carrying no Docker stderr.
 	Inject(exec func(argv []string, stdin []byte) error) error
 }
 

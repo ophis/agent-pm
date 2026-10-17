@@ -340,6 +340,7 @@ func TestRollback(t *testing.T) {
 		"hook":                {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
 		"inject":              {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
 		"inject unreachable":  {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
+		"inject keychain":     {&world{}, &fakeCreds{injectErr: protocol.New(protocol.KeychainFailed, "denied")}, protocol.KeychainFailed, protocol.Removed},
 		"rm fails":            {&world{execErr: failOn("claude", cmdErr), rmErr: &docker.CommandError{Exit: 1, Stderr: "delete failed"}}, &fakeCreds{}, protocol.StartFailed, protocol.Failed},
 		"run fails absent":    {&world{runErr: cmdErr, rmErr: &docker.CommandError{Exit: 1, Stderr: "No such container: x"}}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
 		"run fails present":   {&world{runErr: cmdErr}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
