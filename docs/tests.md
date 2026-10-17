@@ -123,6 +123,17 @@ python3 .github/ci_scope.py --event pull_request --paths manager/skills/manage/S
 python3 .github/ci_scope.py --event pull_request --paths session/src/agent_pm/session/cli.py
 ```
 
+`Worker image` (`.github/workflows/worker-image.yml`, its own README badge) runs the real
+`agent-pm-broker build` on Ubuntu, with the broker's Docker Desktop paths linked to the
+runner's Docker, then checks the image's labels, that `docker history` holds no `sk-ant`,
+and that a container runs as non-root without `sudo`, prints every client version and has
+`/opt/agent-pm/bin/with-secrets`. Every run on `main` builds: a push changing an image
+input (`broker/`, `session/src/`, `utils/src/`, `.claude-plugin/plugin.json`, the
+workflow), the weekly schedule, or a manual dispatch. Every PR gets the check; it builds
+only when the PR changes an image input and passes at once otherwise. Require it beside
+`CI` in the default-branch ruleset only once the workflow is on `main`: a PR without the
+workflow never reports it.
+
 Measure the whole workflow from its start until every job completes, including
 scheduling, setup and cleanup. Report observed times and flakes; no hard timing gate.
 
