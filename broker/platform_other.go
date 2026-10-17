@@ -4,7 +4,6 @@ package main
 
 import "errors"
 
-func accountHome() (string, error) { return "", errors.New("broker requires macOS Docker Desktop") }
 func checkInstalled() error {
 	return errors.New("credential access requires the installed macOS broker")
 }

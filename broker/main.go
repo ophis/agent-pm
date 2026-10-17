@@ -8,64 +8,152 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"os/user"
+	"regexp"
 	"strings"
+	"syscall"
+	"unicode/utf8"
+
+	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const protocol = "1"
 const installedPath = "/usr/local/libexec/agent-pm/agent-pm-broker"
-const upgradeCommand = "sh broker/install.sh (from the current agent-pm package)"
+const upgradeCommand = "sh <agent-pm plugin directory>/broker/install.sh"
+const usage = "usage: agent-pm-broker version | login claude | build --agent-pm DIR | start --manifest FILE | close --container NAME"
 
-func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-	if err := command(ctx, os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "agent-pm-broker:", err)
-		os.Exit(1)
-	}
+var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
+
+type step func(ctx context.Context, arg string) (any, error)
+
+type app struct {
+	build, start, close step
+	login               func(out io.Writer) error
 }
 
-func command(ctx context.Context, args []string, out io.Writer) error {
-	if len(args) == 1 && args[0] == "version" {
-		_, err := fmt.Fprintln(out, protocol)
-		return err
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, system())
+	cancel()
+	os.Exit(code)
+}
+
+func accountHome() (string, error) {
+	u, err := user.Current()
+	if err != nil || !strings.HasPrefix(u.HomeDir, "/") {
+		return "", errors.Join(errors.New("cannot resolve system account home"), err)
 	}
-	if len(args) == 3 && args[0] == "build" && args[1] == "--agent-pm" {
-		home, err := accountHome()
-		if err != nil {
-			return err
+	return u.HomeDir, nil
+}
+
+func isPath(s string) bool {
+	return strings.HasPrefix(s, "/") && utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (code int) {
+	command := "unknown"
+	if len(args) > 0 {
+		switch args[0] {
+		case "version", "build", "start", "close":
+			command = args[0]
+		case "login":
+			if len(args) == 2 && args[1] == "claude" {
+				if err := a.login(stdout); err != nil {
+					fmt.Fprintln(stderr, "agent-pm-broker:", err)
+					return 1
+				}
+				return 0
+			}
 		}
-		d, clean, err := newDocker(home)
-		if err != nil {
-			return err
-		}
-		defer clean()
-		result, err := (builder{home: home, docker: d}).Build(ctx, args[2])
-		if err != nil {
-			return err
-		}
-		return json.NewEncoder(out).Encode(result)
 	}
-	if len(args) == 2 && args[0] == "login" && args[1] == "claude" {
-		if err := checkInstalled(); err != nil {
-			return err
+	defer func() {
+		if r := recover(); r != nil {
+			e := protocol.New(protocol.InternalError, "Unexpected broker failure.")
+			e.Cause = fmt.Sprint(r)
+			code = fail(stderr, command, e)
 		}
-		fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
-		token, err := terminalToken()
-		fmt.Fprintln(os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer erase(token)
-		if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(string(token), "\r\n\x00") {
-			return errors.New("invalid setup-token")
-		}
-		if err := (keychainStore{}).Put(token); err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(out, "Claude setup-token saved")
-		return err
+	}()
+	var s step
+	var arg string
+	switch {
+	case command == "version" && len(args) == 1:
+		return emit(stdout, map[string]string{"protocol_version": protocol.Version})
+	case command == "build" && len(args) == 3 && args[1] == "--agent-pm" && isPath(args[2]):
+		s, arg = a.build, args[2]
+	case command == "start" && len(args) == 3 && args[1] == "--manifest" && isPath(args[2]):
+		s, arg = a.start, args[2]
+	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
+		s, arg = a.close, args[2]
+	default:
+		return fail(stderr, command, protocol.New(protocol.Usage, usage))
 	}
-	return errors.New("usage: agent-pm-broker version | login claude | build --agent-pm DIR")
+	result, err := s(ctx, arg)
+	if err != nil {
+		var e *protocol.Error
+		if !errors.As(err, &e) {
+			e = protocol.New(protocol.InternalError, "Unexpected broker failure.")
+			e.Cause = err.Error()
+		}
+		return fail(stderr, command, e)
+	}
+	return emit(stdout, result)
+}
+
+func emit(stdout io.Writer, v any) int {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := stdout.Write(append(data, '\n')); err != nil {
+		return protocol.Exit(protocol.InternalError)
+	}
+	return 0
+}
+
+func fail(stderr io.Writer, command string, e *protocol.Error) int {
+	_, _ = stderr.Write(protocol.Envelope(command, e))
+	return protocol.Exit(e.Code)
+}
+
+func system() app {
+	return app{
+		build: func(ctx context.Context, pkg string) (any, error) {
+			home, err := accountHome()
+			if err != nil {
+				return nil, err
+			}
+			d, clean, err := docker.New(home)
+			if err != nil {
+				return nil, protocol.New(protocol.DockerUnreachable, err.Error())
+			}
+			defer clean()
+			result, err := (builder{home: home, docker: d}).Build(ctx, pkg)
+			if err != nil {
+				return nil, protocol.New(protocol.BuildFailed, err.Error())
+			}
+			return result, nil
+		},
+		login: func(out io.Writer) error {
+			if err := checkInstalled(); err != nil {
+				return err
+			}
+			fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
+			token, err := terminalToken()
+			fmt.Fprintln(os.Stderr)
+			if err != nil {
+				return err
+			}
+			defer erase(token)
+			if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(string(token), "\r\n\x00") {
+				return errors.New("invalid setup-token")
+			}
+			if err := (keychainStore{}).Put(token); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(out, "Claude setup-token saved")
+			return err
+		},
+	}
 }
 
 func erase(b []byte) {
@@ -74,9 +162,6 @@ func erase(b []byte) {
 	}
 }
 
-type tokenStore interface {
-	Get() ([]byte, error)
-	Put([]byte) error
-}
-
 type keychainStore struct{}
+
+type runner = docker.Runner

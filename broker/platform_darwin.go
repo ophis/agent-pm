@@ -11,10 +11,6 @@ package main
 #include <string.h>
 #include <termios.h>
 
-static char *account_home(void) {
-    struct passwd *p = getpwuid(getuid());
-    return p ? strdup(p->pw_dir) : NULL;
-}
 static OSStatus signed_runtime(void) {
     SecCodeRef code = NULL;
     CFDictionaryRef info = NULL;
@@ -110,15 +106,6 @@ import (
 	"syscall"
 	"unsafe"
 )
-
-func accountHome() (string, error) {
-	p := C.account_home()
-	if p == nil {
-		return "", errors.New("cannot resolve system account home")
-	}
-	defer C.free(unsafe.Pointer(p))
-	return C.GoString(p), nil
-}
 
 func checkInstalled() error {
 	path, err := os.Executable()
