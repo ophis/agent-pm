@@ -236,6 +236,9 @@ class Crew:
             resumed = ("--resume", resume) if resume else ()
             command = ("agent-pm-session", "start", key, *resumed, *argv)
         elif kind == "reopen":
+            options = argv[: argv.index("--")] if "--" in argv else argv
+            if fixed := {"--client", "--cwd", "--resume"} & {o.split("=")[0] for o in options}:
+                raise ValueError(f"reopen sets {', '.join(sorted(fixed))} from the run record")
             role, client, sid, cwd = _closed_run(work_dir, key)
             name = f"{role}-{key}"
             command = (

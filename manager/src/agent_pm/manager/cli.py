@@ -25,6 +25,16 @@ def _number(value: str) -> int:
     return number
 
 
+def _sid(value: str) -> str:
+    try:
+        identity = uuid.UUID(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("want a canonical UUID4") from error
+    if identity.version != 4 or str(identity) != value:
+        raise argparse.ArgumentTypeError("want a canonical UUID4")
+    return value
+
+
 def _after(value: str) -> int | None:
     return None if value == "end" else _number(value)
 
@@ -304,7 +314,10 @@ Recovery and next help:
     run.add_argument("name", metavar="NAME", help="new roster entry name")
     run.add_argument("--note", metavar="TEXT", help="optional roster note; default: none")
     run.add_argument(
-        "--resume", metavar="SID", help="AGENT_PM_SID to give the starter; default: a new one"
+        "--resume",
+        type=_sid,
+        metavar="SID",
+        help="AGENT_PM_SID to give the starter; default: a new one",
     )
     run.set_defaults(func=_run)
     for kind, key, purpose, owner, details in (
@@ -337,12 +350,14 @@ Examples:
 Crew reads the run's role, client, session id and cwd from its run record,
 WORK_DIR/work/ISSUE/run/delegate.json, then starts worker ROLE-ISSUE:
 agent-pm-session start ROLE-ISSUE --client CLIENT --cwd CWD --resume SID,
-under that session identity. No record or session id: exit 1.
-The worker is tracked like any other; the board is not touched.
+under that session identity. No record or session id: exit 1. SESSION_OPTIONS
+must not repeat --client, --cwd or --resume. Reopen only a closed run: a live
+one would get a second client on its conversation. The worker is tracked like
+any other; the board is not touched.
 
 Examples:
   With TASK-123's run closed:
-  agent-pm-crew reopen --manager demo TASK-123
+  agent-pm-crew reopen --manager demo TASK-123 --display none
   Form: reopen [CREW_OPTIONS] ISSUE [SESSION_OPTIONS] [-- CLIENT_FLAGS]
   Placement: agent-pm-session --help
 """,
@@ -405,7 +420,10 @@ Examples:
             )
         if kind == "worker":
             launch.add_argument(
-                "--resume", metavar="SID", help="resume conversation SID; default: a new one"
+                "--resume",
+                type=_sid,
+                metavar="SID",
+                help="resume conversation SID; default: a new one",
             )
         if kind == "reopen":
             launch.add_argument(

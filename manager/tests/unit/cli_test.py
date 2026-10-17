@@ -234,6 +234,10 @@ class Launch(CliCase):
                 ("agent-pm-session", "start", "w1", "--resume", sid, "--client", "claude"),
             ),
             (
+                ("worker", "--manager", "mgr", "--resume", sid, "w2", "--client", "codex"),
+                ("agent-pm-session", "start", "w2", "--resume", sid, "--client", "codex"),
+            ),
+            (
                 ("run", "--manager", "mgr", "--resume", sid, "r1", "--", "start", "--resume", sid),
                 ("start", "--resume", sid),
             ),
@@ -246,6 +250,21 @@ class Launch(CliCase):
                 self.assertEqual(Record.parse(stdout).sid, sid)
                 self.assertEqual(self.roster.entries()[arguments[5]].sid, sid)
                 self.roster.remove(arguments[5])
+
+    def test_a_resume_sid_that_is_not_a_canonical_uuid4_is_a_usage_error(self):
+        for sid in ("x", str(uuid.uuid1()), str(uuid.uuid4()).upper()):
+            for arguments in (
+                ("worker", "--manager", "mgr", "--resume", sid, "w1", "--client", "claude"),
+                ("run", "--manager", "mgr", "--resume", sid, "r1", "--", "start"),
+            ):
+                with (
+                    self.subTest(sid=sid, verb=arguments[0]),
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as error,
+                ):
+                    main(arguments)
+                self.assertEqual(error.exception.code, 2)
+        self.assertFalse(os.path.exists(self.directory))
 
     def test_role_names_share_the_generated_launch_sid(self):
         for explicit in ((), ("--name", "chosen")):
@@ -368,6 +387,17 @@ class Reopen(CliCase):
                 self.assertEqual((entry.sid, entry.record), (self.sid, Record.parse(stdout)))
                 self.roster.remove("researcher-TASK-9")
                 shutil.rmtree(Path(base, "work"))
+
+    def test_reopen_refuses_options_the_run_record_sets(self):
+        self.record()
+        for option in ("--client", "--cwd=/tmp", "--resume"):
+            with self.subTest(option=option):
+                result, stdout, stderr = self.reopen(option, "x", "--", "--cwd")
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn("from the run record", stderr)
+                self.assertEqual((self.calls, self.roster.entries()), ([], {}))
+        result, _, stderr = self.reopen("--", "--client-flag")
+        self.assertEqual(result, 0, stderr)
 
     def test_reopen_without_a_run_record_or_session_id_fails_clearly(self):
         for case, prepare, message in (
