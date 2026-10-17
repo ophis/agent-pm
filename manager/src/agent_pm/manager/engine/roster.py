@@ -628,8 +628,10 @@ class Roster:
                 raise RosterError(f"sid {record.sid}: already owned by {name}")
             return name
 
-    def backlog(self) -> tuple[int, int, list[str]]:
+    def backlog(self, *, require_lease: bool = False) -> tuple[int, int, list[str]]:
         with self._locked() as data:
+            if require_lease:
+                self._lease(data)
             return data["cursor"], data["gen"], self._events.following(data["cursor"])
 
     def _cursor(self, data: dict, after: int | None, gen: int) -> int:

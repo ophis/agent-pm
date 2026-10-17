@@ -182,8 +182,7 @@ def _next_event(args) -> int:
 
 def _pending(args) -> int:
     crew = _crew(args)
-    crew.roster.check_lease()
-    cursor, generation, events = crew.roster.backlog()
+    cursor, generation, events = crew.roster.backlog(require_lease=True)
     for line, event in enumerate(events, cursor + 1):
         print(f"{line} {printable(event)}")
         if args.content:

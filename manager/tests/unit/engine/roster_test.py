@@ -353,6 +353,7 @@ class RosterTest(RosterCase):
                     lambda: self.roster.note("x", "note"),
                     lambda: self.roster.adopt(self.record),
                     lambda: self.roster.advance(0, 0),
+                    lambda: self.roster.backlog(require_lease=True),
                     lambda: self.roster.next_event(0, 0),
                     lambda: self.roster.watch_events(0, 0, acknowledge=False),
                     self.roster.rotate_events,

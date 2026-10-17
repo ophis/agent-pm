@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Spec, State, cli
+from agent_pm.manager import Roster, Spec, State, cli
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState
@@ -24,6 +24,51 @@ from utils.tests.fakes import ctl
 
 
 class CliTest(CliCase):
+    def test_pending_snapshot_cannot_include_events_after_takeover(self):
+        with self.roster.hold("first") as lease, contextlib.ExitStack() as successors:
+            events = Path(self.roster.events)
+            events.write_text("12:00:00 previous done\n")
+            other = Roster(self.directory)
+            native_open, native_close = os.open, os.close
+            watched = None
+            switched = False
+
+            def open_file(path, *args, **kwargs):
+                nonlocal watched
+                fd = native_open(path, *args, **kwargs)
+                if path == str(Path(self.directory, "roster.lock")) and watched is None:
+                    watched = fd
+                return fd
+
+            def close_file(fd):
+                nonlocal switched
+                native_close(fd)
+                if fd == watched and not switched:
+                    switched = True
+                    successors.enter_context(other.hold("second", force=True))
+                    with events.open("a") as stream:
+                        stream.write("12:00:01 successor done\n")
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_HOLDER_ID": lease.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
+                    },
+                ),
+                mock.patch("os.open", side_effect=open_file),
+                mock.patch("os.close", side_effect=close_file),
+            ):
+                result, output, error = self.invoke("pending", "--manager", "mgr")
+            self.assertEqual(result, 0, error)
+            self.assertTrue(switched)
+            self.assertIn("previous done", output)
+            self.assertNotIn("successor done", output)
+            self.assertEqual(
+                other.backlog(), (0, 0, ["12:00:00 previous done", "12:00:01 successor done"])
+            )
+
     def test_ack_is_the_only_handling_verb_without_notification_attestation(self):
         for argv in (
             ("attach", "--after", "1", "--gen", "0"),
@@ -437,6 +482,22 @@ class NextEventContent(CliCase):
         result, _, _ = self.invoke("ack", "--manager", "mgr", "--through", "2", "--gen", "9")
         self.assertEqual(result, 1)
         self.assertEqual(self.roster.backlog()[0], 1)
+
+    def test_pending_content_prints_owner_reply_without_acknowledging(self):
+        record = self.launched("w1")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n")
+        answer = SimpleNamespace(
+            returncode=0, stdout="Publication blocked\nNeeds review\n", stderr=""
+        )
+        with mock.patch("subprocess.run", return_value=answer) as run:
+            result, output, error = self.invoke("pending", "--manager", "mgr", "--content")
+        self.assertEqual(result, 0, error)
+        self.assertEqual(
+            output, "1 12:00:00 w1 done\nPublication blocked\nNeeds review\nN=0 GEN=0\n"
+        )
+        self.assertEqual(tuple(run.call_args.args[0]), (*record.ctl, "content"))
+        self.assertEqual(run.call_args.kwargs["input"], record.to_line() + "\n")
+        self.assertEqual(self.roster.backlog(), (0, 0, ["12:00:00 w1 done"]))
 
     def test_follow_exits_1_on_stale(self):
         self.launched("w1")
