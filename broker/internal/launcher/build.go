@@ -197,7 +197,7 @@ func (h Host) stage(pkg, tmp string) (string, error) {
 
 // Build produces agent-pm-worker:<key> in two stages; an image with this key and version is reused.
 func (h Host) Build(ctx context.Context, pkg string) (BuildResult, error) {
-	tmp, err := os.MkdirTemp("", "agent-pm-build-")
+	tmp, err := docker.TempDir(h.Home, "agent-pm-build-")
 	if err != nil {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Cannot create a build directory.")
 	}

@@ -81,3 +81,28 @@ func TestMissingExecutableIsUnreachable(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigOutsideTMPDIR(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	c, clean, err := New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(home, ".agent-pm/docker/tmp")
+	for _, dir := range []string{base, c.config} {
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", dir, info, err)
+		}
+	}
+	if filepath.Dir(c.config) != base {
+		t.Fatalf("config %s outside %s", c.config, base)
+	}
+	if data, err := os.ReadFile(filepath.Join(c.config, "config.json")); err != nil || string(data) != `{"cliPluginsExtraDirs":["`+pluginDir+`"]}` {
+		t.Fatalf("%s %v", data, err)
+	}
+	clean()
+	if _, err := os.Stat(c.config); !os.IsNotExist(err) {
+		t.Fatalf("config kept: %v", err)
+	}
+}

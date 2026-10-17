@@ -57,6 +57,16 @@ func Absent(err error) bool {
 	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
 }
 
+// TempDir makes a private directory under <home>/.agent-pm/docker/tmp, never TMPDIR or /tmp:
+// ~/.agent-pm is on the launcher's mount deny list, so no worker can mount it and rewrite the contents.
+func TempDir(home, pattern string) (string, error) {
+	base := filepath.Join(home, ".agent-pm/docker/tmp")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(base, pattern)
+}
+
 type CLI struct {
 	path, buildx, home, config string
 }
@@ -64,7 +74,7 @@ type CLI struct {
 // New writes a private CLI config that ignores ~/.docker; Run checks Docker Desktop's executables,
 // so a command's local validation fails first.
 func New(home string) (*CLI, func(), error) {
-	dir, err := os.MkdirTemp("", "agent-pm-docker-")
+	dir, err := TempDir(home, "agent-pm-docker-")
 	if err != nil {
 		return nil, nil, err
 	}
