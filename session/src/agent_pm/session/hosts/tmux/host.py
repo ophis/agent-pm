@@ -591,18 +591,19 @@ class TmuxHost(Host, Showable):
         found = self.tmux.listing()
         if found is None:
             raise SessionError("tmux sessions unknown: tmux failed")
-        parts = self.unfold(display)
+        return sorted(
+            row["name"] for row in found if display is None or self.listed(display, row["display"])
+        )
 
-        def matches(value):
-            other = self.unfold(value)
-            return value == display or (
-                parts is not None
-                and other is not None
-                and parts[0] is not None
-                and parts[0] == other[0]
-            )
-
-        return sorted(row["name"] for row in found if display is None or matches(row["display"]))
+    @classmethod
+    def listed(cls, display: Display, value: Display) -> bool:
+        parts, other = cls.unfold(display), cls.unfold(value)
+        return value == display or (
+            parts is not None
+            and other is not None
+            and parts[0] is not None
+            and parts[0] == other[0]
+        )
 
     def descendants(self, display: Display = None) -> list[str]:
         """list(display)'s sessions, then each session whose @opener is one of those, transitively."""
