@@ -3,8 +3,10 @@
 import argparse
 import contextlib
 import io
+import json
 import os
 import shlex
+import shutil
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -224,6 +226,46 @@ class Launch(CliCase):
                 self.assertEqual(entry.note, "Crew note")
                 self.assertEqual(entry.record, Record.parse(stdout))
 
+    def test_worker_and_run_resume_pass_the_given_sid(self):
+        sid = str(uuid.uuid4())
+        for arguments, argv in (
+            (
+                ("worker", "--manager", "mgr", "--resume", sid, "w1", "--client", "claude"),
+                ("agent-pm-session", "start", "w1", "--resume", sid, "--client", "claude"),
+            ),
+            (
+                ("worker", "--manager", "mgr", "--resume", sid, "w2", "--client", "codex"),
+                ("agent-pm-session", "start", "w2", "--resume", sid, "--client", "codex"),
+            ),
+            (
+                ("run", "--manager", "mgr", "--resume", sid, "r1", "--", "start", "--resume", sid),
+                ("start", "--resume", sid),
+            ),
+        ):
+            with self.subTest(verb=arguments[0]):
+                result, stdout, stderr = self.start(*arguments)
+                self.assertEqual(result, 0, stderr)
+                self.assertEqual(self.calls[0][0], argv)
+                self.assertEqual(self.calls[0][1]["AGENT_PM_SID"], sid)
+                self.assertEqual(Record.parse(stdout).sid, sid)
+                self.assertEqual(self.roster.entries()[arguments[5]].sid, sid)
+                self.roster.remove(arguments[5])
+
+    def test_a_resume_sid_that_is_not_a_canonical_uuid4_is_a_usage_error(self):
+        for sid in ("x", str(uuid.uuid1()), str(uuid.uuid4()).upper()):
+            for arguments in (
+                ("worker", "--manager", "mgr", "--resume", sid, "w1", "--client", "claude"),
+                ("run", "--manager", "mgr", "--resume", sid, "r1", "--", "start"),
+            ):
+                with (
+                    self.subTest(sid=sid, verb=arguments[0]),
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as error,
+                ):
+                    main(arguments)
+                self.assertEqual(error.exception.code, 2)
+        self.assertFalse(os.path.exists(self.directory))
+
     def test_role_names_share_the_generated_launch_sid(self):
         for explicit in ((), ("--name", "chosen")):
             with self.subTest(explicit=explicit):
@@ -286,6 +328,129 @@ class Launch(CliCase):
                 result, stdout, _ = self.start(*arguments, code=code, output=output)
                 self.assertEqual((result, stdout), (1, ""))
         self.assertEqual({e.state.value for e in self.roster.entries().values()}, {"lost"})
+
+
+class Reopen(CliCase):
+    start = Launch.start
+
+    def record(self, client="claude", base=None, **session):
+        work = Path(base or self.agent_pm, "work", "TASK-9")
+        self.agent, run = work / "agent", work / "run"
+        self.agent.mkdir(parents=True)
+        run.mkdir()
+        self.sid = str(uuid.uuid4())
+        plan = {
+            "client": client,
+            "sid": self.sid,
+            "workdir": str(run),
+            "access": {"cwd": str(self.agent)},
+            **session,
+        }
+        (run / "delegate.json").write_text(
+            json.dumps({"role": "researcher", "plan": {"session": plan}})
+        )
+        return run
+
+    def reopen(self, *extra, crew=(), listed=(), alive=()):
+        def run(argv, **kwargs):
+            if argv[1] == "ls":
+                return SimpleNamespace(returncode=0, stdout=lines(listed), stderr="")
+            names = (Record.parse(line).name for line in kwargs["input"].splitlines())
+            statuses = (
+                Status(
+                    name=name,
+                    alive=name in alive,
+                    state=StatusState.WORKING,
+                    outcome=None,
+                    attach=None,
+                    hidden=False,
+                )
+                for name in names
+            )
+            return SimpleNamespace(returncode=0, stdout=lines(statuses), stderr="")
+
+        def lines(items):
+            return "".join(item.to_line() + "\n" for item in items)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.start("reopen", "--manager", "mgr", *crew, "TASK-9", *extra)
+
+    def test_reopen_resumes_the_recorded_session_with_its_client(self):
+        for client, base, option in (
+            ("claude", self.agent_pm, ()),
+            ("codex", self.home, ("--work-dir", self.home)),
+        ):
+            with self.subTest(client=client):
+                self.record(client, base)
+                result, stdout, stderr = self.reopen("--display", "none", crew=option)
+                self.assertEqual(result, 0, stderr)
+                self.assertEqual(
+                    self.calls[0][0],
+                    (
+                        "agent-pm-session",
+                        "start",
+                        "researcher-TASK-9",
+                        "--client",
+                        client,
+                        "--cwd",
+                        str(self.agent),
+                        "--resume",
+                        self.sid,
+                        "--display",
+                        "none",
+                    ),
+                )
+                self.assertEqual(self.calls[0][1]["AGENT_PM_SID"], self.sid)
+                entry = self.roster.entries()["researcher-TASK-9"]
+                self.assertEqual((entry.sid, entry.record), (self.sid, Record.parse(stdout)))
+                self.roster.remove("researcher-TASK-9")
+                shutil.rmtree(Path(base, "work"))
+
+    def test_reopen_refuses_options_the_run_record_sets(self):
+        self.record()
+        for option in ("--client", "--cwd=/tmp", "--resume", "--c", "--cw", "--cl=codex", "--res"):
+            with self.subTest(option=option):
+                result, stdout, stderr = self.reopen(option, "x", "--", "--cwd")
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn("from the run record", stderr)
+                self.assertEqual((self.calls, self.roster.entries()), ([], {}))
+        result, _, stderr = self.reopen("--", "--client-flag")
+        self.assertEqual(result, 0, stderr)
+
+    def test_reopen_refuses_a_run_that_still_answers_alive(self):
+        self.record()
+        issue = self.fake_record("TASK-9")
+        self.roster.begin(Spec("TASK-9", ("start",)), sid=issue.sid)
+        self.roster.commit("TASK-9", issue)
+        session = self.fake_record("researcher-tui", sid=self.sid)
+        for listed, alive, live in (
+            ((), ("TASK-9",), "TASK-9"),
+            ((session,), ("researcher-tui",), "session researcher-tui"),
+        ):
+            with self.subTest(live=live):
+                result, stdout, stderr = self.reopen(listed=listed, alive=alive)
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn(f"TASK-9: still live ({live}); close it before reopen", stderr)
+                self.assertEqual((self.calls, set(self.roster.entries())), ([], {"TASK-9"}))
+        result, _, stderr = self.reopen(listed=(session,))
+        self.assertEqual(result, 0, stderr)
+        self.assertIn("researcher-TASK-9", self.roster.entries())
+
+    def test_reopen_without_a_run_record_or_session_id_fails_clearly(self):
+        for case, prepare, message in (
+            ("no run", lambda: Path(self.agent_pm, "work").mkdir(), "no run record"),
+            ("no record", lambda: os.remove(self.record() / "delegate.json"), "no run record"),
+            ("no sid", lambda: self.record(sid=""), "no role, client, session id or cwd"),
+            ("other run", lambda: self.record(workdir="/elsewhere"), "records another run"),
+        ):
+            with self.subTest(case=case):
+                prepare()
+                result, stdout, stderr = self.reopen()
+                self.assertEqual((result, stdout), (1, ""))
+                self.assertIn("TASK-9", stderr)
+                self.assertIn(message, stderr)
+                self.assertEqual((self.calls, self.roster.entries()), ([], {}))
+                shutil.rmtree(Path(self.agent_pm, "work"))
 
 
 class ResumeInput(CliCase):
@@ -762,6 +927,7 @@ class InsideAnAgentSession(CliCase):
             ("hold", "--manager", "mgr", "--", "true"),
             ("resume", "--manager", "mgr", "w1"),
             ("worker", "--manager", "mgr", "w1", "--client", "claude"),
+            ("reopen", "--manager", "mgr", "TASK-12"),
             ("issue", "--manager", "mgr", "TASK-12"),
             ("role", "--manager", "mgr", "pm", "--input", "x"),
         ):
@@ -789,6 +955,7 @@ HELP_COMMANDS = [
     "hold",
     "run",
     "worker",
+    "reopen",
     "issue",
     "role",
     "attach",
@@ -869,6 +1036,7 @@ class HelpContracts(Case):
     def test_boundary_help_and_recovery_are_explicit(self):
         for verb, owner in (
             ("worker", "agent-pm-session start --help"),
+            ("reopen", "agent-pm-session start --help"),
             ("issue", "agent-pm-linear router --help"),
             ("role", "agent-pm-delegate run --help"),
         ):

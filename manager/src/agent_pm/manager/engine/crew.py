@@ -28,6 +28,7 @@ from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
     SID_ENV,
+    STATE,
     OutcomeStatus,
     Record,
     Status,
@@ -97,6 +98,30 @@ def _reconciled(entry: Entry, status: Status) -> State:
     if status.outcome == OutcomeStatus.NEEDS_INPUT:
         return State.WAITING
     return State.GONE
+
+
+def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str]:
+    """An issue run's role, client, session id and cwd from its run record,
+    `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
+    agent can append to.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", issue):
+        raise ValueError(f"{issue!r}: want an issue identifier")
+    run = os.path.join(os.path.expanduser(work_dir), "work", issue, "run")
+    path = os.path.join(run, "delegate.json")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            state = json.load(stream)
+        role, session = state["role"], state["plan"]["session"]
+        client, sid, workdir = session["client"], session["sid"], session["workdir"]
+        cwd = session["access"]["cwd"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(f"{issue}: no run record at {path}: {error!r}") from None
+    if not all(isinstance(value, str) and value for value in (role, client, sid, workdir, cwd)):
+        raise RuntimeError(f"{issue}: {path}: no role, client, session id or cwd")
+    if os.path.realpath(workdir) != os.path.realpath(run):
+        raise RuntimeError(f"{issue}: {path} records another run, {workdir}")
+    return role, client, sid, cwd
 
 
 class Crew:
@@ -191,8 +216,8 @@ class Crew:
                 f"{shlex.join(argv)}: no response within {START_TIMEOUT} seconds"
             ) from error
 
-    def run(self, spec: Spec) -> Record:
-        return self._run(spec, str(uuid.uuid4()), shorthand=False)
+    def run(self, spec: Spec, *, resume: str | None = None) -> Record:
+        return self._run(spec, resume or str(uuid.uuid4()), shorthand=False)
 
     def launch(
         self,
@@ -202,11 +227,38 @@ class Crew:
         *,
         note: str | None = None,
         name: str | None = None,
+        resume: str | None = None,
+        work_dir: str = STATE,
     ) -> Record:
-        sid = str(uuid.uuid4())
+        sid = resume or str(uuid.uuid4())
         if kind == "worker":
             name = key
-            command = ("agent-pm-session", "start", key, *argv)
+            resumed = ("--resume", resume) if resume else ()
+            command = ("agent-pm-session", "start", key, *resumed, *argv)
+        elif kind == "reopen":
+            options = argv[: argv.index("--")] if "--" in argv else argv
+            # Session's argparse takes unique abbreviations, so --cw is --cwd.
+            words = {w for w in (o.split("=")[0] for o in options) if w.startswith("--") and w[2:]}
+            if fixed := {
+                f for f in ("--client", "--cwd", "--resume") for w in words if f.startswith(w)
+            }:
+                raise ValueError(f"reopen sets {', '.join(sorted(fixed))} from the run record")
+            role, client, sid, cwd = _closed_run(work_dir, key)
+            name = f"{role}-{key}"
+            if live := self._live({key, name}, sid):
+                raise ValueError(f"{key}: still live ({', '.join(live)}); close it before reopen")
+            command = (
+                "agent-pm-session",
+                "start",
+                name,
+                "--client",
+                client,
+                "--cwd",
+                cwd,
+                "--resume",
+                sid,
+                *argv,
+            )
         elif kind == "issue":
             name = key
             command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)
@@ -216,6 +268,23 @@ class Crew:
         else:
             raise ValueError(f"unknown launch kind: {kind}")
         return self._run(Spec(name, command, note), sid, shorthand=True)
+
+    def _live(self, names: set[str], sid: str) -> list[str]:
+        """Roster entries named in names or holding sid, and sessions listed here or below holding
+        sid, that answer alive; one whose status fails is reported on stderr, not refused.
+        """
+        candidates = {
+            name: entry
+            for name, entry in self.roster.entries().items()
+            if name in names or sid in (entry.sid, entry.record and entry.record.sid)
+        }
+        for record in self._listing(DESCENDANTS) or ():
+            if record.sid == sid:
+                candidates[f"session {record.name}"] = Entry(record, State.LIVE, None, "")
+        answers, failures = self._statuses(candidates)
+        for name, reason in failures.items():
+            print(f"crew: {name}: {reason}", file=sys.stderr)
+        return sorted(name for name, status in answers.items() if status.alive)
 
     def _run(self, spec: Spec, sid: str, *, shorthand: bool) -> Record:
         self._listed = None

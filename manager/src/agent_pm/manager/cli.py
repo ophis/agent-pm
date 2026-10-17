@@ -25,6 +25,16 @@ def _number(value: str) -> int:
     return number
 
 
+def _sid(value: str) -> str:
+    try:
+        identity = uuid.UUID(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("want a canonical UUID4") from error
+    if identity.version != 4 or str(identity) != value:
+        raise argparse.ArgumentTypeError("want a canonical UUID4")
+    return value
+
+
 def _after(value: str) -> int | None:
     return None if value == "end" else _number(value)
 
@@ -56,13 +66,19 @@ def _hold(args) -> int:
 
 
 def _run(args) -> int:
-    print(_crew(args).run(Spec(args.name, args.command, args.note)).to_line())
+    print(_crew(args).run(Spec(args.name, args.command, args.note), resume=args.resume).to_line())
     return 0
 
 
 def _launch(args) -> int:
     record = _crew(args).launch(
-        args.kind, args.key, tuple(args.arguments), note=args.note, name=args.entry_name
+        args.kind,
+        args.key,
+        tuple(args.arguments),
+        note=args.note,
+        name=args.entry_name,
+        resume=args.resume,
+        work_dir=args.work_dir,
     )
     print(record.to_line())
     return 0
@@ -211,9 +227,9 @@ Prerequisites and effects:
   hold gives its child AGENT_PM_MANAGER and the paired AGENT_PM_HOLDER_ID /
   AGENT_PM_HOLDER_GENERATION. Keep that pair together. An active holder fences
   ownership-sensitive roster updates; run those from its commander environment.
-  AGENT_PM_AGENT_SESSION blocks hold/run/worker/issue/role/resume; use a
+  AGENT_PM_AGENT_SESSION blocks hold/run/worker/reopen/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
-  run/worker/issue/role give starters empty stdin; supply literal input.
+  run/worker/reopen/issue/role give starters empty stdin; supply literal input.
   hold instead inherits the caller's input for its foreground command.
   Exit 0: success; 2: usage/invalid value; 1: operational/lease failure.
   hold instead propagates its child's status, signals as 128 + signal number.
@@ -278,8 +294,9 @@ Recovery and next help:
         """Prerequisites and effects:
   COMMAND [ARG ...] after -- is required; no shell expansion is performed.
   The starter must finish with a Record on stdout and honor AGENT_PM_SID.
-  Crew supplies a new identity and roster events file, records launch intent
-  before executing, then prints the Record. A failed launch may remain lost.
+  Crew supplies an identity (--resume SID, else a new one) and roster events
+  file, records launch intent before executing, then prints the Record.
+  A failed launch may remain lost.
   Put Crew options before NAME, then --, then the starter and its options.
   Outer help: agent-pm-crew run --help. Help after -- runs the starter path.
 
@@ -292,10 +309,16 @@ Recovery and next help:
   Inspect/reconcile failed launches: agent-pm-crew attach --help
   Starter options: agent-pm-session start --help
 """,
-        usage="%(prog)s [--manager MANAGER] [--note TEXT] NAME -- COMMAND [ARG ...]",
+        usage="%(prog)s [--manager MANAGER] [--note TEXT] [--resume SID] NAME -- COMMAND [ARG ...]",
     )
     run.add_argument("name", metavar="NAME", help="new roster entry name")
     run.add_argument("--note", metavar="TEXT", help="optional roster note; default: none")
+    run.add_argument(
+        "--resume",
+        type=_sid,
+        metavar="SID",
+        help="AGENT_PM_SID to give the starter; default: a new one",
+    )
     run.set_defaults(func=_run)
     for kind, key, purpose, owner, details in (
         (
@@ -306,6 +329,8 @@ Recovery and next help:
             """NAME is both the worker's session name and roster entry name.
 Session options go after NAME; --client CLIENT is required there.
 Session passes CLIENT_FLAGS after its -- verbatim to the client.
+--resume SID resumes conversation SID (agent-pm-session start --resume SID)
+under that same session identity.
 
 Examples:
   With Codex configured and no helper session/entry:
@@ -313,6 +338,28 @@ Examples:
   Starts a hidden worker, records it in demo and prints its Record.
   Form: worker [CREW_OPTIONS] NAME [SESSION_OPTIONS] [-- CLIENT_FLAGS]
   Client flag help: use the configured client executable with --help.
+  Placement: agent-pm-session --help
+""",
+        ),
+        (
+            "reopen",
+            "ISSUE",
+            "Resume a closed issue run's conversation as a worker and track its Record",
+            f"{LayerCommand.SESSION} start",
+            """ISSUE is a board issue identifier with a recorded run.
+Crew reads the run's role, client, session id and cwd from its run record,
+WORK_DIR/work/ISSUE/run/delegate.json, then starts worker ROLE-ISSUE:
+agent-pm-session start ROLE-ISSUE --client CLIENT --cwd CWD --resume SID,
+under that session identity. No record or session id: exit 1. SESSION_OPTIONS
+naming --client, --cwd or --resume, abbreviated or not: exit 2. A run still
+alive (roster entry ISSUE or ROLE-ISSUE, or a session listed here or below with
+its session id): exit 2, so its conversation gets no second client. The worker
+is tracked like any other; the board is not touched.
+
+Examples:
+  With TASK-123's run closed:
+  agent-pm-crew reopen --manager demo TASK-123 --display none
+  Form: reopen [CREW_OPTIONS] ISSUE [SESSION_OPTIONS] [-- CLIENT_FLAGS]
   Placement: agent-pm-session --help
 """,
         ),
@@ -372,6 +419,20 @@ Examples:
                 metavar="NAME",
                 help="roster/session name; default: ROLE-<new session id's first 8 characters>",
             )
+        if kind == "worker":
+            launch.add_argument(
+                "--resume",
+                type=_sid,
+                metavar="SID",
+                help="resume conversation SID; default: a new one",
+            )
+        if kind == "reopen":
+            launch.add_argument(
+                "--work-dir",
+                metavar="WORK_DIR",
+                default=STATE,
+                help=f"the board's configured work_dir; default: {STATE}",
+            )
         launch.add_argument("key", metavar=key, help=f"required {key.lower()}; see below")
         launch.add_argument(
             "arguments",
@@ -379,7 +440,7 @@ Examples:
             metavar="DOWNSTREAM_OPTIONS",
             help=f"forwarded verbatim to {owner}; defaults/values: its --help",
         )
-        launch.set_defaults(func=_launch, kind=kind, entry_name=None)
+        launch.set_defaults(func=_launch, kind=kind, entry_name=None, resume=None, work_dir=STATE)
     attach = page(
         "attach",
         "Reconcile a roster and print recovery/monitoring commands",

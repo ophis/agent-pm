@@ -65,6 +65,72 @@ func TestLogin(t *testing.T) {
 	}
 }
 
+type fakeApps struct {
+	account, key       string
+	accountErr, getErr error
+	trustErr           error
+	trusted            []string
+	got                []byte
+}
+
+func (k *fakeApps) AppAccount(app string) (string, error) { return k.account, k.accountErr }
+func (k *fakeApps) AppKey(app, account string) ([]byte, error) {
+	if account != k.account {
+		return nil, ErrNotFound
+	}
+	k.got = []byte(k.key)
+	return k.got, k.getErr
+}
+func (k *fakeApps) TrustOnlyBroker(app, account string) error {
+	if k.trustErr != nil {
+		return k.trustErr
+	}
+	k.trusted = append(k.trusted, app+" "+account)
+	return nil
+}
+
+func TestLoginGitHub(t *testing.T) {
+	const key = "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQ=="
+	k := &fakeApps{account: "5352992", key: key}
+	for i := range 2 {
+		var out bytes.Buffer
+		if err := LoginGitHub("agent-pm-engineer", k, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(k.trusted) != i+1 || k.trusted[i] != "agent-pm-engineer 5352992" {
+			t.Fatalf("trusted %q", k.trusted)
+		}
+		if out.String() != "GitHub App agent-pm-engineer private key (App ID 5352992) now trusts only the broker\n" {
+			t.Fatalf("%q", out.String())
+		}
+		if !bytes.Equal(k.got, make([]byte, len(key))) {
+			t.Fatal("key buffer not erased")
+		}
+	}
+	for name, k := range map[string]*fakeApps{
+		"missing":      {accountErr: ErrNotFound},
+		"ambiguous":    {accountErr: ErrAmbiguous},
+		"keychain":     {accountErr: errors.New("keychain status -25308")},
+		"not an id":    {account: "setup-token", key: key},
+		"zero id":      {account: "0123", key: key},
+		"read failed":  {account: "5352992", key: key, getErr: errors.New("keychain status -128")},
+		"empty":        {account: "5352992"},
+		"trust failed": {account: "5352992", key: key, trustErr: errors.New("keychain status -128")},
+	} {
+		var out bytes.Buffer
+		err := LoginGitHub("agent-pm-docs", k, &out)
+		if err == nil || k.trusted != nil || out.Len() != 0 || strings.Contains(err.Error(), key) {
+			t.Fatalf("%s: %v trusted %q out %q", name, err, k.trusted, out.String())
+		}
+		if k.got != nil && !bytes.Equal(k.got, make([]byte, len(k.got))) {
+			t.Fatalf("%s: key buffer not erased", name)
+		}
+		if name == "trust failed" && !strings.Contains(err.Error(), "agent-pm-docs unchanged") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
 func TestReady(t *testing.T) {
 	for _, tc := range []struct {
 		err  error

@@ -128,6 +128,11 @@ func TestUsageErrors(t *testing.T) {
 		{"workspace-rm", []string{"workspace-rm", "--volume", strings.Repeat("v", 256)}},
 		{"workspace-rm", []string{"workspace-rm", "--volume", "v", "--forced"}},
 		{"workspace-rm", []string{"workspace-rm", "--force", "--volume", "v"}},
+		{"unknown", []string{"login"}},
+		{"unknown", []string{"login", "github"}},
+		{"unknown", []string{"login", "github", "agent-pm-other"}},
+		{"unknown", []string{"login", "github", "agent-pm-engineer", "x"}},
+		{"unknown", []string{"login", "claude", "x"}},
 	} {
 		code, out, errOut := invoke(a, tc.args...)
 		if code != 2 {
@@ -137,6 +142,24 @@ func TestUsageErrors(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("dispatched %v", calls)
+	}
+}
+
+func TestLoginGitHubDispatch(t *testing.T) {
+	for _, name := range []string{"agent-pm-engineer", "agent-pm-docs"} {
+		var got string
+		a := app{loginGitHub: func(app string, out io.Writer) error {
+			got = app
+			_, err := io.WriteString(out, "ok\n")
+			return err
+		}}
+		if code, out, errOut := invoke(a, "login", "github", name); code != 0 || got != name || out != "ok\n" || errOut != "" {
+			t.Fatalf("%s: exit %d app %q %q %q", name, code, got, out, errOut)
+		}
+	}
+	a := app{loginGitHub: func(string, io.Writer) error { return errors.New("no item") }}
+	if code, out, errOut := invoke(a, "login", "github", "agent-pm-docs"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
+		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
 }
 
