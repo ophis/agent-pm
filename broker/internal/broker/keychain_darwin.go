@@ -291,9 +291,11 @@ static OSStatus put_partitions(CFMutableDataRef out, CFStringRef description) {
     OSStatus s = errSecSuccess;
     for (CFIndex i = 0; s == errSecSuccess && i < n; i += 2) {
         int high = nibble(CFStringGetCharacterAtIndex(description, i)), low = nibble(CFStringGetCharacterAtIndex(description, i + 1));
-        UInt8 b = (UInt8)(high << 4 | low);
         if (high < 0 || low < 0) s = errSecDecode;
-        else CFDataAppendBytes(xml, &b, 1);
+        else {
+            UInt8 b = (UInt8)(high << 4 | low);
+            CFDataAppendBytes(xml, &b, 1);
+        }
     }
     CFPropertyListRef plist = s == errSecSuccess ? CFPropertyListCreateWithData(NULL, xml, kCFPropertyListImmutable, NULL, NULL) : NULL;
     CFArrayRef ids = plist && CFGetTypeID(plist) == CFDictionaryGetTypeID() ? CFDictionaryGetValue(plist, CFSTR("Partitions")) : NULL;
