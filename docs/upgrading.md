@@ -9,6 +9,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | If you have | Do |
 |---|---|
 | running agent-pm sessions | Close them first. |
+| running Docker Host sessions whose `session.json` `host_hook.module` is `agent_pm.session.hosts.tmux.docker_hook` | After upgrading, close and reopen each: that module moved to `agent_pm.session.hosts.docker.hook`, so their host hook no longer loads. |
 | a flat `config.local.toml` | Move top-level values under `[session]`, `[delegate]` or `[linear_orchestrator]`, per the layer's packaged `config.toml`, and prefix tables with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` (run) or `[linear_orchestrator.roles.engineer]` (board). `show` goes under `[delegate]` or `[delegate.roles.<role>]`. `core-new.local.toml` goes under `delegate`, `linear-new.local.toml` under `linear_orchestrator`. |
 | a `runtime` key or `--runtime` | Rename it `client` everywhere. Records written with `runtime` are not read. |
 | `[session.adapters.<name>]` tables, or an `implementation` naming `agent_pm.session.adapters` or an `…Adapter` class | Rename them `[session.clients.<name>]`, `agent_pm.session.clients` and `…Client` (`ClaudeClient`, `CodexClient`); an extension's `Adapter` base is now `Client`; a Host's `HostProcess` is `Process`, `Terminal` is `InteractiveProcess` (its `send` / `press` in `Interactive`), `Displayable` / `NotDisplayable` are `Showable` / `NotShowable`. |

@@ -103,8 +103,8 @@ implementation = "agent_pm.session.hosts.pty:PtyHost"
 outer_terminal = ["TMUX", "TMUX_PANE"]
 
 [hosts.docker]
-# DockerHost (session/src/agent_pm/session/hosts/tmux/docker.py)
-implementation = "agent_pm.session.hosts.tmux.docker:DockerHost"
+# DockerHost (session/src/agent_pm/session/hosts/docker/host.py)
+implementation = "agent_pm.session.hosts.docker.host:DockerHost"
 docker = "/usr/local/bin/docker"
 mount_roots = []
 # local: [session.hosts.docker]

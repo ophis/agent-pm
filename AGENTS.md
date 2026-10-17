@@ -13,6 +13,7 @@ Test boundaries and commands: `docs/tests.md`.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/ops.py:move` does).
 - Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost`: `host.py`; the `Tmux`, `Grid`, `Iterm` and `Placement` it holds: `transport.py`, `grid.py`, `iterm.py`, `placement.py`). `/agent-pm:manage` (`manager/skills/manage/SKILL.md`) reaches it only through `agent-pm-session`.
+- Docker implementation: `session/src/agent_pm/session/hosts/docker/` (`DockerHost`, driving the container's tmux through `docker exec`: `host.py`; its hook callback: `hook.py`; the broker client, daemon, mounts, relay, stub and supervisor beside them; `docs/docker-host.md`).
 - Pty implementation: `session/src/agent_pm/session/hosts/pty/` (`PtyHost`: `host.py`; the supervisor holding each session's pty: `supervisor.py`).
 - The session's and delegate's public interfaces are frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` and `delegate_interface_snapshot` (who may change `tests/session_interface.json` and `tests/delegate_interface.json`: their docstrings).
 - Keep `<work_dir>/logs/runs.jsonl` (`docs/board.md` › Operating).

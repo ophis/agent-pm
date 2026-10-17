@@ -37,6 +37,7 @@ from agent_pm.session.engine.types import (
     StatusState,
 )
 from agent_pm.session.hosts.base import TUI_DIR, TUI_STATE, Host, Process, Showable, tui_lock
+from agent_pm.session.hosts.docker import hook as docker_hook
 from agent_pm.session.hosts.docker import supervisor as run_supervisor
 from agent_pm.session.hosts.docker.broker import (
     RELAY,
@@ -58,7 +59,6 @@ from agent_pm.session.hosts.docker.daemon import (
 )
 from agent_pm.session.hosts.docker.mounts import check_cwd, state_dir
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
-from agent_pm.session.hosts.tmux import docker_hook
 from agent_pm.session.hosts.tmux.host import TmuxHost, TmuxTerminal
 from agent_pm.session.hosts.tmux.transport import DIED, VIEW, Tmux, absent
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
