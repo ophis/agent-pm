@@ -11,6 +11,7 @@ import shlex
 import stat
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -92,7 +93,7 @@ class ClaudeTui(Tui):
         self._pending: tuple[str, str | None, str | None] | None = None
 
     def _home(self):
-        return HOME
+        return replace(HOME, files=self.common.home_files())
 
     def launch(self, spec: Spec, hook):
         common = self.common

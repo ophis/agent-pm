@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tmux git gh pyt
     && tar -xJf "node-v${NODE_VERSION}-linux-${arch}.tar.xz" -C /usr/local --strip-components=1 \
     && rm "node-v${NODE_VERSION}-linux-${arch}.tar.xz" \
     && useradd --create-home --shell /bin/bash agent \
-    && apt-get purge -y sudo && rm -rf /etc/sudoers.d /var/lib/apt/lists/*
+    && SUDO_FORCE_REMOVE=yes apt-get purge -y sudo && rm -rf /etc/sudoers.d /var/lib/apt/lists/*
 USER agent
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
 ENV PATH=/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin

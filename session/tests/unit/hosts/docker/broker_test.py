@@ -1,9 +1,11 @@
 """hosts/docker/broker.py: protocol-1 calls, every shared response fixture's outcome, the manifest."""
 
+import io
 import json
 import os
 import stat
 import tempfile
+from unittest import mock
 
 from agent_pm.session.engine.types import ConfigError, SessionError
 from agent_pm.session.hosts.docker import broker
@@ -14,12 +16,15 @@ from session.tests.case import REPO, Case
 from session.tests.unit.hosts.docker.support import (
     HOOK,
     FakeBroker,
+    FakePopen,
+    FakeProc,
     cases,
     data,
     failure,
     success,
+    text,
 )
-from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 MANIFEST = "/Users/example/.agent-pm/docker-state/worker_1/0123456789abcdef0123456789abcdef.json"
 CONTAINER = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
@@ -87,8 +92,6 @@ class ResponseTest(Case):
                 self.assertEqual(
                     fake.kwargs[0],
                     {
-                        "capture_output": True,
-                        "text": True,
                         "stdin": DEVNULL,
                         "env": {"PATH": os.defpath},
                         "timeout": broker.TIMEOUT,
@@ -112,6 +115,21 @@ class ResponseTest(Case):
             ),
         )
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
+
+    def test_build_progress_before_the_error_object_is_not_the_error(self):
+        progress = "#5 [2/3] RUN apt-get purge -y sudo\n#5 ERROR: process exited 1\n"
+        rc, _, err = failure("error-build_failed.json")
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker((rc, "", progress + err))).build("/opt/agent-pm")
+        self.assertEqual(raised.exception.code, "build_failed")
+        found = Broker(FakeBroker((0, text("build-cached.json"), progress))).build("/opt/agent-pm")
+        self.assertEqual(found[0], data("build-cached.json")["image"])
+
+    def test_only_build_may_put_progress_before_the_error_object(self):
+        rc, _, err = failure("error-login_required.json")
+        with self.assertRaisesRegex(SessionError, "bad response to start") as raised:
+            Broker(FakeBroker((rc, "", "progress\n" + err))).start(MANIFEST, clients=KEYS)
+        self.assertNotIsInstance(raised.exception, BrokerError)
 
     def test_mismatched_exit_is_transport_failure(self):
         for result in (
@@ -188,3 +206,45 @@ class ManifestTest(Case):
                 },
             )
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+
+class StreamTest(Case):
+    def run_stream(self, out, err, code, **kw):
+        popen, shown = FakePopen((out, err, code)), io.StringIO()
+        with mock.patch("subprocess.Popen", popen), mock.patch("sys.stderr", shown):
+            res = broker._stream(["b"], stdin=DEVNULL, env={"PATH": "/bin"}, timeout=30, **kw)
+        return popen, shown.getvalue(), res
+
+    def test_stdout_stays_the_json_and_progress_is_shown(self):
+        popen, shown, res = self.run_stream(b'{"ok": 1}\n', b"#1 load\n#2 done\n", 0)
+        self.assertEqual(
+            (res.returncode, res.stdout, res.stderr), (0, '{"ok": 1}\n', "#1 load\n#2 done\n")
+        )
+        self.assertEqual(shown, "#1 load\n#2 done\n")
+        ((argv, kw, given),) = popen.calls
+        self.assertEqual(
+            (argv, kw["env"], kw["stdout"], kw["stderr"], given),
+            (["b"], {"PATH": "/bin"}, PIPE, PIPE, DEVNULL),
+        )
+
+    def test_a_failing_runs_error_object_is_not_shown(self):
+        _, shown, res = self.run_stream(b"", b'#1 load\n{"exit_code": 8}\n', 8)
+        self.assertEqual((res.returncode, res.stderr), (8, '#1 load\n{"exit_code": 8}\n'))
+        self.assertEqual(shown, "#1 load\n")
+
+    def test_bad_utf8_is_a_decode_error_only_on_stdout(self):
+        with self.assertRaises(UnicodeDecodeError):
+            self.run_stream(b"\xff", b"", 0)
+        _, shown, res = self.run_stream(b"{}\n", b"#3 caf\xe9\n", 0)
+        self.assertEqual((res.stderr, shown), ("#3 caf\ufffd\n", "#3 caf\ufffd\n"))
+
+    def test_a_silent_step_shows_its_header_then_times_out_and_is_killed(self):
+        proc, shown = FakeProc(["b"], err=b"#5 [2/3] RUN make\n", hang=True), io.StringIO()
+        with (
+            mock.patch("subprocess.Popen", return_value=proc),
+            mock.patch("sys.stderr", shown),
+            self.assertRaises(TimeoutExpired),
+        ):
+            broker._stream(["b"], stdin=DEVNULL, env={}, timeout=0.1)
+        self.assertTrue(proc.killed)
+        self.assertEqual(shown.getvalue(), "#5 [2/3] RUN make\n")

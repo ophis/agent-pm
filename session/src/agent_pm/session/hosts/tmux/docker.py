@@ -589,6 +589,8 @@ class DockerHost(Host, Showable):
         if resume == "0":
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
+            for file, text in json.loads(metadata.get("home_files") or "{}").items():
+                save(os.path.join(home, file), text)
         elif read_beneath(home, launch.transcript, limit=0) is None:
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
         hook, root, (image, digest) = self._image(name)

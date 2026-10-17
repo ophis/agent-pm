@@ -48,6 +48,7 @@ STATE_MAX = 64 * 1024
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
 HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
+MODEL_KEYS = ("model", "effortLevel", "modelSettings")
 HOME_READ_MAX = 64 << 20
 TUI_ENV = MappingProxyType({"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1"})
 
@@ -289,6 +290,21 @@ class ClaudeCommon:
             or os.environ.get("CLAUDE_CONFIG_DIR")
             or os.path.expanduser("~/.claude")
         )
+
+    def home_files(self) -> tuple[tuple[str, str], ...]:
+        """A container home's settings.json: only the host settings' MODEL_KEYS, so a worker runs
+        the host's default model and effort; none when unreadable or without them.
+        """
+        try:
+            settings = json.loads(_read(os.path.join(self.config_dir(), "settings.json")))
+        except (ConfigError, ValueError, RecursionError):
+            return ()
+        found = (
+            {k: settings[k] for k in MODEL_KEYS if k in settings}
+            if isinstance(settings, dict)
+            else {}
+        )
+        return (("settings.json", json.dumps(found)),) if found else ()
 
     def transcript(self, cwd: str, sid: str, env: Mapping[str, str] = MappingProxyType({})) -> str:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))

@@ -61,8 +61,9 @@ claude setup-token          # copy the token it prints
 "$B" build --agent-pm "$PKG"
 ```
 
-The first prints `{"image":"agent-pm-worker:<key>","digest":"sha256:…","rebuilt":true}`,
-the second the same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
+The first streams Docker's build progress to stderr, then prints
+`{"image":"agent-pm-worker:<key>","digest":"sha256:…","rebuilt":true}`, the second the
+same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
 | Check (`I` = the printed image) | Expect |
@@ -172,7 +173,8 @@ Session checks the same cwd rules first.
 
 Every start first runs a preflight: the client is Claude, the cwd exists and passes the
 mount rules, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds. `resume` runs it before it touches anything;
+[Install](#install)), and `build` succeeds (its Docker progress streams to the starting
+command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
 broker's `start`, still before any container: the start fails with the broker's own
@@ -200,6 +202,13 @@ supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, ea
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
 (its image is older than the current plugin's) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
+
+Each new start writes the fresh Claude config dir a `settings.json` holding only `model`,
+`effortLevel` and `modelSettings` from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`,
+else `~/.claude/settings.json`), so the worker runs the host's default model and effort; no
+other host setting, credential, hook or permission reaches it. Without readable host
+settings it runs on Claude's default. `--model`/`--effort` and role config still win, as on
+tmux.
 
 ### Recovery
 

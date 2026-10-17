@@ -24,7 +24,8 @@ const usage = "usage: agent-pm-broker version | login claude | build --agent-pm 
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 
-type step func(ctx context.Context, arg string) (any, error)
+// step runs a command; progress is the broker's stderr, for build's Docker progress.
+type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 
 type app struct {
 	build, start, close step
@@ -85,7 +86,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	default:
 		return fail(stderr, command, protocol.New(protocol.Usage, usage))
 	}
-	result, err := s(ctx, arg)
+	result, err := s(ctx, arg, stderr)
 	if err != nil {
 		var e *protocol.Error
 		if !errors.As(err, &e) {
@@ -112,8 +113,8 @@ func fail(stderr io.Writer, command string, e *protocol.Error) int {
 	return protocol.Exit(e.Code)
 }
 
-// withHost runs f on the launcher wired to the fixed Docker Desktop CLI.
-func withHost(f func(launcher.Host) (any, error)) (any, error) {
+// withHost runs f on the launcher wired to the fixed Docker Desktop CLI, copying docker build's stderr to progress.
+func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, error) {
 	home, err := accountHome()
 	if err != nil {
 		return nil, err
@@ -123,19 +124,20 @@ func withHost(f func(launcher.Host) (any, error)) (any, error) {
 		return nil, err
 	}
 	defer clean()
+	d.Progress = progress
 	return f(launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}))
 }
 
 func system() app {
 	return app{
-		build: func(ctx context.Context, pkg string) (any, error) {
-			return withHost(func(h launcher.Host) (any, error) { return h.Build(ctx, pkg) })
+		build: func(ctx context.Context, pkg string, progress io.Writer) (any, error) {
+			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg) })
 		},
-		start: func(ctx context.Context, manifest string) (any, error) {
-			return withHost(func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
+		start: func(ctx context.Context, manifest string, _ io.Writer) (any, error) {
+			return withHost(nil, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
 		},
-		close: func(ctx context.Context, container string) (any, error) {
-			return withHost(func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
+		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
+			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
 		},
 		login: func(out io.Writer) error {
 			home, err := accountHome()
