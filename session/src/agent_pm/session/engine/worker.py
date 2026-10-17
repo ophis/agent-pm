@@ -78,9 +78,7 @@ def _text(value) -> bool:
 
 @dataclass(frozen=True)
 class WorkerState:
-    """What a worker's resume replays: its client, cwd, flags, env, events, Host and display, and
-    its last launch's Host token (Process.token).
-    """
+    """What a worker's resume replays; token: its last launch's Process.token."""
 
     name: str
     sid: str
@@ -206,7 +204,6 @@ class Worker:
 
     @classmethod
     def new(cls, **fields) -> Worker:
-        """A worker not yet started: WorkerState(**fields)."""
         return cls(WorkerState(**fields))
 
     @classmethod
@@ -250,7 +247,7 @@ class Worker:
             raise SessionError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
-        """Session.preflight of its start; no effects."""
+        """No effects."""
         self.session_cls.preflight(
             self.state.spec(prompt=prompt, resume=resume),
             display=self.state.display,
@@ -258,11 +255,10 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool, hidden: bool | None = None) -> Record:
-        """Drop stale sids, claim its sid, save its state, start its client, save its token, show or
-        hide it (hidden: True hides it, False shows it, None keeps its Host's hidden), watch it
-        (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its Record and
-        return it. A failed save or start puts its files back. Its client exiting in the watch:
-        SessionError with its last lines, its terminal kept, no Record.
+        """hidden: True hides, False shows, None keeps its Host's. Watches EARLY s (up to COLOR_CAP s
+        while its opening is pending), then publishes and returns its Record. A failed save or start
+        puts its files back; its client exiting in the watch: SessionError with its last lines, its
+        terminal kept, no Record.
         """
         name = self.state.name
         self._drop_stale()

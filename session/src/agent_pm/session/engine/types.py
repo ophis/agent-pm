@@ -210,8 +210,6 @@ def _string_tuple(value) -> bool:
 
 @dataclass(frozen=True)
 class TuiSettings:
-    """A terminal display's status line and grid preferences."""
-
     status_line: bool = False
     per_column: int | None = None
     retile: str | None = None

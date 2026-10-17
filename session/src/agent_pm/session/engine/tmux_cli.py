@@ -1,6 +1,6 @@
-"""TmuxCli: every tmux call through runner (subprocess.run's signature) and sleep; tests pass a
-fake runner. start and detach hand a launch to a new pane (EXEC); launch puts it on tmux's command
-line. Listings skip VIEW sessions.
+"""TmuxCli: every tmux call through runner (subprocess.run's signature) and sleep. start and
+detach hand a launch to a new pane (EXEC); launch puts it on tmux's command line. Listings skip
+VIEW sessions.
 """
 
 from __future__ import annotations
@@ -174,6 +174,7 @@ def _printable(value: str) -> str | None:
 
 
 def attach_command(session: str) -> str:
+    """`tmux attach -t '=<session>'`, after $TUI_ATTACH_PREFIX when not blank."""
     prefix = os.environ.get("TUI_ATTACH_PREFIX", "").strip()
     return f"{prefix} tmux attach -t '={session}'" if prefix else f"tmux attach -t '={session}'"
 
@@ -212,6 +213,7 @@ def display_error(value) -> str | None:
 
 
 def tmux_path() -> str | None:
+    """The real path (symlinks resolved) of the tmux on PATH, else None."""
     found = shutil.which("tmux")
     return None if found is None else os.path.realpath(found)
 
@@ -331,6 +333,7 @@ def _started(path: str, pipe: int, command: str, sleep) -> bool:
 
 
 def validate_events(path: str) -> str:
+    """The absolute path, checked; never opens it for writing or creates it (events_file does)."""
     path = os.path.abspath(path)
     if "#" in path or path.endswith(";"):
         raise TuiError(f"events file {path}: tmux would misread it")
@@ -363,6 +366,7 @@ def validate_start(
 
 
 def events_file(path: str) -> str:
+    """validate_events, then creates it 0600 when missing; TuiError unless a regular file."""
     path = validate_events(path)
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK, 0o600)
@@ -414,6 +418,7 @@ class TmuxCli:
             raise TuiError(f"tmux: {e}") from e
 
     def read(self, target: str, lines: int | None = None) -> str:
+        """The visible text, or the last `lines` with history; trailing blank lines dropped."""
         args = ["capture-pane", "-p", "-J", "-t", address(target)]
         if lines is not None:
             if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
@@ -469,13 +474,13 @@ class TmuxCli:
         return int(code) if code.isdecimal() else PaneStatus.UNKNOWN
 
     def kill(self, target: str) -> None:
+        """Kills the pane a pane id names, else the whole named session."""
         if PANE.fullmatch(target):
             self.checked(["kill-pane", "-t", target])
         else:
             self.checked(["kill-session", "-t", address(target, "")])
 
     def paste(self, target: str, text: str) -> None:
-        """Bracketed paste via its own buffer, deleted even on failure."""
         buffer = f"tui-{target}-{uuid.uuid4().hex}"
         target = address(target)
         # load-buffer from stdin keeps text exact: send-keys -l lost long text's head, set-buffer a
@@ -491,7 +496,7 @@ class TmuxCli:
             raise
 
     def keys(self, target: str, *names: str) -> None:
-        """Presses tmux keys (Enter, Escape, C-c)."""
+        """Presses tmux keys (Enter, Escape, C-c); a name tmux would misread raises TuiError first."""
         target = address(target)
         for name in names:
             if name.startswith("-") or name.endswith(";"):
@@ -499,7 +504,7 @@ class TmuxCli:
         self.checked(_out_of_mode(target, "send-keys", "-t", target, *names))
 
     def press(self, target: str, *names: str) -> None:
-        """Key names after `--`, so a `-` key is no flag."""
+        """Key names after `--`, so a `-` key is no flag; `;` must come escaped (`\\;`)."""
         target = address(target)
         for name in names:
             if not name or name.endswith(";") and not name.endswith("\\;"):
@@ -515,6 +520,7 @@ class TmuxCli:
         self.checked(["set-option", "-t", target, name, value])
 
     def option(self, target: str, name: str) -> str | None:
+        """None when unset or the target absent."""
         target = address(target)
         if not USER_OPTION.fullmatch(name):
             raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
@@ -728,11 +734,11 @@ class TmuxCli:
         status_line: bool = False,
         tags: Mapping[str, str] | None = None,
     ) -> str:
-        """argv in a new detached session keeping its pane after exit, in cwd with env (its terminal
-        keys the pane's, PWD cwd); tags, @events, pane-died hook (@state dead, dead line to @events),
-        border, status line and @process in that one tmux call, so instant deaths log. Opens
-        no pane; refuses an existing session untouched; argv goes through a 0600 handover file.
-        Returns process() once argv exec'd; raising, leaves no own session.
+        """argv in a new detached session keeping its pane after exit, in cwd with env (terminal keys
+        the pane's, PWD cwd). Every option and the pane-died hook (@state dead, dead line to
+        @events) go in that one tmux call, so instant deaths log. Opens no pane; refuses an existing
+        session untouched; argv goes via a 0600 handover file. Returns process() once argv exec'd;
+        raising, leaves no own session.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
