@@ -101,11 +101,6 @@ func realSafe(path string) error {
 	return nil
 }
 
-// lexWithin is the container's view: mounts sit at literal paths there.
-func lexWithin(a, b string) bool {
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/")
-}
-
 // checkMounts applies the mount rules and returns cwd's real path, the bind source.
 func (h Host) checkMounts(m Manifest) (string, error) {
 	reject := func(format string, args ...any) (string, error) {
@@ -167,7 +162,8 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 			}
 		}
 		for _, mount := range []string{m.CWD, cwd, m.ClaudeDir, docker.SecretsDir} {
-			if lexWithin(m.HookPath, mount) {
+			// The container's view: mounts sit at literal paths there.
+			if m.HookPath == mount || strings.HasPrefix(m.HookPath, strings.TrimSuffix(mount, "/")+"/") {
 				return reject("hook_path %s lies inside the mount %s.", m.HookPath, mount)
 			}
 		}
