@@ -44,6 +44,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import (
     TUI_DIR,
+    TUI_STATE,
     Host,
     InteractiveProcess,
     Process,
@@ -151,7 +152,7 @@ class TuiStore:
         self._sid = sid
         self.root = os.path.expanduser(TUI_DIR)
         self.dir = os.path.join(self.root, name)
-        self.state_file = os.path.join(self.dir, tui_hook.STATE)
+        self.state_file = os.path.join(self.dir, TUI_STATE)
 
     @classmethod
     def attach(cls, name: str, *, host: Host, sid: str | None = None) -> Self:
@@ -582,7 +583,7 @@ class TuiRuntime(Runtime):
     def snapshot(cls, name: str) -> dict:
         """Tui session `name`'s session.json as start wrote it; else SessionError."""
         return _read_state(
-            checked_name(name), os.path.join(os.path.expanduser(TUI_DIR), name, tui_hook.STATE)
+            checked_name(name), os.path.join(os.path.expanduser(TUI_DIR), name, TUI_STATE)
         )
 
     @classmethod

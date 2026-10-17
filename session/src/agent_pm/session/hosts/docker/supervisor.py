@@ -105,20 +105,20 @@ class Supervisor:
             return "hook error"
         return f"hook exit {res.returncode}" if res.returncode else None
 
-    def serve(self, requests, acks) -> None:
+    def serve(self, requests, replies) -> None:
         """A reply per line until EOF; a line over LINE_MAX is discarded."""
         while line := requests.readline(self.line_max + 1):
             if line.endswith(b"\n"):
-                ack = self.handle(line)
+                reply = self.handle(line)
             else:
                 self.reject(None, None, "malformed")
                 while line and not line.endswith(b"\n"):
                     line = requests.readline(self.line_max + 1)
-                ack = {"ok": False}
+                reply = {"ok": False}
             if not self.stopping:
                 with contextlib.suppress(OSError, ValueError):
-                    acks.write(json.dumps(ack).encode() + b"\n")
-                    acks.flush()
+                    replies.write(json.dumps(reply).encode() + b"\n")
+                    replies.flush()
 
     def watch(self, wait: list[str], check: list[str], stopped, start: float = START_WAIT) -> None:
         """A failed wait is retried for `start` s, until one has succeeded."""

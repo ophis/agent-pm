@@ -1,4 +1,4 @@
-"""The root-owned broker, protocol 1 (docs/docker-broker-protocol.md): version, build, start and close
+"""The root-owned broker, protocol PROTOCOL (docs/docker-broker-protocol.md): version, build, start and close
 with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
 a valid error response is a BrokerError.
 """
