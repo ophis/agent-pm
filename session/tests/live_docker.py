@@ -1,9 +1,12 @@
 """The Docker Host's live gate, run by hand from a manager session: `python3
-session/tests/live_docker.py CWD [NAME]` times build, worker start and first event.
+session/tests/live_docker.py CWD [NAME]` times build, worker start and first event, then kills
+the hook supervisor and checks the next command restarts it and the next turn's event comes once.
 """
 
+import fcntl
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -13,6 +16,7 @@ from agent_pm.session.hosts.docker.broker import Broker, plugin_root
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(REPO, "bin")
 WAIT = 300
+QUIET = 30
 
 
 def run(*argv: str, timeout: float = WAIT) -> str:
@@ -27,6 +31,28 @@ def run(*argv: str, timeout: float = WAIT) -> str:
     if res.returncode:
         raise SystemExit(f"{' '.join(argv)}: exit {res.returncode}: {res.stderr.strip()}")
     return res.stdout
+
+
+def supervisor_running(name: str) -> bool:
+    path = os.path.expanduser(f"~/.agent-pm/docker-state/{name}/supervisor.lock")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def kill_supervisor(name: str) -> None:
+    with open(os.path.expanduser(f"~/.agent-pm/docker-state/{name}/supervisor.pid")) as f:
+        os.kill(int(f.read()), signal.SIGKILL)
+    deadline = time.monotonic() + 10
+    while supervisor_running(name):
+        if time.monotonic() > deadline:
+            raise SystemExit("supervisor.lock still held after killing the supervisor")
+        time.sleep(0.2)
 
 
 def timed(times: dict, step: str, action):
@@ -61,16 +87,25 @@ def main(argv: list[str]) -> int:
             *("--prompt", "Reply with the single word ready."),
         ),
     )
+    events = ("agent-pm-crew", "next-event", "--manager", manager, "--gen", gen.group(1))
     try:
-        timed(
+        first = timed(
             times,
             "client ready (first event)",
-            lambda: run(
-                *("agent-pm-crew", "next-event", "--manager", manager),
-                *("--after", after.group(1), "--gen", gen.group(1)),
-            ),
+            lambda: run(*events, "--after", after.group(1)),
         )
+        kill_supervisor(name)
+        run("agent-pm-session", "read", name)
+        if not supervisor_running(name):
+            raise SystemExit("read did not restart the supervisor")
         run("agent-pm-session", "send", name, "Reply with the single word again.")
+        line = run(*events, "--after", first.split()[0]).split()[0]
+        try:
+            extra = run(*events, "--after", line, timeout=QUIET)
+        except subprocess.TimeoutExpired:
+            extra = ""
+        if extra:
+            raise SystemExit(f"a second event after the restart: {extra!r:.200}")
         print(run("agent-pm-session", "read", name))
     finally:
         timed(times, "close", lambda: run("agent-pm-crew", "close", "--manager", manager, name))
