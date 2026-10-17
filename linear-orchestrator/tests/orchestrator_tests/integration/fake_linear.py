@@ -510,7 +510,10 @@ class FakeLinear:
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
-            "history": {"nodes": _newest(rec["history"])},
+            "history": {
+                "nodes": _newest(rec["history"]),
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            },
             "relations": {
                 "nodes": [
                     {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}

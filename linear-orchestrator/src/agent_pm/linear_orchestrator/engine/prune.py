@@ -48,9 +48,9 @@ QUARANTINE = timedelta(hours=24)
 RETENTION = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
-Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
+Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = (
-    """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
+    """query($t: ID, $s: [ID!], $a: [ID!], $c: String, $after: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
   nodes { id identifier """
     + HISTORY

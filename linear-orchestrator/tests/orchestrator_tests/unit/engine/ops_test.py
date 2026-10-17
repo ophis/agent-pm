@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import ops, types
+from agent_pm.linear_orchestrator.engine import ops, promote, prune, router, types
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
@@ -194,6 +194,18 @@ class Writes(Case):
                 "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } }"
             ),
         )
+
+    def test_each_query_with_the_history_declares_its_cursor(self):
+        found = {
+            f"{module.__name__}.{name}": value
+            for module in (promote, prune, router)
+            for name, value in vars(module).items()
+            if isinstance(value, str) and ops.HISTORY in value and value != ops.HISTORY
+        }
+        self.assertEqual(len(found), 4)
+        for name, query in found.items():
+            with self.subTest(name=name):
+                self.assertIn("$after: String", query)
 
     def test_call_returns_the_field_and_raises_on_success_false(self):
         gql = Gql()
