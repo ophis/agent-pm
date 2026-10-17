@@ -1072,7 +1072,7 @@ class RouterEntry(OuterBase):
         self.assertEqual(rc, 1)
         self.assertEqual(
             self.said()[-1],
-            "launch-error TASK-7 error=ConfigError: [hosts] default: want one of pty, tmux",
+            "launch-error TASK-7 error=ConfigError: [hosts] default: want one of docker, pty, tmux",
         )
         self.assertEqual(self.todo["state"], "In Progress")
         self.assertFalse(os.path.lexists(self.rd))

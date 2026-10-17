@@ -126,6 +126,8 @@ class Base(Case):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.ep = f"unix://{self.account}/.docker/run/docker.sock"
+        os.makedirs(os.path.dirname(self.ep.removeprefix("unix://")))
+        open(self.ep.removeprefix("unix://"), "w").close()
         self.cwd = os.path.join(self.account, "src", "repo")
         os.makedirs(self.cwd)
         self.order, self.host_calls = [], []
@@ -625,12 +627,20 @@ class ListTest(Base):
     def test_docker_ps_failure_raises(self):
         for run in (
             mock.Mock(return_value=done(1, "", "Cannot connect")),
-            mock.Mock(side_effect=OSError(2, "gone")),
+            mock.Mock(side_effect=PermissionError(13, "denied")),
         ):
             with self.subTest(run=run):
                 self.host.run = run
                 with self.assertRaisesRegex(SessionError, "docker ps"):
                     self.host.list()
+
+    def test_no_daemon_socket_or_cli_lists_nothing(self):
+        self.listed("w")
+        self.host.run = mock.Mock(side_effect=FileNotFoundError(2, "no docker"))
+        self.assertEqual(self.host.list(), [])
+        os.unlink(self.ep.removeprefix("unix://"))
+        self.host.run = self.docker
+        self.assertEqual((self.host.list(), self.host.rows(), self.order), ([], [], []))
 
     def test_attach_unknown_or_without_client(self):
         with self.assertRaisesRegex(SessionError, "no docker session w"):

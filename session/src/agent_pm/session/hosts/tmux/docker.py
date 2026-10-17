@@ -277,11 +277,16 @@ class DockerHost(Host, Showable):
         return Tmux(exec_runner(self.docker, container, run=self.run))
 
     def _ps(self) -> list[list[str]]:
+        """[] with no daemon socket or docker CLI, as tmux with no server: every Host is listed."""
+        if not os.path.exists(endpoint().removeprefix("unix://")):
+            return []
         argv, env = docker_call(
             self.docker, "ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT
         )
         try:
             res = self.run(argv, env, timeout=RUN_TIMEOUT)
+        except FileNotFoundError:
+            return []
         except (OSError, subprocess.TimeoutExpired) as error:
             raise SessionError(f"docker ps: {error}") from None
         if res.returncode:
