@@ -12,6 +12,12 @@ from types import ModuleType
 STATE = "~/.agent-pm"
 
 
+def installation_root() -> str | None:
+    source = module_roots(sys.modules[__name__])[0]
+    root = os.path.dirname(os.path.dirname(source))
+    return root if os.path.isfile(os.path.join(root, "bin", "agent-pm-session")) else None
+
+
 def module_roots(*packages: ModuleType) -> tuple[str, ...]:
     """Source roots of already-imported modules or packages, retaining their order."""
     roots = []

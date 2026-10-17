@@ -51,10 +51,16 @@ from agent_pm.utils.git import (
     resolve,
 )
 from agent_pm.utils.git import git as run_git
+from agent_pm.utils.installation import (
+    Installation,
+    installations_root,
+    relocate,
+)
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
     import_env,
+    installation_root,
     module_roots,
     overlaps,
     printable_abs,
@@ -105,6 +111,7 @@ __all__ = [
     "EVENTS_ENV",
     "GUARD",
     "GitError",
+    "Installation",
     "Invalid",
     "LEASE_ENV",
     "LOCAL",
@@ -144,6 +151,8 @@ __all__ = [
     "idle",
     "import_env",
     "inode_lock",
+    "installation_root",
+    "installations_root",
     "json_records",
     "kill_group",
     "load_class",
@@ -163,6 +172,7 @@ __all__ = [
     "read_resources",
     "real_dirs",
     "redact",
+    "relocate",
     "renamed_key",
     "repo_slug",
     "resolve",

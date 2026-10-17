@@ -1,6 +1,8 @@
 """The utils layer's guard data (tests/guard_data/__init__.py)."""
 
-STANDALONE = frozenset({"utils/src/agent_pm/utils/process_control.py"})
+STANDALONE = frozenset(
+    {"utils/src/agent_pm/utils/process_control.py", "utils/src/agent_pm/utils/installation.py"}
+)
 
 
 NO_COVER_ALLOWED = {
