@@ -23,6 +23,8 @@ from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
+    M_STATE,
+    Q_ISSUE_STATE,
     call,
     client_id,
     comment,
@@ -588,9 +590,12 @@ def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
     attempt = event.attempt
     session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
     if event.kind == "begun":
-        return session()
+        registered = session()
+        return _running(ctx, attempt) and registered
     if event.kind == "progress":
-        return progress(ctx, Progress(event.name or "", event.text or ""))
+        return _running(ctx, attempt) and progress(
+            ctx, Progress(event.name or "", event.text or "")
+        )
     # Finished: the outcome (once ledgered, never again), the limit, then the session's end
     outcome = event.outcome
     ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
@@ -601,6 +606,19 @@ def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
     ended = session(end=(event.returncode, outcome, event.limit is not None))
     log("writeback", "end", ctx.ident, sid=ctx.sid, exit=event.returncode)
     return ended and ok
+
+
+def _running(ctx, attempt) -> bool:
+    attempts = _ledger(ctx).get(ctx.sid, {}).get("attempts", {})
+    if any(int(n) > attempt or int(n) == attempt and "ended_at" in r for n, r in attempts.items()):
+        return True
+
+    def activate():
+        state = ctx.gql(Q_ISSUE_STATE, i=ctx.issue_id)["issue"]["state"]["id"]
+        if state != ctx.states["in_progress"]:
+            call(ctx.gql, M_STATE, "issueUpdate", i=ctx.issue_id, s=ctx.states["in_progress"])
+
+    return _step(ctx, f"running:{attempt}", activate) is None
 
 
 def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
