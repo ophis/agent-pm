@@ -1,5 +1,5 @@
-"""hosts/docker/relay.py and stub.py: request forwarding, ack matching and the stub's exits, over
-fake connections and pipes.
+"""hosts/docker/relay.py and stub.py: the wire parsers against the shared protocol fixtures, the queue,
+stub answers, the uplink's stop-and-wait, and the stub's exits, over files and fake connections.
 """
 
 import base64
@@ -10,118 +10,298 @@ from unittest import mock
 
 from agent_pm.session.hosts.docker import relay, stub
 
-from session.tests.case import Case
+from session.tests.case import REPO, Case
+
+FIXTURES = os.path.join(REPO, "protocol", "docker-relay", "fixtures")
+GEN = "0123456789abcdef0123456789abcdef"
 
 
-class Pipe:
-    def __init__(self, case):
-        self.read, self.write = os.pipe()
-        self.open = {self.read, self.write}
-        case.addCleanup(lambda: [self.close(fd) for fd in list(self.open)])
-
-    def close(self, fd):
-        self.open.discard(fd)
-        os.close(fd)
-
-    def send(self, *lines):
-        for line in lines:
-            os.write(self.write, line)
+def cases(definition):
+    with open(os.path.join(FIXTURES, "index.json")) as f:
+        return [c for c in json.load(f)["cases"] if c["definition"] == definition]
 
 
-class Conn:
-    """A connected client: `request` to read, what the relay sends kept in `sent`."""
-
-    def __init__(self, request):
-        self.request, self.sent, self.timeout = request, b"", None
-
-    def settimeout(self, timeout):
-        self.timeout = timeout
-
-    def makefile(self, mode):
-        return io.BytesIO(self.request)
-
-    def sendall(self, data):
-        self.sent += data
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return None
+def line(case):
+    with open(os.path.join(FIXTURES, case["file"])) as f:
+        data = json.load(f)
+    if "payload_bytes" in case:
+        data["payload"] = base64.b64encode(bytes(case["payload_bytes"])).decode()
+    return json.dumps(data).encode() + b"\n"
 
 
-class RelayTest(Case):
-    def setUp(self):
-        self.acks = Pipe(self)
+def request(seq_id=7, label="Stop"):
+    found = {"id": seq_id, "argv": ["hook", "/tui/w", label], "payload": "e30="}
+    return json.dumps(found).encode() + b"\n"
 
-    def serve(self, request, *acks, wait=1.0):
-        conn = Conn(request)
-        self.acks.send(*acks)
-        out = io.BytesIO()
-        relay.serve(conn, out, relay.Acks(self.acks.read), wait)
-        self.assertEqual(conn.timeout, wait)
-        return out.getvalue(), conn.sent
 
-    def test_forwards_the_request_and_returns_its_ack_dropping_stale_ones(self):
-        request = b'{"id": 7, "argv": [], "payload": ""}\n'
-        forwarded, back = self.serve(
-            request, b'{"id": 6, "ok": true}\n', b"junk\n", b'{"id": 7, "ok": true}\n'
-        )
-        self.assertEqual((forwarded, back), (request, b'{"id": 7, "ok": true}\n'))
+class Writer(io.BytesIO):
+    def lines(self):
+        return [json.loads(x) for x in self.getvalue().splitlines()]
 
-    def test_no_matching_ack_in_time_sends_nothing(self):
-        forwarded, back = self.serve(b'{"id": 7}\n', b'{"id": 6, "ok": true}\n', wait=0.2)
-        self.assertEqual((forwarded, back), (b'{"id": 7}\n', b""))
 
-    def test_a_request_without_its_newline_is_not_forwarded(self):
-        self.assertEqual(self.serve(b'{"id": 7}', b'{"id": 7, "ok": true}\n'), (b"", b""))
-
-    def test_ids_and_acks_lines(self):
-        for line, want in ((b'{"id": 3}', 3), (b'{"id": true}', None), (b"[]", None), (b"{", None)):
-            with self.subTest(line=line):
-                self.assertEqual(relay.request_id(line), want)
-        acks = relay.Acks(self.acks.read)
-        self.acks.send(b"a\nb")
-        self.assertEqual(acks.line(0.2), b"a\n")
-        self.assertIsNone(acks.line(0.1))
-        self.acks.close(self.acks.write)
-        self.assertIsNone(acks.line(1))
-        self.assertTrue(acks.ended)
-
-    def test_main_serves_until_stdin_ends_and_removes_its_socket(self):
-        path = os.path.join(self.home, "relay.sock")
-        listener = mock.Mock()
-        conn = Conn(b'{"id": 1}\n')
-        conns = [conn]
-
-        def accept():
-            self.acks.send(b'{"id": 1, "ok": true}\n')
-            self.acks.close(self.acks.write)
-            return conns.pop(), None
-
-        listener.accept.side_effect = accept
-        ready = iter([[listener], [self.acks.read]])
-        out = io.BytesIO()
-        with (
-            mock.patch("socket.socket", return_value=listener),
-            mock.patch("select.select", side_effect=lambda r, *_: (next(ready, r[-1:]), [], [])),
-            mock.patch("sys.stdin", mock.Mock(fileno=lambda: self.acks.read)),
-            mock.patch("sys.stdout", mock.Mock(buffer=out)),
+class ParserTest(Case):
+    def test_every_fixture_parses_as_its_index_says(self):
+        for definition, parse in (
+            ("stub_request", relay.stub_request),
+            ("relay_request", relay.relay_request),
+            ("relay_reply", relay.relay_reply),
         ):
-            open(path, "w").close()
-            self.assertEqual(relay.main(path), 0)
-        listener.bind.assert_called_once_with(path)
-        self.assertEqual(out.getvalue(), b'{"id": 1}\n')
-        self.assertEqual(conn.sent, b'{"id": 1, "ok": true}\n')
-        self.assertFalse(os.path.exists(path))
+            for case in cases(definition):
+                with self.subTest(fixture=case["file"]):
+                    self.assertEqual(parse(line(case)) is not None, case["valid"])
+
+    def test_lines_need_their_newline_and_one_object_without_duplicates_or_constants(self):
+        good = request()
+        self.assertIsNotNone(relay.stub_request(good))
+        for bad in (
+            good.rstrip(b"\n"),
+            good + b"{}\n",
+            b'{"id": 1, "id": 2, "argv": ["hook", "/t", "S"], "payload": ""}\n',
+            b'{"id": NaN, "argv": ["hook", "/t", "S"], "payload": ""}\n',
+            b'{"id": true, "argv": ["hook", "/t", "S"], "payload": ""}\n',
+            b'{"id": 1, "argv": ["hook", "/t\\u0000", "S"], "payload": ""}\n',
+            b'{"id": 1, "argv": ["hook", "/t", "S"], "payload": "AB=="}\n'[:-3] + b"\n",
+            b"[]\n",
+        ):
+            with self.subTest(bad=bad[:60]):
+                self.assertIsNone(relay.stub_request(bad))
+
+    def test_the_exact_malformed_reply_alone_omits_gen_and_seq(self):
+        self.assertEqual(relay.relay_reply(b'{"ok":false}\n'), {"ok": False})
+        for bad in (
+            b'{"ok":0}\n',
+            b'{"ok":true}\n',
+            b'{"gen":"%s","seq":1,"ok":1}\n' % GEN.encode(),
+        ):
+            with self.subTest(bad=bad):
+                self.assertIsNone(relay.relay_reply(bad))
+
+
+class QueueTest(Case):
+    def setUp(self):
+        self.path = os.path.join(self.home, "queue")
+        self.queue = relay.Queue(self.path)
+
+    def test_stub_fixtures_get_their_expected_reply_and_only_valid_ones_are_queued(self):
+        for case in cases("stub_request"):
+            with self.subTest(fixture=case["file"]):
+                before = self.queue.last
+                self.assertEqual(
+                    relay.answer(line(case), self.queue, GEN), case["expected"]["reply"]
+                )
+                self.assertEqual(self.queue.last, before + case["valid"])
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o700)
+
+    def test_seq_counts_from_1_and_messages_are_relay_requests(self):
+        self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": True})
+        relay.answer(request(6), self.queue, GEN)
+        seq, message = self.queue.first(0)
+        self.assertEqual(seq, 1)
+        self.assertEqual(
+            relay.relay_request(message),
+            {"id": 5, "gen": GEN, "seq": 1, "argv": ["hook", "/tui/w", "Stop"], "payload": "e30="},
+        )
+
+    def test_a_restarted_daemon_continues_seq_and_keeps_undeleted_messages(self):
+        for n in range(3):
+            relay.answer(request(n), self.queue, GEN)
+        self.queue.drop(1)
+        self.queue.drop(3)
+        again = relay.Queue(self.path)
+        self.assertEqual(again.last, 3)
+        self.assertEqual(again.first(0)[0], 2)
+        os.unlink(os.path.join(self.path, "counter"))
+        self.assertEqual(relay.Queue(self.path).last, 2)
+
+    def test_a_failed_write_is_not_queued(self):
+        with mock.patch("os.replace", side_effect=OSError(28, "No space left")):
+            self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": False})
+
+    def test_a_failed_counter_write_never_reuses_the_queued_seq(self):
+        replace = os.replace
+        with mock.patch(
+            "os.replace",
+            side_effect=lambda a, b: (
+                (_ for _ in ()).throw(OSError(28, "full"))
+                if b.endswith("counter")
+                else replace(a, b)
+            ),
+        ):
+            self.assertEqual(relay.answer(request(5), self.queue, GEN), {"id": 5, "queued": False})
+            self.assertEqual(self.queue.first(0)[0], 1)
+        relay.answer(request(6), self.queue, GEN)
+        self.assertEqual(self.queue.last, 2)
+        self.assertEqual(json.loads(self.queue.first(0)[1])["id"], 5)
+
+    def test_first_waits_at_most_its_limit(self):
+        self.assertIsNone(self.queue.first(0))
+
+
+class PumpTest(Case):
+    def setUp(self):
+        self.queue = relay.Queue(os.path.join(self.home, "queue"))
+        for n in range(3):
+            relay.answer(request(n), self.queue, GEN)
+
+    def pump(self, *replies):
+        writer = Writer()
+        relay.pump(self.queue, io.BytesIO(b"".join(replies)), writer, idle=0)
+        return [m["seq"] for m in writer.lines()]
+
+    def reply(self, seq, *, ok=True):
+        return json.dumps({"gen": GEN, "seq": seq, "ok": ok}).encode() + b"\n"
+
+    def test_any_reply_drops_its_message_and_sends_the_next(self):
+        sent = self.pump(self.reply(1), self.reply(2, ok=False), b'{"ok":false}\n')
+        self.assertEqual(sent, [1, 2, 3])
+        self.assertIsNone(self.queue.first(0))
+
+    def test_eof_or_a_bad_or_mismatched_reply_keeps_the_message_for_replay(self):
+        for replies in (
+            (),
+            (b"junk\n",),
+            (self.reply(2),),
+            (json.dumps({"gen": "f" * 32, "seq": 1, "ok": True}).encode() + b"\n",),
+        ):
+            with self.subTest(replies=replies):
+                self.assertEqual(self.pump(*replies), [1])
+                self.assertEqual(self.queue.first(0)[0], 1)
+        self.assertEqual(self.pump(self.reply(1), self.reply(2), self.reply(3)), [1, 2, 3])
+
+    def test_a_queue_file_that_is_no_relay_request_is_dropped_unsent(self):
+        with open(os.path.join(self.queue.path, "1.json"), "wb") as f:
+            f.write(b"not json\n")
+        self.assertEqual(self.pump(self.reply(2), self.reply(3)), [2, 3])
+        self.assertIsNone(self.queue.first(0))
+
+
+def fake_socket(*, connect=None, accept=(), recv=(), reply=b""):
+    """A socket.socket whose connect, accept and recv follow the lists given."""
+    sock = mock.MagicMock()
+    sock.__enter__.return_value = sock
+    sock.connect.side_effect = connect
+    sock.accept.side_effect = [*accept, OSError("closed")]
+    sock.recv.side_effect = [*recv, b""]
+    sock.written = Writer()
+    sock.written.close = lambda: None
+    sock.makefile.side_effect = lambda mode: io.BytesIO(reply) if mode == "rb" else sock.written
+    return sock
+
+
+class DaemonTest(Case):
+    def setUp(self):
+        self.run = os.path.join(self.home, "run")
+        os.mkdir(self.run)
+
+    def daemon(self, *sockets):
+        daemon = relay.Daemon(GEN, self.run)
+        with (
+            mock.patch("socket.socket", side_effect=list(sockets)),
+            mock.patch("threading.Thread") as thread,
+        ):
+            started = daemon.start()
+        return daemon, started, [c.kwargs["target"] for c in thread.call_args_list]
+
+    def test_start_binds_nothing_while_a_daemon_answers(self):
+        daemon, started, threads = self.daemon(fake_socket())
+        self.assertFalse(started)
+        self.assertEqual((daemon.listeners, threads), ([], []))
+
+    def test_start_replaces_stale_sockets_and_close_shuts_both_listeners(self):
+        for name in ("relay.sock", "relay-up.sock"):
+            open(os.path.join(self.run, name), "w").close()
+        uplink, stubs = fake_socket(), fake_socket()
+        probe = fake_socket(connect=FileNotFoundError(2, "gone"))
+        daemon, started, threads = self.daemon(probe, uplink, stubs)
+        self.assertTrue(started)
+        self.assertEqual(threads, [daemon._uplinks, daemon._stubs])
+        uplink.bind.assert_called_once_with(daemon.uplink)
+        stubs.bind.assert_called_once_with(daemon.socket)
+        self.assertEqual(os.listdir(self.run), ["relay-queue"])
+        daemon.close()
+        for listener in (uplink, stubs):
+            listener.shutdown.assert_called_once()
+            listener.close.assert_called_once()
+
+    def test_a_stub_connection_is_answered_and_an_uplink_is_pumped(self):
+        daemon, _, _ = self.daemon(
+            fake_socket(connect=OSError("none")), fake_socket(), fake_socket()
+        )
+        stub_conn = fake_socket(reply=request(4))
+        daemon._stub(stub_conn)
+        stub_conn.sendall.assert_called_once_with(b'{"id":4,"queued":true}\n')
+        up = fake_socket(reply=json.dumps({"gen": GEN, "seq": 1, "ok": True}).encode() + b"\n")
+        relay.answer(request(5), daemon.queue, GEN)
+        daemon._uplinks(fake_socket(accept=[(up, None)]))
+        self.assertEqual([m["seq"] for m in up.written.lines()], [1, 2])
+        self.assertEqual(daemon.queue.first(0)[0], 2)
+        with mock.patch("threading.Thread") as thread:
+            daemon._stubs(fake_socket(accept=[(stub_conn, None)]))
+        thread.assert_called_once_with(target=daemon._stub, args=(stub_conn,), daemon=True)
+
+
+class ConnectTest(Case):
+    def test_forwards_both_ways_until_either_side_ends(self):
+        stdin_r, stdin_w = os.pipe()
+        stdout_r, stdout_w = os.pipe()
+        self.addCleanup(lambda: [os.close(fd) for fd in (stdin_r, stdout_r, stdout_w)])
+        os.write(stdin_w, b"reply\n")
+        os.close(stdin_w)
+        conn = fake_socket(recv=[b"message\n"])
+        with (
+            mock.patch("socket.socket", return_value=conn),
+            mock.patch("select.select", side_effect=lambda r, *_: (r, [], [])),
+        ):
+            self.assertEqual(relay.connect("/up", stdin_r, stdout_w), 0)
+        conn.connect.assert_called_once_with("/up")
+        conn.sendall.assert_called_once_with(b"reply\n")
+        self.assertEqual(os.read(stdout_r, 100), b"message\n")
+
+    def test_retries_until_its_wait_then_exits_1(self):
+        conns = [fake_socket(connect=FileNotFoundError(2, "No such file")) for _ in range(3)]
+        clock = iter([0, 0, 5, 11])
+        err = io.StringIO()
+        with (
+            mock.patch("socket.socket", side_effect=conns),
+            mock.patch("time.monotonic", side_effect=lambda: next(clock)),
+            mock.patch("time.sleep"),
+            mock.patch("sys.stderr", err),
+        ):
+            self.assertEqual(relay.connect("/up", wait=10), 1)
+        self.assertIn("agent-pm relay connect: [Errno 2] No such file", err.getvalue())
+
+
+class MainTest(Case):
+    def test_serve_exits_0_when_a_daemon_answers_and_connect_runs_the_connector(self):
+        with mock.patch("socket.socket", return_value=fake_socket()):
+            self.assertEqual(relay.main(["serve", GEN]), 0)
+        with (
+            mock.patch("socket.socket", return_value=fake_socket(connect=OSError("none"))),
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            self.assertEqual(relay.main(["connect"]), 1)
+        self.assertIn("agent-pm relay connect: none", err.getvalue())
+
+    def test_bad_arguments_exit_2(self):
+        for argv in ([], ["serve"], ["serve", "XYZ"], ["connect", "x"], ["other"]):
+            with self.subTest(argv=argv), mock.patch("sys.stderr", io.StringIO()):
+                self.assertEqual(relay.main(argv), 2)
 
 
 class StubTest(Case):
-    def conn(self, *, ack=b'{"id": 1, "ok": true}\n', error=None):
+    def conn(self, *, reply=None, error=None):
         conn = mock.MagicMock()
         conn.__enter__.return_value = conn
         conn.connect.side_effect = error
-        conn.makefile.return_value.__enter__.return_value = io.BytesIO(ack)
+
+        def sent(data):
+            found = json.loads(data)
+            answer = {"id": found["id"], "queued": True} if reply is None else reply(found)
+            out = answer if isinstance(answer, bytes) else json.dumps(answer).encode() + b"\n"
+            conn.makefile.return_value.__enter__.return_value = io.BytesIO(out)
+
+        conn.sendall.side_effect = sent
         return conn
 
     def run_stub(self, conn):
@@ -130,23 +310,24 @@ class StubTest(Case):
             code = stub.main(["hook", "/tui/w", "Stop"], io.BytesIO(b'{"a": 1}'))
         return code, err.getvalue()
 
-    def test_sends_argv_and_payload_and_exits_0_on_its_ack(self):
+    def test_sends_a_stub_request_and_exits_0_on_its_queued_reply(self):
         conn = self.conn()
         self.assertEqual(self.run_stub(conn), (0, ""))
-        conn.connect.assert_called_once_with(stub.SOCKET)
+        conn.connect.assert_called_once_with("/run/agent-pm/relay.sock")
         conn.settimeout.assert_called_once_with(stub.WAIT)
-        sent = json.loads(conn.sendall.call_args.args[0])
-        self.assertEqual(set(sent), {"id", "argv", "payload"})
-        self.assertEqual(sent["argv"], ["hook", "/tui/w", "Stop"])
-        self.assertEqual(base64.b64decode(sent["payload"]), b'{"a": 1}')
-        self.assertIsInstance(sent["id"], int)
+        sent = conn.sendall.call_args.args[0]
+        self.assertIsNotNone(relay.stub_request(sent))
+        self.assertEqual(base64.b64decode(json.loads(sent)["payload"]), b'{"a": 1}')
 
-    def test_no_relay_or_no_ack_still_exits_0_with_one_line(self):
+    def test_no_daemon_or_no_queued_reply_still_exits_0_with_one_line(self):
         for conn, want in (
             (self.conn(error=FileNotFoundError(2, "No such file or directory")), "No such file"),
-            (self.conn(error=ConnectionRefusedError(61, "Connection refused")), "refused"),
             (self.conn(error=TimeoutError("timed out")), "timed out"),
-            (self.conn(ack=b""), "no ack"),
+            (self.conn(reply=lambda _: b""), "not queued"),
+            (self.conn(reply=lambda r: {"id": r["id"], "queued": False}), "not queued"),
+            (self.conn(reply=lambda r: {"id": r["id"] + 1, "queued": True}), "not queued"),
+            (self.conn(reply=lambda r: {"id": r["id"], "queued": 1}), "not queued"),
+            (self.conn(reply=lambda _: {"queued": False}), "not queued"),
         ):
             with self.subTest(want=want):
                 code, err = self.run_stub(conn)

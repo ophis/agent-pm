@@ -15,11 +15,7 @@ from agent_pm.utils import save
 
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
-RELAY = (
-    "/opt/agent-pm/venv/bin/python",
-    "-I",
-    "/opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py",
-)
+RELAY = "/opt/agent-pm/bin/relay"
 PROTOCOL = "2"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"

@@ -1,7 +1,8 @@
 """A Docker session's host run supervisor (argv: name, state dir, TUI dir, events or "", hook
-command, then relay, dead-wait and dead-check argv as JSON). Holding supervisor.lock, it runs the
-relay; each valid request runs `<hook> hook <TUI dir> <label>`, and every line gets one ack. SIGTERM
-closes the relay's stdin; lines already sent still run. A confirmed client exit writes the dead line.
+command, generation, the supervisor.lock fd its starter holds, then connector, dead-wait and
+dead-check argv as JSON). Each relay request that passes its checks and is newer than <gen>.seq runs
+`<hook> hook <TUI dir> <label>` once; every line gets one reply. SIGTERM closes the connector's
+stdin; lines already sent still run. A confirmed client exit writes the dead line.
 """
 
 import base64
@@ -9,7 +10,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import select
 import signal
 import subprocess
@@ -18,102 +18,103 @@ import threading
 import time
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.hosts.docker.relay import LINE_MAX, request_id
-from agent_pm.utils import timestamp
+from agent_pm.session.hosts.docker.relay import LINE_MAX, relay_request
+from agent_pm.utils import save
 
-PAYLOAD_MAX = 64 << 20
 HOOK_WAIT = 60
 CHECK_WAIT = 10
 START_WAIT = 60
 POLL = 0.5
-LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 LOG_MAX = 1 << 20
-LOG_TEXT = 200
+
+
+def _body(payload: str) -> dict | None:
+    try:
+        found = json.loads(base64.b64decode(payload, validate=True))
+    except (ValueError, RecursionError):
+        return None
+    return found if isinstance(found, dict) else None
 
 
 class Supervisor:
     def __init__(
-        self, name: str, state: str, tui_dir: str, events: str, hook: str, *, run=None
+        self,
+        name: str,
+        state: str,
+        tui_dir: str,
+        events: str,
+        hook: str,
+        *,
+        generation: str,
+        run=None,
     ) -> None:
-        self.name, self.state, self.tui_dir, self.events, self.hook = (
-            name,
-            state,
-            tui_dir,
-            events,
-            hook,
-        )
+        self.name, self.state, self.tui_dir, self.events = name, state, tui_dir, events
+        self.hook, self.generation = hook, generation
         self.run, self.popen = run or subprocess.run, subprocess.Popen
         self.stopping, self.line_max = False, LINE_MAX
+        self.seq_file = os.path.join(state, f"{generation}.seq")
 
-    def log(self, why: str, line: bytes) -> None:
-        path = os.path.join(self.state, "supervisor.log")
+    def reject(self, gen: str | None, seq: int | None, reason: str) -> None:
+        path = os.path.join(self.state, "rejected.jsonl")
         with contextlib.suppress(OSError):
             if os.path.exists(path) and os.path.getsize(path) >= LOG_MAX:
                 return
             with open(path, "a", encoding="utf-8") as f:
-                f.write(f"{timestamp()} {why}: {repr(line[:LOG_TEXT])[:LOG_TEXT]}\n")
+                f.write(json.dumps({"gen": gen, "seq": seq, "reason": reason}) + "\n")
 
     def handle(self, line: bytes) -> dict:
-        ran = self._hook(line)
-        return {"id": request_id(line), "ok": ran}
+        request = relay_request(line)
+        body = None if request is None else _body(request["payload"])
+        if request is None or body is None:
+            self.reject(None, None, "malformed")
+            return {"ok": False}
+        gen, seq = request["gen"], request["seq"]
+        why = None
+        if gen != self.generation:
+            why = "generation"
+        elif request["argv"][1] != self.tui_dir:
+            why = "directory"
+        elif seq > self._seen():
+            body.pop("transcript_path", None)
+            why = self._hook(request["argv"][2], body)
+            with contextlib.suppress(OSError):
+                save(self.seq_file, str(seq), durable=True)
+        if why:
+            self.reject(gen, seq, why)
+        return {"gen": gen, "seq": seq, "ok": why is None}
 
-    def _hook(self, line: bytes) -> bool:
+    def _seen(self) -> int:
         try:
-            found = json.loads(line)
-        except (ValueError, RecursionError):
-            found = None
-        if not (
-            isinstance(found, dict)
-            and found.keys() == {"id", "argv", "payload"}
-            and request_id(line) is not None
-        ):
-            self.log("refused request", line)
-            return False
-        argv, payload = found["argv"], found["payload"]
-        if not (
-            isinstance(argv, list)
-            and len(argv) == 3
-            and argv[:2] == ["hook", self.tui_dir]
-            and isinstance(argv[2], str)
-            and LABEL.fullmatch(argv[2])
-        ):
-            self.log("refused argv", line)
-            return False
-        data = None
-        with contextlib.suppress(ValueError):
-            if isinstance(payload, str) and len(payload) <= (PAYLOAD_MAX + 2) // 3 * 4:
-                data = base64.b64decode(payload, validate=True)
+            with open(self.seq_file, encoding="ascii") as f:
+                return int(f.read())
+        except (OSError, ValueError):
+            return 0
+
+    def _hook(self, label: str, body: dict) -> str | None:
         try:
-            body = json.loads(data) if data is not None and len(data) <= PAYLOAD_MAX else None
-        except (ValueError, RecursionError):
-            body = None
-        if not isinstance(body, dict):
-            self.log("refused payload", line)
-            return False
-        body.pop("transcript_path", None)
-        try:
-            self.run(
-                [self.hook, "hook", self.tui_dir, argv[2]],
+            res = self.run(
+                [self.hook, "hook", self.tui_dir, label],
                 input=json.dumps(body).encode(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=HOOK_WAIT,
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            self.log(f"hook failed ({type(error).__name__})", line)
-            return False
-        return True
+        except subprocess.TimeoutExpired:
+            return "hook timeout"
+        except OSError:
+            return "hook error"
+        return f"hook exit {res.returncode}" if res.returncode else None
 
     def serve(self, requests, acks) -> None:
-        """An ack per line until EOF; a line over LINE_MAX is discarded."""
+        """A reply per line until EOF; a line over LINE_MAX is discarded."""
         while line := requests.readline(self.line_max + 1):
             if line.endswith(b"\n"):
                 ack = self.handle(line)
             else:
-                self.log("over-long line", line)
+                self.reject(None, None, "malformed")
                 while line and not line.endswith(b"\n"):
                     line = requests.readline(self.line_max + 1)
-                ack = {"id": None, "ok": False}
+                ack = {"ok": False}
             if not self.stopping:
                 with contextlib.suppress(OSError, ValueError):
                     acks.write(json.dumps(ack).encode() + b"\n")
@@ -161,19 +162,18 @@ class Supervisor:
 
 def main(argv=None) -> int:
     try:
-        name, state, tui_dir, events, hook, *commands = sys.argv[1:] if argv is None else argv
+        name, state, tui_dir, events, hook, generation, fd, *commands = (
+            sys.argv[1:] if argv is None else argv
+        )
+        lock = int(fd)
         relay, wait, check = (json.loads(command) for command in commands)
     except ValueError:
         return 2
-    lock = os.open(os.path.join(state, "supervisor.lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(lock)
+    except OSError:
         return 1
-    with open(os.path.join(state, "supervisor.pid"), "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
-    supervisor = Supervisor(name, state, tui_dir, events, hook)
+    supervisor = Supervisor(name, state, tui_dir, events, hook, generation=generation)
     proc = subprocess.Popen(
         relay, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
     )

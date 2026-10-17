@@ -2,8 +2,8 @@
 
 The wire format between a Docker worker's hook stub, the relay daemon in its container
 and the run supervisor on the host, which runs `agent-pm-session hook` for each event.
-This change supplies protocol artifacts only; the stub, relay and supervisor implement
-them. Context: [TASK-548](https://linear.app/ophis-workgroup/issue/TASK-548).
+The stub, relay and supervisor are `session/src/agent_pm/session/hosts/docker/stub.py`,
+`relay.py` and `supervisor.py`; recovery: [Docker Host](docker-host.md#recovery).
 
 The relay protocol has no version of its own. The broker installs the stub, so
 [broker protocol](docker-broker-protocol.md) `2` covers this format: each change to the
@@ -51,8 +51,8 @@ size limit exactly: at most 89478488 base64 characters, ending `==` at that leng
 
 These rules are not in the schema.
 
-- `/opt/agent-pm/bin/relay serve` is the daemon. If a daemon already answers on
-  `relay.sock`, it exits 0 at once, so starting it again is safe.
+- `/opt/agent-pm/bin/relay serve <generation>` is the daemon. If a daemon already
+  answers on `relay.sock`, it exits 0 at once, so starting it again is safe.
 - `/opt/agent-pm/bin/relay connect` forwards between the exec stream and
   `relay-up.sock`, and exits when either side closes.
 - The daemon accepts one uplink connection at a time; a new one waits until the old one closes.
@@ -63,8 +63,8 @@ These rules are not in the schema.
 - A reply that fails `relay_reply`, or a full reply whose `gen` and `seq` differ from
   the message in flight, counts as no reply: the daemon closes the uplink and keeps the
   message for replay.
-- The `seq` counter and undeleted messages live in the daemon's queue directory; a
-  restarted daemon continues from them.
+- The `seq` counter and undeleted messages live in the daemon's queue directory,
+  `/run/agent-pm/relay-queue/`; a restarted daemon continues from them.
 - The stub sends one request and exits 0 on `{"id":<its id>,"queued":true}`. It also
   exits 0, writing one stderr line, when `relay.sock` is absent, no valid reply arrives
   within 10 seconds, or the reply is not a `queued: true` for its `id`.

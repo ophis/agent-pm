@@ -23,6 +23,7 @@ from contextlib import suppress
 from datetime import datetime
 
 from agent_pm.session.engine.types import MARKS, HookCall, HookError, StatusState
+from agent_pm.session.hosts.base import TUI_STATE
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
 
@@ -35,7 +36,7 @@ CUT = 4096
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
-STATE = "session.json"
+STATE = TUI_STATE
 
 HOOKS = "hooks.jsonl"
 

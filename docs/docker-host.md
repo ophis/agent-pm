@@ -195,18 +195,43 @@ start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
 (`<generation>.result.json`: container, image and digest, client versions, update
 result, and when the broker's start began and ended),
-`host.json` (what the host knows of the session) and the hook supervisor's
-`supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
+`host.json` (what the host knows of the session, with its events path), the hook
+supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
+generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
+(its image is older than the current plugin's) and `rejected.jsonl`
+(one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
-A container left behind (for example after a crash) blocks a new start of its name.
-Remove it by hand:
+### Recovery
 
-```sh
-docker --host "unix://$HOME/.docker/run/docker.sock" ps -a --filter label=agent-pm.session=NAME
-docker --host "unix://$HOME/.docker/run/docker.sock" rm -f agent-pm-NAME-GENERATION
+Hook events travel from the container's hook stub to a relay daemon, which queues them
+in the container, then over `docker exec` to the host run supervisor, which runs
+`agent-pm-session hook` for each ([relay protocol](docker-relay-protocol.md)).
+
+```mermaid
+flowchart LR
+    S[hook stub] --> D[relay serve: queue]
+    D --> C[relay connect]
+    C --> P[run supervisor] --> H[agent-pm-session hook]
 ```
 
-`agent-pm-crew status` then shows the worker as ended.
+- **Supervisor or daemon gone** (killed, not a host reboot): the next `attach`, `read`,
+  `send`, `status`, `restart` or `close` of that worker starts both again and replays
+  the queue. An event is delivered once; one whose hook ran just before the supervisor
+  was killed may be delivered twice, never lost. `next-event` alone does not restart
+  them: it reads only the events file.
+- **Refused events**: an event for another generation or another session's dir, or a
+  malformed one, runs nothing and adds a `rejected.jsonl` line; so does a hook that
+  exits non-zero, which is not retried.
+- **Older image**: a container whose image is not the one the current plugin builds
+  (compared by image digest, after a plugin upgrade) gets no restart; the command
+  warns `restart it to upgrade`, and its `close` does not wait for its supervisor.
+- **Container gone** (Docker Desktop restart, `docker rm`): the worker shows `dead`;
+  `agent-pm-session resume NAME` starts a new container and continues the conversation.
+- **Leftover containers**: before every start and close, a container labelled for a
+  session is removed when that session has no `~/.agent-pm/tui/NAME/session.json`,
+  that file names another generation, or its tmux answers that the session is gone
+  (a close killed before removing it). A session starting or closing elsewhere is
+  skipped. Each running worker of another name costs one `docker exec` (at most 10 s).
 
 ## Risks
 
@@ -220,6 +245,14 @@ docker --host "unix://$HOME/.docker/run/docker.sock" rm -f agent-pm-NAME-GENERAT
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running
   container, each deleted with it.
+- Events queued in a container are lost with it; the conversation itself continues from
+  its transcript on `resume`.
+- While the relay daemon is gone and no command has restarted it, the hook stub gives up
+  after 10 s and that event is lost; `status` still shows the worker running, and its
+  replies are still read from the transcript.
+- The first supervisor restart a container needs after a plugin upgrade runs `build`,
+  which rebuilds the image before that command finishes; once per generation, as
+  `<generation>.stale` records an older image.
 - Claude may still show an onboarding prompt after an update; the Claude check above
   catches it.
 - A cwd that covers the agent-pm plugin directory lets the worker change what the next

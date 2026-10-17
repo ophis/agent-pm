@@ -38,6 +38,7 @@ from agent_pm.utils import (
 
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 TUI_DIR = f"{STATE}/tui"
+TUI_STATE = "session.json"
 
 
 def tui_lock(name: str) -> str:
