@@ -510,6 +510,7 @@ class FakeLinear:
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
+            "children": {"nodes": []},  # the fake has no sub-issues
             "history": {
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -771,6 +772,7 @@ OPS = {
     "promote.M_RELATE": FakeLinear._relate,
     "prune.Q_ISSUE": FakeLinear._issue,
     "prune.Q_FINISHED": FakeLinear._finished,
+    "prune.Q_CHILDREN": FakeLinear._issue,
     "prune.M_ARCHIVE": FakeLinear._archive,
     "related.Q_SEARCH": FakeLinear._related,
     "related.Q_SEARCH_IDS": FakeLinear._related,

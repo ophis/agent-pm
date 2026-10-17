@@ -9,7 +9,9 @@ configured one) reports agent files in (Delegate.checkouts not None):
   <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the default
   that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs only,
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
-- archives every finished issue of the team assigned to the pm or engineer role account.
+- archives every finished issue of the team assigned to the pm or engineer role account, unless a
+  sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs too):
+  skipped until each is finished or archived.
 
 For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
@@ -42,6 +44,7 @@ from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move, role_ids, team
+from agent_pm.linear_orchestrator.engine.router import DONE
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     ConfigError,
@@ -58,10 +61,14 @@ IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
 Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " + HISTORY + " } }"
+CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
+Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
 Q_FINISHED = (
     """query($t: ID, $s: [ID!], $a: [ID!], $c: String, $after: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
   nodes { id identifier """
+    + CHILDREN
+    + " "
     + HISTORY
     + """ }
   pageInfo { hasNextPage endCursor } } }"""
@@ -92,7 +99,9 @@ Prerequisites and effects:
   preserve the default branch and unpushed branches. No fetch is performed.
   Clones under work_dir/work or temporary directories are skipped.
   Archive team issues finished at least 2 hours ago and assigned to
-  pm/engineer role accounts; unknown finish times are skipped.
+  pm/engineer role accounts; unknown finish times are skipped, and so is an
+  issue with an unfinished sub-issue at any depth (archiving it archives its
+  sub-issues and theirs).
   For issues in any other state but Todo/In Progress, 7 days after both their
   latest move into it and their latest recorded run, delete their checkouts
   and temp files through their Delegate, keeping the other agent files and the
@@ -266,19 +275,41 @@ class Pruner:
             since = last_move(node["history"]["nodes"], finished)
             if since is None:
                 self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
-            elif self.now - since < QUARANTINE:
                 continue
+            if self.now - since < QUARANTINE:
+                continue
+            try:
+                open_child = self.open_descendant(node["children"]["nodes"])
+                if open_child is None and not self.dry:
+                    call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
+            except Unavailable:
+                raise
+            except (LinearError, OSError, subprocess.SubprocessError) as e:
+                self.error(ident, error=f"archive: {one_line(e)}")
+                continue
+            if open_child:
+                self.say(
+                    "prune-skip",
+                    ident,
+                    once=True,
+                    reason=f"archive: sub-issue {open_child} not finished",
+                )
             elif self.dry:
                 self.say("prune-plan", ident, what="archive")
             else:
-                try:
-                    call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
-                except Unavailable:
-                    raise
-                except (LinearError, OSError, subprocess.SubprocessError) as e:
-                    self.error(ident, error=f"archive: {one_line(e)}")
-                    continue
                 self.say("prune-archived", ident)
+
+    def open_descendant(self, children):
+        """The first unfinished one of children and, recursively, their sub-issues; None: all
+        finished or archived (Linear lists no archived sub-issue)."""
+        for child in children:
+            if child["state"]["type"] not in DONE:
+                return child["identifier"]
+        for child in children:
+            sub = self.gql(Q_CHILDREN, i=child["id"])["issue"]["children"]["nodes"]
+            if found := self.open_descendant(sub):
+                return found
+        return None
 
     def run(self):
         finished = self.team.finished

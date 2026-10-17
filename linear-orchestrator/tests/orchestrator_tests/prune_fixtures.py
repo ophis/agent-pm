@@ -48,8 +48,18 @@ ROLES = {
 TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED)
 
 
-def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
-    owners = owners or {}
+def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
+    """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
+    left out)."""
+    owners, children = owners or {}, children or {}
+
+    def subs(ident):
+        return {
+            "nodes": [
+                {"id": f"id-{c}", "identifier": c, "state": {"type": t}}
+                for c, t in children.get(ident, {}).items()
+            ]
+        }
 
     def history(ident):
         return {
@@ -74,7 +84,12 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             return {
                 "issues": {
                     "nodes": [
-                        {"id": f"id-{i}", "identifier": i, "history": history(i)}
+                        {
+                            "id": f"id-{i}",
+                            "identifier": i,
+                            "history": history(i),
+                            "children": subs(i),
+                        }
                         for i in hits[start : start + page]
                     ],
                     "pageInfo": {
@@ -83,6 +98,9 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
                     },
                 }
             }
+        if query == prune.Q_CHILDREN:
+            gql.subs.append(v["i"])
+            return {"issue": {"children": subs(v["i"].removeprefix("id-"))}}
         if query == prune.M_ARCHIVE:
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
@@ -95,7 +113,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             "issue": {"state": {"id": STATE_IDS[issues[v["i"]][0]]}, "history": history(v["i"])}
         }
 
-    gql.calls, gql.finished, gql.archived, gql.gone = [], [], [], set()
+    gql.calls, gql.finished, gql.archived, gql.gone, gql.subs = [], [], [], set(), []
     gql.issues = issues
     return gql
 
