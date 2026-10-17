@@ -28,7 +28,7 @@ from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 MANIFEST = "/Users/example/.agent-pm/docker-state/worker_1/0123456789abcdef0123456789abcdef.json"
 CONTAINER = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
-VOLUME = "agent-pm-crew-worker_1"
+VOLUME = "agent-pm-ws-worker_1"
 KEYS = broker.client_keys(REPO)
 CALLS = {
     "version_output": ("version", lambda b: b.version()),
@@ -123,7 +123,7 @@ class ResponseTest(Case):
         self.assertFalse(
             Broker(FakeBroker(success("workspace-rm-absent.json"))).workspace_rm(VOLUME)
         )
-        other = (0, json.dumps({"volume": "agent-pm-crew-other", "removed": True}), "")
+        other = (0, json.dumps({"volume": "agent-pm-ws-other", "removed": True}), "")
         with self.assertRaisesRegex(SessionError, "bad response to workspace-rm"):
             Broker(FakeBroker(other)).workspace_rm(VOLUME)
 
@@ -209,7 +209,7 @@ class ManifestTest(Case):
             generation="0" * 32,
             image="agent-pm-worker:" + "a" * 64,
             cwd="/work",
-            workspace="agent-pm-crew-w",
+            workspace="agent-pm-ws-w",
             home=("x_dir", "/home/x"),
             hook_path="/plugin/bin/agent-pm-session",
         )
@@ -221,7 +221,7 @@ class ManifestTest(Case):
                     "generation": "0" * 32,
                     "image": "agent-pm-worker:" + "a" * 64,
                     "cwd": "/work",
-                    "workspace": "agent-pm-crew-w",
+                    "workspace": "agent-pm-ws-w",
                     "x_dir": "/home/x",
                     "hook_path": "/plugin/bin/agent-pm-session",
                     "github": None,

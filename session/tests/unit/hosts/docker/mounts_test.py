@@ -1,11 +1,8 @@
-"""hosts/docker/mounts.py: the cwd rule Session checks before any broker call and the crew volume
-name; daemon.py: the account home, endpoint and docker command line.
-"""
+"""hosts/docker/mounts.py: the workspace volume name; daemon.py: the account home, endpoint and docker command line."""
 
 import os
 from unittest import mock
 
-from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts.docker import daemon, mounts
 
 from session.tests.case import Case
@@ -13,25 +10,9 @@ from session.tests.case import Case
 HOME = "/Users/example"
 
 
-class CwdTest(Case):
-    def test_a_cwd_outside_the_agent_pm_dir_passes_the_broker_judges_the_rest(self):
-        for cwd in (f"{HOME}/src/p", HOME, "/tmp/p", f"{HOME}/.agent-pmx", f"{HOME}/.ssh"):
-            with self.subTest(cwd=cwd):
-                mounts.check_cwd(cwd, HOME)
-
-    def test_role_run_cwd_names_unsupported_role_runs(self):
-        for cwd in (f"{HOME}/.agent-pm", f"{HOME}/.agent-pm/adhoc/x/agent"):
-            with (
-                self.subTest(cwd=cwd),
-                self.assertRaisesRegex(
-                    ConfigError,
-                    f"^Docker cwd {cwd}: role runs are not supported on the Docker Host yet$",
-                ),
-            ):
-                mounts.check_cwd(cwd, HOME)
-
-    def test_crew_volume(self):
-        self.assertEqual(mounts.crew_volume("worker_1"), "agent-pm-crew-worker_1")
+class VolumeTest(Case):
+    def test_workspace_volume(self):
+        self.assertEqual(mounts.workspace_volume("worker_1"), "agent-pm-ws-worker_1")
 
 
 class PathsTest(Case):

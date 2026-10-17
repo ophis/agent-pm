@@ -72,7 +72,6 @@ from agent_pm.session.hosts.docker.broker import (
 from agent_pm.session.hosts.docker.daemon import (
     CLEARED,
     RUN_TIMEOUT,
-    account_home,
     capped,
     container_name,
     docker_call,
@@ -81,11 +80,9 @@ from agent_pm.session.hosts.docker.daemon import (
 )
 from agent_pm.session.hosts.docker.mounts import (
     KIND_LABEL,
-    RUN_VOLUME,
     WORKSPACE_LABEL,
-    check_cwd,
-    crew_volume,
     state_dir,
+    workspace_volume,
 )
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.types import CommandView
@@ -554,16 +551,14 @@ class DockerHost(Host):
 
     def _reclaim(self) -> None:
         rows = self._listed(
-            "volume", "ls", "--filter", f"label={KIND_LABEL}=run", "--format", VOLUME_FORMAT
+            "volume", "ls", "--filter", f"label={KIND_LABEL}", "--format", VOLUME_FORMAT
         )
         if rows is None:
             return
         gone = [
             volume
             for volume, anchor in (row for row in rows if len(row) == 2)
-            if RUN_VOLUME.fullmatch(volume)
-            and os.path.isabs(anchor)
-            and not os.path.lexists(anchor)
+            if os.path.isabs(anchor) and not os.path.lexists(anchor)
         ]
         kept = os.path.expanduser(KEPT)
         if not gone and not os.path.isdir(kept):
@@ -693,7 +688,6 @@ class DockerHost(Host):
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
-        check_cwd(cwd, os.path.realpath(account_home()))
 
     def _image(
         self, name: str, *, max_age: int | None = REFRESH
@@ -706,14 +700,22 @@ class DockerHost(Host):
         root = plugin_root(hook)
         return hook, root, self.broker.build(root, max_age=max_age)
 
-    def _reset_workspace(self, name: str, volume: str) -> None:
-        """Deletes a new start's workspace volume, unless the broker's check finds unsaved work."""
+    def _move_workspace(self, name: str, volume: str, cwd: str) -> None:
+        """Deletes a new start's workspace volume mounted at another cwd, unless the broker's check
+        finds unsaved work there; one at `cwd`, or none, is kept for this start.
+        """
+        rows = self._listed(
+            "volume", "ls", "--filter", f"label={KIND_LABEL}", "--format", VOLUME_FORMAT
+        )
+        anchor = next((row[1] for row in rows or () if len(row) == 2 and row[0] == volume), cwd)
+        if anchor == cwd:
+            return
         try:
             self.broker.workspace_rm(volume)
         except BrokerError as error:
             if error.code == "workspace_dirty":
                 raise ConfigError(
-                    f"docker session {name}: {error.message}; or resume it: agent-pm-session resume {name}"
+                    f"docker session {name}: {error.message}; or start it in {anchor} again"
                 ) from error
             raise
 
@@ -776,15 +778,15 @@ class DockerHost(Host):
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
         laps("checks")
         hook, root, (image, digest) = self._image(name)
-        volume = crew_volume(name)
+        volume = workspace_volume(name)
+        cwd = os.path.realpath(launch.cwd)
         if resume == "0":
-            self._reset_workspace(name, volume)
+            self._move_workspace(name, volume, cwd)
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
         clients = client_keys(root)
-        cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
             manifest,

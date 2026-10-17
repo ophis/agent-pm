@@ -386,7 +386,7 @@ class StartTest(Base):
                 ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
                 "version",
                 ("build", REPO),
-                ("workspace_rm", "agent-pm-crew-w"),
+                ["volume", "ls", "--filter", "label=agent-pm.kind", "--format"],
                 ("start", manifest, client_keys(REPO)),
                 ["exec", "-d", CONTAINER, RELAY, "serve"],
                 ["exec", "-i", CONTAINER, "test", "-S"],
@@ -406,7 +406,7 @@ class StartTest(Base):
                     "generation": GEN,
                     "image": IMAGE,
                     "cwd": self.cwd,
-                    "workspace": "agent-pm-crew-w",
+                    "workspace": "agent-pm-ws-w",
                     "agent_dir": self.home_dir,
                     "hook_path": os.path.join(REPO, "bin", "agent-pm-session"),
                     "github": None,
@@ -532,25 +532,50 @@ class StartTest(Base):
             self.assertEqual(f.read(), "{}\n")
         manifest = os.path.join(self.state, f"{GEN}.json")
         self.assertIn(("start", manifest, client_keys(REPO)), self.order)
-        self.assertNotIn(("workspace_rm", "agent-pm-crew-w"), self.order)
+        self.assertNotIn(("workspace_rm", "agent-pm-ws-w"), self.order)
         with open(manifest) as f:
             found = json.load(f)
         self.assertEqual((found["cwd"], found["agent_dir"]), (self.cwd, self.home_dir))
         self.assertIsInstance(process, DockerTerminal)
 
-    def test_a_new_start_whose_workspace_cannot_be_reset_keeps_the_home_and_starts_nothing(self):
+    def test_a_new_start_keeps_its_volume_at_the_same_cwd(self):
+        for volumes in (
+            [],
+            [f"agent-pm-ws-w\t{self.cwd}"],
+            [f"agent-pm-ws-other\t{self.account}/x"],
+        ):
+            with self.subTest(volumes=volumes):
+                self.docker.volumes = volumes
+                self.start()
+                self.assertNotIn("workspace_rm", {step[0] for step in self.order})
+                self.order.clear()
+
+    def test_a_new_start_at_another_cwd_removes_the_old_volume_first(self):
+        old = os.path.join(self.account, "src", "old")
+        self.docker.volumes = [f"agent-pm-ws-w\t{old}"]
+        self.start()
+        self.assertLess(
+            self.order.index(("workspace_rm", "agent-pm-ws-w")),
+            [step[0] for step in self.order].index("start"),
+        )
+
+    def test_a_new_start_whose_old_volume_cannot_be_removed_keeps_the_home_and_starts_nothing(
+        self,
+    ):
+        old = os.path.join(self.account, "src", "old")
+        self.docker.volumes = [f"agent-pm-ws-w\t{old}"]
         os.makedirs(self.home_dir)
         with open(os.path.join(self.home_dir, "keep"), "w"):
             pass
         dirty = (
-            "Workspace agent-pm-crew-w has uncommitted or unpushed work in: src/o/a. Delete it"
-            " anyway with agent-pm-broker workspace-rm --volume agent-pm-crew-w --force."
+            "Workspace agent-pm-ws-w has uncommitted or unpushed work in: src/o/a. Delete it"
+            " anyway with agent-pm-broker workspace-rm --volume agent-pm-ws-w --force."
         )
         for error, raised, pattern in (
             (
                 BrokerError(12, "workspace_dirty", dirty, "not_needed", None),
                 ConfigError,
-                re.escape(f"docker session w: {dirty}; or resume it: agent-pm-session resume w"),
+                re.escape(f"docker session w: {dirty}; or start it in {old} again"),
             ),
             (
                 BrokerError(14, "workspace_failed", "check failed", "not_needed", None),
@@ -569,7 +594,7 @@ class StartTest(Base):
                 self.broker.failing = {"workspace_rm": error}
                 with self.assertRaisesRegex(raised, pattern):
                     self.start()
-                self.assertEqual(self.order[-1], ("workspace_rm", "agent-pm-crew-w"))
+                self.assertEqual(self.order[-1], ("workspace_rm", "agent-pm-ws-w"))
                 self.assertEqual(os.listdir(self.home_dir), ["keep"])
                 self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.json")))
                 self.popen_mock.assert_not_called()
@@ -703,7 +728,7 @@ class StartTest(Base):
                         "generation": GEN,
                         "image": IMAGE,
                         "image_digest": DIGEST,
-                        "workspace": {"volume": "agent-pm-crew-w", "path": self.cwd},
+                        "workspace": {"volume": "agent-pm-ws-w", "path": self.cwd},
                         "mounts": [{"path": self.home_dir, "rw": True}],
                         "credential": "agent-token",
                     },
@@ -713,7 +738,7 @@ class StartTest(Base):
                     stderr.getvalue().splitlines(),
                     [
                         f"{head} image {IMAGE} {DIGEST}",
-                        f"{head} workspace agent-pm-crew-w at {self.cwd} rw",
+                        f"{head} workspace agent-pm-ws-w at {self.cwd} rw",
                         f"{head} mounts {self.home_dir} rw",
                         f"{head} credential agent-token",
                     ],
@@ -757,13 +782,14 @@ class StartTest(Base):
             self.start()
         self.assertEqual({step[0] for step in self.order}, {"ps"})
 
-    def test_a_role_run_cwd_fails_before_any_docker_call(self):
+    def test_a_role_runs_cwd_starts_as_any_other(self):
         cwd = os.path.join(self.account, ".agent-pm", "adhoc", "x", "agent")
         os.makedirs(cwd)
-        self.launch = Launch(("agent",), cwd=cwd, env={})
-        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: role runs are not supported"):
-            self.start()
-        self.assertEqual(self.order, [])
+        self.launch = replace(self.launch, cwd=cwd)
+        self.start()
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            found = json.load(f)
+        self.assertEqual((found["cwd"], found["workspace"]), (cwd, "agent-pm-ws-w"))
 
     def test_failure_after_start_rolls_back(self):
         for replies in (
@@ -1085,7 +1111,7 @@ class CloseTest(Base):
                 ["exec", "-i", CONTAINER, "tmux"],
                 ("signal", 999, signal.SIGTERM),
                 ("close", CONTAINER),
-                ["volume", "ls", "--filter", "label=agent-pm.kind=run"],
+                ["volume", "ls", "--filter", "label=agent-pm.kind"],
             ],
         )
         self.assertEqual(self.docker.execs()[0], ["tmux", "has-session", "-t", "=w"])
@@ -1466,12 +1492,11 @@ class ReclaimTest(Base):
     def setUp(self):
         super().setUp()
         self.kept = os.path.join(self.home, ".agent-pm", "docker-state", ".kept")
-        self.docker.volumes = [
+        self.docker.volumes = [  # GONE: a protocol 4 run volume, reclaimed as any other
             f"{self.GONE}\t{self.account}/gone/TASK-1",
-            f"agent-pm-run-TASK-2-0123abcd\t{self.cwd}",
-            f"other\t{self.account}/gone/x",
-            "agent-pm-run-TASK-3-0123abcd\trelative",
-            "agent-pm-run-TASK-4-0123abcd",
+            f"agent-pm-ws-here\t{self.cwd}",
+            "agent-pm-ws-relative\trelative",
+            "agent-pm-ws-bare",
         ]
 
     def removed(self):
@@ -1488,7 +1513,7 @@ class ReclaimTest(Base):
         os.utime(path, (then, then))
         return path
 
-    def test_a_run_volume_whose_workdir_is_gone_is_removed_and_others_are_left(self):
+    def test_a_volume_whose_workspace_is_gone_is_removed_and_others_are_left(self):
         self.host.reclaim()
         self.assertEqual(self.removed(), [self.GONE])
         self.assertIn(
@@ -1496,7 +1521,7 @@ class ReclaimTest(Base):
                 "volume",
                 "ls",
                 "--filter",
-                "label=agent-pm.kind=run",
+                "label=agent-pm.kind",
                 "--format",
                 '{{.Name}}\t{{.Label "agent-pm.workspace"}}',
             ],
@@ -1509,11 +1534,11 @@ class ReclaimTest(Base):
         self.assertEqual(self.removed(), [])
 
     def test_each_reclaim_checks_at_most_one_volume(self):
-        self.docker.volumes.append(f"agent-pm-run-TASK-5-0123abcd\t{self.account}/gone/TASK-5")
+        self.docker.volumes.append(f"agent-pm-ws-gone\t{self.account}/gone/w")
         self.broker.failing = {
             "workspace_rm": BrokerError(14, "workspace_failed", "check failed", "not_needed", None)
         }
-        for want in (self.GONE, "agent-pm-run-TASK-5-0123abcd"):
+        for want in (self.GONE, "agent-pm-ws-gone"):
             self.order.clear()
             with self.assertLogs("session", "WARNING"):
                 self.host.reclaim()
@@ -1564,11 +1589,11 @@ class ReclaimTest(Base):
                 self.assertFalse(os.path.exists(marker))
 
     def test_a_marker_whose_volume_is_gone_is_deleted(self):
-        for name in ("agent-pm-run-old-0123abcd", "agent-pm-run-TASK-2-0123abcd"):
+        for name in ("agent-pm-run-old-0123abcd", "agent-pm-ws-here"):
             self.marker(name)
         self.docker.volumes = self.docker.volumes[1:]
         self.host.reclaim()
-        self.assertEqual(sorted(os.listdir(self.kept)), [".lock", "agent-pm-run-TASK-2-0123abcd"])
+        self.assertEqual(sorted(os.listdir(self.kept)), [".lock", "agent-pm-ws-here"])
         self.assertEqual(self.removed(), [])
 
     def test_a_held_lock_or_no_daemon_socket_skips_reclaim(self):

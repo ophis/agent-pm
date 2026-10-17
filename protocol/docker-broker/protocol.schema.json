@@ -92,7 +92,7 @@
     },
     "workspace": {
       "type": "string",
-      "pattern": "^agent-pm-(crew-[A-Za-z0-9_-]+|run-[A-Za-z0-9_.-]+-[0-9a-f]{8})$"
+      "pattern": "^agent-pm-ws-[A-Za-z0-9_-]+$"
     },
     "github": {
       "oneOf": [
@@ -220,7 +220,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "4"
+          "const": "5"
         }
       },
       "required": [

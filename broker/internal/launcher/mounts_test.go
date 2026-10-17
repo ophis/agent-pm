@@ -21,7 +21,7 @@ func mountHost(missing ...string) Host {
 }
 
 func baseManifest() Manifest {
-	return Manifest{Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project", Workspace: "agent-pm-crew-w",
+	return Manifest{Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project", Workspace: "agent-pm-ws-w",
 		ClaudeDir: home + "/.agent-pm/docker-state/w/claude", HookPath: "/usr/local/bin/agent-pm-session", HasHook: true}
 }
 
@@ -94,7 +94,7 @@ func TestMountCSVQuoting(t *testing.T) {
 	if got := bindMount("/a,b", `/c"d`); got != `type=bind,"source=/a,b","target=/c""d"` {
 		t.Fatal(got)
 	}
-	if got := volumeMount("agent-pm-crew-w", "/a,b", true); got != `type=volume,source=agent-pm-crew-w,"target=/a,b",readonly` {
+	if got := volumeMount("agent-pm-ws-w", "/a,b", true); got != `type=volume,source=agent-pm-ws-w,"target=/a,b",readonly` {
 		t.Fatal(got)
 	}
 	if got := volumeMount("v", "/w", false); got != `type=volume,source=v,target=/w` {

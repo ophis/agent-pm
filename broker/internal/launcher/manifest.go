@@ -19,19 +19,12 @@ type Manifest struct {
 	GitHubApp                                                    string // the App whose tokens the session gets; "": github null
 }
 
-// A workspace volume's labels: its Kind and its mount point.
+// A workspace volume's labels: its kind (always kind) and its mount point.
 const (
 	kindLabel      = "agent-pm.kind"
+	kind           = "ws"
 	workspaceLabel = "agent-pm.workspace"
 )
-
-// Kind is the workspace volume's kindLabel: run or crew.
-func (m Manifest) Kind() string {
-	if strings.HasPrefix(m.Workspace, "agent-pm-run-") {
-		return "run"
-	}
-	return "crew"
-}
 
 var (
 	namePattern       = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -39,7 +32,6 @@ var (
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	runVolumePattern  = regexp.MustCompile(`^agent-pm-run-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`)
 )
 
 func hasControl(s string) bool {
@@ -142,8 +134,8 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return reject("invalid generation")
 	case !imagePattern.MatchString(m.Image):
 		return reject("image must be agent-pm-worker:<64 hex>")
-	case m.Workspace != "agent-pm-crew-"+m.Name && !runVolumePattern.MatchString(m.Workspace):
-		return reject("workspace must be agent-pm-crew-<name> or agent-pm-run-<dir>-<8 hex>")
+	case m.Workspace != "agent-pm-ws-"+m.Name:
+		return reject("workspace must be agent-pm-ws-<name>")
 	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
 		return reject("paths must be absolute")
 	}
