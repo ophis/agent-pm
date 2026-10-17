@@ -5,7 +5,7 @@ from jsonschema import Draft202012Validator
 
 from tests.case import REPO, Case
 
-PROTOCOL = Path(REPO, "docs/docker-m1")
+PROTOCOL = Path(REPO, "protocol/docker-broker")
 
 
 class DockerM1Protocol(Case):

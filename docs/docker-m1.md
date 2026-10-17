@@ -12,7 +12,7 @@ tickets. Context: [TASK-545 M1 PRD](https://github.com/ophis/private_docs/blob/m
 
 ## Schemas and channels
 
-[protocol.schema.json](docker-m1/protocol.schema.json) uses
+[protocol.schema.json](../protocol/docker-broker/protocol.schema.json) uses
 [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/json-schema-validation).
 Each `#/$defs/<name>` below is a schema entry point; the document root validates a
 manifest. References are internal, so Go and Python can load it without network access.
@@ -147,7 +147,7 @@ invalid responses and inconsistent process/JSON exit codes as transport failure.
 
 ## Shared fixtures
 
-[fixtures/index.json](docker-m1/fixtures/index.json) inventories every literal `.json`
+[fixtures/index.json](../protocol/docker-broker/fixtures/index.json) inventories every literal `.json`
 sample beside it. Both implementations read these same files; no copied corpus.
 
 | Index field | Meaning |
