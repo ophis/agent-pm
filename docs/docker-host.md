@@ -69,7 +69,7 @@ signature's is its cdhash), not its path: after reinstalling it, rerun both `log
 | output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-engineer"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
-| rerun `login github agent-pm-engineer` | same output, no password question, no dialog |
+| rerun `login github agent-pm-engineer` | same output, no password question |
 
 ## Build
 
@@ -367,8 +367,9 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 
 - The token sits in every running container's tmpfs, readable by any process there;
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
-- Each reinstall changes the broker's ad-hoc code identity, so the keychain asks once to
-  allow it again.
+- Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
+  it read the Claude setup-token again, and each `login github` asks for the keychain
+  password once to trust it.
 - Every image build installs npm's latest Claude Code and Codex releases, trusting their
   vendors' npm packages.
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
