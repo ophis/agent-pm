@@ -325,6 +325,9 @@ class DockerHost(Host, Showable):
             )
         return {home.env: docker_home(name, home.dir)}
 
+    def _resume_argv(self, name: str) -> tuple[str, ...]:
+        return (COMMAND, "resume", name)
+
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         super().validate(name, launch, display=display)
         roots = [os.path.realpath(os.path.expanduser(root)) for root in self.roots]

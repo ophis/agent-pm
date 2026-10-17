@@ -227,6 +227,10 @@ class ClientEnvTest(Base):
         self.assertFalse(os.path.exists(self.state))
         self.assertFalse(self.host._inherit_env)
 
+    def test_resume_argv_names_the_session(self):
+        self.assertEqual(self.host._resume_argv("w"), ("agent-pm-session", "resume", "w"))
+        self.assertIsNone(Host._resume_argv(self.host, "w"))
+
     def test_client_env_points_at_the_home(self):
         self.assertEqual(
             self.host._client_env("w", "agent", HOME, resume=False),

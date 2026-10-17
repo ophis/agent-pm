@@ -62,6 +62,7 @@ from agent_pm.utils import (
     inode_lock,
     json_records,
     read_regular,
+    resume_command,
 )
 
 WORDS = {
@@ -511,6 +512,10 @@ class TuiRuntime(Runtime):
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
         )
+        if argv := host._resume_argv(name):
+            info = prepared.info
+            info = replace(info, resume=resume_command(info.cwd, {}, argv))
+            prepared = replace(prepared, info=info)
         metadata = {
             "sid": prepared.info.sid,
             "client": spec.client or "session",

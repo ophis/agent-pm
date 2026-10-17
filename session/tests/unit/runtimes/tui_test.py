@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -660,6 +661,21 @@ class StartTest(Base):
                     ("fake_dir", "fake", flag),
                 )
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
+
+    def test_a_host_resume_argv_replaces_the_clients_resume_command(self):
+        run = ScanTui(self.client)
+        run.launched = {"resume": "cd /w && agent-pm-session client-resume fake /w s"}
+        lines = []
+        self.start(run=run, record=lines.append)
+        self.assertEqual(lines[-1].resume, run.launched["resume"])
+        argv = ("agent-pm-session", "resume", NAME)
+        self.host.processes.clear()
+        with mock.patch.object(self.host, "_resume_argv", return_value=argv):
+            self.start(run=run, record=lines.append)
+        wanted = f"cd {shlex.quote(self.tmp)} && agent-pm-session resume {NAME}"
+        self.assertEqual(
+            (lines[-1].resume, tui.TuiRuntime.snapshot(NAME)["resume"]), (wanted, wanted)
+        )
 
     def test_a_host_that_inherits_no_env_launches_with_only_its_launch_env(self):
         self.host._inherit_env = False
