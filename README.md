@@ -1,6 +1,12 @@
-# agent-pm
+<div align="center">
+
+# <img src="docs/images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
+
+English · [中文](docs/readme/README.zh-CN.md) · [日本語](docs/readme/README.ja.md) · [한국어](docs/readme/README.ko.md) · [Español](docs/readme/README.es.md) · [Français](docs/readme/README.fr.md) · [Português](docs/readme/README.pt.md)
 
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
 
@@ -21,6 +27,12 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## Why agent-pm
+
+![Working with coding agents: one agent, many agents by hand, agent-pm](docs/images/compare.svg)
+
+One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
 
 ## Demo: one manager, many workers
 
