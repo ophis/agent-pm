@@ -1,11 +1,13 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFileKeychain(t *testing.T) {
@@ -15,7 +17,10 @@ func TestFileKeychain(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "throwaway.keychain-db")
 	security := func(args ...string) {
 		t.Helper()
-		if out, err := exec.Command("/usr/bin/security", args...).CombinedOutput(); err != nil {
+		// A keychain prompt on a headless runner fails the test instead of hanging the job.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "/usr/bin/security", args...).CombinedOutput(); err != nil {
 			t.Fatalf("security %q: %v %s", args, err, out)
 		}
 	}
@@ -40,6 +45,13 @@ func TestFileKeychain(t *testing.T) {
 		if got, err := k.Get(); err != nil || string(got) != token {
 			t.Fatalf("Get %q %v, want %q", got, err, token)
 		}
+	}
+	security("delete-generic-password", "-s", "agent-pm-claude", "-a", "setup-token", path)
+	if err := k.Exists(); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted item: Exists %v", err)
+	}
+	if _, err := k.Get(); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted item: Get %v", err)
 	}
 	security("delete-keychain", path)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
