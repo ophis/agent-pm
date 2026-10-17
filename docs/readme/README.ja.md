@@ -36,6 +36,22 @@ flowchart LR
 
 エージェント 1 つでは待たされます。複数のエージェントを手作業で回すと、すべてのプロンプト、チェック、承認があなたを経由します。agent-pm では manager と話すだけで、manager が worker を起動・監視し、報告します。
 
+## agent と働く 5 つの level
+
+コーディング agent との協働ははしごのようなものです。各 level は下の level の上に新しいエンジニアリングを積み重ね、肝心なのは問題に合った level を選ぶことです。
+
+![agent と働く 5 つの level：Drive、Equip、Systematize、Orchestrate、Master。agent-pm は 4 と 5 の間](../images/levels.svg)
+
+| Level | 分野 | 内容 |
+|---|---|---|
+| 1. Drive | prompt engineering と context engineering | 対話的な prompting、context の管理、どの仕事にどのモデルを使うかの判断。 |
+| 2. Equip | tools、skills、MCP | agent にツールを与え、外の世界（ファイル、API、ブラウザ、MCP server）に手を伸ばして操作させる。ただし権限と sandbox の範囲内で。 |
+| 3. Systematize | state engineering | 1 つの workflow を状態機械として回す：決まったステージ、リトライ、冪等なステップ、引き継ぎ。 |
+| 4. Orchestrate | loop engineering | 複数の agent：fan-out、planner と verifier、ルーティング、並行数と quota の上限。 |
+| 5. Master | environment engineering | ガードレールと agent-oriented な環境：人間ではなく agent のために作ったツール、チェック、検証で、いちばん楽な道が正しい道になるようにする（Lauren Tan の考え方）。 |
+
+まだ level 3 に届いていない？[autopilot](https://github.com/ophis/claude-autopilot) をどうぞ。少なくともそこまでは連れて行ってくれます。agent-pm の各層（冒頭の表）はさらに上へ登ります。Session は agent の対話を回し、手を動かせる host を与えます（level 1–2）。Delegate は 1 つの role を 1 つの task でチェック付きの workflow として回します（3）。Linear orchestrator とその上の manager は複数の agent を調整します（4 と 5 の間）。そこにあなたが上に立ち、環境、境界、関門を決めれば Master です。ただし agent-pm の検証はまだ少し手薄です。目標は level 5、そしてその先です。
+
 ## デモ：1 つの manager、複数の worker
 
 ボードを使わずに、1 つのエージェント（manager）と話すだけで agent-pm を動かせます。`ctmux <name>` でその session を開き、Claude Code か Codex を起動して `/agent-pm:manage` を呼び出します。普通の言葉で仕事を伝えると、task ごとに worker を起動し、イベントを監視し、pull request をチェックして報告します。
