@@ -33,6 +33,50 @@ HOOK = os.path.join(SRC["session"], "agent_pm", "session", "runtimes", "tui_hook
 ROOTS = (SRC["session"], SRC["utils"])
 
 
+class Append(Case):
+    """append's hooks.jsonl: one record per write, rotated to hooks.jsonl.1 past HOOKS_MAX."""
+
+    def setUp(self):
+        self.path = os.path.join(self.home, tui_hook.HOOKS)
+        self.rotated = os.path.join(self.home, tui_hook.ROTATED)
+        patch = unittest.mock.patch.object(tui_hook, "HOOKS_MAX", 64)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def lines(self, path):
+        with open(path, "rb") as f:
+            return [json.loads(line)["n"] for line in f.read().splitlines()]
+
+    def test_a_record_past_the_cap_starts_a_new_file_and_the_old_becomes_dot_1(self):
+        for n in range(4):
+            tui_hook.append(self.path, {"n": n, "pad": "x" * 10})
+        self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([0, 1], [2, 3]))
+        for n in range(4, 7):
+            tui_hook.append(self.path, {"n": n, "pad": "x" * 10})
+        self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([4, 5], [6]))
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+
+    def test_one_record_over_the_cap_still_goes_to_an_empty_file(self):
+        tui_hook.append(self.path, {"n": 0, "pad": "x" * 100})
+        self.assertEqual((self.lines(self.path), os.path.exists(self.rotated)), ([0], False))
+        tui_hook.append(self.path, {"n": 1})
+        self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([0], [1]))
+
+    def test_a_writer_whose_file_was_rotated_while_it_waited_writes_the_new_one(self):
+        tui_hook.append(self.path, {"n": 0})
+        flock, rotated = fcntl.flock, []
+
+        def rotate_first(fd, operation):
+            if not rotated:
+                rotated.append(True)
+                os.replace(self.path, self.rotated)
+            flock(fd, operation)
+
+        with unittest.mock.patch("fcntl.flock", rotate_first):
+            tui_hook.append(self.path, {"n": 1})
+        self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([0], [1]))
+
+
 class InProcess(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

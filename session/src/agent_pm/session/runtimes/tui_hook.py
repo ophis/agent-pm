@@ -39,6 +39,10 @@ STATE = "session.json"
 
 HOOKS = "hooks.jsonl"
 
+ROTATED = HOOKS + ".1"
+
+HOOKS_MAX = 1 << 20  # bytes of hooks.jsonl, then it becomes ROTATED
+
 
 def _abs(value) -> bool:
     return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
@@ -280,18 +284,32 @@ def cut(value):
 
 
 def append(path: str, record: dict) -> None:
-    """One write under an exclusive flock to a regular file, created 0600."""
+    """One write under an exclusive flock to a regular file, created 0600, still at `path` once
+    locked; a non-empty file the line would take past HOOKS_MAX first becomes ROTATED (`path`.1).
+    """
     line = (json.dumps(record) + "\n").encode()
     try:
-        # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o600)
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise HookError(f"{path}: not a regular file")
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            written = os.write(fd, line)
-        finally:
-            os.close(fd)
+        while True:
+            # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o600)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise HookError(f"{path}: not a regular file")
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                opened = os.fstat(fd)
+                try:
+                    current = os.path.samestat(opened, os.stat(path))
+                except FileNotFoundError:
+                    current = False
+                if not current:
+                    continue
+                if opened.st_size and opened.st_size + len(line) > HOOKS_MAX:
+                    os.replace(path, path + ".1")
+                    continue
+                written = os.write(fd, line)
+                break
+            finally:
+                os.close(fd)
     except OSError as e:
         raise HookError(f"{path}: {e.strerror}") from None
     if written != len(line):

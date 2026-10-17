@@ -2118,16 +2118,44 @@ class LockTest(Base):
 
 
 class StoreTest(Base):
-    def test_records_are_whole_lines_from_an_offset_and_the_offset_past_them(self):
+    def test_records_are_whole_lines_from_a_cursor_and_the_cursor_past_them(self):
         store = tui.TuiStore.attach(NAME, host=self.host)
-        self.assertEqual(store.records(0), ([], 0))
+        self.assertEqual(store.records(None), ([], (None, 0)))
         os.makedirs(self.dir)
         first = (json.dumps(record("tool", tool="t")) + "\n").encode()
         self.append(first, b"bad\n", record("stop"), b'{"label": "ask"')
-        found, end = store.records(0)
-        self.assertEqual(found, [("tool", {"tool": "t"}), ("stop", {})])
-        self.assertEqual(store.records(len(first)), ([("stop", {})], end))
-        self.assertEqual(store.records(end), ([], end))
+        found, (ino, end) = store.records(None)
+        self.assertEqual((found, ino), ([("tool", {"tool": "t"}), ("stop", {})], self.ino()))
+        self.assertEqual(store.records((ino, len(first))), ([("stop", {})], (ino, end)))
+        self.assertEqual(store.records((ino, end)), ([], (ino, end)))
+
+    def ino(self, path=None):
+        return os.stat(path or self.hooks).st_ino
+
+    def test_a_cursor_follows_a_rotation_reading_each_record_once(self):
+        store = tui.TuiStore.attach(NAME, host=self.host)
+        os.makedirs(self.dir)
+        self.append(record("a"))
+        _, cursor = store.records(None)
+        self.append(record("b"))
+        os.replace(self.hooks, f"{self.hooks}.1")
+        self.append(record("c"))
+        found, cursor = store.records(cursor)
+        self.assertEqual(([label for label, _ in found], cursor[0]), (["b", "c"], self.ino()))
+        self.assertEqual(store.records(cursor), ([], cursor))
+
+    def test_attach_replays_the_rotated_file_then_the_current_one_once(self):
+        store = tui.TuiStore.attach(NAME, host=self.host)
+        os.makedirs(self.dir)
+        self.append(record("a"))
+        os.replace(self.hooks, f"{self.hooks}.1")
+        self.append(record("b"))
+        found, _ = store.records(None)
+        self.assertEqual([label for label, _ in found], ["a", "b"])
+        os.unlink(f"{self.hooks}.1")
+        os.link(self.hooks, f"{self.hooks}.1")
+        found, _ = store.records(None)
+        self.assertEqual([label for label, _ in found], ["b"])
 
 
 class TmuxErrorTest(TmuxBase):
