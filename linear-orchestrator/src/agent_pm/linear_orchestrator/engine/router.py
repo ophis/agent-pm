@@ -553,7 +553,6 @@ class Board:
 
     def preview_resume(self, issue, sid):
         if self.dry:
-            self.gql(Q_RECHECK, i=issue["id"])
             self.say(
                 "preview",
                 issue["identifier"],

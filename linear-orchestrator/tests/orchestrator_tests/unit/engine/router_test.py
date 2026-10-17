@@ -2298,7 +2298,6 @@ class ScheduledUsageGates(TickBase):
         said = "\n".join(self.said())
         self.assertIn("client=a client_source=pinned", said)
         self.assertNotIn("would comment", said)
-        self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-1"])
         self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
 
     def test_recorded_client_exhaustion_blocks_despite_an_available_new_default(self):
@@ -3554,7 +3553,7 @@ class ExplicitIssueRuns(TickBase):
                 )
                 self.assertEqual(
                     [q for q, _ in fake.queries if q == RECHECK],
-                    [RECHECK] if name in ("todo", "resume") else [],
+                    [RECHECK] if name == "todo" else [],
                 )
 
     def test_todo_not_claimable_starts_nothing(self):
