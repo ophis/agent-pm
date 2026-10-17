@@ -115,6 +115,12 @@ class ResponseTest(Case):
         )
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
 
+    def test_build_passes_a_max_age(self):
+        fake = FakeBroker(success("build-cached.json"))
+        Broker(fake).build("/opt/agent-pm", max_age=broker.REFRESH)
+        self.assertEqual(fake.calls, [[BROKER, *data("build-input-max-age.json")["argv"]]])
+        self.assertEqual(broker.REFRESH, 7 * 24 * 3600)
+
     def test_build_progress_before_the_error_object_is_not_the_error(self):
         progress = "#5 [2/3] RUN apt-get purge -y sudo\n#5 ERROR: process exited 1\n"
         rc, _, err = failure("error-build_failed.json")

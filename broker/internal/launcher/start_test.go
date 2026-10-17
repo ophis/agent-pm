@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/fixtures"
@@ -65,7 +66,7 @@ func (w *world) docker() *fakeDocker {
 			if w.imageMissing {
 				return nil, noImage
 			}
-			return inspectJSON(digest, w.labels), nil
+			return inspectJSON(digest, w.labels, time.Time{}), nil
 		case "ps --all", "ps --filter":
 			return []byte(w.running), nil
 		case "inspect --format":

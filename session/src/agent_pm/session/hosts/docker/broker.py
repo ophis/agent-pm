@@ -23,6 +23,9 @@ PROTOCOL = "3"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
+REFRESH = (
+    7 * 24 * 3600
+)  # seconds: a start rebuilds an older image, which installs the latest clients
 GRACE = 5  # for a broker whose pipes closed by the deadline to be reaped
 
 TEXT = re.compile(r"[^\x00-\x1f\x7f]+")
@@ -208,8 +211,11 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def build(self, package: str) -> tuple[str, str]:
-        """`package`'s image tag and digest."""
+    def build(self, package: str, *, max_age: int | None = None) -> tuple[str, str]:
+        """`package`'s image tag and digest; `max_age`: rebuild an image built more than that many
+        seconds ago.
+        """
+        age = () if max_age is None else ("--max-age", str(max_age))
         found = self._parsed(
             "build",
             lambda d: (
@@ -220,6 +226,7 @@ class Broker:
             ),
             "--agent-pm",
             package,
+            *age,
         )
         return found["image"], found["digest"]
 

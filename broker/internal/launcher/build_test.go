@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -49,8 +50,8 @@ func putFile(t *testing.T, path, text string) {
 	}
 }
 
-func inspectJSON(id string, labels map[string]string) []byte {
-	data, _ := json.Marshal([]map[string]any{{"Id": id, "Config": map[string]any{"Labels": labels}}})
+func inspectJSON(id string, labels map[string]string, created time.Time) []byte {
+	data, _ := json.Marshal([]map[string]any{{"Id": id, "Created": created, "Config": map[string]any{"Labels": labels}}})
 	return data
 }
 
@@ -100,10 +101,12 @@ type buildEnv struct {
 	built     map[string]map[string]string
 	probe     string
 	failStage string
-	// images answers image ls, KEY standing for the built key; containers and used answer container ls and inspect.
-	images, containers, used string
-	listErr, rmErr           error
-	progress                 strings.Builder
+	// images answers image ls, KEY standing for the built key, and dangling its untagged listing;
+	// containers and used answer container ls and inspect.
+	images, dangling, containers, used string
+	age                                time.Duration // of every inspected image
+	listErr, rmErr                     error
+	progress                           strings.Builder
 }
 
 func newBuildEnv(t *testing.T) *buildEnv {
@@ -147,6 +150,9 @@ func newBuildEnv(t *testing.T) *buildEnv {
 		case "image":
 			switch args[1] {
 			case "ls":
+				if slices.Contains(args, "--filter") {
+					return []byte(e.dangling), nil
+				}
 				return []byte(strings.ReplaceAll(e.images, "KEY", e.key)), nil
 			case "rm":
 				return nil, e.rmErr
@@ -155,7 +161,7 @@ func newBuildEnv(t *testing.T) *buildEnv {
 			if !ok {
 				return nil, noImage
 			}
-			return inspectJSON("sha256:"+strings.Repeat("a", 64), labels), nil
+			return inspectJSON("sha256:"+strings.Repeat("a", 64), labels, time.Now().Add(-e.age)), nil
 		case "container":
 			if args[1] == "ls" {
 				return []byte(e.containers), e.listErr
@@ -171,15 +177,19 @@ func (e *buildEnv) host() Host { return Host{Home: e.home, Docker: e.fake, Progr
 
 func TestBuildCacheAndStages(t *testing.T) {
 	e := newBuildEnv(t)
-	first, err := e.host().Build(context.Background(), e.pkg)
+	first, err := e.host().Build(context.Background(), e.pkg, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !first.Rebuilt || first.Image != "agent-pm-worker:"+e.key || first.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("%+v", first)
 	}
-	if got := e.fake.verbs(); !slices.Equal(got, []string{"image inspect", "build --progress=plain", "run --rm", "build --progress=plain", "image inspect", "container ls", "image ls"}) {
+	if got := e.fake.verbs(); !slices.Equal(got, []string{"image inspect", "build --progress=plain", "run --rm", "build --progress=plain", "image inspect", "container ls", "image ls", "image ls"}) {
 		t.Fatalf("%q", got)
+	}
+	stage1 := e.fake.calls[1]
+	if want := []string{"build", "--progress=plain", "--no-cache", "--label", "agent-pm.key=" + e.key, "--tag", "agent-pm-user:" + e.key}; !slices.Equal(stage1[:len(want)], want) || len(stage1) != len(want)+1 {
+		t.Fatalf("%q", stage1)
 	}
 	probe := e.fake.calls[2]
 	wantProbe := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--entrypoint", "/bin/sh", "agent-pm-user:" + e.key, "-c", "id -u agent && id -g agent"}
@@ -199,17 +209,17 @@ func TestBuildCacheAndStages(t *testing.T) {
 		}
 	}
 	calls := len(e.fake.calls)
-	second, err := e.host().Build(context.Background(), e.pkg)
+	second, err := e.host().Build(context.Background(), e.pkg, -1)
 	if err != nil || second.Rebuilt || second.Image != first.Image || len(e.fake.calls) != calls+1 {
 		t.Fatalf("%+v %v %q", second, err, e.fake.verbs())
 	}
 	putFile(t, filepath.Join(e.pkg, "session/src/sample.py"), "changed")
-	third, err := e.host().Build(context.Background(), e.pkg)
+	third, err := e.host().Build(context.Background(), e.pkg, -1)
 	if err != nil || !third.Rebuilt || third.Image == first.Image {
 		t.Fatalf("%+v %v", third, err)
 	}
 	putFile(t, filepath.Join(e.home, ".agent-pm/docker/worker/Dockerfile"), "FROM other")
-	fourth, err := e.host().Build(context.Background(), e.pkg)
+	fourth, err := e.host().Build(context.Background(), e.pkg, -1)
 	if err != nil || !fourth.Rebuilt || fourth.Image == third.Image {
 		t.Fatalf("%+v %v", fourth, err)
 	}
@@ -236,7 +246,7 @@ func TestBuildFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newBuildEnv(t)
 			mutate(e)
-			_, err := e.host().Build(context.Background(), e.pkg)
+			_, err := e.host().Build(context.Background(), e.pkg, -1)
 			if code(err) != protocol.BuildFailed {
 				t.Fatal(err)
 			}
@@ -253,18 +263,18 @@ func TestBuildFailures(t *testing.T) {
 		inner := e.fake.respond
 		e.fake.respond = func(args []string) ([]byte, error) {
 			if args[0] == "image" && len(e.built) == 2 {
-				return inspectJSON("sha256:"+strings.Repeat("b", 64), map[string]string{"agent-pm.version": "9.9.9"}), nil
+				return inspectJSON("sha256:"+strings.Repeat("b", 64), map[string]string{"agent-pm.version": "9.9.9"}, time.Time{}), nil
 			}
 			return inner(args)
 		}
-		if _, err := e.host().Build(context.Background(), e.pkg); code(err) != protocol.BuildFailed {
+		if _, err := e.host().Build(context.Background(), e.pkg, -1); code(err) != protocol.BuildFailed {
 			t.Fatal(err)
 		}
 	})
 	t.Run("unreachable", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.fake.respond = func([]string) ([]byte, error) { return nil, docker.ErrUnreachable }
-		if _, err := e.host().Build(context.Background(), e.pkg); code(err) != protocol.DockerUnreachable {
+		if _, err := e.host().Build(context.Background(), e.pkg, -1); code(err) != protocol.DockerUnreachable {
 			t.Fatal(err)
 		}
 	})
@@ -307,7 +317,7 @@ func TestWorkerImageHasTheRelay(t *testing.T) {
 func TestBuildContextOutsideTMPDIR(t *testing.T) {
 	e := newBuildEnv(t)
 	t.Setenv("TMPDIR", t.TempDir())
-	if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(e.home, ".agent-pm/docker/tmp") + "/"
@@ -338,7 +348,7 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 	t.Run("keeps the current pair and images containers use", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.containers, e.used = listing, "c1\nc2\n", id("e")+"\n"+id("0")+"\n"
-		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
 			t.Fatal(err)
 		}
 		want := []string{"agent-pm-worker:" + old, "agent-pm-user:" + old, "agent-pm-user:" + kept}
@@ -353,14 +363,14 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 			t.Fatalf("%q", got)
 		}
 		calls := len(e.fake.calls)
-		if again, err := e.host().Build(context.Background(), e.pkg); err != nil || again.Rebuilt || len(e.fake.calls) != calls+1 {
+		if again, err := e.host().Build(context.Background(), e.pkg, -1); err != nil || again.Rebuilt || len(e.fake.calls) != calls+1 {
 			t.Fatalf("a reused image pruned: %v %q", err, e.fake.verbs()[calls:])
 		}
 	})
 	t.Run("a failed removal keeps the image", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.rmErr = listing, &docker.CommandError{Exit: 1, Stderr: "Error response from daemon: conflict: image is in use"}
-		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(e.progress.String(), "agent-pm-broker: kept agent-pm-worker:"+old+": Error response from daemon: conflict: image is in use\n") {
@@ -370,11 +380,68 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 	t.Run("unknown containers keep every image", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.listErr = listing, &docker.CommandError{Exit: 1, Stderr: "boom"}
-		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
 			t.Fatal(err)
 		}
 		if got := removed(e); got != nil || e.progress.String() != "agent-pm-broker: kept older images: cannot list containers: boom\n" {
 			t.Fatalf("%q %q", got, e.progress.String())
 		}
 	})
+}
+
+func TestBuildRefreshesAnOldImage(t *testing.T) {
+	const week = 7 * 24 * time.Hour
+	e := newBuildEnv(t)
+	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		maxAge  time.Duration
+		rebuilt bool
+	}{
+		{"young", 6 * 24 * time.Hour, week, false},
+		{"old", 8 * 24 * time.Hour, week, true},
+		{"any age", 400 * 24 * time.Hour, -1, false},
+		{"forced", time.Minute, 0, true},
+		{"built in the future", -time.Hour, week, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e.age = tc.age
+			calls := len(e.fake.calls)
+			got, err := e.host().Build(context.Background(), e.pkg, tc.maxAge)
+			if err != nil || got.Rebuilt != tc.rebuilt || got.Image != "agent-pm-worker:"+e.key {
+				t.Fatalf("%+v %v", got, err)
+			}
+			if !tc.rebuilt {
+				if len(e.fake.calls) != calls+1 {
+					t.Fatalf("%q", e.fake.verbs()[calls:])
+				}
+				return
+			}
+			if stage1 := e.fake.calls[calls+1]; stage1[0] != "build" || stage1[2] != "--no-cache" {
+				t.Fatalf("a refresh may reuse cached clients: %q", stage1)
+			}
+		})
+	}
+}
+
+func TestBuildRemovesUntaggedImages(t *testing.T) {
+	id := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	e := newBuildEnv(t)
+	e.dangling, e.containers, e.used = id("3")+"\n"+id("4")+"\n", "c1\n", id("4")+"\n"
+	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+		t.Fatal(err)
+	}
+	listing := e.fake.calls[len(e.fake.calls)-2]
+	if !slices.Equal(listing, []string{"image", "ls", "--quiet", "--no-trunc", "--filter", "dangling=true", "--filter", "label=agent-pm.key"}) {
+		t.Fatalf("%q", listing)
+	}
+	if rm := e.fake.calls[len(e.fake.calls)-1]; !slices.Equal(rm, []string{"image", "rm", id("3")}) {
+		t.Fatalf("%q", rm)
+	}
+	if got := e.progress.String(); got != "agent-pm-broker: removed "+id("3")+"\n" {
+		t.Fatalf("%q", got)
+	}
 }

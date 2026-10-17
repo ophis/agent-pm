@@ -22,7 +22,9 @@ sh "$PKG/broker/install.sh"
 It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
 freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
 ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
-To upgrade, rerun the same command; your Dockerfile is never overwritten.
+To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code and
+Codex upgrade with the image: a start rebuilds an image built 7 or more days ago, and
+[Build](#build) rebuilds it now.
 
 | Check | Expect |
 |---|---|
@@ -66,8 +68,18 @@ The first streams Docker's build progress to stderr, then prints
 same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
+Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
+latest Claude Code and Codex. To refresh them now:
+
+```sh
+"$B" build --agent-pm "$PKG" --max-age 0
+```
+
+`--max-age N` rebuilds an image built N or more seconds ago (`0`: always) under the same
+key; a start passes 604800 (7 days).
+
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
-images of older keys, keeping the new pair and any image a container (running or
+images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
 stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
 each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
 line; a kept image goes at a later rebuild once no container uses it. A reused image
@@ -79,6 +91,7 @@ removes nothing.
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
 | `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
+| `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
 
 ## Start
 
@@ -178,15 +191,15 @@ Session checks the same cwd rules first.
 
 Every start first runs a preflight: the client is Claude, the cwd exists and passes the
 mount rules, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds (its Docker progress streams to the starting
-command's stderr). `resume` runs it before it touches anything;
+[Install](#install)), and `build` succeeds, rebuilding an image built 7 or more days ago
+(its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
 broker's `start`, still before any container: the start fails with the broker's own
 `agent-pm-broker login claude` message and is not retried.
 
 `agent-pm-crew` waits up to 1920 s for a start or resume, as the build alone may take
-1800 s (the first start after an upgrade rebuilds the image), then sends SIGTERM and,
+1800 s (the first start after an upgrade, or once the image is 7 days old, rebuilds it), then sends SIGTERM and,
 60 s later, SIGKILL. From just before the broker's `start` until the client runs, a
 start holds SIGTERM, SIGINT and SIGHUP back (an ignored one stays ignored); on one it
 removes its container, then the signal takes effect. A start stopped after that leaves
@@ -212,7 +225,7 @@ start, kept by restart and resume), each generation's start manifest
 `host.json` (what the host knows of the session, with its events path), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
-(its image is older than the current plugin's) and `rejected.jsonl`
+(its image is no longer the current one) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
 Each new start writes the fresh Claude config dir a `settings.json` holding only `model`,
@@ -239,7 +252,7 @@ docker timing NAME GENERATION: checks 0.12 s
 
 | Line | Phase | Covers |
 |---|---|---|
-| `docker timing NAME` | `preflight` | cwd rules, broker `version` and `build`: a rebuild after an upgrade lands here |
+| `docker timing NAME` | `preflight` | cwd rules, broker `version` and `build`: a rebuild (after an upgrade, or of an image 7 days old) lands here |
 | `agent-pm-broker: start` | `preflight` | manifest, mount rules, setup-token present |
 | | `image` | the image check |
 | | `checks` | the nesting check and the container-name check |
@@ -282,7 +295,7 @@ flowchart LR
   malformed one, runs nothing and adds a `rejected.jsonl` line; so does a hook that
   exits non-zero, which is not retried.
 - **Older image**: a container whose image is not the one the current plugin builds
-  (compared by image digest, after a plugin upgrade) gets no restart; the command
+  (compared by image digest, after a plugin upgrade or a rebuild) gets no restart; the command
   warns `restart it to upgrade`, and its `close` does not wait for its supervisor.
 - **Container gone** (Docker Desktop restart, `docker rm`): the worker shows `dead`;
   `agent-pm-session resume NAME` starts a new container and continues the conversation.

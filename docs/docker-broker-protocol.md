@@ -8,7 +8,7 @@ broker installation/upgrade command supplied by TASK-559. It creates no containe
 
 The broker installs the hook stub, so this version also covers the stub's wire format.
 Protocol 2 marked the stub's switch to the [relay wire format](docker-relay-protocol.md);
-protocol 3 drops start's `update`: the clients come from the image.
+protocol 3 drops start's `update` (the clients come from the image) and adds build's `--max-age`.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -25,7 +25,7 @@ manifest. References are internal, so Go and Python can load it without network 
 | Invocation | Input definition | Success definition |
 |---|---|---|
 | `agent-pm-broker version` | `version_input` | `version_output` |
-| `agent-pm-broker build --agent-pm /absolute/package` | `build_input` | `build_output` |
+| `agent-pm-broker build --agent-pm /absolute/package [--max-age SECONDS]` | `build_input` | `build_output` |
 | `agent-pm-broker start --manifest /absolute/manifest.json` | `start_input` plus `manifest` for file contents | `start_output` |
 | `agent-pm-broker close --container <container>` | `close_input` | `close_output` |
 
@@ -92,7 +92,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 | Command | Fields and meaning |
 |---|---|
 | `version` | `protocol_version`: exact string `3` |
-| `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it |
+| `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
 

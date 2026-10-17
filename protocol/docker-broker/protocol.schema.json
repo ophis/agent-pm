@@ -206,10 +206,25 @@
             },
             {
               "$ref": "#/$defs/path"
+            },
+            {
+              "const": "--max-age"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]{1,9}$"
             }
           ],
           "items": false,
-          "minItems": 3
+          "minItems": 3,
+          "anyOf": [
+            {
+              "maxItems": 3
+            },
+            {
+              "minItems": 5
+            }
+          ]
         }
       },
       "required": [
