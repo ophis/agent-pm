@@ -22,13 +22,15 @@ sh "$PKG/broker/install.sh"
 It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
 freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
 ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
-To upgrade, rerun the same command; your Dockerfile is never overwritten.
+To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code and
+Codex upgrade with the image: a start rebuilds an image built 7 or more days ago, and
+[Build](#build) rebuilds it now.
 
 | Check | Expect |
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, flags include `runtime` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"2"}` |
+| `"$B" version` | `{"protocol_version":"3"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Configure
@@ -66,8 +68,20 @@ The first streams Docker's build progress to stderr, then prints
 same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
+Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
+latest Claude Code and Codex. To refresh them now:
+
+```sh
+"$B" build --agent-pm "$PKG" --max-age 0
+```
+
+`--max-age N` rebuilds an image built N or more seconds ago (`0`: always) under the same
+key; a start passes 604800 (7 days). When such a refresh fails (e.g. offline), `build`
+keeps the image, printing `agent-pm-broker: kept <image>: refreshing it failed: <reason>`;
+`--max-age 0` fails instead.
+
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
-images of older keys, keeping the new pair and any image a container (running or
+images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
 stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
 each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
 line; a kept image goes at a later rebuild once no container uses it. A reused image
@@ -79,6 +93,7 @@ removes nothing.
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
 | `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
+| `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
 
 ## Start
 
@@ -92,8 +107,8 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest`, the `clients` versions and
-`update` (`updated`, or `fallback` with a `reason`).
+It prints `container` (`C` below), `endpoint`, `image_digest` and the image's `clients`
+versions.
 
 | Check | Expect |
 |---|---|
@@ -116,10 +131,6 @@ trust prompt and answers one sentence.
 `touch /tmp/fake-docker-ran` first on `PATH`, `"$B" build --agent-pm "$PKG"` still
 reports `"rebuilt":false` and `/tmp/fake-docker-ran` does not exist. Restore
 `~/.docker/config.json` after.
-
-**Client update:** with the network off (Wi-Fi off), a new start still succeeds with
-`"update":{"status":"fallback","reason":"network",…}` and the image's versions in
-`clients`. With the network on, `clients.claude` is npm's latest Claude Code.
 
 ## Refusals
 
@@ -182,15 +193,15 @@ Session checks the same cwd rules first.
 
 Every start first runs a preflight: the client is Claude, the cwd exists and passes the
 mount rules, the broker answers `version` with the expected protocol (else it points to
-[Install](#install)), and `build` succeeds (its Docker progress streams to the starting
-command's stderr). `resume` runs it before it touches anything;
+[Install](#install)), and `build` succeeds, rebuilding an image built 7 or more days ago
+(its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
 broker's `start`, still before any container: the start fails with the broker's own
 `agent-pm-broker login claude` message and is not retried.
 
 `agent-pm-crew` waits up to 1920 s for a start or resume, as the build alone may take
-1800 s (the first start after an upgrade rebuilds the image), then sends SIGTERM and,
+1800 s (the first start after an upgrade, or once the image is 7 days old, rebuilds it), then sends SIGTERM and,
 60 s later, SIGKILL. From just before the broker's `start` until the client runs, a
 start holds SIGTERM, SIGINT and SIGHUP back (an ignored one stays ignored); on one it
 removes its container, then the signal takes effect. A start stopped after that leaves
@@ -211,13 +222,12 @@ token, and the broker reads only the manifest.
 `~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
 start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
-(`<generation>.result.json`: container, image and digest, client versions, update
-result, when the broker's start began and ended, and the [start timing](#start-timing)
+(`<generation>.result.json`: container, image and digest, client versions, when the broker's start began and ended, and the [start timing](#start-timing)
 `phases` and `launched_at`),
 `host.json` (what the host knows of the session, with its events path), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
-(its image is older than the current plugin's) and `rejected.jsonl`
+(its image is no longer the current one) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
 Each new start writes the fresh Claude config dir a `settings.json` holding only `model`,
@@ -244,13 +254,13 @@ docker timing NAME GENERATION: checks 0.12 s
 
 | Line | Phase | Covers |
 |---|---|---|
-| `docker timing NAME` | `preflight` | cwd rules, broker `version` and `build`: a rebuild after an upgrade lands here |
+| `docker timing NAME` | `preflight` | cwd rules, broker `version` and `build`: a rebuild (after an upgrade, or of an image 7 days old) lands here |
 | `agent-pm-broker: start` | `preflight` | manifest, mount rules, setup-token present |
 | | `image` | the image check |
 | | `checks` | the nesting check and the container-name check |
 | | `create` | `docker run`: the new container |
 | | `bootstrap` | Claude's bootstrap state and the hook stub |
-| | `update` | the client update in the container, a fallback included |
+| | `clients` | both clients' `--version` in the container |
 | | `credentials` | the token injection |
 | | `total` | the broker's whole `start` |
 | `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check, the client home |
@@ -287,7 +297,7 @@ flowchart LR
   malformed one, runs nothing and adds a `rejected.jsonl` line; so does a hook that
   exits non-zero, which is not retried.
 - **Older image**: a container whose image is not the one the current plugin builds
-  (compared by image digest, after a plugin upgrade) gets no restart; the command
+  (compared by image digest, after a plugin upgrade or a rebuild) gets no restart; the command
   warns `restart it to upgrade`, and its `close` does not wait for its supervisor.
 - **Container gone** (Docker Desktop restart, `docker rm`): the worker shows `dead`;
   `agent-pm-session resume NAME` starts a new container and continues the conversation.
@@ -303,8 +313,8 @@ flowchart LR
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
 - Each reinstall changes the broker's ad-hoc code identity, so the keychain asks once to
   allow it again.
-- Every start installs npm's latest Claude Code and Codex releases into the container,
-  trusting their vendors' npm packages.
+- Every image build installs npm's latest Claude Code and Codex releases, trusting their
+  vendors' npm packages.
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running
@@ -317,7 +327,7 @@ flowchart LR
 - The first supervisor restart a container needs after a plugin upgrade runs `build`,
   which rebuilds the image before that command finishes; once per generation, as
   `<generation>.stale` records an older image.
-- Claude may still show an onboarding prompt after an update; the Claude check above
+- Claude may still show an onboarding prompt after an image rebuild upgrades it; the Claude check above
   catches it.
 - A cwd that covers the agent-pm plugin directory lets the worker change what the next
   `build` copies into `/opt/agent-pm`.

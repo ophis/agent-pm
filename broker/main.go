@@ -10,8 +10,10 @@ import (
 	"os/signal"
 	"os/user"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
@@ -20,16 +22,18 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | build --agent-pm DIR | start --manifest FILE | close --container NAME"
+const usage = "usage: agent-pm-broker version | login claude | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
+var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
 
 // step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
 type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 
 type app struct {
-	build, start, close step
-	login               func(out io.Writer) error
+	build        func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error)
+	start, close step
+	login        func(out io.Writer) error
 }
 
 func main() {
@@ -77,8 +81,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	switch {
 	case command == "version" && len(args) == 1:
 		return emit(stdout, map[string]string{"protocol_version": protocol.Version})
-	case command == "build" && len(args) == 3 && args[1] == "--agent-pm" && isPath(args[2]):
-		s, arg = a.build, args[2]
+	case command == "build" && (len(args) == 3 || (len(args) == 5 && args[3] == "--max-age" && secondsPattern.MatchString(args[4]))) &&
+		args[1] == "--agent-pm" && isPath(args[2]):
+		maxAge := time.Duration(-1)
+		if len(args) == 5 {
+			n, _ := strconv.Atoi(args[4])
+			maxAge = time.Duration(n) * time.Second
+		}
+		s, arg = func(ctx context.Context, pkg string, progress io.Writer) (any, error) {
+			return a.build(ctx, pkg, maxAge, progress)
+		}, args[2]
 	case command == "start" && len(args) == 3 && args[1] == "--manifest" && isPath(args[2]):
 		s, arg = a.start, args[2]
 	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
@@ -132,8 +144,8 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 
 func system() app {
 	return app{
-		build: func(ctx context.Context, pkg string, progress io.Writer) (any, error) {
-			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg) })
+		build: func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error) {
+			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, maxAge) })
 		},
 		start: func(ctx context.Context, manifest string, progress io.Writer) (any, error) {
 			return withHost(progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })

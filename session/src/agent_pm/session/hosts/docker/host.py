@@ -61,6 +61,7 @@ from agent_pm.session.hosts.base import (
 from agent_pm.session.hosts.docker import hook as docker_hook
 from agent_pm.session.hosts.docker import supervisor as run_supervisor
 from agent_pm.session.hosts.docker.broker import (
+    REFRESH,
     RELAY,
     Broker,
     BrokerError,
@@ -559,15 +560,14 @@ class DockerHost(Host):
                 return True
             hook = None
             if not os.path.lexists(stale):
-                hook, _, (_, digest) = self._image(row.name)
+                hook, _, (_, digest) = self._image(row.name, max_age=None)
                 if _image_digest(row) != digest:
                     save(stale, digest)
             if hook is None or os.path.lexists(stale):
                 if row.name not in self._warned:
                     self._warned.add(row.name)
                     LOG.warning(
-                        "docker session %s runs an image from an older agent-pm;"
-                        " restart it to upgrade",
+                        "docker session %s runs an older image; restart it to upgrade",
                         row.name,
                     )
                 return False
@@ -622,14 +622,16 @@ class DockerHost(Host):
         roots = [os.path.realpath(os.path.expanduser(root)) for root in self.roots]
         check_cwd(cwd, roots, os.path.realpath(account_home()))
 
-    def _image(self, name: str) -> tuple[str, str, tuple[str, str]]:
-        """(the hook path, the plugin root, the built image and digest)."""
+    def _image(
+        self, name: str, *, max_age: int | None = REFRESH
+    ) -> tuple[str, str, tuple[str, str]]:
+        """(the hook path, the plugin root, the built image and digest); `max_age`: Broker.build's."""
         hook = command_path(COMMAND)
         if hook is None:
             raise ConfigError(f"docker session {name}: {COMMAND} is not on PATH (its hooks run it)")
         self.broker.version()
         root = plugin_root(hook)
-        return hook, root, self.broker.build(root)
+        return hook, root, self.broker.build(root, max_age=max_age)
 
     def detach(self, name, launch, *, display=None, events=None, record=None) -> Process:
         raise SessionError(f"detach {name}: the Docker Host runs only terminal sessions")
@@ -788,7 +790,6 @@ class DockerHost(Host):
                 "image": image,
                 "image_digest": started.image_digest,
                 "client_versions": dict(started.clients),
-                "update": dict(started.update),
                 "started_at": began,
                 "ended_at": ended,
                 "phases": laps.phases,

@@ -33,7 +33,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker.broker import RELAY, BrokerError, client_keys
+from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import DockerHost, DockerTerminal
 from agent_pm.session.hosts.docker.relay import SOCKET
@@ -117,15 +117,16 @@ class FakeBroker:
 
     def __init__(self, order, started):
         self.order, self.started, self.error, self.closed = order, started, None, []
-        self.failing = {}
+        self.failing, self.max_ages = {}, []
 
     def version(self):
         self.order.append("version")
         if "version" in self.failing:
             raise self.failing["version"]
 
-    def build(self, package):
+    def build(self, package, *, max_age=None):
         self.order.append(("build", package))
+        self.max_ages.append(max_age)
         if "build" in self.failing:
             raise self.failing["build"]
         return IMAGE, DIGEST
@@ -155,7 +156,7 @@ class Base(Case):
         os.makedirs(self.cwd)
         self.order = []
         self.docker = FakeDocker(self.ep, self.order)
-        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, {"status": "updated"})
+        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {})
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
@@ -383,6 +384,7 @@ class StartTest(Base):
                 ["exec", "-i", CONTAINER, "tmux", "display-message"],
             ],
         )
+        self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertEqual(os.listdir(self.home_dir), [])
         self.assertEqual(stat.S_IMODE(os.stat(self.home_dir).st_mode), 0o700)
         with open(manifest) as f:
@@ -575,9 +577,7 @@ class StartTest(Base):
                 self.assertEqual(os.listdir(self.home_dir), ["keep"])
 
     def test_each_start_writes_its_generation_result(self):
-        self.broker.started = Started(
-            CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"}, {"status": "updated"}
-        )
+        self.broker.started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"})
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
             with self.subTest(resume=resume):
@@ -597,7 +597,6 @@ class StartTest(Base):
                         "image": IMAGE,
                         "image_digest": "sha256:" + "b" * 64,
                         "client_versions": {"claude": "2.1.0"},
-                        "update": {"status": "updated"},
                     },
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
@@ -866,6 +865,7 @@ class PreflightTest(Base):
     def test_preflight_runs_version_then_build_and_writes_nothing(self):
         self.validate()
         self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
 
     def test_a_failed_handshake_stops_before_build(self):
@@ -1239,14 +1239,12 @@ class RecoverTest(Base):
                     builds = self.order.count(("build", REPO))
                     self.host.attach("w")
                 self.assertEqual(self.order.count(("build", REPO)), builds)
+                self.assertEqual(self.broker.max_ages[-1], None)
                 with open(stale) as f:
                     self.assertEqual(f.read(), DIGEST)
                 self.assertEqual(
                     logs.output,
-                    [
-                        "WARNING:session:docker session w runs an image from an older agent-pm;"
-                        " restart it to upgrade"
-                    ],
+                    ["WARNING:session:docker session w runs an older image; restart it to upgrade"],
                 )
                 self.assertFalse(process.current)
                 self.assertEqual((self.serves(), self.spawned), ([], []))
@@ -1260,8 +1258,9 @@ class RecoverTest(Base):
     def test_recovery_builds_before_taking_the_lock_and_a_lock_error_only_logs(self):
         held = []
         build = self.broker.build
-        self.broker.build = lambda package: (
-            held.append(os.path.exists(self.lock) and not _free(self.lock)) or build(package)
+        self.broker.build = lambda package, **kwargs: (
+            held.append(os.path.exists(self.lock) and not _free(self.lock))
+            or build(package, **kwargs)
         )
         self.host.attach("w")
         self.assertEqual((held, len(self.spawned)), ([False], 1))
