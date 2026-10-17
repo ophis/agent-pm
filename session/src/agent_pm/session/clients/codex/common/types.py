@@ -45,6 +45,7 @@ class SessionState:
     snapshot: Snapshot
     writable_roots: tuple[str, ...]
     native_id: str | None = None
+    installations: tuple[str, ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "writable_roots", tuple(self.writable_roots))

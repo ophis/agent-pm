@@ -13,6 +13,7 @@ from delegate.tests.integration.cli import ASKING, DONE, SID
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux
 from session.tests.installation import UpgradeCase
+from session.tests.integration.clients.codex.fake_codex import message
 
 
 class HarnessUpgrade(UpgradeCase):
@@ -99,6 +100,61 @@ class HarnessUpgrade(UpgradeCase):
 
     def finished(self, count):
         return len([row for row in self.delivered() if row["kind"] == "finished"]) >= count
+
+    def test_headless_run_survives_cache_removal_through_outcome_and_writeback(self):
+        self.scenario.write_text(
+            json.dumps(
+                {
+                    "steps": [
+                        {"pause": str(self.gate)},
+                        message(mark("start", "running") + "\n" + block(DONE)),
+                        {"out": {"type": "turn.completed"}},
+                    ]
+                }
+            )
+        )
+        record = Record.parse(
+            self.delegate(
+                self.a,
+                "run",
+                "--client",
+                "codex",
+                "--role",
+                "dummy-tester",
+                "--task",
+                "echo",
+                "--mode",
+                "headless",
+                "--input",
+                "saved request",
+                "--out",
+                self.work / "out.md",
+                "--workdir",
+                self.work,
+                "--sid",
+                SID,
+                "--events",
+                self.root / "events",
+                "--detach",
+                "--on-event",
+                shlex.join((str(self.a / "bin/fixture-writeback"), str(self.callback))),
+            ).stdout
+        )
+        self.assertEqual(record.sid, SID)
+        live_tmux.wait(
+            lambda: any("snapshot" in row for row in self.rows()), what="headless startup"
+        )
+        self.assertEqual(len(list(self.snapshots.iterdir())), 2)
+        shutil.rmtree(self.a)
+        self.gate.touch()
+        live_tmux.wait(lambda: self.finished(1), timeout=30, what="headless write-back")
+        live_tmux.wait(
+            lambda: not list(self.snapshots.iterdir()), timeout=30, what="headless cleanup"
+        )
+        self.assertEqual((self.work / "out.md").read_text(), DONE["deliverable"])
+        self.assertEqual({row["sid"] for row in self.delivered()}, {SID})
+        self.assertTrue(all(str(self.snapshots) in row["schema"] for row in self.delivered()))
+        self.assertEqual(self.saved.read_text(), "saved work")
 
     def test_harness_finishes_writeback_after_A_disappears_but_terminal_keeps_its_copy(self):
         self.start_run(DONE)

@@ -51,6 +51,29 @@ def relocate(value: T, source: str, destination: str) -> T:
     return value
 
 
+def runtime_paths(root: str) -> tuple[str, ...]:
+    paths = []
+    for entry in os.scandir(root):
+        if entry.name.startswith(".") or entry.name in ("tests",):
+            continue
+        if entry.is_file() or entry.name in ("bin", "docs"):
+            paths.append(entry.name)
+        elif os.path.isdir(os.path.join(entry.path, "src")):
+            paths.extend(
+                os.path.join(entry.name, child.name)
+                for child in os.scandir(entry.path)
+                if child.name not in IGNORED(entry.path, [child.name])
+            )
+    return tuple(paths)
+
+
+def relocate_runtime(value: T, source: str, destination: str) -> T:
+    existing = source if os.path.isdir(source) else destination
+    for part in runtime_paths(existing):
+        value = relocate(value, os.path.join(source, part), os.path.join(destination, part))
+    return value
+
+
 def _private(path: str, *, create: bool = False) -> None:
     if create:
         with contextlib.suppress(FileExistsError):
@@ -88,9 +111,9 @@ def sweep(root: str, *, now: float | None = None) -> None:
     for entry in os.scandir(root):
         if not entry.name.startswith(("run-", ".copy-")) or not entry.is_dir(follow_symlinks=False):
             continue
-        if current - entry.stat(follow_symlinks=False).st_mtime < HANDOFF:
-            continue
         with contextlib.suppress(OSError, ValueError):
+            if current - entry.stat(follow_symlinks=False).st_mtime < HANDOFF:
+                continue
             retire(entry.path)
 
 
@@ -130,12 +153,16 @@ def _copy(source: str, destination: str) -> None:
 
 class Installation:
     def __init__(self, source: str, *, root: str | None = None):
-        self.source = os.path.realpath(source)
+        self.source = os.path.abspath(source)
         parent = installations_root() if root is None else root
         state = os.path.dirname(parent)
         if not os.path.lexists(state):
             os.mkdir(state, 0o700)
-        if os.path.islink(state) or os.stat(state).st_uid != os.getuid():
+        if (
+            os.path.islink(state)
+            or os.stat(state).st_uid != os.getuid()
+            or os.stat(state).st_mode & 0o022
+        ):
             raise ValueError(f"not an owned private directory: {state}")
         _private(parent, create=True)
         sweep(parent)
@@ -146,7 +173,7 @@ class Installation:
                 os.path.join(folder, ".lease"), os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600
             )
             fcntl.flock(self._descriptor, fcntl.LOCK_SH)
-            _copy(self.source, folder)
+            _copy(os.path.realpath(self.source), folder)
             published = os.path.join(
                 parent, "run-" + os.path.basename(folder).removeprefix(".copy-")
             )
@@ -178,7 +205,9 @@ class Installation:
                 retire(self.root)
 
     def relocate(self, value: T) -> T:
-        return relocate(value, self.source, self.root)
+        for source in dict.fromkeys((self.source, os.path.realpath(self.source))):
+            value = relocate_runtime(value, source, self.root)
+        return value
 
     def environment(self, env: Mapping[str, str]) -> dict[str, str]:
         mapped = self.relocate(dict(env))
@@ -227,6 +256,7 @@ def supervise(folder: str, argv: Sequence[str]) -> int:
         code = child.wait()
         return 128 - code if code < 0 else code
     finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, signals)
         if child is not None and child.poll() is None:
             child.terminate()
             child.wait()

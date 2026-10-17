@@ -46,9 +46,11 @@ from agent_pm.utils import (
     STATE,
     drop_stale,
     environment_ok,
+    installation_root,
     installations_root,
     number,
     overlaps,
+    relocate_runtime,
     resume_command,
 )
 
@@ -300,7 +302,7 @@ def session_identity(workdir: object, sid: object) -> tuple[str, str]:
 def _state(data: object, workdir: str, sid: str) -> SessionState:
     if (
         not isinstance(data, dict)
-        or frozenset(data) != _SESSION_KEYS
+        or frozenset(data) not in (_SESSION_KEYS, _SESSION_KEYS | {"installations"})
         or type(data["version"]) is not int
         or data["version"] != _SESSION_VERSION
     ):
@@ -315,7 +317,35 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
         absolute_path(path, "writable root") != path for path in roots
     ):
         raise RecoveryError("invalid recovery writable roots")
-    return SessionState(workdir, sid, validate_snapshot(data["snapshot"]), tuple(roots), native)
+    origins = data.get("installations", [])
+    if (
+        not isinstance(origins, list)
+        or len(origins) > 2
+        or any(
+            not isinstance(origin, str) or not os.path.isabs(origin) or "\0" in origin
+            for origin in origins
+        )
+    ):
+        raise RecoveryError("invalid recovery installation origins")
+    snapshot = validate_snapshot(data["snapshot"])
+    current = installation_root()
+    if current:
+        if not origins:
+            paths = snapshot.env.get("PYTHONPATH", "").split(os.pathsep)
+            for path in paths:
+                suffix = os.path.join("utils", "src")
+                if path.endswith(os.sep + suffix):
+                    origin = path[: -len(suffix) - 1]
+                    if os.path.join(origin, "session", "src") in paths and not os.path.isdir(
+                        origin
+                    ):
+                        origins = [origin]
+                        break
+        values = snapshot_data(snapshot)
+        for origin in origins:
+            values = relocate_runtime(values, origin, current)
+        snapshot = validate_snapshot(values)
+    return SessionState(workdir, sid, snapshot, tuple(roots), native, tuple(origins))
 
 
 def _private_dir(path: str, *, create: bool) -> bool:
@@ -467,17 +497,21 @@ class _StoreOperation:
 
     @staticmethod
     def encoded(state: SessionState) -> bytes:
-        payload = json.dumps(
-            {
-                "version": _SESSION_VERSION,
-                "workdir": state.workdir,
-                "sid": state.sid,
-                "snapshot": snapshot_data(state.snapshot),
-                "native_id": state.native_id,
-                "writable_roots": list(state.writable_roots),
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
+        snapshot = snapshot_data(state.snapshot)
+        current = installation_root()
+        if current and state.installations:
+            snapshot = relocate_runtime(snapshot, current, state.installations[0])
+        data = {
+            "version": _SESSION_VERSION,
+            "workdir": state.workdir,
+            "sid": state.sid,
+            "snapshot": snapshot,
+            "native_id": state.native_id,
+            "writable_roots": list(state.writable_roots),
+        }
+        if state.installations:
+            data["installations"] = list(state.installations)
+        payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
         if len(payload) > _MAX_SESSION_BYTES:
             raise RecoveryError("recovery state is too large")
         return payload
@@ -549,11 +583,15 @@ class SessionStore:
         writable_roots: Sequence[str],
     ) -> SessionState:
         workdir, sid = session_identity(workdir, sid)
+        origin = installation_root()
         state = SessionState(
             workdir,
             sid,
             snapshot,
             tuple(dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)),
+            installations=tuple(dict.fromkeys((origin, os.path.realpath(origin))))
+            if origin
+            else (),
         )
         _StoreOperation(self.root).validate_for_save(state)
         return state

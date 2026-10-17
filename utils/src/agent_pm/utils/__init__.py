@@ -55,6 +55,7 @@ from agent_pm.utils.installation import (
     Installation,
     installations_root,
     relocate,
+    relocate_runtime,
 )
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
@@ -173,6 +174,7 @@ __all__ = [
     "real_dirs",
     "redact",
     "relocate",
+    "relocate_runtime",
     "renamed_key",
     "repo_slug",
     "resolve",

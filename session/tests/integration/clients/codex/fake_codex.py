@@ -144,6 +144,12 @@ def main():
                 stream.write(json.dumps(step["out"]) + "\n")
         elif "err" in step:
             print(step["err"], file=sys.stderr, flush=True)
+        elif "pause" in step:
+            deadline = time.monotonic() + 30
+            while not Path(step["pause"]).exists():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("pause gate timed out")
+                time.sleep(0.05)
         elif "sleep" in step:
             time.sleep(step["sleep"])
         elif "exit" in step:

@@ -34,6 +34,35 @@ class InstallationTest(Case):
             self.assertTrue((folder / "utils/src/agent_pm/utils").stat().st_mode & 0o200)
         self.assertFalse(folder.exists())
 
+    def test_runtime_mapping_preserves_user_files_and_covers_source_alias(self):
+        alias = Path(self.home) / "alias"
+        alias.symlink_to(self.source, target_is_directory=True)
+        user = self.source / ".test-sandbox/home"
+        with installation.Installation(str(alias), root=str(self.root)) as kept:
+            for prefix in (alias, self.source):
+                self.assertEqual(
+                    kept.relocate(str(prefix / "bin/agent-pm-session")),
+                    kept.root + "/bin/agent-pm-session",
+                )
+            self.assertEqual(kept.relocate(str(user)), str(user))
+            self.assertEqual(kept.environment({"HOME": str(user)})["HOME"], str(user))
+
+    def test_world_writable_state_parent_is_refused(self):
+        parent = Path(self.home) / "shared"
+        parent.mkdir(mode=0o777)
+        parent.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "private directory"):
+            installation.Installation(str(self.source), root=str(parent / "kept"))
+        self.assertFalse((parent / "kept").exists())
+
+    def test_sweep_tolerates_an_owner_removed_after_enumeration(self):
+        entry = mock.Mock(name="entry")
+        entry.name = "run-removed"
+        entry.is_dir.return_value = True
+        entry.stat.side_effect = FileNotFoundError("already removed")
+        with mock.patch("os.scandir", return_value=[entry]):
+            installation.sweep(str(self.root))
+
     def test_copies_resources_modes_and_internal_symlinks_without_development_files(self):
         (self.source / "utils/tests").mkdir()
         (self.source / "utils/tests/ignored.py").write_text("unused")

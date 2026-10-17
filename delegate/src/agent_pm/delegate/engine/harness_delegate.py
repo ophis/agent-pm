@@ -69,7 +69,7 @@ from agent_pm.utils import (
     StatusState,
     installation_root,
     load_class,
-    relocate,
+    relocate_runtime,
     source_path,
     thaw,
     under,
@@ -379,7 +379,8 @@ class HarnessDelegate(Delegate):
         origin = getattr(self, "_installation_origin", None)
         current = installation_root()
         if origin is not None and current is not None:
-            values = relocate(values, current, origin)
+            for source in dict.fromkeys((current, os.path.realpath(current))):
+                values = relocate_runtime(values, source, origin)
             values["installation"] = origin
         self.store.write(json.dumps(values))
 
@@ -416,7 +417,7 @@ class HarnessDelegate(Delegate):
                         origin = candidate
             self._installation_origin = origin
             if origin is not None and current is not None:
-                data = relocate(data, origin, current)
+                data = relocate_runtime(data, origin, current)
             given = data.pop("spec")
             team = given.pop("team")
             spec = Spec(

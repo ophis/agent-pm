@@ -133,6 +133,8 @@ class Upgrade(UpgradeCase):
             what="initial worker hook",
         )
         before = len(self.hooks())
+        journal = self.home / ".agent-pm/tui/worker/hooks.jsonl"
+        journal_before = len(journal.read_text().splitlines())
         state = json.loads((self.home / ".agent-pm/tui/worker/session.json").read_text())
         self.assertNotIn(str(self.a), json.dumps(state["client_hook"]))
         self.assertIn(str(self.snapshots), json.dumps(state["client_hook"]))
@@ -147,6 +149,11 @@ class Upgrade(UpgradeCase):
         delivered = self.hooks()[before:]
         self.assertEqual([row["hook"] for row in delivered], [*labels, "Stop"])
         self.assertEqual({row["exit"] for row in delivered}, {0}, delivered)
+        received = [json.loads(line) for line in journal.read_text().splitlines()][journal_before:]
+        self.assertEqual([row["label"] for row in received], [*labels, "Stop"])
+        self.assertEqual(
+            [row["payload"] for row in received], [row["payload"] for row in delivered]
+        )
         native = delivered[-1]["payload"]["session_id"]
         transcript = Path(delivered[-1]["payload"]["transcript_path"])
         history = transcript.read_text()
