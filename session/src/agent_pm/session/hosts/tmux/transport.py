@@ -477,8 +477,9 @@ class Tmux:
                 self.run(["run-shell", "-b", "true"])
             return PaneStatus.RUNNING
         if sig:  # libc's sys_signame (macOS: "kill"), else the number
-            return -(int(sig) if sig.isdigit() else getattr(signal, "SIG" + sig.upper(), 0))
-        return int(code)
+            name = "SIG" + sig.upper()
+            return -(int(sig) if sig.isdecimal() else signal.Signals.__members__.get(name, 0))
+        return int(code) if code.isdecimal() else PaneStatus.UNKNOWN
 
     def kill(self, target: str) -> None:
         """Kills the pane a pane id names, else the named session."""
