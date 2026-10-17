@@ -2144,6 +2144,16 @@ class StoreTest(Base):
         self.assertEqual(([label for label, _ in found], cursor[0]), (["b", "c"], self.ino()))
         self.assertEqual(store.records(cursor), ([], cursor))
 
+    def test_a_directory_in_either_hook_log_place_gives_no_records_and_leaks_no_fd(self):
+        store = tui.TuiStore.attach(NAME, host=self.host)
+        for place in (self.hooks, f"{self.hooks}.1"):
+            with self.subTest(place=place):
+                os.makedirs(place)
+                fds = len(os.listdir("/dev/fd"))
+                self.assertEqual(store.records(None), ([], (None, 0)))
+                self.assertEqual(len(os.listdir("/dev/fd")), fds)
+                os.rmdir(place)
+
     def test_attach_replays_the_rotated_file_then_the_current_one_once(self):
         store = tui.TuiStore.attach(NAME, host=self.host)
         os.makedirs(self.dir)

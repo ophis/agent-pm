@@ -304,7 +304,7 @@ def append(path: str, record: dict) -> None:
                 if not current:
                     continue
                 if opened.st_size and opened.st_size + len(line) > HOOKS_MAX:
-                    os.replace(path, path + ".1")
+                    os.replace(path, os.path.join(os.path.dirname(path), ROTATED))
                     continue
                 written = os.write(fd, line)
                 break

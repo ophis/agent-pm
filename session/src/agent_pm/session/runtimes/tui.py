@@ -171,9 +171,15 @@ class TuiStore:
         return _read_state(self.name, self.state_file)
 
     def records(self, cursor: Cursor | None) -> tuple[list[tuple[str, dict]], Cursor]:
-        """The hook log's records past `cursor` (None: ROTATED's too), across a rotation; the
-        cursor past them. shortcut: two rotations between reads lose the middle file.
+        """The hook log's records past `cursor` (None: ROTATED's too); the cursor past them.
+        shortcut: two rotations between reads lose the middle file.
         """
+        try:
+            return self._records(cursor)
+        except OSError:
+            return [], cursor or (None, 0)
+
+    def _records(self, cursor: Cursor | None) -> tuple[list[tuple[str, dict]], Cursor]:
         with _opened(os.path.join(self.dir, tui_hook.HOOKS)) as (ino, current):
             older = b""
             if cursor is None or cursor[0] != ino:
@@ -278,7 +284,6 @@ class TuiStore:
             yield
 
     def _forget(self) -> None:
-        """Unlinks the name's lock; inode_lock survives it."""
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tui_lock(self.name))
 
@@ -347,18 +352,21 @@ class TuiStore:
 
 @contextlib.contextmanager
 def _opened(path: str) -> Iterator[tuple[int | None, BinaryIO | None]]:
-    """`path`'s inode and stream if regular, else (None, None); never waits on a FIFO."""
+    """`path`'s inode and stream if regular, else (None, None); no FIFO wait."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
         yield None, None
         return
-    with os.fdopen(fd, "rb") as stream:
+    try:
         found = os.fstat(fd)
-        if stat.S_ISREG(found.st_mode):
-            yield found.st_ino, stream
-        else:
+        if not stat.S_ISREG(found.st_mode):
             yield None, None
+            return
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield found.st_ino, stream
+    finally:
+        os.close(fd)
 
 
 def _parsed(data: bytes) -> tuple[list[tuple[str, dict]], int]:
