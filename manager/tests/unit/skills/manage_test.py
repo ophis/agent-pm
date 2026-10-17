@@ -33,6 +33,11 @@ RETIRED = (
 
 
 class Manage(Case):
+    def test_tmux_skill_stays_retired(self):
+        self.assertFalse(
+            os.path.isfile(os.path.join(REPO, "manager", "skills", "tmux", "SKILL.md"))
+        )
+
     def test_each_cited_command_section_exists(self):
         cited = references("manage")
         self.assertGreaterEqual(set(cited), {"Start", "Events", "Launch", "Direct", "Recover"})
@@ -50,6 +55,24 @@ class Manage(Case):
         monitor = section("manage", "Start")
         self.assertNotIn("confirm by reading the pane", monitor)
         self.assertIn("event line, then its content", monitor)
+
+    def test_monitoring_has_one_authoritative_contract(self):
+        monitor = section("manage", "Start") + section("manage", "Events")
+        self.assertNotIn("manager/skills/tmux/SKILL.md", body("manage"))
+        for phrase in (
+            "every active turn",
+            "Shell `&`",
+            "automatically delivers output or completion notifications",
+            "Manual monitoring; no idle notifications",
+            "pending --content",
+            "ack --through <line> --gen <generation>",
+            "reconcile its durable result",
+            "Rotation retains the unhandled suffix",
+        ):
+            self.assertIn(phrase, monitor)
+        for retired in ("--receipt", "--notify", "reader.lock", "ready: true", "version 3"):
+            self.assertNotIn(retired, body("manage"))
+        self.assertNotIn("marks each printed event handled", body("manage"))
 
     def test_a_roster_entry_closes_through_crew(self):
         close = rule("AppleScript")

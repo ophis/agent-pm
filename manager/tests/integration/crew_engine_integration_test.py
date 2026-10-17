@@ -989,7 +989,7 @@ class CrewTest(Case):
             stream.write("12:00:00 worker outcome done\n")
         self.assertEqual(self.crew.next_event(after=0, gen=0), (1, "12:00:00 worker outcome done"))
 
-    def test_next_event_saves_ack_before_wait_and_does_not_consume_returned_line(self):
+    def test_next_event_retains_every_line_until_explicit_ack(self):
         path = self.roster.events
         with open(path, "a", encoding="utf-8") as stream:
             stream.write("12:00:00 worker done\ndiagnostic\n")
@@ -1003,12 +1003,14 @@ class CrewTest(Case):
 
         with mock.patch("time.sleep", side_effect=wait):
             result = self.crew.next_event(after=2, gen=0)
-        self.assertEqual(observed, [(2, 0, [])])
+        self.assertEqual(observed, [(0, 0, ["12:00:00 worker done", "diagnostic"])])
         self.assertEqual(result, (4, "12:00:01 worker blocked"))
-        self.assertEqual(self.roster.backlog(), (2, 0, ["noise", "12:00:01 worker blocked"]))
+        self.assertEqual(len(self.roster.backlog()[2]), 4)
         successor = Crew(Roster(self.directory))
         self.assertEqual(successor.next_event(after=2, gen=0), result)
-        self.assertEqual(self.roster.backlog()[0], 2)
+        self.assertEqual(self.roster.backlog()[0], 0)
+        self.roster.advance(2, 0)
+        self.assertEqual(self.roster.backlog(), (2, 0, ["noise", "12:00:01 worker blocked"]))
 
     def test_next_event_refuses_replacement_deletion_shrink_and_unsafe_file_while_waiting(self):
         path = self.roster.events
@@ -1039,8 +1041,7 @@ class CrewTest(Case):
                     self.assertRaises((Stale, RosterError)),
                 ):
                     self.crew.next_event(after=1, gen=0)
-                with open(self.roster.path, encoding="utf-8") as stream:
-                    self.assertEqual(json.load(stream)["cursor"], 1)
+                self.assertFalse(Path(self.roster.path).exists())
 
     def test_next_event_refuses_an_event_file_that_becomes_unreadable_while_waiting(self):
         path = self.roster.events
@@ -1061,8 +1062,7 @@ class CrewTest(Case):
         ):
             self.crew.next_event(after=1, gen=0)
         self.assertEqual(waiting, [0.5])
-        with open(self.roster.path, encoding="utf-8") as stream:
-            self.assertEqual(json.load(stream)["cursor"], 1)
+        self.assertFalse(Path(self.roster.path).exists())
 
     def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
         with open(self.roster.events, "a", encoding="utf-8") as stream:

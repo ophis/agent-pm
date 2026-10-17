@@ -78,10 +78,6 @@ class PathsAndArguments(Case):
                     "attach",
                     "--manager",
                     "mgr",
-                    "--after",
-                    "LINE",
-                    "--gen",
-                    "0",
                 ],
                 "next-event": [
                     "agent-pm-crew",
@@ -94,6 +90,7 @@ class PathsAndArguments(Case):
                     "0",
                     "--content",
                 ],
+                "manual": ["agent-pm-crew", "pending", "--manager", "mgr", "--content"],
             },
         )
         self.assertTrue(events.is_file())
@@ -144,15 +141,13 @@ class PathsAndArguments(Case):
         self.assertTrue(events.with_name("roster.json").is_file())
         self.assertFalse(Path(self.agent_pm, "managers").exists())
 
-    def test_attach_and_next_event_cursors_require_paired_nonnegative_numbers_without_writes(self):
+    def test_only_ack_accepts_handling_cursors_and_invalid_numbers_write_nothing(self):
         before = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
         cases = (
-            ("attach", ("--after", "3"), "--after and --gen go together"),
-            ("attach", ("--gen", "0"), "--after and --gen go together"),
-            ("attach", ("--after", "end", "--gen", "0"), "want a non-negative integer"),
-            ("attach", ("--after", "-1", "--gen", "0"), "want a non-negative integer"),
-            ("attach", ("--after", "1", "--gen", "-1"), "want a non-negative integer"),
-            ("attach", ("--after", "1", "--gen", "x"), "want a non-negative integer"),
+            ("attach", ("--after", "3", "--gen", "0"), "unrecognized arguments"),
+            ("ack", ("--through", "-1", "--gen", "0"), "want a non-negative integer"),
+            ("ack", ("--through", "1", "--gen", "-1"), "want a non-negative integer"),
+            ("ack", ("--through", "1", "--gen", "x"), "want a non-negative integer"),
             ("next-event", ("--after", "-1", "--gen", "0"), "want a non-negative integer"),
             ("next-event", ("--after", "0", "--gen", "-1"), "want a non-negative integer"),
             ("next-event", ("--after", "x", "--gen", "0"), "want a non-negative integer"),

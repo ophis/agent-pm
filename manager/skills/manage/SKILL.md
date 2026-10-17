@@ -6,6 +6,8 @@ allowed-tools:
   - Bash(agent-pm-crew attach)
   - Bash(agent-pm-crew attach *)
   - Bash(agent-pm-crew next-event *)
+  - Bash(agent-pm-crew pending *)
+  - Bash(agent-pm-crew ack *)
   - Bash(agent-pm-crew status)
   - Bash(agent-pm-crew status *)
   - Bash(agent-pm-crew note *)
@@ -30,12 +32,20 @@ Launch every worker, role run and pipeline run through Crew (Launch), which reco
 ## Start
 
 1. The commander's session: `ctmux <name>` (`${CLAUDE_SKILL_DIR}/scripts/ctmux`) opens tmux session `<name>` (how it attaches: README's ctmux row); its shell runs under `agent-pm-crew hold --manager=<name>`, which holds manager `<name>`'s lease while the shell lives and gives every `agent-pm-crew` command there its manager. It starts no agent: the user starts the client (`claude`, `codex`) in it. Elsewhere, start the commander's client under `agent-pm-crew hold --manager <manager> -- <client argv>`, or give `--manager <manager>` to every `agent-pm-crew` command. `agent-pm-crew hold --help`: taking over a hung holder.
-2. Attach, to start and after a compaction, a resume or a takeover: TaskStop any Monitor or `next-event` task of yours still running, then `agent-pm-crew attach`. It checks the lease (another live holder → refused: tell the user which), marks a launch that never gave a Record `lost`, adopts the sessions you launched that the Roster missed, asks each entry's own command for its state, reopens beside you each live entry no terminal shows unless it is hidden, and prints:
+2. `agent-pm-crew attach` checks the lease (another live holder → refused: tell the user which), marks a launch that never gave a Record `lost`, adopts the sessions you launched that the Roster missed, asks each entry's own command for its state, reopens beside you each live entry no terminal shows unless it is hidden, and prints:
    - the entries, one row each: `name kind sid state view note cwd attach`. `state`: a live entry's own (`working`, `done`, `blocked`, `dead`), else `gone` (its sessions ended or its client died, without a close: Recover), `waiting` (a role run ended on `needs_input`: Recover), `done`, `lost` (its launch gave no Record: read why, then close or forget it; it never resumes), `starting`, `resuming`, or `unknown` (its host could not tell, or its command did not answer: the error is on stderr); `view`: `hidden` (hidden, Direct) or `-`;
    - the backlog, `<line> <event>` per event after the cursor N;
    - `resume: agent-pm-crew resume … <name>` per `gone` entry; `attach` itself starts nothing;
-   - `monitor:`, `monitor expired:` and `next-event:` commands, then `N=<N> GEN=<G>`.
-3. Arm before the first launch: one Monitor running the `monitor:` command (`agent-pm-crew next-event … --content --follow`), `timeout_ms` 1800000. Each notification is an event line, then its content (`--content`: the owning entry's ctl queried at read time, Events); it marks each printed event handled. Without a Monitor tool, run the `next-event:` command with `run_in_background`: it marks N handled, waits, prints one event and its content, and exits; handle it, then rerun it at once with `--after <line>`. Arming from N delivers the backlog again, so an event can come twice.
+   - `monitor:`, `monitor expired:`, `next-event:` and `manual:` commands, then `N=<N> GEN=<G>`.
+3. Select **Monitoring mode** from the tools exposed in this conversation and their actual runtime contract; report the mode with each launch. Client name, process id, successful shell launch and stdout alone are insufficient evidence.
+
+| Mode | Requirement and action |
+|---|---|
+| Automatic | An exposed tool automatically delivers output or completion notifications into this commander conversation. With Monitor, run the `monitor:` command, `timeout_ms` 1800000 within the runtime's limit: event line, then its content. With a documented completion-notifying background tool, run `next-event:` as that tool's task and rearm after handling. |
+| Manual | No notifying tool exposed, or its delivery failed. Report `Manual monitoring; no idle notifications. Read: agent-pm-crew pending --content. Recovery: agent-pm-crew attach.` Run `pending --content` at the beginning of every active turn before status reports or new launches. Include `--manager <manager>` when needed. |
+| Unavailable | Event reads fail. Report the failed command and recovery action; retry on the next active turn. Monitoring limitations do not cancel authorized launches. |
+
+Shell `&`, a persistent terminal and an explicit output read are manual monitoring. Generic `run_in_background` qualifies only when its runtime contract promises a notification to this commander. The current Codex exec/write_stdin tools require explicit reads; another host needs its own tool contract. [Claude Code Monitor](https://code.claude.com/docs/en/tools-reference#monitor-tool) documents automatic conversation delivery, only where that tool is exposed.
 
 ## Events
 
@@ -43,12 +53,17 @@ Each event line is `<line> HH:MM:SS <session> <word> …`: a worker's session, a
 
 Content is whatever the owning ctl returns at read time; the event word does not select it. A new turn may already have begun by the time a `done` event is read. No owning entry or unreadable content gives `content unavailable: <why>`.
 
+**Handled cursor** is the contiguous prefix whose actions the commander has confirmed. `pending`, `next-event` and `next-event --follow` read without acknowledging; `--after` is only a reader position. After handling through a line, run `agent-pm-crew ack --through <line> --gen <generation>`. Leave an unresolved event and everything after it pending. Repeating an acknowledgment is safe.
+
+**Redelivery** is expected. Identify an event by manager, generation and physical line, with the entry's session id identifying its work. Before repeating a side effect, reconcile its durable result (outcome, sent message, issue state or existing pull request). If the result is unknown, retain the event and resolve it before retrying. Printed output is not proof of handling.
+
+**Reader recovery**: stop your own listener, run plain `agent-pm-crew attach`, handle its backlog, then select Monitoring mode and rearm from its handled `N` and `GEN`. Apply this after reader exit, notification failure, runtime expiration, resume, compaction, takeover or stale generation. A successful one-shot read rearms after handling. Rotation retains the unhandled suffix and changes generation; discard old line/generation pairs. Never recover from the last printed line. The lease fences old readers and acknowledgments.
+
 - **done**: a turn ended; a session that asks you something or waits for approval ends its turn too. A role run's `done` is not its outcome: its harness nudges a turn that ends without one.
 - **blocked**: a permission prompt or a dialog. Read its current screen (`agent-pm-session read <name>`) when the content is insufficient. Within the user's mandate, answer it with keys: `agent-pm-session send <name> --key K…`, each `K` one character or `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1`–`F12`, after any of `C-`, `M-`, `S-`: `--key Down Enter` picks the next option, `--key 2` the numbered one, `--key Escape` cancels, `--key C-c` interrupts. Outside the mandate, ask the user. While the screen shows a dialog, send no text: the Enter after a paste answers the dialog. After answering, read it again. Judge by the screen, not by the last event: a dialog that closes appends no event. Codex's `Trust this folder?` writes the user's Codex config: ask the user. Its `Hooks need review`: answer nothing, close the worker (Direct) and tell the user.
 - **dead**: the client exited; its pane stays until closed. `agent-pm-session read <name>` shows why. A worker: continue it with `agent-pm-session restart <name>`, or close it (Direct) and tell the user. A role run's tui: its harness ends too (outcome `error`): Recover.
 - **exited `<rc>`**: a detached process ended, e.g. a role run's or pipeline's harness. That is not its result; check its content.
 - **outcome `<status>`**: a role run's harness ended with `done`, `needs_input`, `failed` or `error` (no valid outcome: a give-up, a dead or killed session, a client exit without a valid report). `agent-pm-delegate outcome <workdir>` prints the checked outcome as JSON (`null` without one); the run's record (`docs/state-root.md`) is its own claim. `done`: the deliverable is the outcome's `deliverable` for a `local` or `orchestrator` destination, else its `url`. `needs_input`: Recover. A client's exit code is never the result. The tui stays open, unwatched, until you close the entry (Direct).
-- **Monitor expired**: run the `monitor expired:` command with `LINE` the last event's line (none received: N), then re-arm with its new N and G (Start 3). A `next-event` task that stopped without printing: rerun it with the same `--after`; one that failed: Start 2.
 
 ## Launch
 
@@ -77,7 +92,7 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 - Close all: `agent-pm-crew close-all` closes every entry's work and what it opened, transitively, and removes the entries; only when the user says to close everything. Nothing closes them when you exit or detach.
 - A session killed by hand keeps its entry, `gone`: close an entry's sessions with `agent-pm-crew close <name>`.
 - Forget: `agent-pm-crew forget <name>` drops an entry whose work is confirmed gone; `--force` drops it without asking its command (its work may live on).
-- Release, to hand over or once nothing is left: TaskStop your Monitor or `next-event` task, then `agent-pm-crew release`. The successor starts a new holder, then attaches (Start).
+- Release, to hand over or once nothing is left: stop your own listener, then `agent-pm-crew release`. The successor starts a new holder, then attaches (Start).
 - Never `/clear` a worker or role run, nor `/new` a Codex one: the new session id breaks `reply`, `restart` and resume. For a fresh context, close it and launch another.
 
 ## Recover

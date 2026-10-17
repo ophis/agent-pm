@@ -12,7 +12,7 @@ from pathlib import Path
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
-from agent_pm.utils import STATE, LayerCommand, nested_start
+from agent_pm.utils import STATE, LayerCommand, nested_start, printable
 
 
 def _number(value: str) -> int:
@@ -70,7 +70,7 @@ def _launch(args) -> int:
 
 def _attach(args) -> int:
     crew = _crew(args)
-    lines = crew.attach(after=args.after, gen=args.gen).splitlines()
+    lines = crew.attach().splitlines()
     trailer = lines.pop()
     cursor, generation = (field.partition("=")[2] for field in trailer.split())
     manager = os.path.basename(crew.roster.directory)
@@ -83,11 +83,12 @@ def _attach(args) -> int:
     if os.path.isdir(crew.roster.directory):
         for label, verb, after, *extra in (
             ("monitor", "next-event", cursor, "--content", "--follow"),
-            ("monitor expired", "attach", "LINE"),
             ("next-event", "next-event", cursor, "--content"),
         ):
             command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation, *extra)
             print(f"{label}: {shlex.join(command)}")
+        print(f"monitor expired: {shlex.join(('agent-pm-crew', 'attach', *named))}")
+        print(f"manual: {shlex.join(('agent-pm-crew', 'pending', *named, '--content'))}")
     print(trailer)
     return 0
 
@@ -177,6 +178,22 @@ def _next_event(args) -> int:
         print(block, end="", flush=True)
         if not args.follow:
             return 0
+
+
+def _pending(args) -> int:
+    crew = _crew(args)
+    cursor, generation, events = crew.roster.backlog(require_lease=True)
+    for line, event in enumerate(events, cursor + 1):
+        print(f"{line} {printable(event)}")
+        if args.content:
+            print(crew.event_content(event), end="")
+    print(f"N={cursor} GEN={generation}")
+    return 0
+
+
+def _ack(args) -> int:
+    _crew(args).roster.advance(args.through, args.gen)
+    return 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -371,7 +388,7 @@ Examples:
   lease or attach a terminal. Reconciles/adopts matching launches, shows
   eligible live panes and rotates events. Prints roster rows, backlog,
   recovery/monitor commands and N=cursor GEN=generation.
-  --after and --gen go together; omit both to use the stored cursor.
+  Uses the stored handled cursor; attach does not acknowledge events.
 
 Examples:
   agent-pm-crew attach --manager demo
@@ -379,15 +396,11 @@ Examples:
 Recovery and next help:
   Follow the printed monitor command to read events. Reading events alone
   does not verify notification delivery to a commander.
-  On monitor expiry, use its printed monitor expired command, replacing LINE
-  with the last consumed line; keep the matching generation.
+  On monitor expiry, use its printed monitor expired command, then rearm
+  from the returned handled N and GEN. Confirm handling with ack.
   Acquire a holder: agent-pm-crew hold --help
   Event reading: agent-pm-crew next-event --help
 """,
-    )
-    attach.add_argument("--after", type=_number, metavar="LINE", help="non-negative consumed line")
-    attach.add_argument(
-        "--gen", type=_number, metavar="GEN", help="non-negative matching generation"
     )
     attach.set_defaults(func=_attach)
     status = page(
@@ -538,10 +551,51 @@ Examples:
 Acquire ownership again: agent-pm-crew hold --help
 """,
     ).set_defaults(func=_release)
+    pending = page(
+        "pending",
+        "Read unhandled events without waiting or acknowledging",
+        """Requires lease access when a holder is active. Prints numbered pending
+events, then the handled N and matching GEN. --content adds current owning-entry
+content. Run each active turn when monitoring is manual.
+
+Examples:
+  agent-pm-crew pending --manager demo --content
+
+Recovery: agent-pm-crew attach --help
+Handling confirmation: agent-pm-crew ack --help
+""",
+    )
+    pending.add_argument(
+        "--content", action="store_true", help="include current owning-entry content"
+    )
+    pending.set_defaults(func=_pending)
+    ack = page(
+        "ack",
+        "Confirm handling through a line in the current event generation",
+        """Requires lease access. Acknowledges the entire prefix through LINE;
+confirm every action in that prefix first. Repeated acknowledgment is safe.
+Stale generations or out-of-range lines fail without advancing the cursor.
+
+Examples:
+  After handling lines through 3 in generation 1:
+  agent-pm-crew ack --manager demo --through 3 --gen 1
+
+Recovery: agent-pm-crew attach --help; use its current N and GEN.
+Read pending events: agent-pm-crew pending --help
+""",
+    )
+    ack.add_argument(
+        "--through", type=_number, required=True, metavar="LINE", help="handled prefix end >=0"
+    )
+    ack.add_argument(
+        "--gen", type=_number, required=True, metavar="GEN", help="matching event generation >=0"
+    )
+    ack.set_defaults(func=_ack)
     next_event = page(
         "next-event",
         "Wait for and print roster events after a cursor",
-        """Use paired N/GEN values printed by attach; --after end skips existing events.
+        """Use paired N/GEN values printed by attach; --after end skips existing events
+for this reader only. Reads do not acknowledge handling; use ack afterward.
 Prints LINE EVENT, optionally followed by current owning-entry content.
 Default: wait for one event. --follow repeats until stopped or an error.
 Requires roster event access; no notification-delivery guarantee is implied.
@@ -550,13 +604,17 @@ Examples:
   If attach printed N=0 GEN=1 for demo:
   agent-pm-crew next-event --manager demo --after 0 --gen 1 --content --follow
 
-Recovery: on expiry/rotation, use attach's printed monitor expired command
-with the last consumed LINE and its GEN. Then use its new monitor command.
-Cursor reconciliation: agent-pm-crew attach --help
+Recovery: on expiry/rotation, run attach's printed monitor expired command.
+Rearm from its handled N and GEN, never the last printed line.
+Handling confirmation: agent-pm-crew ack --help
 """,
     )
     next_event.add_argument(
-        "--after", type=_after, required=True, metavar="LINE|end", help="consumed line >=0, or end"
+        "--after",
+        type=_after,
+        required=True,
+        metavar="LINE|end",
+        help="reader position >=0, or end; never acknowledges",
     )
     next_event.add_argument(
         "--gen", type=_number, required=True, metavar="GEN", help="matching generation >=0"
@@ -590,8 +648,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("only run and hold accept a command after --")
     if args.func is _view and bool(args.names) == args.all:
         parser.error(f"{args.verb} takes entry names or --all")
-    if args.func is _attach and (args.after is None) != (args.gen is None):
-        parser.error("--after and --gen go together")
     if args.func is _resume and args.input is not None and len(args.names) != 1:
         parser.error("resume --input requires exactly one name")
     if args.func in {_run, _hold, _resume, _launch} and (refused := nested_start()):

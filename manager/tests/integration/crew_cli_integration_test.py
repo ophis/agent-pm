@@ -75,6 +75,8 @@ class Commands(Case):
             "note",
             "report",
             "next-event",
+            "pending",
+            "ack",
             "release",
         }
         self.assertEqual(set(result.stdout.split("{")[1].split("}")[0].split(",")), expected)
@@ -292,7 +294,7 @@ class Commands(Case):
             self.succeeded("next-event", "--manager", "mgr", "--after", "0", "--gen", "0"),
             "1 12:00:00 a done\n",
         )
-        self.succeeded("attach", "--manager", "mgr", "--after", "1", "--gen", "0")
+        self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")
         self.assertEqual(crew.roster.backlog(), (1, 0, []))
         with open(crew.roster.events, "a", encoding="utf-8") as stream:
             stream.write("diagnostic\n12:00:01 a blocked\ngarbage\n")
@@ -320,11 +322,34 @@ class Commands(Case):
             "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow\n",
             output,
         )
-        self.assertIn(
-            "monitor expired: agent-pm-crew attach --manager mgr --after LINE --gen 0\n", output
-        )
+        self.assertIn("monitor expired: agent-pm-crew attach --manager mgr\n", output)
         self.assertIn(
             "next-event: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content\n",
             output,
         )
         self.assertTrue(output.endswith("N=0 GEN=0\n"))
+
+    def test_plain_shell_background_reader_retains_completion_for_manual_handling(self):
+        roster = Roster(self.directory)
+        Path(roster.events).write_text("12:00:00 worker done\n")
+        output = Path(self.home, "reader.stdout")
+        reader = shlex.join(
+            (self.crew_bin, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0")
+        )
+        script = f"{reader} > {shlex.quote(str(output))} & wait $!"
+        result = subprocess.run(
+            ("/bin/sh", "-c", script),
+            cwd=self.home,
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("worker done", output.read_text())
+        self.assertEqual(roster.backlog(), (0, 0, ["12:00:00 worker done"]))
+        self.assertIn("worker done", self.succeeded("pending", "--manager", "mgr", "--content"))
+        for _ in range(2):
+            self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")
+        self.assertEqual(roster.backlog(), (1, 0, []))
