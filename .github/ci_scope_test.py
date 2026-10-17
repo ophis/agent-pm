@@ -89,6 +89,35 @@ class Repository(unittest.TestCase):
                 self.assertEqual(result["projects"], PROJECTS)
                 self.assertTrue(result["reason"])
 
+    def test_docs_only_pr_selects_docs_scope_and_anything_else_keeps_full(self):
+        docs = scope.classify(
+            self.root,
+            [
+                "README.md",
+                "CONTEXT.md",
+                "docs/tests.md",
+                "docs/images/demo.jpg",
+                "docs/readme/README.ja.md",
+            ],
+            "pull_request",
+        )
+        self.assertEqual(
+            docs,
+            {"full": False, "docs": True, "projects": PROJECTS[:2], "reason": "Docs-only changes"},
+        )
+        for paths, event, full in (
+            (["README.md", "session/src/agent_pm/session/cli.py"], "pull_request", True),
+            (["docs/tests.md", ".github/ci_scope.py"], "pull_request", True),
+            (["delegate/skills/act-as/SKILL.md"], "pull_request", True),
+            (["manager/skills/manage/SKILL.md"], "pull_request", False),
+            (["delegate/src/agent_pm/delegate/team/roles/engineer.md"], "pull_request", True),
+            (["README.md", "docs/tests.md"], "push", True),
+        ):
+            with self.subTest(paths=paths, event=event):
+                result = scope.classify(self.root, paths, event)
+                self.assertFalse(result["docs"])
+                self.assertEqual(result["full"], full)
+
     def test_unsafe_or_non_normal_paths_are_full(self):
         for path in (
             "",
@@ -240,7 +269,7 @@ class Repository(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["projects"], PROJECTS[:2])
         self.assertEqual(
             destination.read_text(),
-            'existing=value\nfull=false\nprojects=["manager", "linear-orchestrator"]\n',
+            'existing=value\nfull=false\ndocs=false\nprojects=["manager", "linear-orchestrator"]\n',
         )
 
     def test_cli_pr_uses_diff_but_push_needs_no_diff(self):
@@ -267,20 +296,22 @@ class Repository(unittest.TestCase):
 
 
 class Aggregate(unittest.TestCase):
-    def needs(self, *, full=True, event="pull_request"):
+    def needs(self, *, full=True, event="pull_request", docs=False):
         result = {
             job: {"result": "success"}
             for job in ("changes", "lint", "repository", "unit", "coverage", "integration")
         }
-        result["changes"]["outputs"] = {"full": str(full).lower()}
+        result["changes"]["outputs"] = {"full": str(full).lower(), "docs": str(docs).lower()}
         result["repository"]["result"] = "success" if full else "skipped"
         result["coverage"]["result"] = "success" if event == "pull_request" else "skipped"
+        result["integration"]["result"] = "skipped" if docs else "success"
         return result
 
     def test_expected_full_upper_and_push_results_pass(self):
         for full, event in ((True, "pull_request"), (False, "pull_request"), (True, "push")):
             with self.subTest(full=full, event=event):
                 self.assertEqual(scope.gate(self.needs(full=full, event=event), event), [])
+        self.assertEqual(scope.gate(self.needs(full=False, docs=True), "pull_request"), [])
 
     def test_failure_cancel_and_unexpected_skip_always_fail(self):
         for job in self.needs():
@@ -293,7 +324,11 @@ class Aggregate(unittest.TestCase):
                     self.assertIn(job, " ".join(failures))
 
     def test_expected_skip_is_not_failure_or_cancel_and_unexpected_success_fails(self):
-        for job, kwargs in (("repository", {"full": False}), ("coverage", {"event": "push"})):
+        for job, kwargs in (
+            ("repository", {"full": False}),
+            ("coverage", {"event": "push"}),
+            ("integration", {"full": False, "docs": True}),
+        ):
             for result in ("failure", "cancelled", "success"):
                 needs = self.needs(**kwargs)
                 needs[job]["result"] = result
@@ -306,6 +341,12 @@ class Aggregate(unittest.TestCase):
             needs["changes"]["outputs"]["full"] = value
             with self.subTest(value=value):
                 self.assertTrue(scope.gate(needs, "pull_request"))
+        for value in (None, True, "", "TRUE", "unknown"):
+            needs = self.needs(full=False, docs=True)
+            needs["changes"]["outputs"]["docs"] = value
+            with self.subTest(docs=value):
+                self.assertTrue(scope.gate(needs, "pull_request"))
+        self.assertTrue(scope.gate(self.needs(full=True, docs=True), "pull_request"))
         needs = self.needs(full=False)
         needs["changes"]["result"] = "failure"
         self.assertTrue(scope.gate(needs, "pull_request"))
