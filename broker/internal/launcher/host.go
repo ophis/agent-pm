@@ -3,7 +3,6 @@
 package launcher
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 
@@ -14,8 +13,9 @@ import (
 // Credentials is the broker package's side of start; the launcher never sees the token.
 type Credentials interface {
 	Ready() error // *protocol.Error: login_required or keychain_failed
-	// Inject errors wrap docker.ErrUnreachable or are opaque, carrying no Docker stderr.
-	Inject(ctx context.Context, container string, d docker.Runner) error
+	// Inject writes the token through exec, which runs argv as agent in the container being started.
+	// Its errors wrap docker.ErrUnreachable or are opaque, carrying no Docker stderr.
+	Inject(exec func(argv []string, stdin []byte) error) error
 }
 
 type Host struct {

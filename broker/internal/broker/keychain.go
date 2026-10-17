@@ -1,9 +1,8 @@
 // Package broker owns the Claude setup-token: login, keychain access and injection into a container.
-// It never decides how a container starts; the launcher calls it through Credentials.
+// It never decides how a container starts: the launcher calls it through Credentials with an exec bound to one container.
 package broker
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -69,16 +68,15 @@ func (c Credentials) Ready() error {
 	}
 }
 
-// Inject writes the token into the container's secrets tmpfs through exec stdin.
+// Inject writes the token into the container's secrets tmpfs through exec's stdin.
 // Errors wrap docker.ErrUnreachable or are opaque: no Docker stderr, no keychain detail.
-func (c Credentials) Inject(ctx context.Context, container string, d docker.Runner) error {
+func (c Credentials) Inject(exec func(argv []string, stdin []byte) error) error {
 	token, err := c.Keychain.Get()
 	defer erase(token)
 	if err != nil {
 		return errors.New("Claude setup-token unavailable for injection")
 	}
-	_, err = d.Run(ctx, []string{"exec", "--interactive", "--user", "agent", container,
-		"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}, token)
+	err = exec([]string{"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}, token)
 	if errors.Is(err, docker.ErrUnreachable) {
 		return fmt.Errorf("token injection: %w", docker.ErrUnreachable)
 	}

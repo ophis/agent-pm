@@ -119,7 +119,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 	if err != nil {
 		return StartResult{}, err
 	}
-	if err := h.Creds.Inject(ctx, c, h.Docker); err != nil {
+	exec := func(argv []string, stdin []byte) error {
+		_, err := h.Docker.Run(ctx, append([]string{"exec", "--interactive", "--user", "agent", c}, argv...), stdin)
+		return err
+	}
+	if err := h.Creds.Inject(exec); err != nil {
 		if errors.Is(err, docker.ErrUnreachable) {
 			return StartResult{}, failure(err, protocol.StartFailed, "")
 		}

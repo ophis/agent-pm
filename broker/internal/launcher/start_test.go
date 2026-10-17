@@ -27,8 +27,8 @@ type fakeCreds struct {
 }
 
 func (c *fakeCreds) Ready() error { return c.ready }
-func (c *fakeCreds) Inject(ctx context.Context, name string, d docker.Runner) error {
-	if _, err := d.Run(ctx, []string{"exec", "--interactive", "inject", name}, []byte(fakeToken)); err != nil {
+func (c *fakeCreds) Inject(exec func(argv []string, stdin []byte) error) error {
+	if err := exec([]string{"inject"}, []byte(fakeToken)); err != nil {
 		return err
 	}
 	return c.injectErr
@@ -288,9 +288,12 @@ func TestStartOrder(t *testing.T) {
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"agent timeout --kill-after=10 180", "agent claude --version", "agent codex --version",
-		"--interactive inject " + container}
+		"--interactive --user inject"}
 	if !slices.Equal(steps, wantSteps) {
 		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
+	}
+	if inject := d.calls[len(d.calls)-1]; !slices.Equal(inject, []string{"exec", "--interactive", "--user", "agent", container, "inject"}) {
+		t.Fatalf("inject %q", inject)
 	}
 	boot, hook := d.calls[4], d.calls[5]
 	if !slices.Equal(boot[len(boot)-3:], []string{"claude", home + "/.agent-pm/docker-state/worker_1/claude", home + "/src/project"}) ||

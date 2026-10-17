@@ -2,7 +2,6 @@ package broker
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -26,16 +25,16 @@ func (k *fakeKeychain) Get() ([]byte, error) {
 }
 func (k *fakeKeychain) Put(b []byte) error { k.put = append([]byte(nil), b...); return nil }
 
-type fakeDocker struct {
-	args  [][]string
+type fakeExec struct {
+	argv  [][]string
 	stdin [][]byte
 	err   error
 }
 
-func (d *fakeDocker) Run(_ context.Context, args []string, stdin []byte) ([]byte, error) {
-	d.args = append(d.args, args)
-	d.stdin = append(d.stdin, append([]byte(nil), stdin...))
-	return nil, d.err
+func (e *fakeExec) run(argv []string, stdin []byte) error {
+	e.argv = append(e.argv, argv)
+	e.stdin = append(e.stdin, append([]byte(nil), stdin...))
+	return e.err
 }
 
 const token = "sk-ant-oat01-SECRET"
@@ -94,14 +93,14 @@ func TestReady(t *testing.T) {
 }
 
 func TestInject(t *testing.T) {
-	d := &fakeDocker{}
+	e := &fakeExec{}
 	k := &fakeKeychain{token: []byte(token)}
-	if err := (Credentials{Keychain: k}).Inject(context.Background(), "agent-pm-w-0123", d); err != nil {
+	if err := (Credentials{Keychain: k}).Inject(e.run); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"exec", "--interactive", "--user", "agent", "agent-pm-w-0123", "/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}
-	if !reflect.DeepEqual(d.args, [][]string{want}) || string(d.stdin[0]) != token {
-		t.Fatalf("%q %q", d.args, d.stdin)
+	want := []string{"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}
+	if !reflect.DeepEqual(e.argv, [][]string{want}) || string(e.stdin[0]) != token {
+		t.Fatalf("%q %q", e.argv, e.stdin)
 	}
 	for _, tc := range []struct {
 		dockerErr, keyErr error
@@ -111,8 +110,8 @@ func TestInject(t *testing.T) {
 		{errors.Join(docker.ErrUnreachable, errors.New(token)), nil, true},
 		{nil, errors.New("locked " + token), false},
 	} {
-		d := &fakeDocker{err: tc.dockerErr}
-		err := Credentials{Keychain: &fakeKeychain{token: []byte(token), getErr: tc.keyErr}}.Inject(context.Background(), "c", d)
+		e := &fakeExec{err: tc.dockerErr}
+		err := Credentials{Keychain: &fakeKeychain{token: []byte(token), getErr: tc.keyErr}}.Inject(e.run)
 		if err == nil || strings.Contains(err.Error(), token) || errors.Is(err, docker.ErrUnreachable) != tc.unreachable {
 			t.Fatalf("%v", err)
 		}
