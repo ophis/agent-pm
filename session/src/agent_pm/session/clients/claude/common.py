@@ -15,6 +15,7 @@ from agent_pm.session.clients import common
 from agent_pm.session.clients.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
+    ClientHome,
     ConfigError,
     Effort,
     Launch,
@@ -25,13 +26,16 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.utils import (
+    DOCKER_STATE,
     LOCAL_ENV_VARS,
     STATE,
+    docker_home,
     drop_stale,
     environment_ok,
     json_records,
     number,
     printable_abs,
+    read_beneath,
     read_regular,
     resume_command,
     save,
@@ -44,6 +48,8 @@ STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
+HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR")
+HOME_READ_MAX = 64 << 20
 TUI_ENV = MappingProxyType({"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1"})
 
 
@@ -199,6 +205,19 @@ CHECKS = (
 )
 
 
+def read(path: str, *, offset: int = 0, limit: int | None = None, tail: bool = False):
+    """read_regular; under a Docker session's home, which its container writes, never through a
+    link and at most HOME_READ_MAX bytes.
+    """
+    path = os.path.abspath(path)
+    state = os.path.expanduser(DOCKER_STATE) + os.sep
+    if not path.startswith(state):
+        return read_regular(path, offset=offset, limit=limit, tail=tail)
+    root = docker_home(path.removeprefix(state).split(os.sep)[0], HOME.dir)
+    cap = HOME_READ_MAX if limit is None else min(limit, HOME_READ_MAX)
+    return read_beneath(root, path, offset=offset, limit=cap, tail=tail)
+
+
 class ClaudeCommon:
     UNSET = (
         "CLAUDE_CODE_CHILD_SESSION",
@@ -311,7 +330,7 @@ class ClaudeCommon:
         hops: list[tuple[str, str | None, str | None]] = [(sid, path, None)]
         seen = {sid}
         while path:
-            data = read_regular(path, limit=TAIL, tail=True) or b""
+            data = read(path, limit=TAIL, tail=True) or b""
             found = None
             for record in json_records(data.splitlines()):
                 found = cls.continuation(record, sid, config_dir) or found

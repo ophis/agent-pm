@@ -1,6 +1,6 @@
 """Tmux, tmux inside our program: every tmux call through runner (subprocess.run's signature) and
 sleep, production one Tmux(), tests a fake runner. start and detach hand a launch over to a new
-session's pane (EXEC).
+session's pane (EXEC); launch puts it on tmux's command line. Listings skip sessions tagged VIEW.
 """
 
 from __future__ import annotations
@@ -86,6 +86,10 @@ ERRPIPE = "errpipe"
 
 
 DIED = "set-option @state dead"
+
+
+VIEW = "@view"
+VIEWLESS = ["-f", f"#{{==:#{{{VIEW}}},}}"]
 
 
 CLOCK = f'"$(date +{SessionStatusLog.CLOCK})"'
@@ -383,9 +387,11 @@ def events_file(path: str) -> str:
     return path
 
 
-def _decorations(session: str, events: str | None, *, status_line: bool) -> list[list[str]]:
+def _decorations(
+    session: str, events: str | None, *, status_line: bool, died: str = DIED
+) -> list[list[str]]:
     target = f"={session}:"
-    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
+    died = died if events is None else f"{died} ; {DEAD_EVENT}"
     return [
         *([["set-option", "-t", target, "@events", events]] if events is not None else []),
         ["set-hook", "-p", "-t", target, "pane-died", died],
@@ -547,7 +553,7 @@ class Tmux:
 
     def sessions(self) -> list[str] | None:
         """The sessions' names: [] when no server runs, None when tmux fails."""
-        found = self._table(["list-sessions", "-F", "#{session_name}"], 1)
+        found = self._table(["list-sessions", *VIEWLESS, "-F", "#{session_name}"], 1)
         return None if found is None else [name for (name,) in found if name]
 
     def listing(self, match=None) -> list[dict] | None:
@@ -558,7 +564,7 @@ class Tmux:
         through the pane its launch recorded, whichever pane is active: dead once that pane is gone,
         and dead None for a bad @process; any other session through its active pane.
         """
-        found = self._table(["list-sessions", "-F", LISTING], 9)
+        found = self._table(["list-sessions", *VIEWLESS, "-F", LISTING], 9)
         if found is None:
             return None
         rows = sorted(
@@ -625,9 +631,11 @@ class Tmux:
         *,
         pane: str | None = None,
         tmux: str = "tmux",
+        session: str | None = None,
     ) -> None:
         """Hook protocol: sets the pane ($TMUX_PANE when None) @state to word; done and blocked also
-        append `HH:MM:SS <session> <word>` to events, an existing regular file (None: no line).
+        append `HH:MM:SS <session> <word>` to events, an existing regular file (None: no line); the
+        session is the pane's unless given.
         """
         pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
         if not pane:
@@ -637,7 +645,8 @@ class Tmux:
         self._mark_tmux([tmux, "set-option", "-t", pane, "@state", word])
         if word not in ("done", "blocked") or events is None:
             return
-        session = self._mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"]).strip()
+        if session is None:
+            session = self._mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"]).strip()
         if not NAME.fullmatch(session):
             raise TuiError(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
         try:
@@ -668,6 +677,68 @@ class Tmux:
         if res.returncode:
             raise TuiError(f"tmux: {error(res)}")
         return res.stdout
+
+    def launch(
+        self,
+        session: str,
+        argv: Sequence[str],
+        *,
+        cwd: str,
+        env: Mapping[str, str],
+        tags: Mapping[str, str] | None = None,
+        died: str = DIED,
+    ) -> str:
+        """start's session, decorations and @process in one call, its argv run as given (no PATH
+        lookup, no handover file) with only env's -e values, and pane-died `died`; no events.
+        Returns its pane's process().
+        """
+        session_name(session)
+        tag_options = _tags(session, tags or {})
+        if not argv:
+            raise TuiError("no command")
+        if not os.path.isabs(cwd) or "#" in cwd or cwd.endswith(";"):
+            raise TuiError(f"tmux would misread cwd {cwd!r:.80}")
+        for arg in argv:
+            if arg.endswith(";"):
+                raise TuiError(f"tmux would misread argv item {arg!r:.80}")
+        values = []
+        for key, value in env.items():
+            if value.endswith(";"):
+                raise TuiError(f"tmux would misread env {key}")
+            values += ["-e", f"{key}={value}"]
+        cols, rows = shutil.get_terminal_size()
+        decorations = [
+            arg
+            for args in _decorations(session, None, status_line=False, died=died)
+            for arg in (";", *args)
+        ]
+        res = self.run(
+            [
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                PROCESS,
+                "-s",
+                session,
+                "-x",
+                str(cols),
+                "-y",
+                str(rows),
+                "-c",
+                cwd,
+                *values,
+                "--",
+                *argv,
+                *(";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"),
+                *tag_options,
+                *decorations,
+                *_recorded(session),
+            ]
+        )
+        if res.returncode:
+            raise TuiError(f"tmux: {error(res)}")
+        return _identity(res)
 
     def start(
         self,

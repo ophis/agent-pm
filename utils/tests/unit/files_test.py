@@ -1,4 +1,4 @@
-"""utils/files.py: read_regular, append_line, holds, file_lock, save and drop_stale."""
+"""utils/files.py: read_regular, read_beneath, append_line, holds, file_lock, save and drop_stale."""
 
 import errno
 import json
@@ -102,6 +102,49 @@ class ReadRegular(Base):
         self.write()
         with unittest.mock.patch.object(os, "fstat", side_effect=OSError(errno.EIO, "I/O error")):
             self.assertIsNone(files.read_regular(self.path))
+
+
+class ReadBeneath(Base):
+    def setUp(self):
+        super().setUp()
+        self.sub = os.path.join(self.dir, "a", "b")
+        os.makedirs(self.sub)
+        self.file = os.path.join(self.sub, "f")
+        with open(self.file, "wb") as f:
+            f.write(DATA)
+
+    def test_reads_a_file_below_root_as_read_regular(self):
+        self.assertEqual(files.read_beneath(self.dir, self.file), DATA)
+        self.assertEqual(files.read_beneath(self.dir, self.file, offset=3, limit=4), b"3456")
+        self.assertEqual(files.read_beneath(self.dir, self.file, limit=4, tail=True), b"6789")
+
+    def test_a_link_anywhere_below_root_is_none(self):
+        outside = os.path.join(self.dir, "outside")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "f"), "wb") as f:
+            f.write(b"secret")
+        root = os.path.join(self.dir, "a")
+        os.symlink(os.path.join(outside, "f"), os.path.join(self.sub, "file-link"))
+        os.symlink(outside, os.path.join(root, "dir-link"))
+        for path in (os.path.join(self.sub, "file-link"), os.path.join(root, "dir-link", "f")):
+            with self.subTest(path=path):
+                self.assertIsNone(files.read_beneath(root, path))
+
+    def test_outside_root_missing_fifo_or_directory_is_none_without_blocking(self):
+        root = os.path.join(self.dir, "a")
+        fifo = os.path.join(self.sub, "fifo")
+        os.mkfifo(fifo)
+        self.assertIsNone(self.promptly(lambda: files.read_beneath(root, fifo)))
+        for path in (self.path, root, self.sub, os.path.join(self.sub, "missing"), f"{root}/../f"):
+            with self.subTest(path=path):
+                self.assertIsNone(files.read_beneath(root, path))
+        self.assertIsNone(files.read_beneath(os.path.join(self.dir, "missing"), self.file))
+
+    def test_no_fd_is_left_open(self):
+        before = len(os.listdir("/dev/fd"))
+        for path in (self.file, os.path.join(self.sub, "missing")):
+            files.read_beneath(self.dir, path)
+        self.assertEqual(len(os.listdir("/dev/fd")), before)
 
 
 class AppendLine(Base):

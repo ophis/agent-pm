@@ -320,6 +320,8 @@ class Worker:
         session = self._session()
         if session is None:
             raise SessionError(f"{self.state.name}: no session to restart; resume starts it")
+        if refused := self.session_cls.host(self.state.host)._resume_refused:
+            raise SessionError(f"{self.state.name}: {refused}")
         self.replace(session)
         return self._start_again()
 

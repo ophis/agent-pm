@@ -39,10 +39,17 @@ def on_hook(word: str, call: HookCall) -> None:
     def run(argv, **options):
         return subprocess.run(argv, env=environment, **options)
 
+    mark_launched(run, word, call, target=target, generation=generation, tmux=executable)
+
+
+def mark_launched(
+    run, word: str, call: HookCall, *, target: str, generation: str, tmux: str, session=None
+) -> None:
+    """Marks target's launched pane while its @sid and @generation are the call's."""
     try:
         result = run(
             [
-                executable,
+                tmux,
                 "display-message",
                 "-p",
                 "-t",
@@ -66,7 +73,9 @@ def on_hook(word: str, call: HookCall) -> None:
             return
         if sid != call.sid or actual_generation != generation:
             return
-        transport.Tmux(run).mark(word, call.events, pane=process.split(" ")[2], tmux=executable)
+        transport.Tmux(run).mark(
+            word, call.events, pane=process.split(" ")[2], tmux=tmux, session=session
+        )
     except subprocess.TimeoutExpired:
         raise HookError(f"tmux: timed out after {transport.MARK_TIMEOUT} s") from None
     except OSError as error:

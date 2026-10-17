@@ -12,6 +12,8 @@ from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from agent_pm.utils.paths import (
+    DOCKER_STATE,
+    docker_home,
     import_env,
     module_roots,
     overlaps,
@@ -314,6 +316,13 @@ class SourcePath(Case):
                 ),
             ):
                 self.assertEqual(source_path(roots), want)
+
+
+class DockerHome(Case):
+    def test_a_session_home_under_the_docker_state_root(self):
+        with mock.patch.dict(os.environ, {"HOME": "/home/u"}):
+            self.assertEqual(docker_home("w", "dir"), "/home/u/.agent-pm/docker-state/w/dir")
+        self.assertEqual(DOCKER_STATE, "~/.agent-pm/docker-state")
 
 
 if __name__ == "__main__":

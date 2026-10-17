@@ -1,4 +1,4 @@
-"""The state root STATE, path normalization, containment and writable temp roots."""
+"""The state root STATE, its Docker session homes, path normalization, containment and writable temp roots."""
 
 import contextlib
 import os
@@ -10,6 +10,12 @@ from collections.abc import Sequence
 from types import ModuleType
 
 STATE = "~/.agent-pm"
+DOCKER_STATE = f"{STATE}/docker-state"
+
+
+def docker_home(name: str, dir: str) -> str:
+    """A Docker session's client home: `dir` in its state dir under DOCKER_STATE."""
+    return os.path.expanduser(f"{DOCKER_STATE}/{name}/{dir}")
 
 
 def module_roots(*packages: ModuleType) -> tuple[str, ...]:

@@ -500,14 +500,23 @@ class TuiRuntime(Runtime):
         cls._selected(spec, client)
         drop = identity_drop(registry)
         store = TuiStore.attach(name, host=host)
-        spec = replace(spec, name=name, events=events)
+        client_home = run._home()
+        home = host._client_env(name, spec.client or "", client_home, resume=spec.resume)
+        spec = replace(spec, name=name, events=events, env={**spec.env, **home})
         spec = cls._noted(spec, client)
         hook = store.hook_argv()
-        prepared = cls._launched(spec, lambda s: run.launch(s, hook), drop)
+        prepared = cls._launched(
+            spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
+        )
         metadata = {
             "sid": prepared.info.sid,
             "client": spec.client or "session",
             "generation": uuid.uuid4().hex,
+            **(
+                {"home_field": client_home.field, "home_dir": client_home.dir}
+                if home and client_home
+                else {}
+            ),
         }
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):

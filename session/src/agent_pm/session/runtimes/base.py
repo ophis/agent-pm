@@ -41,13 +41,19 @@ from agent_pm.utils import (
 
 
 def child_env(
-    launch: Launch, cwd: str, drop: Collection[str] = (), client: str | None = None
+    launch: Launch,
+    cwd: str,
+    drop: Collection[str] = (),
+    client: str | None = None,
+    *,
+    inherit: bool = True,
 ) -> dict[str, str]:
-    """The environment less drop and unset, then the launch env, PWD, AGENT_SESSION_ENV and
-    CLIENT_ENV (client, when given); PATH led by the running plugin's bin/, where PATH finds
-    COMMAND (FR-32), when it does.
+    """The environment (inherit; else none) less drop and unset, then the launch env, PWD,
+    AGENT_SESSION_ENV and CLIENT_ENV (client, when given); PATH led by the running plugin's bin/,
+    where PATH finds COMMAND (FR-32), when it does.
     """
-    env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
+    source = os.environ if inherit else {}
+    env = {k: v for k, v in source.items() if k not in drop and k not in launch.unset}
     env = {**env, **launch.env, "PWD": cwd, AGENT_SESSION_ENV: "1"}
     if client is not None:
         env[CLIENT_ENV] = client
@@ -166,7 +172,9 @@ class Runtime(ABC):
         return spec
 
     @staticmethod
-    def _launched(spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str]) -> Prepared:
+    def _launched(
+        spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str], *, inherit: bool = True
+    ) -> Prepared:
         if refused := nested_start():
             raise ConfigError(refused)
         if spec.sid is None:
@@ -177,4 +185,5 @@ class Runtime(ABC):
         cwd = command.cwd or spec.access.cwd
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
-        return Prepared(spec, info, command.argv, child_env(command, cwd, drop, spec.client))
+        env = child_env(command, cwd, drop, spec.client, inherit=inherit)
+        return Prepared(spec, info, command.argv, env)

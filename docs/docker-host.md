@@ -3,8 +3,9 @@
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
 keychain and writes it only into a container's tmpfs. Its JSON interface:
-[Docker broker protocol](docker-broker-protocol.md). Session's Docker Host, which calls
-it, is not here yet: this page installs the broker and checks it by hand.
+[Docker broker protocol](docker-broker-protocol.md). Session's Docker Host calls it to run
+workers ([Run workers](#run-workers)); the sections up to Close install the broker and
+check it by hand.
 
 Run every step as yourself, with `HOME` your account home. `B` below is
 `/usr/local/libexec/agent-pm/agent-pm-broker`; `PKG` is the installed agent-pm plugin
@@ -39,10 +40,6 @@ them to project folders):
 [session.hosts.docker]
 mount_roots = ["~/src"]
 ```
-
-Until Session's Docker Host ships, Session rejects a `[session.hosts.docker]` table
-(`[hosts.docker].implementation: want module.path:Class`): remove the table after these
-checks and before using other agent-pm commands.
 
 ## Log in
 
@@ -139,6 +136,44 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 ```
 
 `docker ps -a --filter name="$C"` lists nothing.
+
+## Run workers
+
+To run tui workers in containers, make the Docker Host the default in the same file:
+
+```toml
+[session.hosts]
+default = "docker"
+```
+
+| `[session.hosts.docker]` key | Default | Meaning |
+|---|---|---|
+| `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
+| `mount_roots` | `[]` | the roots above; empty: every start fails and asks you to set it |
+
+Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container, and
+`send`, `read`, `attach`, `status`, `report`, `next-event`, `pending` and `close` work as
+on tmux. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
+whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
+
+Refused before any container exists, as not supported on the Docker Host yet: a client
+other than Claude, `restart` and `resume`, role runs (a cwd under `~/.agent-pm`), detached
+sessions, and a start while a container of that name still exists. The broker's
+Refusals above apply too, and Session checks the same cwd rules first.
+
+`~/.agent-pm/docker-state/<name>/` holds the client's config dir (remade at each start),
+the start manifests, `host.json` (what the host knows of the session) and the hook
+supervisor's `supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
+
+A container left behind (for example after a crash) blocks a new start of its name.
+Remove it by hand:
+
+```sh
+docker --host "unix://$HOME/.docker/run/docker.sock" ps -a --filter label=agent-pm.session=NAME
+docker --host "unix://$HOME/.docker/run/docker.sock" rm -f agent-pm-NAME-GENERATION
+```
+
+`agent-pm-crew status` then shows the worker as ended.
 
 ## Risks
 
