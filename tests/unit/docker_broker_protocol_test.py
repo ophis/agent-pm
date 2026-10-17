@@ -8,7 +8,7 @@ from tests.case import REPO, Case
 PROTOCOL = Path(REPO, "protocol/docker-broker")
 
 
-class DockerM1Protocol(Case):
+class DockerBrokerProtocol(Case):
     def test_every_shared_fixture_has_its_expected_schema_outcome(self):
         schema = json.loads((PROTOCOL / "protocol.schema.json").read_text())
         Draft202012Validator.check_schema(schema)

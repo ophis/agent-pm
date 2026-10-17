@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker M1 broker protocol 1",
+  "title": "Docker broker protocol 1",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {

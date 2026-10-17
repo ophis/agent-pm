@@ -121,4 +121,4 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Upgrading](docs/upgrading.md) | upgrade steps, switching from v1, smoke checklist |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
-| [Docker M1 protocol](docs/docker-m1.md) | broker schemas, errors and shared fixtures (developers) |
+| [Docker broker protocol](docs/docker-broker-protocol.md) | broker schemas, errors and shared fixtures (developers) |

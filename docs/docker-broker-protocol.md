@@ -1,4 +1,4 @@
-# Docker M1 broker protocol
+# Docker broker protocol
 
 **Protocol 1** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
 (Session's Docker Host, Python). `version` writes `{"protocol_version":"1"}`.
@@ -8,7 +8,7 @@ broker installation/upgrade command supplied by TASK-559. It creates no containe
 
 This change supplies protocol artifacts only. Broker installation, interactive
 `login claude`, image construction and Docker Host implementation belong to those
-tickets. Context: [TASK-545 M1 PRD](https://github.com/ophis/private_docs/blob/main/Product%20Design/2026-10-16-2247-TASK-545-docker-host-m1.md).
+tickets. Context: [TASK-545](https://linear.app/ophis-workgroup/issue/TASK-545).
 
 ## Schemas and channels
 
@@ -166,4 +166,4 @@ acceptance only, not those future implementations or real Docker behavior.
 are rejection cases. `docker=sharing_denied` means a reachable daemon rejects creation.
 
 Install the pinned test dependency and use the supervised test command in
-[docs/tests.md](tests.md); the fixture test is `tests/unit/docker_m1_protocol_test.py`.
+[docs/tests.md](tests.md); the fixture test is `tests/unit/docker_broker_protocol_test.py`.
