@@ -510,6 +510,7 @@ class FakeLinear:
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
+            "children": {"nodes": []},  # the fake has no sub-issues
             "history": {
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},

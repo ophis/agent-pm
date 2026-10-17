@@ -48,8 +48,9 @@ ROLES = {
 TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED)
 
 
-def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
-    owners = owners or {}
+def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
+    """children: sub-issue state types by parent, as Linear lists them (archived ones left out)."""
+    owners, children = owners or {}, children or {}
 
     def history(ident):
         return {
@@ -74,7 +75,17 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             return {
                 "issues": {
                     "nodes": [
-                        {"id": f"id-{i}", "identifier": i, "history": history(i)}
+                        {
+                            "id": f"id-{i}",
+                            "identifier": i,
+                            "history": history(i),
+                            "children": {
+                                "nodes": [
+                                    {"identifier": c, "state": {"type": t}}
+                                    for c, t in children.get(i, {}).items()
+                                ]
+                            },
+                        }
                         for i in hits[start : start + page]
                     ],
                     "pageInfo": {

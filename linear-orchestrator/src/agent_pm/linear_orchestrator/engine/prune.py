@@ -9,7 +9,9 @@ configured one) reports agent files in (Delegate.checkouts not None):
   <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the default
   that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs only,
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
-- archives every finished issue of the team assigned to the pm or engineer role account.
+- archives every finished issue of the team assigned to the pm or engineer role account, unless a
+  sub-issue is unfinished (Linear archives sub-issues with their parent): skipped until each is
+  finished or archived.
 
 For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
@@ -42,6 +44,7 @@ from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move, role_ids, team
+from agent_pm.linear_orchestrator.engine.router import DONE
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     ConfigError,
@@ -61,7 +64,7 @@ Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " +
 Q_FINISHED = (
     """query($t: ID, $s: [ID!], $a: [ID!], $c: String, $after: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
-  nodes { id identifier """
+  nodes { id identifier children(first: 250) { nodes { identifier state { type } } } """
     + HISTORY
     + """ }
   pageInfo { hasNextPage endCursor } } }"""
@@ -92,7 +95,8 @@ Prerequisites and effects:
   preserve the default branch and unpushed branches. No fetch is performed.
   Clones under work_dir/work or temporary directories are skipped.
   Archive team issues finished at least 2 hours ago and assigned to
-  pm/engineer role accounts; unknown finish times are skipped.
+  pm/engineer role accounts; unknown finish times are skipped, and so is an
+  issue with an unfinished sub-issue (archiving it archives its sub-issues).
   For issues in any other state but Todo/In Progress, 7 days after both their
   latest move into it and their latest recorded run, delete their checkouts
   and temp files through their Delegate, keeping the other agent files and the
@@ -268,6 +272,15 @@ class Pruner:
                 self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
             elif self.now - since < QUARANTINE:
                 continue
+            elif open_child := next(
+                (c for c in node["children"]["nodes"] if c["state"]["type"] not in DONE), None
+            ):
+                self.say(
+                    "prune-skip",
+                    ident,
+                    once=True,
+                    reason=f"archive: sub-issue {open_child['identifier']} not finished",
+                )
             elif self.dry:
                 self.say("prune-plan", ident, what="archive")
             else:
