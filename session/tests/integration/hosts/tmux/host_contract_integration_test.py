@@ -11,9 +11,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import SessionError
+from agent_pm.session import SessionError, Viewer
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.viewer import display as displays
 from agent_pm.utils import StatusState
 
 from session.tests import live_tmux
@@ -259,15 +260,16 @@ while True: time.sleep(1)
                 self.server.tmux("set-option", "-t", f"={name}:", "@record", forged)
                 self.assertIsNone(self.host.attach(name).record())
 
-    def test_a_display_completed_once_is_stored_with_its_opener_and_listed(self):
+    def test_a_display_completed_once_is_stored_as_given_and_listed_by_the_viewer(self):
+        viewer = Viewer()
         with mock.patch.dict(os.environ, self.server.inside(MANAGER)):
-            display = self.host.display("/right")
+            display = displays.display(viewer, "/right", self.host)
         self.assertEqual(display, f"{MANAGER}/right")
         name = self.fresh()
         self.start("detach", name, SLEEP, display=display)
         self.assertEqual(self.host.attach(name).display(), display)
-        self.assertEqual(self.server.option(name, "@opener"), MANAGER)
-        self.assertEqual(self.host.list(display), [name])
+        self.assertEqual(self.server.option(name, "@opener"), "")
+        self.assertIn(name, displays.names(viewer, self.host, display))
 
 
 if __name__ == "__main__":

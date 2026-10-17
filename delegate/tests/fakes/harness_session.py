@@ -1,4 +1,4 @@
-"""Process-free Session and Hosts for HarnessDelegate's ownership and view contracts. A
+"""Process-free Session, Hosts and Viewer for HarnessDelegate's ownership and view contracts. A
 RecordingHost given a tui run's harness starts its agent session as the harness would, unless
 harness_starts_agent is False.
 """
@@ -20,7 +20,6 @@ from agent_pm.session import (
     Session,
     SessionError,
     SessionStatus,
-    Showable,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.engine.types import Liveness
@@ -92,13 +91,11 @@ class RecordingHost(Host):
             raise SessionError(f"no {self.name} session {name}")
         return self.processes[self.name, name]
 
-    def list(self, display=None):
+    def list(self):
         return [
             name
             for (host, name), process in self.processes.items()
-            if host == self.name
-            and process.alive()
-            and (display is None or display == process.display())
+            if host == self.name and process.alive()
         ]
 
 
@@ -125,24 +122,36 @@ def harness_launches():
     return [launch for launch in RecordingHost.launches if launch["argv"] != ["fake-agent"]]
 
 
-class ShowingHost(RecordingHost, Showable):
+class ShowingHost(RecordingHost):
+    attachable = True
+
+
+class FakeViewer:
+    """The Viewer's four methods, recorded; attach_command is `<host> attach <name>`."""
+
     shown: list[tuple[str, str | None, str | None]] = []
     hidden: list[str] = []
+    closed: list[str] = []
 
-    def show(self, name, *, display=None, command=None):
-        self.shown.append((name, display, command))
-        return self.attach_command(name)
+    def show(self, name, host, *, display=None, command=None):
+        self.attach_command(name, host)
+        FakeViewer.shown.append((name, display, command))
+        return self.attach_command(name, host)
 
-    def hide(self, name, *, if_closed=False):
-        self.hidden.append(name)
+    def hide(self, name, host, *, if_closed=False):
+        self.attach_command(name, host)
+        FakeViewer.hidden.append(name)
 
-    def attach_command(self, name):
-        return f"{self.name} attach {name}"
+    def attach_command(self, name, host):
+        if not host.attachable:
+            raise NotShowable(f"host {host.name} cannot show")
+        return f"{host.name} attach {name}"
 
-    def layout(self, *, display=None):
-        return None
+    def close(self, name, host):
+        if host.attachable:
+            FakeViewer.closed.append(name)
 
-    def tile(self, window, *, wait=True, if_panes_changed=False):
+    def layout(self, host, *, display=None):
         return None
 
 
@@ -160,7 +169,7 @@ class HarnessSession(SessionClass):
         cls.preflights, cls.preflight_error = [], None
         cls.host_names = {}
         RecordingHost.processes, RecordingHost.launches = {}, []
-        ShowingHost.shown, ShowingHost.hidden = [], []
+        FakeViewer.shown, FakeViewer.hidden, FakeViewer.closed = [], [], []
         RecordingHost.harness_starts_agent = True
         kind = ShowingHost if showable else RecordingHost
         cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
@@ -198,34 +207,24 @@ class HarnessSession(SessionClass):
     @classmethod
     def layout(cls, *, display=None):
         host = cls.host()
-        return host.layout(display=display) if isinstance(host, Showable) else None
+        return FakeViewer().layout(host, display=display) if host.attachable else None
 
     @property
     def showable(self):
-        return isinstance(self.host(self.host_names[self.name]), Showable)
+        return self.host(self.host_names[self.name]).attachable
 
     def show(self, *, display=None, command=None):
         host = self.host(self.host_names[self.name])
-        if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot show")
-        return host.show(self.name, display=display, command=command)
+        return FakeViewer().show(self.name, host, display=display, command=command)
 
     def hide(self):
-        host = self.host(self.host_names[self.name])
-        if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot show")
-        host.hide(self.name)
+        FakeViewer().hide(self.name, self.host(self.host_names[self.name]))
 
     def status(self):
-        host = self.host(self.host_names[self.name])
-        hidden = isinstance(host, ShowingHost) and self.name in host.hidden
-        return replace(super().status(), hidden=hidden)
+        return replace(super().status(), hidden=self.name in FakeViewer.hidden)
 
     def attach_command(self):
-        host = self.host(self.host_names[self.name])
-        if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot show")
-        return host.attach_command(self.name)
+        return FakeViewer().attach_command(self.name, self.host(self.host_names[self.name]))
 
     def stop(self):
         self.liveness = Liveness.ABSENT
@@ -300,7 +299,7 @@ class DiskHost(RecordingHost):
             raise SessionError(f"no {self.name} session {name}")
         return DiskProcess(name, self.path(name))
 
-    def list(self, display=None):
+    def list(self):
         return []
 
 

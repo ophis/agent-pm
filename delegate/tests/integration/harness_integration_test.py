@@ -627,8 +627,8 @@ class CountingDisplay(HarnessSession):
 class ValidatingHost(RecordingHost):
     validated: list = []
 
-    def validate(self, name, launch, *, display=None):
-        super().validate(name, launch, display=display)
+    def validate(self, name, launch):
+        super().validate(name, launch)
         ValidatingHost.validated.append((self.name, name, launch))
         if not name.replace("-", "").replace("_", "").isalnum():
             raise SessionConfigError(f"session name {name!r}: want [A-Za-z0-9_-]+")

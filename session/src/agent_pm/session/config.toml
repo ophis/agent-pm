@@ -2,9 +2,9 @@
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below; a `# local:` line shows a value to copy there, uncommented.
 #
-# The session's keys: [clients.<name>] and [hosts]. The session reads no config file: each entry reads this file
-# through agent_pm.session.read_config(), parses [hosts] once (Host.parse_hosts) and hands both to
-# Session.configure(clients=, hosts=); bin/agent-pm-session (session/src/agent_pm/session/cli.py) is one such entry.
+# The session's keys: [clients.<name>], [hosts] and [viewer]. The session reads no config file: each entry reads this
+# file through agent_pm.session.read_config(), parses [hosts] once (Host.parse_hosts) and hands it to
+# Session.configure_from; bin/agent-pm-session (session/src/agent_pm/session/cli.py) is one such entry.
 
 # ── Clients ────────────────────────────────────────────
 # [clients.<name>]  one table per client, loaded only by session/src/agent_pm/session/clients/registry.py; <name> is the
@@ -73,11 +73,8 @@ max = "max"
 # [hosts]             default: the [hosts.<name>] sessions run on
 # [hosts.<name>]      one table per Host, parsed only by Host.parse_hosts (session/src/agent_pm/session/hosts/base.py)
 #   implementation    required: "module.path:Class", the Host class; checked for that form only, never loaded there
-# [hosts.tmux]        tmux's display keys:
+# [hosts.tmux]
 #   status_line       true → tui sessions show tmux's status line
-#   workers_per_column panes per tmux grid column (the tmux Host's show), 1..9999
-#   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
-#                     window resize), "off" (never by itself: agent-pm-session tile @N)
 # [hosts.pty]         a pty per session, held by its own supervisor; state in ~/.agent-pm/pty/<name>/; cannot show:
 #   outer_terminal    variables of an enclosing terminal a tui program on the pty never gets (its TERM: xterm-256color)
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
@@ -90,12 +87,8 @@ default = "tmux"
 # TmuxHost (session/src/agent_pm/session/hosts/tmux/host.py)
 implementation = "agent_pm.session.hosts.tmux:TmuxHost"
 status_line = false
-workers_per_column = 3
-grid_retile = "open-close"
 # local: [session.hosts.tmux]
 # local: status_line = true
-# local: workers_per_column = 2
-# local: grid_retile = "all"
 
 [hosts.pty]
 # PtyHost (session/src/agent_pm/session/hosts/pty/host.py)
@@ -109,3 +102,15 @@ docker = "/usr/local/bin/docker"
 mount_roots = []
 # local: [session.hosts.docker]
 # local: mount_roots = ["~/src"]
+
+# ── Viewer ──────────────────────────────────────────────
+# [viewer]            how the Viewer (session/src/agent_pm/session/viewer/viewer.py) shows every Host's sessions:
+#   workers_per_column panes per tmux grid column, 1..9999
+#   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
+#                     window resize), "off" (never by itself: agent-pm-session tile @N)
+[viewer]
+workers_per_column = 3
+grid_retile = "open-close"
+# local: [session.viewer]
+# local: workers_per_column = 2
+# local: grid_retile = "all"

@@ -1,6 +1,6 @@
 """clients/registry.py: what a caller-owned Registry stores (read-only copies of the
 [clients.<name>] tables and the parsed Hosts, never parsed again), settings() from a read session
-config, the tui settings a configured class's default Host reads from [hosts.tmux] and Client loading
+config ([viewer] included), the tui settings a configured class's default Host reads from [hosts.tmux] and Client loading
 from module.path:Class. Caller-owned fake module tables supply the client loader; each test
 constructs fresh settings.
 """
@@ -125,17 +125,17 @@ class ConfigureTest(Base):
             )
             self.assertEqual(
                 tui(self.session_cls),
-                TuiSettings(status_line=True, per_column=None, retile=None),
+                TuiSettings(status_line=True),
             )
         opened.assert_not_called()
 
     def test_independent_classes_keep_their_own_configuration(self):
         self.register(fake=fake_client)
-        self.configure(FAKE + 'scenario = "/a"\n', {"workers_per_column": 2})
+        self.configure(FAKE + 'scenario = "/a"\n', {"status_line": True})
         first = self.session_cls
         self.configure(FAKE + 'scenario = "/b"\n')
         self.assertEqual(registry_of(first).client("fake").config, {"scenario": "/a"})
-        self.assertEqual(tui(first).per_column, 2)
+        self.assertTrue(tui(first).status_line)
         self.assertEqual(registry_of(self.session_cls).client("fake").config, {"scenario": "/b"})
         self.assertEqual(tui(self.session_cls), TuiSettings())
 
@@ -226,13 +226,10 @@ class ConfigureTest(Base):
         with (
             mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
         ):
-            self.session_cls = configured({}, {"workers_per_column": 4})
+            self.session_cls = configured({}, {"status_line": True})
             imp.assert_not_called()
             for _ in range(2):
-                self.assertEqual(
-                    tui(self.session_cls),
-                    TuiSettings(status_line=False, per_column=4, retile=None),
-                )
+                self.assertEqual(tui(self.session_cls), TuiSettings(status_line=True))
         imp.assert_called_once_with("agent_pm.session.hosts.tmux")
         self.assertIs(
             load_class(HOSTS["tmux"]["implementation"], Host), agent_pm.session.hosts.tmux.TmuxHost
@@ -262,14 +259,17 @@ class SettingsTest(Base):
                     "a",
                     {"a": {"implementation": "pkg.mod:AHost"}, "b": {"implementation": "p.b:B"}},
                 ),
+                "viewer": {},
             },
         )
+        config["viewer"] = {"grid_retile": "off"}
+        self.assertEqual(registry.settings(config)["viewer"], {"grid_retile": "off"})
 
     def test_hosts_parsed_already_are_not_parsed_again(self):
         hosts = Hosts("x", {"x": {}})
         self.assertEqual(
             registry.settings(tomllib.loads(FAKE), hosts=hosts),
-            {"clients": {"fake": {"implementation": FAKE_CLASS}}, "hosts": hosts},
+            {"clients": {"fake": {"implementation": FAKE_CLASS}}, "hosts": hosts, "viewer": {}},
         )
 
     def test_configure_from_a_read_config(self):
@@ -296,11 +296,9 @@ class SettingsTest(Base):
         found = registry.settings(read_config())
         self.assertEqual(sorted(found["clients"]), ["claude", "codex"])
         self.assertEqual(found["hosts"].default, "tmux")
+        self.assertEqual(found["viewer"], {"workers_per_column": 3, "grid_retile": "open-close"})
         self.session_cls = HostedSession.configured(**found)
-        self.assertEqual(
-            tui(self.session_cls),
-            TuiSettings(status_line=True, per_column=3, retile="open-close"),
-        )
+        self.assertEqual(tui(self.session_cls), TuiSettings(status_line=True))
 
 
 class TuiTest(Base):
@@ -308,11 +306,11 @@ class TuiTest(Base):
         self.configure(FAKE)
         self.assertEqual(
             tui(self.session_cls),
-            TuiSettings(status_line=False, per_column=None, retile=None),
+            TuiSettings(status_line=False),
         )
         self.assertEqual(
             TuiSettings(),
-            TuiSettings(status_line=False, per_column=None, retile=None),
+            TuiSettings(status_line=False),
         )
         self.session_cls = HostedSession.configured(
             clients={}, hosts=Host.parse_hosts({"other": HOSTS["tmux"], "default": "other"})
@@ -320,20 +318,16 @@ class TuiTest(Base):
         self.assertEqual(tui(self.session_cls), TuiSettings())
 
     def test_the_hosts_tmux_keys_values(self):
-        for tmux, want in (
-            (
-                {"status_line": True, "workers_per_column": 2, "grid_retile": "all"},
-                (True, 2, "all"),
-            ),
-            (
-                {"status_line": False, "workers_per_column": 9999, "grid_retile": "off"},
-                (False, 9999, "off"),
-            ),
-            ({"workers_per_column": 1, "grid_retile": "open-close"}, (False, 1, "open-close")),
-        ):
-            with self.subTest(tmux=tmux):
-                self.configure(FAKE, tmux)
-                self.assertEqual(tui(self.session_cls), TuiSettings(*want))
+        for line in (True, False):
+            with self.subTest(line=line):
+                self.configure(FAKE, {"status_line": line})
+                self.assertEqual(tui(self.session_cls), TuiSettings(line))
+
+    def test_the_viewers_keys_in_hosts_tmux_are_unknown(self):
+        for key, value in (("workers_per_column", 2), ("grid_retile", "all")):
+            with self.subTest(key=key):
+                self.configure(FAKE, {key: value})
+                self.refused(f"unknown key {key!r} in [hosts.tmux]", lambda: tui(self.session_cls))
 
     def test_a_clients_key_is_no_setting(self):
         self.configure("[clients.fake]\nstatus_line = true\nworkers_per_column = 2\n")
@@ -343,16 +337,6 @@ class TuiTest(Base):
         self.register(fake=fake_client)
         for key, values, message in (
             ("status_line", ("true", 1, 0, [True]), "status_line: want true or false"),
-            (
-                "workers_per_column",
-                (0, 10000, -1, True, 2.0, "2"),
-                "workers_per_column: want an integer from 1 to 9999",
-            ),
-            (
-                "grid_retile",
-                ("All", "", "never", 1, ["all"]),
-                "grid_retile: want one of all, open-close, off",
-            ),
         ):
             for value in values:
                 with self.subTest(key=key, value=value):

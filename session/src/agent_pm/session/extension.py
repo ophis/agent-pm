@@ -47,7 +47,6 @@ from agent_pm.session.hosts.base import (
     Interactive,
     InteractiveProcess,
     Process,
-    Showable,
     TmuxView,
 )
 from agent_pm.session.modes.client_adapters.headless import Headless, JsonHeadless
@@ -62,7 +61,6 @@ __all__ = [
     "Tui",
     "InProcess",
     "Host",
-    "Showable",
     "TmuxView",
     "CommandView",
     "Process",

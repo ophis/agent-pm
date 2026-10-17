@@ -839,26 +839,20 @@ class TmuxCli:
         session: str,
         launch: Launch,
         *,
-        opener: str | None = None,
         display: str | None = None,
         events: str | None = None,
         record: str | None = None,
         sid: str | None = None,
         control: str | None = None,
     ) -> str:
-        """As start, keeping env's iTerm2 $ITERM_SESSION_ID; opener, display, record (a line) become
-        @opener, @display, @record. No decoration; events: a kept pane whose pane-died hook appends
+        """As start, keeping env's iTerm2 $ITERM_SESSION_ID; display, record (a line) become
+        @display, @record. No decoration; events: a kept pane whose pane-died hook appends
         `HH:MM:SS <session> exited <rc>` (signal n: -n) to them, then kills it.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
-        if opener is not None and not OPENER.fullmatch(opener):
-            raise TuiError(
-                f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
-            )
         named = {
             "@kind": "detach",
-            "@opener": opener,
             "@display": display,
             "@record": record,
             "@sid": sid,

@@ -8,7 +8,7 @@ from unittest import mock
 from agent_pm.session import ConfigError, NotShowable, SessionError
 from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.types import PaneStatus
-from agent_pm.session.hosts.base import CommandView, Host
+from agent_pm.session.hosts.base import CommandView, Host, TmuxView
 from agent_pm.session.viewer import display as displays
 from agent_pm.session.viewer import hidden
 from agent_pm.session.viewer.viewer import VIEW_TAG, Viewer
@@ -73,15 +73,25 @@ class ShowTest(Base):
         self.assertEqual(self.runner.calls, [])
 
     def test_bad_settings_are_refused_when_built(self):
-        for settings, want in (
-            ({"workers_per_column": 0}, "workers_per_column: want an integer from 1 to 9999"),
-            ({"workers_per_column": True}, "workers_per_column: want an integer from 1 to 9999"),
-            ({"grid_retile": "x"}, "grid_retile: want one of all, open-close, off"),
-            ({"status_line": True}, "unknown key 'status_line' in [viewer]"),
+        for key, values, want in (
+            (
+                "workers_per_column",
+                (0, 10000, -1, True, 2.0, "2"),
+                "workers_per_column: want an integer from 1 to 9999",
+            ),
+            (
+                "grid_retile",
+                ("All", "", "never", 1, ["all"]),
+                "grid_retile: want one of all, open-close, off",
+            ),
+            ("status_line", (True,), "unknown key 'status_line' in [viewer]"),
         ):
-            with self.subTest(settings=settings), self.assertRaises(ConfigError) as caught:
-                Viewer(settings, tmux=self.tmux)
-            self.assertEqual(str(caught.exception), want)
+            for value in values:
+                with self.subTest(key=key, value=value), self.assertRaises(ConfigError) as caught:
+                    Viewer({key: value}, tmux=self.tmux)
+                self.assertEqual(str(caught.exception), want)
+        for per, retile in ((1, "open-close"), (9999, "off"), (2, "all")):
+            Viewer({"workers_per_column": per, "grid_retile": retile}, tmux=self.tmux)
 
     def test_layout_completes_the_display_once_the_pane_is_found(self):
         self.enterContext(environ(**INSIDE))
@@ -427,10 +437,26 @@ class CommandViewTest(Base):
                 self.viewer.close("d1", self.docker)
                 self.assertEqual(self.tmux.kill.call_args_list, [mock.call("d1")] if killed else [])
 
+    def test_close_after_its_session_is_gone_still_kills_its_view(self):
+        self.docker.attach_target.side_effect = SessionError("no docker session d1")
+        self.view = VIEW_TAG
+        self.viewer.close("d1", self.docker)
+        self.tmux.kill.assert_called_once_with("d1")
+
     def test_close_names_a_failed_tmux_call(self):
         self.tmux.option.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^view d1: tmux: boom$"):
             self.viewer.close("d1", self.docker)
+
+
+class TmuxViewCloseTest(Base):
+    def test_close_on_a_host_whose_target_is_its_own_tmux_session_touches_no_tmux(self):
+        host = mock.create_autospec(Host, instance=True)
+        host.name, host.attachable = "tmux", True
+        host.attach_target.return_value = TmuxView("w1")
+        self.viewer.close("w1", host)
+        self.tmux.option.assert_not_called()
+        self.tmux.kill.assert_not_called()
 
 
 class NotShowableTest(Base):

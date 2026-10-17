@@ -25,7 +25,6 @@ ABCS = {
     "Process": hosts_base,
     "Interactive": hosts_base,
     "InteractiveProcess": hosts_base,
-    "Showable": hosts_base,
 }
 TYPES = {
     **dict.fromkeys(

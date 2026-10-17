@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session import ConfigError, Launch, SessionError, Showable
+from agent_pm.session import ConfigError, Launch, SessionError
 from agent_pm.session.hosts.base import tui_lock
 from agent_pm.session.hosts.pty import PtyHost, state
 from agent_pm.session.hosts.pty.host import SUPERVISOR, PtyProcess
@@ -31,10 +31,10 @@ class Settings(Case):
             with self.subTest(settings=settings), self.assertRaises(ConfigError):
                 PtyHost("pty", settings)
 
-    def test_it_cannot_show_and_keeps_a_display_as_given(self):
+    def test_it_cannot_show(self):
         host = PtyHost("pty")
-        self.assertNotIsInstance(host, Showable)
-        self.assertEqual((host.display("x:1.2"), host.display_help()), ("x:1.2", ""))
+        self.assertFalse(host.attachable)
+        self.assertIsNone(host.attach_target("x"))
 
 
 class _Connection:

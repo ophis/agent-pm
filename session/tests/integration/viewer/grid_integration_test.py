@@ -10,16 +10,17 @@ import tempfile
 import time
 from unittest import mock
 
-from agent_pm.session import Showable
+from agent_pm.session import Viewer
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
 from agent_pm.session.viewer import grid as tmux_model
 from agent_pm.session.viewer import layout
+from agent_pm.session.viewer.viewer import fold
 
 from session.tests import live_tmux
-from session.tests.case import PLUGIN_BIN, Case
+from session.tests.case import PLUGIN_BIN, Case, configured
 from session.tests.processes import reject_command
 
 MANAGER = "mgr"
@@ -54,9 +55,9 @@ class Live(Case):
         self.configure()
 
     def configure(self, **settings) -> None:
-        """The tui settings show() reads: these, over the earlier ones."""
+        """The [viewer] settings show() reads: these, over the earlier ones."""
         self.settings.update(settings)
-        self.configure_session({}, self.settings)
+        self.session_cls = configured({}, viewer=self.settings)
 
     def per_column(self, n: int) -> None:
         self.configure(workers_per_column=n)
@@ -71,16 +72,16 @@ class Live(Case):
             yield
 
     def show(self, name: str, inside: str | None = MANAGER, split=None, split_from=None) -> str:
-        """The default Host's show(name) at split and split_from from inside `inside`, a pane then
+        """The Viewer's show(name) on the default Host at split and split_from from inside `inside`, a pane then
         showing it; its stderr.
         """
         err = io.StringIO()
-        display = TmuxHost.fold(None, split, split_from)
+        display = fold(None, split, split_from)
         host = self.session_cls.host()
-        if not isinstance(host, Showable):
+        if not host.attachable:
             self.fail(f"host {host.name} cannot show")
         with self.inside(inside), contextlib.redirect_stderr(err):
-            self.assertIsNone(host.show(name, display=display))
+            self.assertIsNone(self.session_cls.viewer().show(name, host, display=display))
         return err.getvalue()
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
@@ -412,7 +413,7 @@ class BoundaryTest(Live):
             "dead", Launch(("/bin/sh", "-c", "exit 7"), self.server.env(), cwd=self.cwd)
         )
         live_tmux.wait(lambda: not terminal.alive(), what="retained terminal exit")
-        self.assertIsNone(self.host.show("dead", display=MANAGER))
+        self.assertIsNone(Viewer().show("dead", self.host, display=MANAGER))
         manual = self.tmux(
             "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.window, *live_tmux.IDLE
         )

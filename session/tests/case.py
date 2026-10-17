@@ -13,6 +13,7 @@ import agent_pm
 from agent_pm.session import Host
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.viewer.viewer import Viewer
 
 from utils.tests.sandbox import clean_env, project_roots
 
@@ -32,14 +33,16 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
 def configured(clients, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:
-    """A HostedSession class of `clients`, HOSTS with `tmux` in [hosts.tmux]; each TmuxHost holds
-    TmuxCli `host` (None: its own); dependencies: class_loader, probe, clock.
+    """A HostedSession class of `clients`, HOSTS with `tmux` in [hosts.tmux]; each TmuxHost and its
+    Viewer hold TmuxCli `host` (None: their own); dependencies: class_loader, probe, clock,
+    viewer_factory.
     """
     hosts = Host.parse_hosts({"tmux": {**HOSTS["tmux"], **(tmux or {})}, "default": "tmux"})
 
     def build(kind: type[Host], name: str, table) -> Host:
         return kind(name, table, tmux=host) if issubclass(kind, TmuxHost) else kind(name, table)
 
+    dependencies.setdefault("viewer_factory", lambda settings: Viewer(settings, tmux=host))
     return HostedSession.configured(
         clients=clients, hosts=hosts, host_factory=build, **dependencies
     )

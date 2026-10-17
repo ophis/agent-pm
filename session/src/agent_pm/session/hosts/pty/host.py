@@ -336,20 +336,18 @@ class PtyHost(Host):
             raise SessionError(f"no {self.name} session {name}")
         return kind(name, folder)
 
-    def list(self, display: Display = None) -> list[str]:
+    def list(self) -> list[str]:
         root = state.root()
-        names = sorted(os.listdir(root)) if os.path.isdir(root) and display != "" else []
+        names = sorted(os.listdir(root)) if os.path.isdir(root) else []
         return [
             name
             for name in names
-            if NAME.fullmatch(name)
-            and (found := state.meta(os.path.join(root, name))).get("kind") in KINDS
-            and (display is None or found.get("display") == display)
+            if NAME.fullmatch(name) and state.meta(os.path.join(root, name)).get("kind") in KINDS
         ]
 
-    def rows(self, display: Display = None) -> list[SessionRow]:
+    def rows(self) -> list[SessionRow]:
         found = []
-        for name in self.list(display):
+        for name in self.list():
             with contextlib.suppress(SessionError):
                 found.append(self.attach(name).row())
         return found
@@ -361,14 +359,14 @@ class PtyHost(Host):
         folder = os.path.join(state.root(), name)
         return HookCallback(hook.__name__, {"folder": folder, "generation": metadata["generation"]})
 
-    def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
-        super().validate(name, launch, display=display)
+    def validate(self, name: str, launch: Launch) -> None:
+        super().validate(name, launch)
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
 
     def _start(self, kind, name, launch: Launch, **options) -> tuple[str, dict]:
         """options: display, events, record, metadata, env."""
-        self.validate(name, launch, display=options["display"])
+        self.validate(name, launch)
         options["events"] = self.prepare_events(self.events_path(options["events"]))
         os.makedirs(state.root(), mode=0o700, exist_ok=True)
         with contextlib.ExitStack() as stack:

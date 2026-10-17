@@ -196,6 +196,12 @@ class Viewer:
         if not host.attachable:
             return
         try:
+            target = host.attach_target(name)
+        except SessionError:
+            target = None  # its session gone, the view it showed may remain
+        if isinstance(target, TmuxView):
+            return
+        try:
             if self._tmux.option(name, VIEW) == VIEW_TAG:
                 self._tmux.kill(name)
         except TuiError as error:

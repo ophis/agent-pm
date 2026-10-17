@@ -5,7 +5,7 @@ Host to display on.
 import inspect
 import unittest
 
-from agent_pm.session import Mode, NotShowable, Session, SessionError, Showable, Usage
+from agent_pm.session import Mode, NotShowable, Session, SessionError, Usage
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Hosts, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
@@ -117,7 +117,7 @@ class Scripted(Case):
         self.assertEqual(cls.display("d"), "d")
         host = cls.host()
         self.assertIsInstance(host, FakeHost)
-        self.assertNotIsInstance(host, Showable)
+        self.assertFalse(host.attachable)
         self.assertEqual((host.name, cls.host("h").name), ("fake", "h"))
 
     def test_classes_from_scripted_share_no_state(self):

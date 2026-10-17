@@ -92,24 +92,14 @@ class AttachListTest(AttachmentBase):
                     self.host.attach("d1")
                 self.assertEqual(str(caught.exception), message)
 
-    def test_list_every_name_or_those_whose_display_equals(self):
+    def test_list_every_name_whatever_its_display(self):
         self.tmux.listing.return_value = [
-            row("a", "mgr"),
+            row("d", "mgr"),
             row("b", None),
             row("c", "elsewhere:1.2"),
-            row("d", "mgr"),
+            row("a", "mgr"),
         ]
-        for display, want in (
-            (None, ["a", "b", "c", "d"]),
-            ("mgr", ["a", "d"]),
-            ("elsewhere:1.2", ["c"]),
-            ("other", []),
-        ):
-            with self.subTest(display=display):
-                self.assertEqual(self.host.list(display), want)
-        self.tmux.listing.reset_mock()
-        self.assertEqual(self.host.list(""), [])
-        self.tmux.listing.assert_not_called()
+        self.assertEqual(self.host.list(), ["a", "b", "c", "d"])
 
     def test_list_when_tmux_fails_is_a_driver_error(self):
         self.tmux.listing.return_value = None

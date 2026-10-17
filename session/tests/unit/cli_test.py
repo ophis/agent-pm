@@ -10,8 +10,10 @@ from unittest import mock
 
 from agent_pm.session import cli
 from agent_pm.session.engine.hosted_session import HostedSession
+from agent_pm.session.engine.tmux_cli import attach_command
 from agent_pm.session.engine.types import Hosts
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record
 
 from session.tests.case import Case
@@ -66,7 +68,6 @@ class RecordControl(HostedTuiBase):
             ctl=("agent-pm-session",),
             resume=("agent-pm-session", "resume", "w1"),
         )
-        self.host.calls.attach_command.return_value = "attach-session"
 
     def invoke(self, *argv, record=None, stdin=None):
         out, err = io.StringIO(), io.StringIO()
@@ -94,9 +95,6 @@ class RecordControl(HostedTuiBase):
                     self.assertIn(SID, err)
                     self.assertIn("replacement", err)
         replacement.calls.close.assert_not_called()
-        self.host.calls.show.assert_not_called()
-        self.host.calls.hide.assert_not_called()
-        self.host.calls.attach_command.assert_not_called()
 
     def test_status_refuses_a_record_with_one_replaced_session(self):
         self.host.create("w1", sid=SID)
@@ -131,8 +129,6 @@ class RecordControl(HostedTuiBase):
                 self.invoke(command, record=record)
         first.calls.close.assert_not_called()
         replacement.calls.close.assert_not_called()
-        self.host.calls.show.assert_not_called()
-        self.host.calls.hide.assert_not_called()
 
     def test_duplicate_keys_refuse_before_close(self):
         process = self.host.create("w1", sid=SID)
@@ -197,7 +193,7 @@ class RecordControl(HostedTuiBase):
         code, out, err = self.invoke("attach-command", stdin=records)
         self.assertEqual(code, 1)
         self.assertIn(SID, err)
-        self.assertEqual(out, "attach-session\n")
+        self.assertEqual(out, f"{attach_command('w2')}\n")
 
 
 COMMANDS = (
@@ -226,7 +222,7 @@ class HelpTest(Case):
             description = self.help([command, "--help"]).split("\n\n")[1]
             with self.subTest(command=command):
                 self.assertLessEqual(max(map(len, description.splitlines())), 80)
-        for line in TmuxHost("tmux").display_help().splitlines():
+        for line in displays.display_help(TmuxHost("tmux")).splitlines():
             if not line.strip().startswith("agent-pm-"):
                 self.assertLessEqual(len(line), 80, line)
 
@@ -305,8 +301,8 @@ class HelpTest(Case):
             cli._parser(hosts)
             .format_help()
             .endswith(
-                f"  tmux: {TmuxHost('tmux').display_help()}\n  pty: as given\n"
-                f"  docker: {TmuxHost('docker').display_help()}\n"
+                f"  tmux: {displays.display_help(TmuxHost('tmux'))}\n  pty: as given\n"
+                f"  docker: {displays.display_help(TmuxHost('docker'))}\n"
             )
         )
         fallback = cli._parser(None).format_help()
@@ -316,7 +312,7 @@ class HelpTest(Case):
         self.assertEqual(cli._display_help(invalid), cli._display_help(None))
 
     def test_tmux_guidance_covers_placement_and_metadata(self):
-        text = TmuxHost("tmux").display_help()
+        text = displays.display_help(TmuxHost("tmux"))
         for term in (
             "OPENER",
             "ANCHOR",

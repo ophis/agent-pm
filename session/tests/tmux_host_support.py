@@ -56,7 +56,7 @@ class Base(Case):
         self.enterContext(which(self.tool))
         self.runner = FakeTmux()
         self.tmux = fake_tmux(self.runner)
-        self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
+        self.host = TmuxHost("tmux", tmux=self.tmux)
         self.viewer = Viewer({"workers_per_column": 2}, tmux=self.tmux)
         self.killpg = self.enterContext(
             mock.patch("os.killpg", side_effect=AssertionError("unsafe signal"))

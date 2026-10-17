@@ -20,7 +20,7 @@ from agent_pm.session.modes.in_process import RUN_THREAD
 
 from session.tests import fake_client
 from session.tests.case import Case
-from session.tests.fakes.terminal import ScreenHost
+from session.tests.fakes.terminal import MemoryViewer, ScreenHost
 from session.tests.modules import client_loader
 from session.tests.threads import capture_errors
 from session.tests.tmux_fixtures import which
@@ -367,7 +367,8 @@ class HostedTuiBase(TuiBase):
         self.host = ScreenHost("tmux")
         self.boundary = True
         self.session_dependencies = {
-            name: value for name, value in self.session_dependencies.items() if name != "host"
+            **{n: v for n, v in self.session_dependencies.items() if n != "host"},
+            "viewer_factory": MemoryViewer,
         }
         self.configure(tui=True)
 

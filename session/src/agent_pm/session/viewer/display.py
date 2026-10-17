@@ -221,12 +221,5 @@ def status(viewer: Viewer, host: Host, process: Process) -> Status:
             viewer.attach_command(process.name, host) if found.alive and host.attachable else None
         )
     except SessionError:
-        return Status(
-            name=process.name,
-            alive=False,
-            state=StatusState.UNKNOWN,
-            outcome=None,
-            attach=None,
-            hidden=False,
-        )
+        return replace(found, alive=False, state=StatusState.UNKNOWN, outcome=None)
     return replace(found, hidden=hidden, attach=attach)

@@ -1,12 +1,14 @@
-"""Nonspawning Host and InteractiveProcess doubles with configurable boundary calls."""
+"""Nonspawning Host, InteractiveProcess and Viewer doubles with configurable boundary calls."""
 
 import os
 import signal
 from unittest import mock
 
-from agent_pm.session import Host, SessionError, Showable
+from agent_pm.session import Host, SessionError, Viewer
+from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Launch, Liveness, SessionRow, StatusState
-from agent_pm.session.hosts.base import InteractiveProcess
+from agent_pm.session.hosts.base import InteractiveProcess, TmuxView
+from agent_pm.session.viewer.placement import Placement
 
 
 class MemoryTerminal(InteractiveProcess):
@@ -17,7 +19,6 @@ class MemoryTerminal(InteractiveProcess):
         self.calls.state.return_value = Liveness.LIVE
         self.calls.returncode.return_value = None
         self.calls.activity.return_value = None
-        self.calls.hidden.return_value = False
         self.calls.record.return_value = receipt
         self.calls.row.return_value = None
         self.calls.session_identity.return_value = (
@@ -45,9 +46,6 @@ class MemoryTerminal(InteractiveProcess):
 
     def activity(self):
         return self.calls.activity() if self._own() else None
-
-    def hidden(self):
-        return self._own() and self.calls.hidden()
 
     def mark(self, word, events):
         if self._own():
@@ -121,7 +119,6 @@ class MemoryHost(Host):
         self.serial = 0
         self.hook = hook
         self.calls.list.return_value = None
-        self.calls.display.return_value = None
 
     def create(self, name, sid=None, *, identity=None, receipt=None, metadata=None, display=None):
         self.serial += 1
@@ -134,17 +131,13 @@ class MemoryHost(Host):
         self.processes[name] = process
         return process
 
-    def validate(self, name, launch: Launch, *, display=None):
-        self.calls.validate(name, launch, display=display)
-        super().validate(name, launch, display=display)
+    def validate(self, name, launch: Launch):
+        self.calls.validate(name, launch)
+        super().validate(name, launch)
 
     def hook_callback(self, name, metadata):
         self.calls.hook_callback(name, metadata)
         return self.hook
-
-    def display(self, value):
-        self.calls.display(value)
-        return value if self.calls.display.return_value is None else self.calls.display.return_value
 
     def terminal(
         self, name, launch: Launch, *, display=None, events=None, record=None, metadata=None
@@ -169,38 +162,50 @@ class MemoryHost(Host):
             raise SessionError(f"no {self.name} session {name}")
         return self.processes[name]
 
-    def list(self, display=None):
-        listed = self.calls.list(display)
-        if listed is not None:
-            return listed
-        return sorted(
-            name
-            for name, process in self.processes.items()
-            if display is None or display != "" and process.display() == display
-        )
+    def list(self):
+        listed = self.calls.list()
+        return sorted(self.processes) if listed is None else listed
 
 
-class ScreenHost(MemoryHost, Showable):
+class ScreenHost(MemoryHost):
+    """Attachable: MemoryViewer shows its sessions through its calls."""
+
     terminal_class = ScreenTerminal
+    attachable = True
 
     def __init__(self, name="memory", **options):
         super().__init__(name, **options)
         self.calls.screen.return_value = ""
+        self.calls.attach_command.return_value = None
 
-    def show(self, name, *, display=None, command=None):
-        shown = self.calls.show(name, display=display, command=command)
-        self.processes[name].calls.hidden.return_value = False
-        return shown
+    def attach_target(self, name):
+        return TmuxView(name)
 
-    def hide(self, name, *, if_closed=False):
-        self.calls.hide(name)
-        self.processes[name].calls.hidden.return_value = True
 
-    def attach_command(self, name):
-        return self.calls.attach_command(name)
+class MemoryViewer(Viewer):
+    """A Viewer on a mock TmuxCli and Placement whose show, hide, attach_command and close ask a
+    ScreenHost's calls (close: `close_view`); a non-attachable Host's close does nothing, as the
+    Viewer's.
+    """
 
-    def layout(self, *, display=None):
-        return self.calls.layout(display=display)
+    def __init__(self, settings=None):
+        tmux = mock.create_autospec(TmuxCli, instance=True)
+        tmux.listing.return_value = []
+        tmux.runner = mock.Mock(side_effect=AssertionError("no tmux in MemoryViewer"))
+        super().__init__(settings, tmux=tmux)
+        self.placement = self._placement = mock.create_autospec(Placement, instance=True)
 
-    def tile(self, window, *, wait=True, if_panes_changed=False):
-        self.calls.tile(window, wait=wait, if_panes_changed=if_panes_changed)
+    def show(self, name, host, *, display=None, command=None):
+        if display is None:
+            display = host.attach(name).display()
+        return host.calls.show(name, display=display, command=command)
+
+    def hide(self, name, host, *, if_closed=False):
+        host.calls.hide(name)
+
+    def attach_command(self, name, host):
+        return host.calls.attach_command(name)
+
+    def close(self, name, host):
+        if host.attachable:
+            host.calls.close_view(name)

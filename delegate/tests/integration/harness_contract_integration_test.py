@@ -13,6 +13,7 @@ from agent_pm.session import Exited, NotShowable, Reply
 from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import (
+    FakeViewer,
     HarnessSession,
     RecordingHost,
     ShowingHost,
@@ -182,7 +183,7 @@ class Ownership(HarnessCase):
     def test_show_reaches_only_the_live_agent(self):
         _, view = self.pair()
         view.show()
-        self.assertEqual(ShowingHost.shown, [(self.metadata()["agent_name"], "target", None)])
+        self.assertEqual(FakeViewer.shown, [(self.metadata()["agent_name"], "target", None)])
 
     def test_hidden_agent_uses_harness_target_and_hidden_pair_has_no_attach(self):
         _, view = self.pair(agent_showable=False)

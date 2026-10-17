@@ -49,13 +49,13 @@ from agent_pm.session.hosts.base import (
     Host,
     InteractiveProcess,
     Process,
-    Showable,
     check_sid,
     tui_lock,
 )
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import BaseMode, identity_drop
 from agent_pm.session.modes.client_adapters.tui import Tui
+from agent_pm.session.viewer.viewer import printed
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import (
     STALE_AGE,
@@ -413,8 +413,8 @@ def _stale(store: TuiStore) -> Process | None:
     """Tui session `store.name`'s dead process, else None; SessionError while it runs."""
     process = store.process()
     if process is not None and process.alive():
-        host = store.host
-        hint = f"; {host.attach_command(store.name)}" if isinstance(host, Showable) else ""
+        target = store.host.attach_target(store.name)
+        hint = "" if target is None else f"; {printed(target)}"
         raise SessionError(f"tui session {store.name} is running{hint}")
     return process
 
@@ -427,8 +427,8 @@ class _Start:
     state: dict
     metadata: Mapping[str, str]
 
-    def validate(self, display: Display) -> None:
-        self.store.host.validate(self.store.name, self.launch, display=display)
+    def validate(self) -> None:
+        self.store.host.validate(self.store.name, self.launch)
 
     @property
     def launch(self) -> Launch:
@@ -483,7 +483,7 @@ class TuiMode(BaseMode):
     ) -> Prepared:
         pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         try:
-            pending.validate(display)
+            pending.validate()
             _stale(pending.store)
         except SessionError as error:
             raise ConfigError(str(error)) from error
@@ -556,7 +556,7 @@ class TuiMode(BaseMode):
         pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         prepared, run, store = pending.prepared, pending.run, pending.store
         try:
-            pending.validate(display)
+            pending.validate()
             host.prepare_events(prepared.spec.events)
         except SessionError as error:
             raise SessionError(f"cannot start tui session {store.name}: {error}") from error

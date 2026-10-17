@@ -50,6 +50,13 @@ class Units(Case):
                     ("extension", "hosts.base"),
                     ("extension", "modes.client_adapters.tui"),
                     ("extension", "engine.types"),
+                    ("engine.hosted_session", "viewer.display"),
+                    ("cli", "viewer.display"),
+                    ("modes.tui", "viewer.viewer"),
+                    ("__init__", "viewer.viewer"),
+                    ("viewer.viewer", "engine.tmux_cli"),
+                    ("viewer.viewer", "hosts.base"),
+                    ("viewer.display", "engine.types"),
                 )
             ),
             *(
@@ -80,6 +87,14 @@ class Units(Case):
                     ("extension", "modes.base"),
                     ("extension", "engine.hosted_session"),
                     ("extension", "hosts.tmux.host"),
+                    ("hosts.base", "viewer.viewer"),
+                    ("hosts.tmux.host", "viewer.grid"),
+                    ("hosts.docker.host", "viewer.viewer"),
+                    ("viewer.viewer", "engine.hosted_session"),
+                    ("viewer.display", "modes.tui"),
+                    ("viewer.viewer", "hosts.tmux.host"),
+                    ("engine.worker", "viewer.display"),
+                    ("extension", "viewer.viewer"),
                 )
             ),
         )

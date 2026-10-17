@@ -34,7 +34,6 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.hosts.base import Process
-from agent_pm.session.modes.tui import TuiStore
 from agent_pm.utils import (
     CONFIG_NAME,
     STALE_AGE,
@@ -331,7 +330,7 @@ class Worker:
     def replace(self, handle: Process | None) -> None:
         """Close its session by name, close `handle`, wait WAIT s, else kill and wait again."""
         name = self.state.name
-        TuiStore.attach(name, host=self.session_cls.host(self.state.host)).close()
+        self.session_cls.retire(name, host=self.state.host)
         if handle is None:
             return
         handle.close()

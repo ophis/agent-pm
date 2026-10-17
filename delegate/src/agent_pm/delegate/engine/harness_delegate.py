@@ -51,8 +51,8 @@ from agent_pm.session import (
     SessionError,
     SessionStatus,
     SessionStatusLog,
-    Showable,
     Usage,
+    get_viewer,
 )
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
@@ -72,23 +72,6 @@ from agent_pm.utils import (
     thaw,
     under,
 )
-
-
-@dataclass(frozen=True)
-class _HarnessView:
-    """The harness session's view, shaped as its agent Session's."""
-
-    host: Showable
-    name: str
-
-    def show(self, *, display: Display = None) -> str | None:
-        return self.host.show(self.name, display=display)
-
-    def hide(self) -> None:
-        self.host.hide(self.name)
-
-    def attach_command(self) -> str:
-        return self.host.attach_command(self.name)
 
 
 def _team(team: Team) -> Team:
@@ -269,9 +252,7 @@ class HarnessDelegate(Delegate):
             events=events,
         )
         try:
-            harness.validate(
-                self._state.harness_name, self._harness_launch(self._state), display=display
-            )
+            harness.validate(self._state.harness_name, self._harness_launch(self._state))
         except (SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
 
@@ -667,41 +648,49 @@ class HarnessDelegate(Delegate):
             alive=alive,
             state=word,
             outcome=None if outcome is None else outcome.status,
-            attach=views[0].attach_command() if views else None,
+            attach=get_viewer().attach_command(*views[0]) if views else None,
             hidden=found is not None and found.hidden,
             cwd=state.plan.session.access.cwd,
         )
 
     def attach_command(self) -> str | None:
         views = self._views(self._read())
-        return views[0].attach_command() if views else None
+        return get_viewer().attach_command(*views[0]) if views else None
 
     def _shown_agent(self, state: _State) -> Session | None:
         agent = self._agent(state)
         return agent if agent is not None and agent.alive() and agent.showable else None
 
-    def _views(self, state: _State) -> list[Session | _HarnessView]:
-        """Its live showable views, agent first."""
-        agent = self._shown_agent(state)
-        views: list[Session | _HarnessView] = [] if agent is None else [agent]
+    def _views(self, state: _State) -> list[tuple[str, Host]]:
+        """Its live showable sessions and their Hosts, agent first."""
+        views = []
+        if self._shown_agent(state) is not None:
+            views.append((state.agent_name, self._session_host(state.host)))
         process = self._harness(state)
-        if process is not None and process.alive() and isinstance(self._harness_host, Showable):
-            views.append(_HarnessView(self._harness_host, state.harness_name))
+        if process is not None and process.alive() and self._harness_host.attachable:
+            views.append((state.harness_name, self._harness_host))
         return views
+
+    def _session_host(self, name: str | None) -> Host:
+        try:
+            return self.session_cls.host(name)
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
 
     def show(self) -> str | None:
         state = self._read()
-        agent = self._shown_agent(state)
-        if agent is None:
+        if self._shown_agent(state) is None:
             raise NotShowable("delegate has no live showable agent session")
-        return agent.show(display=state.display)
+        return get_viewer().show(
+            state.agent_name, self._session_host(state.host), display=state.display
+        )
 
     def hide(self) -> None:
         views = self._views(self._read())
         if not views:
             raise NotShowable("delegate has no live showable session")
         for view in views:
-            view.hide()
+            get_viewer().hide(*view)
 
     def close(self) -> None:
         state = self._read()
@@ -712,6 +701,8 @@ class HarnessDelegate(Delegate):
         if process is not None:
             try:
                 process.close()
+                if self._harness_host.attachable:
+                    get_viewer().close(state.harness_name, self._harness_host)
             except SessionError as error:
                 raise SessionError(f"close {state.harness_name}: {error}") from error
 

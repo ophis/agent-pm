@@ -340,7 +340,7 @@ class AttachTest(Base):
                 Blocked(""),
             ),
         )
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(), mock.call.attach(NAME)])
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
@@ -461,7 +461,7 @@ class AttachTest(Base):
         with self.assertRaises(SessionError) as caught:
             self.attach(record("tool"))
         self.assertEqual(str(caught.exception), "no tui session w1: no recovery state")
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(), mock.call.attach(NAME)])
         self.client.run = None
         with self.assertRaises(SessionError) as caught:
             self.attach()
@@ -611,7 +611,7 @@ class StartTest(Base):
 
     def test_the_names_lock_is_held_from_session_dir_to_terminal_launch(self):
         held = []
-        self.host.calls.list.side_effect = lambda _display: held.append(self.locked()) or []
+        self.host.calls.list.side_effect = lambda: held.append(self.locked()) or []
         self.host.calls.terminal.side_effect = lambda *_args, **_kwargs: held.append(self.locked())
         self.start()
         self.host.calls.terminal.side_effect = SessionError("host launch failed")
@@ -1050,7 +1050,7 @@ class SweepTest(Base):
             with self.subTest(failure=failure):
                 listings = iter(([], failure))
 
-                def listed(_display, listings=listings):
+                def listed(listings=listings):
                     found = next(listings)
                     if isinstance(found, Exception):
                         raise found
@@ -1256,7 +1256,7 @@ class BoundTest(Base):
         mode = self.started()
         self.host.processes.clear()
         mode.stop()
-        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None)])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list()])
         mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
@@ -1268,7 +1268,7 @@ class BoundTest(Base):
                 if replacement:
                     self.host.create(NAME, SID)
                 held = []
-                self.host.calls.list.side_effect = lambda _display, *, held=held: (
+                self.host.calls.list.side_effect = lambda *, held=held: (
                     held.append(self.locked()) or [NAME]
                 )
                 mode._terminal.calls.close.side_effect = lambda *, held=held: held.append(

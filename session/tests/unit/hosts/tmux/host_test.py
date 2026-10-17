@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Host, Launch, SessionError, Showable
+from agent_pm.session import ConfigError, Host, Launch, SessionError
 from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.tmux_cli import (
     TmuxCli,
@@ -20,7 +20,6 @@ from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste
 from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess, TmuxView
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
-from agent_pm.session.viewer import hidden
 from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
@@ -33,10 +32,10 @@ OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
 
 
 class ClassTest(Case):
-    def test_a_showable_host_loaded_by_its_config_name(self):
+    def test_an_attachable_host_loaded_by_its_config_name(self):
         cls = load_class("agent_pm.session.hosts.tmux:TmuxHost", Host)
         self.assertIs(cls, TmuxHost)
-        self.assertTrue(issubclass(cls, Showable))
+        self.assertTrue(cls.attachable)
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
         self.assertIsInstance(host.tmux, TmuxCli)
@@ -143,14 +142,13 @@ class DetachTest(Base):
             "d1", Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin"}), **kw
         )
 
-    def test_forwards_the_launch_the_opener_part_and_the_record_line(self):
+    def test_forwards_the_launch_the_display_and_the_record_line(self):
         events = os.path.join(self.dir, "events")
         line = replace(LINE, sid=SID)
         process = self.detach(display="mgr/below", events=events, record=line)
         self.tmux.detach.assert_called_once_with(
             "d1",
             Launch(tuple(self.control.command()), cwd=self.dir, env={"PATH": "/bin"}),
-            opener="mgr",
             display="mgr/below",
             events=events,
             record=line.to_line(),
@@ -178,13 +176,13 @@ class DetachTest(Base):
             list(SIGNALS),
         )
 
-    def test_a_foreign_or_openerless_display_is_stored_without_an_opener(self):
-        for display in (None, "", "/right", "elsewhere:1.2"):
+    def test_any_display_is_stored_as_given(self):
+        for display in (None, "", "/right", "elsewhere:1.2", "mgr///hidden"):
             with self.subTest(display=display):
                 self.tmux.detach.reset_mock()
                 self.detach(display=display)
                 kw = self.tmux.detach.call_args.kwargs
-                self.assertEqual((kw["opener"], kw["display"], kw["record"]), (None, display, None))
+                self.assertEqual((kw["display"], kw["record"]), (display, None))
 
     def test_a_display_tmux_could_not_list_or_a_bad_events_file_is_a_config_error(self):
         for kw, message in (
@@ -318,7 +316,6 @@ class TerminalTest(Base):
                 "@kind": "terminal",
                 "@control": self.control.path,
                 "@display": "mgr/below",
-                "@opener": "mgr",
                 "@record": LINE.to_line(),
             },
         )
@@ -376,40 +373,14 @@ class AttachTest(Base):
 
 
 class MarkerTest(Base):
-    def terminal(self, display, metadata=None):
+    def test_a_launch_writes_no_hidden_entry_and_no_opener(self):
         launch = Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"})
-        metadata = (
-            {"sid": SID, "client": "claude", "generation": "g1"} if metadata is None else metadata
-        )
-        return self.host.terminal("t1", launch, display=display, metadata=metadata)
-
-    def test_a_marked_terminal_launch_marks_a_new_sid_hidden_only(self):
-        self.terminal("mgr///hidden")
-        self.assertTrue(hidden.read("t1", SID))
-        hidden.write("t1", SID, hidden=False, live=None)
-        self.terminal("mgr///hidden")
-        self.assertFalse(hidden.read("t1", SID))
-        self.assertEqual(self.tmux.start.call_args.kwargs["tags"]["@opener"], "mgr")
-
-    def test_an_unmarked_or_sidless_launch_writes_no_hidden_entry(self):
-        store = os.path.join(self.agent_pm, "hidden")
-        self.terminal("mgr")
-        self.terminal("mgr///hidden", metadata={})
-        self.host.detach(
-            "d1", Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"}), display="mgr///hidden"
-        )
-        self.assertFalse(os.path.exists(store))
-
-    def test_a_failed_hidden_write_undoes_the_launch(self):
-        store = os.path.join(self.agent_pm, "hidden")
-        os.mkdir(store, 0o500)
-        self.addCleanup(os.chmod, store, 0o700)
-        self.tmux.process.return_value = PROCESS
-        with self.assertRaisesRegex(
-            SessionError, "^tui session t1: hidden state: Permission denied"
-        ):
-            self.terminal("mgr///hidden")
-        self.tmux.kill.assert_called_once_with("%7")
+        metadata = {"sid": SID, "client": "claude", "generation": "g1"}
+        self.host.terminal("t1", launch, display="mgr///hidden", metadata=metadata)
+        self.host.detach("d1", launch, display="mgr///hidden")
+        self.assertNotIn("@opener", self.tmux.start.call_args.kwargs["tags"])
+        self.assertNotIn("opener", self.tmux.detach.call_args.kwargs)
+        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "hidden")))
 
 
 class ScreenTest(Base):

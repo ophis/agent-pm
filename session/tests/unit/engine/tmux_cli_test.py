@@ -951,48 +951,10 @@ class DetachHandoverTest(StartFixture):
                 self.assertEqual(fake.calls[0][: len(head) + 1], [*head, sys.executable])
                 self.assertNotIn("ITERM_SESSION_ID", fake._handover["env"])
 
-    def test_opener_set_in_the_same_call(self):
-        for opener in ("mgr", "w0t0p0:ABC"):
-            with self.subTest(opener=opener):
-                fake = FakeTmux()
-                self.detach(fake, opener=opener)
-                self.assertEqual(
-                    fake.calls,
-                    [
-                        [
-                            "tmux",
-                            "new-session",
-                            "-d",
-                            *NEW,
-                            "-s",
-                            "d",
-                            sys.executable,
-                            "-I",
-                            "-c",
-                            EXEC,
-                            fake.path,
-                            fake.fifo,
-                            ";",
-                            "set-option",
-                            "-t",
-                            "=d:",
-                            "@kind",
-                            "detach",
-                            ";",
-                            "set-option",
-                            "-t",
-                            "=d:",
-                            "@opener",
-                            opener,
-                            *recorded("d"),
-                        ]
-                    ],
-                )
-
     def test_events_keep_the_pane_for_the_exited_hook_and_tags_set_in_the_same_call(self):
         events, line = os.path.join(self.root, "events"), '{"v":1,"name":"d"}'
         fake = FakeTmux()
-        self.detach(fake, opener="mgr", display="mgr/right", events=events, record=line)
+        self.detach(fake, display="mgr/right", events=events, record=line)
         self.assertEqual(
             fake.calls[0][fake.calls[0].index(fake.fifo) + 1 :],
             [
@@ -1023,12 +985,6 @@ class DetachHandoverTest(StartFixture):
                 "=d:",
                 "@kind",
                 "detach",
-                ";",
-                "set-option",
-                "-t",
-                "=d:",
-                "@opener",
-                "mgr",
                 ";",
                 "set-option",
                 "-t",
@@ -1116,7 +1072,7 @@ class DetachHandoverTest(StartFixture):
                 self.assertEqual(os.listdir(self.temp), [])
 
     def test_the_creating_call_records_its_pane_identity(self):
-        for kw in ({}, {"events": "ev", "opener": "mgr", "record": LINE.to_line()}):
+        for kw in ({}, {"events": "ev", "record": LINE.to_line()}):
             with self.subTest(**kw):
                 fake = FakeTmux()
                 if "events" in kw:
@@ -1136,7 +1092,7 @@ class DetachHandoverTest(StartFixture):
     def test_an_existing_session_is_refused_untouched(self):
         fake = FakeTmux(results={"new-session": (1, "", "duplicate session: d\n")})
         with self.assertRaisesRegex(tmux_cli.TuiError, r"^session d exists$"):
-            self.detach(fake, opener="mgr")
+            self.detach(fake)
         self.assertEqual(fake.commands(), ["new-session"])
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -1179,7 +1135,7 @@ class DetachHandoverTest(StartFixture):
             fail={"new-session"}
         )  # e.g. the chained set-option failed after new-session made the session
         with self.assertRaisesRegex(tmux_cli.TuiError, r"^tmux: boom$"):
-            self.detach(fake, opener="mgr")
+            self.detach(fake)
         self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -1206,9 +1162,6 @@ class DetachHandoverTest(StartFixture):
             ({"argv": ()}, "^no command$"),
             ({"argv": ("no-such-tool",)}, "no-such-tool"),
             ({"argv": ("tool", "\ud800")}, "encoded"),
-            ({"opener": "a b"}, "opener"),
-            ({"opener": "a:b:c"}, "opener"),
-            ({"opener": ""}, "opener"),
         ):
             with self.subTest(**kw):
                 fake = FakeTmux()
