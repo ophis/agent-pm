@@ -264,10 +264,10 @@ class CleanTest(HarnessCase):
     def agent(self):
         return Layout(self.work).agent
 
-    def refused(self, message, workdir=None):
+    def refused(self, message, workdir=None, **options):
         for dry in (False, True):
             with self.subTest(dry=dry), self.assertRaises(ConfigError) as caught:
-                HarnessDelegate.clean(workdir or self.work, dry=dry)
+                HarnessDelegate.clean(workdir or self.work, dry=dry, **options)
             self.assertEqual(str(caught.exception), message)
 
     def test_checkouts_lists_real_src_entries(self):
@@ -305,18 +305,61 @@ class CleanTest(HarnessCase):
             file.write("kept")
         run = tree(Layout(self.work).run)
         name = HarnessDelegate.attach(self.work).status().name
-        HarnessDelegate.clean(self.work, dry=True)
+        self.assertTrue(HarnessDelegate.clean(self.work, dry=True))
         self.assertTrue(os.path.isdir(deep))
-        self.assertIsNone(HarnessDelegate.clean(self.work))
+        self.assertTrue(HarnessDelegate.clean(self.work))
         self.assertFalse(os.path.lexists(self.agent()))
         self.assertEqual(tree(Layout(self.work).run), run)
         self.assertEqual(sorted(os.listdir(self.work)), ["notes.md", "run"])
         self.assertIsNone(HarnessDelegate.checkouts(self.work))
         self.assertEqual(HarnessDelegate.attach(self.work).status().name, name)
-        self.assertIsNone(HarnessDelegate.clean(self.work))
+        self.assertFalse(HarnessDelegate.clean(self.work))
         never = os.path.join(self.home, "never")
-        self.assertIsNone(HarnessDelegate.clean(never))
+        self.assertFalse(HarnessDelegate.clean(never))
         self.assertFalse(os.path.lexists(never))
+
+    def test_scratch_deletes_only_checkouts_and_temp_files_never_following_a_link(self):
+        self.make()
+        agent = self.agent()
+        for path in ("src/o/r-TASK-1/f", "publish/Research/r.md", "prd.md"):
+            os.makedirs(os.path.dirname(os.path.join(agent, path)), exist_ok=True)
+            with open(os.path.join(agent, path), "w") as file:
+                file.write("x")
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(elsewhere)
+        open(os.path.join(elsewhere, "keep"), "w").close()
+        os.symlink(elsewhere, os.path.join(agent, "tmp"))
+        run = tree(Layout(self.work).run)
+        self.assertTrue(HarnessDelegate.clean(self.work, dry=True, scratch=True))
+        self.assertEqual(sorted(os.listdir(agent)), ["prd.md", "publish", "src", "tmp"])
+        self.assertTrue(HarnessDelegate.clean(self.work, scratch=True))
+        self.assertEqual(os.listdir(agent), ["prd.md"])
+        self.assertEqual(os.listdir(elsewhere), ["keep"])
+        self.assertEqual(tree(Layout(self.work).run), run)
+        self.assertFalse(HarnessDelegate.clean(self.work, scratch=True))
+        self.assertFalse(HarnessDelegate.clean(os.path.join(self.home, "never"), scratch=True))
+
+    def test_scratch_refuses_a_live_run_or_one_whose_liveness_is_unknown(self):
+        self.make()
+        os.makedirs(os.path.join(self.agent(), "tmp"))
+        with RunState(Layout(self.work)).run_lock():
+            self.refused(f"{self.work}: delegate is still alive", scratch=True)
+        with open(Layout(self.work).run + "/delegate.json", "w") as file:
+            file.write("not json")
+        self.refused(f"{self.work}: delegate liveness unknown", scratch=True)
+        self.assertTrue(os.path.isdir(os.path.join(self.agent(), "tmp")))
+
+    def test_scratch_refuses_an_agent_session_left_open_after_its_run(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view.close()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        view.run()
+        self.assertFalse(view.alive())
+        os.makedirs(os.path.join(self.agent(), "tmp"), exist_ok=True)
+        self.refused(f"{self.work}: its agent session is still open", scratch=True)
+        self.assertTrue(os.path.isdir(os.path.join(self.agent(), "tmp")))
 
     def test_clean_refuses_a_live_run(self):
         self.make()
@@ -342,7 +385,7 @@ class CleanTest(HarnessCase):
         files = tree(self.work)
         for dry in (False, True):
             with self.subTest(dry=dry):
-                self.assertIsNone(HarnessDelegate.clean(self.work, dry=dry))
+                self.assertFalse(HarnessDelegate.clean(self.work, dry=dry))
                 self.assertEqual(tree(self.work), files)
 
     def test_clean_refuses_a_live_detached_run(self):

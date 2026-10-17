@@ -123,15 +123,18 @@ class FakeDelegate(Delegate):
         return Layout(workdir).checkouts()
 
     @classmethod
-    def clean(cls, workdir, *, dry=False):
+    def clean(cls, workdir, *, dry=False, scratch=False):
         layout = Layout(workdir)
         agent = os.path.lexists(layout.agent)
         if agent and not layout.in_place():
             raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
         if os.path.exists(_path(workdir)) and _load(workdir)["alive"]:
             raise ConfigError(f"{layout.workdir}: delegate is still alive")
-        if agent and not dry:
-            shutil.rmtree(layout.agent)
+        found = [p for p in (layout.scratch if scratch else (layout.agent,)) if os.path.isdir(p)]
+        if not dry:
+            for path in found:
+                shutil.rmtree(path)
+        return bool(found)
 
     @classmethod
     def end(cls, workdir: str) -> None:

@@ -103,9 +103,9 @@ class RepositoryCleanup(PruneScenario):
             cleaned = []
 
             @classmethod
-            def clean(cls, workdir, *, dry=False):
+            def clean(cls, workdir, *, dry=False, scratch=False):
                 cls.cleaned.append(workdir)
-                super().clean(workdir, dry=dry)
+                return super().clean(workdir, dry=dry, scratch=scratch)
 
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, [B], agent=False)

@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import TypedDict
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
-from agent_pm.delegate.composer.types import DELIVERABLE
+from agent_pm.delegate.composer.types import DELIVERABLE, TMP
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Stopped as Stopped
@@ -55,6 +55,15 @@ class Layout:
     @property
     def run(self) -> str:
         return os.path.join(self.workdir, "run")
+
+    @property
+    def tmp(self) -> str:
+        return os.path.join(self.agent, TMP)
+
+    @property
+    def scratch(self) -> tuple[str, ...]:
+        """`agent`'s checkouts (`src`, the report repo's clone `publish`) and temp files."""
+        return (os.path.join(self.agent, "src"), os.path.join(self.agent, "publish"), self.tmp)
 
     @property
     def out(self) -> str:
