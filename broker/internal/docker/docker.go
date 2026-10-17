@@ -132,6 +132,12 @@ func (c *CLI) Run(ctx context.Context, args []string, stdin []byte) ([]byte, err
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if c.Progress != nil && len(args) > 0 && args[0] == "build" {
 		cmd.Stderr = io.MultiWriter(&stderr, c.Progress)
+		// The broker's own lines (error object, image notes) follow: start them on a fresh line.
+		defer func() {
+			if n := len(stderr.data); n > 0 && stderr.data[n-1] != '\n' {
+				_, _ = c.Progress.Write([]byte{'\n'})
+			}
+		}()
 	}
 	err := cmd.Run()
 	if err == nil {
