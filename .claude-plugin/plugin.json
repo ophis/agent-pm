@@ -11,14 +11,5 @@
     "./delegate/skills/",
     "./manager/skills/"
   ],
-  "hooks": "./manager/hooks/hooks.json",
-  "types": "./manager/hooks/types/index.d.ts",
-  "userConfig": {
-    "quiet_background": {
-      "type": "boolean",
-      "title": "Hide Monitor notices",
-      "description": "Hide Monitor event and stream-ended notices in the manager session; the model still reads them. /quiet toggles it for one session.",
-      "default": true
-    }
-  }
+  "hooks": "./manager/hooks/hooks.json"
 }

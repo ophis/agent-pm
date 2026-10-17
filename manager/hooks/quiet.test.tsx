@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { CommandRunInput, On, RenderPropsOf } from 'claude-code'
+import type { On, RenderPropsOf } from 'claude-code'
 
 type Row = RenderPropsOf['UserMessage']
 
@@ -21,7 +21,14 @@ const GROUP: RenderPropsOf['ToolGroup'] = {
   isExpanded: false,
 }
 
-const QUIET: CommandRunInput = { command: 'quiet', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } }
+const MONITOR: RenderPropsOf['ToolUse'] = {
+  tool_use_id: 'monitor-1',
+  tool: 'Monitor',
+  input: { command: 'agent-pm-manager roster', description: 'Crew events with content (agent-pm-manager roster)' },
+  isRunning: true,
+  isErrored: false,
+  isInterrupted: false,
+}
 
 function engine(on: On) {
   on('ui.render', ($, e) => {
@@ -30,7 +37,7 @@ function engine(on: On) {
   })
 }
 
-async function drawn<C extends 'UserMessage' | 'ToolGroup'>($: Engine, component: C, props: RenderPropsOf[C]) {
+async function drawn<C extends 'UserMessage' | 'ToolGroup' | 'ToolUse'>($: Engine, component: C, props: RenderPropsOf[C]) {
   const ui = await $.ui.mount({ plugin: 'agent-pm', surface: 'terminal', component, props })
   const tree = await ui.drawn()
   await ui.unmount()
@@ -53,17 +60,23 @@ test('leaves other notices, the prompt, ctrl+o and folded tool lines drawn', asy
   expect(await drawn($, 'ToolGroup', GROUP)).toMatchObject(ENGINE)
 })
 
-test('/quiet toggles it for the session', async ($, on) => {
+test('hides Monitor tool rows while running, completed, errored, interrupted and rearmed', async ($, on) => {
   engine(on)
-  expect(await $.command.run(QUIET)).toMatchObject({ text: 'Monitor notices shown.' })
-  expect(await drawn($, 'UserMessage', EVENT)).toMatchObject(ENGINE)
-  expect(await $.command.run(QUIET)).toMatchObject({ text: 'Monitor notices hidden.' })
-  expect(await drawn($, 'UserMessage', EVENT)).toEqual(HIDDEN)
+  for (const row of [
+    MONITOR,
+    { ...MONITOR, isRunning: false, output: { taskId: 'm1', timeoutMs: 1800000 } },
+    { ...MONITOR, isRunning: false, isErrored: true, output: 'Monitor failed' },
+    { ...MONITOR, isRunning: false, isInterrupted: true },
+    { ...MONITOR, tool_use_id: 'monitor-2' },
+  ]) {
+    expect(await drawn($, 'ToolUse', row)).toEqual(HIDDEN)
+  }
 })
 
-test('the quiet_background option off draws as the engine does', { options: { quiet_background: false } }, async ($, on) => {
+test('matches only the Monitor tool name, regardless of input text', async ($, on) => {
   engine(on)
-  expect(await drawn($, 'UserMessage', EVENT)).toMatchObject(ENGINE)
-  expect(await $.command.run(QUIET)).toMatchObject({ text: 'Monitor notices hidden.' })
-  expect(await drawn($, 'UserMessage', EVENT)).toEqual(HIDDEN)
+  for (const tool of ['Bash', 'Read', 'Agent', 'monitor', 'MonitorStatus', 'mcp__server__Monitor']) {
+    expect(await drawn($, 'ToolUse', { ...MONITOR, tool })).toMatchObject(ENGINE)
+  }
+  expect(await drawn($, 'ToolUse', { ...MONITOR, input: {} })).toEqual(HIDDEN)
 })
