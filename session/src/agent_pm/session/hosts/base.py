@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import (
+    ClientHome,
     ConfigError,
     HookCallback,
     Hosts,
@@ -249,6 +250,15 @@ class Host(ABC):
 
     def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
         return None
+
+    _inherit_env = True
+    _resume_refused: str | None = None
+
+    def _client_env(
+        self, name: str, client: str, home: ClientHome | None, *, resume: bool
+    ) -> Mapping[str, str]:
+        """Env for `client`'s launch as `name`; ConfigError: not on this Host."""
+        return {}
 
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()

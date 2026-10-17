@@ -12,6 +12,7 @@ from unittest import mock
 from agent_pm.session import Launch, SessionError
 from agent_pm.session.engine.types import Key, KeyPress, Paste
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.hosts.tmux.transport import Tmux
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -88,6 +89,24 @@ class LaunchTest(Case):
                 self.assertTrue(process.alive())
                 gate.touch()
                 self.assertTrue(process.wait_exit(WAIT))
+
+    def test_launch_puts_argv_cwd_and_env_on_the_command_line_and_views_are_not_listed(self):
+        out = os.path.join(self.home, "launched.json")
+        code = "import json, os, sys, time; json.dump([sys.argv[1:], os.getcwd(), os.environ['X']], open(sys.argv[1], 'w')); time.sleep(30)"
+        tmux = Tmux()
+        tmux.launch(
+            "v1",
+            [sys.executable, "-I", "-c", code, out, "a b"],
+            cwd=self.home,
+            env={"X": "x y"},
+            tags={"@view": "docker"},
+        )
+        self.addCleanup(tmux.kill, "v1")
+        self.poll(lambda: os.path.exists(out) and os.path.getsize(out))
+        with open(out) as f:
+            self.assertEqual(json.load(f), [[out, "a b"], os.path.realpath(self.home), "x y"])
+        self.assertEqual(tmux.sessions(), ["manager"])
+        self.assertEqual([row["name"] for row in tmux.listing()], ["manager"])
 
     def test_long_unicode_multiline_paste_is_literal_and_does_not_submit(self):
         text = ("雪 a b\n" * 3000) + "literal ; $(echo x)"

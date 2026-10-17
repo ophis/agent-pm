@@ -395,10 +395,13 @@ class FakeTmux:
 
 MARK_KW = {**TMUX_KW, "timeout": 5}
 
+VIEWLESS = ["-f", "#{==:#{@view},}"]
+
 LISTING = [
     "tmux",
     "-u",
     "list-sessions",
+    *VIEWLESS,
     "-F",
     "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}\t#{@process}",
 ]

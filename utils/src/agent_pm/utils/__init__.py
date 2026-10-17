@@ -30,6 +30,7 @@ from agent_pm.utils.files import (
     holds,
     idle,
     inode_lock,
+    read_beneath,
     read_confined,
     read_regular,
     save,
@@ -53,7 +54,9 @@ from agent_pm.utils.git import (
 from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
+    DOCKER_STATE,
     STATE,
+    docker_home,
     import_env,
     module_roots,
     overlaps,
@@ -102,6 +105,7 @@ __all__ = [
     "ConfigFileError",
     "ConfinedFileError",
     "ConfinedReason",
+    "DOCKER_STATE",
     "Display",
     "EVENTS_ENV",
     "GUARD",
@@ -134,6 +138,7 @@ __all__ = [
     "checkout",
     "command_path",
     "common_dir",
+    "docker_home",
     "drop_stale",
     "environment_ok",
     "err_text",
@@ -158,6 +163,7 @@ __all__ = [
     "printable",
     "printable_abs",
     "probe",
+    "read_beneath",
     "read_confined",
     "read_regular",
     "read_resources",

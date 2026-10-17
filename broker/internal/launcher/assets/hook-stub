@@ -1,0 +1,4 @@
+#!/bin/sh
+/opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/stub.py "$@" \
+    || echo "agent-pm hook: event relay unavailable" >&2
+exit 0

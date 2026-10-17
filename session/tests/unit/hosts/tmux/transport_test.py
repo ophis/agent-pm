@@ -46,6 +46,7 @@ from session.tests.tmux_fixtures import (
     PREFIXES,
     TMUX,
     TMUX_KW,
+    VIEWLESS,
     FakeTmux,
     StartFixture,
     captured,
@@ -487,6 +488,80 @@ class PaneTargetTest(Case):
                 self.assertEqual(fake.calls, [])
 
 
+class LaunchTest(Case):
+    """launch: argv straight onto tmux's command line, for a server whose host has no handover."""
+
+    DIED = "set-option @state dead ; wait-for -S x"
+
+    def setUp(self):
+        self.enterContext(
+            unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24)))
+        )
+
+    def launch(self, fake, argv=("with-secrets", "run", "a b"), **kw):
+        return transport.Tmux(fake).launch(
+            "w", argv, **{"cwd": "/work", "env": {"A": "1", "B": "x y"}, **kw}
+        )
+
+    def test_one_new_session_call_with_cwd_env_tags_and_its_died_hook(self):
+        fake = FakeTmux(results={"new-session": (0, NEW_PROCESS + "\n")})
+        found = self.launch(fake, tags={"@kind": "docker"}, died=self.DIED)
+        self.assertEqual(found, NEW_PROCESS)
+        deco = decorations("w")
+        deco[0][-1] = self.DIED
+        self.assertEqual(
+            fake.calls,
+            [
+                [
+                    "tmux",
+                    "new-session",
+                    "-d",
+                    *NEW,
+                    "-s",
+                    "w",
+                    "-x",
+                    "80",
+                    "-y",
+                    "24",
+                    "-c",
+                    "/work",
+                    "-e",
+                    "A=1",
+                    "-e",
+                    "B=x y",
+                    "--",
+                    "with-secrets",
+                    "run",
+                    "a b",
+                    *(";", "set-option", "-p", "-t", "=w:", "remain-on-exit", "on"),
+                    *(";", "set-option", "-t", "=w:", "@kind", "docker"),
+                    *chained(deco),
+                    *recorded("w"),
+                ]
+            ],
+        )
+        self.assertEqual(fake.kwargs, [TMUX_KW])
+
+    def test_refuses_what_tmux_would_misread_before_any_call(self):
+        for kw, error in (
+            ({"argv": ()}, "no command"),
+            ({"argv": ("run", "x;")}, "argv item"),
+            ({"env": {"A": "x;"}}, "env A"),
+            ({"cwd": "/w#{x}"}, "cwd"),
+            ({"cwd": "relative"}, "cwd"),
+        ):
+            with self.subTest(kw=kw):
+                fake = FakeTmux()
+                with self.assertRaisesRegex(types.TuiError, error):
+                    self.launch(fake, **kw)
+                self.assertEqual(fake.calls, [])
+
+    def test_a_failed_call_or_bad_identity_raises(self):
+        for result, error in (((1, "", "boom\n"), "^tmux: boom$"), ((0, "x\n"), "bad new session")):
+            with self.subTest(result=result), self.assertRaisesRegex(types.TuiError, error):
+                self.launch(FakeTmux(results={"new-session": result}))
+
+
 class SessionsTest(Case):
     def test_names_none_without_a_server_and_none_on_failure(self):
         for result, want in (
@@ -498,7 +573,8 @@ class SessionsTest(Case):
                 fake = FakeTmux(results={"list-sessions": result})
                 self.assertEqual(transport.Tmux(fake).sessions(), want)
                 self.assertEqual(
-                    fake.calls, [["tmux", "-u", "list-sessions", "-F", "#{session_name}"]]
+                    fake.calls,
+                    [["tmux", "-u", "list-sessions", *VIEWLESS, "-F", "#{session_name}"]],
                 )
 
 
@@ -1770,6 +1846,14 @@ class MarkTest(Case):
                 )
                 self.assertEqual(fake.kwargs, [MARK_KW] * 2)
         self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n\d\d:\d\d:\d\d w1 blocked\n$")
+
+    def test_a_known_session_names_the_line_without_asking_tmux(self):
+        fake = FakeTmux(pane="forged")
+        transport.Tmux(fake).mark("done", self.events, pane="%2", session="w1")
+        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%2", "@state", "done"]])
+        self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n$")
+        with self.assertRaisesRegex(types.TuiError, "want"):
+            transport.Tmux(FakeTmux()).mark("done", self.events, pane="%2", session="a b")
 
     def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
         fake = FakeTmux(pane="w1")

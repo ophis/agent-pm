@@ -24,6 +24,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
+from agent_pm.utils import docker_home
 
 from session.tests.unit.clients.claude.support import (
     CEILING,
@@ -952,6 +953,46 @@ class TranscriptTest(TranscriptCase):
 NEXT = "1f8fad5b-d9cb-469f-a165-70867728950e"
 LAST = "2f8fad5b-d9cb-469f-a165-70867728950e"
 CUT = "2026-10-15T12:00:00Z"
+
+
+class DockerHomeTest(TranscriptCase):
+    """A transcript under a Docker session's home, which its container can write."""
+
+    def setUp(self):
+        super().setUp()
+        home = docker_home("w", "claude")
+        self.enterContext(mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": home}))
+        self.run = self.launched()
+        self.run.hook_events("SessionStart", {"session_id": SID})
+        self.path = self.run.transcript
+        self.outside = os.path.join(self.tmp, "outside.jsonl")
+        with open(self.outside, "w", encoding="utf-8") as f:
+            f.write(json.dumps(said("m1", text("host secret"))) + "\n")
+
+    def test_a_regular_transcript_there_is_read(self):
+        self.assertTrue(self.path.startswith(docker_home("w", "claude") + os.sep))
+        self.append(PROMPT, said("m1", text("A")))
+        self.assertEqual(self.run.observe(), [Reply("A")])
+
+    def test_docker_home_transcript_symlink_reads_nothing(self):
+        os.makedirs(os.path.dirname(self.path))
+        os.symlink(self.outside, self.path)
+        self.assertEqual(self.run.observe(), [])
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "")
+
+    def test_a_linked_dir_above_the_transcript_reads_nothing(self):
+        projects = os.path.dirname(os.path.dirname(self.path))
+        os.makedirs(os.path.dirname(projects))
+        target = os.path.join(self.tmp, "linked")
+        os.makedirs(os.path.join(target, os.path.basename(os.path.dirname(self.path))))
+        os.symlink(
+            self.outside,
+            os.path.join(
+                target, os.path.basename(os.path.dirname(self.path)), os.path.basename(self.path)
+            ),
+        )
+        os.symlink(target, projects)
+        self.assertEqual(self.run.observe(), [])
 
 
 class ContinuationTest(TranscriptCase):

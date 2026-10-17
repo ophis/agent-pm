@@ -16,7 +16,7 @@ from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.clients.base import Tui
-from agent_pm.session.clients.claude.common import TAIL, TUI_ENV, ClaudeCommon
+from agent_pm.session.clients.claude.common import HOME, TAIL, TUI_ENV, ClaudeCommon, read
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
-from agent_pm.utils import number, read_regular
+from agent_pm.utils import number
 
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
 WHEN = re.compile(
@@ -91,6 +91,9 @@ class ClaudeTui(Tui):
         self._cutoff: str | None = None
         self._pending: tuple[str, str | None, str | None] | None = None
 
+    def _home(self):
+        return HOME
+
     def launch(self, spec: Spec, hook):
         common = self.common
         self.sid, self.spec = spec.sid or "", spec
@@ -144,7 +147,7 @@ class ClaudeTui(Tui):
         found: list[Reply | LimitHit] = []
         while True:
             self.offset = min(self.offset, _size(self.transcript))
-            data = read_regular(self.transcript, offset=self.offset) or b""
+            data = read(self.transcript, offset=self.offset) or b""
             end = data.rfind(b"\n") + 1
             self.offset += end
             for line in data[:end].split(b"\n"):
@@ -255,7 +258,7 @@ class ClaudeTui(Tui):
         if not isinstance(text, str):
             path = payload.get("transcript_path")
             try:
-                data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
+                data = read(path, limit=TAIL, tail=True) if isinstance(path, str) else None
             except ValueError:  # a NUL or a lone surrogate in the path
                 data = None
             text = _last_text(data or b"")

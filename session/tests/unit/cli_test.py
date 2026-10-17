@@ -304,7 +304,10 @@ class HelpTest(Case):
         self.assertTrue(
             cli._parser(hosts)
             .format_help()
-            .endswith("  tmux: " + TmuxHost("tmux").display_help() + "\n  pty: as given\n")
+            .endswith(
+                f"  tmux: {TmuxHost('tmux').display_help()}\n  pty: as given\n"
+                f"  docker: {TmuxHost('docker').display_help()}\n"
+            )
         )
         fallback = cli._parser(None).format_help()
         for text in ("config could not be read", "--display none", "attach-command", "anchor"):

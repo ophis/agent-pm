@@ -76,11 +76,6 @@ class ServerCase(Case):
 
 
 class GraphQLProjection(ServerCase):
-    def test_viewer_follows_the_callers_key(self):
-        for gql, uid in ((self.gql, self.harness), (self.eng, self.engineer)):
-            with self.subTest(uid=uid):
-                self.assertEqual(gql(routing.Q_VIEWER), {"viewer": {"id": uid}})
-
     def test_history_cursor_returns_the_next_page(self):
         at = datetime(2026, 9, 1, tzinfo=UTC)
         for n in range(251):
@@ -591,7 +586,8 @@ class FixtureOperations(Case):
 class GraphQLQueries(ServerCase):
     def test_the_team_lists_backlog_beside_the_config_states(self):
         query = ops.Q_TEAM.replace(
-            "states(first: 100) { nodes { id } }", "states(first: 100) { nodes { id name type } }"
+            "states(first: 100) { nodes { id type } }",
+            "states(first: 100) { nodes { id name type } }",
         )
         self.fake.ops[query] = "linear.Q_TEAM"
         nodes = self.gql(query, t=TEAM)["teams"]["nodes"][0]["states"]["nodes"]

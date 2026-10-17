@@ -1,0 +1,450 @@
+package launcher
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/fixtures"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
+)
+
+const (
+	digest    = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	imageKey  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	container = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
+	fakeToken = "FAKE-TOKEN"
+)
+
+type fakeCreds struct {
+	ready     error
+	injectErr error
+}
+
+func (c *fakeCreds) Ready() error { return c.ready }
+func (c *fakeCreds) Inject(exec func(argv []string, stdin []byte) error) error {
+	if err := exec([]string{"inject"}, []byte(fakeToken)); err != nil {
+		return err
+	}
+	return c.injectErr
+}
+
+func goodLabels() map[string]string {
+	return map[string]string{"agent-pm.key": imageKey, "agent-pm.version": "1.2.3", "agent-pm.agent-uid": "1001", "agent-pm.agent-gid": "1002"}
+}
+
+// world is a scripted Docker Desktop: each field steers one kind of call.
+type world struct {
+	labels       map[string]string
+	imageMissing bool
+	running      string // docker ps output
+	mounts       string // docker inspect .Mounts output
+	exists       bool   // container already present
+	runErr       error
+	execErr      func(args []string) error
+	versions     []string
+	rmErr        error
+	rmSilent     bool // rm --force exits 0 without echoing: the container was absent
+	unreachable  bool
+}
+
+func (w *world) docker() *fakeDocker {
+	probes := 0
+	return &fakeDocker{respond: func(args []string) ([]byte, error) {
+		if w.unreachable {
+			return nil, docker.ErrUnreachable
+		}
+		switch strings.Join(args[:2], " ") {
+		case "image inspect":
+			if w.imageMissing {
+				return nil, noImage
+			}
+			return inspectJSON(digest, w.labels), nil
+		case "ps --all", "ps --filter":
+			return []byte(w.running), nil
+		case "inspect --format":
+			return []byte(w.mounts), nil
+		case "container inspect":
+			if w.exists {
+				return []byte("[{}]"), nil
+			}
+			return nil, &docker.CommandError{Exit: 1, Stderr: "Error: No such container: " + container}
+		}
+		switch args[0] {
+		case "run":
+			return []byte("id\n"), w.runErr
+		case "rm":
+			if w.rmErr != nil || w.rmSilent {
+				return nil, w.rmErr
+			}
+			return []byte(args[len(args)-1] + "\n"), nil
+		case "exec":
+			if w.execErr != nil {
+				if err := w.execErr(args); err != nil {
+					return nil, err
+				}
+			}
+			if slices.Contains(args, "--version") {
+				v := "2.1.0 (Claude Code)\n"
+				if slices.Contains(args, "codex") {
+					v = "codex-cli 0.100.0\n"
+				}
+				if probes < len(w.versions) {
+					v = w.versions[probes]
+				}
+				probes++
+				if v == "" {
+					return nil, &docker.CommandError{Exit: 127, Stderr: "not found"}
+				}
+				return []byte(v), nil
+			}
+			return nil, nil
+		}
+		return nil, errors.New("unexpected " + strings.Join(args, " "))
+	}}
+}
+
+func writeManifest(t *testing.T, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "m.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func validManifest(t *testing.T) string {
+	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeManifest(t, data)
+}
+
+func startHost(w *world, creds *fakeCreds) (Host, *fakeDocker) {
+	d := w.docker()
+	h := mountHost([]string{home + "/src"}, nil)
+	h.Docker, h.Creds, h.Endpoint = d, creds, "unix://"+home+"/.docker/run/docker.sock"
+	return h, d
+}
+
+func protoErr(t *testing.T, err error) *protocol.Error {
+	t.Helper()
+	var e *protocol.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("not a protocol error: %v", err)
+	}
+	return e
+}
+
+func hasCall(d *fakeDocker, verb string) bool {
+	return slices.Contains(d.verbs(), verb) || slices.ContainsFunc(d.calls, func(c []string) bool { return c[0] == verb })
+}
+
+func TestRuntimeFixtures(t *testing.T) {
+	for _, c := range fixtures.Cases(t, "manifest") {
+		if c.Expected.Stage != "runtime" {
+			continue
+		}
+		t.Run(c.File, func(t *testing.T) {
+			ctx := c.Context
+			w := &world{labels: goodLabels()}
+			switch ctx.Image {
+			case "untrusted":
+				w.labels = map[string]string{"agent-pm.version": "1.2.3"}
+			case "missing_version_label":
+				delete(w.labels, "agent-pm.version")
+			}
+			switch ctx.Docker {
+			case "unreachable":
+				w.unreachable = true
+			case "sharing_denied":
+				w.runErr = &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker.\n\nRun 'docker run --help' for more information"}
+				w.rmErr = &docker.CommandError{Exit: 1, Stderr: "Error: No such container: " + container}
+			}
+			creds := &fakeCreds{}
+			switch ctx.Login {
+			case "missing":
+				creds.ready = protocol.New(protocol.LoginRequired, "run agent-pm-broker login claude")
+			case "denied":
+				creds.ready = protocol.New(protocol.KeychainFailed, "denied")
+			}
+			d := w.docker()
+			h := Host{
+				Home:     ctx.Home,
+				Endpoint: "unix://" + ctx.Home + "/.docker/run/docker.sock",
+				Roots:    func() ([]string, error) { return ctx.MountRoots, nil },
+				RealPath: func(p string) (string, error) {
+					if strings.HasSuffix(p, "/claude") || !strings.HasPrefix(p, "/") {
+						return p, nil
+					}
+					m, _ := ParseManifest(c.Data)
+					if p == m.CWD {
+						return ctx.CWDRealpath, nil
+					}
+					return p, nil
+				},
+				Safe: func(string) error {
+					if ctx.ClaudeDirHasSymlink {
+						return errors.New("symlink component")
+					}
+					return nil
+				},
+				Same:   func(a, b string) bool { return a == b },
+				Docker: d,
+				Creds:  creds,
+			}
+			_, err := h.Start(context.Background(), writeManifest(t, c.Data))
+			e := protoErr(t, err)
+			if string(e.Code) != *c.Expected.ErrorCode || protocol.Exit(e.Code) != *c.Expected.ExitCode {
+				t.Fatalf("got %s (%s) want %s", e.Code, e.Message, *c.Expected.ErrorCode)
+			}
+			if e.Cleanup != protocol.NotNeeded {
+				t.Fatalf("cleanup %s", e.Cleanup)
+			}
+			if e.Code != protocol.StartFailed && hasCall(d, "run") {
+				t.Fatalf("created a container before rejecting: %q", d.verbs())
+			}
+		})
+	}
+}
+
+func TestExistingContainerUntouched(t *testing.T) {
+	h, d := startHost(&world{labels: goodLabels(), exists: true}, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	e := protoErr(t, err)
+	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "close it first") || hasCall(d, "run") || hasCall(d, "rm") {
+		t.Fatalf("%+v %q", e, d.verbs())
+	}
+}
+
+func TestRunArguments(t *testing.T) {
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
+		t.Fatal(err)
+	}
+	var run []string
+	for _, c := range d.calls {
+		if c[0] == "run" {
+			run = c
+		}
+	}
+	cwd, claude := home+"/src/project", home+"/.agent-pm/docker-state/worker_1/claude"
+	want := []string{"run", "--detach", "--name", container, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
+		"--network", "bridge", "--workdir", cwd, "--env", "CLAUDE_CONFIG_DIR=" + claude,
+		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "team=crew",
+		"--mount", "type=bind,source=" + cwd + ",target=" + cwd, "--mount", "type=bind,source=" + claude + ",target=" + claude,
+		"--tmpfs", "/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536,mode=0700,uid=1001,gid=1002",
+		"--entrypoint", "/usr/bin/tini", digest, "--", "sleep", "infinity"}
+	if !slices.Equal(run, want) {
+		t.Fatalf("run argv\n got %q\nwant %q", run, want)
+	}
+	for _, c := range d.calls {
+		for _, a := range c {
+			if strings.Contains(a, "docker.sock") || a == "--privileged" || a == "host" || strings.HasPrefix(a, "--device") {
+				t.Fatalf("forbidden %q in %q", a, c)
+			}
+		}
+	}
+}
+
+func TestMountCSVQuoting(t *testing.T) {
+	if got := bindMount("/a,b", `/c"d`); got != `type=bind,"source=/a,b","target=/c""d"` {
+		t.Fatal(got)
+	}
+}
+
+func TestStartOrder(t *testing.T) {
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	got, err := h.Start(context.Background(), validManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, Update: Update{Status: "updated"}}
+	if got != want {
+		t.Fatalf("%+v", got)
+	}
+	var steps []string
+	for i, c := range d.calls {
+		step := strings.Join(c[:2], " ")
+		if c[0] == "exec" {
+			step = c[1] + " " + c[2] + " " + c[len(c)-1]
+			if c[1] == "--user" {
+				step = c[2] + " " + strings.Join(c[4:min(len(c), 7)], " ")
+			}
+		}
+		if len(d.stdin[i]) > 0 && c[1] != "--interactive" {
+			t.Fatalf("stdin on %q", c)
+		}
+		steps = append(steps, step)
+	}
+	wantSteps := []string{"image inspect", "ps --filter", "container inspect", "run --detach",
+		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
+		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
+		"agent timeout --kill-after=10 180", "agent claude --version", "agent codex --version",
+		"--interactive --user inject"}
+	if !slices.Equal(steps, wantSteps) {
+		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
+	}
+	if inject := d.calls[len(d.calls)-1]; !slices.Equal(inject, []string{"exec", "--interactive", "--user", "agent", container, "inject"}) {
+		t.Fatalf("inject %q", inject)
+	}
+	boot, hook := d.calls[4], d.calls[5]
+	if !slices.Equal(boot[len(boot)-3:], []string{"claude", home + "/.agent-pm/docker-state/worker_1/claude", home + "/src/project"}) ||
+		!slices.Equal(hook[len(hook)-2:], []string{"hook", "/usr/local/bin/agent-pm-session"}) {
+		t.Fatalf("%q %q", boot, hook)
+	}
+	update := d.calls[6]
+	if !slices.Equal(update[4:], []string{"timeout", "--kill-after=10", "180", "npm", "install", "-g", "--prefix", "/home/agent/.npm-global", "@anthropic-ai/claude-code@latest", "@openai/codex@latest"}) {
+		t.Fatalf("%q", update)
+	}
+	noHook, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-no-hook.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, d = startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), writeManifest(t, noHook)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.calls {
+		if slices.Contains(c, "root") {
+			t.Fatalf("hook installed without hook_path: %q", c)
+		}
+	}
+}
+
+func failOn(word string, err error) func([]string) error {
+	return func(args []string) error {
+		if slices.Contains(args, word) {
+			return err
+		}
+		return nil
+	}
+}
+
+func TestRollback(t *testing.T) {
+	cmdErr := &docker.CommandError{Exit: 1, Stderr: "boom"}
+	for name, tc := range map[string]struct {
+		w       *world
+		creds   *fakeCreds
+		code    protocol.Code
+		cleanup string
+	}{
+		"bootstrap":           {&world{execErr: failOn("claude", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"hook":                {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"inject":              {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
+		"inject unreachable":  {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
+		"inject keychain":     {&world{}, &fakeCreds{injectErr: protocol.New(protocol.KeychainFailed, "denied")}, protocol.KeychainFailed, protocol.Removed},
+		"rm fails":            {&world{execErr: failOn("claude", cmdErr), rmErr: &docker.CommandError{Exit: 1, Stderr: "delete failed"}}, &fakeCreds{}, protocol.StartFailed, protocol.Failed},
+		"run fails absent":    {&world{runErr: cmdErr, rmErr: &docker.CommandError{Exit: 1, Stderr: "No such container: x"}}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
+		"run fails present":   {&world{runErr: cmdErr}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
+		"run fails rm silent": {&world{runErr: cmdErr, rmSilent: true}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tc.w.labels = goodLabels()
+			h, d := startHost(tc.w, tc.creds)
+			_, err := h.Start(context.Background(), validManifest(t))
+			e := protoErr(t, err)
+			if e.Code != tc.code || e.Cleanup != tc.cleanup || !hasCall(d, "rm") {
+				t.Fatalf("%+v %q", e, d.verbs())
+			}
+			if tc.cleanup == protocol.Failed && (e.CleanupError == "" || e.Container != container) {
+				t.Fatalf("%+v", e)
+			}
+			if strings.HasPrefix(name, "inject") && e.Cause != "" {
+				t.Fatalf("inject cause leaked: %q", e.Cause)
+			}
+		})
+	}
+}
+
+func TestRollbackAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &world{labels: goodLabels(), execErr: func(args []string) error {
+		if slices.Contains(args, "claude") {
+			cancel()
+			return context.Canceled
+		}
+		return nil
+	}}
+	h, d := startHost(w, &fakeCreds{})
+	_, err := h.Start(ctx, validManifest(t))
+	if e := protoErr(t, err); e.Cleanup != protocol.Removed {
+		t.Fatalf("%+v", e)
+	}
+	last := len(d.calls) - 1
+	if d.calls[last][0] != "rm" || d.ctxErrs[last] != nil {
+		t.Fatalf("rollback ran on a cancelled context: %q %v", d.calls[last], d.ctxErrs[last])
+	}
+}
+
+func TestSharingDenied(t *testing.T) {
+	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: "docker: Error response from daemon: mounts denied: \nThe path /Users/example/src/project is not shared from the host and is not known to Docker.\n\nRun 'docker run --help' for more information"},
+		rmErr: &docker.CommandError{Exit: 1, Stderr: "Error: No such container: x"}}
+	h, _ := startHost(w, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	e := protoErr(t, err)
+	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "file sharing") ||
+		!strings.Contains(e.Message, "docker-state") || !strings.Contains(e.Cause, "not shared from the host") {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestManifestUnreadable(t *testing.T) {
+	h, _ := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	if _, err := h.Start(context.Background(), "/nonexistent/m.json"); protoErr(t, err).Code != protocol.ManifestRejected {
+		t.Fatal(err)
+	}
+}
+
+func TestHookUnderUncleanCWD(t *testing.T) {
+	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
+		`","cwd":"` + home + `/src/project/.","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","labels":{}}`
+	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))
+	if protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run") {
+		t.Fatalf("%v %q", err, d.verbs())
+	}
+}
+
+func TestCauseOnlyWhereNamed(t *testing.T) {
+	cmdErr := &docker.CommandError{Exit: 1, Stderr: "boom detail"}
+	for name, w := range map[string]*world{
+		"bootstrap": {execErr: failOn("claude", cmdErr)},
+		"restore": {execErr: func(a []string) error {
+			if slices.Contains(a, "npm") || slices.Contains(a, "/bin/sh") {
+				return cmdErr
+			}
+			return nil
+		}},
+	} {
+		w.labels = goodLabels()
+		h, _ := startHost(w, &fakeCreds{})
+		_, err := h.Start(context.Background(), validManifest(t))
+		if e := protoErr(t, err); e.Cause != "" {
+			t.Fatalf("%s: cause %q", name, e.Cause)
+		}
+	}
+	h, _ := startHost(&world{labels: goodLabels(), runErr: cmdErr}, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	if e := protoErr(t, err); e.Cause != "boom detail" {
+		t.Fatalf("run cause %q", e.Cause)
+	}
+}
+
+func TestNameConflictSkipsRollback(t *testing.T) {
+	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: `docker: Error response from daemon: Conflict. The container name "/` + container +
+		`" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.` + "\n\nRun 'docker run --help' for more information"}}
+	h, d := startHost(w, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	e := protoErr(t, err)
+	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "close it first") || hasCall(d, "rm") {
+		t.Fatalf("%+v %q", e, d.verbs())
+	}
+}
