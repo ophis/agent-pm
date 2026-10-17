@@ -136,6 +136,13 @@ class QueueTest(Case):
     def test_first_waits_at_most_its_limit(self):
         self.assertIsNone(self.queue.first(0))
 
+    def test_first_lists_the_queue_once(self):
+        for n in (1, 2, 3):
+            relay.answer(request(n), self.queue, GEN)
+        with mock.patch("os.listdir", wraps=os.listdir) as listing:
+            self.assertEqual(self.queue.first(0)[0], 1)
+        self.assertEqual(listing.call_count, 1)
+
 
 class PumpTest(Case):
     def setUp(self):
@@ -201,6 +208,16 @@ class DaemonTest(Case):
         ):
             started = daemon.start()
         return daemon, started, [c.kwargs["target"] for c in thread.call_args_list]
+
+    def test_its_sockets_are_the_modules_under_its_run_dir(self):
+        self.assertEqual(
+            (relay.Daemon(GEN).socket, relay.Daemon(GEN).uplink), (relay.SOCKET, relay.UPLINK)
+        )
+        daemon = relay.Daemon(GEN, self.run)
+        self.assertEqual(
+            (daemon.socket, daemon.uplink),
+            (os.path.join(self.run, "relay.sock"), os.path.join(self.run, "relay-up.sock")),
+        )
 
     def test_start_binds_nothing_while_a_daemon_answers(self):
         daemon, started, threads = self.daemon(fake_socket())
@@ -309,6 +326,9 @@ class StubTest(Case):
         with mock.patch("socket.socket", return_value=conn), mock.patch("sys.stderr", err):
             code = stub.main(["hook", "/tui/w", "Stop"], io.BytesIO(b'{"a": 1}'))
         return code, err.getvalue()
+
+    def test_the_stub_dials_the_relays_socket(self):
+        self.assertEqual(stub.SOCKET, relay.SOCKET)
 
     def test_sends_a_stub_request_and_exits_0_on_its_queued_reply(self):
         conn = self.conn()
