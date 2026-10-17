@@ -33,11 +33,11 @@ FIGURE = f"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 class SvgCheck(Case):
-    def check(self, svg):
+    def check(self, svg, encoding="utf-8"):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "r-1.svg")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(svg)
+            with open(path, "wb") as f:
+                f.write(svg.encode(encoding))
             out = io.StringIO()
             return svg_check.main([path], out=out), out.getvalue()
 
@@ -53,6 +53,7 @@ class SvgCheck(Case):
             ('<rect ONLOAD="go()"/>', "unsafe markup: ONLOAD"),
             ('<image href="https://x.com/i.png"/>', "external reference: https://x.com/i.png"),
             ('<a xlink:href="r.md"><text>r</text></a>', "external reference: r.md"),
+            ('<a href=""><text>r</text></a>', "external reference: "),
             (
                 '<image href="data:image/png;base64,AA"/>',
                 "external reference: data:image/png;base64,AA",
@@ -67,6 +68,22 @@ class SvgCheck(Case):
             (
                 r"<style>.a { fill: u\72l(https://x.com/p) }</style>",
                 "external reference: url(https://x.com/p)",
+            ),
+            (
+                "<style>.a {}<g/>.b { fill: url(https://x.com/p) }</style>",
+                "external reference: url(https://x.com/p)",
+            ),
+            (
+                "<style>.a { background: image-set('https://x.com/p.png' 1x) }</style>",
+                "external reference: image-set(",
+            ),
+            (
+                '<a><set attributeName="href" to="javascript:alert(1)"/></a>',
+                "external reference: javascript:alert(1)",
+            ),
+            (
+                '<image><animate attributeName="xlink:href" values="#a; https://x.com/a.png"/></image>',
+                "external reference: https://x.com/a.png",
             ),
         )
         for markup, line in cases:
@@ -105,6 +122,14 @@ class SvgCheck(Case):
                 code, out = self.check(text)
                 self.assertEqual(code, 1)
                 self.assertTrue(out.startswith(start), out)
+
+    def test_only_utf_8_is_read(self):
+        svg = f'<?xml-stylesheet href="https://x.com/s.css"?>{OPEN}</svg>'
+        for encoding in ("utf-16", "utf-16-le"):
+            with self.subTest(encoding):
+                code, out = self.check(svg, encoding)
+                self.assertEqual(code, 1)
+                self.assertTrue(out.startswith("invalid svg: "), out)
 
     def test_the_size_cap(self):
         padding = "<!--" + "x" * svg_check.MAX_BYTES + "-->"

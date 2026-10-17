@@ -397,6 +397,7 @@ class Real(RealConfig):
                 "a list",
                 "a caption",
                 "delete the text the diagram replaces",
+                "A research report: its Template's Body rule instead.",
             ):
                 self.assertIn(literal, diagrams, (role, task, literal))
             for cap in ("3000 words", "5 sentences"):
@@ -464,7 +465,7 @@ class Real(RealConfig):
         self.assertIn("> **<one-sentence answer>** (<overall confidence>)", light)
         self.assertIn(point, section(light, "Comparison table"))
         findings = section(light, "Findings")
-        self.assertIn(point, findings)
+        self.assertNotIn(point, findings)
         self.assertIn(
             "`(<confidence: high, medium or low>; [n]…; <single-source or unverified, when so>)`",
             findings,
