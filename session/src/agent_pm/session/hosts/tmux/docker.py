@@ -188,6 +188,25 @@ def _listed(containers: Mapping[str, Row], display: Display) -> list[str]:
     ]
 
 
+def _report_plan(name: str, plan: Mapping) -> None:
+    """Freeze a generation's plan beside its manifest, then print it to stderr, a line a part."""
+    try:
+        save(
+            os.path.join(state_dir(name), f"{plan['generation']}.plan.json"),
+            json.dumps(plan),
+            durable=True,
+        )
+    except OSError as error:
+        raise SessionError(f"docker session {name}: plan: {error}") from None
+    mounts = ", ".join(f"{mount['path']} rw" for mount in plan["mounts"])
+    for part in (
+        f"image {plan['image']} {plan['image_digest']}",
+        f"mounts {mounts}",
+        f"credential {plan['credential']}",
+    ):
+        print(f"docker plan {name} {plan['generation']}: {part}", file=sys.stderr)
+
+
 def _wait(ready, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
@@ -458,15 +477,12 @@ class DockerHost(Host, Showable):
         try:
             if not _lock_free(os.path.join(state, "supervisor.lock")):
                 return True
-            hook = command_path(COMMAND)
-            if hook is None:
-                raise ConfigError(f"{COMMAND} is not on PATH")
+            hook = None
             if not os.path.lexists(stale):
-                self.broker.version()
-                _, digest = self.broker.build(plugin_root(hook))
+                hook, _, (_, digest) = self._image(row.name)
                 if _image_digest(row) != digest:
                     save(stale, digest)
-            if os.path.lexists(stale):
+            if hook is None or os.path.lexists(stale):
                 if row.name not in self._warned:
                     self._warned.add(row.name)
                     LOG.warning(
@@ -510,9 +526,26 @@ class DockerHost(Host, Showable):
         return (COMMAND, "resume", name)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
+        """The preflight, before any container: the cwd, the broker handshake and the build."""
+        self._check_cwd(name, launch, display=display)
+        self._image(name)
+
+    def _check_cwd(self, name: str, launch: Launch, *, display: Display) -> None:
         super().validate(name, launch, display=display)
+        cwd = os.path.realpath(launch.cwd)
+        if not os.path.isdir(cwd):
+            raise ConfigError(f"Docker cwd {cwd}: no such directory")
         roots = [os.path.realpath(os.path.expanduser(root)) for root in self.roots]
-        check_cwd(os.path.realpath(launch.cwd), roots, os.path.realpath(account_home()))
+        check_cwd(cwd, roots, os.path.realpath(account_home()))
+
+    def _image(self, name: str) -> tuple[str, str, tuple[str, str]]:
+        """(the hook path, the plugin root, the built image and digest)."""
+        hook = command_path(COMMAND)
+        if hook is None:
+            raise ConfigError(f"docker session {name}: {COMMAND} is not on PATH (its hooks run it)")
+        self.broker.version()
+        root = plugin_root(hook)
+        return hook, root, self.broker.build(root)
 
     def detach(self, name, launch, *, display=None, events=None, record=None) -> Process:
         raise SessionError(f"detach {name}: the Docker Host runs only terminal sessions")
@@ -527,13 +560,13 @@ class DockerHost(Host, Showable):
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> DockerTerminal:
-        self.validate(name, launch, display=display)
+        self._check_cwd(name, launch, display=display)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
-        generation, field, home_dir = (
-            metadata.get(key) for key in ("generation", "home_field", "home_dir")
+        generation, field, home_dir, credential = (
+            metadata.get(key) for key in ("generation", "home_field", "home_dir", "credential")
         )
-        if not (generation and field and home_dir):
+        if not (generation and field and home_dir and credential):
             raise SessionError(f"docker session {name}: no client home to mount")
         resume = metadata.get("resume")
         if resume not in ("0", "1"):
@@ -549,13 +582,8 @@ class DockerHost(Host, Showable):
             os.makedirs(home, mode=0o700)
         elif read_beneath(home, launch.transcript, limit=0) is None:
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
-        hook = command_path(COMMAND)
-        if hook is None:
-            raise ConfigError(f"docker session {name}: {COMMAND} is not on PATH (its hooks run it)")
-        self.broker.version()
-        root = plugin_root(hook)
+        hook, root, (image, digest) = self._image(name)
         clients = client_keys(root)
-        image, _ = self.broker.build(root)
         cwd = os.path.realpath(launch.cwd)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
@@ -566,6 +594,17 @@ class DockerHost(Host, Showable):
             cwd=cwd,
             home=(field, home),
             hook_path=hook,
+        )
+        _report_plan(
+            name,
+            {
+                "name": name,
+                "generation": generation,
+                "image": image,
+                "image_digest": digest,
+                "mounts": [{"path": cwd, "rw": True}, {"path": home, "rw": True}],
+                "credential": credential,
+            },
         )
         container = container_name(name, generation)
         began = timestamp()
