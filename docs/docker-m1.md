@@ -140,7 +140,8 @@ and explain in `message` that cwd and `~/.agent-pm/docker-state` must be shared.
 `error.cleanup` is `not_needed` when no container was created, `removed` after rollback,
 or `failed` when rollback failed. Only start can report the latter two. Keep the original
 exit/code when cleanup fails; include required `error.cleanup_error` and the canonical
-container name in its message so the caller can retry close. Do not emit success for
+container name in required `error.container`. The caller retries close with
+`close --container <error.container>`. Do not emit success for
 partially completed start. Optional `cause` carries a sanitized underlying diagnostic.
 Process termination by signal may prevent a JSON response; callers treat missing or
 invalid responses and inconsistent process/JSON exit codes as transport failure.

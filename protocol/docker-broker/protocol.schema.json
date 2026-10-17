@@ -430,6 +430,9 @@
             },
             "cleanup_error": {
               "$ref": "#/$defs/text"
+            },
+            "container": {
+              "$ref": "#/$defs/container"
             }
           },
           "required": [
@@ -450,7 +453,8 @@
               },
               "then": {
                 "required": [
-                  "cleanup_error"
+                  "cleanup_error",
+                  "container"
                 ]
               },
               "else": {

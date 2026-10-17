@@ -566,6 +566,26 @@
       }
     },
     {
+      "file": "error-start-cleanup-missing-container.json",
+      "definition": "error",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "error-start-cleanup-invalid-container.json",
+      "definition": "error",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
       "file": "error-close_failed.json",
       "definition": "error",
       "valid": true,
