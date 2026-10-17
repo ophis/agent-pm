@@ -1,7 +1,7 @@
 {
   "name": "agent-pm",
   "displayName": "Agent-PM",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Guidelines for your commander session (/agent-pm:manage), and agent-pm's core roles and tasks, researcher, pm and engineer, run in this conversation (/agent-pm:act-as).",
   "author": {
     "name": "Yinze Wang"
