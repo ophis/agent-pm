@@ -12,15 +12,6 @@
 
 Linear ボードからコーディングエージェント（Claude Code、Codex、今後さらに追加予定）を無人で動かします。各 Linear project が 1 つのプロダクトで、issue の assignee（role アカウント）がそのステージです。各 role は同時に最大 `max_runs` 件の issue を処理し、成果物をレビューのために戻します。承認すると次の role が引き継ぎます。
 
-| レイヤー | 役割 | 入口 |
-|---|---|---|
-| Session | tmux または pty でコーディングエージェント（Claude Code、Codex）を起動・監視・再開します。どの client でも同じ方法です。 | [Sessions](../sessions.md) |
-| Delegate（コア） | session を通じて role に 1 つの task を実行させ、チェック済みの結果を返します。単体でも使える Claude Code / Codex プラグインです。 | [インストール](#インストール) |
-| Linear orchestrator | Linear ボードから role を動かします。私自身のワークフローです。 | [Linear ボード](../board.md) |
-| Manager | 下位レイヤーのドライバー。対話するエージェントで、worker、role run、ボード run を起動し、監視して報告します。 | [デモ](#デモ1-つの-manager複数の-worker) |
-
-下の 2 つのレイヤー、Session と Delegate は汎用の部品です。その上に自分のフローを組んでください。Linear orchestrator は、エージェントがどう働くべきかについての私の考え方です（調査、PRD、ビルドの順に進み、各ステージの間に人間のレビューを挟む）。そのまま使っても、使わなくても、変えても構いません。role と task 自体も自由に編集できます（[role と task のカスタマイズ](../customizing-roles-and-tasks.md)）。
-
 開発者向け：[`AGENTS.md`](../../AGENTS.md)。
 
 ```mermaid
@@ -29,6 +20,21 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## レイヤー構成
+
+agent-pm はレイヤーで構成され、各レイヤーは 1 つの役割だけを担い、すぐ下のレイヤーだけを呼び出します。下の 2 つのレイヤー、Session と Delegate は単体で使える汎用の部品です。一番上は差し替えられ、Linear orchestrator の代わりに自分のワークフローを置けます。拡張するときは、新しいエージェント client を Session に、新しい role と task を Delegate に追加します。
+
+![agent-pm のレイヤー（上から下へ）：Manager（ユーザーインターフェース）、Linear orchestrator（オーケストレーション）、Delegate（role レイヤー）、Session（client アダプター）](../images/layers.svg)
+
+| レイヤー | 役割 | 入口 |
+|---|---|---|
+| Manager | 下位レイヤーのドライバー。対話するエージェントで、worker、role run、ボード run を起動し、監視して報告します。 | [デモ](#デモ1-つの-manager複数の-worker) |
+| Linear orchestrator | Linear ボードから role を動かします。私自身のワークフローです。 | [Linear ボード](../board.md) |
+| Delegate（コア） | session を通じて role に 1 つの task を実行させ、チェック済みの結果を返します。単体でも使える Claude Code / Codex プラグインです。 | [インストール](#インストール) |
+| Session | tmux または pty でコーディングエージェント（Claude Code、Codex）を起動・監視・再開します。どの client でも同じ方法です。 | [Sessions](../sessions.md) |
+
+Linear orchestrator は、エージェントがどう働くべきかについての私の考え方です（調査、PRD、ビルドの順に進み、各ステージの間に人間のレビューを挟む）。role と task 自体も自由に編集できます（[role と task のカスタマイズ](../customizing-roles-and-tasks.md)）。
 
 ## agent-pm を使う理由
 

@@ -12,15 +12,6 @@
 
 从 Linear 看板无人值守地运行编码 agent（Claude Code、Codex，后续支持更多）。每个 Linear project 是一个产品，issue 的 assignee（一个 role 账号）就是它所处的阶段。每个 role 同时最多处理 `max_runs` 个 issue，并把产出交回给你审阅。你批准后，下一个 role 接手。
 
-| 层 | 做什么 | 从这里开始 |
-|---|---|---|
-| Session | 在 tmux 或 pty 中启动、监视和恢复编码 agent（Claude Code、Codex），对每个 client 方式相同。 | [Sessions](../sessions.md) |
-| Delegate（核心） | 通过一个 session 让某个 role 执行一个 task，并返回经过检查的结果。是一个可单独使用的 Claude Code 和 Codex 插件。 | [安装](#安装) |
-| Linear orchestrator | 从 Linear 看板运行各 role：我自己的工作流。 | [Linear 看板](../board.md) |
-| Manager | 下面各层的驱动：一个你与之对话的 agent，它启动 worker、role run 和看板 run，监视它们并向你汇报。 | [演示](#演示一个-manager多个-worker) |
-
-底下两层 Session 和 Delegate 是通用的构建块：拿去在上面搭你自己的流程。Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再写 PRD，再构建，每个阶段之间都有人工审阅）。可以原样使用、跳过或修改；role 和 task 本身也都由你编辑（[自定义 role 和 task](../customizing-roles-and-tasks.md)）。
-
 开发者：[`AGENTS.md`](../../AGENTS.md)。
 
 ```mermaid
@@ -29,6 +20,21 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## 分层架构
+
+agent-pm 是分层构建的：每层只做一件事，只调用它下面的一层。底下两层 Session 和 Delegate 是通用的构建块，可以单独拿去用；最上层也可以换掉，用你自己的工作流替代 Linear orchestrator。要扩展，新的 agent client 接在 Session，新的 role 和 task 加在 Delegate。
+
+![agent-pm 的分层，从上到下：Manager（用户界面）、Linear orchestrator（编排）、Delegate（role 层）、Session（client 适配层）](../images/layers.svg)
+
+| 层 | 做什么 | 从这里开始 |
+|---|---|---|
+| Manager | 下面各层的驱动：一个你与之对话的 agent，它启动 worker、role run 和看板 run，监视它们并向你汇报。 | [演示](#演示一个-manager多个-worker) |
+| Linear orchestrator | 从 Linear 看板运行各 role：我自己的工作流。 | [Linear 看板](../board.md) |
+| Delegate（核心） | 通过一个 session 让某个 role 执行一个 task，并返回经过检查的结果。是一个可单独使用的 Claude Code 和 Codex 插件。 | [安装](#安装) |
+| Session | 在 tmux 或 pty 中启动、监视和恢复编码 agent（Claude Code、Codex），对每个 client 方式相同。 | [Sessions](../sessions.md) |
+
+Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再写 PRD，再构建，每个阶段之间都有人工审阅）。role 和 task 本身也都由你编辑（[自定义 role 和 task](../customizing-roles-and-tasks.md)）。
 
 ## 为什么用 agent-pm
 
