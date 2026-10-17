@@ -188,6 +188,41 @@ on tmux. The Viewer shows it as it shows a tmux session: `--display none` starts
 `[session.viewer]` shapes its grid, and `ls --descendants` follows the sessions it opened. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
 whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
+### Role runs
+
+Role runs (`agent-pm-crew role` and board runs) run their client in a container too, their
+harness staying on the host; it needs a Host of its own:
+
+```toml
+[delegate.delegates]
+harness_host = "tmux"
+```
+
+Before each session the Delegate writes `<workdir>/run/container-intent.json` (0600, on
+every Host): `role`, `repo` (the github.com `owner/name` of the input's `Reference:` block
+`Repo:` line, a local clone's read from its `origin`; two different ones fail the run),
+`output_repo` and `delegate_config`, a `[delegate]` table of `users` (no bot) and
+`trusted_dirs = []`. The Docker Host takes a start for a role run when its cwd is named
+`agent`, the sibling `run/container-intent.json` is a regular file reached through no
+link, and it lies under `~/.agent-pm` (so a board run counts only with the default
+`work_dir`); anything else is a crew worker. It then mounts the run's
+[workspace volume](#workspace-volumes) and has the broker write the intent's
+`delegate_config` to the container's `/home/agent/.agent-pm/config.local.toml` (root, 0444).
+
+On the Docker Host the Delegate:
+
+- refuses, before any container and naming the key, a `harness_host` that is empty or the
+  Docker Host, a `read` dir other than the image's team (`{{team}}`, a core role's
+  `{{role_team}}`, the tasks dir), any `write` dir, a role `cwd`, a cwd other than the agent
+  dir (a `trusted_dirs` project cwd included), a `team_dirs` role, and a `Reference:`
+  `Repo:` naming no github.com repo;
+- gives the agent the image's team at `/opt/agent-pm/team` and its `python3`;
+- writes the `Repo:` line as `owner/name`;
+- asks for the deliverable inline in the outcome, never `deliverable_file`; `local` and
+  `orchestrator` outputs still save it to `out`;
+- drops the outcome's `files` before checking it, noting `files_dropped` in `run.jsonl`,
+  so an engineer run posts no spec or plan to Linear.
+
 Each start, restart or resume runs a new generation in a new container, built from the
 current image. `restart` closes the running container and starts the next one; `resume`
 (after `close`, or once the container is gone) starts one in the same cwd. Both keep the
@@ -199,11 +234,10 @@ with `no native history to resume`. The worker's resume command is
 host.
 
 Refused before any container exists, as not supported on the Docker Host yet: a client
-other than Claude, role runs (a cwd under `~/.agent-pm`), detached sessions, and a start
-while a container of that name still exists. The broker's Refusals above apply too.
+other than Claude, detached sessions, and a start while a container of that name still
+exists. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd exists and is not a
-role run's, the broker answers `version` with the expected protocol (else it points to
+Every start first runs a preflight: the client is Claude, the cwd exists, the broker answers `version` with the expected protocol (else it points to
 [Install](#install)), and `build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
@@ -322,7 +356,8 @@ flowchart LR
 ## Workspace volumes
 
 A worker's workspace is a Docker volume, never a host directory: `agent-pm-crew-<name>`
-for a crew worker. The broker mounts it at the session's cwd, the path it has on the host,
+for a crew worker, `agent-pm-run-<workdir name>-<8 hex of the agent dir's path>` for a
+[role run](#role-runs), kept across its sessions. The broker mounts it at the session's cwd, the path it has on the host,
 which stays untouched and unshared. A worker starts in an empty directory and clones what
 it works on; until token delivery lands it can clone only public repos and cannot push.
 npm, uv and pip caches go to `.agent-pm-cache` inside it.
