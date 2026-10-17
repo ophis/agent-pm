@@ -195,6 +195,11 @@ SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_DISPLAY}"
 COMMAND = "agent-pm-session"
 
 
+def resume_argv(name: str) -> tuple[str, ...]:
+    """The command that resumes worker `name`."""
+    return (COMMAND, "resume", name)
+
+
 def _string_tuple(value) -> bool:
     return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
 

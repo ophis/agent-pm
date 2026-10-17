@@ -21,6 +21,7 @@ from typing import Protocol, runtime_checkable
 
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import (
+    COMMAND,
     SESSION_NAME,
     SESSION_NAME_RULE,
     Access,
@@ -30,6 +31,7 @@ from agent_pm.session.engine.types import (
     Mode,
     SessionError,
     Spec,
+    resume_argv,
 )
 from agent_pm.session.hosts.base import Process, Showable
 from agent_pm.session.runtimes.tui import TuiStore
@@ -57,7 +59,6 @@ COLOR_CAP = 15
 WAIT = 10
 REPORT_LINES = 20
 SCREEN_LINES = 2000
-COMMAND = "agent-pm-session"
 KIND = "worker"
 
 
@@ -146,7 +147,7 @@ class WorkerState:
             sid=self.sid,
             workdir=self.workdir(),
             ctl=(COMMAND,),
-            resume=(COMMAND, "resume", self.name),
+            resume=resume_argv(self.name),
             display=self.display,
             detail=self.client,
         )
