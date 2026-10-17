@@ -1,6 +1,9 @@
 ARG USER_IMAGE
 FROM ${USER_IMAGE}
 USER root
+ARG AGENT_UID
+ARG AGENT_GID
+RUN test "$(id -u agent):$(id -g agent)" = "${AGENT_UID}:${AGENT_GID}"
 RUN apt-get update && apt-get install -y --no-install-recommends tini python3 python3-venv && rm -rf /var/lib/apt/lists/*
 COPY session/src /opt/agent-pm/session/src
 COPY utils/src /opt/agent-pm/utils/src
@@ -14,7 +17,7 @@ RUN python3 -m venv /opt/agent-pm/venv && mkdir -p /opt/agent-pm/bin \
     && cp -a /home/agent/.npm-global /opt/agent-pm/client-baseline \
     && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm
 ARG AGENT_PM_VERSION
-LABEL agent-pm.version=${AGENT_PM_VERSION}
+LABEL agent-pm.version=${AGENT_PM_VERSION} agent-pm.agent-uid=${AGENT_UID} agent-pm.agent-gid=${AGENT_GID}
 ENV PATH=/opt/agent-pm/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
 USER agent
 ENTRYPOINT ["/usr/bin/tini", "--"]

@@ -16,6 +16,7 @@ import (
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -114,23 +115,28 @@ func fail(stderr io.Writer, command string, e *protocol.Error) int {
 	return protocol.Exit(e.Code)
 }
 
+// host wires the launcher to the fixed Docker Desktop CLI; errors are protocol errors.
+func host() (launcher.Host, func(), error) {
+	home, err := accountHome()
+	if err != nil {
+		return launcher.Host{}, nil, err
+	}
+	d, clean, err := docker.New(home)
+	if err != nil {
+		return launcher.Host{}, nil, protocol.New(protocol.DockerUnreachable, err.Error())
+	}
+	return launcher.Host{Home: home, Docker: d}, clean, nil
+}
+
 func system() app {
 	return app{
 		build: func(ctx context.Context, pkg string) (any, error) {
-			home, err := accountHome()
+			h, clean, err := host()
 			if err != nil {
 				return nil, err
 			}
-			d, clean, err := docker.New(home)
-			if err != nil {
-				return nil, protocol.New(protocol.DockerUnreachable, err.Error())
-			}
 			defer clean()
-			result, err := (builder{home: home, docker: d}).Build(ctx, pkg)
-			if err != nil {
-				return nil, protocol.New(protocol.BuildFailed, err.Error())
-			}
-			return result, nil
+			return h.Build(ctx, pkg)
 		},
 		login: func(out io.Writer) error {
 			home, err := accountHome()
@@ -148,5 +154,3 @@ func system() app {
 		},
 	}
 }
-
-type runner = docker.Runner
