@@ -97,6 +97,7 @@ LOG = logging.getLogger("session")
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
+STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 
 
 class Row(NamedTuple):
@@ -209,6 +210,32 @@ def _report_plan(name: str, plan: Mapping) -> None:
 def _text(found: str) -> str:
     """Container text, which reaches the host terminal, without C0 or C1 controls but tab."""
     return CONTROL.sub("", found)
+
+
+class _Stops:
+    """Holds STOPS back while a start owns its container, so its rollback still runs: check()
+    raises for the first one received. Only the main thread can set handlers.
+    """
+
+    def __init__(self) -> None:
+        self.signum, self.previous = 0, {}
+
+    def __enter__(self) -> _Stops:
+        if threading.current_thread() is threading.main_thread():
+            for signum in STOPS:
+                self.previous[signum] = signal.signal(signum, self._receive)
+        return self
+
+    def __exit__(self, *_) -> None:
+        for signum, handler in self.previous.items():
+            signal.signal(signum, handler)
+
+    def _receive(self, signum, _frame) -> None:
+        self.signum = self.signum or signum
+
+    def check(self, prefix: str = "") -> None:
+        if self.signum:
+            raise SessionError(f"{prefix}stopped by {signal.Signals(self.signum).name}")
 
 
 def _wait(ready, timeout: float) -> bool:
@@ -569,6 +596,28 @@ class DockerHost(Host, Showable):
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> DockerTerminal:
+        with _Stops() as stops:
+            return self._terminal(
+                name,
+                launch,
+                stops,
+                display=display,
+                events=events,
+                record=record,
+                metadata=metadata,
+            )
+
+    def _terminal(
+        self,
+        name: str,
+        launch: Launch,
+        stops: _Stops,
+        *,
+        display: Display,
+        events: str | None,
+        record: Record | None,
+        metadata: Mapping[str, str] | None,
+    ) -> DockerTerminal:
         self._check_cwd(name, launch, display=display)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
@@ -618,6 +667,7 @@ class DockerHost(Host, Showable):
             },
         )
         container = container_name(name, generation)
+        stops.check(f"docker session {name}: ")
         began = timestamp()
         try:
             started = self.broker.start(manifest, clients=clients)
@@ -632,6 +682,7 @@ class DockerHost(Host, Showable):
         ended = timestamp()
         supervisor = lock = None
         try:
+            stops.check()
             if (started.endpoint, started.container) != (endpoint(), container):
                 raise SessionError(
                     f"broker: started {started.container} at {started.endpoint},"
@@ -689,6 +740,7 @@ class DockerHost(Host, Showable):
                 json.dumps(result),
                 durable=True,
             )
+            stops.check()
         except (SessionError, TuiError, OSError) as error:
             cleanup = self._roll_back(supervisor, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error

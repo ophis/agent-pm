@@ -41,6 +41,7 @@ GEN = "0123456789abcdef0123456789abcdef"
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
 IMAGE = "agent-pm-worker:" + "a" * 64
+STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 DIGEST = "sha256:" + "c" * 64
 HOME = ClientHome("agent_dir", "agent", "AGENT_HOME", "agent-token")
 RECORD = Record(
@@ -733,6 +734,53 @@ class StartTest(Base):
                     self.start()
                 self.assertEqual(self.broker.closed, [CONTAINER])
                 self.popen_mock.assert_not_called()
+
+    def stopped_at(self, step, signum=signal.SIGTERM):
+        """start() with `signum`'s handler called as `step` (a broker method or a docker exec
+        prefix) runs, as a signal would.
+        """
+        before = {sig: signal.getsignal(sig) for sig in STOPS}
+
+        def stop():
+            handler = signal.getsignal(signum)
+            self.assertIsNot(handler, before[signum])
+            handler(signum, None)
+
+        if isinstance(step, tuple):
+            self.docker.replies = {
+                **self.docker.replies,
+                step: lambda cmd: (stop(), pane()(cmd))[1],
+            }
+        else:
+            real = getattr(self.broker, step)
+            setattr(self.broker, step, lambda *a, **k: (stop(), real(*a, **k))[1])
+        name = signal.Signals(signum).name
+        with self.assertRaisesRegex(SessionError, f"^docker session w: stopped by {name}$"):
+            self.start()
+        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, before)
+
+    def test_a_signal_during_the_broker_start_closes_its_container(self):
+        for signum in STOPS:
+            with self.subTest(signum=signum):
+                self.broker = self.host.broker = FakeBroker(self.order, self.broker.started)
+                self.stopped_at("start", signum)
+                self.assertEqual(self.broker.closed, [CONTAINER])
+                self.popen_mock.assert_not_called()
+
+    def test_a_signal_before_the_broker_start_starts_nothing(self):
+        self.stopped_at("build")
+        self.assertNotIn("start", [step[0] for step in self.order if isinstance(step, tuple)])
+        self.assertEqual(self.broker.closed, [])
+
+    def test_a_signal_while_the_client_starts_stops_the_supervisor_and_closes(self):
+        self.stopped_at(("tmux", "display-message"))
+        self.supervisor.terminate.assert_called()
+        self.assertEqual(self.order[-1], ("close", CONTAINER))
+
+    def test_a_start_restores_the_signal_handlers(self):
+        before = {sig: signal.getsignal(sig) for sig in STOPS}
+        self.start()
+        self.assertEqual({sig: signal.getsignal(sig) for sig in STOPS}, before)
 
     def test_login_required_surfaces_message(self):
         self.broker.error = BrokerError(5, "login_required", "log in first", "not_needed", None)
