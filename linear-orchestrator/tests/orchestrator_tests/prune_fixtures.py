@@ -183,7 +183,6 @@ class PruneScenario(Case):
             task_labels={},
             agent_label_group="",
             agent_labels={},
-            option_labels={},
             roles={},
             project_repos={},
             local_clones={},
