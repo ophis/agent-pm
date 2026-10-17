@@ -19,6 +19,7 @@ from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback, sweep
 from agent_pm.delegate.engine.config import module_roots, read_config
+from agent_pm.delegate.engine.container import write_intent
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute, say, stopped
@@ -277,9 +278,13 @@ class HarnessDelegate(Delegate):
                 if not fresh or payload is not None:
                     self._preflight()
                 os.makedirs(self.layout.agent, exist_ok=True)
+                self._write_intent(self._state.plan)
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None
+
+    def _write_intent(self, plan: Plan) -> None:
+        write_intent(self.layout, plan, thaw(self.composer.config.values).get("users", []))
 
     def _preflight(self) -> None:
         try:
@@ -350,7 +355,11 @@ class HarnessDelegate(Delegate):
         values = {
             field.name: _encode(getattr(persisted, field.name)) for field in fields(persisted)
         }
-        accepted = {"session": _encode(state.plan.session), "run": _encode(state.plan.run)}
+        accepted = {
+            "session": _encode(state.plan.session),
+            "run": _encode(state.plan.run),
+            "repo": state.plan.repo,
+        }
         spec = {
             field.name: _encode(getattr(state.plan.spec, field.name))
             for field in fields(state.plan.spec)
@@ -387,7 +396,9 @@ class HarnessDelegate(Delegate):
             session["access"] = Access(**access)
             session["flags"] = tuple(session["flags"])
             session["reply_tags"] = tuple(session["reply_tags"])
-            accepted = Plan(spec, SessionSpec(**session), RunConfig(**planned["run"]))
+            accepted = Plan(
+                spec, SessionSpec(**session), RunConfig(**planned["run"]), planned.get("repo")
+            )
             result = data.pop("result")
             if result is not None:
                 outcome = result.pop("outcome")
@@ -1015,6 +1026,7 @@ class HarnessDelegate(Delegate):
             )
             try:
                 os.makedirs(self.layout.agent, exist_ok=True)
+                self._write_intent(accepted)
             except OSError as error:
                 raise ConfigError(str(error)) from None
             record = self._launch(previous, state)

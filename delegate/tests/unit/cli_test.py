@@ -637,7 +637,13 @@ class InProcess(Base):
             (sorted(os.listdir(self.work)), sorted(os.listdir(Layout(self.work).run))),
             (
                 ["agent", "out.md", "run"],
-                ["delegate.json", "delegate.lock", "delegate.run.lock", "run.jsonl"],
+                [
+                    "container-intent.json",
+                    "delegate.json",
+                    "delegate.lock",
+                    "delegate.run.lock",
+                    "run.jsonl",
+                ],
             ),
         )
 

@@ -130,12 +130,13 @@ class DriverSpec:
 @dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its client, sid and team set, its paths absolute; `session` the session's
-    Spec.
+    Spec; `repo` the input's Reference repo (container.reference_repo).
     """
 
     spec: Spec
     session: SessionSpec
     run: RunConfig
+    repo: str | None = None
 
     @property
     def prompt(self) -> str:

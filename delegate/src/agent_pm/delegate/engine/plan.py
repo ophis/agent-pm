@@ -10,6 +10,7 @@ import uuid
 from dataclasses import replace
 
 from agent_pm.delegate.composer import Composer, RunConfig
+from agent_pm.delegate.engine.container import reference_repo
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.types import ConfigError, Layout, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
@@ -147,7 +148,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
     _check_team_dirs(
         composition, intent.writes, client=client, spec=session, layout=layout, driver=driver
     )
-    planned = Plan(spec, session, run)
+    planned = Plan(spec, session, run, reference_repo(spec.input))
     return replace(
         planned, session=replace(session, prompt=composition.render(run, planned.params))
     )
