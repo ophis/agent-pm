@@ -67,6 +67,7 @@ from agent_pm.utils import (
     read_beneath,
     save,
     source_path,
+    timestamp,
 )
 
 KIND = "docker"
@@ -382,6 +383,7 @@ class DockerHost(Host, Showable):
             hook_path=hook,
         )
         container = container_name(name, generation)
+        began = timestamp()
         try:
             started = self.broker.start(manifest, clients=clients)
         except BrokerError as error:
@@ -389,6 +391,7 @@ class DockerHost(Host, Showable):
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
+        ended = timestamp()
         supervisor = None
         try:
             if (started.endpoint, started.container) != (endpoint(), container):
@@ -423,6 +426,20 @@ class DockerHost(Host, Showable):
             _save_record(name, {**_record(name), "process": process})
             if not _wait(lambda: tmux.status(name) == PaneStatus.RUNNING, READY_WAIT):
                 raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
+            result = {
+                "container": started.container,
+                "image": image,
+                "image_digest": started.image_digest,
+                "clients": dict(started.clients),
+                "update": dict(started.update),
+                "started_at": began,
+                "ended_at": ended,
+            }
+            save(
+                os.path.join(state_dir(name), f"{generation}.result.json"),
+                json.dumps(result),
+                durable=True,
+            )
         except (SessionError, TuiError, OSError) as error:
             cleanup = self._roll_back(supervisor, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
