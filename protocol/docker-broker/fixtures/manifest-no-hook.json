@@ -1,0 +1,10 @@
+{
+  "name": "worker_1",
+  "generation": "0123456789abcdef0123456789abcdef",
+  "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cwd": "/Users/example/src/project",
+  "claude_dir": "/Users/example/.agent-pm/docker-state/worker_1/claude",
+  "labels": {
+    "team": "crew"
+  }
+}
