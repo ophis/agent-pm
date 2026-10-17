@@ -57,6 +57,12 @@ func Absent(err error) bool {
 	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
 }
 
+// Conflict reports whether Docker refused a container name another container holds.
+func Conflict(err error) bool {
+	var ce *CommandError
+	return errors.As(err, &ce) && strings.Contains(ce.Stderr, "Conflict. The container name")
+}
+
 // TempDir makes a private directory under <home>/.agent-pm/docker/tmp, never TMPDIR or /tmp:
 // ~/.agent-pm is on the launcher's mount deny list, so no worker can mount it and rewrite the contents.
 func TempDir(home, pattern string) (string, error) {

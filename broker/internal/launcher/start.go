@@ -19,6 +19,13 @@ const (
 	sharing   = "Docker Desktop file sharing must include cwd and ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
 )
 
+// errTaken: another start created the container first, so it is not this start's to roll back.
+var errTaken = errors.New("container name taken")
+
+func taken(c string) *protocol.Error {
+	return protocol.New(protocol.StartFailed, "Container "+c+" already exists; close it first.")
+}
+
 // bindMount renders a --mount value; Docker parses it as one CSV record.
 func bindMount(source, target string) string {
 	var b strings.Builder
@@ -56,9 +63,12 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		if err != nil {
 			return StartResult{}, failure(err, protocol.StartFailed, "Cannot check for container "+c+".")
 		}
-		return StartResult{}, protocol.New(protocol.StartFailed, "Container "+c+" already exists; close it first.")
+		return StartResult{}, taken(c)
 	}
 	result, err := h.create(ctx, c, m, cwd, info)
+	if errors.Is(err, errTaken) {
+		return StartResult{}, taken(c)
+	}
 	if err != nil {
 		var e *protocol.Error
 		if !errors.As(err, &e) {
@@ -88,6 +98,9 @@ func (h Host) create(ctx context.Context, c string, m Manifest, cwd string, info
 		"--tmpfs", docker.SecretsDir+":rw,noexec,nosuid,nodev,size=65536,mode=0700,uid="+labels["agent-pm.agent-uid"]+",gid="+labels["agent-pm.agent-gid"],
 		"--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
+		if docker.Conflict(err) {
+			return StartResult{}, errTaken
+		}
 		e := diagnosed(err, protocol.StartFailed, "Creating the container failed.")
 		if text := err.Error(); strings.Contains(text, "mounts denied") || strings.Contains(text, "not shared from the host") {
 			e.Message = sharing

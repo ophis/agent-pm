@@ -433,3 +433,14 @@ func TestCauseOnlyWhereNamed(t *testing.T) {
 		t.Fatalf("run cause %q", e.Cause)
 	}
 }
+
+func TestNameConflictSkipsRollback(t *testing.T) {
+	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: `docker: Error response from daemon: Conflict. The container name "/` + container +
+		`" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.` + "\n\nRun 'docker run --help' for more information"}}
+	h, d := startHost(w, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	e := protoErr(t, err)
+	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "close it first") || hasCall(d, "rm") {
+		t.Fatalf("%+v %q", e, d.verbs())
+	}
+}
