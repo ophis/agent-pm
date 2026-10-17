@@ -16,7 +16,7 @@ from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.clients.base import Tui
-from agent_pm.session.clients.claude.common import HOME, TAIL, TUI_ENV, ClaudeCommon, approval, read
+from agent_pm.session.clients.claude.common import HOME, TAIL, TUI_ENV, ClaudeCommon, read
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -93,9 +93,6 @@ class ClaudeTui(Tui):
 
     def _home(self):
         return HOME
-
-    def _approval(self, flags):
-        return approval(flags)
 
     def launch(self, spec: Spec, hook):
         common = self.common

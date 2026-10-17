@@ -126,15 +126,6 @@ def _listed(containers: Mapping[str, tuple[str, str]], display: Display) -> list
     ]
 
 
-def _strings(text: str | None) -> list[str] | None:
-    """`text`'s JSON array of strings, else None."""
-    try:
-        found = json.loads(text or "")
-    except ValueError:
-        return None
-    return found if isinstance(found, list) and all(isinstance(s, str) for s in found) else None
-
-
 def _report_plan(name: str, plan: Mapping) -> None:
     """Freeze a generation's plan beside its manifest, then print it to stderr, a line a part."""
     try:
@@ -150,7 +141,6 @@ def _report_plan(name: str, plan: Mapping) -> None:
         f"image {plan['image']} {plan['image_digest']}",
         f"mounts {mounts}",
         f"credential {plan['credential']}",
-        f"approval {shlex.join(plan['approval']) or 'none'}",
     ):
         print(f"docker plan {name} {plan['generation']}: {part}", file=sys.stderr)
 
@@ -403,11 +393,6 @@ class DockerHost(Host, Showable):
         resume = metadata.get("resume")
         if resume not in ("0", "1"):
             raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
-        approval = _strings(metadata.get("approval"))
-        if approval is None:
-            raise SessionError(
-                f"docker session {name}: bad approval {metadata.get('approval')!r:.40}"
-            )
         if any(row[1:2] == [name] for row in self._ps()):
             raise SessionError(
                 f"docker session {name}: a container for it exists; close {name} first"
@@ -440,7 +425,6 @@ class DockerHost(Host, Showable):
                 "image_digest": digest,
                 "mounts": [{"path": cwd, "rw": True}, {"path": home, "rw": True}],
                 "credential": credential,
-                "approval": approval,
             },
         )
         container = container_name(name, generation)

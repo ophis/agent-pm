@@ -14,7 +14,7 @@ from functools import partial
 from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
-from agent_pm.session.clients.claude.common import HOME, approval
+from agent_pm.session.clients.claude.common import HOME
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -82,28 +82,6 @@ class ModelEffortTest(Base):
 class HomeTest(Case):
     def test_the_credential_kind_a_container_host_injects(self):
         self.assertEqual(HOME.credential, "claude-setup-token")
-
-
-class ApprovalTest(Case):
-    def test_settings_keep_only_their_permissions_and_other_flags_stay(self):
-        permissions = {"allow": ["Bash(ls)"], "defaultMode": "plan"}
-        settings = json.dumps({"permissions": permissions, "env": {"ANTHROPIC_API_KEY": "x"}})
-        kept = ("--settings", json.dumps({"permissions": permissions}))
-        for given in (("--settings", settings), (f"--settings={settings}",)):
-            with self.subTest(given=given):
-                found = approval(("--mode", "a", *given, "--x", "--", "--settings", "y"))
-                self.assertEqual(found, ("--mode", "a", *kept, "--x", "--", "--settings", "y"))
-                self.assertNotIn("ANTHROPIC_API_KEY", " ".join(found))
-
-    def test_settings_without_permissions_are_dropped_whole(self):
-        for value in ('{"env": {"ANTHROPIC_API_KEY": "x"}}', "settings.json", "[1]", ""):
-            with self.subTest(value=value):
-                self.assertEqual(approval(("--a", "--settings", value, "--b")), ("--a", "--b"))
-        self.assertEqual(approval(("--a", "--settings")), ("--a",))
-
-    def test_the_tui_reports_them(self):
-        tui = ClaudeClient({}).tui()
-        self.assertEqual(tui._approval(("--settings", '{"env": {"K": "v"}}', "--a")), ("--a",))
 
 
 class SettingSourcesTest(Base):

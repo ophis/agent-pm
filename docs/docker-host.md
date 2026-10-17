@@ -185,14 +185,10 @@ Just before the broker's `start`, each generation freezes its plan in
 docker plan NAME GENERATION: image agent-pm-worker:<key> sha256:<digest>
 docker plan NAME GENERATION: mounts <cwd> rw, <claude dir> rw
 docker plan NAME GENERATION: credential claude-setup-token
-docker plan NAME GENERATION: approval <the client flags the caller set, or none>
 ```
 
-Approval is the caller's client flags: the role's policy flags, or a worker's
-`-- <client flags>` (e.g. `--permission-mode auto`), each `--settings` cut to its
-`permissions` (dropped without them). The plan is for you to check
-against `docker inspect`; it holds no env values or token, and the broker reads only the
-manifest.
+The plan is for you to check against `docker inspect`; it holds no env values, flags or
+token, and the broker reads only the manifest.
 
 `~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
 start, kept by restart and resume), each generation's start manifest

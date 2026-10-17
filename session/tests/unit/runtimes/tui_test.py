@@ -633,9 +633,6 @@ class StartTest(Base):
             def _home(self):
                 return ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token")
 
-            def _approval(self, flags):
-                return (*flags, "--cut")
-
             def launch(self, spec, hook):
                 self.spec = spec
                 return super().launch(spec, hook)
@@ -652,7 +649,7 @@ class StartTest(Base):
                 calls.clear()
                 self.host.processes.clear()
                 with mock.patch.object(self.host, "_client_env", client_env):
-                    self.start(run=run, env={"OTHER": "1"}, resume=resume, flags=("--ask", "x"))
+                    self.start(run=run, env={"OTHER": "1"}, resume=resume)
                 self.assertEqual(
                     calls,
                     [
@@ -671,10 +668,8 @@ class StartTest(Base):
                     (metadata["home_field"], metadata["home_dir"], metadata["resume"]),
                     ("fake_dir", "fake", flag),
                 )
-                self.assertEqual(
-                    (metadata["credential"], json.loads(metadata["approval"])),
-                    ("fake-token", ["--ask", "x", "--cut"]),
-                )
+                self.assertEqual(metadata["credential"], "fake-token")
+                self.assertNotIn("approval", metadata)
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 
     def test_a_host_resume_argv_replaces_the_clients_resume_command(self):

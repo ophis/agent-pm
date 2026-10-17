@@ -129,9 +129,6 @@ class Tui(ABC):
     def _home(self) -> ClientHome | None:
         return None
 
-    def _approval(self, flags: Sequence[str]) -> tuple[str, ...]:
-        return tuple(flags)
-
     def commit(self) -> None:
         return None
 

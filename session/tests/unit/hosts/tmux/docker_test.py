@@ -255,7 +255,6 @@ class StartTest(Base):
         "home_dir": "agent",
         "resume": "0",
         "credential": "agent-token",
-        "approval": '["--ask", "Bash(git status)"]',
     }
 
     def setUp(self):
@@ -516,7 +515,6 @@ class StartTest(Base):
                             {"path": self.home_dir, "rw": True},
                         ],
                         "credential": "agent-token",
-                        "approval": ["--ask", "Bash(git status)"],
                     },
                 )
                 head = f"docker plan w {GEN}:"
@@ -526,16 +524,11 @@ class StartTest(Base):
                         f"{head} image {IMAGE} {DIGEST}",
                         f"{head} mounts {self.cwd} rw, {self.home_dir} rw",
                         f"{head} credential agent-token",
-                        f"{head} approval --ask 'Bash(git status)'",
                     ],
                 )
-                self.assertNotIn("sk-secret", text + stderr.getvalue())
+                for absent in ("sk-secret", "--flag", "approval"):
+                    self.assertNotIn(absent, text + stderr.getvalue())
                 self.assertFalse(plan.startswith(self.home_dir + os.sep))
-
-    def test_no_approval_args_report_none(self):
-        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
-            self.start(approval="[]")
-        self.assertIn(f"docker plan w {GEN}: approval none", stderr.getvalue().splitlines())
 
     def test_a_plan_write_failure_starts_nothing(self):
         os.makedirs(os.path.join(self.state, f"{GEN}.plan.json", "taken"))
@@ -547,10 +540,6 @@ class StartTest(Base):
         for changes, pattern in (
             ({"credential": None}, "no client home"),
             ({"credential": ""}, "no client home"),
-            ({"approval": None}, "bad approval"),
-            ({"approval": "x"}, "bad approval"),
-            ({"approval": '{"a": 1}'}, "bad approval"),
-            ({"approval": "[1]"}, "bad approval"),
         ):
             with self.subTest(changes=changes):
                 self.order.clear()

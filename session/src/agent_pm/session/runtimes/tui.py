@@ -525,7 +525,6 @@ class TuiRuntime(Runtime):
                     "home_field": client_home.field,
                     "home_dir": client_home.dir,
                     "credential": client_home.credential,
-                    "approval": json.dumps(run._approval(spec.flags)),
                     "resume": "1" if spec.resume else "0",
                 }
                 if home and client_home
