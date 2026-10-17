@@ -651,6 +651,14 @@ class StartTest(Base):
         metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
         self.assertEqual((metadata["home_field"], metadata["home_dir"]), ("fake_dir", "fake"))
 
+    def test_a_host_that_inherits_no_env_launches_with_only_the_launchs_own(self):
+        self.host._inherit_env = False
+        with mock.patch.dict(os.environ, {"HOST_ONLY": "1"}):
+            self.start()
+        launch = self.host.calls.terminal.call_args.args[1]
+        self.assertNotIn("HOST_ONLY", launch.env)
+        self.assertEqual(launch.env["PWD"], launch.cwd)
+
     def test_a_host_without_client_env_leaves_the_spec_and_metadata_alone(self):
         self.assertEqual(self.host._client_env(NAME, "fake", None, resume=True), {})
         self.start(env={"OTHER": "1"})

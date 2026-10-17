@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.hosts.docker.relay import LINE_MAX, request_id
@@ -23,6 +24,8 @@ from agent_pm.utils import timestamp
 PAYLOAD_MAX = 64 << 20
 HOOK_WAIT = 60
 CHECK_WAIT = 10
+START_WAIT = 60
+POLL = 0.5
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 LOG_MAX = 1 << 20
 LOG_TEXT = 200
@@ -116,7 +119,9 @@ class Supervisor:
                     acks.write(json.dumps(ack).encode() + b"\n")
                     acks.flush()
 
-    def watch(self, wait: list[str], check: list[str], stopped: threading.Event) -> None:
+    def watch(self, wait: list[str], check: list[str], stopped, start: float = START_WAIT) -> None:
+        """A failed wait is retried for `start` s, until one has succeeded."""
+        deadline = time.monotonic() + start
         while not stopped.is_set():
             try:
                 waited = self.run(
@@ -127,13 +132,19 @@ class Supervisor:
                 )
             except OSError:
                 return
-            if waited.returncode or stopped.is_set():
+            if stopped.is_set():
                 return
-            if self._dead(check):
+            if waited.returncode:
+                if time.monotonic() >= deadline:
+                    return
+            elif self._dead(check):
                 if self.events:
                     with contextlib.suppress(OSError, ValueError):
                         SessionStatusLog(self.events).write(self.name, "dead")
                 return
+            else:
+                deadline = 0.0
+            stopped.wait(POLL)
 
     def _dead(self, check: list[str]) -> bool:
         try:

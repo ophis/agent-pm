@@ -114,6 +114,16 @@ def _lock_free(path: str) -> bool:
     return True
 
 
+def _listed(containers: Mapping[str, tuple[str, str]], display: Display) -> list[str]:
+    if display == "":
+        return []
+    return [
+        name
+        for name in sorted(containers)
+        if display is None or TmuxHost.listed(display, _record(name).get("display"))
+    ]
+
+
 def _wait(ready, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
@@ -248,6 +258,9 @@ class DockerHost(Host, Showable):
     session's cwd may lie under). Only terminal sessions run here.
     """
 
+    _inherit_env = False  # the container gets only the launch's own env (D10)
+    _resume_refused = "resume and restart are not supported on the Docker Host yet"
+
     def __init__(
         self,
         name: str,
@@ -310,7 +323,7 @@ class DockerHost(Host, Showable):
                 f"client {client or '(unnamed)'}: not supported on the Docker Host yet"
             )
         if resume:
-            raise ConfigError("resume and restart are not supported on the Docker Host yet")
+            raise ConfigError(self._resume_refused)
         return {home.env: docker_home(name, home.dir)}
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
@@ -486,18 +499,11 @@ class DockerHost(Host, Showable):
         )
 
     def list(self, display: Display = None) -> list[str]:
-        if display == "":
-            return []
-        names = sorted(self._containers())
-        return [
-            name
-            for name in names
-            if display is None or TmuxHost.listed(display, _record(name).get("display"))
-        ]
+        return _listed(self._containers(), display)
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         containers = self._containers()
-        return [self._row(name, *containers[name]) for name in self.list(display)]
+        return [self._row(name, *containers[name]) for name in _listed(containers, display)]
 
     def _row(self, name: str, container: str, generation: str) -> SessionRow:
         record = _record(name)

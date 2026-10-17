@@ -217,9 +217,10 @@ class ClientEnvTest(Base):
             ):
                 self.host._client_env("w", client, None, resume=False)
 
-    def test_resume_is_refused(self):
+    def test_resume_and_restart_are_refused_and_the_launch_env_starts_clean(self):
         with self.assertRaisesRegex(ConfigError, "resume and restart are not supported"):
             self.host._client_env("w", "agent", HOME, resume=True)
+        self.assertFalse(self.host._inherit_env)
 
     def test_client_env_points_at_the_home(self):
         self.assertEqual(
@@ -607,7 +608,10 @@ class ListTest(Base):
         self.assertEqual(self.host.list(""), [])
         listing = "w\t0\tforged\tforged\tdone\t\t\tforged\t\n"
         self.docker.replies = {("tmux", "-u", "list-sessions"): (0, listing, "")}
+        before = len(self.docker.order)
         rows = {row.name: row for row in self.host.rows()}
+        ran = [call[0] for call in self.docker.order[before:] if isinstance(call, list)]
+        self.assertEqual(ran.count("ps"), 1)
         self.assertEqual(
             (rows["w"].sid, rows["w"].client, rows["w"].display, rows["w"].state),
             ("s1", "agent", "lead/below", StatusState.DONE),

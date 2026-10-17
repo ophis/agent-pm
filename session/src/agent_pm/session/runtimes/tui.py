@@ -505,7 +505,9 @@ class TuiRuntime(Runtime):
         spec = replace(spec, name=name, events=events, env={**spec.env, **home})
         spec = cls._noted(spec, client)
         hook = store.hook_argv()
-        prepared = cls._launched(spec, lambda s: run.launch(s, hook), drop)
+        prepared = cls._launched(
+            spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
+        )
         metadata = {
             "sid": prepared.info.sid,
             "client": spec.client or "session",

@@ -251,6 +251,9 @@ class Host(ABC):
     def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
         return None
 
+    _inherit_env = True
+    _resume_refused: str | None = None
+
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
     ) -> Mapping[str, str]:

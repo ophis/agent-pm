@@ -8,7 +8,6 @@ import io
 import json
 import os
 import signal
-import threading
 from types import SimpleNamespace
 from unittest import mock
 
@@ -127,6 +126,17 @@ class ServeTest(Base):
         self.assertEqual(len(self.ran), 1)
 
 
+class Stop:
+    def __init__(self, *, stopped=False):
+        self.stopped = stopped
+
+    def is_set(self):
+        return self.stopped
+
+    def wait(self, _timeout):
+        return self.stopped
+
+
 class WatchTest(Base):
     def popen(self, out):
         def make(argv, **kw):
@@ -140,13 +150,13 @@ class WatchTest(Base):
 
         return make
 
-    def watch(self, *, codes, out=b"1\n", stopped=None):
+    def watch(self, *, codes, out=b"1\n", stopped=False, start=0.0):
         results = iter(codes)
         self.supervisor.run = lambda argv, **kw: (
             self.ran.append((argv, kw)) or SimpleNamespace(returncode=next(results))
         )
         self.supervisor.popen = self.popen(out)
-        self.supervisor.watch(["wait"], ["check"], stopped or threading.Event())
+        self.supervisor.watch(["wait"], ["check"], Stop(stopped=stopped), start)
 
     def events_text(self):
         with open(self.events) as f:
@@ -158,17 +168,20 @@ class WatchTest(Base):
         self.assertEqual([argv for argv, _ in self.ran], [["wait"], ["check"]])
 
     def test_a_forged_signal_with_a_live_pane_writes_nothing_and_waits_again(self):
-        self.watch(codes=[0, 1], out=b"0\n")
+        self.watch(codes=[0, 1], out=b"0\n", start=60)
         self.assertEqual(self.events_text(), "")
         self.assertEqual([argv for argv, _ in self.ran], [["wait"], ["check"], ["wait"]])
 
+    def test_a_failed_wait_is_retried_until_the_containers_tmux_starts(self):
+        self.watch(codes=[1, 1, 0], start=60)
+        self.assertRegex(self.events_text(), r"^\d\d:\d\d:\d\d w dead\n$")
+        self.assertEqual([argv for argv, _ in self.ran], [["wait"]] * 3 + [["check"]])
+
     def test_a_failed_wait_or_a_stop_writes_nothing(self):
         self.watch(codes=[1])
-        stopped = threading.Event()
-        stopped.set()
-        self.watch(codes=[0], stopped=stopped)
+        self.watch(codes=[0], stopped=True)
         self.supervisor.run = mock.Mock(side_effect=OSError(2, "gone"))
-        self.supervisor.watch(["wait"], ["check"], threading.Event())
+        self.supervisor.watch(["wait"], ["check"], Stop(), 60)
         self.assertEqual(self.events_text(), "")
 
     def test_no_events_file_writes_nothing(self):
