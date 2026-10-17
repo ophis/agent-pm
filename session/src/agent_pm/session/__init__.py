@@ -3,7 +3,7 @@
 on a Host (hosts/); the Viewer (viewer/) shows them. `__all__` is its API for Session users.
 """
 
-from agent_pm.session.engine.base import HOSTED, Session
+from agent_pm.session.engine.base import Session, hosted_viewer
 from agent_pm.session.engine.config import CONFIG_RESOURCES
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.status_log import SessionStatusLog
@@ -33,7 +33,6 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import SIGNALS, Host, Process
 from agent_pm.session.viewer.viewer import Viewer
-from agent_pm.utils import load_class
 
 __all__ = [
     "CONFIG_RESOURCES",
@@ -72,4 +71,4 @@ __all__ = [
 
 def get_viewer() -> Viewer:
     """The Viewer Session.configure_from built from [viewer]."""
-    return load_class(HOSTED, Session).viewer()
+    return hosted_viewer()

@@ -165,8 +165,9 @@ def rows(viewer: Viewer, host: Host, display: Display) -> list[SessionRow]:
 
 def names(viewer: Viewer, host: Host, display: Display, *, descendants: bool = False) -> list[str]:
     """display's sessions, then (descendants) each session one of those opened, transitively."""
+    listed = host.list()
     if display is None and not descendants:
-        return sorted(host.list())
+        return sorted(listed)
     found = {row.name for row in _matching(host, display)}
     if not (descendants and found and host.attachable):
         return sorted(found)

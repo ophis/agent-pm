@@ -189,3 +189,7 @@ class Session(ABC):
         each configured Host's, without repeats.
         """
         return cls._hosted("class_roots")(client)
+
+
+def hosted_viewer():
+    return load_class(HOSTED, Session).viewer()

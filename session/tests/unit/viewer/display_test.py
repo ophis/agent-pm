@@ -324,6 +324,20 @@ class PtyTest(Base):
         self.tmux.listing.assert_not_called()
 
 
+class HostFailureTest(Base):
+    def test_a_filtered_listing_fails_when_its_host_does_though_its_rows_only_warn(self):
+        for attachable in (False, True):
+            host = _pty_host()
+            host.attachable = attachable
+            host.list.side_effect = SessionError("docker failed")
+            for descendants in (False, True):
+                with (
+                    self.subTest(attachable=attachable, descendants=descendants),
+                    self.assertRaisesRegex(SessionError, "^docker failed$"),
+                ):
+                    displays.names(self.viewer, host, "mgr", descendants=descendants)
+
+
 class OpenerTest(Base):
     def test_opener_falls_back_to_display(self):
         self.tmux.listing.return_value = [

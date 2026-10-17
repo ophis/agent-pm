@@ -27,7 +27,7 @@ from dataclasses import replace
 
 import agent_pm.session.engine.types
 import agent_pm.utils
-from agent_pm.session.engine.base import HOSTED, Session
+from agent_pm.session.engine.base import Session, hosted_viewer
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     COMMAND,
@@ -47,7 +47,6 @@ from agent_pm.session.hosts.base import Host, check_sid
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.tui import TuiMode
 from agent_pm.session.viewer import display as displays
-from agent_pm.session.viewer.viewer import Viewer
 from agent_pm.utils import (
     EVENTS_ENV,
     SID_ENV,
@@ -55,7 +54,6 @@ from agent_pm.utils import (
     Status,
     StatusState,
     answer_keys,
-    load_class,
     module_roots,
     nested_start,
 )
@@ -470,11 +468,6 @@ def _host_of(name: str, hosts: Hosts) -> str:
     return next((h for h in hosts.tables if name in Session.host(h).list()), hosts.default)
 
 
-def _viewer() -> Viewer:
-    """The Viewer Session.configure_from built (agent_pm.session.get_viewer's)."""
-    return load_class(HOSTED, Session).viewer()
-
-
 def _shown(name: str, hosts: Hosts) -> Host:
     host = Session.host(_host_of(name, hosts))
     if not host.attachable:
@@ -509,7 +502,7 @@ def _state(name: str, hosts: Hosts, sid: str | None = None) -> Status:
         return Status(
             name=name, alive=False, state=StatusState.GONE, outcome=None, attach=None, hidden=False
         )
-    found = displays.status(_viewer(), host, process)
+    found = displays.status(hosted_viewer(), host, process)
     return replace(found, cwd=_cwd(name)) if found.alive else found
 
 
@@ -555,19 +548,19 @@ def _show(name: str, record: Record | None, hosts: Hosts) -> None:
     for session in _carried(name, record, hosts):
         host = _shown(session, hosts)
         display = host.attach(session).display() if record is None else record.display
-        command = _viewer().show(session, host, display=display)
+        command = hosted_viewer().show(session, host, display=display)
         if command is not None:
             _say(f"session {session}: not shown; attach with {command}")
 
 
 def _hide(name: str, record: Record | None, hosts: Hosts, *, if_closed: bool = False) -> None:
     for session in _carried(name, record, hosts):
-        _viewer().hide(session, _shown(session, hosts), if_closed=if_closed)
+        hosted_viewer().hide(session, _shown(session, hosts), if_closed=if_closed)
 
 
 def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
     session = _carried(name, record, hosts)[0]
-    return _viewer().attach_command(session, _shown(session, hosts))
+    return hosted_viewer().attach_command(session, _shown(session, hosts))
 
 
 def _close(name: str, record: Record | None, hosts: Hosts) -> None:
@@ -632,7 +625,7 @@ def _listed(args, hosts: Hosts) -> Iterator[tuple[Host, str]]:
         display = Session.display(None, host=name) if args.here else args.display
         if args.here and not display:
             continue
-        names = displays.names(_viewer(), host, display, descendants=args.descendants)
+        names = displays.names(hosted_viewer(), host, display, descendants=args.descendants)
         yield from ((host, n) for n in names if pattern is None or pattern.fullmatch(n))
 
 
@@ -746,7 +739,10 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
         if not host.attachable:
             raise NotShowable(f"session {args.window}: host {host.name} cannot show")
         displays.tile(
-            _viewer(), args.window, wait=not args.no_wait, if_panes_changed=args.if_panes_changed
+            hosted_viewer(),
+            args.window,
+            wait=not args.no_wait,
+            if_panes_changed=args.if_panes_changed,
         )
     return 0
 
