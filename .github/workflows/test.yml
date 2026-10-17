@@ -80,6 +80,9 @@ jobs:
         run: |
           ruff check --no-cache --output-format=github
           ruff format --check --no-cache
+      - name: Unit import boundaries
+        if: ${{ !cancelled() && matrix.group == 'style' }}
+        run: python3 -m tests.unit_imports
       - name: Pyright
         if: ${{ !cancelled() && matrix.group == 'types' }}
         run: pyright

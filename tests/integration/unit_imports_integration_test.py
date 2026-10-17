@@ -1,4 +1,4 @@
-"""Ruff TID251 enforces unit import boundaries, with the migration inventory in guards.py."""
+"""Ruff TID251 rule samples and the interpreter gate import boundary."""
 
 import json
 import subprocess
@@ -6,23 +6,9 @@ import unittest
 from pathlib import Path
 
 from tests.case import REPO, Case
-from tests.guards import UNIT_ISOLATION_ALLOWED
+from tests.unit_imports import CONFIG, _unit_files
 
-CONFIG = 'lint.flake8-tidy-imports.banned-api = {subprocess = {msg = "Unit tests cannot import subprocess"}, socket = {msg = "Unit tests cannot import socket"}, multiprocessing = {msg = "Unit tests cannot start multiprocessing"}, "concurrent.futures.ProcessPoolExecutor" = {msg = "Unit tests cannot start process pools"}}'
 GATE_CONFIG = 'lint.flake8-tidy-imports.banned-api = {isolation = {msg = "Tests cannot access interpreter gates"}}'
-
-
-def _unit_files(root):
-    return sorted(
-        str(path)
-        for path in root.rglob("*.py")
-        if (
-            {"unit", "tests"}.issubset(path.relative_to(root).parts)
-            or path.parent == root / ".github"
-            and path.name.endswith("_test.py")
-        )
-        and str(path.relative_to(root)) not in UNIT_ISOLATION_ALLOWED
-    )
 
 
 class UnitImports(Case):
@@ -58,30 +44,6 @@ class UnitImports(Case):
             )
             self.assertIn(proc.returncode, (0, 1), proc.stderr)
             self.assertEqual([item["code"] for item in json.loads(proc.stdout)], expected)
-
-    def test_unit_imports_obey_the_boundary(self):
-        root = Path(REPO)
-        files = _unit_files(root)
-        proc = subprocess.run(
-            [
-                "ruff",
-                "check",
-                "--isolated",
-                "--no-cache",
-                "--select",
-                "TID251",
-                "--config",
-                CONFIG,
-                "--output-format",
-                "json",
-                *files,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        self.assertIn(proc.returncode, (0, 1), proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), [])
 
     def test_github_unit_modules_are_selected_without_selecting_the_runner(self):
         root = Path(self.home)
