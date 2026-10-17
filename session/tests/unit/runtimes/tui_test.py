@@ -633,6 +633,9 @@ class StartTest(Base):
             def _home(self):
                 return ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token")
 
+            def _approval(self, flags):
+                return (*flags, "--cut")
+
             def launch(self, spec, hook):
                 self.spec = spec
                 return super().launch(spec, hook)
@@ -670,7 +673,7 @@ class StartTest(Base):
                 )
                 self.assertEqual(
                     (metadata["credential"], json.loads(metadata["approval"])),
-                    ("fake-token", ["--ask", "x"]),
+                    ("fake-token", ["--ask", "x", "--cut"]),
                 )
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 

@@ -188,8 +188,9 @@ docker plan NAME GENERATION: credential claude-setup-token
 docker plan NAME GENERATION: approval <the client flags the caller set, or none>
 ```
 
-Approval is the caller's client flags, verbatim: the role's policy flags, or a worker's
-`-- <client flags>` (e.g. `--permission-mode auto`). The plan is for you to check
+Approval is the caller's client flags: the role's policy flags, or a worker's
+`-- <client flags>` (e.g. `--permission-mode auto`), each `--settings` cut to its
+`permissions` (dropped without them). The plan is for you to check
 against `docker inspect`; it holds no env values or token, and the broker reads only the
 manifest.
 

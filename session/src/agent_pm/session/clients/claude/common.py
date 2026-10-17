@@ -8,7 +8,7 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
 
 from agent_pm.session.clients import common
@@ -60,6 +60,29 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
         for flag in scan(flags, {"--add-dir": "--add-dir"})
         if flag.word == "--add-dir" and flag.value is not None
     )
+
+
+def approval(flags: Sequence[str]) -> tuple[str, ...]:
+    """`flags` with each --settings before "--" cut to its inline permissions: its env and other
+    settings are never kept, and one without permissions is dropped.
+    """
+    found, at = [], 0
+    for flag in scan(flags, {"--settings": "--settings"}):
+        if flag.word == "--settings":
+            found.extend(flags[at : flag.start])
+            found.extend(_permissions(flag.value or ""))
+            at = flag.end
+    return (*found, *flags[at:])
+
+
+def _permissions(settings: str) -> tuple[str, ...]:
+    try:
+        parsed = json.loads(settings)
+    except (ValueError, RecursionError):
+        return ()
+    if not isinstance(parsed, dict) or "permissions" not in parsed:
+        return ()
+    return ("--settings", json.dumps({"permissions": parsed["permissions"]}))
 
 
 def _read(path: str) -> str:
