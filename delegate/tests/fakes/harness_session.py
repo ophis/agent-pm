@@ -139,9 +139,6 @@ class ShowingHost(RecordingHost, Showable):
     def attach_command(self, name):
         return f"{self.name} attach {name}"
 
-    def screen(self, name, lines=None):
-        return ""
-
     def layout(self, *, display=None):
         return None
 
