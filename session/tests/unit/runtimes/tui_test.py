@@ -633,9 +633,6 @@ class StartTest(Base):
             def _home(self):
                 return ClientHome("fake_dir", "fake", "FAKE_HOME", "fake-token")
 
-            def _approval(self, argv):
-                return ("--ask", argv[0])
-
             def launch(self, spec, hook):
                 self.spec = spec
                 return super().launch(spec, hook)
@@ -652,7 +649,7 @@ class StartTest(Base):
                 calls.clear()
                 self.host.processes.clear()
                 with mock.patch.object(self.host, "_client_env", client_env):
-                    self.start(run=run, env={"OTHER": "1"}, resume=resume)
+                    self.start(run=run, env={"OTHER": "1"}, resume=resume, flags=("--ask", "x"))
                 self.assertEqual(
                     calls,
                     [
@@ -673,7 +670,7 @@ class StartTest(Base):
                 )
                 self.assertEqual(
                     (metadata["credential"], json.loads(metadata["approval"])),
-                    ("fake-token", ["--ask", args[1].argv[0]]),
+                    ("fake-token", ["--ask", "x"]),
                 )
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 

@@ -171,8 +171,8 @@ while a container of that name still exists. The broker's Refusals above apply t
 Session checks the same cwd rules first.
 
 Every start first runs a preflight: the client is Claude, the cwd exists and passes the
-mount rules, the broker answers `version` with the expected protocol (else it points to the
-[Install](#install) step), and `build` succeeds. `resume` runs it before it touches anything;
+mount rules, the broker answers `version` with the expected protocol (else it points to
+[Install](#install)), and `build` succeeds. `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
 closed and `resume` continues it once fixed. A missing setup-token surfaces at the
 broker's `start`, still before any container: the start fails with the broker's own
@@ -185,17 +185,19 @@ Just before the broker's `start`, each generation freezes its plan in
 docker plan NAME GENERATION: image agent-pm-worker:<key> sha256:<digest>
 docker plan NAME GENERATION: mounts <cwd> rw, <claude dir> rw
 docker plan NAME GENERATION: credential claude-setup-token
-docker plan NAME GENERATION: approval <Claude's permission flags, or none>
+docker plan NAME GENERATION: approval <the client flags the caller set, or none>
 ```
 
-Approval lists Claude's permission flags (`--permission-mode`, `--allowedTools` and
-the like) and only the `permissions` of its `--settings`. The plan is for you to check
-against `docker inspect`; it holds no secret, and the broker reads only the manifest.
+Approval is the caller's client flags, verbatim: the role's policy flags, or a worker's
+`-- <client flags>` (e.g. `--permission-mode auto`). The plan is for you to check
+against `docker inspect`; it holds no env values or token, and the broker reads only the
+manifest.
 
 `~/.agent-pm/docker-state/<name>/` holds the client's config dir (cleared at each new
 start, kept by restart and resume), each generation's start manifest
-(`<generation>.json`), plan (`<generation>.plan.json`, above) and result (`<generation>.result.json`: container, image and
-digest, client versions, update result, and when the broker's start began and ended),
+(`<generation>.json`), plan (`<generation>.plan.json`, above) and result
+(`<generation>.result.json`: container, image and digest, client versions, update
+result, and when the broker's start began and ended),
 `host.json` (what the host knows of the session) and the hook supervisor's
 `supervisor.lock`, `supervisor.pid` and `supervisor.log`; `close` keeps it.
 
