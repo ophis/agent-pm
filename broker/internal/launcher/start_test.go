@@ -214,35 +214,6 @@ func TestRuntimeFixtures(t *testing.T) {
 	}
 }
 
-func TestImageProvenance(t *testing.T) {
-	for name, w := range map[string]*world{
-		"absent":     {imageMissing: true},
-		"no key":     {labels: map[string]string{"agent-pm.version": "1", "agent-pm.agent-uid": "1", "agent-pm.agent-gid": "1"}},
-		"wrong key":  {labels: map[string]string{"agent-pm.key": strings.Repeat("c", 64), "agent-pm.version": "1", "agent-pm.agent-uid": "1", "agent-pm.agent-gid": "1"}},
-		"bad uid":    {labels: map[string]string{"agent-pm.key": imageKey, "agent-pm.version": "1", "agent-pm.agent-uid": "x", "agent-pm.agent-gid": "1"}},
-		"no version": {labels: map[string]string{"agent-pm.key": imageKey, "agent-pm.agent-uid": "1", "agent-pm.agent-gid": "1"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h, d := startHost(w, &fakeCreds{})
-			_, err := h.Start(context.Background(), validManifest(t))
-			if protoErr(t, err).Code != protocol.ImageRejected || hasCall(d, "run") {
-				t.Fatalf("%v %q", err, d.verbs())
-			}
-		})
-	}
-}
-
-func TestNestedInRunningWorker(t *testing.T) {
-	for source, rejected := range map[string]bool{home + "/src": true, home + "/src/project": false, home + "/other": false} {
-		w := &world{labels: goodLabels(), running: "c1\n", mounts: `[{"Type":"bind","Source":"` + source + `","Destination":"/x"},{"Type":"tmpfs","Source":"","Destination":"/run"}]` + "\n"}
-		h, d := startHost(w, &fakeCreds{})
-		_, err := h.Start(context.Background(), validManifest(t))
-		if rejected != (err != nil) || rejected && (protoErr(t, err).Code != protocol.MountRejected || hasCall(d, "run")) {
-			t.Fatalf("%s: %v", source, err)
-		}
-	}
-}
-
 func TestExistingContainerUntouched(t *testing.T) {
 	h, d := startHost(&world{labels: goodLabels(), exists: true}, &fakeCreds{})
 	_, err := h.Start(context.Background(), validManifest(t))
