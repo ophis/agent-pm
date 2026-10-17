@@ -23,6 +23,7 @@ PROTOCOL = "2"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
+GRACE = 5  # for a broker whose pipes closed by the deadline to be reaped
 
 TEXT = re.compile(r"[^\x00-\x1f\x7f]+")
 IMAGE = re.compile(r"agent-pm-worker:[0-9a-f]{64}")
@@ -145,7 +146,7 @@ def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:
     ) as proc:
         try:
             out, err, shown = _copy(proc, deadline, timeout)
-            code = proc.wait(max(0.0, deadline - time.monotonic()))
+            code = proc.wait(max(GRACE, deadline - time.monotonic()))
         except BaseException:
             proc.kill()
             raise

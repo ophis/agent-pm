@@ -146,3 +146,19 @@ func TestRunCopiesStderrToProgress(t *testing.T) {
 		t.Fatalf("%v %q", err, progress.String())
 	}
 }
+
+func TestRunEndsBuildProgressOnALine(t *testing.T) {
+	for script, want := range map[string]string{
+		"printf '#7 partial' >&2; exit 1": "#7 partial\n",
+		"printf '#7 done\\n' >&2":         "#7 done\n",
+		"exit 0":                          "",
+	} {
+		var progress bytes.Buffer
+		c := fakeDocker(t, script)
+		c.Progress = &progress
+		_, _ = c.Run(context.Background(), []string{"build"}, nil)
+		if progress.String() != want {
+			t.Errorf("%s: %q, want %q", script, progress.String(), want)
+		}
+	}
+}

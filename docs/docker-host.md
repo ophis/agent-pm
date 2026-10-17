@@ -66,11 +66,19 @@ The first streams Docker's build progress to stderr, then prints
 same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
+After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
+images of older keys, keeping the new pair and any image a container (running or
+stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
+each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
+line; a kept image goes at a later rebuild once no container uses it. A reused image
+removes nothing.
+
 | Check (`I` = the printed image) | Expect |
 |---|---|
 | `docker image inspect "$I" --format '{{json .Config.Labels}}'` | `agent-pm.version` equals the plugin's version; `agent-pm.key`, `agent-pm.agent-uid`, `agent-pm.agent-gid` |
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
+| `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
 
 ## Start
 

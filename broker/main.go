@@ -113,7 +113,7 @@ func fail(stderr io.Writer, command string, e *protocol.Error) int {
 	return protocol.Exit(e.Code)
 }
 
-// withHost runs f on the launcher wired to the fixed Docker Desktop CLI, copying docker build's stderr to progress.
+// withHost runs f on the launcher wired to the fixed Docker Desktop CLI; docker build's stderr and the launcher's notes go to progress.
 func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, error) {
 	home, err := accountHome()
 	if err != nil {
@@ -125,7 +125,9 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 	}
 	defer clean()
 	d.Progress = progress
-	return f(launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}))
+	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}})
+	h.Progress = progress
+	return f(h)
 }
 
 func system() app {

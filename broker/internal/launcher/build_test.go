@@ -100,6 +100,10 @@ type buildEnv struct {
 	built     map[string]map[string]string
 	probe     string
 	failStage string
+	// images answers image ls, KEY standing for the built key; containers and used answer container ls and inspect.
+	images, containers, used string
+	listErr, rmErr           error
+	progress                 strings.Builder
 }
 
 func newBuildEnv(t *testing.T) *buildEnv {
@@ -141,18 +145,29 @@ func newBuildEnv(t *testing.T) *buildEnv {
 		case "run":
 			return []byte(e.probe), nil
 		case "image":
+			switch args[1] {
+			case "ls":
+				return []byte(strings.ReplaceAll(e.images, "KEY", e.key)), nil
+			case "rm":
+				return nil, e.rmErr
+			}
 			labels, ok := e.built[args[len(args)-1]]
 			if !ok {
 				return nil, noImage
 			}
 			return inspectJSON("sha256:"+strings.Repeat("a", 64), labels), nil
+		case "container":
+			if args[1] == "ls" {
+				return []byte(e.containers), e.listErr
+			}
+			return []byte(e.used), nil
 		}
 		return nil, errors.New("unexpected " + strings.Join(args, " "))
 	}}
 	return e
 }
 
-func (e *buildEnv) host() Host { return Host{Home: e.home, Docker: e.fake} }
+func (e *buildEnv) host() Host { return Host{Home: e.home, Docker: e.fake, Progress: &e.progress} }
 
 func TestBuildCacheAndStages(t *testing.T) {
 	e := newBuildEnv(t)
@@ -163,7 +178,7 @@ func TestBuildCacheAndStages(t *testing.T) {
 	if !first.Rebuilt || first.Image != "agent-pm-worker:"+e.key || first.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("%+v", first)
 	}
-	if got := e.fake.verbs(); !slices.Equal(got, []string{"image inspect", "build --progress=plain", "run --rm", "build --progress=plain", "image inspect"}) {
+	if got := e.fake.verbs(); !slices.Equal(got, []string{"image inspect", "build --progress=plain", "run --rm", "build --progress=plain", "image inspect", "container ls", "image ls"}) {
 		t.Fatalf("%q", got)
 	}
 	probe := e.fake.calls[2]
@@ -301,4 +316,65 @@ func TestBuildContextOutsideTMPDIR(t *testing.T) {
 			t.Fatalf("build context %s outside %s", dir, base)
 		}
 	}
+}
+
+func TestBuildRemovesOlderImages(t *testing.T) {
+	old, kept, id := strings.Repeat("1", 64), strings.Repeat("2", 64), func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	listing := strings.Join([]string{
+		"agent-pm-worker:KEY " + id("a"), "agent-pm-user:KEY " + id("b"),
+		"agent-pm-worker:" + old + " " + id("c"), "agent-pm-user:" + old + " " + id("d"),
+		"agent-pm-worker:" + kept + " " + id("e"), "agent-pm-user:" + kept + " " + id("f"),
+		"agent-pm-worker:latest " + id("7"), "ubuntu:24.04 " + id("8"), "<none>:<none> " + id("9"), "",
+	}, "\n")
+	removed := func(e *buildEnv) []string {
+		var refs []string
+		for _, c := range e.fake.calls {
+			if strings.Join(c[:2], " ") == "image rm" {
+				refs = append(refs, c[2:]...)
+			}
+		}
+		return refs
+	}
+	t.Run("keeps the current pair and images containers use", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.images, e.containers, e.used = listing, "c1\nc2\n", id("e")+"\n"+id("0")+"\n"
+		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"agent-pm-worker:" + old, "agent-pm-user:" + old, "agent-pm-user:" + kept}
+		if got := removed(e); !slices.Equal(got, want) {
+			t.Fatalf("%q", got)
+		}
+		inspect := e.fake.calls[slices.Index(e.fake.verbs(), "container inspect")]
+		if !slices.Equal(inspect, []string{"container", "inspect", "--format", "{{.Image}}", "c1", "c2"}) {
+			t.Fatalf("%q", inspect)
+		}
+		if got := e.progress.String(); got != "agent-pm-broker: removed agent-pm-worker:"+old+"\nagent-pm-broker: removed agent-pm-user:"+old+"\nagent-pm-broker: removed agent-pm-user:"+kept+"\n" {
+			t.Fatalf("%q", got)
+		}
+		calls := len(e.fake.calls)
+		if again, err := e.host().Build(context.Background(), e.pkg); err != nil || again.Rebuilt || len(e.fake.calls) != calls+1 {
+			t.Fatalf("a reused image pruned: %v %q", err, e.fake.verbs()[calls:])
+		}
+	})
+	t.Run("a failed removal keeps the image", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.images, e.rmErr = listing, &docker.CommandError{Exit: 1, Stderr: "Error response from daemon: conflict: image is in use"}
+		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(e.progress.String(), "agent-pm-broker: kept agent-pm-worker:"+old+": Error response from daemon: conflict: image is in use\n") {
+			t.Fatalf("%q", e.progress.String())
+		}
+	})
+	t.Run("unknown containers keep every image", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.images, e.listErr = listing, &docker.CommandError{Exit: 1, Stderr: "boom"}
+		if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+			t.Fatal(err)
+		}
+		if got := removed(e); got != nil || e.progress.String() != "agent-pm-broker: kept older images: cannot list containers: boom\n" {
+			t.Fatalf("%q %q", got, e.progress.String())
+		}
+	})
 }
