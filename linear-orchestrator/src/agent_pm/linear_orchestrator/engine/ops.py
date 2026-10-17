@@ -5,7 +5,7 @@ import subprocess
 import uuid
 from dataclasses import dataclass
 
-from agent_pm.linear_orchestrator.engine.types import LinearError, State, Unavailable
+from agent_pm.linear_orchestrator.engine.types import FinishedType, LinearError, State, Unavailable
 from agent_pm.utils import one_line, parse_time
 
 
@@ -14,6 +14,7 @@ class Team:
     id: str
     name: str
     states: dict[str, str]
+    finished: frozenset[str]
 
 
 M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
@@ -144,7 +145,7 @@ def role_ids(gql, roles):
 
 
 Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
-  states(first: 100) { nodes { id } } } } }"""
+  states(first: 100) { nodes { id type } } } } }"""
 
 
 def team(gql, cfg):
@@ -157,7 +158,13 @@ def team(gql, cfg):
         raise LinearError(
             f"linear-orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
         )
-    return Team(t["id"], t["name"], {k: cfg.states[k] for k in State})
+    finished = {cfg.states[State.DONE], cfg.states[State.CANCELED]}
+    finished |= {
+        s["id"]
+        for s in t["states"]["nodes"]
+        if s["type"] in (FinishedType.CANCELED, FinishedType.DUPLICATE)
+    }
+    return Team(t["id"], t["name"], {k: cfg.states[k] for k in State}, frozenset(finished))
 
 
 Q_TASK_GROUP = (

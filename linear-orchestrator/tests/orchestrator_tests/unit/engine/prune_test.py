@@ -24,7 +24,7 @@ from orchestrator_tests.prune_fixtures import (
     write,
 )
 from orchestrator_tests.unit import promote_fixtures as tp
-from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_tests.unit.board_ids import FINISHED
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
 from delegate.tests.workdir import checkout_path
@@ -43,7 +43,7 @@ class RepositoryCleanup(PruneScenario):
         busy = self.mkc("TASK-50")
         gql = gql_for(
             {
-                "TASK-49": ("Done", [(30, "In Progress"), (24, "Done")]),
+                "TASK-49": ("Done", [(30, "In Progress"), (2, "Done")]),
                 "TASK-50": ("In Progress", [(30, "In Progress")]),
             }
         )
@@ -159,7 +159,7 @@ class RepositoryCleanup(PruneScenario):
         self.api.live = ["engineer-TASK-48-aaaaaaaa", "engineer-TASK-50-bbbbbbbb"]
         gql = gql_for(
             {
-                "TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
+                "TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (2 - 1 / 3600, "Done")]),
                 "TASK-50": ("In Progress", [(50, "Done"), (30, "In Progress")]),
             }
         )
@@ -259,13 +259,13 @@ class RetentionCleanup(PruneScenario):
         )
         self.assertEqual(pruner.writable, (self.work, *temp_dirs()))
 
-    def test_archives_pm_and_engineer_issues_finished_24h(self):
+    def test_archives_pm_and_engineer_issues_finished_2h(self):
         gql = gql_for(
             {
-                "TASK-1": ("Done", [(30, "In Progress"), (24, "Done")]),
+                "TASK-1": ("Done", [(30, "In Progress"), (2, "Done")]),
                 "TASK-2": ("Canceled", [(50, "Canceled")]),
                 "TASK-3": ("Done", [(30, "Done")]),
-                "TASK-4": ("Canceled", [(24, "Canceled")]),
+                "TASK-4": ("Canceled", [(2, "Canceled")]),
             },
             owners={
                 "TASK-1": "u-pm",
@@ -291,8 +291,8 @@ class RetentionCleanup(PruneScenario):
         done = ("Done", [(50, "Done")])
         gql = gql_for(
             {
-                "TASK-1": ("Done", [(24 - 1 / 3600, "Done")]),
-                "TASK-2": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
+                "TASK-1": ("Done", [(2 - 1 / 3600, "Done")]),
+                "TASK-2": ("Done", [(50, "Done"), (30, "In Progress"), (2 - 1 / 3600, "Done")]),
                 "TASK-3": ("Done", []),
                 "TASK-4": ("In Progress", [(50, "Done"), (30, "In Progress")]),
                 "TASK-5": done,
@@ -317,7 +317,7 @@ class RetentionCleanup(PruneScenario):
         )
         (v,) = gql.finished
         self.assertEqual(sorted(v["a"]), ["u-engineer", "u-pm"])
-        self.assertEqual(sorted(v["s"]), sorted([IDS_BY_KEY["done"], IDS_BY_KEY["canceled"]]))
+        self.assertEqual(sorted(v["s"]), sorted(FINISHED))
 
     def test_archive_failure_others_archived(self):
         done = ("Done", [(30, "Done")])
@@ -428,7 +428,9 @@ class RetentionCleanup(PruneScenario):
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, [B])
         self.api.errors = {A: SessionError("boom")}
-        gql = gql_for({"TASK-7": ("Done", [(30, "Done")]), "TASK-8": ("Done", [(2, "Done")])})
+        gql = gql_for(
+            {"TASK-7": ("Done", [(30, "Done")]), "TASK-8": ("Done", [(2 - 1 / 3600, "Done")])}
+        )
         self.assertEqual(self.prune(gql)[0], 3)
         for ident in ("TASK-7", "TASK-8"):
             with self.subTest(ident=ident):
@@ -614,7 +616,7 @@ class WorkdirRetention(PruneScenario):
                 )
                 self.assertEqual(tree(workdir), files)
 
-    def test_agent_files_take_the_24_hour_step_first(self):
+    def test_agent_files_take_the_2_hour_step_first(self):
         self.record("TASK-7", SID, [A])
         workdir = self.cfg.issue_workdir("TASK-7")
         gql = gql_for({"TASK-7": ("Done", [(8 * 24, "Done")])})
@@ -803,6 +805,14 @@ class Stalled(PruneScenario):
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
 
+    def test_a_duplicate_issue_is_finished_not_stalled(self):
+        _, gql = self.stalled(state="Duplicate")
+        self.assertEqual(
+            self.prune(gql),
+            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
+        )
+        self.assertIsNone(self.checkouts("TASK-7"))
+
 
 class PruneCommand(PruneScenario):
     """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
@@ -836,6 +846,16 @@ class PruneCommand(PruneScenario):
         self.assertFalse(os.path.exists(clone))
         self.assertEqual(gql.archived, ["id-TASK-49"])
         self.assertOutsideKept()
+
+    def test_a_duplicate_issue_is_finished_by_its_state_type(self):
+        clone = self.mkc("TASK-49")
+        gql = gql_for(
+            {"TASK-49": ("Duplicate", [(30, "In Progress"), (2, "Duplicate")])},
+            owners={"TASK-49": "u-pm"},
+        )
+        self.assertEqual(self.command(gql)[:3], (0, "", ""))
+        self.assertFalse(os.path.exists(clone))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
 
     def test_a_dry_run_plans_and_changes_nothing(self):
         clone = self.mkc("TASK-49")

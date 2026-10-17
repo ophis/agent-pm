@@ -36,8 +36,8 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | Entry | Cleaned by | Safe to delete by hand |
 |---|---|---|
 | `config.local.toml` | nobody | never: your settings |
-| `work/<ID>/agent/` | prune ([Finish](board.md#using-the-board)): all of it 24 hours after Done or Canceled; `src/`, `publish/`, `tmp/` 7 days into any other state but Todo or In Progress; each run's end clears `tmp/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
-| `work/<ID>/run/` | prune deletes the whole `work/<ID>/` 7 days after Done or Canceled, once `agent/` is gone and the run is not live | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
+| `work/<ID>/agent/` | prune ([Finish](board.md#using-the-board)): all of it 2 hours after Done, Canceled or Duplicate; `src/`, `publish/`, `tmp/` 7 days into any other state but Todo or In Progress; each run's end clears `tmp/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| `work/<ID>/run/` | prune deletes the whole `work/<ID>/` 7 days after Done, Canceled or Duplicate, once `agent/` is gone and the run is not live | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
 | `work/<ID>/writeback.json`, `writeback.lock` | prune, with `work/<ID>/run/` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run and latest `start` row ([trim](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/runs.py#L198)) | never ([Operating](board.md#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 6) |

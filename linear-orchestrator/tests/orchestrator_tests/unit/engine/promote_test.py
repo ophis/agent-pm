@@ -9,8 +9,8 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, ops, promote, run_comments
 from orchestrator_tests.case import Case
+from orchestrator_tests.unit.board_ids import FINISHED, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
-from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.promote_fixtures import (
@@ -347,7 +347,7 @@ class PromotionCleanup(Base):
         self.assertIsInstance(gql, functools.partial)
         self.assertEqual((gql.func, gql.keywords), (self.fake, {"service": HARNESS}))
         self.assertEqual((now, dry, work), (NOW, True, os.path.join(self.work, "work")))
-        self.assertEqual(team, ops.Team(TEAM, "Team", dict(IDS_BY_KEY)))
+        self.assertEqual(team, ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED))
         self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
 
     def test_prune_error_does_not_break_promote(self):

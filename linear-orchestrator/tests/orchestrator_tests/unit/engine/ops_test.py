@@ -6,7 +6,15 @@ from agent_pm.linear_orchestrator.engine import ops, promote, prune, router, typ
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
+from orchestrator_tests.unit.board_ids import (
+    ACCOUNTS,
+    DUPLICATE,
+    FINISHED,
+    STATES,
+    TASK_GROUP,
+    TEAM,
+    team_node,
+)
 from orchestrator_tests.unit.linear_fixtures import (
     CHILD,
     IN_PROGRESS,
@@ -71,8 +79,20 @@ class TeamCheck(Case):
 
     def test_ok(self):
         gql = self.gql([team_node()])
-        self.assertEqual(ops.team(gql, self.cfg()), ops.Team(TEAM, "Team", dict(STATES)))
+        self.assertEqual(ops.team(gql, self.cfg()), ops.Team(TEAM, "Team", dict(STATES), FINISHED))
         self.assertEqual(gql.calls, [(ops.Q_TEAM, {"t": TEAM})])
+
+    def test_finished_is_done_canceled_and_every_canceled_or_duplicate_type(self):
+        node = team_node()
+        node["states"]["nodes"] += [
+            {"id": "s-duplicate", "type": "duplicate"},
+            {"id": "s-released", "type": "completed"},
+            {"id": "s-backlog", "type": "backlog"},
+        ]
+        self.assertEqual(
+            ops.team(self.gql([node]), self.cfg()).finished,
+            {STATES["done"], STATES["canceled"], DUPLICATE, "s-duplicate"},
+        )
 
     def test_team_not_found_or_states_outside_team(self):
         other = [i for k, i in STATES.items() if k not in ("handoff", "done")]
