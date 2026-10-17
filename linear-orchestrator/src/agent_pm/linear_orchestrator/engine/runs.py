@@ -200,12 +200,11 @@ def trim(path, now):
         lines = _lines(path)
         entries = [e for line in lines if (e := parse_line(line))]
         newest = latest(entries)
-        starts = latest(e for e in entries if e.kind == "start")
         keep = [
             line
             for line in lines
             if (e := parse_line(line))
-            and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid or e == starts.get(e.issue))
+            and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid)
             or _limit(line, now)
             or (f := _failure(line))
             and f.ts >= now - KEEP

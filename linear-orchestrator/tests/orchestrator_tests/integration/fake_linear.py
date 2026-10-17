@@ -585,9 +585,6 @@ class FakeLinear:
             }
         }
 
-    def _viewer(self, caller, _v):
-        return {"viewer": self._person(caller["id"], caller)}
-
     def _history(self, _caller, v):
         found = _newest(self._get(v["i"])["history"])
         start = int(v.get("after") or 0)
@@ -758,7 +755,6 @@ OPS = {
     "router.Q_RELATIONS": FakeLinear._issue,
     "router.Q_RECHECK": FakeLinear._issue,
     "router.Q_HISTORY": FakeLinear._history,
-    "router.Q_VIEWER": FakeLinear._viewer,
     "router.issues": FakeLinear._board,
     "router.issues+relations": FakeLinear._board,
     "issues.Q_ISSUE": FakeLinear._issue,

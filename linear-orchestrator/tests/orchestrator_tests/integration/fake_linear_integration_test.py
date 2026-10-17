@@ -76,11 +76,6 @@ class ServerCase(Case):
 
 
 class GraphQLProjection(ServerCase):
-    def test_viewer_follows_the_callers_key(self):
-        for gql, uid in ((self.gql, self.harness), (self.eng, self.engineer)):
-            with self.subTest(uid=uid):
-                self.assertEqual(gql(routing.Q_VIEWER), {"viewer": {"id": uid}})
-
     def test_history_cursor_returns_the_next_page(self):
         at = datetime(2026, 9, 1, tzinfo=UTC)
         for n in range(251):
