@@ -788,6 +788,34 @@ class HarnessDelegate(Delegate):
                     if callback is not None:
                         callback(Finished(ended))
                 raise
+            finally:
+                self._clear_tmp()
+
+    def _clear_tmp(self) -> None:
+        """agent/tmp at the run's end, never followed, keeping a deliverable file `out` directly in
+        it; kept whole while its agent session is open; an error printed.
+        """
+        tmp, out = self.layout.tmp, os.path.abspath(self._state.plan.driver_spec.out)
+        try:
+            agent = self._agent(self._read())
+            if agent is not None and agent.alive():
+                return
+            if not (os.path.dirname(out) == tmp and _regular(out) and _regular(tmp, dir=True)):
+                _remove(tmp)
+                return
+            fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                for entry in os.scandir(fd):
+                    if entry.name == os.path.basename(out):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        shutil.rmtree(entry.name, dir_fd=fd)
+                    else:
+                        os.unlink(entry.name, dir_fd=fd)
+            finally:
+                os.close(fd)
+        except (ConfigError, SessionError, OSError) as error:
+            say(f"delegate: {error}")
 
     def ctl(self) -> tuple[str, ...]:
         return self._record(self._read()).ctl
@@ -1006,3 +1034,12 @@ def _remove(path: str) -> None:
         shutil.rmtree(path)
     else:
         os.unlink(path)
+
+
+def _regular(path: str, *, dir: bool = False) -> bool:
+    """`path`, not followed, is a regular file (dir: a directory)."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return False
+    return stat.S_ISDIR(mode) if dir else stat.S_ISREG(mode)

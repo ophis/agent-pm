@@ -436,6 +436,81 @@ class CleanTest(HarnessCase):
         self.assertEqual(self.metadata()["attempt"], 2)
 
 
+class RunEndTest(HarnessCase):
+    """A run's end clears agent/tmp but an `out` directly in it, unless its agent session is open."""
+
+    def setUp(self):
+        super().setUp()
+        self.tmp = Layout(self.work).tmp
+        self.elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(self.elsewhere)
+        open(os.path.join(self.elsewhere, "keep"), "w").close()
+
+    def kept(self, **spec):
+        """A run whose `out` is agent/tmp/deliverable.md."""
+        out = os.path.join(self.tmp, "deliverable.md")
+        return self.make(spec=Spec("input", self.work, sid=SID, client="fake", out=out, **spec))
+
+    def fill(self):
+        os.makedirs(os.path.join(self.tmp, "deep"), exist_ok=True)
+        for name in ("deep/pr.md", "msg", "deliverable.md"):
+            with open(os.path.join(self.tmp, name), "w") as file:
+                file.write("x")
+        os.symlink(self.elsewhere, os.path.join(self.tmp, "link"))
+
+    def test_a_finished_run_leaves_only_its_out_there(self):
+        view = self.kept(task="echo")
+        self.fill()
+        view.run()
+        self.assertEqual(os.listdir(self.tmp), ["deliverable.md"])
+        self.assertEqual(os.listdir(self.elsewhere), ["keep"])
+
+    def test_a_run_whose_out_lies_elsewhere_or_without_a_temp_dir_ends_cleanly(self):
+        view = self.make()
+        self.fill()
+        view.run()
+        self.assertFalse(os.path.lexists(self.tmp))
+        self.assertEqual(os.listdir(self.elsewhere), ["keep"])
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.make().run()
+        self.assertNotIn(self.tmp, err.getvalue())
+
+    def test_a_symlinked_temp_dir_is_unlinked_never_followed(self):
+        view = self.make()
+        os.symlink(self.elsewhere, self.tmp)
+        view.run()
+        self.assertFalse(os.path.lexists(self.tmp))
+        self.assertEqual(os.listdir(self.elsewhere), ["keep"])
+
+    def test_a_run_that_raises_clears_it_too(self):
+        view = self.make()
+        self.fill()
+
+        def fail(_event):
+            raise RuntimeError("boom")
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            view.run(on_event=fail)
+        self.assertFalse(os.path.lexists(self.tmp))
+
+    def test_an_agent_session_left_open_keeps_it(self):
+        view = self.make(spec=Spec("input", self.work, mode="tui", client="fake", sid=SID))
+        self.fill()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        view.run()
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["deep", "deliverable.md", "link", "msg"])
+
+    def test_a_removal_error_is_printed_and_the_result_kept(self):
+        view = self.make()
+        self.fill()
+        with (
+            mock.patch.object(harness_delegate.shutil, "rmtree", side_effect=PermissionError("no")),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as err,
+        ):
+            result = view.run()
+        self.assertEqual((result.outcome.status, err.getvalue()[-13:]), ("done", "delegate: no\n"))
+
+
 class PreviewTest(HarnessCase):
     def test_preview_names_the_sessions_hosts_and_callback_and_writes_nothing(self):
         for mode, agent in (("tui", f"dummy-tester-{SID[:8]}"), ("headless", None)):
