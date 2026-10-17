@@ -102,7 +102,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	c := "agent-pm-" + m.Name + "-" + m.Generation
-	if _, err := h.Docker.Run(ctx, []string{"container", "inspect", c}, nil); !absent(err) {
+	if _, err := h.Docker.Run(ctx, []string{"container", "inspect", c}, nil); !docker.Absent(err) {
 		if err != nil {
 			return StartResult{}, failure(err, protocol.StartFailed, "Cannot check for container "+c+".")
 		}
@@ -172,7 +172,7 @@ func (h Host) rollback(ctx context.Context, c string, e *protocol.Error) {
 	removed, err := h.remove(rctx, c)
 	switch {
 	case err != nil:
-		e.Cleanup, e.CleanupError, e.Container = protocol.Failed, lastLine(err), c
+		e.Cleanup, e.CleanupError, e.Container = protocol.Failed, docker.Diagnostic(err), c
 	case removed:
 		e.Cleanup = protocol.Removed
 	default:

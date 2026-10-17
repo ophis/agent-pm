@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -124,7 +125,7 @@ func treeDigest(root string) (string, error) {
 // inspectImage returns found=false when Docker reports the image absent.
 func (h Host) inspectImage(ctx context.Context, image string) (imageInfo, bool, error) {
 	out, err := h.Docker.Run(ctx, []string{"image", "inspect", image}, nil)
-	if absent(err) {
+	if docker.Absent(err) {
 		return imageInfo{}, false, nil
 	}
 	if err != nil {
