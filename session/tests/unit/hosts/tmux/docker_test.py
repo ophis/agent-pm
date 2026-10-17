@@ -928,6 +928,23 @@ class CloseTest(Base):
         kill.assert_not_called()
         self.assertEqual(self.broker.closed, [CONTAINER])
 
+    def test_a_kill_that_cannot_run_still_stops_the_supervisor_and_the_container(self):
+        process = self.terminal()
+        fd = self.hold_lock()
+        self.docker.replies = {("tmux", "set-hook"): FileNotFoundError(2, "no docker")}
+
+        def kill(pid, sig):
+            self.order.append(("signal", pid, sig))
+            os.close(fd)
+
+        with (
+            mock.patch("os.kill", side_effect=kill),
+            self.assertRaisesRegex(SessionError, r"^docker session w: kill: tmux: .*no docker"),
+        ):
+            process.close()
+        self.assertIn(("signal", 999, signal.SIGTERM), self.order)
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
     def test_a_supervisor_that_keeps_its_lock_fails_close_after_the_rest(self):
         process = self.terminal()
         self.hold_lock()

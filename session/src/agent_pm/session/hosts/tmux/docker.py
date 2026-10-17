@@ -298,14 +298,18 @@ class DockerTerminal(TmuxTerminal):
         """
         self.host.sweep(self.name)
         failures = []
-        res = self.tmux.run(
-            [
-                *("set-hook", "-p", "-u", "-t", self._pane, "pane-died", ";"),
-                *("kill-session", "-t", f"={self.name}"),
-            ]
-        )
-        if res.returncode and not absent(res):
-            failures.append(f"kill: {res.stderr.strip()}")
+        try:
+            res = self.tmux.run(
+                [
+                    *("set-hook", "-p", "-u", "-t", self._pane, "pane-died", ";"),
+                    *("kill-session", "-t", f"={self.name}"),
+                ]
+            )
+        except TuiError as error:
+            failures.append(f"kill: {error}")
+        else:
+            if res.returncode and not absent(res):
+                failures.append(f"kill: {res.stderr.strip()}")
         if self.current and (why := _stop_supervisor(self.name)):
             failures.append(why)
         try:
