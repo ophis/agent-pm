@@ -25,6 +25,7 @@ from typing import NamedTuple
 
 import agent_pm.utils
 from agent_pm.session.engine.tmux_cli import DIED, VIEW, TmuxCli, TmuxPane, TuiError, absent
+from agent_pm.session.engine.tmux_cli import POLL as TMUX_POLL
 from agent_pm.session.engine.types import (
     COMMAND,
     MARKS,
@@ -251,12 +252,12 @@ class _Stops:
             raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
 
 
-def _wait(ready, timeout: float) -> bool:
+def _wait(ready, timeout: float, poll: float = POLL) -> bool:
     deadline = time.monotonic() + timeout
     while not ready():
         if time.monotonic() >= deadline:
             return False
-        time.sleep(POLL)
+        time.sleep(poll)
     return True
 
 
@@ -305,7 +306,7 @@ class DockerTerminal(InteractiveProcess):
         self.pane.press(keys, self.alive)
 
     def wait_exit(self, timeout: float) -> bool:
-        return _wait(lambda: not (self.alive() or self._group_live()), timeout)
+        return _wait(lambda: not (self.alive() or self._group_live()), timeout, TMUX_POLL)
 
     def kill(self) -> None:
         self._kill_group()
