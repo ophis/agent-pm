@@ -29,6 +29,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── hidden/<name>.json            whether that name's tmux session is hidden, for its sid
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:manage role runs
+├── docker/worker/                your worker image definition (Dockerfile), seeded by broker/install.sh
 ├── probe/                        the empty cwd of the client usage check
 └── bin/                          ctmux --install's launchers
 ```
@@ -50,6 +51,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `hidden/<name>.json` | each write of one (a `--display none` start, `show`, `hide`): an entry unwritten for 30 days whose tmux session is gone | any time: that session then reads not hidden |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody: your working directory | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
+| `docker/worker/` | nobody | never: your image definition; with it gone, `install.sh` seeds the default again |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
 Each tui start runs the tui sweep and each pty start the pty sweep, over the other names of their dir whose files all went unchanged for 30 days: the tui sweep drops a name its host has no session of, the pty sweep one with no process left; a name whose lock is held stays.
