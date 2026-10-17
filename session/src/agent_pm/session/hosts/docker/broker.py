@@ -172,7 +172,7 @@ class Broker:
             )
 
     def build(self, package: str) -> tuple[str, str]:
-        """The image tag built for `package` and its digest."""
+        """`package`'s image tag and digest."""
         found = self._parsed(
             "build",
             lambda d: (

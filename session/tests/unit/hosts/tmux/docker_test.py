@@ -99,14 +99,21 @@ class FakeDocker:
 
 
 class FakeBroker:
+    """`failing`: {command: the error it raises}."""
+
     def __init__(self, order, started):
         self.order, self.started, self.error, self.closed = order, started, None, []
+        self.failing = {}
 
     def version(self):
         self.order.append("version")
+        if "version" in self.failing:
+            raise self.failing["version"]
 
     def build(self, package):
         self.order.append(("build", package))
+        if "build" in self.failing:
+            raise self.failing["build"]
         return IMAGE, DIGEST
 
     def start(self, manifest, *, clients):
@@ -548,6 +555,37 @@ class StartTest(Base):
     def test_detach_is_refused(self):
         with self.assertRaisesRegex(SessionError, "only terminal sessions"):
             self.host.detach("w", self.launch)
+
+
+class PreflightTest(Base):
+    def validate(self):
+        self.host.validate("w", Launch(("agent",), cwd=self.cwd, env={}))
+
+    def test_preflight_runs_version_then_build_and_writes_nothing(self):
+        self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_a_failed_handshake_stops_before_build(self):
+        self.broker.failing["version"] = SessionError("broker: protocol '1', want '2'")
+        with self.assertRaisesRegex(SessionError, "protocol '1', want '2'"):
+            self.validate()
+        self.assertEqual(self.order, ["version"])
+
+    def test_a_failed_build_stops_before_any_file(self):
+        self.broker.failing["build"] = BrokerError(
+            8, "build_failed", "no image", "not_needed", None
+        )
+        with self.assertRaisesRegex(SessionError, "broker: no image"):
+            self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_a_missing_cwd_is_refused_before_the_broker(self):
+        self.cwd = os.path.join(self.account, "src", "gone")
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.cwd}: no such directory"):
+            self.validate()
+        self.assertEqual(self.order, [])
 
 
 class TerminalTest(Base):
