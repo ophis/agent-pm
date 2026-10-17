@@ -15,7 +15,7 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 build=$(mktemp -d)
 trap 'rm -rf "$build"' EXIT
-(cd "$here" && CGO_ENABLED=1 go build -trimpath -o "$build/agent-pm-broker" .)
+(cd "$here" && CGO_ENABLED=1 sh ./with-go-state.sh go build -trimpath -o "$build/agent-pm-broker" .)
 codesign --force --sign - --options runtime --identifier com.github.ophis.agent-pm-broker "$build/agent-pm-broker"
 sudo install -d -o root -g wheel -m 0755 "$target"
 sudo install -o root -g wheel -m 0755 "$build/agent-pm-broker" "$target/agent-pm-broker"

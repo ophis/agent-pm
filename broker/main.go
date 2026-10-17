@@ -112,7 +112,7 @@ func fail(stderr io.Writer, command string, e *protocol.Error) int {
 	return protocol.Exit(e.Code)
 }
 
-// withHost runs f on the launcher wired to the fixed Docker Desktop CLI; setup errors are protocol errors.
+// withHost runs f on the launcher wired to the fixed Docker Desktop CLI.
 func withHost(f func(launcher.Host) (any, error)) (any, error) {
 	home, err := accountHome()
 	if err != nil {
@@ -120,7 +120,7 @@ func withHost(f func(launcher.Host) (any, error)) (any, error) {
 	}
 	d, clean, err := docker.New(home)
 	if err != nil {
-		return nil, protocol.New(protocol.DockerUnreachable, err.Error())
+		return nil, err
 	}
 	defer clean()
 	return f(launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}))

@@ -57,19 +57,30 @@ func Absent(err error) bool {
 	return errors.As(err, &ce) && (strings.Contains(ce.Stderr, "No such image") || strings.Contains(ce.Stderr, "No such object") || strings.Contains(ce.Stderr, "No such container"))
 }
 
-type CLI struct {
-	path, home, config string
+// Conflict reports whether Docker refused a container name another container holds.
+func Conflict(err error) bool {
+	var ce *CommandError
+	return errors.As(err, &ce) && strings.Contains(ce.Stderr, "Conflict. The container name")
 }
 
-// New checks Docker Desktop's executables and writes a private CLI config that ignores ~/.docker.
-func New(home string) (*CLI, func(), error) {
-	for _, path := range []string{Path, filepath.Join(pluginDir, "docker-buildx")} {
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-			return nil, nil, fmt.Errorf("Docker Desktop executable unavailable: %s", path)
-		}
+// TempDir makes a private directory under <home>/.agent-pm/docker/tmp, never TMPDIR or /tmp:
+// ~/.agent-pm is on the launcher's mount deny list, so no worker can mount it and rewrite the contents.
+func TempDir(home, pattern string) (string, error) {
+	base := filepath.Join(home, ".agent-pm/docker/tmp")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return "", err
 	}
-	dir, err := os.MkdirTemp("", "agent-pm-docker-")
+	return os.MkdirTemp(base, pattern)
+}
+
+type CLI struct {
+	path, buildx, home, config string
+}
+
+// New writes a private CLI config that ignores ~/.docker; Run checks Docker Desktop's executables,
+// so a command's local validation fails first.
+func New(home string) (*CLI, func(), error) {
+	dir, err := TempDir(home, "agent-pm-docker-")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -79,7 +90,7 @@ func New(home string) (*CLI, func(), error) {
 		clean()
 		return nil, nil, err
 	}
-	return &CLI{path: Path, home: home, config: dir}, clean, nil
+	return &CLI{path: Path, buildx: filepath.Join(pluginDir, "docker-buildx"), home: home, config: dir}, clean, nil
 }
 
 func (c *CLI) Endpoint() string {
@@ -102,6 +113,12 @@ func (b *capped) Write(p []byte) (int, error) {
 }
 
 func (c *CLI) Run(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
+	for _, path := range []string{c.path, c.buildx} {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			return nil, fmt.Errorf("%w: Docker Desktop executable unavailable: %s", ErrUnreachable, path)
+		}
+	}
 	path, argv, env := c.Command(args)
 	cmd := exec.CommandContext(ctx, path, argv...)
 	cmd.Env = env

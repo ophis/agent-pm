@@ -330,28 +330,28 @@ jobs:
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: broker/go.mod
-          cache-dependency-path: broker/go.sum
+          cache: false
       - name: Gofmt
         run: |
-          unformatted=$(gofmt -l .)
+          unformatted=$(sh with-go-state.sh gofmt -l .)
           if [[ -n "$unformatted" ]]; then
             printf '%s\n' "$unformatted"
             exit 1
           fi
       - name: Go vet
-        run: go vet ./...
+        run: sh with-go-state.sh go vet ./...
       - name: Go test
-        run: go test ./...
+        run: sh with-go-state.sh go test ./...
       - name: Go build
         if: ${{ runner.os == 'Linux' }}
-        run: go build -trimpath -o "$RUNNER_TEMP/agent-pm-broker" .
+        run: sh with-go-state.sh go build -trimpath -o "$RUNNER_TEMP/agent-pm-broker" .
       - name: Build darwin/arm64 binary with cgo
         if: ${{ runner.os == 'macOS' }}
         env:
           GOOS: darwin
           GOARCH: arm64
           CGO_ENABLED: "1"
-        run: go build -trimpath -o "$RUNNER_TEMP/agent-pm-broker-darwin-arm64" .
+        run: sh with-go-state.sh go build -trimpath -o "$RUNNER_TEMP/agent-pm-broker-darwin-arm64" .
       - name: Upload darwin/arm64 binary
         if: ${{ runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7.0.2

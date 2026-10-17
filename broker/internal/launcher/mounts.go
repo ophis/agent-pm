@@ -121,13 +121,13 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 		}
 		return filepath.Clean(p)
 	}
-	var real []string
+	var realRoots []string
 	for _, root := range roots {
 		r := resolve(root)
 		if h.within(h.Home, r) {
 			return reject("mount root %s is the home directory or its ancestor.", root)
 		}
-		real = append(real, r)
+		realRoots = append(realRoots, r)
 	}
 	cwd, err := h.RealPath(m.CWD)
 	if err != nil {
@@ -143,7 +143,7 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 		}
 	}
 	inside := false
-	for _, r := range real {
+	for _, r := range realRoots {
 		inside = inside || h.within(cwd, r)
 	}
 	if !inside {
@@ -172,7 +172,8 @@ func (h Host) checkMounts(m Manifest) (string, error) {
 }
 
 // checkNesting refuses a cwd strictly inside a running worker's bind source: that worker could swap
-// a directory for a symlink between this check and Docker's mount.
+// a directory for a symlink between this check and Docker's mount. A source the host cannot resolve
+// refuses too, since nesting cannot be ruled out.
 func (h Host) checkNesting(ctx context.Context, cwd string) error {
 	out, err := h.Docker.Run(ctx, []string{"ps", "--filter", "label=agent-pm.session", "--format", "{{.ID}}"}, nil)
 	if err != nil {
@@ -192,7 +193,18 @@ func (h Host) checkNesting(ctx context.Context, cwd string) error {
 			return protocol.New(protocol.StartFailed, "Cannot read running workers' mounts.")
 		}
 		for _, m := range mounts {
-			if m.Type == "bind" && m.Source != "" && h.within(cwd, m.Source) && !h.Same(cwd, m.Source) {
+			if m.Type != "bind" || m.Source == "" {
+				continue
+			}
+			source, err := h.RealPath(m.Source)
+			if err != nil {
+				// Docker Desktop may report a source by its path in the VM's /host_mnt.
+				source, err = h.RealPath(strings.TrimPrefix(m.Source, "/host_mnt"))
+			}
+			if err != nil {
+				return protocol.Newf(protocol.MountRejected, "Cannot resolve running worker mount %s; close that worker first.", m.Source)
+			}
+			if h.within(cwd, source) && !h.Same(cwd, source) {
 				return protocol.Newf(protocol.MountRejected, "cwd %s is inside running worker mount %s.", cwd, m.Source)
 			}
 		}

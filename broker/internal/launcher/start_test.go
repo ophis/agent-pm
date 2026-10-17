@@ -27,8 +27,8 @@ type fakeCreds struct {
 }
 
 func (c *fakeCreds) Ready() error { return c.ready }
-func (c *fakeCreds) Inject(ctx context.Context, name string, d docker.Runner) error {
-	if _, err := d.Run(ctx, []string{"exec", "--interactive", "inject", name}, []byte(fakeToken)); err != nil {
+func (c *fakeCreds) Inject(exec func(argv []string, stdin []byte) error) error {
+	if err := exec([]string{"inject"}, []byte(fakeToken)); err != nil {
 		return err
 	}
 	return c.injectErr
@@ -288,9 +288,12 @@ func TestStartOrder(t *testing.T) {
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"agent timeout --kill-after=10 180", "agent claude --version", "agent codex --version",
-		"--interactive inject " + container}
+		"--interactive --user inject"}
 	if !slices.Equal(steps, wantSteps) {
 		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
+	}
+	if inject := d.calls[len(d.calls)-1]; !slices.Equal(inject, []string{"exec", "--interactive", "--user", "agent", container, "inject"}) {
+		t.Fatalf("inject %q", inject)
 	}
 	boot, hook := d.calls[4], d.calls[5]
 	if !slices.Equal(boot[len(boot)-3:], []string{"claude", home + "/.agent-pm/docker-state/worker_1/claude", home + "/src/project"}) ||
@@ -337,6 +340,7 @@ func TestRollback(t *testing.T) {
 		"hook":                {&world{execErr: failOn("hook", cmdErr)}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
 		"inject":              {&world{}, &fakeCreds{injectErr: errors.New("opaque")}, protocol.StartFailed, protocol.Removed},
 		"inject unreachable":  {&world{}, &fakeCreds{injectErr: docker.ErrUnreachable}, protocol.DockerUnreachable, protocol.Removed},
+		"inject keychain":     {&world{}, &fakeCreds{injectErr: protocol.New(protocol.KeychainFailed, "denied")}, protocol.KeychainFailed, protocol.Removed},
 		"rm fails":            {&world{execErr: failOn("claude", cmdErr), rmErr: &docker.CommandError{Exit: 1, Stderr: "delete failed"}}, &fakeCreds{}, protocol.StartFailed, protocol.Failed},
 		"run fails absent":    {&world{runErr: cmdErr, rmErr: &docker.CommandError{Exit: 1, Stderr: "No such container: x"}}, &fakeCreds{}, protocol.StartFailed, protocol.NotNeeded},
 		"run fails present":   {&world{runErr: cmdErr}, &fakeCreds{}, protocol.StartFailed, protocol.Removed},
@@ -431,5 +435,16 @@ func TestCauseOnlyWhereNamed(t *testing.T) {
 	_, err := h.Start(context.Background(), validManifest(t))
 	if e := protoErr(t, err); e.Cause != "boom detail" {
 		t.Fatalf("run cause %q", e.Cause)
+	}
+}
+
+func TestNameConflictSkipsRollback(t *testing.T) {
+	w := &world{labels: goodLabels(), runErr: &docker.CommandError{Exit: 125, Stderr: `docker: Error response from daemon: Conflict. The container name "/` + container +
+		`" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.` + "\n\nRun 'docker run --help' for more information"}}
+	h, d := startHost(w, &fakeCreds{})
+	_, err := h.Start(context.Background(), validManifest(t))
+	e := protoErr(t, err)
+	if e.Code != protocol.StartFailed || e.Cleanup != protocol.NotNeeded || !strings.Contains(e.Message, "close it first") || hasCall(d, "rm") {
+		t.Fatalf("%+v %q", e, d.verbs())
 	}
 }

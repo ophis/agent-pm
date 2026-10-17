@@ -272,3 +272,17 @@ func TestImageProvenance(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildContextOutsideTMPDIR(t *testing.T) {
+	e := newBuildEnv(t)
+	t.Setenv("TMPDIR", t.TempDir())
+	if _, err := e.host().Build(context.Background(), e.pkg); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(e.home, ".agent-pm/docker/tmp") + "/"
+	for _, i := range []int{1, 3} {
+		if dir := e.fake.calls[i][len(e.fake.calls[i])-1]; !strings.HasPrefix(dir, base) {
+			t.Fatalf("build context %s outside %s", dir, base)
+		}
+	}
+}

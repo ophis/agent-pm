@@ -37,7 +37,7 @@ func fakeDocker(t *testing.T, script string) *CLI {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &CLI{path: path, home: dir, config: dir}
+	return &CLI{path: path, buildx: path, home: dir, config: dir}
 }
 
 func TestRunResults(t *testing.T) {
@@ -61,5 +61,48 @@ func TestUnreachable(t *testing.T) {
 		if !errors.Is(err, ErrUnreachable) {
 			t.Fatalf("%q: %v", msg, err)
 		}
+	}
+}
+
+func TestNewNeedsNoDockerDesktop(t *testing.T) {
+	_, clean, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean()
+}
+
+func TestMissingExecutableIsUnreachable(t *testing.T) {
+	present := fakeDocker(t, "touch ran").path
+	for _, c := range []*CLI{{path: "/nonexistent/docker", buildx: present}, {path: present, buildx: "/nonexistent/docker-buildx"}} {
+		_, err := c.Run(context.Background(), []string{"ps"}, nil)
+		if !errors.Is(err, ErrUnreachable) || !strings.Contains(err.Error(), "executable unavailable: /nonexistent/") {
+			t.Fatalf("%q: %v", c.path, err)
+		}
+	}
+}
+
+func TestConfigOutsideTMPDIR(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	c, clean, err := New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(home, ".agent-pm/docker/tmp")
+	for _, dir := range []string{base, c.config} {
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", dir, info, err)
+		}
+	}
+	if filepath.Dir(c.config) != base {
+		t.Fatalf("config %s outside %s", c.config, base)
+	}
+	if data, err := os.ReadFile(filepath.Join(c.config, "config.json")); err != nil || string(data) != `{"cliPluginsExtraDirs":["`+pluginDir+`"]}` {
+		t.Fatalf("%s %v", data, err)
+	}
+	clean()
+	if _, err := os.Stat(c.config); !os.IsNotExist(err) {
+		t.Fatalf("config kept: %v", err)
 	}
 }

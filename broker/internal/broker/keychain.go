@@ -1,9 +1,8 @@
 // Package broker owns the Claude setup-token: login, keychain access and injection into a container.
-// It never decides how a container starts; the launcher calls it through Credentials.
+// It never decides how a container starts: the launcher calls it through Credentials with an exec bound to one container.
 package broker
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -57,28 +56,31 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 
 type Credentials struct{ Keychain Keychain }
 
-func (c Credentials) Ready() error {
-	err := c.Keychain.Exists()
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, ErrNotFound):
+// keychainError maps a keychain failure to the protocol, without its detail.
+func keychainError(err error) *protocol.Error {
+	if errors.Is(err, ErrNotFound) {
 		return protocol.New(protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude.")
-	default:
-		return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
 	}
+	return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
 }
 
-// Inject writes the token into the container's secrets tmpfs through exec stdin.
-// Errors wrap docker.ErrUnreachable or are opaque: no Docker stderr, no keychain detail.
-func (c Credentials) Inject(ctx context.Context, container string, d docker.Runner) error {
+func (c Credentials) Ready() error {
+	if err := c.Keychain.Exists(); err != nil {
+		return keychainError(err)
+	}
+	return nil
+}
+
+// Inject writes the token into the container's secrets tmpfs through exec's stdin.
+// The token read is the first that can prompt, so a denied or locked keychain fails here.
+// Errors are keychainError's, wrap docker.ErrUnreachable or are opaque: no Docker stderr, no keychain detail.
+func (c Credentials) Inject(exec func(argv []string, stdin []byte) error) error {
 	token, err := c.Keychain.Get()
 	defer erase(token)
 	if err != nil {
-		return errors.New("Claude setup-token unavailable for injection")
+		return keychainError(err)
 	}
-	_, err = d.Run(ctx, []string{"exec", "--interactive", "--user", "agent", container,
-		"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}, token)
+	err = exec([]string{"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}, token)
 	if errors.Is(err, docker.ErrUnreachable) {
 		return fmt.Errorf("token injection: %w", docker.ErrUnreachable)
 	}

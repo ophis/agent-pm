@@ -100,6 +100,7 @@ It prints `container` (`C` below), `endpoint`, `image_digest`, the `clients` ver
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
 | `lsof -nP -a -iTCP -c agent-pm` during a start | nothing: the broker opens no TCP socket |
+| while `C` runs, start a `worker_2` manifest (its own `claude_dir`) with `cwd` `$HOME/src/other`; close it after | it starts: a sibling of a running worker's cwd is not nested |
 
 **Claude:** `docker exec -it "$C" with-secrets claude` opens with no login, theme or
 trust prompt and answers one sentence.
@@ -128,6 +129,7 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 | `hook_path` inside `cwd` | 4 |
 | `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container is untouched |
+| while `C` runs, a `worker_2` manifest (its own `claude_dir`) with `cwd` `$HOME/src/demo/sub` | 4 `mount_rejected`: inside a running worker's cwd |
 
 ## Close
 
@@ -154,6 +156,8 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
   host executables or shell startup files (e.g. `~/.local`, `~/bin`).
 - A worker can plant `.git` hooks or an fsmonitor in its cwd: run host git there as
   `git -c core.fsmonitor= -c core.hooksPath=/dev/null …`.
+- A running worker whose cwd was deleted makes every start fail with `mount_rejected`
+  (its mount cannot be resolved) until you close it.
 - Docker Desktop file sharing must include the cwd and `~/.agent-pm/docker-state`
   (Settings > Resources > File sharing); otherwise start fails with `start_failed`.
 - Containers reach the host through `host.docker.internal`: a host service listening on

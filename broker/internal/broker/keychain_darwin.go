@@ -166,12 +166,6 @@ func ReadHidden() ([]byte, error) {
 	return buf[:int(n)], nil
 }
 
-type SystemKeychain struct{ Home string }
-
-func (k SystemKeychain) path() *C.char {
-	return C.CString(filepath.Join(k.Home, "Library/Keychains/login.keychain-db"))
-}
-
 func status(s C.OSStatus) error {
 	switch s {
 	case 0:
@@ -182,20 +176,17 @@ func status(s C.OSStatus) error {
 	return fmt.Errorf("keychain status %d", int(s))
 }
 
-func (k SystemKeychain) Exists() error {
-	if err := CheckInstalled(); err != nil {
-		return err
-	}
-	p := k.path()
+// fileKeychain is the setup-token item in the keychain file at this path, with no install check.
+type fileKeychain string
+
+func (k fileKeychain) Exists() error {
+	p := C.CString(string(k))
 	defer C.free(unsafe.Pointer(p))
 	return status(C.token_exists(p))
 }
 
-func (k SystemKeychain) Get() ([]byte, error) {
-	if err := CheckInstalled(); err != nil {
-		return nil, err
-	}
-	p := k.path()
+func (k fileKeychain) Get() ([]byte, error) {
+	p := C.CString(string(k))
 	defer C.free(unsafe.Pointer(p))
 	var data unsafe.Pointer
 	var n C.long
@@ -208,14 +199,39 @@ func (k SystemKeychain) Get() ([]byte, error) {
 	return b, nil
 }
 
+func (k fileKeychain) Put(token []byte) error {
+	if len(token) == 0 {
+		return errors.New("empty setup-token")
+	}
+	p := C.CString(string(k))
+	defer C.free(unsafe.Pointer(p))
+	return status(C.token_put(p, unsafe.Pointer(&token[0]), C.long(len(token))))
+}
+
+// SystemKeychain is the item in the account's login keychain, reachable only from the hardened install.
+type SystemKeychain struct{ Home string }
+
+func (k SystemKeychain) login() fileKeychain {
+	return fileKeychain(filepath.Join(k.Home, "Library/Keychains/login.keychain-db"))
+}
+
+func (k SystemKeychain) Exists() error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	return k.login().Exists()
+}
+
+func (k SystemKeychain) Get() ([]byte, error) {
+	if err := CheckInstalled(); err != nil {
+		return nil, err
+	}
+	return k.login().Get()
+}
+
 func (k SystemKeychain) Put(token []byte) error {
 	if err := CheckInstalled(); err != nil {
 		return err
 	}
-	if len(token) == 0 {
-		return errors.New("empty setup-token")
-	}
-	p := k.path()
-	defer C.free(unsafe.Pointer(p))
-	return status(C.token_put(p, unsafe.Pointer(&token[0]), C.long(len(token))))
+	return k.login().Put(token)
 }

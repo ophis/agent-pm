@@ -44,8 +44,10 @@ that method runs all its subtests.
 
 Docker broker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
 Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py`.
-The Go broker (`broker/`, Go from `broker/go.mod`): `gofmt -l .`, `go vet ./...`, `go test ./...`
-in `broker/`; CI's `Broker` jobs run them on Linux and macOS and build the darwin/arm64 binary.
+The Go broker (`broker/`, Go from `broker/go.mod`): `sh with-go-state.sh gofmt -l .`,
+`sh with-go-state.sh go vet ./...`, `sh with-go-state.sh go test ./...` in `broker/`; run every
+Go tool through `broker/with-go-state.sh` (state in `.cache/go/`). CI's `Broker` jobs run them on
+Linux and macOS and build the darwin/arm64 binary.
 
 Integration jobs upload `integration-<run-id>-<attempt>-<job>` artifacts containing
 the discovered IDs, assigned IDs, expected load, Python/tmux versions, runner type, supervised
