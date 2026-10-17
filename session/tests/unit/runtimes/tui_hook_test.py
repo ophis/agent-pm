@@ -39,9 +39,7 @@ class Append(Case):
     def setUp(self):
         self.path = os.path.join(self.home, tui_hook.HOOKS)
         self.rotated = os.path.join(self.home, tui_hook.ROTATED)
-        patch = unittest.mock.patch.object(tui_hook, "HOOKS_MAX", 64)
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.pad = "x" * (tui_hook.HOOKS_MAX * 2 // 5)  # two records fit, a third rotates
 
     def lines(self, path):
         with open(path, "rb") as f:
@@ -49,15 +47,15 @@ class Append(Case):
 
     def test_a_record_past_the_cap_starts_a_new_file_and_the_old_becomes_dot_1(self):
         for n in range(4):
-            tui_hook.append(self.path, {"n": n, "pad": "x" * 10})
+            tui_hook.append(self.path, {"n": n, "pad": self.pad})
         self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([0, 1], [2, 3]))
         for n in range(4, 7):
-            tui_hook.append(self.path, {"n": n, "pad": "x" * 10})
+            tui_hook.append(self.path, {"n": n, "pad": self.pad})
         self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([4, 5], [6]))
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
 
     def test_one_record_over_the_cap_still_goes_to_an_empty_file(self):
-        tui_hook.append(self.path, {"n": 0, "pad": "x" * 100})
+        tui_hook.append(self.path, {"n": 0, "pad": self.pad * 3})
         self.assertEqual((self.lines(self.path), os.path.exists(self.rotated)), ([0], False))
         tui_hook.append(self.path, {"n": 1})
         self.assertEqual((self.lines(self.rotated), self.lines(self.path)), ([0], [1]))
