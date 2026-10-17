@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,8 @@ import (
 type call struct{ command, arg string }
 
 func recording(calls *[]call) app {
-	result := func(name string) func(context.Context, string) (any, error) {
-		return func(_ context.Context, arg string) (any, error) {
+	result := func(name string) step {
+		return func(_ context.Context, arg string, _ io.Writer) (any, error) {
 			*calls = append(*calls, call{name, arg})
 			return map[string]string{"ok": name}, nil
 		}
@@ -121,9 +122,9 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestChannels(t *testing.T) {
-	failing := app{build: func(context.Context, string) (any, error) {
+	failing := app{build: func(context.Context, string, io.Writer) (any, error) {
 		return nil, protocol.New(protocol.BuildFailed, "stage failed")
-	}, close: func(context.Context, string) (any, error) {
+	}, close: func(context.Context, string, io.Writer) (any, error) {
 		return nil, errors.New("surprise")
 	}}
 	code, out, errOut := invoke(failing, "build", "--agent-pm", "/pkg")
@@ -139,7 +140,7 @@ func TestChannels(t *testing.T) {
 }
 
 func TestPanicIsInternalError(t *testing.T) {
-	a := app{start: func(context.Context, string) (any, error) { panic("boom") }}
+	a := app{start: func(context.Context, string, io.Writer) (any, error) { panic("boom") }}
 	code, out, errOut := invoke(a, "start", "--manifest", "/m.json")
 	if code != 70 {
 		t.Fatal(code)
@@ -211,7 +212,7 @@ func TestTokenNeverLeaves(t *testing.T) {
 			Docker:   d,
 			Creds:    broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
 		}
-		a := app{start: func(ctx context.Context, m string) (any, error) { return h.Start(ctx, m) }}
+		a := app{start: func(ctx context.Context, m string, _ io.Writer) (any, error) { return h.Start(ctx, m) }}
 		_, out, errOut := invoke(a, "start", "--manifest", path)
 		if strings.Contains(out+errOut, token) {
 			t.Fatalf("token in output: %q %q", out, errOut)
@@ -229,4 +230,28 @@ func TestTokenNeverLeaves(t *testing.T) {
 			t.Fatalf("%q: token written %d times", fail, injected)
 		}
 	}
+}
+
+func TestBuildProgressGoesToStderr(t *testing.T) {
+	result := map[string]any{"image": "agent-pm-worker:k", "digest": "sha256:d", "rebuilt": true}
+	build := func(fail bool) app {
+		return app{build: func(_ context.Context, _ string, progress io.Writer) (any, error) {
+			_, _ = io.WriteString(progress, "#1 [1/3] FROM base\n#2 DONE\n")
+			if fail {
+				return nil, protocol.New(protocol.BuildFailed, "stage failed")
+			}
+			return result, nil
+		}}
+	}
+	code, out, errOut := invoke(build(false), "build", "--agent-pm", "/pkg")
+	want, _ := json.Marshal(result)
+	if code != 0 || out != string(want)+"\n" || errOut != "#1 [1/3] FROM base\n#2 DONE\n" {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	code, out, errOut = invoke(build(true), "build", "--agent-pm", "/pkg")
+	progress, envelope, _ := strings.Cut(errOut, "#2 DONE\n")
+	if code != 8 || progress != "#1 [1/3] FROM base\n" {
+		t.Fatalf("%d %q", code, errOut)
+	}
+	assertError(t, envelope, out, "build", protocol.BuildFailed)
 }

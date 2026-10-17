@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -128,5 +129,20 @@ func TestRunKeepsOutputTail(t *testing.T) {
 	var ce *CommandError
 	if !errors.As(err, &ce) || len(ce.Stderr) != capture || Diagnostic(err) != "ERROR: last" {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestRunCopiesStderrToProgress(t *testing.T) {
+	c := fakeDocker(t, "echo '#1 load' >&2; echo out; echo '#2 ERROR: boom' >&2; exit 1")
+	var progress bytes.Buffer
+	c.Progress = &progress
+	out, err := c.Run(context.Background(), []string{"build"}, nil)
+	var ce *CommandError
+	if out != nil || !errors.As(err, &ce) || ce.Stderr != "#1 load\n#2 ERROR: boom\n" || progress.String() != ce.Stderr {
+		t.Fatalf("%q %v %q", out, err, progress.String())
+	}
+	progress.Reset()
+	if _, err := c.Run(context.Background(), []string{"image", "inspect"}, nil); err == nil || progress.Len() != 0 {
+		t.Fatalf("%v %q", err, progress.String())
 	}
 }

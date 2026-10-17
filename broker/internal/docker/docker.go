@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,6 +77,7 @@ func TempDir(home, pattern string) (string, error) {
 
 type CLI struct {
 	path, buildx, home, config string
+	Progress                   io.Writer // nil: none; gets each docker build's stderr as it arrives
 }
 
 // New writes a private CLI config that ignores ~/.docker; Run checks Docker Desktop's executables,
@@ -128,6 +130,9 @@ func (c *CLI) Run(ctx context.Context, args []string, stdin []byte) ([]byte, err
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr capped
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if c.Progress != nil && len(args) > 0 && args[0] == "build" {
+		cmd.Stderr = io.MultiWriter(&stderr, c.Progress)
+	}
 	err := cmd.Run()
 	if err == nil {
 		return stdout.data, nil

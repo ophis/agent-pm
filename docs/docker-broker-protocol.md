@@ -35,12 +35,13 @@ stdin. `login claude` reads a token interactively without echo and has no JSON c
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|
-| Success, including update fallback or absent container on close | `0` | One success JSON object plus LF | Empty |
-| Failure | Table below | Empty | One `error` JSON object plus LF |
+| Success, including update fallback or absent container on close | `0` | One success JSON object plus LF | Empty; build: Docker's build progress |
+| Failure | Table below | Empty | One `error` JSON object plus LF; build: after Docker's build progress, as the last line |
 
 Use UTF-8. Reject duplicate object keys, non-JSON numeric constants, trailing JSON values,
 unknown fields and missing required fields. JSON object key order is irrelevant.
-Capture subprocess output rather than mixing progress lines into either channel.
+Capture subprocess output rather than mixing progress lines into either channel, except
+build's: it copies `docker build`'s stderr to its own as it arrives.
 Output and diagnostics must contain no tokens, credentials, environment dumps or
 manifest contents. `message`, `cause` and `cleanup_error` are nonempty, single-line
 human diagnostics; escape control characters and redact secrets before serialization.
