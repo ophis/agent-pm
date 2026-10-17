@@ -25,6 +25,7 @@ __all__ = [
     "MARKS",
     "Blocked",
     "ClientBound",
+    "ClientHome",
     "ConfigError",
     "SessionError",
     "Effort",
@@ -148,6 +149,17 @@ class HookCallback:
 
     def fields(self) -> dict:
         return {"module": self.module, "state": dict(self.state), "roots": list(self.roots)}
+
+
+@dataclass(frozen=True)
+class ClientHome:
+    """A client's per-session state dir that a Host may give it: `field`, its name in the Host's
+    records; `dir`, the dir's last path part; `env`, the variable that points the client at it.
+    """
+
+    field: str
+    dir: str
+    env: str
 
 
 @dataclass(frozen=True)

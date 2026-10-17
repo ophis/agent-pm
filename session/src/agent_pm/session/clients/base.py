@@ -19,6 +19,7 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientHome,
     ConfigError,
     HookCallback,
     HookKind,
@@ -124,6 +125,9 @@ class Tui(ABC):
         """As Headless.launch, plus each label L of `hooks` and `opening` as a hook running
         `hook + (L,)`, its payload on stdin.
         """
+
+    def _home(self) -> ClientHome | None:
+        return None
 
     def commit(self) -> None:
         return None

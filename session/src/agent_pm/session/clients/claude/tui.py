@@ -20,6 +20,7 @@ from agent_pm.session.clients.claude.common import TAIL, TUI_ENV, ClaudeCommon
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
+    ClientHome,
     ConfigError,
     HookCall,
     HookCallback,
@@ -90,6 +91,9 @@ class ClaudeTui(Tui):
         self._visited: set[str] = set()
         self._cutoff: str | None = None
         self._pending: tuple[str, str | None, str | None] | None = None
+
+    def _home(self):
+        return ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR")
 
     def launch(self, spec: Spec, hook):
         common = self.common

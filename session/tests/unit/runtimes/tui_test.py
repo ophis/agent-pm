@@ -24,6 +24,7 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientHome,
     ConfigError,
     HookCallback,
     HookKind,
@@ -625,6 +626,37 @@ class StartTest(Base):
         mode = self.start(name=None, events=None)
         self.assertEqual((mode.name, self.prepared.spec.name), ("fake-0f8fad5b", "fake-0f8fad5b"))
         self.assertEqual(self.host.calls.terminal.call_args.args[0], "fake-0f8fad5b")
+
+    def test_host_client_env_reaches_launch_and_names_the_home_in_metadata(self):
+        class Homed(ScanTui):
+            def _home(self):
+                return ClientHome("fake_dir", "fake", "FAKE_HOME")
+
+            def launch(self, spec, hook):
+                self.spec = spec
+                return super().launch(spec, hook)
+
+        run, calls = Homed(self.client), []
+
+        def client_env(name, client, home, *, resume):
+            calls.append((name, client, home, resume))
+            return {"FAKE_HOME": "/home/fake"}
+
+        with mock.patch.object(self.host, "_client_env", client_env):
+            self.start(run=run, env={"OTHER": "1"})
+        self.assertEqual(
+            calls, [(NAME, "fake", ClientHome("fake_dir", "fake", "FAKE_HOME"), False)]
+        )
+        self.assertEqual(dict(run.spec.env), {"OTHER": "1", "FAKE_HOME": "/home/fake"})
+        metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
+        self.assertEqual((metadata["home_field"], metadata["home_dir"]), ("fake_dir", "fake"))
+
+    def test_a_host_without_client_env_leaves_the_spec_and_metadata_alone(self):
+        self.assertEqual(self.host._client_env(NAME, "fake", None, resume=True), {})
+        self.start(env={"OTHER": "1"})
+        self.assertEqual(dict(self.prepared.spec.env), {"OTHER": "1"})
+        metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
+        self.assertEqual(set(metadata), {"sid", "client", "generation"})
 
     def test_cwd_and_grants_over_the_hook_paths_launch(self):
         for hook_path, field in itertools.product((self.events, self.root), ("cwd", "dirs")):
