@@ -99,6 +99,7 @@ removes nothing.
 |---|---|
 | `docker image inspect "$I" --format '{{json .Config.Labels}}'` | `agent-pm.version` equals the plugin's version; `agent-pm.key`, `agent-pm.agent-uid`, `agent-pm.agent-gid` |
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
+| `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (the image's interpreter, which imports agent-pm's Delegate), then `repo.py`'s usage: role runs read the team and run its tools from `/opt/agent-pm/team`, the plugin's own version |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
 | `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |

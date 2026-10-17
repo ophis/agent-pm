@@ -170,7 +170,7 @@ func (h Host) stage(pkg, tmp string) (string, error) {
 	if err := snapshotTree(definition, userDir); err != nil {
 		return "", protocol.New(protocol.BuildFailed, "Cannot read the worker image definition.")
 	}
-	for _, rel := range []string{"session/src", "utils/src", ".claude-plugin/plugin.json"} {
+	for _, rel := range []string{"session/src", "utils/src", "delegate/src", ".claude-plugin/plugin.json"} {
 		if err := snapshotTree(filepath.Join(pkg, rel), filepath.Join(packageDir, rel)); err != nil {
 			return "", protocol.New(protocol.BuildFailed, "Invalid agent-pm package directory: "+rel+" unreadable.")
 		}

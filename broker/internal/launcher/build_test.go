@@ -115,6 +115,7 @@ func newBuildEnv(t *testing.T) *buildEnv {
 	putFile(t, filepath.Join(e.pkg, ".claude-plugin/plugin.json"), `{"version":"1.2.3"}`)
 	putFile(t, filepath.Join(e.pkg, "session/src/sample.py"), "session")
 	putFile(t, filepath.Join(e.pkg, "utils/src/sample.py"), "utils")
+	putFile(t, filepath.Join(e.pkg, "delegate/src/sample.py"), "delegate")
 	e.fake = &fakeDocker{respond: func(args []string) ([]byte, error) {
 		switch args[0] {
 		case "build":
@@ -218,6 +219,10 @@ func TestBuildCacheAndStages(t *testing.T) {
 	if err != nil || !third.Rebuilt || third.Image == first.Image {
 		t.Fatalf("%+v %v", third, err)
 	}
+	putFile(t, filepath.Join(e.pkg, "delegate/src/sample.py"), "changed")
+	if team, err := e.host().Build(context.Background(), e.pkg, -1); err != nil || !team.Rebuilt || team.Image == third.Image {
+		t.Fatalf("%+v %v", team, err)
+	}
 	putFile(t, filepath.Join(e.home, ".agent-pm/docker/worker/Dockerfile"), "FROM other")
 	fourth, err := e.host().Build(context.Background(), e.pkg, -1)
 	if err != nil || !fourth.Rebuilt || fourth.Image == third.Image {
@@ -238,6 +243,7 @@ func TestBuildFailures(t *testing.T) {
 		"missing version":    func(e *buildEnv) { os.Remove(filepath.Join(e.pkg, ".claude-plugin/plugin.json")) },
 		"bad version":        func(e *buildEnv) { putFile(t, filepath.Join(e.pkg, ".claude-plugin/plugin.json"), `{"version":"v1"}`) },
 		"missing session":    func(e *buildEnv) { os.RemoveAll(filepath.Join(e.pkg, "session")) },
+		"missing delegate":   func(e *buildEnv) { os.RemoveAll(filepath.Join(e.pkg, "delegate")) },
 		"root agent":         func(e *buildEnv) { e.probe = "0\n0\n" },
 		"probe garbage":      func(e *buildEnv) { e.probe = "agent\n" },
 		"stage one":          func(e *buildEnv) { e.failStage = "agent-pm-user" },
@@ -309,6 +315,12 @@ func TestWorkerImageHasTheRelayAndWorkspaceCheck(t *testing.T) {
 		"install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue",
 		"COPY bootstrap.py hook-stub with-secrets workspace-check /opt/agent-pm/lib/",
 		" /opt/agent-pm/lib/workspace-check \\\n",
+		"COPY delegate/src /opt/agent-pm/delegate/src\n",
+		"python3 -m venv --system-site-packages /opt/agent-pm/venv",
+		`printf '%s\n' /opt/agent-pm/delegate/src /opt/agent-pm/session/src /opt/agent-pm/utils/src > "$(/opt/agent-pm/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-pm.pth"`,
+		`printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python "$@"' > /opt/agent-pm/bin/python3`,
+		"ln -s /opt/agent-pm/delegate/src/agent_pm/delegate/team /opt/agent-pm/team",
+		"install -d -o root -g root -m 0755 /home/agent/.agent-pm",
 	} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("Dockerfile lacks %q", want)
