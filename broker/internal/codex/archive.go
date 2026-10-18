@@ -13,16 +13,17 @@ import (
 const nativeEntry = "package/vendor/aarch64-apple-darwin/bin/codex"
 
 func readArchive(b []byte, native bool) ([]byte, error) {
+	return readArchiveBounded(b, native, maxExpanded)
+}
+
+func readArchiveBounded(b []byte, native bool, limit int64) ([]byte, error) {
 	z, err := gzip.NewReader(bytes.NewReader(b))
 	if err != nil {
 		return nil, errors.New("invalid Codex gzip archive")
 	}
 	defer z.Close()
-	expanded, err := io.ReadAll(io.LimitReader(z, maxExpanded+1))
-	if err != nil || len(expanded) > maxExpanded {
-		return nil, errors.New("Codex expanded archive exceeds limit or is corrupt")
-	}
-	tr := tar.NewReader(bytes.NewReader(expanded))
+	expanded := &io.LimitedReader{R: z, N: limit + 1}
+	tr := tar.NewReader(expanded)
 	seen := map[string]bool{}
 	var executable []byte
 	for count := 0; ; count++ {
@@ -34,7 +35,7 @@ func readArchive(b []byte, native bool) ([]byte, error) {
 			return nil, errors.New("invalid Codex tar archive")
 		}
 		name := strings.TrimSuffix(h.Name, "/")
-		if name == "" || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || (name != "package" && !strings.HasPrefix(name, "package/")) || seen[name] || h.Size < 0 || h.Size > maxExpanded || h.Mode&07000 != 0 {
+		if name == "" || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || (name != "package" && !strings.HasPrefix(name, "package/")) || seen[name] || h.Size < 0 || h.Size > limit || h.Mode&07000 != 0 {
 			return nil, errors.New("unsafe Codex archive entry")
 		}
 		seen[name] = true
@@ -56,6 +57,9 @@ func readArchive(b []byte, native bool) ([]byte, error) {
 				return nil, errors.New("cannot read Codex native executable")
 			}
 		}
+	}
+	if _, err := io.Copy(io.Discard, expanded); err != nil || expanded.N == 0 {
+		return nil, errors.New("Codex expanded archive exceeds limit or is corrupt")
 	}
 	if native && executable == nil {
 		return nil, errors.New("Codex native executable missing")

@@ -23,6 +23,8 @@ import (
 
 const installRoot = "/usr/local/libexec/agent-pm/codex"
 
+var ErrNotInstalled = errors.New("pinned Codex is not installed")
+
 var stableVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func ValidVersion(version string) bool { return stableVersion.MatchString(version) }
@@ -104,7 +106,7 @@ func (r Runtime) safePath(name string, directory bool) error {
 	for n := len(parts) - 1; n >= 0; n-- {
 		fi, err := os.Lstat(parts[n])
 		if err != nil {
-			return errors.New("Codex installation is missing; run sudo agent-pm-broker install-codex <version>")
+			return fmt.Errorf("cannot inspect Codex installation: %w", err)
 		}
 		if fi.Mode()&os.ModeSymlink != 0 || !r.owned(fi) || fi.Mode().Perm()&0022 != 0 || fi.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
 			return errors.New("Codex installation ownership or permissions invalid; run sudo agent-pm-broker update-codex <version>")
@@ -141,6 +143,9 @@ func (r Runtime) metadataRecord() (Installation, error) {
 	var i Installation
 	f, err := r.open(filepath.Join(r.root, "active.json"))
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return i, ErrNotInstalled
+		}
 		return i, err
 	}
 	defer f.Close()

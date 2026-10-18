@@ -20,8 +20,8 @@ import (
 const (
 	registry    = "https://registry.npmjs.org"
 	maxMetadata = 1 << 20
-	maxArchive  = 128 << 20
-	maxExpanded = 256 << 20
+	maxArchive  = 256 << 20
+	maxExpanded = 512 << 20
 )
 
 type packageMetadata struct {

@@ -230,7 +230,7 @@ func TestCodexStatusFixtures(t *testing.T) {
 		if !c.Valid {
 			continue
 		}
-		var result statusResult
+		var result launcher.StatusResult
 		if err := json.Unmarshal(c.Data, &result); err != nil {
 			t.Fatal(err)
 		}

@@ -46,11 +46,6 @@ type app struct {
 	installCodex func(context.Context, string, bool) (any, error)
 }
 
-type statusResult struct {
-	launcher.StatusResult
-	Codex *broker.CodexStatus `json:"codex,omitempty"`
-}
-
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, system())
@@ -216,7 +211,8 @@ func system() app {
 				return nil, err
 			}
 			codexStatus := broker.NewCodex(home, nil).Status(ctx)
-			return statusResult{StatusResult: status, Codex: &codexStatus}, nil
+			status.Codex = &codexStatus
+			return status, nil
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })

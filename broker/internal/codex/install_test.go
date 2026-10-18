@@ -103,6 +103,92 @@ func TestInstallAndVerify(t *testing.T) {
 	}
 }
 
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestPublishedPlatformArchiveSize(t *testing.T) {
+	var compressed bytes.Buffer
+	z := gzip.NewWriter(&compressed)
+	tw := tar.NewWriter(z)
+	const publishedSize = 338137646
+	if err := tw.WriteHeader(&tar.Header{Name: "package/support-data", Typeflag: tar.TypeReg, Mode: 0644, Size: publishedSize}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.CopyN(tw, zeroReader{}, publishedSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: nativeEntry, Typeflag: tar.TypeReg, Mode: 0755, Size: 6}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("native")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readArchive(compressed.Bytes(), true)
+	if err != nil || string(got) != "native" {
+		t.Fatalf("published size rejected: %v", err)
+	}
+}
+
+func TestIntegrityMismatchPreservesInstallation(t *testing.T) {
+	for _, suffix := range []string{"0.162.1", "0.162.1-darwin-arm64"} {
+		t.Run(suffix, func(t *testing.T) {
+			r, data := fixture(t)
+			if _, err := r.Install(context.Background(), "0.162.1", false); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(r.root, "active.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			url := "https://registry.npmjs.org/@openai%2Fcodex/" + suffix
+			var meta map[string]any
+			if err := json.Unmarshal(data[url], &meta); err != nil {
+				t.Fatal(err)
+			}
+			meta["dist"].(map[string]any)["integrity"] = "sha512-" + base64.StdEncoding.EncodeToString(make([]byte, 64))
+			data[url], _ = json.Marshal(meta)
+			if _, err := r.Install(context.Background(), "0.162.1", true); err == nil || !strings.Contains(err.Error(), "integrity mismatch") {
+				t.Fatalf("wrong integrity result: %v", err)
+			}
+			after, err := os.ReadFile(filepath.Join(r.root, "active.json"))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("failed integrity replaced active installation")
+			}
+			if _, err := r.Verify(); err != nil {
+				t.Fatal(err)
+			}
+			fresh, _ := fixture(t)
+			fresh.http = r.http
+			if _, err := fresh.Install(context.Background(), "0.162.1", false); err == nil || !strings.Contains(err.Error(), "integrity mismatch") {
+				t.Fatalf("fresh install accepted mismatching integrity: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(fresh.root, "active.json")); !os.IsNotExist(err) {
+				t.Fatal("failed fresh install published metadata")
+			}
+		})
+	}
+}
+
+func TestArchiveTotalSizeBound(t *testing.T) {
+	body := archive(t, &tar.Header{Name: "package/one", Typeflag: tar.TypeReg, Mode: 0644, Size: 1024}, &tar.Header{Name: "package/two", Typeflag: tar.TypeReg, Mode: 0644, Size: 1024})
+	if _, err := readArchiveBounded(body, false, 4096); err != nil {
+		t.Fatalf("exact total size refused: %v", err)
+	}
+	if _, err := readArchiveBounded(body, false, 4095); err == nil {
+		t.Fatal("total expanded size exceeded bound")
+	}
+}
+
 func TestInstallGuards(t *testing.T) {
 	for _, version := range []string{"latest", "v0.162.1", "0.162", "0.162.1-beta", "0.0162.1", "0.162.1/evil", "0.162.1\n"} {
 		t.Run(version, func(t *testing.T) {

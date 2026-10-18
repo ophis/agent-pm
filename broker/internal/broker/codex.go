@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/codex"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
 const (
@@ -23,7 +24,15 @@ const (
 	maxCodexAuth        = 64 * 1024
 	codexLoginCommand   = "agent-pm-broker login codex"
 	codexInstallCommand = "sudo " + InstalledPath + " install-codex <version>"
+	codexUpdateCommand  = "sudo " + InstalledPath + " update-codex <version>"
 )
+
+func codexRepair(err error) string {
+	if errors.Is(err, codex.ErrNotInstalled) {
+		return codexInstallCommand
+	}
+	return codexUpdateCommand
+}
 
 type codexNative interface {
 	Verify() (codex.Installation, error)
@@ -136,25 +145,20 @@ func (c Codex) Login(ctx context.Context, out io.Writer) error {
 		return errors.New("run " + codexLoginCommand + " as your ordinary user, without sudo")
 	}
 	if _, err := c.native.Verify(); err != nil {
-		return errors.New("pinned Codex unavailable; run " + codexInstallCommand)
+		return errors.New("pinned Codex unavailable; run " + codexRepair(err))
 	}
 	unlock, err := c.native.Lock(ctx)
 	if err != nil {
 		return errors.New("cannot lock Codex login; install pinned Codex or retry")
 	}
 	defer unlock()
-	before, err := c.keychain.AppAccess(codexService, codexAccount)
+	_, err = c.keychain.AppAccess(codexService, codexAccount)
 	missing := errors.Is(err, ErrNotFound)
 	if err != nil && !missing {
 		return errors.New("cannot inspect Codex keychain access; retry " + codexLoginCommand)
 	}
-	if !missing && onlyBroker(before) == nil {
-		old, err := c.keychain.Secret(codexService, codexAccount)
-		erase(old)
-		if err != nil {
-			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
-		}
-	}
+	var previous []byte
+	defer func() { erase(previous) }()
 	home, err := os.MkdirTemp(c.tempRoot, "agent-pm-codex-")
 	if err != nil {
 		return errors.New("cannot create private Codex login directory")
@@ -191,23 +195,41 @@ func (c Codex) Login(ctx context.Context, out io.Writer) error {
 		if c.keychain.CreateCodex() != nil {
 			return errors.New("cannot create Codex keychain item")
 		}
-		before, err = c.keychain.AppAccess(codexService, codexAccount)
-		if err != nil {
-			return errors.New("cannot inspect new Codex keychain item")
-		}
 	}
-	if onlyBroker(before) != nil {
-		password, err := c.password()
-		if err == nil {
-			err = trust(codexService, codexAccount, c.keychain, before, password)
-		}
-		erase(password)
+	var password []byte
+	var passwordErr error
+	passwordRead := false
+	defer func() { erase(password) }()
+	secure := func() error {
+		access, err := c.keychain.AppAccess(codexService, codexAccount)
 		if err != nil {
-			return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
+			return errors.New("cannot inspect Codex keychain access")
 		}
+		if onlyBroker(access) != nil {
+			if !passwordRead {
+				passwordRead = true
+				password, passwordErr = c.password()
+			}
+			if passwordErr != nil || trust(codexService, codexAccount, c.keychain, access, password) != nil {
+				return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
+			}
+		}
+		return c.trusted()
 	}
-	if err := c.trusted(); err != nil {
+	if err := secure(); err != nil {
 		return err
+	}
+	if !missing && len(previous) == 0 {
+		old, err := c.keychain.Secret(codexService, codexAccount)
+		if err != nil {
+			erase(old)
+			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
+		}
+		if expiry, err := parseCodexAuth(old); err == nil && c.now().Before(expiry) {
+			previous = old
+		} else {
+			erase(old)
+		}
 	}
 	if ctx.Err() != nil {
 		return errors.New("Codex login canceled")
@@ -215,16 +237,23 @@ func (c Codex) Login(ctx context.Context, out io.Writer) error {
 	if c.keychain.WriteCodex(data) != nil {
 		return errors.New("cannot save Codex login; retry " + codexLoginCommand)
 	}
-	if err := c.trusted(); err != nil {
-		return err
-	}
-	saved, err := c.keychain.Secret(codexService, codexAccount)
-	defer erase(saved)
-	if err != nil || !bytes.Equal(saved, data) {
+	if c.trusted() != nil || !c.matches(data) {
+		if len(previous) > 0 {
+			if secure() != nil || c.keychain.WriteCodex(previous) != nil || secure() != nil || !c.matches(previous) {
+				return errors.New("Codex login verification failed and previous login could not be restored; retry " + codexLoginCommand)
+			}
+			return errors.New("Codex login verification failed; previous login restored; retry " + codexLoginCommand)
+		}
 		return errors.New("Codex login verification failed; retry " + codexLoginCommand)
 	}
 	_, err = fmt.Fprintln(out, "Codex login saved; keychain trusts only the broker")
 	return err
+}
+
+func (c Codex) matches(expected []byte) bool {
+	saved, err := c.keychain.Secret(codexService, codexAccount)
+	defer erase(saved)
+	return err == nil && bytes.Equal(saved, expected)
 }
 
 func (c Codex) trusted() error {
@@ -235,21 +264,11 @@ func (c Codex) trusted() error {
 	return nil
 }
 
-type CodexStatus struct {
-	Version         string   `json:"version"`
-	Path            string   `json:"path"`
-	SHA256          string   `json:"sha256"`
-	AllowedVersions []string `json:"allowed_versions"`
-	LoggedIn        bool     `json:"logged_in"`
-	State           string   `json:"state"`
-	ExpiresAt       string   `json:"expires_at,omitempty"`
-	Repair          string   `json:"repair"`
-}
-
-func (c Codex) Status(ctx context.Context) CodexStatus {
-	s := CodexStatus{AllowedVersions: []string{}, State: "installation_invalid", Repair: codexInstallCommand}
+func (c Codex) Status(ctx context.Context) protocol.CodexStatus {
+	s := protocol.CodexStatus{AllowedVersions: []string{}, State: "installation_invalid"}
 	installed, err := c.native.Verify()
 	if err != nil {
+		s.Repair = codexRepair(err)
 		return s
 	}
 	s.Version, s.Path, s.SHA256, s.AllowedVersions = installed.Version, installed.Path, installed.SHA256, installed.AllowedVersions

@@ -62,6 +62,10 @@ type fakeCodexKeychain struct {
 	missing        bool
 	writeErr       error
 	writeBreaksACL bool
+	mismatchWrite  bool
+	badReadOnce    bool
+	failRestore    bool
+	writeCalls     int
 	events         []string
 }
 
@@ -92,6 +96,10 @@ func (k *fakeCodexKeychain) Secret(service, account string) ([]byte, error) {
 	if a, err := k.AppAccess(service, account); err != nil || onlyBroker(a) != nil {
 		return nil, errors.New("not trusted")
 	}
+	if k.badReadOnce {
+		k.badReadOnce = false
+		return []byte("unverified-readback"), nil
+	}
 	return slices.Clone(k.data), k.getErr
 }
 
@@ -112,10 +120,18 @@ func (k *fakeCodexKeychain) WriteCodex(data []byte) error {
 		return errors.New("write before trust")
 	}
 	k.events = append(k.events, "write")
+	k.writeCalls++
+	if k.failRestore && k.writeCalls > 1 {
+		return errors.New("restore denied")
+	}
 	if k.writeErr != nil {
 		return k.writeErr
 	}
 	k.data = slices.Clone(data)
+	if k.mismatchWrite {
+		k.mismatchWrite = false
+		k.badReadOnce = true
+	}
 	if k.writeBreaksACL {
 		k.access = added()
 	}
@@ -230,7 +246,7 @@ func TestCodexAuthValidation(t *testing.T) {
 }
 
 func TestCodexReloginAndTrustFailure(t *testing.T) {
-	for _, kind := range []string{"relogin", "partition", "readback", "write", "postwrite"} {
+	for _, kind := range []string{"relogin", "partition", "readback", "write", "postwrite", "postread"} {
 		t.Run(kind, func(t *testing.T) {
 			c, n, k := codexFixture(t)
 			old := codexAuth(codexNow.Add(2 * time.Hour).Unix())
@@ -244,6 +260,8 @@ func TestCodexReloginAndTrustFailure(t *testing.T) {
 				k.writeErr = errors.New("fake-refresh-secret")
 			case "postwrite":
 				k.writeBreaksACL = true
+			case "postread":
+				k.mismatchWrite = true
 			}
 			err := c.Login(context.Background(), &bytes.Buffer{})
 			if kind == "relogin" {
@@ -255,10 +273,45 @@ func TestCodexReloginAndTrustFailure(t *testing.T) {
 			if err == nil || strings.Contains(err.Error(), "fake-refresh-secret") {
 				t.Fatalf("unsafe error %v", err)
 			}
-			if kind != "postwrite" && !bytes.Equal(k.data, old) {
+			if !bytes.Equal(k.data, old) {
 				t.Fatal("old login overwritten")
 			}
+			if (kind == "postwrite" || kind == "postread") && !c.Status(context.Background()).LoggedIn {
+				t.Fatal("previous login no longer usable")
+			}
 		})
+	}
+}
+
+func TestCodexReportsRestorationFailure(t *testing.T) {
+	c, n, k := codexFixture(t)
+	a := brokerOnly()
+	k.missing, k.access, k.data = false, &a, codexAuth(codexNow.Add(2*time.Hour).Unix())
+	k.mismatchWrite, k.failRestore = true, true
+	err := c.Login(context.Background(), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "previous login could not be restored") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("hidden restoration failure %v", err)
+	}
+	if n.locked {
+		t.Fatal("failed restoration retained lock")
+	}
+}
+
+func TestCodexPinRepair(t *testing.T) {
+	for _, kind := range []string{"missing", "corrupt"} {
+		c, n, _ := codexFixture(t)
+		want := "update-codex"
+		n.verifyErr = errors.New("hash mismatch")
+		if kind == "missing" {
+			n.verifyErr = codex.ErrNotInstalled
+			want = "install-codex"
+		}
+		if repair := c.Status(context.Background()).Repair; !strings.Contains(repair, want) {
+			t.Fatalf("wrong repair %s", repair)
+		}
+		if err := c.Login(context.Background(), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("wrong diagnostic %v", err)
+		}
 	}
 }
 

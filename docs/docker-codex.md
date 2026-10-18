@@ -16,7 +16,7 @@ Replace `<version>` with an exact stable npm version, such as `0.162.1`:
 | Independent browser login, ordinary user | `/usr/local/libexec/agent-pm/agent-pm-broker login codex` |
 | Inspect | `/usr/local/libexec/agent-pm/agent-pm-broker status` |
 
-Administrative install/update success writes installation JSON; failure exits 1 with a
+Administrative install/update success writes installation JSON (JavaScript Object Notation); failure exits 1 with a
 diagnostic. Login is interactive text and exits 0 on success, 1 on failure/cancellation.
 Malformed command arguments use the protocol usage error, exit 2. Status fields and
 protocol version are defined only in [Docker broker protocol](docker-broker-protocol.md#success-fields).
@@ -39,12 +39,12 @@ flowchart LR
 Sources: `broker/internal/codex/install.go:110`, `broker/internal/codex/archive.go:15`.
 
 Only `https://registry.npmjs.org/` is accepted, without redirects. The main package and
-its exact macOS arm64 dependency require SHA-512 integrity. Archive links, special
-files, traversal, duplicate entries and excessive sizes are refused. The installer
-keeps only the native `vendor/aarch64-apple-darwin/bin/codex`, never scripts or Node.
+its exact macOS arm64 dependency require SHA-512 (Secure Hash Algorithm, 512 bit) integrity. Archive links, special
+files, traversal, duplicate entries and excessive sizes are refused. Limits are 256 MiB (mebibytes) compressed, 512 MiB expanded and 4096 entries; unused
+entries are streamed and discarded. The installer keeps only the native `vendor/aarch64-apple-darwin/bin/codex`, never scripts or Node.
 
 Before execution the broker verifies root ownership, write permissions and symlink
-absence for the native file and every ancestor, plus its SHA-256 against protected
+absence for the native file and every ancestor, plus its SHA-256 (Secure Hash Algorithm, 256 bit) against protected
 metadata. Native commands use an absolute path, private working directory and a fresh
 environment containing only private `HOME`/`CODEX_HOME`, system `PATH` and `LANG`.
 Personal npm configuration, `NODE_OPTIONS`, `npm_config_*` and Codex environment
@@ -76,13 +76,15 @@ exist only in this directory, broker memory and login-keychain service
 Other processes running as the same user can still read the temporary data.
 
 A new keychain item starts with a nonsecret placeholder. TASK-642's implementation
-sets the partition list first, then broker-only read/export ACL entries, using a
-hidden keychain password once when needed and the same dialog fallback. Credentials
+applies the diagram ordering to the access control list (ACL), using a hidden
+keychain password once when needed and the same dialog fallback. Credentials
 are written in place only after verification; existing GitHub App items are unchanged.
+If final access/readback verification fails, the broker restores and re-verifies an
+earlier usable login; any restoration failure is reported explicitly.
 Reinstalling the broker changes its ad hoc code identity: rerun `login codex` to
 authorize the new broker. No `security` subprocess receives credential data.
 
-The access-token JWT `exp` is a local expiry source, not signature verification or
+The access-token JSON Web Token (JWT) `exp` is a local expiry source, not signature verification or
 proof that the upstream still accepts the subscription. Expired credentials require
 host login in this milestone. Official references:
 [credential storage](https://learn.chatgpt.com/docs/auth),

@@ -64,6 +64,17 @@ type Pending struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+type CodexStatus struct {
+	Version         string   `json:"version"`
+	Path            string   `json:"path"`
+	SHA256          string   `json:"sha256"`
+	AllowedVersions []string `json:"allowed_versions"`
+	LoggedIn        bool     `json:"logged_in"`
+	State           string   `json:"state"`
+	ExpiresAt       string   `json:"expires_at,omitempty"`
+	Repair          string   `json:"repair"`
+}
+
 type Error struct {
 	Code         Code   `json:"code"`
 	Message      string `json:"message"`
