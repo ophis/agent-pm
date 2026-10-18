@@ -1,11 +1,18 @@
-"""What the Claude and Codex clients share."""
+"""What the Claude, Codex and OpenCode clients share."""
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from agent_pm.session.engine.types import ConfigError, Effort, Permission, Tier
+from agent_pm.session.engine.types import (
+    ClientContext,
+    ConfigError,
+    Container,
+    Effort,
+    Permission,
+    Tier,
+)
 from agent_pm.utils import environment_ok
 
 
@@ -111,3 +118,12 @@ def check_selection(
     for flag in scan(flags, {word: word for word in valued}):
         if flag.arg in forbidden or flag.word in forbidden:
             raise ConfigError(f"{flag.arg}: picks the session; use sid= or resume=")
+
+
+def container(context: ClientContext) -> Container | None:
+    """A container context's paths (it has a bin_dir), else None."""
+    if context.bin_dir is None:
+        return None
+    if context.python is None or context.pythonpath is None or context.state_root is None:
+        raise ConfigError("client context: bin_dir without python, pythonpath or state_root")
+    return Container(context.bin_dir, context.python, context.pythonpath, context.state_root)
