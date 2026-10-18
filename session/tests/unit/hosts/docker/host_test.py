@@ -1166,6 +1166,46 @@ class PipeTest(Base):
         piped.close()
         self.assertIn(("refresh", CONTAINER, os.path.join(self.state, f"{GEN}.json")), self.order)
 
+    def test_codex_pipe_uses_its_manifest_history_and_reports_expiry(self):
+        home = os.path.join(self.state, "codex")
+        self.launch = replace(
+            self.launch,
+            argv=("/opt/agent-pm/bin/codex", "exec", "--json", "hello"),
+            env={"CODEX_HOME": home},
+        )
+        self.broker.started = replace(
+            self.broker.started, credential_expires_at="2000-01-01T00:00:00Z"
+        )
+        expired = threading.Event()
+        original = self.broker.close
+
+        def close(container):
+            result = original(container)
+            expired.set()
+            return result
+
+        self.broker.close = close
+        with self.assertLogs("session", "WARNING") as logs:
+            piped = self.pipe(
+                client="codex",
+                home_field="codex_dir",
+                home_dir="codex",
+                credential="codex-access-token",
+                home_persistent='["sessions"]',
+            )
+            self.assertTrue(expired.wait(5))
+        with open(os.path.join(self.state, f"{GEN}.json")) as stream:
+            manifest = json.load(stream)
+        self.assertEqual(manifest["codex_dir"], home)
+        self.assertNotIn("claude_dir", manifest)
+        self.assertTrue(os.path.isdir(os.path.join(home, "sessions")))
+        self.assertIn("codex", self.popened[0])
+        self.assertIn("/opt/agent-pm/bin/codex", self.popened[0])
+        self.assertIn("client_auth_expired", logs.output[0])
+        self.assertIn("agent-pm-broker login codex", logs.output[0])
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        piped.close()
+
     def test_a_failed_piped_token_refresh_is_logged(self):
         self.broker.started = replace(
             self.broker.started, github=[{"account": "o", "expires_at": "2000-01-01T00:00:00Z"}]

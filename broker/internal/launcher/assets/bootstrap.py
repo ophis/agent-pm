@@ -43,13 +43,24 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
     destination.chmod(0o755)
 
 
-def bootstrap_codex(directory, cwd, secrets=Path("/run/agent-pm/secrets")):
+def bootstrap_codex(
+    directory,
+    cwd,
+    secrets=Path("/run/agent-pm/secrets"),
+    plugins=Path("/opt/agent-pm/codex-plugins"),
+):
+    enabled = "".join(
+        f"[plugins.{json.dumps(plugin.name + '@inline')}]\nenabled = true\n"
+        for plugin in sorted((plugins / "inline").iterdir())
+    )
     (directory / "config.toml").write_text(
         'cli_auth_credentials_store = "file"\n'
         'forced_login_method = "chatgpt"\n'
         "check_for_update_on_startup = false\n"
-        f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n'
+        f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n' + enabled
     )
+    (directory / "plugins").mkdir(mode=0o700)
+    (directory / "plugins/cache").symlink_to(plugins, target_is_directory=True)
     (directory / "auth.json").symlink_to(secrets / "codex/auth.json")
 
 

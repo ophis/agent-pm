@@ -70,6 +70,12 @@ func (h Host) stagePlugins(names []string, dir string) ([]string, error) {
 		if cacheErr != nil || err != nil || statErr != nil || !info.IsDir() || !strings.HasPrefix(src, cache+string(filepath.Separator)) {
 			return nil, protocol.New(protocol.BuildFailed, "Plugin "+name+": install path "+installed+" is not an installed plugin directory.")
 		}
+		if link, err := leavingLink(src); err != nil || link != "" {
+			if err != nil {
+				return nil, protocol.New(protocol.BuildFailed, "Cannot read plugin "+name+".")
+			}
+			return nil, protocol.New(protocol.BuildFailed, "Plugin "+name+": link "+link+" leaves the plugin directory.")
+		}
 		var manifest struct {
 			Name string `json:"name"`
 		}
@@ -79,12 +85,6 @@ func (h Host) stagePlugins(names []string, dir string) ([]string, error) {
 		}
 		if slices.Contains(staged, manifest.Name) {
 			return nil, protocol.New(protocol.BuildFailed, "Two plugins named "+manifest.Name+".")
-		}
-		if link, err := leavingLink(src); err != nil || link != "" {
-			if err != nil {
-				return nil, protocol.New(protocol.BuildFailed, "Cannot read plugin "+name+".")
-			}
-			return nil, protocol.New(protocol.BuildFailed, "Plugin "+name+": link "+link+" leaves the plugin directory.")
 		}
 		if err := snapshotTree(src, filepath.Join(dir, manifest.Name), pluginMarkers...); err != nil {
 			return nil, protocol.New(protocol.BuildFailed, "Cannot read plugin "+name+".")
@@ -107,7 +107,8 @@ func leavingLink(root string) (string, error) {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
-		if inside, err := filepath.Rel(root, filepath.Join(filepath.Dir(path), target)); filepath.IsAbs(target) || err != nil ||
+		resolved, resolveErr := filepath.EvalSymlinks(path)
+		if inside, err := filepath.Rel(root, resolved); filepath.IsAbs(target) || resolveErr != nil || err != nil ||
 			inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
 			leaving = rel
 			return fs.SkipAll

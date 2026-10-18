@@ -1,4 +1,4 @@
-"""CI-only synthetic checks of the worker's Codex authentication and mount layout."""
+"""CI-only synthetic checks of the worker's Codex authentication, plugins and mount layout."""
 
 import base64
 import json
@@ -12,6 +12,50 @@ from pathlib import Path
 
 PYTHON = "/opt/agent-pm/venv/bin/python"
 BOOTSTRAP = "/opt/agent-pm/lib/bootstrap.py"
+SKILLS_PROBE = """
+import json, os, stat, subprocess
+from pathlib import Path
+home = Path(os.environ['CODEX_HOME'])
+root = Path('/opt/agent-pm/codex-plugins/inline/ci-probe/local')
+skill = root / 'skills/probe/SKILL.md'
+for path in (root, root / '.codex-plugin/plugin.json', skill):
+    assert path.stat().st_uid == 0
+    assert not path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    assert not os.access(path, os.W_OK)
+assert home.joinpath('plugins/cache').resolve() == root.parents[2]
+assert not root.is_symlink()
+assert json.loads(root.joinpath('.codex-plugin/plugin.json').read_text())['name'] == 'ci-probe'
+proc = subprocess.Popen(['codex', 'app-server'], stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+def request(identifier, method, params):
+    proc.stdin.write(json.dumps({'id': identifier, 'method': method, 'params': params}) + '\\n')
+    proc.stdin.flush()
+    for line in proc.stdout:
+        reply = json.loads(line)
+        if reply.get('id') == identifier:
+            assert 'error' not in reply
+            return reply['result']
+    raise AssertionError('app-server closed before its reply')
+try:
+    request(0, 'initialize', {'clientInfo': {'name': 'agent_pm_ci', 'title': 'Agent PM CI', 'version': '0.0.1'}})
+    proc.stdin.write(json.dumps({'method': 'initialized', 'params': {}}) + '\\n')
+    proc.stdin.flush()
+    found = request(1, 'skills/list', {'cwds': ['/workspace'], 'forceReload': True})
+    entry, = found['data']
+    assert entry['cwd'] == '/workspace'
+    assert not entry['errors']
+    loaded, = [s for s in entry['skills'] if s['name'] == 'ci-probe:probe']
+    assert loaded['enabled'] is True
+    assert loaded['pluginId'] == 'ci-probe@inline'
+    assert Path(loaded['path']).resolve() == skill.resolve()
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+"""
 PROBE = """
 import json, os, stat, tempfile
 from pathlib import Path
@@ -136,6 +180,7 @@ def main(image):
                     *inspected["HostConfig"]["Tmpfs"]
                 }
                 docker("exec", name, PYTHON, "-I", BOOTSTRAP, "codex", str(home), "/workspace")
+                docker("exec", name, PYTHON, "-I", "-c", SKILLS_PROBE)
                 docker("exec", "-i", name, PYTHON, "-I", BOOTSTRAP, "codex-auth", data=document)
                 assert docker("exec", name, "codex", "--version").strip() == b"codex-cli 0.162.1"
                 status = docker("exec", name, "codex", "login", "status")
@@ -144,7 +189,7 @@ def main(image):
             finally:
                 docker("rm", "--force", name)
             assert sorted(p.name for p in home.iterdir()) == ["sessions"]
-    print("Codex synthetic auth, tmpfs replacement and sessions-only persistence: PASS")
+    print("Codex native plugin skills, synthetic auth, tmpfs and history-only persistence: PASS")
 
 
 if __name__ == "__main__":
