@@ -223,11 +223,7 @@ def expire_client(
         delay = 0.0
     if stopped.wait(delay):
         return
-    record = read_regular(os.path.join(state, "host.json"))
-    try:
-        client = json.loads(record or b"{}").get("client") or "<client>"
-    except (ValueError, AttributeError):
-        client = "<client>"
+    client = json.loads(read_regular(os.path.join(state, "host.json")) or b"")["client"]
     failed(
         f"Client authentication expired; run agent-pm-broker login {client}; token refresh is not supported yet"
     )

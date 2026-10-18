@@ -64,6 +64,11 @@ class Base(Case):
 
 
 class ExpiryTest(Base):
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.state, "host.json"), "w") as f:
+            json.dump({"generation": GEN, "client": "codex"}, f)
+
     def test_no_credential_and_a_null_deadline_do_not_close(self):
         self.supervisor.broker = mock.Mock()
         stopped = mock.Mock()
@@ -98,8 +103,11 @@ class ExpiryTest(Base):
         self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
         with open(self.events) as f:
             text = f.read()
-        self.assertIn("client_auth_expired", text)
-        self.assertIn("agent-pm-broker login", text)
+        self.assertEqual(
+            text.split(" ", 1)[1],
+            "worker_1 client_auth_expired Client authentication expired; run agent-pm-broker login"
+            " codex; token refresh is not supported yet\n",
+        )
 
     def test_recovery_after_expiry_is_immediate_and_stop_cancels_close(self):
         with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
