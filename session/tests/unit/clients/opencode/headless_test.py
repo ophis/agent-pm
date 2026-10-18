@@ -9,12 +9,18 @@ from agent_pm.session.clients.opencode import OpenCodeClient, launcher
 from agent_pm.session.engine.types import (
     LOCAL_CONTEXT,
     Access,
+    Activity,
+    ClientBound,
     ClientContext,
     ConfigError,
     Effort,
     Launch,
     Permission,
+    Reply,
     Spec,
+    Stderr,
+    TurnEnd,
+    TurnFailed,
 )
 
 from session.tests.case import Case
@@ -225,3 +231,105 @@ class ResumeTest(Base):
             json.dump({**record, "native": "--auto"}, f)
         with self.assertRaises(ConfigError):
             self.launch(self.spec(resume=True))
+
+
+def line(kind: str, **fields) -> str:
+    return json.dumps({"type": kind, "timestamp": 1, "sessionID": SES, **fields})
+
+
+def text(value: str) -> str:
+    return line("text", part={"type": "text", "text": value, "time": {"start": 1, "end": 2}})
+
+
+class EventsTest(Base):
+    def events(self, *lines: str, spec: Spec | None = None) -> list:
+        run = self.client.headless()
+        assert run is not None
+        run.launch(spec or self.spec())
+        return list(run.events(lines))
+
+    def test_a_run_binds_replies_and_ends_with_its_last_text(self):
+        found = self.events(
+            line("step_start", part={"type": "step-start"}),
+            text("one"),
+            line("tool_use", part={"tool": "read", "state": {"status": "completed"}}),
+            text("two"),
+            line("step_finish", part={"reason": "stop"}),
+        )
+        self.assertEqual(
+            found,
+            [
+                ClientBound(SES),
+                Activity("step_start"),
+                Reply("one"),
+                Activity("read"),
+                Reply("two"),
+                Activity("step_finish"),
+                TurnEnd("two"),
+            ],
+        )
+        self.assertEqual(self.client.common.native(self.cwd, "run-1"), SES)
+
+    def test_a_blank_text_is_no_reply(self):
+        self.assertEqual(self.events(text("  ")), [ClientBound(SES), TurnEnd("")])
+
+    def test_a_rejected_tool_is_stderr_and_the_turn_still_ends(self):
+        rejected = "The user rejected permission to use this specific tool call."
+        found = self.events(
+            line(
+                "tool_use", part={"tool": "bash", "state": {"status": "error", "error": rejected}}
+            ),
+            text("I cannot run it."),
+        )
+        self.assertEqual(
+            found,
+            [
+                ClientBound(SES),
+                Activity("bash"),
+                Stderr(f"opencode: bash: {rejected}"),
+                Reply("I cannot run it."),
+                TurnEnd("I cannot run it."),
+            ],
+        )
+
+    def test_an_error_fails_the_turn(self):
+        error = {"name": "UnknownError", "data": {"message": "Model not found: p/m."}}
+        found = self.events(line("error", error=error))
+        self.assertEqual(
+            found, [ClientBound(SES), TurnFailed("UnknownError", "Model not found: p/m.")]
+        )
+
+    def test_an_error_without_data_keeps_its_name(self):
+        found = self.events(line("error", error={"name": "APIError"}), text("late"))
+        self.assertEqual(found, [ClientBound(SES), TurnFailed("APIError", ""), Reply("late")])
+
+    def test_no_session_fails_the_turn(self):
+        found = self.events("not json", json.dumps({"type": "text"}))
+        self.assertEqual(
+            found,
+            [
+                Stderr("opencode: invalid JSON event"),
+                Activity("text"),
+                TurnFailed("no_session", "opencode ended before it started a session"),
+            ],
+        )
+        self.assertIsNone(self.client.common.native(self.cwd, "run-1"))
+
+    def test_an_invalid_session_id_binds_nothing(self):
+        found = self.events(json.dumps({"type": "text", "sessionID": "--auto"}))
+        self.assertEqual(found[0], Stderr("opencode: invalid sessionID '--auto'"))
+        self.assertEqual(
+            found[-1], TurnFailed("no_session", "opencode ended before it started a session")
+        )
+
+    def test_the_first_session_binds_once(self):
+        other = "ses_zzzzzzzzzzzzzzzzzzzzzzzzzz"
+        found = self.events(text("a"), json.dumps({"type": "text", "sessionID": other}))
+        self.assertEqual(found.count(ClientBound(SES)), 1)
+        self.assertNotIn(ClientBound(other), found)
+        self.assertEqual(self.client.common.native(self.cwd, "run-1"), SES)
+
+    def test_a_resume_rebinds_its_session(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        found = self.events(text("again"), spec=self.spec(resume=True))
+        self.assertEqual(found, [ClientBound(SES), Reply("again"), TurnEnd("again")])
