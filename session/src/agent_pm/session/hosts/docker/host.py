@@ -902,6 +902,7 @@ class DockerHost(Host):
             supervisor = self._spawn_supervisor(
                 name, container, generation=generation, events=events, hook=hook, lock=lock
             )
+            runtime = self._client_runtime()
             process = tmux.launch(
                 name,
                 [
@@ -912,6 +913,8 @@ class DockerHost(Host):
                 ],
                 cwd=cwd,
                 env=self._exec_env(launch),
+                python=runtime.python,
+                handover_dir=runtime.state_root,
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
             )

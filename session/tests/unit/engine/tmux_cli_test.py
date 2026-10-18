@@ -3,7 +3,9 @@ read, options and pane targets; listing row validation, shown-client precedence 
 tails.
 """
 
+import contextlib
 import errno
+import io
 import os
 import re
 import stat
@@ -54,6 +56,7 @@ from session.tests.tmux_fixtures import (
     captured,
     chained,
     decorations,
+    done,
     environ,
     expected_row,
     listed,
@@ -496,8 +499,59 @@ class PaneTargetTest(Case):
                 self.assertEqual(fake.calls, [])
 
 
+class Container:
+    """A runner whose PYTHON runs its -c program in this process (stdin as given, os.execvpe and
+    signal.signal recorded) and whose rm deletes here, beside a tmux recording each call:
+    new-session answers `new` (rc, out[, err]), else records the handover file's mode, runs its
+    pane's argv (after --, to the first ;) and prints NEW_PROCESS. A failed program exits 1 with its
+    error's last traceback line.
+    """
+
+    PYTHON = "/container/python"
+
+    def __init__(self, new=None):
+        self.calls, self.new, self.staged_mode, self.execs = [], new, None, []
+
+    def __call__(self, argv, *, input=None, **_):
+        self.calls.append(argv)
+        if argv[0] == "rm":
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(argv[-1])
+            return done(argv)
+        if argv[0] != "tmux":
+            return self.python(argv, input or "")
+        if self.new is not None:
+            return done(argv, *self.new)
+        pane = argv[argv.index("--") + 1 : argv.index(";")]
+        self.staged_mode = stat.S_IMODE(os.stat(pane[-1]).st_mode)
+        res = self.python(pane, "")
+        if res.returncode:
+            raise AssertionError(res.stderr)
+        return done(argv, 0, NEW_PROCESS + "\n")
+
+    def python(self, argv, stdin):
+        if argv[0] != self.PYTHON:
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", argv[0])
+        assert argv[1:3] == ["-I", "-c"], argv
+        out = io.StringIO()
+        with ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch("sys.argv", ["-c", *argv[4:]]))
+            stack.enter_context(unittest.mock.patch("sys.stdin", io.StringIO(stdin)))
+            stack.enter_context(unittest.mock.patch("signal.signal"))
+            stack.enter_context(
+                unittest.mock.patch("os.execvpe", side_effect=lambda *a: self.execs.append(a))
+            )
+            stack.enter_context(contextlib.redirect_stdout(out))
+            try:
+                exec(argv[3], {"__name__": "__main__"})
+            except OSError as e:
+                return done(argv, 1, "", f"Traceback\n{type(e).__name__}: {e}\n")
+        return done(argv, 0, out.getvalue())
+
+
 class LaunchTest(Case):
-    """launch: argv straight onto tmux's command line, for a server whose host has no handover."""
+    """launch: argv and env through a handover file the runner's python stages and the pane's
+    RELAUNCH reads, so tmux's command line stays short."""
 
     DIED = "set-option @state dead ; wait-for -S x"
 
@@ -505,69 +559,121 @@ class LaunchTest(Case):
         self.enterContext(
             unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24)))
         )
+        self.handover = self.enterContext(tempfile.TemporaryDirectory())
 
-    def launch(self, fake, argv=("with-secrets", "run", "a b"), **kw):
-        return tmux_cli.TmuxCli(fake).launch(
-            "w", argv, **{"cwd": "/work", "env": {"A": "1", "B": "x y"}, **kw}
+    def launch(self, runner, argv=("with-secrets", "run", "a b"), **kw):
+        return tmux_cli.TmuxCli(runner).launch(
+            "w",
+            argv,
+            **{
+                "cwd": "/work",
+                "env": {"A": "1", "B": "x y"},
+                "python": Container.PYTHON,
+                "handover_dir": self.handover,
+                **kw,
+            },
         )
 
-    def test_one_new_session_call_with_cwd_env_tags_and_its_died_hook(self):
-        fake = FakeTmux(results={"new-session": (0, NEW_PROCESS + "\n")})
-        found = self.launch(fake, tags={"@kind": "docker"}, died=self.DIED)
+    def new_session(self, runner):
+        (call,) = [argv for argv in runner.calls if argv[:2] == ["tmux", "new-session"]]
+        return call
+
+    def exec_d(self, runner, argv):
+        """The one exec the pane made: argv found on PATH, given env over the server's."""
+        ((file, args, env),) = runner.execs
+        self.assertEqual((file, args), (argv[0], argv))
+        self.assertEqual(env, {**os.environ, "A": "1", "B": "x y"})
+
+    def test_one_new_session_call_runs_the_staged_argv_with_env_tags_and_its_died_hook(self):
+        runner = Container()
+        found = self.launch(runner, tags={"@kind": "docker"}, died=self.DIED)
         self.assertEqual(found, NEW_PROCESS)
+        stage, new = runner.calls
+        self.assertEqual(stage, [Container.PYTHON, "-I", "-c", tmux_cli.STAGE, self.handover])
+        path = new[new.index(tmux_cli.RELAUNCH) + 1]
+        self.assertEqual(os.path.dirname(path), self.handover)
         deco = decorations("w")
         deco[0][-1] = self.DIED
         self.assertEqual(
-            fake.calls,
+            new,
             [
-                [
-                    "tmux",
-                    "new-session",
-                    "-d",
-                    *NEW,
-                    "-s",
-                    "w",
-                    "-x",
-                    "80",
-                    "-y",
-                    "24",
-                    "-c",
-                    "/work",
-                    "-e",
-                    "A=1",
-                    "-e",
-                    "B=x y",
-                    "--",
-                    "with-secrets",
-                    "run",
-                    "a b",
-                    *(";", "set-option", "-p", "-t", "=w:", "remain-on-exit", "on"),
-                    *(";", "set-option", "-t", "=w:", "@kind", "docker"),
-                    *chained(deco),
-                    *recorded("w"),
-                ]
+                "tmux",
+                "new-session",
+                "-d",
+                *NEW,
+                "-s",
+                "w",
+                "-x",
+                "80",
+                "-y",
+                "24",
+                "-c",
+                "/work",
+                "--",
+                Container.PYTHON,
+                "-I",
+                "-c",
+                tmux_cli.RELAUNCH,
+                path,
+                *(";", "set-option", "-p", "-t", "=w:", "remain-on-exit", "on"),
+                *(";", "set-option", "-t", "=w:", "@kind", "docker"),
+                *chained(deco),
+                *recorded("w"),
             ],
         )
-        self.assertEqual(fake.kwargs, [TMUX_KW])
+        self.exec_d(runner, ["with-secrets", "run", "a b"])
+        self.assertEqual(runner.staged_mode, 0o600)
+        self.assertEqual(os.listdir(self.handover), [])
 
-    def test_refuses_what_tmux_would_misread_before_any_call(self):
-        for kw, error in (
-            ({"argv": ()}, "no command"),
-            ({"argv": ("run", "x;")}, "argv item"),
-            ({"env": {"A": "x;"}}, "env A"),
-            ({"cwd": "/w#{x}"}, "cwd"),
-            ({"cwd": "relative"}, "cwd"),
+    def test_a_64_kib_prompt_reaches_the_client_whole_on_a_short_tmux_command_line(self):
+        line = "a b ; $(echo x) #{y} \u96ea -p\n"
+        prompt = line * (65536 // len(line.encode()) + 1)
+        self.assertGreater(len(prompt.encode()), 65536)
+        runner = Container()
+        self.launch(runner, argv=("with-secrets", "--flag", prompt))
+        new = self.new_session(runner)
+        self.assertLess(len("\0".join(new).encode()), 4096)
+        self.assertFalse(any("$(echo x)" in arg for arg in new))
+        self.exec_d(runner, ["with-secrets", "--flag", prompt])
+        self.assertEqual(os.listdir(self.handover), [])
+
+    def test_a_failed_new_session_or_bad_identity_raises_and_deletes_the_handover(self):
+        for new, error in (((1, "", "boom\n"), "^tmux: boom$"), ((0, "x\n"), "bad new session")):
+            with self.subTest(new=new):
+                runner = Container(new)
+                with self.assertRaisesRegex(tmux_cli.TuiError, error):
+                    self.launch(runner)
+                self.assertEqual(runner.calls[-1][:3], ["rm", "-f", "--"])
+                self.assertEqual(os.listdir(self.handover), [])
+                self.assertEqual(runner.execs, [])
+
+    def test_a_failed_stage_raises_before_tmux(self):
+        bad = done([], 0, "/elsewhere/launch-x\n")
+        for kw, runner, error in (
+            ({"handover_dir": self.handover + "/gone"}, Container(), "^handover: .*No such file"),
+            ({"python": "/nonexistent/python"}, Container(), "^handover: "),
+            ({}, unittest.mock.Mock(return_value=bad), "^handover: bad staged file"),
         ):
             with self.subTest(kw=kw):
-                fake = FakeTmux()
                 with self.assertRaisesRegex(tmux_cli.TuiError, error):
-                    self.launch(fake, **kw)
-                self.assertEqual(fake.calls, [])
+                    self.launch(runner, **kw)
+                calls = runner.calls if isinstance(runner, Container) else runner.call_args_list
+                self.assertEqual(len(calls), 1)
 
-    def test_a_failed_call_or_bad_identity_raises(self):
-        for result, error in (((1, "", "boom\n"), "^tmux: boom$"), ((0, "x\n"), "bad new session")):
-            with self.subTest(result=result), self.assertRaisesRegex(tmux_cli.TuiError, error):
-                self.launch(FakeTmux(results={"new-session": result}))
+    def test_refuses_what_tmux_would_misread_or_exec_refuses_before_any_call(self):
+        for kw, error in (
+            ({"argv": ()}, "no command"),
+            ({"argv": ("run", "a\0b")}, "NUL"),
+            ({"env": {"A": "a\0b"}}, "NUL"),
+            ({"cwd": "/w#{x}"}, "misread"),
+            ({"cwd": "relative"}, "misread"),
+            ({"handover_dir": "run"}, "misread"),
+        ):
+            with self.subTest(kw=kw):
+                runner = Container()
+                with self.assertRaisesRegex(tmux_cli.TuiError, error):
+                    self.launch(runner, **kw)
+                self.assertEqual(runner.calls, [])
 
 
 class SessionsTest(Case):

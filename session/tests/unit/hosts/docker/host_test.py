@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session import Viewer
-from agent_pm.session.engine import worker
+from agent_pm.session.engine import tmux_cli, worker
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import (
     ClientHome,
@@ -53,6 +53,8 @@ SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 NEW = "f" * 32
 CONTAINER = f"agent-pm-w-{GEN}"
 PROCESS = "4242 $3 %7 4343"
+PYTHON = "/opt/agent-pm/venv/bin/python"
+STAGED = "/run/agent-pm/launch-x1"
 IMAGE = "agent-pm-worker:" + "a" * 64
 STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 DIGEST = "sha256:" + "c" * 64
@@ -89,12 +91,13 @@ def done(rc=0, out="", err=""):
 
 class FakeDocker:
     """The docker CLI: `ps` prints `ps`, `volume ls` prints `volumes`; an exec answers from `replies`, {command prefix: (rc, out,
-    err), an exception or a callable of the command}, the first matching prefix; else success.
+    err), an exception or a callable of the command}, the first matching prefix; else success, a
+    launch's stage printing STAGED and keeping its handover in `staged`.
     """
 
     def __init__(self, ep, order):
         self.ep, self.order, self.ps, self.replies, self.inputs = ep, order, [], {}, []
-        self.volumes = []
+        self.volumes, self.staged = [], []
 
     def __call__(self, argv, env, *, input=None, timeout):
         assert argv[:3] == [DOCKER, "--host", self.ep], argv
@@ -110,6 +113,9 @@ class FakeDocker:
                 if isinstance(reply, BaseException):
                     raise reply
                 return reply(cmd) if callable(reply) else done(*reply)
+        if cmd[:3] == [PYTHON, "-I", "-c"] and cmd[3:] == [tmux_cli.STAGE, "/run/agent-pm"]:
+            self.staged.append(json.loads(input))
+            return done(0, STAGED + "\n")
         return done()
 
     def execs(self):
@@ -500,6 +506,7 @@ class StartTest(Base):
                 ["exec", "-d", CONTAINER, RELAY, "serve"],
                 ["exec", "-i", CONTAINER, "test", "-S"],
                 "supervisor",
+                ["exec", "-i", CONTAINER, PYTHON, "-I"],
                 ["exec", "-i", CONTAINER, "tmux", "new-session"],
                 ["exec", "-i", CONTAINER, "tmux", "display-message"],
             ],
@@ -592,13 +599,25 @@ class StartTest(Base):
         self.assertEqual(self.docker.execs()[0], [RELAY, "serve", GEN])
         self.assertEqual(self.docker.execs()[1], ["test", "-S", SOCKET])
         self.assertEqual(SOCKET, "/run/agent-pm/relay.sock")
-        new = self.docker.execs()[2]
-        tail = new[new.index("--") :]
-        self.assertEqual(tail[:6], ["--", "with-secrets", "--client", "agent", "agent", "--flag"])
+        stage = self.docker.execs()[2]
+        self.assertEqual(stage[:3], [PYTHON, "-I", "-c"])
+        self.assertEqual(stage[3:], [tmux_cli.STAGE, "/run/agent-pm"])
+        self.assertEqual(
+            self.docker.staged,
+            [
+                {
+                    "argv": ["with-secrets", "--client", "agent", "agent", "--flag"],
+                    "env": {"AGENT_HOME": self.home_dir, "K": "v"},
+                }
+            ],
+        )
+        new = self.docker.execs()[3]
+        self.assertEqual(
+            new[new.index("--") : new.index(";")],
+            ["--", PYTHON, "-I", "-c", tmux_cli.RELAUNCH, STAGED],
+        )
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
-        self.assertIn(f"AGENT_HOME={self.home_dir}", new)
-        self.assertIn("K=v", new)
-        self.assertFalse(any(arg.startswith("PATH=") or "/host/bin" in arg for arg in new))
+        self.assertFalse(any("/host/bin" in arg or "AGENT_HOME" in arg for arg in new))
         for tag in ("@kind docker", f"@generation {GEN}", "@sid s1"):
             self.assertIn(tag, " ".join(new))
         self.assertIn("set-option @state dead ; wait-for -S agent-pm-dead", new)
@@ -628,6 +647,48 @@ class StartTest(Base):
         kw = self.popen_mock.call_args.kwargs
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
+
+    def test_a_long_prompt_is_staged_whole_off_tmux_s_command_line_on_start_resume_and_codex(self):
+        """Restart and resume both start with resume=1; a Claude and a Codex client differ only in
+        their with-secrets client and home."""
+        prompt = "do the task ; $(echo x)\n" * 3000
+        rollout = os.path.join(self.state, "codex", "sessions", "rollout.jsonl")
+        codex = {
+            "client": "codex",
+            "home_field": "codex_dir",
+            "home_dir": "codex",
+            "credential": "codex-access-token",
+            "home_persistent": '["sessions"]',
+        }
+        for case, client, metadata in (
+            ("start", "agent", {}),
+            ("resume", "agent", {"resume": "1"}),
+            ("codex start", "codex", codex),
+            ("codex resume", "codex", {**codex, "resume": "1"}),
+        ):
+            with self.subTest(case=case):
+                transcript = self.history() if case == "resume" else rollout
+                if case == "codex resume":
+                    os.makedirs(os.path.dirname(rollout), exist_ok=True)
+                    with open(rollout, "w") as f:
+                        f.write("{}\n")
+                self.launch = replace(
+                    self.launch, argv=("agent", "--flag", prompt), transcript=transcript
+                )
+                self.docker.staged.clear()
+                self.order.clear()
+                self.start(**metadata)
+                (new,) = [call for call in self.docker.execs() if "new-session" in call]
+                self.assertLess(len("\0".join(new).encode()), 4096)
+                self.assertEqual(
+                    new[new.index("--") : new.index(";")],
+                    ["--", PYTHON, "-I", "-c", tmux_cli.RELAUNCH, STAGED],
+                )
+                (staged,) = self.docker.staged
+                self.assertEqual(
+                    staged["argv"], ["with-secrets", "--client", client, "agent", "--flag", prompt]
+                )
+                self.assertNotIn("PATH", staged["env"])
 
     def test_a_fresh_home_gets_the_clients_files(self):
         self.start(home_files=json.dumps({"settings.json": '{"model": "opus"}'}))
@@ -805,14 +866,14 @@ class StartTest(Base):
         self.start()
         with open(os.path.join(self.state, f"{GEN}.json")) as f:
             self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
-        self.assertIn("AGENT_PM_PR_AUTHOR=agent-pm-bot[bot]", self.docker.execs()[2])
+        self.assertEqual(self.docker.staged[0]["env"]["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
         with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
             self.assertEqual(json.load(f), expiries)
         self.assertFalse(self.spawned_github)
 
     def test_no_github_app_writes_null_and_no_author(self):
         self.start()
-        self.assertFalse(any("AGENT_PM_PR_AUTHOR" in arg for arg in self.docker.execs()[2]))
+        self.assertNotIn("AGENT_PM_PR_AUTHOR", self.docker.staged[0]["env"])
         with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
             self.assertEqual(json.load(f), [])
 
