@@ -16,8 +16,8 @@ before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan d
 
 AGENT_PM_USERS, a JSON array of strings, replaces `users`. AGENT_PM_PR_AUTHOR (a Docker session's
 App bot, e.g. agent-pm-bot[bot]) replaces the gh login as B's PR author; `user` then holds only
-`users` other than it and any [bot], never the gh login; and a repo whose data has no
-permissions.push counts as pushable (the App can write wherever it can read).
+`users` other than it and any [bot], never the gh login; and every repo it reads counts as
+pushable, permissions unread (an App token gets them all false).
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
@@ -90,9 +90,8 @@ def info(repo: Repo, *, run: Runner, app: bool = False) -> tuple[bool, str]:
         raise RepoCommandError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
-        if app and isinstance(data, dict) and "push" not in (data.get("permissions") or {}):
-            data = {**data, "permissions": {"push": True}}
-        push, default = data["permissions"]["push"], data["default_branch"]
+        push = True if app else data["permissions"]["push"]
+        default = data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
         raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
     if not isinstance(push, bool) or not isinstance(default, str):
