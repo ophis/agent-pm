@@ -180,6 +180,7 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 	defer clean()
 	d.Progress = progress
 	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home))
+	h.Codex = broker.NewCodex(home, nil)
 	h.Progress = progress
 	return f(h)
 }

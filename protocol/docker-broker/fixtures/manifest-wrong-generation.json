@@ -1,4 +1,5 @@
 {
+  "client": "claude",
   "name": "worker_1",
   "generation": 1,
   "image": "agent-pm-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

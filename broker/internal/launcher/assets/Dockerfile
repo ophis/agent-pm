@@ -11,6 +11,8 @@ COPY delegate/src /opt/agent-pm/delegate/src
 COPY .claude-plugin/plugin.json /opt/agent-pm/version.json
 COPY bootstrap.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
+RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.162.1 \
+    && mkdir -p /opt/agent-pm/bin && ln -s /opt/agent-pm/clients/bin/codex /opt/agent-pm/bin/codex
 # python3 on the agent's PATH is this venv's, importing agent-pm; system site keeps pip --user working.
 RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/agent-pm/bin \
     && printf '%s\n' /opt/agent-pm/delegate/src /opt/agent-pm/session/src /opt/agent-pm/utils/src > "$(/opt/agent-pm/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-pm.pth" \

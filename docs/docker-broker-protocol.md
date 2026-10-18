@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 7** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"7"}`.
+**Protocol 8** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"8"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -14,7 +14,8 @@ drops the mount roots and deny list, and adds `workspace-rm`; protocol 5 names e
 `agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`; protocol 6 issues
 that App's installation tokens ([GitHub tokens](#github-tokens)): start's `github`, `refresh`, `status`, and the
 codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
-`status.codex` object; container manifest and relay message shapes remain unchanged.
+`status.codex` object. Protocol 8 adds client-specific manifest directories and start's
+`credential_expires_at`; relay messages and GitHub fields remain unchanged.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -68,7 +69,9 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `image` | `agent-pm-worker:<key>`; key is 64 lowercase hexadecimal characters computed by broker from both image-definition and agent-pm package contents |
 | `cwd` | Absolute existing host directory: the container path the workspace volume is mounted at and the working directory; never a bind source |
 | `workspace` | The workspace volume: `agent-pm-ws-<name>` |
-| `claude_dir` | Absolute host directory, mounted read/write at the same container path |
+| `client` | Required: `claude` or `codex` |
+| `claude_dir` | Required only for Claude, forbidden for Codex; mounted read/write at the same container path |
+| `codex_dir` | Required only for Codex, forbidden for Claude; volatile container home with only its `sessions/` host-bound |
 | `github` | Required: `null` (no GitHub token), or `{"app": "agent-pm-bot"}`, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
@@ -89,9 +92,10 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
   `/proc`, `/sys` or `/dev`, or inside `/usr`, `/etc`, `/opt/agent-pm`, `/run`, `/proc`,
   `/sys`, `/dev`, `/bin`, `/sbin`, `/lib`, `/lib32`, `/lib64`, `/libx32`, `/var/run`,
   `/var/lock` or `/home/agent`: a volume there would hide what the image runs.
-- Require `claude_dir` to be exactly `<account-home>/.agent-pm/docker-state/<name>/claude`,
-  with no symlink component, and not overlapping cwd. It is the only bind mount.
-  Reject `hook_path` equal to or below cwd, `claude_dir` or the secrets tmpfs, and a cwd
+- Require the selected directory to be exactly `<account-home>/.agent-pm/docker-state/<name>/<client>`,
+  with no symlink component and not overlapping cwd. Codex additionally requires a
+  symlink-free `sessions/` directory, its only bind mount; Claude binds its selected directory.
+  Reject `hook_path` equal to or below cwd, the selected directory or `/run/agent-pm`, and a cwd
   below `hook_path`.
 - Ensure the volume: create an absent one with labels `agent-pm.kind=ws` and
   `agent-pm.workspace=<cwd>`, read its labels back, and give its root to the
@@ -102,7 +106,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
   inside the volume.
 - Require the image to exist, be broker-built and carry `agent-pm.version`; tag syntax
   alone does not establish provenance. Missing login fails before creation and tells
-  the user to run `agent-pm-broker login claude`.
+  the user to run `agent-pm-broker login <client>`; only that client's login is read.
 - Use the system account home, never `$HOME`, for the fixed endpoint
   `unix://<account-home>/.docker/run/docker.sock`. Ignore `DOCKER_HOST`,
   `DOCKER_CONTEXT` and `~/.docker/config.json`.
@@ -111,9 +115,9 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `7` |
+| `version` | `protocol_version`: exact string `8` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |

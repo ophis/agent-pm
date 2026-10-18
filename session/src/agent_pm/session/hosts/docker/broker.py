@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from dataclasses import fields
+from datetime import datetime
 
 from agent_pm.session.engine.types import ConfigError, SessionError
 from agent_pm.session.hosts.docker.types import Started
@@ -19,7 +20,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "7"
+PROTOCOL = "8"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -115,6 +116,18 @@ def _expiries(value) -> bool:
         and _matches(TIME, e["expires_at"])
         for e in value
     )
+
+
+def _credential_expiry(value) -> bool:
+    if value is None:
+        return True
+    if not _matches(TIME, value):
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _error(command: str, returncode: int, data: dict) -> BrokerError:
@@ -264,6 +277,7 @@ class Broker:
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
+            and _credential_expiry(started.credential_expires_at)
         ):
             raise SessionError("broker: bad response to start: fields")
         return started
@@ -366,6 +380,7 @@ def write_manifest(
         "image": image,
         "cwd": cwd,
         "workspace": workspace,
+        "client": field.removesuffix("_dir"),
         field: home_path,
         "hook_path": hook_path,
         "github": {"app": github} if github else None,

@@ -42,9 +42,36 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
     destination.chmod(0o755)
 
 
+def bootstrap_codex(directory, cwd, secrets=Path("/run/agent-pm/secrets")):
+    (directory / "config.toml").write_text(
+        'cli_auth_credentials_store = "file"\n'
+        'forced_login_method = "chatgpt"\n'
+        "check_for_update_on_startup = false\n"
+        f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n'
+    )
+    (directory / "auth.json").symlink_to(secrets / "codex/auth.json")
+
+
+def inject_codex(stream, secrets=Path("/run/agent-pm/secrets")):
+    directory = secrets / "codex"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    temporary = directory / "auth.new"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            shutil.copyfileobj(stream, output)
+        os.replace(temporary, directory / "auth.json")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main(argv):
     if len(argv) == 3 and argv[0] == "claude":
         bootstrap_claude(TEMPLATES, Path(argv[1]), argv[2])
+    elif len(argv) == 3 and argv[0] == "codex":
+        bootstrap_codex(Path(argv[1]), argv[2])
+    elif argv == ["codex-auth"]:
+        inject_codex(sys.stdin.buffer)
     elif len(argv) == 2 and argv[0] == "hook":
         install_hook(STUB, Path(argv[1]))
     else:

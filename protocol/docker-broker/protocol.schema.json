@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 7",
+  "title": "Docker broker protocol 8",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -183,6 +183,15 @@
         },
         "labels": {
           "$ref": "#/$defs/labels"
+        },
+        "client": {
+          "enum": [
+            "claude",
+            "codex"
+          ]
+        },
+        "codex_dir": {
+          "$ref": "#/$defs/path"
         }
       },
       "required": [
@@ -191,11 +200,43 @@
         "image",
         "cwd",
         "workspace",
-        "claude_dir",
         "github",
-        "labels"
+        "labels",
+        "client"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "client": {
+              "const": "claude"
+            }
+          },
+          "required": [
+            "claude_dir"
+          ],
+          "not": {
+            "required": [
+              "codex_dir"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "client": {
+              "const": "codex"
+            }
+          },
+          "required": [
+            "codex_dir"
+          ],
+          "not": {
+            "required": [
+              "claude_dir"
+            ]
+          }
+        }
+      ]
     },
     "version_input": {
       "type": "object",
@@ -220,7 +261,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "7"
+          "const": "8"
         }
       },
       "required": [
@@ -343,6 +384,16 @@
         },
         "github": {
           "$ref": "#/$defs/expiries"
+        },
+        "credential_expires_at": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/time"
+            }
+          ]
         }
       },
       "required": [
@@ -350,7 +401,8 @@
         "endpoint",
         "image_digest",
         "clients",
-        "github"
+        "github",
+        "credential_expires_at"
       ],
       "additionalProperties": false
     },

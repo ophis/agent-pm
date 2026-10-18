@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -152,6 +153,61 @@ func codexFixture(t *testing.T) (Codex, *fakeCodexNative, *fakeCodexKeychain) {
 	n := &fakeCodexNative{data: codexAuth(codexNow.Add(time.Hour).Unix())}
 	k := &fakeCodexKeychain{native: n, missing: true}
 	return Codex{native: n, keychain: k, tempRoot: t.TempDir(), now: func() time.Time { return codexNow }, uid: func() int { return 501 }, password: func() ([]byte, error) { return []byte(keychainPass), nil }}, n, k
+}
+
+func TestCodexContainerCredential(t *testing.T) {
+	c, n, k := codexFixture(t)
+	if err := c.Login(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	original := slices.Clone(k.data)
+	var payload []byte
+	expiry, err := c.Inject(context.Background(), func(argv []string, stdin []byte) error {
+		if !n.locked || bytes.Contains([]byte(strings.Join(argv, " ")), []byte("secret")) {
+			t.Fatal("unlocked injection or secret argv")
+		}
+		payload = slices.Clone(stdin)
+		return nil
+	})
+	if err != nil || expiry != codexNow.Add(time.Hour).Format(time.RFC3339) {
+		t.Fatalf("expiry %s: %v", expiry, err)
+	}
+	var auth codexAuthDocument
+	if json.Unmarshal(payload, &auth) != nil || auth.Mode != "chatgptAuthTokens" || auth.Tokens.Refresh != "" || auth.Tokens.ID != auth.Tokens.Access || auth.Tokens.Account != "fake-account-secret" {
+		t.Fatal("wrong access-only document")
+	}
+	if bytes.Contains(payload, []byte("fake-refresh-secret")) || bytes.Contains(payload, []byte("fake-id-secret")) || !bytes.Equal(original, k.data) || n.runs != 1 || n.locked {
+		t.Fatal("credential isolation failed")
+	}
+}
+
+func TestCodexContainerPreflightFailures(t *testing.T) {
+	for _, failure := range []string{"missing", "expired", "native", "trust", "inject"} {
+		t.Run(failure, func(t *testing.T) {
+			c, n, k := codexFixture(t)
+			if err := c.Login(context.Background(), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			switch failure {
+			case "missing":
+				k.missing = true
+			case "expired":
+				k.data = codexAuth(codexNow.Unix())
+			case "native":
+				n.verifyErr = errors.New("bad native")
+			case "trust":
+				k.access = added()
+			}
+			called := false
+			_, err := c.Inject(context.Background(), func([]string, []byte) error {
+				called = true
+				return errors.New("fake-refresh-secret")
+			})
+			if err == nil || strings.Contains(err.Error(), "fake-refresh-secret") || called != (failure == "inject") || n.locked {
+				t.Fatal("failure leaked credentials, lock or executed injection")
+			}
+		})
+	}
 }
 
 func TestCodexLoginIsolation(t *testing.T) {

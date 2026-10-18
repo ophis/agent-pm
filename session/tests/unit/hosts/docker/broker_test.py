@@ -249,6 +249,7 @@ class ManifestTest(Case):
                     "image": "agent-pm-worker:" + "a" * 64,
                     "cwd": "/work",
                     "workspace": "agent-pm-ws-w",
+                    "client": "x",
                     "x_dir": "/home/x",
                     "hook_path": "/plugin/bin/agent-pm-session",
                     "github": None,
