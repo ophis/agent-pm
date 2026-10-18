@@ -1662,6 +1662,22 @@ class TerminalTest(Base):
                 }
                 self.assertTrue(process.wait_exit(0))
 
+    def test_a_pane_probe_that_cannot_answer_is_unanswered_before_any_kill(self):
+        process = self.terminal()
+        for reply in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over 8388608 bytes"),
+            (1, "", "server exited unexpectedly"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.order.clear()
+                self.docker.replies = {("tmux", "display-message"): reply}
+                with self.assertRaisesRegex(Unanswered, "^tmux session w: "):
+                    process.alive()
+                with self.assertRaisesRegex(Unanswered, "^tmux session w: "):
+                    process.wait_exit(0)
+                self.assertNotIn("kill", [call[0] for call in self.docker.execs()])
+
     def test_a_group_probe_that_cannot_answer_is_unknown_not_exited(self):
         process = self.terminal()
         for reply in (

@@ -395,7 +395,10 @@ class DockerTerminal(InteractiveProcess):
         return StatusState(value) if value in MARKS else None
 
     def alive(self) -> bool:
-        return self.pane.alive()
+        try:
+            return self.pane.alive()
+        except SessionError as error:  # the pane's tmux did not tell
+            raise Unanswered(str(error)) from None
 
     def send(self, action: Paste | Key) -> None:
         self.pane.send(action, self.alive)
