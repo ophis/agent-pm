@@ -43,6 +43,7 @@ from session.tests.unit.clients.codex.support import (
     CHILD,
     NATIVE,
     PLUGIN_OFF,
+    UNIFIED,
     Base,
     committed_tui,
     packaged,
@@ -926,6 +927,17 @@ class SuppliedFlagsTest(Base):
         argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
         start = argv.index(PLUGIN_OFF[1]) - 1
         self.assertEqual(argv[start : start + 2], list(PLUGIN_OFF))
+
+    def test_the_packaged_config_gives_a_crew_worker_each_codex_policy_flag_once(self):
+        self.client = packaged()
+        _, data = self.launch(self.spec)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
+        for flag, value in UNIFIED:
+            with self.subTest(value=value):
+                self.assertEqual(argv.count(value), 1)
+                self.assertEqual(argv[argv.index(value) - 1], flag)
+        self.assertEqual(argv.count("-s"), 1)
 
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")

@@ -48,10 +48,12 @@ max = "max"
 
 # [clients.codex]   Codex (session/src/agent_pm/session/clients/codex/)
 #   flags            codex flags added before a Spec's to every new session; a resume keeps its own; empty → none.
-#                    Default: as [clients.claude] flags'; the plugin id stays unquoted, or the key never matches
+#                    Default: as [clients.claude] flags'; the plugin id stays unquoted, or the key never matches. Then
+#                    every session, workers and role runs on every Host, runs without Codex's sandbox (it cannot run
+#                    in a Docker container) and with auto-reviewed approvals (docs/sessions.md › Client policy)
 [clients.codex]
 implementation = "agent_pm.session.clients.codex:CodexClient"
-flags = ["-c", "plugins.agent-pm@agent-pm.enabled=false"]
+flags = ["-c", "plugins.agent-pm@agent-pm.enabled=false", "-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']
 
 [clients.codex.tiers]
 1 = "gpt-6-astra"

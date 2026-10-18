@@ -320,6 +320,7 @@ func TestWorkerImageHasItsScripts(t *testing.T) {
 		" /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \\\n",
 		`printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig`,
 		"ENV PATH=/opt/agent-pm/bin:",
+		`printf '%s\n' 'PATH=/opt/agent-pm/bin:$PATH' > /etc/profile.d/agent-pm.sh`,
 		"COPY delegate/src /opt/agent-pm/delegate/src\n",
 		"python3 -m venv --system-site-packages /opt/agent-pm/venv",
 		`printf '%s\n' /opt/agent-pm/delegate/src /opt/agent-pm/session/src /opt/agent-pm/utils/src > "$(/opt/agent-pm/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-pm.pth"`,

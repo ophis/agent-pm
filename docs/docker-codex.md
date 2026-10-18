@@ -108,6 +108,16 @@ After installation/login and the [Docker Host setup](docker-host.md#crew-workers
 `agent-pm-crew worker w --client codex`, Codex role runs and unattended board runs use
 the same container authentication. The host needs the broker, not a personal Codex executable.
 
+**No Codex sandbox** in the container: Codex's `workspace-write` sandbox runs each command under bwrap, which needs
+new namespaces, and the container grants none (no capabilities, `no-new-privileges`), so every command fails with
+`bwrap: No permissions to create new namespace` and Codex then asks to run it unsandboxed, stalling an unattended
+run. The container is the isolation: Codex runs with `danger-full-access` and auto-reviewed approvals, the flags
+every Codex session gets ([Client policy](sessions.md#client-policy)).
+
+**Login shells**: Codex runs commands in a login shell (`bash -lc`), whose `/etc/profile` resets `PATH`. The image's
+`/etc/profile.d/agent-pm.sh` puts `/opt/agent-pm/bin` back first, so `gh` (with the session's GitHub token), `codex`
+and `python3` resolve to the image's own in login and other shells alike.
+
 **Access-only authentication** uses managed ChatGPT mode with the broker login's
 original ID token, access token and account ID (identifier), an empty refresh string
 and its refresh timestamp. The wire fields are defined only in
