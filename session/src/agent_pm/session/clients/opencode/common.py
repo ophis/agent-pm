@@ -240,10 +240,13 @@ class OpenCodeCommon:
                 [exe, "--version"],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=VERSION_WAIT,
                 stdin=subprocess.DEVNULL,
                 env=run,
-                cwd=cwd,
+                cwd=cwd
+                if os.path.isdir(cwd)
+                else None,  # a run's cwd may not exist before its start
             )
         except OSError as error:
             raise ConfigError(

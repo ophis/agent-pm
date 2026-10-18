@@ -1,9 +1,11 @@
 // A fake `opencode` TUI: loads the plugins its OPENCODE_CONFIG_CONTENT lists, as OpenCode 1.19.3
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
-// {text}, {tool}, {bash, child?} (asks unless --auto, then waits for the stdin line "allow"),
-// {error, recover?} (recovered: the turn goes on, as after a compaction), {text, late: ms} (saved
-// ms after the turn's idle), {unsaved} (an assistant message never completed), {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
+// {text, late?: ms} (late: saved ms after the turn's idle), {tool}, {bash, child?} (asks unless
+// --auto, then waits for the stdin line "allow"), {error, recover?} (recovered: the turn goes on, as
+// after a compaction), {unsaved} (an assistant message never completed), {errored} (one that
+// failed), {lateUser: ms} (the whole turn, its user message too, saved ms after its idle),
+// {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -46,6 +48,11 @@ log({
 });
 
 const messages = [];
+const late = []; // [ms after the turn's idle, a message saved then]
+let held = null; // a lateUser turn's messages, saved together later
+function save(message) {
+  (held ?? messages).push(message);
+}
 const client = { session: { messages: async () => ({ data: messages.map((m) => ({ ...m })) }) } };
 const modules = [];
 for (const url of config.plugin ?? []) modules.push(await import(url));
@@ -97,13 +104,14 @@ async function step(item) {
     const text = { id: `prt_${++part}`, sessionID: native, type: "text", text: item.text };
     const message = assistant([text]);
     if (item.late) late.push([item.late, message]);
-    else messages.push(message);
+    else save(message);
     await emit("message.part.updated", { sessionID: native, part: text, time: Date.now() });
-  } else if ("unsaved" in item) {
-    messages.push({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() } }, parts: [] });
+  } else if ("unsaved" in item || "errored" in item) {
+    const error = item.errored ? { name: "MessageAbortedError", data: { message: "aborted" } } : undefined;
+    save({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
   } else if ("tool" in item) {
     await tool(native, item.tool);
-    messages.push(assistant([{ type: "tool", tool: item.tool }]));
+    save(assistant([{ type: "tool", tool: item.tool }]));
   } else if ("bash" in item) {
     const session = item.child ? CHILD : native;
     if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
@@ -144,17 +152,23 @@ function assistant(parts) {
   return { info: { id: `msg_${++part}`, role: "assistant", time: { created: now, completed: now } }, parts };
 }
 
-const late = []; // [ms after the turn's idle, a message saved then]
 async function turn(text, steps, first) {
   if (first && !opts.session) await emit("session.created", { info: { id: native } });
   const user = { id: `msg_${++part}`, role: "user", time: { created: Date.now() } };
-  messages.push({ info: user, parts: [{ type: "text", text }] });
+  const lateUser = steps.find((item) => "lateUser" in item)?.lateUser;
+  held = lateUser ? [] : null;
+  save({ info: user, parts: [{ type: "text", text }] });
   await emit("message.updated", { sessionID: native, info: user });
   await emit("session.status", { sessionID: native, status: { type: "busy" } });
   for (const item of steps) if (await step(item)) break;
   await emit("session.status", { sessionID: native, status: { type: "idle" } });
   await emit("session.idle", { sessionID: native });
   for (const [ms, message] of late.splice(0)) setTimeout(() => messages.push(message), ms);
+  if (held) {
+    const turnMessages = held;
+    held = null;
+    setTimeout(() => messages.push(...turnMessages), lateUser);
+  }
 }
 
 await init();

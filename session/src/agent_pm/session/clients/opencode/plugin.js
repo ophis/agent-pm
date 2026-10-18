@@ -87,7 +87,7 @@ async function reply(client, user) {
       const last = answers.at(-1);
       const saved = typeof last?.info?.time?.completed === "number" && texts(last).trim();
       if (turn && last && (saved || last.info.error != null)) return best;
-    } catch {}
+    } catch {} // a failed read is one more try, not the reply
     if (Date.now() >= until) return best;
     await new Promise((resolve) => setTimeout(resolve, REPLY_POLL));
   }
@@ -123,7 +123,7 @@ function handle(event, client) {
       busy = false;
       // A fatal error's turn idles twice (its halt, then its run's end); only a busy clears it.
       if (failed) return;
-      const text = reply(client, turnUser).catch(() => "");
+      const text = reply(client, turnUser);
       call("session.idle", text.then((last) => ({ last_assistant_message: last })));
       return;
     }

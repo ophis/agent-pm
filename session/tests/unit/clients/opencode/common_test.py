@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, probe
+from agent_pm.session.clients.opencode import common as common_module
 from agent_pm.session.clients.opencode.common import (
     NATIVE,
     Bindings,
@@ -266,6 +267,12 @@ class ProgramTest(Case):
         self.assertEqual((kwargs["env"]["PATH"], kwargs["env"]["A"]), ("/opt/oc1/bin", "b"))
         self.assertEqual(kwargs["timeout"], 10)
 
+    def test_a_cwd_not_made_yet_is_not_the_checks(self):
+        common = OpenCodeCommon(packaged_table(), selector=lambda *_: ())
+        with mock.patch("subprocess.run", return_value=self.done("1.19.3")) as run:
+            common.program({}, os.path.join(self.home, "not-yet"))
+        self.assertIsNone(run.call_args.kwargs["cwd"])
+
     def test_a_2x_version_is_refused_naming_it_and_the_key(self):
         with self.assertRaises(ConfigError) as raised:
             self.program(self.done("2.0.32\n"))
@@ -275,15 +282,17 @@ class ProgramTest(Case):
         self.assertIn("[clients.opencode] executable", message)
 
     def test_a_missing_failing_or_silent_executable_is_refused(self):
-        import subprocess
-
         for case, kwargs, words in (
             (
                 "missing",
                 {"error": FileNotFoundError(2, "No such file or directory")},
                 "No such file",
             ),
-            ("timeout", {"error": subprocess.TimeoutExpired(["opencode"], 10)}, "timed out"),
+            (
+                "timeout",
+                {"error": common_module.subprocess.TimeoutExpired(["opencode"], 10)},
+                "timed out",
+            ),
             ("failed", {"result": self.done("1.19.3", code=1)}, "no version"),
             ("silent", {"result": self.done("opencode\n")}, "no version"),
         ):

@@ -192,6 +192,25 @@ class TuiSessions(Case):
         handle.send("next")
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("second answer"))
 
+    def test_a_turn_saved_after_idle_with_its_user_message_is_not_the_previous_turns(self):
+        self.scene([[{"text": "first answer"}], [{"lateUser": 800}, {"text": "second answer"}]])
+        handle, stream = self.start()
+        stream.until(TurnEnd)
+        handle.send("next")
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("second answer"))
+
+    def test_a_tool_step_saved_before_the_late_text_does_not_end_the_wait(self):
+        self.scene([[{"tool": "read"}, {"text": "after the tool", "late": 800}]])
+        _, stream = self.start()
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("after the tool"))
+
+    def test_an_errored_last_message_ends_the_wait_at_once(self):
+        self.scene([[{"errored": True}]])
+        _, stream = self.start()
+        started = time.monotonic()
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd(""))
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_a_turn_never_saved_ends_after_the_wait(self):
         self.scene([[{"unsaved": True}]])
         _, stream = self.start()
