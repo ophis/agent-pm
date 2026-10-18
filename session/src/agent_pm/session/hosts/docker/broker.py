@@ -133,6 +133,10 @@ def _credential_expiry(value) -> bool:
     return True
 
 
+def _user_id(value) -> bool:
+    return value is None or (type(value) is int and value >= 1)
+
+
 def _client_update(value, clients) -> bool:
     if not isinstance(value, dict) or value.keys() != {
         "client",
@@ -330,10 +334,7 @@ class Broker:
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
-            and (
-                started.github_user_id is None
-                or (type(started.github_user_id) is int and started.github_user_id >= 1)
-            )
+            and _user_id(started.github_user_id)
             and _credential_expiry(started.credential_expires_at)
             and (
                 _client_update(started.client_update, started.clients)

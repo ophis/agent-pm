@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"syscall"
@@ -30,6 +31,9 @@ const (
 // writeScript replaces $1's token file with stdin; the temporary name is a dot file, which no reader matches.
 const writeScript = "mkdir -p -m 0700 " + tokenDir + " && umask 0377 && rm -f " + tokenDir + `/."$1".new && cat > ` + tokenDir +
 	`/."$1".new && mv -f ` + tokenDir + `/."$1".new ` + tokenDir + `/"$1"`
+
+// userID is a GitHub user ID as the user item holds it: decimal, no sign or leading zero.
+var userID = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 type tokenEntry struct {
 	Account      string `json:"account"`
@@ -286,16 +290,17 @@ func (g GitHub) Ready(app string) error {
 // BotUserID is app's bot user ID as login github saved it.
 func (g GitHub) BotUserID(app string) (int64, error) {
 	rerun := ": run agent-pm-broker login github " + app + "."
+	missing := protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
 	data, err := g.Keychain.Secret(usersService, app)
 	switch {
 	case errors.Is(err, ErrNotFound):
-		return 0, protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
+		return 0, missing
 	case err != nil:
 		return 0, protocol.New(protocol.KeychainFailed, "Keychain access to the GitHub bot user ID failed"+rerun)
 	}
 	id, err := strconv.ParseInt(string(data), 10, 64)
-	if err != nil || !appID.Match(data) {
-		return 0, protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
+	if err != nil || !userID.Match(data) {
+		return 0, missing
 	}
 	return id, nil
 }
