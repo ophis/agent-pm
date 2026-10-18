@@ -17,12 +17,13 @@ from agent_pm.session import (
     Process,
     SessionError,
 )
-from agent_pm.session.engine.types import Hosts, Liveness
-from agent_pm.session.hosts.base import Interactive, InteractiveProcess
+from agent_pm.session.engine.types import Hosts, Launch, Liveness
+from agent_pm.session.hosts.base import Interactive, InteractiveProcess, Piped
 from agent_pm.session.hosts.types import CommandView, SessionView
-from agent_pm.utils import Status, StatusState
+from agent_pm.utils import STOP_WAIT, Status, StatusState
 
 from session.tests.case import Case
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 TWO = """[hosts]
 default = "a"
@@ -43,6 +44,7 @@ ABSTRACT = {
     Process: PROCESS,
     Interactive: {"send", "press"},
     InteractiveProcess: PROCESS | {"send", "press"},
+    Piped: {"wait", "stop"},
 }
 
 
@@ -157,6 +159,44 @@ class HostDefaults(Case):
 
 def table(base: str = TWO, text: str = ""):
     return tomllib.loads(base + text).get("hosts")
+
+
+class Pipe(Case):
+    def test_the_base_pipe_starts_the_launch_here_on_pipes_in_its_own_group(self):
+        launch = Launch(("cli", "-p"), env={"K": "v"}, cwd="/w")
+        proc = mock.Mock(stdout=object(), stderr=object())
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            piped = MinimalHost("m").pipe(None, launch, metadata={"sid": "s"})
+        popen.assert_called_once_with(
+            ("cli", "-p"),
+            cwd="/w",
+            env={"K": "v"},
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=PIPE,
+            text=True,
+            errors="replace",
+            process_group=0,
+        )
+        self.assertEqual((piped.stdout, piped.stderr), (proc.stdout, proc.stderr))
+
+    def test_a_local_piped_waits_within_its_timeout_and_stop_kills_its_group(self):
+        proc = mock.Mock()
+        proc.wait.side_effect = [TimeoutExpired("cli", 0), 3, 3]
+        with mock.patch("subprocess.Popen", return_value=proc):
+            piped = MinimalHost("m").pipe(None, Launch(("cli",), cwd="/w"))
+        self.assertIsNone(piped.wait(0))
+        self.assertEqual(piped.wait(2), 3)
+        self.assertEqual(
+            [c.kwargs for c in proc.wait.call_args_list], [{"timeout": 0}, {"timeout": 2}]
+        )
+        proc.pid = 4321
+        proc.returncode = None
+        with mock.patch("os.killpg") as killpg:
+            piped.stop(ended=True)
+            piped.close()
+        killpg.assert_called_once_with(4321, signal.SIGKILL)
+        self.assertEqual(proc.wait.call_args.kwargs, {"timeout": STOP_WAIT})
 
 
 class ParseHosts(Case):

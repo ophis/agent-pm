@@ -1,5 +1,5 @@
 """Subprocess runs with a timeout, their stderr shown with URL userinfo masked; process-group
-kills (kill_group), timed output probes (probe) and shell resume commands.
+kills (kill_group), piped starts (piped_popen), timed output probes (probe) and shell resume commands.
 """
 
 import contextlib
@@ -38,19 +38,25 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
         proc.wait(timeout=wait)
 
 
+def piped_popen(
+    argv, *, env: Mapping[str, str], cwd: str | None = None, stderr: int = subprocess.PIPE
+) -> subprocess.Popen:
+    return subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=stderr,
+        text=True,
+        errors="replace",
+        process_group=0,
+    )
+
+
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
     try:
-        proc = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            errors="replace",
-            process_group=0,
-        )
+        proc = piped_popen(argv, cwd=cwd, env=env, stderr=subprocess.DEVNULL)
     except (OSError, ValueError):
         return None
     try:

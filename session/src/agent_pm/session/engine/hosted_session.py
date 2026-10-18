@@ -45,7 +45,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.base import Host, host_resume
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.session.modes.base import BaseMode, child_env
 from agent_pm.session.viewer import display as displays
@@ -59,7 +59,6 @@ from agent_pm.utils import (
     module_roots,
     printable_abs,
     probe,
-    resume_command,
     sid_error,
     thaw,
 )
@@ -639,10 +638,7 @@ class HostedSession(Session):
         return found if resume is None else replace(found, resume_command=resume)
 
     def _host_resume(self, cwd: str) -> str | None:
-        """A tui session's Host resume command (the Docker Host's), which outranks the client's."""
-        name = self._tui()
-        argv = None if name is None else self._host._resume_argv(name)
-        return resume_command(cwd, {}, argv) if argv else None
+        return host_resume(self._host, self.name, cwd)
 
     def record(self) -> Record | None:
         self._running.state()

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 from agent_pm.session.engine.status_log import SessionStatusLog
@@ -155,40 +156,21 @@ class Supervisor:
             stopped.wait(POLL)
 
     def refresh(self, stopped) -> None:
-        """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
-        list saved; a failure writes github_refresh_failed and retries in REFRESH_RETRY s. No list:
-        returns.
-        """
-        path = os.path.join(self.state, f"{self.generation}.github.json")
-        try:
-            with open(path, encoding="utf-8") as f:
-                delay = self._delay(json.load(f))
-        except (OSError, ValueError, KeyError, TypeError):
-            return
-        while delay is not None and not stopped.wait(delay):
-            try:
-                found = self.broker.refresh(
-                    f"agent-pm-{self.name}-{self.generation}",
-                    os.path.join(self.state, f"{self.generation}.json"),
-                )
-            except SessionError as error:
-                if self.events:
-                    with contextlib.suppress(OSError, ValueError):
-                        SessionStatusLog(self.events).write(
-                            self.name, "github_refresh_failed", str(error)
-                        )
-                delay = REFRESH_RETRY
-                continue
-            with contextlib.suppress(OSError):
-                save(path, json.dumps(found), durable=True)
-            delay = self._delay(found)
-
-    def _delay(self, expiries: list) -> float | None:
-        """Seconds until the earliest expires_at less REFRESH_AHEAD, at least 0; None for no token."""
-        due = min(
-            (datetime.fromisoformat(e["expires_at"]).timestamp() for e in expiries), default=None
+        """refresh_tokens(), a failure written as github_refresh_failed."""
+        refresh_tokens(
+            self.name,
+            self.state,
+            self.generation,
+            self.broker,
+            stopped,
+            failed=self._refresh_failed,
+            clock=self.clock,
         )
-        return None if due is None else max(0.0, due - REFRESH_AHEAD - self.clock())
+
+    def _refresh_failed(self, reason: str) -> None:
+        if self.events:
+            with contextlib.suppress(OSError, ValueError):
+                SessionStatusLog(self.events).write(self.name, "github_refresh_failed", reason)
 
     def _dead(self, check: list[str]) -> bool:
         try:
@@ -201,6 +183,45 @@ class Supervisor:
         except OSError:
             return False
         return out.strip() == b"1"
+
+
+def refresh_tokens(
+    name: str,
+    state: str,
+    generation: str,
+    broker: Broker,
+    stopped: threading.Event,
+    *,
+    failed: Callable[[str], None],
+    clock: Callable[[], float] = time.time,
+) -> None:
+    """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
+    list saved; a failure goes to `failed` and retries in REFRESH_RETRY s. No list: returns.
+    """
+    path = os.path.join(state, f"{generation}.github.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            delay = _delay(json.load(f), clock())
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    while delay is not None and not stopped.wait(delay):
+        try:
+            found = broker.refresh(
+                f"agent-pm-{name}-{generation}", os.path.join(state, f"{generation}.json")
+            )
+        except SessionError as error:
+            failed(str(error))
+            delay = REFRESH_RETRY
+            continue
+        with contextlib.suppress(OSError):
+            save(path, json.dumps(found), durable=True)
+        delay = _delay(found, clock())
+
+
+def _delay(expiries: list, now: float) -> float | None:
+    """Seconds until the earliest expires_at less REFRESH_AHEAD, at least 0; None for no token."""
+    due = min((datetime.fromisoformat(e["expires_at"]).timestamp() for e in expiries), default=None)
+    return None if due is None else max(0.0, due - REFRESH_AHEAD - now)
 
 
 def main(argv=None) -> int:

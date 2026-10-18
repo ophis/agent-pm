@@ -6,22 +6,32 @@ process. Real children: session/tests/integration/modes/headless_integration_tes
 import contextlib
 import io
 import os
+import queue
 import sys
+import threading
+import time
 import unittest
+import uuid
 from unittest import mock
 
+from agent_pm.session import SESSION_NAME_RULE
 from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import (
     Access,
+    ClientHome,
     ConfigError,
     Launch,
+    Liveness,
     Prepared,
     SessionError,
     SessionInfo,
     Spec,
 )
+from agent_pm.session.hosts.base import Piped
+from agent_pm.session.modes.headless import PUT_WAIT, QUEUE_MAX, HeadlessMode
 
 from session.tests.case import PLUGIN_BIN
+from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
@@ -194,7 +204,12 @@ class Start(Base):
     def test_refused_before_its_session_line_or_a_process(self):
         for client, fields, error, message in (
             (NoHeadless(), {}, ConfigError, "client 'stub' does not support headless mode"),
-            (StubClient(), {"name": "w1"}, ConfigError, "name: tui mode only"),
+            (
+                StubClient(),
+                {"name": "w 1"},
+                ConfigError,
+                f"name must match {SESSION_NAME_RULE}, got 'w 1'",
+            ),
             (StubClient(), {"events": "/e"}, ConfigError, "events: tui mode only"),
             (StubClient(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
             (
@@ -222,7 +237,7 @@ class Start(Base):
             {"broken": {"implementation": "agent_pm.session.clients.broken:BrokenClient"}}
         )
         for fields, message in (
-            ({"name": "w1", "flags": ("--resume",)}, "name: tui mode only"),
+            ({"events": "/e", "flags": ("--resume",)}, "events: tui mode only"),
             ({"flags": ("--resume",)}, "--resume: picks the session; use sid= or resume="),
             ({}, "[clients.broken].implementation: "),
         ):
@@ -263,6 +278,198 @@ class Start(Base):
                 self.assertIs(caught.exception.__cause__, error)
                 popen.assert_called_once()
                 self.assertEqual((len(self.recorded), self.mode), (1, None))
+
+
+class FakePiped(Piped):
+    def __init__(self, codes=()):
+        self.stdout, self.stderr = io.StringIO(), io.StringIO()
+        self.codes, self.waits, self.stops, self.closes = list(codes), [], [], 0
+
+    def wait(self, timeout):
+        self.waits.append(timeout)
+        return self.codes.pop(0) if self.codes else None
+
+    def stop(self, *, ended):
+        self.stops.append(ended)
+
+    def close(self):
+        self.closes += 1
+
+
+class PipingHost(MemoryHost):
+    def __init__(self, piped):
+        super().__init__()
+        self.piped, self.pipes = piped, []
+
+    def pipe(self, name, launch, *, metadata=None):
+        self.pipes.append((name, launch, metadata))
+        return self.piped
+
+
+class HomedRun(StubRun):
+    def _home(self):
+        return ClientHome("f", "d", "HOME_DIR", "c", (("a", "b"),))
+
+
+class HomeHost(PipingHost):
+    _inherit_env = False
+
+    def _client_env(self, name, client, home, *, resume):
+        return {home.env: f"/state/{name}/{home.dir}"} if home else {}
+
+    def _resume_argv(self, name):
+        return ("agent-pm-session", "resume", name)
+
+
+class ThroughItsHost(Base):
+    def start_on(self, host, client_class=StubRun, **fields):
+        spec = Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub", **fields)
+        self.mode = HeadlessMode.start(
+            spec,
+            StubClient(Launch(NOTHING, transcript="/t.jsonl"), run=client_class),
+            registry=self.session_cls._config().registry,
+            record=self.recorded.append,
+            host=host,
+        )
+        return self.mode
+
+    def test_start_goes_through_its_host_pipe_never_popen(self):
+        host = PipingHost(FakePiped())
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("popen")):
+            mode = self.start_on(host)
+        ((name, launch, metadata),) = host.pipes
+        prepared = mode.prepared
+        self.assertEqual(
+            (name, launch, metadata),
+            (
+                None,
+                Launch(prepared.argv, env=prepared.env, cwd=self.dir, transcript="/t.jsonl"),
+                None,
+            ),
+        )
+        self.assertEqual(len(self.recorded), 1)
+
+    def test_returncode_closes_the_piped_once_and_state_never(self):
+        piped = FakePiped(codes=[None, None, 0, 0])
+        mode = self.start_on(PipingHost(piped))
+        self.assertEqual(mode.state(), Liveness.LIVE)
+        self.assertIsNone(mode.returncode(1))
+        self.assertEqual(piped.closes, 0)
+        self.assertEqual(mode.returncode(1), 0)
+        self.assertEqual(mode.returncode(1), 0)
+        self.assertEqual((piped.closes, piped.waits), (1, [0, 1, 1, 1]))
+        mode.stop()
+        self.assertEqual(piped.stops, [True])
+
+    def test_a_named_headless_spec_gets_the_hosts_client_env_and_metadata(self):
+        host = HomeHost(FakePiped())
+        with (
+            mock.patch.object(uuid, "uuid4", return_value=uuid.UUID(int=7)),
+            mock.patch.dict(os.environ, {"HM_AMBIENT": "1"}),
+        ):
+            mode = self.start_on(host, name="w1", resume=True, client_class=HomedRun)
+        ((name, launch, metadata),) = host.pipes
+        self.assertEqual((name, StubRun.specs[-1].env), ("w1", {"HOME_DIR": "/state/w1/d"}))
+        self.assertNotIn("HM_AMBIENT", launch.env)
+        self.assertEqual(
+            dict(metadata),
+            {
+                "sid": SID,
+                "client": "stub",
+                "generation": uuid.UUID(int=7).hex,
+                "home_field": "f",
+                "home_dir": "d",
+                "credential": "c",
+                "home_files": '{"a": "b"}',
+                "resume": "1",
+            },
+        )
+        resume = f"cd {self.dir} && agent-pm-session resume w1"
+        self.assertEqual((mode.prepared.info.resume, self.recorded[0].resume), (resume, resume))
+
+    def test_a_nameless_spec_gets_no_host_env_metadata_or_resume(self):
+        host = HomeHost(FakePiped())
+        self.start_on(host, client_class=HomedRun)
+        ((name, launch, metadata),) = host.pipes
+        self.assertEqual((name, metadata, self.recorded[0].resume), (None, None, ""))
+        self.assertEqual(StubRun.specs[-1].env, {})
+
+    def test_preflight_validates_a_named_run_on_its_host(self):
+        for name, validated in ((None, []), ("w1", ["w1"])):
+            with self.subTest(name=name):
+                host = HomeHost(FakePiped())
+                spec = Spec(
+                    workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub", name=name
+                )
+                HeadlessMode.preflight(
+                    spec,
+                    StubClient(Launch(NOTHING), run=HomedRun),
+                    registry=self.session_cls._config().registry,
+                    host=host,
+                )
+                self.assertEqual([c.args[0] for c in host.calls.validate.call_args_list], validated)
+
+    def test_after_stop_a_polling_caller_still_gets_the_end(self):
+        mode = self.start_on(PipingHost(FakePiped()))
+        mode.stop()
+        ends = [mode.poll(5)[1] for _ in range(2)]
+        self.assertEqual(ends, [False, True])
+
+    def test_a_pump_that_drops_its_end_after_stop_still_ends_the_poll(self):
+        piped = FakePiped()
+        piped.stderr = io.StringIO("e\n" * (QUEUE_MAX + 2))
+        mode = self.start_on(PipingHost(piped))
+        deadline = time.monotonic() + 5
+        while not mode.items.full() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        mode.stop()
+        time.sleep(PUT_WAIT * 6)  # its last lines and its end dropped
+        pumps = [t for t in threading.enumerate() if t.name.endswith("(_pump)")]
+        self.assertEqual((mode.items.full(), pumps), (True, []))
+        ended = False
+        for _ in range(QUEUE_MAX + 4):
+            if ended := mode.poll(0.1)[1]:
+                break
+        self.assertTrue(ended)
+
+    def test_an_item_queued_as_a_stopped_poll_times_out_is_kept(self):
+        mode = self.start_on(PipingHost(FakePiped()))
+        for done in mode.done:
+            self.assertTrue(done.wait(5))
+        mode.stop()
+        late, real = RuntimeError("late"), queue.Queue()
+
+        class Racy:
+            def get(self, timeout):
+                mode.items = real
+                real.put(late)
+                for done in mode.done:
+                    done.set()
+                raise queue.Empty
+
+        for done in mode.done:
+            done.clear()
+        mode.items = Racy()
+        self.assertEqual(mode.poll(0), ([], False))
+        with self.assertRaises(RuntimeError) as caught:
+            mode.poll(0)
+        self.assertIs(caught.exception, late)
+
+    def test_the_event_queue_is_bounded_and_a_stop_frees_a_pump_waiting_on_it(self):
+        piped = FakePiped()
+        piped.stderr = io.StringIO("e\n" * (QUEUE_MAX + 2))
+        mode = self.start_on(PipingHost(piped))
+        self.assertEqual(mode.items.maxsize, QUEUE_MAX)
+        deadline = time.monotonic() + 5
+        while not mode.items.full() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)
+        pumps = [t for t in threading.enumerate() if t.name.endswith("(_pump)")]
+        self.assertEqual((mode.items.full(), len(pumps)), (True, 1))
+        mode.stop()
+        for pump in pumps:
+            pump.join(5)
+        self.assertFalse(any(pump.is_alive() for pump in pumps))
 
 
 if __name__ == "__main__":

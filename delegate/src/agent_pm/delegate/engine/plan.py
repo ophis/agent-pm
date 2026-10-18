@@ -105,7 +105,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         sid=run_sid(spec.sid),
         team=composition.team,
     )
-    docker = driver.docker and spec.mode == Mode.TUI
+    docker = driver.docker and spec.mode in (Mode.TUI, Mode.HEADLESS)
     repo = reference_repo(spec.input) if docker else None
     if docker:
         spec = replace(spec, input=_on_docker(run, spec, repo, composition))

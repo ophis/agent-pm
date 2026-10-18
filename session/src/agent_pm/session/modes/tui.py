@@ -10,7 +10,6 @@ import signal
 import stat
 import tempfile
 import time
-import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import BinaryIO, Self
@@ -65,7 +64,6 @@ from agent_pm.utils import (
     inode_lock,
     json_records,
     read_regular,
-    resume_command,
 )
 
 WORDS = {
@@ -507,34 +505,15 @@ class TuiMode(BaseMode):
         cls._selected(spec, client)
         drop = identity_drop(registry)
         store = TuiStore.attach(name, host=host)
-        client_home = run._home()
-        home = host._client_env(name, spec.client or "", client_home, resume=spec.resume)
-        spec = replace(spec, name=name, events=events, env={**spec.env, **home})
+        spec, metadata = cls._hosted(
+            replace(spec, name=name, events=events), run._home(), host, name
+        )
         spec = cls._noted(spec, client)
         hook = store.hook_argv()
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
         )
-        if argv := host._resume_argv(name):
-            info = prepared.info
-            info = replace(info, resume=resume_command(info.cwd, {}, argv))
-            prepared = replace(prepared, info=info)
-        metadata = {
-            "sid": prepared.info.sid,
-            "client": spec.client or "session",
-            "generation": uuid.uuid4().hex,
-            **(
-                {
-                    "home_field": client_home.field,
-                    "home_dir": client_home.dir,
-                    "credential": client_home.credential,
-                    "home_files": json.dumps(dict(client_home.files)),
-                    "resume": "1" if spec.resume else "0",
-                }
-                if home and client_home
-                else {}
-            ),
-        }
+        prepared = cls._host_resume(prepared, host, name)
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise SessionError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")

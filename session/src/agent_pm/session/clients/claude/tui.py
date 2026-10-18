@@ -11,12 +11,11 @@ import shlex
 import stat
 import time
 from collections.abc import Sequence
-from dataclasses import replace
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.clients.claude.common import HOME, TAIL, TUI_ENV, ClaudeCommon, read
+from agent_pm.session.clients.claude.common import TAIL, TUI_ENV, ClaudeCommon, read
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -93,7 +92,7 @@ class ClaudeTui(Tui):
         self._pending: tuple[str, str | None, str | None] | None = None
 
     def _home(self):
-        return replace(HOME, files=self.common.home_files())
+        return self.common.home()
 
     def launch(self, spec: Spec, hook):
         common = self.common

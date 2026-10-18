@@ -1,7 +1,8 @@
-"""DockerHost runs each tui session in its own broker-made container (docs/docker-host.md): the
-container's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a host run supervisor for
-its hooks; the Viewer shows a session through `docker exec` (a CommandView). What the host knows of
-a session is its Host record (RECORD in its state dir), never the container's tmux options.
+"""DockerHost runs each tui or headless session in its own broker-made container
+(docs/docker-host.md): a tui one's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a
+host run supervisor for its hooks; a headless one's client through `docker exec -i` (pipe). The
+Viewer shows a session through `docker exec` (a CommandView). What the host knows of a session is
+its Host record (RECORD in its state dir), never the container's tmux options.
 """
 
 from __future__ import annotations
@@ -84,7 +85,9 @@ from agent_pm.session.hosts.docker.mounts import (
     state_dir,
     workspace_volume,
 )
+from agent_pm.session.hosts.docker.pipe import DockerPiped
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
+from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
     DOCKER_STATE,
@@ -93,7 +96,9 @@ from agent_pm.utils import (
     command_path,
     docker_home,
     inode_lock,
+    kill_group,
     module_roots,
+    piped_popen,
     read_beneath,
     read_regular,
     save,
@@ -104,6 +109,8 @@ from agent_pm.utils import (
 KIND = "docker"
 DEAD_SIGNAL = "agent-pm-dead"
 RECORD = "host.json"
+PIPE_LOCK = "pipe.lock"  # held by a headless run's harness while its client runs
+PIPED = "pipe"
 READY_WAIT = 10
 LOCK_WAIT = 30
 KILL_WAIT = 5
@@ -148,6 +155,11 @@ def _record(name: str) -> dict:
     except (OSError, ValueError):
         return {}
     return found if isinstance(found, dict) else {}
+
+
+def _piped(name: str, generation: str) -> bool:
+    found = _record(name)
+    return found.get("generation") == generation and found.get("mode") == PIPED
 
 
 def _save_record(name: str, data: Mapping) -> None:
@@ -259,6 +271,17 @@ class _Stops:
             raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
 
 
+class _Container(NamedTuple):
+    container: str
+    generation: str
+    hook: str
+    image: str
+    cwd: str
+    started: Started
+    began: str
+    ended: str
+
+
 class _Laps:
     """Seconds per phase, since the previous one ended (docs/docker-host.md › Start timing)."""
 
@@ -283,6 +306,20 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
             return False
         time.sleep(poll)
     return True
+
+
+def _accept_started(name: str, generation: str, started: Started, container: str) -> None:
+    """The broker started `container` here; its GitHub token expiries saved for refresh."""
+    if (started.endpoint, started.container) != (endpoint(), container):
+        raise SessionError(
+            f"broker: started {started.container} at {started.endpoint},"
+            f" want {container} at {endpoint()}"
+        )
+    save(
+        os.path.join(state_dir(name), f"{generation}.github.json"),
+        json.dumps(list(started.github)),
+        durable=True,
+    )
 
 
 class DockerTerminal(InteractiveProcess):
@@ -446,8 +483,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 class DockerHost(Host):
     """settings: [hosts.<name>]'s docker, the CLI's absolute path, and github.app, the GitHub App
-    whose tokens every session gets ("" or no table: none). Only terminal sessions run here, each
-    on its workspace volume.
+    whose tokens every session gets ("" or no table: none). Terminal and piped sessions run here,
+    each on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -518,6 +555,8 @@ class DockerHost(Host):
         """Name → its row; of several, the one of host.json's generation."""
         found: dict[str, Row] = {}
         for row in self._rows():
+            if _piped(row.name, row.generation):
+                continue
             if row.name not in found or row.generation == _record(row.name).get("generation"):
                 found[row.name] = row
         return found
@@ -596,6 +635,10 @@ class DockerHost(Host):
                     os.unlink(marker)
 
     def _sweep_row(self, row: Row) -> None:
+        if _piped(row.name, row.generation):
+            if _lock_free(os.path.join(state_dir(row.name), PIPE_LOCK)):
+                self.broker.close(row.container)
+            return
         path = _state_file(row.name)
         if os.path.lexists(path):
             try:
@@ -770,6 +813,87 @@ class DockerHost(Host):
         self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
+        container, generation, hook, image, cwd, started, began, ended = self._container(
+            name, launch, stops, laps, metadata
+        )
+        supervisor = lock = None
+        try:
+            stops.check()
+            _accept_started(name, generation, started, container)
+            if why := _stop_supervisor(name):
+                raise SessionError(why)
+            lock = _take_lock(name)
+            if lock is None:
+                raise SessionError(f"{state_dir(name)}/supervisor.lock: held")
+            os.ftruncate(lock, 0)
+            os.write(lock, generation.encode())
+            sid = metadata.get("sid") or (record.sid if record is not None else None)
+            _save_record(
+                name,
+                {
+                    "generation": generation,
+                    "sid": sid,
+                    "client": metadata.get("client"),
+                    "display": display,
+                    "record": None if record is None else record.to_line(),
+                    "events": events,
+                },
+            )
+            self._serve_relay(container, generation)
+            tmux = self.container_tmux(container)
+            if not _wait(lambda: tmux.runner(["test", "-S", SOCKET]).returncode == 0, READY_WAIT):
+                raise SessionError(f"no hook relay in {container} after {READY_WAIT} s")
+            laps("relay")
+            supervisor = self._spawn_supervisor(
+                name, container, generation=generation, events=events, hook=hook, lock=lock
+            )
+            process = tmux.launch(
+                name,
+                ["with-secrets", *launch.argv],
+                cwd=cwd,
+                env=self._exec_env(launch),
+                tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
+                died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
+            )
+            _save_record(name, {**_record(name), "process": process})
+            laps("tmux")
+            if not _wait(lambda: tmux.status(name) == PaneStatus.RUNNING, READY_WAIT):
+                raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
+            laps("client")
+            launched = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            result = {
+                "container": started.container,
+                "image": image,
+                "image_digest": started.image_digest,
+                "client_versions": dict(started.clients),
+                "started_at": began,
+                "ended_at": ended,
+                "phases": laps.phases,
+                "launched_at": launched,
+            }
+            save(
+                os.path.join(state_dir(name), f"{generation}.result.json"),
+                json.dumps(result),
+                durable=True,
+            )
+            stops.check()
+        except (SessionError, TuiError, OSError) as error:
+            cleanup = self._roll_back(supervisor, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
+        finally:
+            if lock is not None:
+                os.close(lock)
+        laps.report(f"docker timing {name} {generation}")
+        return DockerTerminal(
+            name, process, tmux=tmux, host=self, container=container, generation=generation
+        )
+
+    def _container(
+        self, name: str, launch: Launch, stops: _Stops, laps: _Laps, metadata: Mapping[str, str]
+    ) -> _Container:
+        """The checks, image, workspace, home and plan, then the broker's start, rolled back on a
+        transport failure: what terminal and pipe share.
+        """
         generation, field, home_dir, credential = (
             metadata.get(key) for key in ("generation", "home_field", "home_dir", "credential")
         )
@@ -779,10 +903,16 @@ class DockerHost(Host):
         if resume not in ("0", "1"):
             raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
         self.sweep(name)
-        if any(row[1:2] == [name] for row in self._ps()):
-            raise SessionError(
-                f"docker session {name}: a container for it exists; close {name} first"
-            )
+        for row in self._ps():
+            if row[1:2] == [name]:
+                if len(row) == len(Row._fields) and _piped(name, row[2]):
+                    raise SessionError(
+                        f"docker session {name}: a headless run holds it;"
+                        " wait for it to end or stop its run"
+                    )
+                raise SessionError(
+                    f"docker session {name}: a container for it exists; close {name} first"
+                )
         home = docker_home(name, home_dir)
         if resume == "1" and read_beneath(home, launch.transcript, limit=0) is None:
             raise ConfigError(f"docker session {name}: no native history to resume in {home}")
@@ -837,63 +967,64 @@ class DockerHost(Host):
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         ended = timestamp()
         laps("start")
-        supervisor = lock = None
+        return _Container(container, generation, hook, image, cwd, started, began, ended)
+
+    def pipe(
+        self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
+    ) -> DockerPiped:
+        """`docker exec -i` of the client in its own container, no tmux, relay or supervisor; it
+        holds the tui lock while it starts, then its pipe lock while the client runs.
+        """
+        if name is None:
+            raise ConfigError("a headless session on the Docker Host needs a name")
+        for key in launch.env:
+            if key in CLEARED or key.startswith("DOCKER_"):
+                raise ConfigError(
+                    f"docker session {name}: env {key} would reconfigure the docker CLI"
+                )
+        lock = tui_lock(name)
+        os.makedirs(os.path.dirname(lock), mode=0o700, exist_ok=True)
+        with _Stops() as stops, inode_lock(lock, wait=False) as held:
+            if not held:
+                raise SessionError(f"docker session {name}: busy")
+            try:
+                return self._pipe(name, launch, stops, metadata or {})
+            finally:
+                if not os.path.lexists(_state_file(name)):
+                    os.unlink(lock)
+
+    def _pipe(
+        self, name: str, launch: Launch, stops: _Stops, metadata: Mapping[str, str]
+    ) -> DockerPiped:
+        laps = _Laps()
+        self._check_cwd(name, launch)
+        container, generation, _, image, cwd, started, began, ended = self._container(
+            name, launch, stops, laps, metadata
+        )
+        lock = proc = None
         try:
             stops.check()
-            if (started.endpoint, started.container) != (endpoint(), container):
-                raise SessionError(
-                    f"broker: started {started.container} at {started.endpoint},"
-                    f" want {container} at {endpoint()}"
-                )
-            save(
-                os.path.join(state_dir(name), f"{generation}.github.json"),
-                json.dumps(list(started.github)),
-                durable=True,
-            )
-            if why := _stop_supervisor(name):
-                raise SessionError(why)
-            lock = _take_lock(name)
-            if lock is None:
-                raise SessionError(f"{state_dir(name)}/supervisor.lock: held")
-            os.ftruncate(lock, 0)
-            os.write(lock, generation.encode())
-            sid = metadata.get("sid") or (record.sid if record is not None else None)
+            _accept_started(name, generation, started, container)
+            lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
                 name,
                 {
                     "generation": generation,
-                    "sid": sid,
+                    "sid": metadata.get("sid"),
                     "client": metadata.get("client"),
-                    "display": display,
-                    "record": None if record is None else record.to_line(),
-                    "events": events,
+                    "mode": PIPED,
                 },
             )
-            self._serve_relay(container, generation)
-            tmux = self.container_tmux(container)
-            if not _wait(lambda: tmux.runner(["test", "-S", SOCKET]).returncode == 0, READY_WAIT):
-                raise SessionError(f"no hook relay in {container} after {READY_WAIT} s")
-            laps("relay")
-            supervisor = self._spawn_supervisor(
-                name, container, generation=generation, events=events, hook=hook, lock=lock
+            env = self._exec_env(launch)
+            argv, docker_env = docker_call(
+                self.docker,
+                *("exec", "-i", "--workdir", cwd),
+                *(arg for key in env for arg in ("--env", key)),
+                *(container, "with-secrets", *launch.argv),
             )
-            process = tmux.launch(
-                name,
-                ["with-secrets", *launch.argv],
-                cwd=cwd,
-                env={
-                    **{k: v for k, v in launch.env.items() if k != "PATH"},
-                    **({"AGENT_PM_PR_AUTHOR": f"{self.github}[bot]"} if self.github else {}),
-                },
-                tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
-                died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
-            )
-            _save_record(name, {**_record(name), "process": process})
-            laps("tmux")
-            if not _wait(lambda: tmux.status(name) == PaneStatus.RUNNING, READY_WAIT):
-                raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
+            proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
-            launched = datetime.now().astimezone().isoformat(timespec="milliseconds")
             result = {
                 "container": started.container,
                 "image": image,
@@ -902,7 +1033,6 @@ class DockerHost(Host):
                 "started_at": began,
                 "ended_at": ended,
                 "phases": laps.phases,
-                "launched_at": launched,
             }
             save(
                 os.path.join(state_dir(name), f"{generation}.result.json"),
@@ -910,16 +1040,43 @@ class DockerHost(Host):
                 durable=True,
             )
             stops.check()
-        except (SessionError, TuiError, OSError) as error:
-            cleanup = self._roll_back(supervisor, container)
-            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
-        finally:
+        except (SessionError, OSError, ValueError) as error:
+            if proc is not None:
+                kill_group(proc)
             if lock is not None:
                 os.close(lock)
+            cleanup = self._roll_back(None, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         laps.report(f"docker timing {name} {generation}")
-        return DockerTerminal(
-            name, process, tmux=tmux, host=self, container=container, generation=generation
+        return DockerPiped(
+            name,
+            proc,
+            close=lambda: self._close_piped(name, container),
+            lock=lock,
+            refresh=lambda stopped: run_supervisor.refresh_tokens(
+                name,
+                state_dir(name),
+                generation,
+                self.broker,
+                stopped,
+                failed=lambda reason: LOG.warning(
+                    "docker session %s: github_refresh_failed %s", name, reason
+                ),
+            ),
         )
+
+    def _exec_env(self, launch: Launch) -> dict[str, str]:
+        return {
+            **{k: v for k, v in launch.env.items() if k != "PATH"},
+            **({"AGENT_PM_PR_AUTHOR": f"{self.github}[bot]"} if self.github else {}),
+        }
+
+    def _close_piped(self, name: str, container: str) -> None:
+        try:
+            self.broker.close(container)
+        except SessionError as error:
+            LOG.warning("docker session %s: %s", name, error)
+        self.reclaim()
 
     def _serve_relay(self, container: str, generation: str) -> None:
         argv, env = docker_call(self.docker, "exec", "-d", container, RELAY, "serve", generation)
