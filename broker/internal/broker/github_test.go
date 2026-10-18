@@ -107,7 +107,6 @@ type api struct {
 	revoked   []string
 	issueFail map[int]int // nth issue (1-based) → status
 	revokeErr func(token string) int
-	down      bool
 }
 
 func (a *api) handler(t *testing.T) http.HandlerFunc {
