@@ -1,6 +1,7 @@
 """Codex headless launches and native JSON events with session binding and usage limits."""
 
 import json
+import os
 
 from agent_pm.session.clients.codex.common import (
     LIMIT_PREFIXES,
@@ -25,7 +26,11 @@ from agent_pm.session.modes.client_adapters.headless import Headless
 
 
 class CodexHeadless(Headless):
+    def _home(self):
+        return self.common.home()
+
     def __init__(self, common: CodexCommon):
+        self._set_runtime(None)
         self.common = common
         self.state: SessionState | None = None
         self.last_reply = ""
@@ -36,7 +41,8 @@ class CodexHeadless(Headless):
         self.state = self.common.prepare(spec)
         self.limit_sent = False
         snapshot = self.state.snapshot
-        argv = ["codex", "exec", *launch_flags(snapshot, interactive=False)]
+        executable = os.path.join(self._runtime.bin_dir, "codex") if self._runtime else "codex"
+        argv = [executable, "exec", *launch_flags(snapshot, interactive=False)]
         if resume:
             argv.extend(self.common.selector(self.state.native_id, resume=True))
         _, literal = split_flags(snapshot.flags)

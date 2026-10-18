@@ -173,36 +173,20 @@ class Supervisor:
                 SessionStatusLog(self.events).write(self.name, "github_refresh_failed", reason)
 
     def expire(self, stopped) -> None:
-        path = os.path.join(self.state, f"{self.generation}.credential.json")
-        data = read_regular(path)
-        if data is None:
-            return
-        try:
-            expiry = json.loads(data)
-            if expiry is None:
-                return
-            delay = max(0.0, datetime.fromisoformat(expiry).timestamp() - self.clock())
-        except (ValueError, TypeError):
-            delay = 0.0
-        if stopped.wait(delay):
-            return
-        record = read_regular(os.path.join(self.state, "host.json"))
-        try:
-            client = json.loads(record or b"{}").get("client") or "<client>"
-        except (ValueError, AttributeError):
-            client = "<client>"
-        reason = f"Client authentication expired; run agent-pm-broker login {client}; token refresh is not supported yet"
+        expire_client(
+            self.name,
+            self.state,
+            self.generation,
+            self.broker,
+            stopped,
+            failed=self._auth_expired,
+            clock=self.clock,
+        )
+
+    def _auth_expired(self, reason: str) -> None:
         if self.events:
             with contextlib.suppress(OSError, ValueError):
                 SessionStatusLog(self.events).write(self.name, "client_auth_expired", reason)
-        while True:
-            try:
-                self.broker.close(f"agent-pm-{self.name}-{self.generation}")
-            except SessionError:
-                if stopped.wait(REFRESH_RETRY):
-                    return
-            else:
-                return
 
     def _dead(self, check: list[str]) -> bool:
         try:
@@ -215,6 +199,46 @@ class Supervisor:
         except OSError:
             return False
         return out.strip() == b"1"
+
+
+def expire_client(
+    name: str,
+    state: str,
+    generation: str,
+    broker: Broker,
+    stopped: threading.Event,
+    *,
+    failed: Callable[[str], None],
+    clock: Callable[[], float] = time.time,
+) -> None:
+    data = read_regular(os.path.join(state, f"{generation}.credential.json"))
+    if data is None:
+        return
+    try:
+        expiry = json.loads(data)
+        if expiry is None:
+            return
+        delay = max(0.0, datetime.fromisoformat(expiry).timestamp() - clock())
+    except (ValueError, TypeError):
+        delay = 0.0
+    if stopped.wait(delay):
+        return
+    record = read_regular(os.path.join(state, "host.json"))
+    try:
+        client = json.loads(record or b"{}").get("client") or "<client>"
+    except (ValueError, AttributeError):
+        client = "<client>"
+    failed(
+        f"Client authentication expired; run agent-pm-broker login {client}; token refresh is not supported yet"
+    )
+    while True:
+        try:
+            broker.close(f"agent-pm-{name}-{generation}")
+        except SessionError:
+            if stopped.wait(REFRESH_RETRY):
+                return
+        else:
+            return
 
 
 def refresh_tokens(
