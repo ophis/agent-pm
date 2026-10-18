@@ -158,6 +158,7 @@ class HomeFilesTest(Base):
         "autoContinueAtUsageLimit": True,
         "promptSuggestionEnabled": False,
         "tui": "fullscreen",
+        "outputStyle": "Concise",
     }
     SEARCHES = {"CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "50"}
 
@@ -189,6 +190,7 @@ class HomeFilesTest(Base):
             **dict.fromkeys(self.UNATTENDED, False),
             "promptSuggestionEnabled": True,
             "tui": "default",
+            "outputStyle": "Explanatory",
         }
         self.settings(json.dumps(host))
         self.assertEqual(self.container_settings(), self.UNATTENDED)
