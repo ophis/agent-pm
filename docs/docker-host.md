@@ -224,6 +224,20 @@ On the Docker Host the Delegate:
 - drops the outcome's `files` before checking it, noting `files_dropped` in `run.jsonl`,
   so an engineer run posts no spec or plan to Linear.
 
+Before the first role run, run `"$B" login github agent-pm-bot` ([Log in](#log-in)) and
+install the App on every repo the runs need, `private_docs` included. Whichever repos the
+App is installed on, every Docker session (role run or crew worker) can read and write;
+no other private repo.
+
+In the container, `repo.py worktree` makes a fresh blobless clone at
+`<Workdir>/src/<owner>/<name>-<slug>`, never a worktree of a `[local_clones]` clone, and
+counts a repo it can read as pushable. With `AGENT_PM_PR_AUTHOR` set, `repo.py status`
+never calls `gh api user`: it finds the PR `agent-pm-bot[bot]` opened, and puts in `user`
+only the comments and reviews by `AGENT_PM_USERS`, the bot's own in `others`. An engineer
+opens its draft PR through the `gh` wrapper, authored by `agent-pm-bot[bot]`; the
+Delegate's ready gate on the host marks it ready, you approve it with your own account, and
+revision rounds push to the same branch. Then [review before pulling](#review-before-pulling).
+
 Each start, restart or resume runs a new generation in a new container, built from the
 current image. `restart` closes the running container and starts the next one; `resume`
 (after `close`, or once the container is gone) starts one in the same cwd. Both keep the
@@ -360,8 +374,8 @@ flowchart LR
 A worker's workspace is a Docker volume, never a host directory: `agent-pm-ws-<name>`
 for every session, a crew worker or a [role run](#role-runs). The broker mounts it at the
 session's cwd, the path it has on the host, which stays untouched and unshared. A worker starts in an empty directory and clones what
-it works on; until token delivery lands it can clone only public repos and cannot push.
-npm, uv and pip caches go to `.agent-pm-cache` inside it.
+it works on with the App's tokens; its work reaches the host only through GitHub. npm, uv
+and pip caches go to `.agent-pm-cache` inside it.
 
 The broker creates the volume at its first start, labelled `agent-pm.kind` (`ws`) and
 `agent-pm.workspace` (the cwd),
@@ -396,6 +410,24 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 | in `C`, `git clone` a public repo into `src/x` and add a file; close; `"$B" workspace-rm --volume agent-pm-ws-worker_1` | exit 12, naming `src/x`; `docker volume ls` still lists it |
 | `docker ps -a --filter label=agent-pm.check` during and after | the check container while it runs, nothing after |
 
+## Review before pulling
+
+A worker's branch can carry files your tools run. Review a bot PR on GitHub first; only
+then `gh pr checkout <number>` in your own clone. Before running anything there, read every
+change to:
+
+- `Makefile` and `package.json` scripts;
+- `.claude/` (settings hooks, commands, `CLAUDE.md`) and `.vscode/` (tasks, settings);
+- `.envrc`;
+- hooks config: `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `core.hooksPath`, `core.fsmonitor`.
+
+The same goes for an output repo pm and researcher runs push straight to `main` (such as
+`private_docs`): `git fetch`, then `git diff --stat HEAD @{upstream}`, before you `git pull`.
+
+The target repo's own `push` and `pull_request` workflows run a worker's changed scripts
+with the repo's secrets before you review: require approval for workflow runs, or keep
+secrets in environments that need it.
+
 ## Risks
 
 - The token sits in every running container's tmpfs, readable by any process there;
@@ -421,8 +453,28 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
   catches it.
 - Docker Desktop file sharing must include `~/.agent-pm/docker-state`
   (Settings > Resources > File sharing); otherwise start fails with `start_failed`.
+- Why workspaces are volumes: a worker writing to a host dir could plant files that host
+  tools run, not only git hooks: `.claude/settings.json` hooks, `.envrc`, Makefile and
+  `package.json` scripts, `.vscode` tasks, and a git `core.fsmonitor`.
 - A workspace volume outlives its container: it stays until its cwd leaves the host or
   `workspace-rm`, and holds whatever the worker cloned. A crew worker whose cwd stays keeps
-  its volume for good.
+  its volume for good: remove it with `workspace-rm`.
+- Volumes are named by session: a board issue that switches client gets a new sid, name
+  and empty volume, and clones again; the old volume goes only when the issue is pruned, so
+  its unpushed work must be fetched from it by hand.
+- The `workspace-rm` check sees only git: ignored files (autopilot plan docs, progress
+  logs) go with the volume; `--force` drops unpushed work too.
+- A kept dirty volume takes disk until you deal with it; reclaiming runs only on a Docker close.
+- Volumes are plain files in the Docker Desktop VM: anyone with Docker access can read them.
+- `claude_dir` is still a read-write bind mount: a worker can leave settings, hooks,
+  `CLAUDE.md`, symlinks or large files there, for its own later generations only; whatever
+  on the host reads it must not follow symlinks.
+- Every Docker session can push to any unprotected branch of every repo the App is
+  installed on, `private_docs`'s `main` included, not only its issue's repo.
+- A pulled branch, or a pull of an output repo a run pushed to `main`, brings files your
+  tools run (`.claude/settings.json`, `.vscode/tasks.json`, …); only
+  [review before pulling](#review-before-pulling) guards against it.
+- A target repo's `push` and `pull_request` CI runs a worker's changed scripts with the
+  repo's secrets before review ([Review before pulling](#review-before-pulling)).
 - Containers reach the host through `host.docker.internal`: a host service listening on
   all interfaces or on Docker's gateway is reachable from workers.
