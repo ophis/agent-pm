@@ -758,8 +758,13 @@ class HarnessDelegate(Delegate):
         views, unanswered = self._views(self._read())
         if not views and unanswered is None:
             raise NotShowable("delegate has no live showable session")
-        for view in views:
-            self._shown_by().hide(*view)
+        try:
+            for view in views:
+                self._shown_by().hide(*view)
+        except SessionError as error:
+            if unanswered is None:
+                raise
+            raise SessionError(f"{error}; {_unknown(unanswered)}") from error
         if unanswered is not None:
             raise _unknown(unanswered)
 
@@ -772,6 +777,11 @@ class HarnessDelegate(Delegate):
             agent, unanswered = None, error
         if agent is not None:
             agent.close()
+        unchecked = (
+            None
+            if unanswered is None
+            else f"close {state.agent_name}: agent session not checked: {unanswered}"
+        )
         process = self._harness(state)
         if process is not None:
             try:
@@ -779,9 +789,10 @@ class HarnessDelegate(Delegate):
                 if self._harness_host.attachable:
                     self._shown_by().close(state.harness_name, self._harness_host)
             except SessionError as error:
-                raise SessionError(f"close {state.harness_name}: {error}") from error
-        if unanswered is not None:
-            raise Unanswered(f"close {state.agent_name}: agent session not checked: {unanswered}")
+                also = "" if unchecked is None else f"; {unchecked}"
+                raise SessionError(f"close {state.harness_name}: {error}{also}") from error
+        if unchecked is not None:
+            raise Unanswered(unchecked)
 
     def session_status(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;

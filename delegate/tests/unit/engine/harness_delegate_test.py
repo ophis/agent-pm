@@ -1198,6 +1198,36 @@ class UnansweredTest(HarnessCase):
         self.assertEqual(FakeViewer.closed, [harness])
         self.assertTrue(HarnessSession.live[agent].alive())
 
+    def test_a_failing_harness_step_still_names_the_unchecked_agent(self):
+        HarnessSession.reset(showable=True)
+        self.settings(harness_host="harness")
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
+        harness, agent = record.sessions
+        unchecked = "docker ps: timed out"
+        process = RecordingHost.processes["harness", harness]
+        with (
+            self.unanswered(),
+            mock.patch.object(FakeViewer, "hide", side_effect=SessionError("hide refused")),
+            self.assertRaises(SessionError) as caught,
+        ):
+            view.hide()
+        self.assertEqual(
+            str(caught.exception),
+            f"hide refused; delegate agent session liveness unknown: {unchecked}",
+        )
+        with (
+            self.unanswered(),
+            mock.patch.object(process, "close", side_effect=SessionError("close refused")),
+            self.assertRaises(SessionError) as caught,
+        ):
+            view.close()
+        self.assertEqual(
+            str(caught.exception),
+            f"close {harness}: close refused; close {agent}: agent session not checked: {unchecked}",
+        )
+
     def test_replace_resume_and_clean_refuse_while_the_agent_does_not_answer(self):
         view = self.gave_up()
         before = self.metadata()
