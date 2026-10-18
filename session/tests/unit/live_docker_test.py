@@ -177,6 +177,15 @@ class BaselineTest(Case):
         ]
         self.assertEqual(self.check(inspect(Mounts=mounts), (sessions,)), [])
 
+    def test_docker_desktop_shared_folder_source(self):
+        volume = {"Type": "volume", "Name": "agent-pm-ws-live", "Destination": CWD}
+        bind = {"Type": "bind", "Source": "/host_mnt" + CLAUDE_DIR, "Destination": CLAUDE_DIR}
+        self.assertEqual(self.check(inspect(Mounts=[volume, bind])), [])
+        inside = {"Type": "bind", "Source": "/host_mnt" + CWD + "/src", "Destination": "/w"}
+        problems = gate.baseline(inspect(Mounts=[volume, inside]), "live", CWD, [CWD + "/src"])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("cwd", problems[0])
+
     def test_no_new_privileges_with_value(self):
         self.assertEqual(
             self.check(inspect(HostConfig__SecurityOpt=["no-new-privileges:true"])), []
