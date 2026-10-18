@@ -152,22 +152,55 @@ class HomeFilesTest(Base):
         with open(os.path.join(self.config_dir, "settings.json"), "wb") as f:
             f.write(text if isinstance(text, bytes) else text.encode())
 
-    def test_only_the_hosts_model_and_effort_keys_reach_a_container_home(self):
-        other = {"hooks": {"Stop": []}, "permissions": {"allow": ["Bash"]}, "env": {"K": "v"}}
+    UNATTENDED = {
+        "skipWorkflowUsageWarning": True,
+        "autoCompactEnabled": True,
+        "autoContinueAtUsageLimit": True,
+    }
+    SEARCHES = {"CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "50"}
+
+    def container_settings(self):
+        ((name, text),) = ClaudeCommon({}).home_files()
+        self.assertEqual(name, "settings.json")
+        return json.loads(text)
+
+    def test_only_the_hosts_model_keys_and_search_cap_reach_a_container_home(self):
+        other = {
+            "hooks": {"Stop": []},
+            "permissions": {"allow": ["Bash"]},
+            "statusLine": {"type": "command", "command": "x"},
+            "enabledPlugins": {"p@m": True},
+            "extraKnownMarketplaces": {"m": {}},
+            "theme": "dark",
+            "env": {"K": "v", **self.SEARCHES},
+        }
         self.settings(json.dumps({**self.MODEL, **other, "apiKeyHelper": "/bin/key"}))
         ((name, text),) = ClaudeClient(CONFIG).tui()._home().files
-        self.assertEqual((name, json.loads(text)), ("settings.json", self.MODEL))
+        self.assertEqual(
+            (name, json.loads(text)),
+            ("settings.json", {**self.UNATTENDED, **self.MODEL, "env": self.SEARCHES}),
+        )
         self.assertEqual(dataclasses.replace(ClaudeClient(CONFIG).tui()._home(), files=()), HOME)
 
-    def test_missing_or_invalid_host_settings_give_no_file(self):
-        self.assertEqual(ClaudeCommon({}).home_files(), ())
+    def test_the_unattended_keys_are_fixed_whatever_the_host_sets(self):
+        self.settings(json.dumps(dict.fromkeys(self.UNATTENDED, False)))
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
+
+    def test_no_env_without_the_hosts_search_cap(self):
+        for env in ({"K": "v"}, {}, ["x"], "x"):
+            with self.subTest(env=env):
+                self.settings(json.dumps({**self.MODEL, "env": env}))
+                self.assertEqual(self.container_settings(), {**self.UNATTENDED, **self.MODEL})
+
+    def test_missing_or_invalid_host_settings_give_only_the_unattended_keys(self):
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
         for text in ("not json", "[]", '{"theme": "dark"}', b"\xff"):
             with self.subTest(text=text):
                 self.settings(text)
-                self.assertEqual(ClaudeCommon({}).home_files(), ())
+                self.assertEqual(self.container_settings(), self.UNATTENDED)
         os.remove(os.path.join(self.config_dir, "settings.json"))
         os.mkdir(os.path.join(self.config_dir, "settings.json"))
-        self.assertEqual(ClaudeCommon({}).home_files(), ())
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
 
     def test_an_explicit_model_or_effort_flag_still_wins(self):
         self.settings(json.dumps(self.MODEL))

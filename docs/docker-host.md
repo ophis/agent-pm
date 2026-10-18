@@ -382,12 +382,19 @@ generation's `<generation>.seq` (the last hook event it delivered), `<generation
 (its image is no longer the current one) and `rejected.jsonl`
 (one `gen`, `seq`, `reason` line per event refused, never its content); `close` keeps it.
 
-Each new start writes the fresh Claude config dir a `settings.json` holding only `model`,
-`effortLevel` and `modelSettings` from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`,
-else `~/.claude/settings.json`), so the worker runs the host's default model and effort; no
-other host setting, credential, hook or permission reaches it. Without readable host
-settings it runs on Claude's default. `--model`/`--effort` and role config still win, as on
-tmux.
+Each new start writes the fresh Claude config dir a `settings.json` holding:
+
+- `skipWorkflowUsageWarning`, `autoCompactEnabled` and `autoContinueAtUsageLimit`, all
+  `true` whatever the host sets, so an unattended run never stops at the Workflow usage
+  warning, a full context or a usage limit;
+- `model`, `effortLevel`, `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`
+  from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`, else
+  `~/.claude/settings.json`), so the worker runs the host's default model and effort.
+
+No other host setting, credential, hook, plugin, status line or permission reaches it.
+Without readable host settings it runs on Claude's default model. `--model`/`--effort` and
+role config still win, as on tmux. A resume keeps the home, and so the `settings.json`, its
+session started with.
 
 ### Start timing
 
