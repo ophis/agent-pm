@@ -274,38 +274,4 @@ go to the user. Workers never run live probes or read real credentials.
 
 ### Pending live checks
 
-For the manager and the user on authorized macOS Apple silicon with Docker Desktop, after release; workers run
-none. Use an isolated login, versions meeting the minimum, and record only versions, times, statuses, counts and
-redacted errors: never dump auth, keychain, environment or token values, change credential dates or test real
-expiry. Missing observations stay incomplete. Final expiry and close retries are covered with fake clocks and
-credentials.
-
-Owners: [PR #408](https://github.com/ophis/agent-pm/pull/408), [PR #409](https://github.com/ophis/agent-pm/pull/409)
-and [PR #411](https://github.com/ophis/agent-pm/pull/411)'s live checklists:
-
-| Check | Expect |
-|---|---|
-| Start two Codex crew workers, a terminal role run and an unattended Codex board role run | no login/onboarding prompt; replies reach `crew report` and completion events; no role-specific manifest |
-| Hide personal host Codex from `PATH` for these | both modes and container hook trust still start, from image files |
-| Inspect mounts/security without dumping env or secrets | one workspace volume; only the client history bind; volatile home/secrets; user `agent`, CapDrop ALL, no-new-privileges; no Docker socket, privileged mode or host namespaces |
-| Restart, then close and resume a worker | same native identity and history; no duplicate completed event; missing history fails |
-| Finish a headless run, reopen it as a terminal, close, resume headless on the same Host | same native ID, `CODEX_HOME`, history and workspace; replies and outcomes once |
-| Restart the host supervisor, then query/send | hook relay resumes, same identity, published deadline kept |
-| After native credential replacement and close, check state | host client dir holds only allowed history; no auth/token file or value in host state or workspace; personal login unchanged |
-| Start, restart, close/resume with supported pinned/image versions and a newer registry stable | each generation runs registry latest; audit and progress agree; program outside workspace/history |
-| Repeat with the registry unavailable, then an unavailable/corrupt supported update | image version restored and recorded; no secret injected before preparation |
-| Below-minimum image, then below-minimum pinned host; then equal and higher versions | low versions refused before any secret, with rebuild/upgrade instructions; equal/higher admitted; a failed advisory lookup still starts |
-| Close after a successful update, then resume | executable tmpfs gone; next generation selects again; native history kept |
-| Use a whitelisted skill in both modes | namespaced skill runs from the image, its scripts/references resolve; empty whitelist loads none |
-
-Owner: [TASK-650](https://linear.app/ophis-workgroup/issue/TASK-650), concurrent refresh (none recorded yet; TASK-651
-owns the headless counterpart):
-
-| Check | Expect |
-|---|---|
-| Keep personal host Codex and two container terminals talking across one genuine broker renewal | all three continue; same native identities and personal login; running container processes adopt the new access value, not just a new file or process |
-| With the login due, run `/usr/local/libexec/agent-pm/agent-pm-broker refresh --container <container> --manifest <manifest>` for each run at once | exactly one native rotation, the waiter reuses it; no lock failure or lost login; a later due renewal succeeds |
-| Record both | fixed/image/actual versions, generation digests, rotation count, per-stage timing, safe evidence of same-process adoption |
-| Cut the network during a scheduled renewal, restore it before expiry | classified events, one-minute retries; same identity continues; no run login |
-| Restart the supervisor, then interact | published deadline reread; renewal continues for the same history |
-| A generation fails | the repair message in [Refresh and recovery](#refresh-and-recovery); after the host command, resume keeps identity and history |
+Live checks still pending after release, with their owners: [Docker checks › Codex live checks](docker-checks.md#codex-live-checks).

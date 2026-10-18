@@ -124,6 +124,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, risks |
+| [Docker checks](docs/docker-checks.md) | hand checks for each Docker Host step and the pending Codex live checks |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: purpose, least privilege, storage, readers, lifetime, revocation |
 | [Docker Codex](docs/docker-codex.md) | Codex install, login, sessions, refresh, version policy and the plan A verdict (probe records: `ophis/private_docs`) |
 | [Docker broker protocol](docs/docker-broker-protocol.md) | broker schemas, errors and shared fixtures (developers) |

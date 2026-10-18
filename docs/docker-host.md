@@ -3,8 +3,9 @@
 `agent-pm-broker` builds the worker image and starts and closes worker containers on macOS (Apple silicon) with
 Docker Desktop. It keeps the logins and the GitHub App key in the login keychain and writes credentials only into a
 container's tmpfs. Session's Docker Host calls it ([Run workers](#run-workers)); the sections up to [Close](#close)
-install the broker and check it by hand. JSON interface: [Docker broker protocol](docker-broker-protocol.md); Codex:
-[Codex operations](docker-codex.md); each credential's readers, lifetime and revocation: [Credentials](credentials.md).
+install the broker by hand; checks for each step: [Docker checks](docker-checks.md). JSON interface: [Docker broker
+protocol](docker-broker-protocol.md); Codex: [Codex operations](docker-codex.md); each credential's readers, lifetime
+and revocation: [Credentials](credentials.md).
 
 The host needs no Node and no personal Codex: the clients run in the image. On subscriptions a container holds a
 model credential; an API key behind a host model relay, so that containers hold none, is not supported.
@@ -31,12 +32,7 @@ To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-
 the image, Codex by its [version policy](docker-codex.md#container-versions); the image's `gh` is the version agent-pm
 pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs.
 
-| Check | Expect |
-|---|---|
-| `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
-| `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"13"}` |
-| edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
+Checks: [Docker checks › Install](docker-checks.md#install).
 
 ## Log in
 
@@ -67,12 +63,7 @@ It saves the token in a new item, makes its access trust only the broker as `log
 ask, it first prints `macOS will ask to let agent-pm-broker use agent-pm-claude: enter the login keychain password if
 asked and click Always Allow`, then reads once with the dialog and once without, proving Always Allow was clicked.
 
-| Check | Expect |
-|---|---|
-| output | `Claude setup-token saved; keychain trusts only the broker`, no token |
-| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, account `setup-token`; the only trusted application is `$B` |
-| shell history | no token |
-| first Claude [start](#start) after it | no keychain dialog |
+Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
 **GitHub**: the private key of the one GitHub App, `agent-pm-bot`, must be a generic-password item in the login
 keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
@@ -91,13 +82,7 @@ credential; needs network) and keeps its ID in the broker-only item `agent-pm-gi
 identity. The App must be private (installable only on your account): every session gets a token for every repo of
 every installation.
 
-| Check | Expect |
-|---|---|
-| first run after an install | one hidden `Login keychain password` question; no macOS dialog, or one only after the password |
-| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, then `GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID <ID>` (`gh api 'users/agent-pm-bot[bot]' --jq .id`), no key |
-| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
-| `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
-| rerun the login | same output, no password question |
+Checks: [Docker checks › GitHub login](docker-checks.md#github-login).
 
 ## Build
 
@@ -121,16 +106,7 @@ concurrent builds of two packages (two worktrees, a worker's check beside a boar
 `build_failed`; a removal pass removes nothing, printing `agent-pm-broker: kept older images: cannot take the image
 lock: <reason>`.
 
-| Check (`I` = the printed image) | Expect |
-|---|---|
-| `docker image inspect "$I" --format '{{json .Config.Labels}}'` | `agent-pm.version` equals the plugin's version; `agent-pm.key`, `agent-pm.agent-uid`, `agent-pm.agent-gid` |
-| `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
-| `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (it imports the Delegate), then `repo.py`'s usage: role runs use the plugin's own team at `/opt/agent-pm/team` |
-| delete a line (e.g. `WORKDIR`) from your Dockerfile, rebuild | still the labels and `/opt/agent-pm/bin/with-secrets`; restore the line |
-| `docker image ls --filter reference='agent-pm-*'` | the new pair and the older one, leased within the hour |
-| `rm ~/.agent-pm/docker/images/<older key>`, rebuild with `--max-age 0`, list again | only the new pair, plus an older worker image a container still uses |
-| `"$B" build --agent-pm "$PKG" --max-age 0 & "$B" build --agent-pm "$PKG2" --max-age 0; wait` (`PKG2` another worktree's, other content) | both `"rebuilt":true`; both pairs listed |
-| `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, same `image`, new `digest`; `npm install` runs, not `CACHED` |
+Checks: [Docker checks › Build](docker-checks.md#build).
 
 ### Plugins
 
@@ -158,12 +134,7 @@ valid `.claude-plugin/plugin.json` name, or holds a symlink leaving its director
 preflight the same way. Whitelisting trusts the plugin's code (Claude loads its hooks, MCP servers and scripts) beside
 the container's credentials.
 
-| Check | Expect |
-|---|---|
-| `"$B" build --agent-pm "$PKG" --plugin autopilot`, then `docker run --rm "$I" sh -c 'echo "$CLAUDE_CODE_PLUGIN_DIRS"; stat -c %U /opt/agent-pm/plugins/autopilot; touch /opt/agent-pm/plugins/autopilot/x'` | `/opt/agent-pm/plugins/autopilot`, `root`, `Permission denied` |
-| `"$B" build --agent-pm "$PKG" --plugin no-such-plugin` | exit 8, `build_failed`, `Plugin no-such-plugin is not installed: …`; no Docker build |
-| `claude plugin update autopilot@<marketplace>`, the same build | `"rebuilt":true`, a new key |
-| `/autopilot:build` in a container's Claude | the skill starts |
+Checks: [Docker checks › Plugins](docker-checks.md#plugins).
 
 ## Start
 
@@ -180,33 +151,7 @@ EOF
 It prints `container` (`C` below), `endpoint`, `image_digest` and the actual `clients` versions; Codex starts add the
 [version audit](docker-broker-protocol.md#success-fields).
 
-| Check | Expect |
-|---|---|
-| `docker inspect "$C" --format '{{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.Config.User}} {{.HostConfig.Privileged}} {{.HostConfig.NetworkMode}} {{.HostConfig.PidMode}}'` | `[ALL] [no-new-privileges] agent false bridge ` (empty PidMode) |
-| `docker inspect "$C" --format '{{json .Mounts}}'` | the volume `agent-pm-ws-worker_1` at cwd, one bind (claude_dir), no `docker.sock` |
-| `docker exec "$C" grep -E "$HOME\|/run/agent-pm" /proc/mounts` | the volume at cwd, claude_dir at its host path, the `/run/agent-pm/secrets` tmpfs; nothing else from the host |
-| `docker volume inspect agent-pm-ws-worker_1 --format '{{json .Labels}}'` | `agent-pm.kind` `ws`, `agent-pm.workspace` `$HOME/src/demo` |
-| `docker exec "$C" sh -c 'touch x; stat -c %U .; echo $npm_config_cache'`, then `ls ~/src/demo` | `agent`, `$HOME/src/demo/.agent-pm-cache`; the host dir stays empty |
-| `docker exec "$C" ps -o comm= -p 1` | `tini` |
-| `docker exec "$C" sh -c 'id -u; command -v sudo; tmux -V; git --version; gh --version; python3 --version; uv --version; node --version; claude --version; codex --version'` | uid not 0, no sudo, every version prints |
-| `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
-| `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
-| `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
-| `cat ~/.agent-pm/docker-state/worker_1/claude/settings.json` | the fixed values of [Lifecycle](#lifecycle) |
-| `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket (Codex preparation and GitHub calls may open outbound HTTPS) |
-| with `"github": {"app": "agent-pm-bot"}` in the manifest | start's `github` lists one `{"account", "expires_at"}` per installation, `github_user_id` the ID `login github` saved |
-| then `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
-| `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work with no login |
-| `docker exec -w <clone of a private repo> "$C" gh api 'repos/{owner}/{repo}' --jq .full_name` | works with no login (`{owner}` from `origin`) |
-| `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
-| `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}` |
-
-**Claude**: `docker exec -it "$C" with-secrets --client claude claude` opens with no login, theme or trust prompt and
-answers one sentence.
-
-**Hijack**: with `export DOCKER_HOST=tcp://127.0.0.1:9 DOCKER_CONTEXT=bogus`, a `~/.docker/config.json` naming another
-context, and an executable `docker` first on `PATH` that runs `touch /tmp/fake-docker-ran`, `"$B" build --agent-pm
-"$PKG"` still reports `"rebuilt":false` and `/tmp/fake-docker-ran` does not exist. Restore `~/.docker/config.json`.
+Checks: [Docker checks › Start](docker-checks.md#start).
 
 ## What a container gets
 
@@ -225,21 +170,7 @@ Each row's source holds the exact values.
 
 ## Refusals
 
-Each fails before any container exists (`docker ps -a` unchanged):
-
-| Change to the manifest or host | Exit |
-|---|---|
-| add a field `"x": 1` | 3 `manifest_rejected` |
-| `image` a tag not built by `build` (e.g. `agent-pm-worker:` + 64 `0`) | 6 `image_rejected` |
-| `cwd` a missing dir, `/`, `/home`, `/usr/local/x`, `/opt/agent-pm`, `/home/agent` or `$HOME` (it holds `claude_dir`) | 4 `mount_rejected` |
-| `claude_dir` any other path | 4 |
-| `hook_path` inside `cwd` | 4 |
-| `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
-| reinstall the broker (`install.sh --build`), then start a Claude manifest without `login claude` | 5 `login_required`, "trusts another broker build"; no keychain dialog; log in again after |
-| `security lock-keychain ~/Library/Keychains/login.keychain-db`, then start a Claude manifest | 5 `login_required`, "unlock the login keychain, or run agent-pm-broker login claude"; no dialog; `security unlock-keychain ~/Library/Keychains/login.keychain-db` after |
-| start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container untouched |
-| while `C` runs, the same manifest with a new `generation` | 4 `mount_rejected`: its volume is in use |
-| `docker volume create agent-pm-ws-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: no workspace labels; `docker volume rm agent-pm-ws-worker_3` after |
+What the broker refuses before creating any container, with each exit code: [Docker checks › Refusals](docker-checks.md#refusals).
 
 ## Close
 
@@ -488,10 +419,7 @@ docs, progress logs) go with the volume. An absent volume is `removed:false`.
   client gets a new name and empty volume; the old one goes when the issue is pruned, so fetch its unpushed work by
   hand.
 
-| Check | Expect |
-|---|---|
-| in `C`, `git clone` a public repo into `src/x` and add a file; close; `"$B" workspace-rm --volume agent-pm-ws-worker_1` | exit 12, naming `src/x`; `docker volume ls` still lists it |
-| `docker ps -a --filter label=agent-pm.check` during and after | the check container while it runs, nothing after |
+Checks: [Docker checks › Workspace volumes](docker-checks.md#workspace-volumes).
 
 ## Review before pulling
 
@@ -521,7 +449,7 @@ secrets in environments that need it.
 - Image builds trust the client vendors' npm packages ([Codex's policy](docker-codex.md#container-versions)).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation; if it cannot read it, the
   resume fails rather than starting anew. Claude may show an onboarding prompt after a rebuild; the
-  [Claude check](#start) catches it.
+  [Claude check](docker-checks.md#start) catches it.
 - Docker Desktop file sharing must include `~/.agent-pm/docker-state` (Settings > Resources > File sharing), or start
   fails with `start_failed`.
 - A kept dirty volume takes disk until you act. Volumes are plain files in the Docker Desktop VM: anyone with Docker
