@@ -560,17 +560,21 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 		return nil, tokensError(err)
 	}
 	now := g.API.Now()
+	type outcome struct {
+		entry  pending
+		result string
+	}
 	var done []string
-	var outcomes []string // done's: noted once the backlog no longer holds them, so a failed removal notes nothing twice
+	var resolved []outcome // done's: noted once the backlog no longer holds them, so a failed removal notes nothing twice
 	for i, p := range list {
 		expires, err := time.Parse(time.RFC3339, p.ExpiresAt)
 		if err != nil || !now.Before(expires) {
-			done, outcomes = append(done, p.Token), append(outcomes, audit.ExpiredUnrevoked)
+			done, resolved = append(done, p.Token), append(resolved, outcome{p, audit.ExpiredUnrevoked})
 			continue
 		}
 		err = g.API.Revoke(ctx, p.Token)
 		if err == nil {
-			done, outcomes = append(done, p.Token), append(outcomes, audit.Revoked)
+			done, resolved = append(done, p.Token), append(resolved, outcome{p, audit.Revoked})
 			continue
 		}
 		if github.Transport(err) {
@@ -590,9 +594,8 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 			return nil, tokensError(err)
 		}
 	}
-	for i, token := range done {
-		p := list[slices.IndexFunc(list, func(p pending) bool { return p.Token == token })]
-		g.note(p.Container, outcomes[i], "", p.entry(), nil)
+	for _, o := range resolved {
+		g.note(o.entry.Container, o.result, "", o.entry.entry(), nil)
 	}
 	out := []protocol.Pending{}
 	for _, p := range list {

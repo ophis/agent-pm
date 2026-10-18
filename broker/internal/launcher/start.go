@@ -161,11 +161,8 @@ func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
 	bind := func(path string) {
 		add("--mount", bindMount(path, path), audit.Mount{Type: "bind", Source: path, Target: path, Mode: "rw"})
 	}
-	readonly, mode := false, "rw"
-	if readonly {
-		mode = "ro"
-	}
-	add("--mount", volumeMount(m.Workspace, m.CWD, readonly), audit.Mount{Type: "volume", Source: m.Workspace, Target: m.CWD, Mode: mode})
+	spec, mount := workspaceMount(m.Workspace, m.CWD, false)
+	add("--mount", spec, mount)
 	owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
 	if m.Client == "codex" {
 		tmpfs(runtimeDir, "rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0")
