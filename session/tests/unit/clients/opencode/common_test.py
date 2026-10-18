@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.docker.host import DockerHost
+from agent_pm.session.modes.base import BaseMode
 
 from session.tests.case import Case
 from session.tests.unit.clients.opencode.support import (
@@ -353,6 +354,17 @@ class SelectionTest(Case):
         self.assertEqual(
             transcript.database({"XDG_DATA_HOME": data}),
             os.path.join(data, "opencode", "opencode.db"),
+        )
+        spec, metadata = BaseMode._hosted(self.spec, self.common.home(), host, "w")
+        self.assertEqual(spec.env["XDG_DATA_HOME"], data)
+        self.assertEqual(
+            {k: metadata[k] for k in ("home_field", "home_dir", "credential", "resume")},
+            {
+                "home_field": "opencode_dir",
+                "home_dir": "opencode",
+                "credential": "none",
+                "resume": "0",
+            },
         )
 
     def test_extra_flags_are_refused_with_the_reserved_ones(self):

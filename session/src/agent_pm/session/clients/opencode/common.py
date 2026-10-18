@@ -11,7 +11,6 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 
-import agent_pm.session
 from agent_pm.session.clients.common import (
     CHECKS,
     FLAGS,
@@ -51,7 +50,7 @@ from agent_pm.utils import (
 TABLE = "[clients.opencode]"
 # A container Host's session state dir: OpenCode keeps opencode.db under $XDG_DATA_HOME/opencode.
 HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
-SOURCE = os.path.dirname(os.path.dirname(os.path.dirname(agent_pm.session.__file__)))  # session/src
+HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
 BINDING_MAX = 4096
@@ -189,8 +188,9 @@ def edit_rules(cwd: str, dirs: list[str], reads: list[str]) -> dict[str, str]:
 
 
 def image_path(found: Container, local: str) -> str:
-    """`local`, a file of this session/src, at its path in the container's image."""
-    return os.path.join(found.source, os.path.relpath(local, SOURCE))
+    """`local`, a file of this package, at its path in the container's image."""
+    package = __name__.split(".")[:-1]
+    return os.path.join(found.source, *package, os.path.relpath(os.path.abspath(local), HERE))
 
 
 def refuse(flags: Iterable[str], banned: tuple[str, ...], where: str) -> None:
@@ -240,7 +240,7 @@ class OpenCodeCommon:
         self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
     ) -> tuple[str, ...]:
         """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
-        container(context)
+        container(context)  # refuses an incomplete container context
         refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
         if not spec.resume:
             return ()

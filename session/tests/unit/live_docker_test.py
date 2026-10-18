@@ -719,10 +719,6 @@ class RoleRunTest(Case):
         self.assertEqual(str(raised.exception), "FAIL token refresh of c: not yet")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 LSOF = (
     "COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
     "ollama  12345    u    3u  IPv4 0x1234      0t0  TCP {address}:11434 (LISTEN)\n"
@@ -772,3 +768,7 @@ class SessionIdsTest(Case):
             with self.subTest(ids=ids, before=before):
                 (problem,) = gate.one_session(ids, before)[1]
                 self.assertIn(words, problem)
+
+
+if __name__ == "__main__":
+    unittest.main()

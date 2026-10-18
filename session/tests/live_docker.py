@@ -632,10 +632,10 @@ class OpenCodeChecks(Checks):
         native, problems = one_session(
             session_ids(hooks, launched["launched_at"]), self.session if resumed else None
         )
-        if resumed:
-            passed(problems, f"{start.step}: same OpenCode session {self.session}")
-        elif problems:
+        if problems:
             raise SystemExit(f"FAIL {start.step}: {problems[0]}")
+        if resumed:
+            print(f"PASS {start.step}: same OpenCode session {native}", flush=True)
         self.session = native
 
 
