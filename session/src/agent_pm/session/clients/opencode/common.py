@@ -70,6 +70,7 @@ VALUED = (
     "--username",
     "--dir",
     "--port",
+    "--prompt",
     "-s",
     "--session",
 )
@@ -205,7 +206,22 @@ class OpenCodeCommon:
     def variant(self, effort: Effort | None) -> str | None:
         return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
 
-    def inline(self, spec: Spec, host_address: str) -> dict:
+    def selection(
+        self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
+    ) -> tuple[str, ...]:
+        """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
+        if context.bin_dir is not None:
+            raise ConfigError("the opencode client runs on a local Host only")
+        refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
+        if not spec.resume:
+            return ()
+        sid = spec.sid or ""
+        native = self.native(spec.access.cwd, sid)
+        if native is None:
+            raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
+        return self.selector(native, resume=True)
+
+    def inline(self, spec: Spec, host_address: str, plugin: str | None = None) -> dict:
         """The launch's OpenCode config: ollama on `host_address`, no auto-update, shell calls asking
         but pre-approved commands, Access dirs and reads outside the cwd, edit_rules.
         """
@@ -228,6 +244,7 @@ class OpenCodeCommon:
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
         return {
             "$schema": "https://opencode.ai/config.json",
+            **({"plugin": [plugin]} if plugin is not None else {}),
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
@@ -242,13 +259,15 @@ class OpenCodeCommon:
             "permission": permission,
         }
 
-    def environment(self, spec: Spec, context: ClientContext) -> dict[str, str]:
+    def environment(
+        self, spec: Spec, context: ClientContext, plugin: str | None = None
+    ) -> dict[str, str]:
         """The config's env, then Access's and the Spec's, under the client's own."""
         access = spec.access
         supplied = {**access.env, **spec.env}
         refuse_env(supplied, "a run's env")
         env = {k: v for k, v in {**self.env, **supplied}.items() if k not in LOCAL_ENV_VARS}
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address))
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address, plugin))
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         if not access.project:
             env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"

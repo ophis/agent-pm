@@ -3,12 +3,29 @@
 import json
 import os
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, probe
-from agent_pm.session.clients.opencode.common import NATIVE, Bindings, OpenCodeCommon, worktree
-from agent_pm.session.engine.types import ConfigError, Effort, Resumable, SessionInfo, Usage
+from agent_pm.session.clients.opencode.common import (
+    NATIVE,
+    Bindings,
+    OpenCodeCommon,
+    worktree,
+)
+from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
+    Access,
+    ClientContext,
+    ConfigError,
+    Effort,
+    Permission,
+    Resumable,
+    SessionInfo,
+    Spec,
+    Usage,
+)
 
 from session.tests.case import Case
 from session.tests.unit.clients.opencode.support import SES, make_db, packaged_table
@@ -215,6 +232,53 @@ class SessionStatusTest(Case):
         self.assertEqual(self.status(XDG_DATA_HOME=other).resumable, Resumable.YES)
         configured = OpenCodeClient({**packaged_table(), "env": {"XDG_DATA_HOME": other}})
         self.assertEqual(configured.session_status(self.info).resumable, Resumable.YES)
+
+
+EXTRA = ("--prompt", "--pure")
+
+
+class SelectionTest(Case):
+    def setUp(self):
+        self.common = common()
+        self.cwd = os.path.realpath(self.home)
+        self.spec = Spec(workdir=self.home, access=Access(cwd=self.cwd), sid="run-1")
+
+    def test_a_fresh_run_selects_nothing_and_a_resume_its_bound_session(self):
+        self.assertEqual(self.common.selection(self.spec, LOCAL_CONTEXT), ())
+        self.common.bind(self.cwd, "run-1", SES)
+        resumed = self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
+        self.assertEqual(resumed, ("--session", SES))
+
+    def test_an_unbound_resume_or_a_container_host_fails(self):
+        with self.assertRaisesRegex(ConfigError, "no OpenCode session bound to run ID 'run-1'"):
+            self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
+        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
+        with self.assertRaisesRegex(ConfigError, "runs on a local Host only"):
+            self.common.selection(self.spec, context)
+
+    def test_extra_flags_are_refused_with_the_reserved_ones(self):
+        for flags in (("-c",), ("--prompt=x",), ("--pure",)):
+            with self.subTest(flags=flags), self.assertRaises(ConfigError):
+                self.common.selection(replace(self.spec, flags=flags), LOCAL_CONTEXT, EXTRA)
+        self.assertEqual(
+            self.common.selection(replace(self.spec, flags=("--pure",)), LOCAL_CONTEXT), ()
+        )
+
+    def test_the_prompt_takes_a_value(self):
+        with self.assertRaises(ConfigError):
+            self.common.selection(
+                replace(self.spec, flags=("--prompt", "-c")), LOCAL_CONTEXT, EXTRA
+            )
+        self.assertEqual(
+            self.common.selection(replace(self.spec, flags=("--title", "-c")), LOCAL_CONTEXT), ()
+        )
+
+    def test_a_plugin_is_listed_in_the_inline_config(self):
+        plugin = "file:///opt/plugin.js"
+        env = self.common.environment(self.spec, LOCAL_CONTEXT, plugin=plugin)
+        self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"])["plugin"], [plugin])
+        plain = self.common.environment(self.spec, LOCAL_CONTEXT)
+        self.assertNotIn("plugin", json.loads(plain["OPENCODE_CONFIG_CONTENT"]))
 
 
 class WorktreeTest(Case):
