@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 5** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"5"}`.
+**Protocol 6** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"6"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -11,7 +11,9 @@ Protocol 2 marked the stub's switch to the [relay wire format](docker-relay-prot
 protocol 3 drops start's `update` (the clients come from the image) and adds build's `--max-age`;
 protocol 4 mounts the manifest's `workspace` volume at `cwd` instead of binding the host cwd,
 drops the mount roots and deny list, and adds `workspace-rm`; protocol 5 names every volume
-`agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`.
+`agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`; protocol 6 issues
+that App's installation tokens ([GitHub tokens](#github-tokens)): start's `github`, `refresh`, `status`, and the
+codes `github_failed` and `refresh_failed`.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -30,7 +32,9 @@ manifest. References are internal, so Go and Python can load it without network 
 | `agent-pm-broker version` | `version_input` | `version_output` |
 | `agent-pm-broker build --agent-pm /absolute/package [--max-age SECONDS]` | `build_input` | `build_output` |
 | `agent-pm-broker start --manifest /absolute/manifest.json` | `start_input` plus `manifest` for file contents | `start_output` |
+| `agent-pm-broker refresh --container <container> --manifest /absolute/manifest.json` | `refresh_input` | `refresh_output` |
 | `agent-pm-broker close --container <container>` | `close_input` | `close_output` |
+| `agent-pm-broker status` | `status_input` | `status_output` |
 | `agent-pm-broker workspace-rm --volume <volume> [--force]` | `workspace_rm_input` | `workspace_rm_output` |
 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
@@ -63,7 +67,7 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `cwd` | Absolute existing host directory: the container path the workspace volume is mounted at and the working directory; never a bind source |
 | `workspace` | The workspace volume: `agent-pm-ws-<name>` |
 | `claude_dir` | Absolute host directory, mounted read/write at the same container path |
-| `github` | Required: `null`, or `{"app": <App name>}`, whose tokens a later protocol issues; this broker rejects anything but `null` at `start` |
+| `github` | Required: `null` (no GitHub token), or `{"app": "agent-pm-bot"}`, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
 
@@ -105,10 +109,12 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `5` |
+| `version` | `protocol_version`: exact string `6` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings |
-| `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account |
+| `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
+| `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
+| `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}` |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
 
 ```mermaid
@@ -118,7 +124,8 @@ flowchart LR
     C --> B[Bootstrap and hook stub]
     B --> P[Probe both clients' versions]
     P --> T[Inject token through exec stdin]
-    T --> O[Return start output]
+    T --> G[Issue and write GitHub tokens]
+    G --> O[Return start output]
 ```
 Failure to determine either version is `start_failed`.
 Any fatal failure after creation attempts container deletion before returning an error.
@@ -134,18 +141,20 @@ The common `error` definition validates the exit/code/command combination. Examp
 | Exit | `error.code` | Commands | Failure class |
 |---|---|---|---|
 | `2` | `usage` | All, or `unknown` | Unknown command/flag, missing/extra argument, malformed argument value |
-| `3` | `manifest_rejected` | start | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation |
+| `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than `agent-pm-bot`; refresh: a manifest of another container or with `github` `null` |
 | `4` | `mount_rejected` | start | Runtime cwd, `claude_dir`, symlink or hook-placement rejection; a workspace volume with other labels or in use |
-| `5` | `login_required` | start | Setup-token entry absent; message gives login command |
+| `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
-| `7` | `docker_unreachable` | build/start/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
+| `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
 | `8` | `build_failed` | build | Package directory/version invalid, context hashing or either build stage failed |
 | `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client version probing or token injection failed |
 | `10` | `close_failed` | close | Daemon reachable but container deletion failed |
-| `11` | `keychain_failed` | start | Keychain access denied, locked or otherwise failed; distinguish from absent entry |
+| `11` | `keychain_failed` | start/refresh/close/status | Keychain access denied, locked or otherwise failed; distinguish from absent entry. close: the container is deleted, but its tokens could not be revoked |
 | `12` | `workspace_dirty` | workspace-rm | The check found unsaved work; `message` names each repo (relative to the mount point) and the `--force` command |
 | `13` | `workspace_rejected` | workspace-rm | The volume has no `agent-pm.kind` label, or its `agent-pm.workspace` path is not clean, absolute and outside the container's own trees |
 | `14` | `workspace_failed` | workspace-rm | No worker image, the check failed or printed no result, or deletion failed |
+| `15` | `github_failed` | start/refresh | A GitHub request failed (`message` gives the HTTP status, never a body), or the App private key is unusable |
+| `16` | `refresh_failed` | refresh | No tokens recorded for the container, it was closed during the refresh, or writing a token into it failed |
 | `70` | `internal_error` | All, or `unknown` | Unexpected broker failure |
 
 Classify the first fatal failing stage; daemon connectivity failures use exit 7.
@@ -163,6 +172,29 @@ container name in required `error.container`. The caller retries close with
 partially completed start. Optional `cause` carries a sanitized underlying diagnostic.
 Process termination by signal may prevent a JSON response; callers treat missing or
 invalid responses and inconsistent process/JSON exit codes as transport failure.
+
+## GitHub tokens
+
+With `github` not `null`, start signs a JWT with the App's private key (its keychain item's account is the App
+ID), lists every installation of the App, and issues one token per installation for all its repositories with
+exactly `contents: write`, `pull_requests: write`, `checks: read`, `actions: read`. Each token goes through exec
+stdin to `/run/agent-pm/secrets/github/<account login>` (0400, owned by agent) and nowhere else: no argv, output,
+manifest or log.
+
+| Keychain item (broker-only) | Account | Content |
+|---|---|---|
+| `agent-pm-tokens` | container name | `{"app", "tokens": [{"account", "installation", "token", "expires_at"}]}` |
+| `agent-pm-revocations` | `pending` | `[{"container", "account", "token", "expires_at"}]` |
+
+- Every token is recorded before it is written in, and revoked (`DELETE /installation/token`) only with the
+  recorded value, never one read back from the container. A 401 or 404 answer counts as revoked.
+- A failed start revokes the tokens it issued; refresh records and writes in a new token before revoking the old.
+- close moves the container's tokens to the backlog, revokes it, then deletes the container.
+- start, close and status retry the backlog: an expired entry is dropped, the first request with no answer stops
+  the retry. A backlog the broker cannot read (a broker reinstalled since made it) is skipped by start and close,
+  without stderr; close then revokes a readable record directly.
+- `~/.agent-pm/docker/tokens.lock` serializes each read-modify-write of these items, never a GitHub request.
+- Nothing falls back to another credential.
 
 ## Shared fixtures
 

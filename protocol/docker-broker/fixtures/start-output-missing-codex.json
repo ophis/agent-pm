@@ -4,5 +4,6 @@
   "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "clients": {
     "claude": "2.1.0"
-  }
+  },
+  "github": []
 }
