@@ -54,6 +54,8 @@ class Install(Case):
         self.bin.mkdir()
         for tool in TOOLS:
             (self.bin / tool).symlink_to(shutil.which(tool))
+        (self.bin / "uname").write_text('#!/bin/sh\necho "$PLATFORM"\n')
+        (self.bin / "uname").chmod(0o755)
         self.log = Path(self.home, "calls.log")
         self.plugin = Path(self.home, "plugin")
         (self.plugin / "broker/worker").mkdir(parents=True)
@@ -75,6 +77,7 @@ class Install(Case):
             "FLAGS": "flags=0x10002(adhoc,runtime)",
             "ENTITLEMENTS": "Executable=/x",
             "INSTALLED": str(self.installed),
+            "PLATFORM": "Darwin arm64",
         }
 
     def fake(self, *names):
@@ -219,9 +222,18 @@ class Install(Case):
         )
         self.assertEqual(self.calls(), [])
 
+    def test_other_platforms_stop_before_download_naming_build(self):
+        self.fake("gh", "sudo")
+        for platform in ("Darwin x86_64", "Linux x86_64"):
+            result = self.run_script("install.sh", RELEASED=str(self.asset), PLATFORM=platform)
+            self.assert_nothing_installed(result)
+            self.assertIn(f"not {platform}", result.stderr)
+            self.assertIn(f"sh {self.plugin.resolve()}/broker/install.sh --build", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def test_build_seeds_definition_builds_signs_and_installs(self):
         self.fake("gh", "go", "codesign", "sudo")
-        result = self.run_script("install.sh", "--build")
+        result = self.run_script("install.sh", "--build", PLATFORM="Darwin x86_64")
         self.assertEqual(result.returncode, 0, result.stderr)
         seeded = Path(self.agent_pm, "docker/worker/Dockerfile")
         self.assertEqual(seeded.read_text(), (BROKER / "worker/Dockerfile").read_text())

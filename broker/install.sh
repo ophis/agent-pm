@@ -26,6 +26,9 @@ if [ "$mode" = build ]; then
   command -v go >/dev/null 2>&1 || fail "go is required to build agent-pm-broker (brew install go)"
   sh "$here/build.sh" "$work/agent-pm-broker"
 else
+  platform=$(uname -sm)
+  [ "$platform" = "Darwin arm64" ] \
+    || fail "release assets are built for Darwin arm64 only, not $platform; build it locally: sh $here/install.sh --build"
   manifest="$(dirname "$here")/.claude-plugin/plugin.json"
   version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null | sed -n 1p)
   [ -n "$version" ] || fail "no version in $manifest"
