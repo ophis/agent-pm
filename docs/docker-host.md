@@ -50,9 +50,10 @@ GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
 generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
 content the base64 key. Change the item's access in place to trust only the broker; content and account stay. When a step is
 not yet in place, the broker asks once on its terminal, without echo, for the login keychain
-password (a wrong one fails with `keychain status -25293`) and shows no keychain dialog; it
-then does only those steps: the entries that read or export the item get only the broker,
-then the partition list gets only the broker's partition ID. It reads the access back, then
+password (a wrong one fails with `keychain status -25293`); it then does only those steps,
+both with that password: the partition list gets only the broker's partition ID, then the
+entries that read or export the item get only the broker. If macOS refuses that second
+change with the password, the keychain dialog asks instead (allow it). It reads the access back, then
 the key once to check it is not empty, and only then prints its success line; otherwise it
 exits non-zero saying whether it changed the item, what is done and what is not: rerun the
 same command to finish. The broker is trusted by its code requirement (an ad hoc
@@ -66,7 +67,7 @@ repository of every installation.
 
 | Check | Expect |
 |---|---|
-| first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal, no macOS dialog before or after it |
+| first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal; no macOS dialog, or one only after the password |
 | output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |

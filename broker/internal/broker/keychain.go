@@ -33,6 +33,8 @@ type Keychain interface {
 var (
 	ErrNotFound  = errors.New("keychain item not found")
 	ErrAmbiguous = errors.New("more than one keychain item")
+	// ErrAuthFailed is errSecAuthFailed: a wrong keychain password, or securityd refusing a change.
+	ErrAuthFailed = errors.New("keychain status -25293")
 )
 
 // GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
@@ -50,6 +52,7 @@ type AppKeychain interface {
 	AppAccount(app string) (string, error)
 	AppKey(app, account string) ([]byte, error)
 	TrustApps(app, account string, password []byte) error
+	TrustAppsByDialog(app, account string) error
 	TrustPartition(app, account string, password []byte) error
 	AppAccess(app, account string) (AppAccess, error)
 }
@@ -202,9 +205,10 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 
 // LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker, then reads the key
 // once to confirm it is usable; the item is never deleted and its content never changes. Each step runs only when
-// its part is not yet in place: the read and export entries first, then the partition list, both with the login
-// keychain password read once with password, so no keychain dialog shows. The key is read only once the item
-// trusts only the broker, so that read needs no dialog either. out never sees the key or the password.
+// its part is not yet in place: the partition list first, then the read and export entries, both with the login
+// keychain password read once with password, so no keychain dialog shows unless securityd refuses the second
+// step with the password (trust). The key is read only once the item trusts only the broker, so that read needs
+// no dialog either. out never sees the key or the password.
 func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out io.Writer) error {
 	account, err := k.AppAccount(app)
 	switch {
@@ -251,16 +255,27 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 	return err
 }
 
-// trust runs each step not in place before with the keychain password, stopping at the first that fails.
+// trust runs each step not in place before with the keychain password, stopping at the first that fails. The
+// partition step goes first: securityd takes it with the password, and it checks the password before the read
+// and export entries change. securityd has refused that second change with the password (ErrAuthFailed), so
+// then it goes through the keychain's dialog instead.
 func trust(app, account string, k AppKeychain, before AppAccess, password []byte) error {
-	if appsOnlyBroker(before) != nil {
-		if err := k.TrustApps(app, account, password); err != nil {
-			return fmt.Errorf("changing its read and export entries failed: %w", err)
-		}
-	}
 	if partitionOnlyBroker(before) != nil {
 		if err := k.TrustPartition(app, account, password); err != nil {
 			return fmt.Errorf("changing its partition list failed: %w", err)
+		}
+	}
+	if appsOnlyBroker(before) != nil {
+		err := k.TrustApps(app, account, password)
+		if errors.Is(err, ErrAuthFailed) {
+			if dialogErr := k.TrustAppsByDialog(app, account); dialogErr != nil {
+				err = fmt.Errorf("%w; through the keychain dialog: %w", err, dialogErr)
+			} else {
+				err = nil
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("changing its read and export entries failed: %w", err)
 		}
 	}
 	return nil

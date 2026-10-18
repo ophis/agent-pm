@@ -75,6 +75,7 @@ type fakeApps struct {
 	access                 *AppAccess
 	accessErr, readBackErr error
 	appsErr, partitionErr  error
+	dialogErr              error
 	frozen                 bool
 	steps                  []string
 	password               []byte
@@ -161,11 +162,24 @@ func (k *fakeApps) TrustApps(app, account string, password []byte) error {
 	if k.appsErr != nil || k.frozen {
 		return k.appsErr
 	}
+	k.trustApps()
+	return nil
+}
+
+func (k *fakeApps) trustApps() {
 	for i, e := range k.access.Entries {
 		if slices.ContainsFunc(e.Authorizations, func(x string) bool { return slices.Contains(readAuthorizations, x) }) {
 			k.access.Entries[i].Any, k.access.Entries[i].Apps = false, []string{brokerApp}
 		}
 	}
+}
+
+func (k *fakeApps) TrustAppsByDialog(app, account string) error {
+	k.steps = append(k.steps, "apps by dialog "+app+" "+account)
+	if k.dialogErr != nil || k.frozen {
+		return k.dialogErr
+	}
+	k.trustApps()
 	return nil
 }
 
@@ -205,10 +219,10 @@ func TestLoginGitHub(t *testing.T) {
 		steps  []string
 		asks   int
 	}{
-		"added":        {access: added(), steps: []string{"apps", "partition", "key"}, asks: 1},
+		"added":        {access: added(), steps: []string{"partition", "apps", "key"}, asks: 1},
 		"half done":    {access: halfDone(), steps: []string{"partition", "key"}, asks: 1},
 		"already done": {steps: []string{"key"}},
-		"reinstalled":  {access: reinstalled(), steps: []string{"apps", "partition", "key"}, asks: 1},
+		"reinstalled":  {access: reinstalled(), steps: []string{"partition", "apps", "key"}, asks: 1},
 	} {
 		k := &fakeApps{account: "5352992", key: appKey, access: tc.access}
 		ask := &askOnce{}
@@ -279,7 +293,7 @@ func TestLoginGitHubKeyAfterAccess(t *testing.T) {
 		if err == nil || err.Error() != tc.want || ask.calls != 1 || out.Len() != 0 {
 			t.Fatalf("%s: %v asked %d times out %q", name, err, ask.calls, out.String())
 		}
-		if !slices.Equal(tc.k.steps, []string{"apps agent-pm-bot 5352992", "partition agent-pm-bot 5352992", "key agent-pm-bot 5352992"}) {
+		if !slices.Equal(tc.k.steps, []string{"partition agent-pm-bot 5352992", "apps agent-pm-bot 5352992", "key agent-pm-bot 5352992"}) {
 			t.Fatalf("%s: steps %q", name, tc.k.steps)
 		}
 		if !bytes.Equal(tc.k.got, make([]byte, len(tc.k.got))) {
@@ -292,40 +306,46 @@ func TestLoginGitHubStepFails(t *testing.T) {
 	const (
 		apps      = "done: its read and export entries trust only the broker"
 		partition = `its partition list is ["apple-tool:"], not ["cdhash:0a1b2c"]`
+		security  = `entry trusts ["/usr/bin/security"]`
 		rerun     = "rerun agent-pm-broker login github agent-pm-bot"
 	)
-	denied := errors.New("keychain status -25293")
+	denied := errors.New("keychain status -25300")
 	for name, tc := range map[string]struct {
 		k     *fakeApps
 		ask   *askOnce
 		asks  int
 		wants []string
 	}{
-		"partition after apps": {
-			k:     &fakeApps{access: added(), partitionErr: denied},
+		"partition first": {
+			k:     &fakeApps{access: added(), partitionErr: ErrAuthFailed},
 			asks:  1,
-			wants: []string{"agent-pm-bot partly changed: changing its partition list failed: keychain status -25293", apps, "not done: " + partition, rerun},
+			wants: []string{"agent-pm-bot unchanged: changing its partition list failed: keychain status -25293", "done: nothing", security, partition, rerun},
 		},
 		"partition on half done": {
 			k:     &fakeApps{access: halfDone(), partitionErr: denied},
 			asks:  1,
 			wants: []string{"agent-pm-bot unchanged: changing its partition list failed", apps, "not done: " + partition, rerun},
 		},
-		"apps": {
+		"apps after partition": {
 			k:     &fakeApps{access: added(), appsErr: denied},
 			asks:  1,
-			wants: []string{"agent-pm-bot unchanged: changing its read and export entries failed", "done: nothing", `entry trusts ["/usr/bin/security"]`, partition, rerun},
+			wants: []string{"agent-pm-bot partly changed: changing its read and export entries failed: keychain status -25300", "done: its partition list holds only the broker's partition ID", security, rerun},
+		},
+		"apps by dialog after refusal": {
+			k:     &fakeApps{access: added(), appsErr: ErrAuthFailed, dialogErr: errors.New("keychain status -128")},
+			asks:  1,
+			wants: []string{"agent-pm-bot partly changed: changing its read and export entries failed: keychain status -25293; through the keychain dialog: keychain status -128", "done: its partition list", security, rerun},
 		},
 		"password read": {
 			k:     &fakeApps{access: added()},
 			ask:   &askOnce{err: errors.New("needs an interactive terminal")},
 			asks:  1,
-			wants: []string{"agent-pm-bot unchanged: reading the login keychain password failed: needs an interactive terminal", "done: nothing", `entry trusts ["/usr/bin/security"]`, partition, rerun},
+			wants: []string{"agent-pm-bot unchanged: reading the login keychain password failed: needs an interactive terminal", "done: nothing", security, partition, rerun},
 		},
 		"read back": {
 			k:     &fakeApps{access: added(), partitionErr: denied, readBackErr: errors.New("keychain status -25308")},
 			asks:  1,
-			wants: []string{"agent-pm-bot: changing its partition list failed: keychain status -25293", "reading its access back failed: keychain status -25308", "unknown", rerun},
+			wants: []string{"agent-pm-bot: changing its partition list failed: keychain status -25300", "reading its access back failed: keychain status -25308", "unknown", rerun},
 		},
 	} {
 		tc.k.account, tc.k.key = "5352992", appKey
@@ -351,6 +371,24 @@ func TestLoginGitHubStepFails(t *testing.T) {
 	}
 }
 
+// securityd can refuse the read and export entries' change with the password (seen on macOS with the partition
+// list not yet holding the broker): the keychain's dialog is the fallback, after the partition step.
+func TestLoginGitHubAppsDialogFallback(t *testing.T) {
+	for name, appsErr := range map[string]error{"refused": ErrAuthFailed, "other": errors.New("keychain status -25300")} {
+		k := &fakeApps{account: "5352992", key: appKey, access: added(), appsErr: appsErr}
+		ask := &askOnce{}
+		var out bytes.Buffer
+		err := LoginGitHub("agent-pm-bot", k, ask.read, &out)
+		want := []string{"partition agent-pm-bot 5352992", "apps agent-pm-bot 5352992"}
+		if name == "refused" {
+			want = append(want, "apps by dialog agent-pm-bot 5352992", "key agent-pm-bot 5352992")
+		}
+		if (err == nil) != (name == "refused") || !slices.Equal(k.steps, want) || ask.calls != 1 {
+			t.Fatalf("%s: %v steps %q asked %d times", name, err, k.steps, ask.calls)
+		}
+	}
+}
+
 // A step whose error comes with the change applied passes on the access read back.
 func TestLoginGitHubStepErrorButDone(t *testing.T) {
 	k := &fakeApps{account: "5352992", key: appKey, access: added()}
@@ -363,11 +401,11 @@ func TestLoginGitHubStepErrorButDone(t *testing.T) {
 
 type appliedThenFailed struct{ *fakeApps }
 
-func (k *appliedThenFailed) TrustPartition(app, account string, password []byte) error {
-	if err := k.fakeApps.TrustPartition(app, account, password); err != nil {
+func (k *appliedThenFailed) TrustApps(app, account string, password []byte) error {
+	if err := k.fakeApps.TrustApps(app, account, password); err != nil {
 		return err
 	}
-	return errors.New("keychain status -25293")
+	return errors.New("keychain status -25300")
 }
 
 // Steps that report success but leave the access as it was must not pass for success.
