@@ -244,6 +244,245 @@ class CodexCIGuard(Case):
             run.assert_not_called()
 
 
+class CodexCIReload(Case):
+    def setUp(self):
+        self.worker = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))
+
+    def reload_code(self):
+        self.assertTrue(
+            "RELOAD_PROBE" in self.worker, "same-process synthetic reload check missing"
+        )
+        code = {"__name__": "fake_ci_probe"}
+        exec(self.worker["RELOAD_PROBE"], code)
+        return code
+
+    @staticmethod
+    def status(identifier, token):
+        return {
+            "id": identifier,
+            "result": {"authMethod": "chatgpt", "authToken": token, "requiresOpenaiAuth": True},
+        }
+
+    def exchange(self, publish=None):
+        code = self.reload_code()
+        return code["ReloadExchange"]("old-secret", "new-secret", publish or mock.Mock())
+
+    def test_reload_proves_replacement_and_adoption_are_separate_on_one_connection(self):
+        publish = mock.Mock()
+        exchange = self.exchange(publish)
+        self.assertEqual(json.loads(exchange.start())["method"], "initialize")
+        initialized, initial = exchange.accept({"id": 1, "result": {}})
+        self.assertEqual(json.loads(initialized)["method"], "initialized")
+        self.assertEqual(json.loads(initial)["params"]["refreshToken"], False)
+        self.assertEqual(json.loads(exchange.accept(self.status(2, "old-secret"))[0])["id"], 3)
+        publish.assert_called_once_with()
+        refresh = json.loads(exchange.accept(self.status(3, "old-secret"))[0])
+        self.assertEqual(refresh["method"], "getAuthStatus")
+        self.assertEqual(refresh["params"], {"includeToken": True, "refreshToken": True})
+        self.assertEqual(json.loads(exchange.accept(self.status(4, "new-secret"))[0])["id"], 5)
+        self.assertEqual(exchange.accept(self.status(5, "new-secret")), [])
+        self.assertTrue(exchange.complete)
+        self.assertNotIn("secret", json.dumps(exchange.summary()))
+        self.assertEqual(exchange.summary()["guarded_reload_completed"], True)
+
+    def test_reload_rejects_protocol_errors_and_never_reports_token_values(self):
+        for message in (
+            None,
+            [],
+            {"id": "1", "result": {}},
+            {"id": 9, "result": {}},
+            {"id": 1, "error": {"message": "secret"}},
+            {"id": 1, "result": []},
+            {"id": 7, "method": "secret"},
+        ):
+            with self.subTest(message=message):
+                exchange = self.exchange()
+                with self.assertRaisesRegex(ValueError, "synthetic native reload failed"):
+                    exchange.accept(message)
+                self.assertFalse(exchange.complete)
+
+    def test_reload_requires_old_cache_before_trigger_and_new_cache_after_it(self):
+        for stage, token in ((2, "new-secret"), (3, "new-secret"), (5, "old-secret")):
+            with self.subTest(stage=stage):
+                exchange = self.exchange()
+                exchange.stage = stage
+                with self.assertRaisesRegex(ValueError, "synthetic native reload failed"):
+                    exchange.accept(self.status(stage, token))
+                self.assertFalse(exchange.complete)
+        exchange = self.exchange()
+        exchange.stage = 4
+        with self.assertRaises(ValueError):
+            exchange.accept({"id": 4, "result": {"account": {"type": "apiKey"}}})
+
+    def test_reload_bounds_protocol_lines_total_output_and_notifications(self):
+        code = self.reload_code()
+        for chunks in ([b"x" * 65537], [b"\n" * (1024 * 1024 + 1)], [b"{bad}\n"]):
+            with self.subTest(length=sum(map(len, chunks))):
+                lines = code["BoundedLines"]()
+                with self.assertRaises(ValueError):
+                    for chunk in chunks:
+                        lines.feed(chunk)
+        lines = code["BoundedLines"]()
+        lines.feed(b'{"id":1')
+        with self.assertRaises(ValueError):
+            lines.finish()
+        exchange = self.exchange()
+        for _ in range(1024):
+            self.assertEqual(exchange.accept({"method": "notice"}), [])
+        with self.assertRaises(ValueError):
+            exchange.accept({"method": "notice"})
+
+    def test_reload_cleanup_closes_streams_and_kills_its_process_group(self):
+        code = self.reload_code()
+        process = mock.Mock(pid=1234)
+        process.wait.side_effect = [code["subprocess"].TimeoutExpired("native", 2), 0]
+        with (
+            mock.patch.object(code["os"], "killpg") as killpg,
+            mock.patch.object(code["time"], "sleep"),
+        ):
+            code["stop_native"](process)
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(1234, code["signal"].SIGTERM), mock.call(1234, code["signal"].SIGKILL)],
+        )
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close.assert_called()
+
+    def test_ci_generates_distinct_managed_synthetic_values_without_date_changes(self):
+        self.assertTrue("synthetic_credentials" in self.worker)
+        first, second = self.worker["synthetic_credentials"]()
+        documents = [json.loads(value) for value in (first, second)]
+        for document in documents:
+            self.assertEqual(document["auth_mode"], "chatgpt")
+            self.assertEqual(document["tokens"]["refresh_token"], "")
+            self.assertEqual(document["tokens"]["account_id"], "ci-fake")
+            self.assertIn("last_refresh", document)
+        self.assertNotEqual(
+            documents[0]["tokens"]["access_token"], documents[1]["tokens"]["access_token"]
+        )
+        self.assertEqual(documents[0]["last_refresh"], documents[1]["last_refresh"])
+        self.assertIn("0.163.0", (ASSETS / "Dockerfile").read_text())
+
+    def test_reload_natural_auth_adopts_replacement_after_cached_near_expiry_value(self):
+        code = self.reload_code()
+        publish_near, publish_final = mock.Mock(), mock.Mock()
+        exchange = code["ReloadExchange"](
+            "old-secret",
+            "new-secret",
+            mock.Mock(),
+            proactive={
+                "token": "natural-secret",
+                "near": "near-secret",
+                "publish_near": publish_near,
+                "publish_final": publish_final,
+            },
+        )
+        for response in (
+            {"id": 1, "result": {}},
+            self.status(2, "old-secret"),
+            self.status(3, "old-secret"),
+            self.status(4, "new-secret"),
+        ):
+            exchange.accept(response)
+        load = json.loads(exchange.accept(self.status(5, "new-secret"))[0])
+        publish_near.assert_called_once_with()
+        self.assertEqual(load["method"], "getAuthStatus")
+        self.assertEqual(load["params"], {"includeToken": True, "refreshToken": True})
+        natural = json.loads(exchange.accept(self.status(6, "near-secret"))[0])
+        publish_final.assert_called_once_with()
+        self.assertEqual(natural["method"], "getAuthStatus")
+        self.assertEqual(natural["params"]["refreshToken"], False)
+        exchange.accept(self.status(7, "natural-secret"))
+        self.assertTrue(exchange.complete)
+        self.assertTrue(exchange.summary()["natural_auth_reload_completed"])
+
+    def test_ci_entrypoint_injects_managed_values_and_runs_reload_with_network_disabled(self):
+        calls, active = [], {}
+        version = b"codex-cli 0.163.0"
+
+        def docker(*args, data=None):
+            calls.append((args, data))
+            if args[:2] == ("image", "inspect"):
+                return json.dumps(
+                    [
+                        {
+                            "Config": {
+                                "Labels": {
+                                    "agent-pm.agent-uid": "1000",
+                                    "agent-pm.agent-gid": "1000",
+                                }
+                            }
+                        }
+                    ]
+                ).encode()
+            if args[0] == "run":
+                active["home"] = Path(
+                    next(
+                        arg.removeprefix("CODEX_HOME=")
+                        for arg in args
+                        if arg.startswith("CODEX_HOME=")
+                    )
+                )
+            elif args[0] == "inspect":
+                sessions = str(active["home"] / "sessions")
+                return json.dumps(
+                    [
+                        {
+                            "Mounts": [
+                                {"Type": "bind", "Source": sessions, "Destination": sessions}
+                            ],
+                            "HostConfig": {
+                                "Tmpfs": {
+                                    str(active["home"]): "",
+                                    "/run/agent-pm": "",
+                                    "/run/agent-pm/secrets": "",
+                                }
+                            },
+                        }
+                    ]
+                ).encode()
+            elif args[-1] == "--version":
+                return version
+            elif args[-1] == self.worker["RELOAD_PROBE"]:
+                payload = json.loads(data)
+                self.assertEqual(set(payload), {"initial", "replacement", "near", "adopted"})
+                self.assertTrue(
+                    all(document["auth_mode"] == "chatgpt" for document in payload.values())
+                )
+                return b"Synthetic same-process guarded reload: PASS\n"
+            return b""
+
+        main = self.worker["main"]
+        with (
+            mock.patch.dict(
+                os.environ, {"CI": "true", "GITHUB_ACTIONS": "true", "RUNNER_TEMP": self.home}
+            ),
+            mock.patch.dict(main.__globals__, {"docker": docker}),
+            mock.patch("builtins.print"),
+        ):
+            main("agent-pm-worker:" + "a" * 64)
+        starts = [args for args, _ in calls if args[0] == "run"]
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(all(args[args.index("--network") + 1] == "none" for args in starts))
+        injected = [(args, data) for args, data in calls if "codex-auth" in args]
+        self.assertEqual(len(injected), 2)
+        self.assertTrue(all(args[-1].endswith("/codex") for args, _ in injected))
+        self.assertEqual(sum(args[-1] == self.worker["RELOAD_PROBE"] for args, _ in calls), 2)
+
+    def test_reload_cleanup_still_kills_group_after_broken_input(self):
+        code = self.reload_code()
+        process = mock.Mock(pid=1234)
+        process.stdin.close.side_effect = BrokenPipeError("secret")
+        with (
+            mock.patch.object(code["os"], "killpg") as killpg,
+            mock.patch.object(code["time"], "sleep"),
+        ):
+            code["stop_native"](process)
+        self.assertEqual(killpg.call_count, 2)
+        process.stdout.close.assert_called_once_with()
+        process.stderr.close.assert_called_once_with()
+
+
 class CodexUpdate(Case):
     def setUp(self):
         self.update = script("codex-update.py")["update"]

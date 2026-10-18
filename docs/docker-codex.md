@@ -4,12 +4,13 @@ TASK-648 implements M4 step 2 FR-2 and FR-3 from
 [Product Design/2026-10-16-2311-TASK-550-docker-host-m4.md](https://github.com/ophis/private_docs/blob/main/Product%20Design/2026-10-16-2311-TASK-550-docker-host-m4.md).
 TASK-649 adds terminal container authentication and recovery; TASK-651 adds headless
 execution and whitelisted native plugin skills ([Docker sessions](#docker-sessions)).
-TASK-652 adds FR-9's container version policy. Authentication refresh remains separate work.
+TASK-652 adds FR-9's container version policy. TASK-650 adds serialized broker
+refresh and supervisor renewal ([Refresh and recovery](#refresh-and-recovery)).
 
 ## Commands
 
 Install or upgrade the hardened broker first with `sh <agent-pm plugin directory>/broker/install.sh`.
-Replace `<version>` with an exact stable npm version, such as `0.162.1`:
+Replace `<version>` with an exact stable npm version, such as `0.163.0` (required for refresh):
 
 | Action | Command |
 |---|---|
@@ -107,11 +108,10 @@ After installation/login and the [Docker Host setup](docker-host.md#crew-workers
 `agent-pm-crew worker w --client codex`, Codex role runs and unattended board runs use
 the same container authentication. The host needs the broker, not a personal Codex executable.
 
-**Access-only authentication** uses the broker login's access token and account ID
-(identifier). The external-token document has no refresh credential or original ID
-token. The required Rust `refresh_token` string is empty; `id_token` holds the access
-token and `last_refresh` retains the original nonsecret timestamp. The exact wire
-fields are defined in [Docker broker protocol](docker-broker-protocol.md).
+**Access-only authentication** uses managed ChatGPT mode with the broker login's
+original ID token, access token and account ID (identifier), an empty refresh string
+and its refresh timestamp. The wire fields are defined only in
+[Docker broker protocol](docker-broker-protocol.md).
 
 | Resource | Lifetime |
 |---|---|
@@ -119,27 +119,11 @@ fields are defined in [Docker broker protocol](docker-broker-protocol.md).
 | Container `CODEX_HOME`, at the corresponding host path | Entirely tmpfs; image-created configuration and credential-link replacements disappear on close |
 | `/run/agent-pm/secrets/codex/auth.json` | Agent-owned 0400 tmpfs file, injected over Docker standard input |
 | `/run/agent-pm/codex-store/` | Terminal launcher's volatile projection of only the current `(workdir, sid)` recovery record |
-| `<generation>.credential.json` | Host control record containing only initial expiry; GitHub renewal does not extend it |
+| `<generation>.credential.json` | Broker-owned control record containing only the latest published Codex expiry |
 
-```mermaid
-flowchart LR
-    B[Verify broker login] --> V[Prepare compatible Codex]
-    V --> I[Inject access credential]
-    I --> T[Image terminal or headless]
-    T --> E[Initial expiry]
-    E --> C[Report and close container]
-```
-Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:204`.
-
-**Expiry** produces `client_auth_expired` in the terminal session event log or headless
-harness log and closes that generation. Log in again with `agent-pm-broker login codex`, then resume the worker.
-A recovered supervisor reads the same saved initial deadline. No run login or personal
-credential fallback is attempted. Missing login, invalid pinned installation and expired
-credentials fail preflight with repair instructions.
-Credential refresh and cross-refresh compatibility remain later M4 work.
-
-The authentication implementation's source evidence below does not certify the PRD's
-cross-refresh version matrix. Container admission uses [Container versions](#container-versions).
+See [Refresh and recovery](#refresh-and-recovery) for renewal and failure handling.
+Container admission follows [Container versions](#container-versions); source evidence
+and synthetic checks alone do not certify terminal cross-refresh compatibility.
 
 ### Headless and terminal recovery
 
@@ -158,8 +142,7 @@ replies and completion events reach Delegate reporting. The host prepares its na
 resume selector directly; only the terminal's Python launcher needs a projected store.
 Both modes retain the original snapshot, native ID and CODEX_HOME when resuming on the
 same Host. Missing or mismatched history and symlinked history paths fail before launch.
-The harness supervises headless GitHub refresh and client expiry concurrently; ending
-the run cancels both tasks. A killed harness leaves cleanup to the next Docker sweep.
+The harness uses the same Codex renewal owner as terminals; ending the run cancels it. A killed harness leaves cleanup to the next Docker sweep.
 
 ### Native plugins
 
@@ -197,7 +180,84 @@ network disabled. It queries app-server `skills/list` for the native probe skill
 its enabled state, plugin ID and path, and verifies cache ownership/non-writability.
 It also checks the real Codex auth loader, agent identity, nested mounts,
 atomic replacement of the auth link and history-only persistence across two containers.
-It does not test model access, native conversation recovery or macOS file sharing.
+Its managed-carrier check distinguishes disk replacement from cached adoption on
+one app-server connection, then exercises explicit guarded reload and proactive
+auth() reload using independently generated synthetic values. It does not test
+model access, ordinary terminal turns, native conversation recovery or macOS file sharing.
+
+## Refresh and recovery
+
+**Renewal** uses the earlier Codex or GitHub deadline minus 600 seconds. TASK-647
+measured 2 seconds; the existing 600-second floor remains. A short lifetime triggers
+an immediate attempt, then at least 60 seconds between attempts, bounded by expiry.
+Recovery rereads the broker-owned publication deadline.
+
+```mermaid
+flowchart TD
+    Q[Snapshot refresh revision] --> L[Take fixed account lock]
+    L --> R[Reread revision and trusted login]
+    R --> D{Another request completed}
+    D -->|yes| U[Reuse valid result]
+    D -->|no and due| N[Verified native refresh]
+    N --> K[Validate and save same account]
+    K --> U
+    U --> P[Replace effective auth and publish deadline]
+    P --> G[Renew GitHub credentials]
+```
+Sources: `broker/internal/broker/codex.go`, `codex_revision.go`, `codex_refresh.go`;
+`broker/internal/launcher/refresh.go:15`. Login uses the same lock. The revision record
+contains no account or credential value.
+
+The fixed native `0.163.0` app-server performs the managed account refresh in a
+private temporary home, with bounded output and a 120-second deadline. The broker
+requires unchanged account, changed access value, later expiry and verified keychain
+readback. Temporary state is removed on normal completion, failure and cancellation;
+uncatchable termination retains the limitation described under [Login trust](#login-trust).
+The broker never implements an upstream refresh request itself.
+
+Publication replaces the effective volatile `CODEX_HOME/auth.json`, including after
+native replacement of its original link. The broker durably saves the corresponding
+Codex expiry before attempting GitHub renewal. A lost response or GitHub failure
+therefore cannot erase that deadline; retries repair publication independently.
+
+The embedded native terminal keeps its existing launch, permissions and history.
+Pinned source provides managed proactive reload within 300 seconds of the old access
+expiry and same-account reload on unauthorized recovery, before attempting native
+managed refresh (see [Pinned source evidence](#pinned-source-evidence)). Adoption is
+eventual: file publication is not an acknowledgment from the running terminal.
+The synthetic backend check exercises auth() without a model request; it does not
+certify ordinary terminal-turn continuity.
+
+Failures emit `client_refresh_failed` and retry each minute. After a final failed
+reconciliation at expiry, `client_auth_expired` and the harness log contain:
+
+> Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login codex on the host, then resume
+
+The generation closes, with one-minute close retries. Follow the message on the host,
+then explicitly resume the worker; preserved native history remains authoritative.
+Missing login or invalid pinned files fail preflight with repair instructions.
+No run login, personal cache or different identity is selected.
+Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:312`.
+
+### TASK-650 user-run acceptance, pending
+
+Run on authorized macOS Apple silicon with Docker Desktop after release. Workers
+run none of these checks. Use the supported, evidence-backed compatibility rule and
+record only versions, times, statuses, counts and redacted errors. Do not dump auth,
+keychain, environment or token values; do not change credential dates or test real expiry.
+
+| Check | Required observation |
+|---|---|
+| Keep the independently logged-in personal host Codex and two container terminal sessions talking before and after one genuine broker renewal | All three continue; unchanged native identities and personal login; running container processes actually adopt the new access value, not just a replaced file or new process |
+| With the broker login naturally due for renewal, concurrently invoke `/usr/local/libexec/agent-pm/agent-pm-broker refresh --container <container> --manifest <manifest>` for each run | Exactly one genuine native rotation; the waiter reuses it; no lock-contention failure or lost login; a later due renewal also succeeds |
+| Record the two preceding checks | Fixed/image/actual versions, generation digests, actual rotation count, per-stage timing and safe evidence of same-process adoption; missing adoption evidence stays incomplete |
+| Interrupt networking during a scheduled renewal, then restore it before expiry | Classified events and one-minute retries; same identity continues after recovery; no interactive run login |
+| Restart the supervisor, then interact | Current published deadline is reread and renewal continues for the same native history |
+| A failed generation is encountered | Exact repair message above; after the host command, explicit resume retains native identity/history |
+
+Final expiry and close-retry behavior are covered with fake clocks and credentials;
+this checklist adds no real-expiry experiment. TASK-651 owns the corresponding
+headless live check. No TASK-650 concurrent live result is recorded yet.
 
 ## Container versions
 
@@ -259,22 +319,22 @@ workers run none of these checks. Real expiry is outside TASK-647.
 | Inspect mounts/security without dumping environment or secret files | One workspace volume; only client history bind; volatile home/secrets; user agent, CapDrop ALL, no-new-privileges; no Docker socket or privileged/host namespaces |
 | Restart, then close and resume a worker | Same native identity and history; no duplicate completed event; missing history produces failure |
 | Complete a headless run, reopen it as a terminal, then close and resume headless on the same Host | Same native ID, CODEX_HOME, history and workspace; replies and outcomes appear once |
-| Restart the host supervisor, then query/send | Hook relay resumes, same identity; original access deadline retained |
-| Let the initial access token expire | `client_auth_expired`, container removed, no login prompt or identity change; host login plus resume repairs it |
+| Restart the host supervisor, then query/send | Hook relay resumes, same identity; current published access deadline retained |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
 | Start, restart, then close/resume using an evidence-backed rule containing an image and newer registry version | Each generation runs the newest allowed version; audit and progress agree; runtime program is outside workspace/history |
 | Repeat with registry unavailable, then an unavailable/corrupt allowed update | Image version restored and recorded; no secret injection precedes preparation |
 | Use an image outside the rule, and separately an empty rule | Startup refuses before any client/GitHub secret; existing compatible image remains usable if only advisory lookup fails |
 | Close after a successful update, then resume | Executable tmpfs disappears; next generation repeats selection; native history remains |
 | Use a whitelisted skill in both modes | Namespaced skill executes from the image; its scripts/references resolve; empty whitelist loads none |
-| After M4 refresh support lands: two containers and an independently logged-in host across a real refresh | Both modes continue with unchanged identity and personal login; record actual refresh count, versions and timings |
+| Concurrent real refresh and failure recovery | [TASK-650 pending checklist](#task-650-user-run-acceptance-pending) |
 
 ## Plan A validation report
 
 **Verdict: A, for the narrowed 2026-10-18 scope.** The running native app-server
 loaded the replaced access token without restart. TASK-647 certifies `0.163.0`;
-[the operations above](#docker-sessions) describe the separate `0.162.1` product
-baseline. Neither grants the other's compatibility. Sources:
+the TASK-647 report recorded the then-product `0.162.1` baseline separately.
+TASK-650 advances the image pin to the tested `0.163.0`; installed admission metadata
+remains unchanged. Sources:
 [TASK-647](https://linear.app/ophis-workgroup/issue/TASK-647) and the
 [M4 requirements](https://github.com/ophis/private_docs/blob/main/Product%20Design/2026-10-16-2311-TASK-550-docker-host-m4.md).
 
@@ -293,7 +353,7 @@ reading a replacement is distinct from a running process changing its cached val
 | Retained item | Status and evidence | Qualification |
 |---|---|---|
 | Running-process token replacement | Pass: initial old cache matched; cache stayed old after replacement; native guarded reload loaded the new value through the same process connection ([live reload](docker-codex-evidence/2026-10-18-a-live-reload.json), 2026-10-18 04:46 UTC) | None within retained scope |
-| Version matrix and rule | Pass for exact `0.163.0`: fixed host/container verified, same-minor/latest coincide, image content ID captured in live evidence. Product baseline `0.162.1` remains untested/excluded | No range or additional version admitted |
+| Version matrix and rule | Pass for exact `0.163.0`: fixed host/container verified, same-minor/latest coincide, image content ID captured in live evidence. Then-product baseline `0.162.1` was untested/excluded | No range or additional version admitted |
 | Refresh trigger and measured lead | Pass: third genuine own-Codex rotation; complete refresh/write/reload interval 1.467578 s, rounded-up observed lead 2 s | Scheduler floor 600 s applies; observation is not a worst-case bound |
 
 | Moved item | Destination |
@@ -369,12 +429,12 @@ fixed category IDs/counts leave classifier memory; unknown stays unknown.
 | Experimental container | `0.163.0` | Pass: same-process cache reload; image `sha256:0979a801ea59c7ef5e4f124b7d9dbf060007172e631490a4a1355daefdb94361` |
 | Latest same minor | `0.163.0` | Pass: same tested artifact, not a separate test |
 | Latest stable | `0.163.0` | Pass: same artifact; registry observed 2026-10-18 04:46 UTC, published 2026-10-15T21:37:11.083Z |
-| Product image baseline | `0.162.1` | Untested for retained gates; excluded from this validation's rule |
+| TASK-647 product baseline, historical | `0.162.1` | Untested for retained gates; excluded from this validation's rule |
 
 Final inventory and live observation are in the [live-reload evidence](docker-codex-evidence/2026-10-18-a-live-reload.json).
 Untested same-minor versions gain no admission; an unproved range narrows to an exact
-passing set. The current product image needs its own passing record or an image
-upgrade before this `0.163.0`-only rule can enable its starts. This report does not change installed admission metadata.
+passing set. TASK-650 aligns the product image with this tested version; terminal
+acceptance remains pending above. This report does not change installed admission metadata.
 
 ```json
 {

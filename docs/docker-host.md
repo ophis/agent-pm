@@ -1,6 +1,7 @@
 # Docker host
 
 Codex installation, broker login and container runs: [Codex operations](docker-codex.md).
+Renewal, failure repair and pending live acceptance: [Refresh and recovery](docker-codex.md#refresh-and-recovery).
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
