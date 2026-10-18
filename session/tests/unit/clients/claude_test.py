@@ -85,6 +85,10 @@ class ConfigTest(Base):
                     ["--verbose", "--setting-sources", "user"],
                 )
             ),
+            (
+                {"modes": {"yolo": ["--setting-sources", "user"]}},
+                sources.replace("].flags", "].modes.yolo"),
+            ),
         )
         for config, message in cases:
             with self.subTest(config=config):

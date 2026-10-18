@@ -248,10 +248,14 @@ class ClaudeCommon:
         common.check_config(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: common.mode_flags(config, p) for p in Permission}
-        if any(flag.startswith("--setting-sources") for flag in self.flags):
-            raise ConfigError(
-                f"--setting-sources is set by the Claude client: remove it from {TABLE}.flags"
-            )
+        for key, flags in (
+            ("flags", self.flags),
+            *((f"modes.{p}", f) for p, f in self.modes.items()),
+        ):
+            if any(flag.startswith("--setting-sources") for flag in flags):
+                raise ConfigError(
+                    f"--setting-sources is set by the Claude client: remove it from {TABLE}.{key}"
+                )
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))

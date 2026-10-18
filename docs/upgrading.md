@@ -27,7 +27,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | `~/.agent-pm/core-new-sessions/codex` | Close Codex TUI sessions, then `mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions`. |
 | a v1 manager roster: `~/.agent-pm/managers/<name>/roster.json` with `"version": 1`, which fails `agent-pm-crew status` and `attach` with `want roster fields` | Back up `~/.agent-pm/managers/`, then move its contents to the Trash. The next `agent-pm-crew attach` starts an empty roster. |
 | `default_task` or `tasks` in a role table | Drop `default_task`. Move each `<prefix>.roles.<role>.tasks.<task>` table's keys to `<prefix>.roles.<role>`, for the prefixes `delegate`, `delegate.clients.<name>` and `linear_orchestrator.core`. |
-| `[session.clients.codex]` `sandbox`, `shell_network` | Express them in `[session.clients.codex]` `flags`. |
+| `[session.clients.codex]` `sandbox`, `shell_network` | Express them in `[session.clients.codex.modes]` `auto` ([Client policy](sessions.md#client-policy)). |
 | a local `flags` list in `[session.clients.claude]` or `[session.clients.codex]` | A local list replaces the packaged one whole: add its agent-pm entry, Claude `"--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}'`, Codex `"-c", "plugins.agent-pm@agent-pm.enabled=false"`. |
 | permission flags in a local `flags` list: `--permission-mode`, `--dangerously-skip-permissions` (`[session.clients.claude]`, `[delegate.policy.claude]`), `-s`, `approval_policy`, `approvals_reviewer`, `--dangerously-bypass-approvals-and-sandbox` (`[session.clients.codex]`, `[delegate.policy.codex]`) | Remove them: permission flags live only in `[session.clients.<client>.modes]` `auto` and `yolo`, which the Host picks ([Client policy](sessions.md#client-policy)); left in `flags` they reach every Host, the Docker Host's yolo sessions too. To change a mode, set it there, e.g. `[session.clients.codex.modes] auto = [...]`; the local list replaces that mode's whole. Keep `--strict-mcp-config` in `[delegate.policy.claude]`. |
 | scripts or prompts passing `-- --permission-mode auto` to Claude workers | Drop it: auto mode adds it, and on the Docker Host it would sit beside yolo's. |
@@ -94,7 +94,7 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 | `core.local.toml` `[clients.claude]` `flags` | `--strict-mcp-config` to `[delegate.policy.claude]`, `--permission-mode` to `[session.clients.claude.modes]` `auto`, the rest to `[session.clients.claude]` |
 | `core.local.toml` `[clients.claude]` `allow`, `env`, `tiers`, `efforts` | `[session.clients.claude]`, same names |
 | `core.local.toml` `[clients.codex]` `tiers`, `efforts` | `[session.clients.codex]`, same names |
-| `core.local.toml` `[clients.codex]` `shell_network` | a `[session.clients.codex]` flag ([Client policy](sessions.md#client-policy)) |
+| `core.local.toml` `[clients.codex]` `shell_network` | a `[session.clients.codex.modes]` `auto` flag ([Client policy](sessions.md#client-policy)) |
 | `core.local.toml` `[clients.skill.…]`, `[clients.<name>]` `implementation` | drop |
 | `orchestrator.local.toml` top-level keys | `[linear_orchestrator]` |
 | `orchestrator.local.toml` `[states]`, `[task_labels]`, `[project_repos]`, `[local_clones]`, `[roles.<role>]`, `[core]` | the same tables under `linear_orchestrator.`; drop a `gate` copied into `[core]` |

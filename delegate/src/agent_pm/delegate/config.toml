@@ -99,7 +99,7 @@ host = ""
 #                 tui mode, but in the shipped auto mode goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
 #                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
-#                 session's default danger-full-access can write there too (docs/sessions.md › Client policy). A dir also in write,
+#                 session's default auto mode's danger-full-access, or yolo's, can write there too (docs/sessions.md › Client policy). A dir also in write,
 #                 or inside the cwd, <workdir>/agent or a write dir, stays writable; shell commands can write there
 #                 regardless
 #   write         extra dirs the agent run needs to write; <workdir>/agent is always reachable; [] → none.
