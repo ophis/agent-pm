@@ -4,6 +4,7 @@ import io
 import json
 import os
 import signal
+import threading
 from unittest import mock
 
 from agent_pm.session.clients.opencode import launcher
@@ -133,20 +134,56 @@ class LauncherTest(Case):
         end.assert_called_once_with(124)
         self.assertTrue(child.killed)
 
-    def test_the_watch_spares_a_bound_run_whose_reader_hangs(self):
+    def test_the_watch_spares_a_run_bound_while_its_lock_wait_times_out(self):
+        waits, expiry = [], threading.Thread(target=lambda: Timers.made[0].function())
+
+        class Gate:
+            """The watch's lock, noting each timed wait and keeping it short."""
+
+            def __init__(self, lock):
+                self.lock, self.waiting = lock, threading.Event()
+
+            def __enter__(self):
+                return self.lock.__enter__()
+
+            def __exit__(self, *exc):
+                return self.lock.__exit__(*exc)
+
+            def acquire(self, **kwargs):
+                self.waiting.set()
+                waits.append((kwargs, self.lock.acquire(timeout=0.01)))
+                return waits[-1][1]
+
+            def release(self):
+                self.lock.release()
+
+        loads = json.loads
+
+        def binding(line):
+            # The watch fires unbound and waits on the lock this line holds; the line binds meanwhile.
+            if expiry.ident is None:
+                watch = Timers.made[0].function.__self__
+                watch.lock = Gate(watch.lock)
+                expiry.start()
+                self.assertTrue(watch.lock.waiting.wait(5))
+            return loads(line)
+
         class Stuck(io.BytesIO):
             def write(self, data):
-                Timers.made[0].function()  # the lock wait times out under this write
+                expiry.join(5)  # holds the lock until the wait times out
                 return super().write(data)
 
-        child = Child([BOUND, TEXT])
+        stdout, child = Stuck(), Child([BOUND, TEXT])
         with (
-            mock.patch("sys.stdout", mock.Mock(buffer=Stuck())),
+            mock.patch("json.loads", binding),
+            mock.patch("sys.stdout", mock.Mock(buffer=stdout)),
             mock.patch("os._exit", side_effect=SystemExit) as end,
         ):
             self.assertEqual(self.run_with(child), 0)
+        self.assertEqual(waits, [({"timeout": launcher.LOCK_WAIT}, False)])
         end.assert_not_called()
         self.assertFalse(child.killed)
+        self.assertEqual((stdout.getvalue(), self.written()[1]), (BOUND + TEXT, ""))
 
     def test_a_bound_or_ended_run_skips_the_lock(self):
         for state in ("session", "ended"):
@@ -160,21 +197,23 @@ class LauncherTest(Case):
                 watch.lock.acquire.assert_not_called()
                 self.assertFalse(child.killed)
 
-    def test_a_run_bound_during_the_lock_wait_is_spared(self):
-        child = Child()
-        self.addCleanup(child.stderr.close)
-        watch = launcher.Watch(child, "120")
+    def test_a_run_bound_or_ended_during_the_lock_wait_is_spared(self):
+        for state in ("session", "ended"):
+            with self.subTest(state=state):
+                child = Child()
+                self.addCleanup(child.stderr.close)
+                watch = launcher.Watch(child, "120")
 
-        def bind(**_):
-            watch.session = True
-            return False
+                def change(watch=watch, state=state, **_):
+                    setattr(watch, state, True)
+                    return False
 
-        watch.lock = mock.Mock(**{"acquire.side_effect": bind})
-        with mock.patch("os._exit", side_effect=SystemExit) as end:
-            watch.expire()
-        end.assert_not_called()
-        watch.lock.release.assert_not_called()
-        self.assertFalse(child.killed)
+                watch.lock = mock.Mock(**{"acquire.side_effect": change})
+                with mock.patch("os._exit", side_effect=SystemExit) as end:
+                    watch.expire()
+                end.assert_not_called()
+                watch.lock.release.assert_not_called()
+                self.assertFalse(child.killed)
 
     def test_the_watch_spares_a_run_that_ended(self):
         child = Child([TEXT], code=1)
