@@ -397,13 +397,13 @@ func (c Codex) inject(ctx context.Context, exec func([]string, []byte) error, pu
 }
 
 func (c Codex) Status(ctx context.Context) protocol.CodexStatus {
-	s := protocol.CodexStatus{AllowedVersions: []string{}, State: "installation_invalid"}
+	s := protocol.CodexStatus{State: "installation_invalid"}
 	installed, err := c.native.Verify()
 	if err != nil {
 		s.Repair = codexRepair(err)
 		return s
 	}
-	s.Version, s.Path, s.SHA256, s.AllowedVersions = installed.Version, installed.Path, installed.SHA256, installed.AllowedVersions
+	s.Version, s.Path, s.SHA256 = installed.Version, installed.Path, installed.SHA256
 	s.State, s.Repair = "login_unavailable", codexLoginCommand
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()

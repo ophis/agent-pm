@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 11",
+  "title": "Docker broker protocol 12",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -261,7 +261,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "11"
+          "const": "12"
         }
       },
       "required": [
@@ -1130,13 +1130,6 @@
           "type": "string",
           "pattern": "^([0-9a-f]{64})?$"
         },
-        "allowed_versions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
-          }
-        },
         "logged_in": {
           "type": "boolean"
         },
@@ -1160,7 +1153,6 @@
         "version",
         "path",
         "sha256",
-        "allowed_versions",
         "logged_in",
         "state",
         "repair"
@@ -1217,14 +1209,6 @@
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
         },
-        "allowed_versions": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
-          }
-        },
         "image_version": {
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
@@ -1245,7 +1229,7 @@
             "updated",
             "current",
             "registry_unavailable",
-            "no_allowed_release",
+            "no_supported_release",
             "update_failed"
           ]
         },
@@ -1253,12 +1237,16 @@
           "enum": [
             "codex"
           ]
+        },
+        "min_version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
         }
       },
       "required": [
         "client",
         "pinned_version",
-        "allowed_versions",
+        "min_version",
         "image_version",
         "target_version",
         "result"

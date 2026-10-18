@@ -4,7 +4,6 @@
     "version": "",
     "path": "",
     "sha256": "",
-    "allowed_versions": [],
     "logged_in": false,
     "state": "installation_invalid",
     "repair": "sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex <version>"

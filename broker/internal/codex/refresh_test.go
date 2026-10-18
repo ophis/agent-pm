@@ -119,7 +119,7 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(content)
-	metadata, _ := json.Marshal(Installation{Version: "0.163.0", Path: "releases/fixed/codex", SHA256: hex.EncodeToString(hash[:]), AllowedVersions: []string{}})
+	metadata, _ := json.Marshal(Installation{Version: "0.163.0", Path: "releases/fixed/codex", SHA256: hex.EncodeToString(hash[:])})
 	if err := os.WriteFile(filepath.Join(root, "active.json"), metadata, 0644); err != nil {
 		t.Fatal(err)
 	}

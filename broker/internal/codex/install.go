@@ -137,6 +137,9 @@ func (r Runtime) Install(ctx context.Context, version string, update bool) (Inst
 	if !stableVersion.MatchString(version) {
 		return empty, errors.New("Codex requires an exact stable version")
 	}
+	if !SupportedVersion(version) {
+		return empty, errors.New("Codex requires version " + MinVersion + " or newer")
+	}
 	if r.uid() != 0 {
 		return empty, errors.New("Codex installation requires sudo")
 	}
@@ -158,7 +161,7 @@ func (r Runtime) Install(ctx context.Context, version string, update bool) (Inst
 	if err := r.prepareLock("auth.lock"); err != nil {
 		return empty, err
 	}
-	previous, verifyErr := r.metadataRecord()
+	_, verifyErr := r.metadataRecord()
 	_, statErr := os.Lstat(filepath.Join(r.root, "active.json"))
 	exists := !os.IsNotExist(statErr)
 	if !update && exists {
@@ -209,10 +212,7 @@ func (r Runtime) Install(ctx context.Context, version string, update bool) (Inst
 		return empty, errors.New("Codex native version verification failed")
 	}
 	sum := sha256.Sum256(native)
-	i := Installation{Version: version, Path: filepath.Join("releases", filepath.Base(stage), "codex"), SHA256: hex.EncodeToString(sum[:]), AllowedVersions: []string{}}
-	if update {
-		i.AllowedVersions = append(i.AllowedVersions, previous.AllowedVersions...)
-	}
+	i := Installation{Version: version, Path: filepath.Join("releases", filepath.Base(stage), "codex"), SHA256: hex.EncodeToString(sum[:])}
 	metadata, err := json.Marshal(i)
 	if err != nil {
 		return empty, err

@@ -68,7 +68,6 @@ def inventory():
         "latest_stable": metadata["dist-tags"]["latest"],
         "latest_same_minor": max(stable, key=lambda v: tuple(map(int, v.split(".")))),
         "published": metadata["time"][VERSION],
-        "allowed_versions": [],
         "refresh_lead_seconds": None,
         "live_refresh_count": 0,
     }

@@ -8,6 +8,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 
 | If you have | Do |
 |---|---|
+| Docker Codex installations from broker protocol 11 or earlier | Upgrade plugin and broker together, then follow [Codex installation migration](docker-codex.md#upgrade-existing-installations): move old metadata aside, reinstall a supported pinned version, and rebuild below-minimum images. |
 | running agent-pm sessions | Close them first. |
 | running Docker Host sessions | Close them before upgrading: their view sessions' old tag and their records' `hidden` field are no longer read. |
 | keychain items `agent-pm-engineer` or `agent-pm-docs` (the GitHub App private keys) | The broker now serves only the App `agent-pm-bot` (App ID 5352992): add its private key as a generic-password item, service `agent-pm-bot`, account `5352992`, content the base64 key, then run `/usr/local/libexec/agent-pm/agent-pm-broker login github agent-pm-bot` ([Log in](docker-host.md#log-in)). The `agent-pm-engineer` and `agent-pm-docs` items are no longer read: delete them. |

@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "11"
+PROTOCOL = "12"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -137,13 +137,13 @@ def _client_update(value, clients) -> bool:
     if not isinstance(value, dict) or value.keys() != {
         "client",
         "pinned_version",
-        "allowed_versions",
+        "min_version",
         "image_version",
         "target_version",
         "result",
     }:
         return False
-    allowed = value["allowed_versions"]
+    minimum = value["min_version"]
     client = value["client"]
     image, target, result = value["image_version"], value["target_version"], value["result"]
     if not (
@@ -151,17 +151,21 @@ def _client_update(value, clients) -> bool:
         and client in clients
         and _matches(VERSION, value["pinned_version"])
         and _matches(VERSION, image)
-        and isinstance(allowed, list)
-        and bool(allowed)
-        and all(_matches(VERSION, v) for v in allowed)
-        and image in allowed
+        and _matches(VERSION, minimum)
         and isinstance(target, str)
-        and (target == "" or target in allowed)
+        and (target == "" or _matches(VERSION, target))
         and isinstance(result, str)
     ):
         return False
+    floor = tuple(map(int, minimum.split(".")))
+    if any(
+        tuple(map(int, version.split("."))) < floor
+        for version in (value["pinned_version"], image, target)
+        if version
+    ):
+        return False
     actual = clients[client].rsplit(" ", 1)[-1]
-    if result in {"registry_unavailable", "no_allowed_release"}:
+    if result in {"registry_unavailable", "no_supported_release"}:
         return target == "" and actual == image
     if result == "current":
         return target == image and actual == image

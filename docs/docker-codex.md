@@ -52,8 +52,8 @@ metadata. Native commands use an absolute path, private working directory and a 
 environment containing only private `HOME`/`CODEX_HOME`, system `PATH` and `LANG`.
 Personal npm configuration, `NODE_OPTIONS`, `npm_config_*` and Codex environment
 overrides are not inherited. Failed validation/publication preserves the active
-installation. Updates preserve `allowed_versions`; no untested container version is
-granted by installing a host binary.
+installation. Install and update accept only stable versions meeting the
+[minimum version](#container-versions).
 
 ## Login trust
 
@@ -261,47 +261,65 @@ headless live check. No TASK-650 concurrent live result is recorded yet.
 
 ## Container versions
 
-**Compatibility rule** is the protected pinned installation's `active.json`
-`allowed_versions` exact set. Only Codex container generations read it; an initial
-empty set refuses Codex starts. Claude needs no pinned Codex and makes no registry
-query or update. An administrator must publish
-only versions backed by the M4 compatibility matrix in that root-owned metadata;
-TASK-652's admission implementation neither certifies versions nor changes the installed rule. Host upgrades
-preserve it; matching major/minor alone grants nothing.
+**Minimum version** is compiled into the broker as `codex.MinVersion`, currently
+`0.163.0`. Both the pinned host installation and the image must meet it. A lower host
+version refuses startup with `update-codex 0.163.0`; a lower image version requires
+rebuilding the worker image. Claude needs no pinned Codex and makes no registry query
+or update. No administrator-maintained version list remains.
 
 ```mermaid
 flowchart TD
-    P[Verify pinned installation and rule] --> I{Image version allowed}
-    I -->|no| X[Reject without secrets]
-    I -->|yes| R[Select newest allowed official release]
-    R --> U{Download and probe succeeds}
+    P{Pinned and image meet minimum} -->|no| X[Reject without secrets]
+    P -->|yes| R[Query official latest stable release]
+    R --> U{Supported target installs and probes}
     U -->|yes| A[Publish volatile executable]
-    U -->|no or none| F[Restore and probe image executable]
+    U -->|no| F[Restore and probe image executable]
     A --> S[Inject secrets]
     F -->|verified| S
     F -->|failed| X
 ```
-Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share this
-preparation. Attach leaves its running generation alone.
+Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share
+this preparation. Attach leaves its running generation alone.
 
-Selection compares stable version components numerically, querying each allowed npm
-release from newest downward. Only official registry metadata/artifacts are used;
-both main and Linux arm64/amd64 platform archives retain the installation integrity
-and extraction checks. No npm scripts, user npm configuration or workspace cache runs.
+Versions compare canonical stable components numerically. The registry's `latest`
+release is the update target when it meets the minimum. `no_supported_release`
+replaces the old no-match outcome when that target is below the minimum; its audit
+target is empty. Invalid registry responses or lookup failures report
+`registry_unavailable`. Only official metadata/artifacts are used; both main and Linux
+arm64/amd64 archives retain installation integrity and extraction checks. No npm
+scripts, user npm configuration or workspace cache runs.
 
 The immutable image installation stays under `/opt/agent-pm/clients/`; its public
 wrapper selects the updated native file in root-owned executable tmpfs
-`/opt/agent-pm/runtime/`. Programs never enter workspace/history. Failed downloads,
-staging, publication or actual-version verification remove the override and require
-a successful image reprobe. Registry failure or no allowed release follows the same
-fallback. An incompatible image always rejects, even if an update exists.
+`/opt/agent-pm/runtime/`. Programs never enter workspace/history. Download, staging,
+publication, probe and registry failures restore and reverify the supported image.
+A below-minimum image rejects even if an update exists.
 
-Each Codex generation's `<generation>.result.json` retains the image digest, actual clients
-and [version audit object](docker-broker-protocol.md#success-fields). Startup stderr
-reports its classified update outcome. Preflight's three-second advisory lookup of
-the official stable `latest` release prints the explicit pinned-upgrade command from
-the command table with its version; lookup failure does not block a compatible start.
-The hint neither upgrades the host nor expands the rule.
+Each Codex generation's `<generation>.result.json` retains the image digest, actual
+clients and [version audit object](docker-broker-protocol.md#success-fields), including
+`min_version`. Startup stderr reports the classified outcome. Preflight's three-second
+advisory `latest` lookup prints a pinned-upgrade command when newer; lookup failure
+does not block a supported start. The hint never upgrades the host.
+
+### Upgrade existing installations
+
+Protocol 12 requires upgrading the plugin and broker together; close Docker sessions
+first, following [broker reinstall precautions](upgrading.md#upgrading-steps).
+Old exact-list `active.json` metadata fails the existing strict decoder. Neither
+`update-codex` nor `install-codex` overwrites that existing metadata. After upgrading
+the broker, preserve it under a new backup name, then install again:
+
+```bash
+sudo mv -i /usr/local/libexec/agent-pm/codex/active.json /usr/local/libexec/agent-pm/codex/active.json.before-minimum
+sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex 0.163.0
+```
+
+If the backup name exists, choose another; confirm `active.json` moved before installing.
+This leaves releases and account locks intact and does not modify keychain entries.
+Rebuild worker images containing an older Codex using `agent-pm-broker build`; use the
+new image on subsequent starts. Later host upgrades use
+`sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex <version>` with a stable
+version at least the minimum. No version-list publication step is needed.
 
 ## Post-release acceptance, moved out of TASK-647
 

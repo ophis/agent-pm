@@ -1,7 +1,7 @@
 # Docker broker protocol
 
 **Protocol 11** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"11"}`.
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"12"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -122,7 +122,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `11` |
+| `version` | `protocol_version`: exact string `12` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude |
@@ -139,14 +139,15 @@ extra fields rejected:
 |---|---|
 | `client` | Exactly `codex`, identifying the prepared executable in `clients` |
 | `pinned_version` | Verified host installation version |
-| `allowed_versions` | Nonempty exact stable-version rule snapshot |
-| `image_version` | Original image Codex, required in the rule |
-| `target_version` | Selected allowed registry version; empty for unavailable registry or no allowed release |
-| `result` | `updated`, `current`, `registry_unavailable`, `no_allowed_release`, `update_failed` |
+| `min_version` | Broker minimum stable-version rule snapshot |
+| `image_version` | Original image Codex, at least `min_version` |
+| `target_version` | Registry latest stable version at least `min_version`; empty for unavailable registry or no supported release |
+| `result` | `updated`, `current`, `registry_unavailable`, `no_supported_release`, `update_failed` |
 
-Stable versions use canonical `major.minor.patch`. `current` requires target=image;
-`updated` requires an allowed different target and matching `clients.codex`;
-`update_failed` requires an allowed different target and actual=image. The two empty-target
+Stable versions use canonical `major.minor.patch`. Pinned, image and nonempty target
+versions must meet `min_version`. `current` requires target=image;
+`updated` requires a different supported target and matching `clients.codex`;
+`update_failed` requires a different supported target and actual=image. The two empty-target
 outcomes also require actual=image. Python checks these cross-field relationships.
 Update operations and diagnostics: [Codex versions](docker-codex.md#container-versions).
 
@@ -163,7 +164,6 @@ the running terminal adopted the credential; see [refresh continuity](docker-cod
 | Field | Meaning |
 |---|---|
 | `version`, `path`, `sha256` | Verified pinned native installation; empty strings if invalid |
-| `allowed_versions` | Exact container compatibility set; initially empty, preserved by updates |
 | `logged_in` | Local installation, ACL, credential shape and access-token expiry checks pass |
 | `state` | `installation_invalid`, `login_unavailable`, `busy`, `expired` or `ready` |
 | `expires_at` | Optional UTC access-token expiry; required for `ready`; no signature or online-validity claim |

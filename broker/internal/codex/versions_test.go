@@ -44,23 +44,16 @@ func registryFixture(entries map[string]string) Runtime {
 	return r
 }
 
-func TestLatestAllowed(t *testing.T) {
-	metadata := func(v string) string {
-		return `{"name":"@openai/codex","version":"` + v + `","dist":{"tarball":"https://registry.npmjs.org/main.tgz"}}`
-	}
-	r := registryFixture(map[string]string{"/@openai/codex/0.162.9": metadata("0.162.9"), "/@openai/codex/0.162.10": metadata("0.162.10"), "/@openai/codex/0.164.0": "unavailable"})
+func TestSupportedVersion(t *testing.T) {
 	for _, c := range []struct {
-		versions []string
-		want     string
-		fail     bool
+		version   string
+		supported bool
 	}{
-		{[]string{"0.162.9", "0.162.10", "0.163.0"}, "0.162.10", false},
-		{[]string{}, "", false}, {[]string{"0.163.0"}, "", false},
-		{[]string{"0.164.0"}, "", true}, {[]string{"0.162.10-beta"}, "", true},
+		{"0.162.999", false}, {"0.163.0", true}, {"0.164.0", true},
+		{"0.163.0-beta", false}, {"invalid", false}, {"1.0.0", true},
 	} {
-		got, err := r.LatestAllowed(context.Background(), c.versions)
-		if got != c.want || (err != nil) != c.fail {
-			t.Errorf("%v: %q %v", c.versions, got, err)
+		if SupportedVersion(c.version) != c.supported {
+			t.Fatal(c)
 		}
 	}
 }
@@ -89,7 +82,7 @@ func TestPlatformArtifacts(t *testing.T) {
 					triple = "wrong-target"
 				}
 				r, data := platformFixture(t, target.goos, target.cpu, triple, mode != "direct")
-				mainURL := "https://registry.npmjs.org/@openai%2Fcodex/0.162.1"
+				mainURL := "https://registry.npmjs.org/@openai%2Fcodex/0.163.0"
 				var main map[string]any
 				if err := json.Unmarshal(data[mainURL], &main); err != nil {
 					t.Fatal(err)
@@ -100,13 +93,13 @@ func TestPlatformArtifacts(t *testing.T) {
 				case "missing":
 					delete(dependencies, key)
 				case "version":
-					dependencies[key] = "0.162.2"
+					dependencies[key] = "0.164.0"
 				case "alias_package":
-					dependencies[key] = "npm:@evil/codex@0.162.1-" + target.goos + "-" + target.cpu
+					dependencies[key] = "npm:@evil/codex@0.163.0-" + target.goos + "-" + target.cpu
 				case "alias_version":
-					dependencies[key] = "npm:@openai/codex@0.162.2-" + target.goos + "-" + target.cpu
+					dependencies[key] = "npm:@openai/codex@0.164.0-" + target.goos + "-" + target.cpu
 				case "alias_target":
-					dependencies[key] = "npm:@openai/codex@0.162.1-other-" + target.cpu
+					dependencies[key] = "npm:@openai/codex@0.163.0-other-" + target.cpu
 				case "main_integrity":
 					data["https://registry.npmjs.org/main.tgz"] = []byte("corrupt")
 				case "platform_integrity":
@@ -126,12 +119,12 @@ func TestPlatformArtifacts(t *testing.T) {
 				var err error
 				if target.goos == "darwin" {
 					var installed Installation
-					installed, err = r.Install(context.Background(), "0.162.1", false)
+					installed, err = r.Install(context.Background(), "0.163.0", false)
 					if err == nil {
 						got, err = os.ReadFile(installed.Path)
 					}
 				} else {
-					got, err = r.Linux(context.Background(), "0.162.1", target.arch)
+					got, err = r.Linux(context.Background(), "0.163.0", target.arch)
 				}
 				if mode == "direct" || mode == "alias" {
 					if err != nil || !bytes.Equal(got, []byte("xxxxxx")) {
@@ -146,7 +139,7 @@ func TestPlatformArtifacts(t *testing.T) {
 }
 
 func TestLinuxTargetGuards(t *testing.T) {
-	for _, c := range [][2]string{{"0.162.1", "ppc64"}, {"latest", "arm64"}} {
+	for _, c := range [][2]string{{"0.163.0", "ppc64"}, {"latest", "arm64"}} {
 		if _, err := New().Linux(context.Background(), c[0], c[1]); err == nil {
 			t.Fatal("invalid target accepted")
 		}
