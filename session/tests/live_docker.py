@@ -436,6 +436,15 @@ def quiet(events: tuple[str, ...], after: str) -> str:
         return ""
 
 
+def drained(events: tuple[str, ...], after: str) -> str:
+    """The line of the newest event already in the roster's events: a backlog is not this run's."""
+    while True:
+        try:
+            after = run(*events, "--after", after, timeout=2).split()[0]
+        except subprocess.TimeoutExpired:
+            return after
+
+
 def timed(times: dict, step: str, action):
     started = time.monotonic()
     found = action()
@@ -565,6 +574,7 @@ def worker(args: Args) -> int:
     if after is None or gen is None:
         raise SystemExit(f"agent-pm-crew attach printed no N= and GEN=: {cursor!r:.200}")
     w.events = ("agent-pm-crew", "next-event", "--manager", manager, "--gen", gen.group(1))
+    start_after = drained(w.events, after.group(1))
     removed = None
     try:
         crew = [os.path.join(BIN, "agent-pm-crew"), "worker", "--manager", manager, w.name]
@@ -572,7 +582,7 @@ def worker(args: Args) -> int:
             "start",
             [*crew, "--client", w.client, "--cwd", w.cwd, "--display", "none", "--prompt", PROMPT],
         )
-        w.event("start", after.group(1))
+        w.event("start", start_after)
         print("PASS start: the default Host put the worker in a container; first event", flush=True)
         w.isolation(first)
         run("agent-pm-session", "send", w.name, "Count from 1 to 200, one number per line.")

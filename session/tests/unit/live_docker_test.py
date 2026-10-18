@@ -234,6 +234,26 @@ class BaselineTest(Case):
         self.assertIn("docker.sock", problems[0])
 
 
+class DrainedTest(Case):
+    def drained(self, backlog):
+        lines = iter(backlog)
+
+        def run(*argv, timeout):
+            try:
+                return next(lines)
+            except StopIteration:
+                raise gate.subprocess.TimeoutExpired(argv, timeout) from None
+
+        with mock.patch.object(gate, "run", run):
+            return gate.drained(("agent-pm-crew", "next-event"), "1540")
+
+    def test_skips_the_backlog(self):
+        self.assertEqual(self.drained(["1541 10:00:00 a done", "1542 10:00:01 b done"]), "1542")
+
+    def test_no_backlog(self):
+        self.assertEqual(self.drained([]), "1540")
+
+
 class ZeroCountsTest(Case):
     def test_counts(self):
         self.assertTrue(gate.zero_counts("0\n0\n"))
