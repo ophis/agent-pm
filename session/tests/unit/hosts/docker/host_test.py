@@ -1641,11 +1641,43 @@ class TerminalTest(Base):
         process = self.terminal()
         self.docker.replies = {
             ("tmux", "display-message"): pane("1 0 "),
-            ("kill", "-0"): (1, "", ""),
+            ("kill", "-0"): (1, "", "kill: (-4343) - No such process\n"),
         }
         process.kill()
         self.assertEqual(self.docker.execs()[0], ["kill", "-KILL", "--", "-4343"])
         self.assertIn(["kill", "-0", "--", "-4343"], self.docker.execs())
+
+    def test_a_group_gone_or_its_container_gone_or_stopped_has_exited(self):
+        process = self.terminal()
+        for reply in (
+            (1, "", "kill: (-4343) - No such process\n"),
+            (1, "", f"Error response from daemon: No such container: {CONTAINER}\n"),
+            (1, "", f"Error response from daemon: container {CONTAINER} is not running\n"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {
+                    ("tmux", "display-message"): pane("1 0 "),
+                    ("kill", "-0"): reply,
+                }
+                self.assertTrue(process.wait_exit(0))
+
+    def test_a_group_probe_that_cannot_answer_is_unknown_not_exited(self):
+        process = self.terminal()
+        for reply in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over 8388608 bytes"),
+            (1, "", "kill: (-4343) - Operation not permitted\n"),
+            (126, "", ""),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {
+                    ("tmux", "display-message"): pane("1 0 "),
+                    ("kill", "-0"): reply,
+                }
+                with self.assertRaisesRegex(SessionError, "^process group w: "):
+                    process.wait_exit(0)
+                with self.assertRaisesRegex(SessionError, "^process group w: "):
+                    process.kill()
 
     def test_record_and_display_ignore_container_options(self):
         process = self.terminal()

@@ -450,12 +450,20 @@ class DockerTerminal(InteractiveProcess):
     def mark(self, word: StatusState, events: str | None) -> None:
         self.pane.mark(word, events, session=self.name)
 
-    def _signal(self, sig: str) -> bool:
-        res = self.tmux.runner(["kill", f"-{sig}", "--", f"-{self._pane_pid}"])
-        return res.returncode == 0
+    def _signal(self, sig: str) -> subprocess.CompletedProcess:
+        return self.tmux.runner(["kill", f"-{sig}", "--", f"-{self._pane_pid}"])
 
     def _group_live(self) -> bool:
-        return self._signal("0")
+        """False only when the container's kill finds no such group or Docker reports the
+        container gone or stopped; a probe that did not answer raises SessionError.
+        """
+        res = self._signal("0")
+        if res.returncode == 0:
+            return True
+        if "No such process" in res.stderr or absent(res):
+            return False
+        why = res.stderr.strip() or f"kill exited {res.returncode}"
+        raise SessionError(f"process group {self.name}: {why}")
 
     def _kill_group(self) -> None:
         self._signal("KILL")
