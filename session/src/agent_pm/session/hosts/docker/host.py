@@ -906,7 +906,7 @@ class DockerHost(Host):
                 [
                     "with-secrets",
                     "--client",
-                    metadata["client"],
+                    metadata["home_field"].removesuffix("_dir"),
                     *launch.argv,
                 ],
                 cwd=cwd,
@@ -1078,7 +1078,7 @@ class DockerHost(Host):
                     container,
                     "with-secrets",
                     "--client",
-                    metadata["client"],
+                    metadata["home_field"].removesuffix("_dir"),
                     *launch.argv,
                 ),
             )

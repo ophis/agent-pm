@@ -1155,6 +1155,13 @@ class PipeTest(Base):
             self.launch = replace(self.launch, env={"K": "v"})
         self.assertEqual(self.order, [])
 
+    def test_with_secrets_gets_the_implementations_client_not_the_table_name(self):
+        piped = self.pipe(client="work")
+        argv, _ = self.popened
+        start = argv.index("with-secrets")
+        self.assertEqual(argv[start : start + 4], ["with-secrets", "--client", "agent", "agent"])
+        piped.close()
+
     def test_pipe_starts_the_container_then_docker_exec_without_tmux(self):
         piped = self.pipe()
         manifest = os.path.join(self.state, f"{GEN}.json")
