@@ -20,7 +20,7 @@
 
 | 角色 | 版本 | 终端／headless（无界面运行）／真实刷新／resume（恢复） |
 |---|---|---|
-| 固定宿主候选 | 0.163.0 | 全部未完成 |
+| 固定宿主候选 | 0.163.0 下载目标；独立版本输出未采集 | 宿主 headless 基线通过；其余未完成，见用户观察 |
 | 同 minor（次版本）最新稳定版 | 0.163.0 | 与上一行同一产物，全部未完成 |
 | 当日最新稳定版 | 0.163.0 | 与上一行同一产物，全部未完成 |
 | 用户镜像实际版本、digest（内容摘要） | 未采集 | 全部未完成 |
@@ -93,7 +93,18 @@ Docker [tmpfs（内存文件系统）文档](https://docs.docker.com/engine/stor
 
 命令：`bash scripts/docker-codex-mount-probe.sh`，由 `.github/workflows/codex-probe.yml` 的 `Codex synthetic mounts` 运行。[脚本:24](../scripts/docker-codex-mount-probe.sh#L24) 使用无身份、无网络容器、非 root、只读根目录、`CapDrop=ALL`、`no-new-privileges`；整个 `/probe/home` 为 tmpfs，仅其 `sessions/` bind。写入合成 auth、原子 rename、写历史、重启后确认 auth 消失，再删除容器。仅输出版本、digest 和状态；底层错误不输出原文。
 
-Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世界时），两次启动检查成功。[脱敏记录](docker-codex-evidence/2026-10-17-mount-ci.json) 包含测试提交、命令、镜像 digest 和 [GitHub 运行证据](https://github.com/ophis/agent-pm/actions/runs/39085070423/job/117549791580)。macOS 用户运行方式见下一节；此结果不证明 S3 的实际保存、凭据无残留、原生历史可恢复或真实账号续用。
+Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世界时），两次启动检查成功。[脱敏记录](docker-codex-evidence/2026-10-17-mount-ci.json) 包含测试提交、命令、镜像 digest 和 [GitHub 运行证据](https://github.com/ophis/agent-pm/actions/runs/39085070423/job/117549791580)。macOS 用户观察见下节；两者均不证明 S3 的实际保存、凭据无残留、原生历史可恢复或真实账号续用。
+
+## 用户观察
+
+[2026-10-18 宿主记录](docker-codex-evidence/2026-10-18-user-host.json) 仅记录用户回传，worker 未复跑。
+
+| 项目 | 观察 | 未采集／未验证 |
+|---|---|---|
+| 隔离登录 | 账号禁用 device-code；同一隔离 `CODEX_HOME` 改用浏览器登录成功 | 登录时间未采集 |
+| 宿主 headless 基线 | `host_baseline_pass`，1 次；`2026-10-18T01:27:36Z` 至 `01:27:40Z`，4 秒 | 未观察真实刷新；不表示 A 或 B 的容器认证成功 |
+| 原生版本 | 下载目标及基线固定标签均为 `0.163.0` | `codex --version` 原始输出未采集；基线标签是前轮命令的常量，不能当成运行时版本探测 |
+| macOS 合成挂载 | Docker 29.8.2，`synthetic_mount_restart_only` 通过，2 次；Alpine digest 与 Linux 记录相同 | 挂载执行时间未采集；未运行真实 Codex 凭据保存检查 |
 
 ## 用户实测交接
 
@@ -125,7 +136,7 @@ date -u '+%Y-%m-%dT%H:%M:%SZ'
 env AGENT_PM_CODEX_USER_PROBE=1 bash /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker-codex-mount-probe.sh
 ```
 
-先停在此处，用户回传脱敏结果后继续。尚未准备或执行的后续命令不算验证完成。完整订阅流程保留以下待办，不能据本节的一轮基线跳过：
+首轮命令已收到上述用户观察，保留命令供追溯，不重复登录或重建该目录。下一组 A 载体与双容器命令待准备。尚未准备或执行的后续命令不算验证完成。完整订阅流程保留以下待办，不能据本节的一轮基线跳过：
 
 ```mermaid
 flowchart TD
