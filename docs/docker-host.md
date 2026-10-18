@@ -1,6 +1,6 @@
 # Docker host
 
-Pinned host Codex installation and independent broker login: [Codex operations](docker-codex.md).
+Codex installation, broker login and terminal containers: [Codex operations](docker-codex.md).
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
@@ -24,15 +24,16 @@ sh "$PKG/broker/install.sh"
 It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
 freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
 ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
-To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code and
-Codex upgrade with the image: a start rebuilds an image built 7 or more days ago, and
+To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
+upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-terminals).
+A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
 | Check | Expect |
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"8"}` |
+| `"$B" version` | `{"protocol_version":"9"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -88,7 +89,7 @@ same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
 Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
-latest Claude Code and Codex. To refresh them now:
+latest Claude Code; the overlay supplies Codex's version boundary. To rebuild now:
 
 ```sh
 "$B" build --agent-pm "$PKG" --max-age 0
@@ -164,7 +165,7 @@ gives another key, and its rebuild removes the other's images.
 ```sh
 mkdir -p ~/src/demo ~/.agent-pm/docker-state/worker_1/claude
 cat > /tmp/worker_1.json <<EOF
-{"name": "worker_1", "generation": "$(openssl rand -hex 16)", "image": "$I",
+{"name": "worker_1", "client": "claude", "generation": "$(openssl rand -hex 16)", "image": "$I",
  "cwd": "$HOME/src/demo", "workspace": "agent-pm-ws-worker_1",
  "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "github": null, "labels": {}}
 EOF
@@ -311,26 +312,26 @@ revision rounds push to the same branch. Then [review before pulling](#review-be
 Each start, restart or resume runs a new generation in a new container, built from the
 current image. `restart` closes the running container and starts the next one; `resume`
 (after `close`, or once the container is gone) starts one in the same cwd. Both keep the
-Claude config dir and the [workspace volume](#workspace-volumes) and continue its
+client history and the [workspace volume](#workspace-volumes) and continue its
 conversation; only a new start clears them. A resume
 whose conversation file is missing, or is a symlink, fails before any container exists
 with `no native history to resume`. The worker's resume command is
-`agent-pm-session resume <name>`, never `client-resume`, which would start Claude on the
+`agent-pm-session resume <name>`, never `client-resume`, which would start the client on the
 host.
 
-Refused before any container exists, as not supported on the Docker Host yet: a client
-other than Claude, detached sessions, and a start while a container of that name still
-exists. The broker's Refusals above apply too.
+Docker supports Claude terminals and headless runs, plus [Codex terminals](docker-codex.md).
+Unsupported clients, Codex headless runs, detached sessions, and a start while a container
+of that name still exists fail before container creation. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd exists (`Session.preflight`
-also accepts one not yet made: a role run makes its agent dir after it), the broker answers
-`version` with the expected protocol (else it points to [Install](#install)), and
+Every start first runs a preflight: the client and mode are supported, the cwd exists
+(`Session.preflight` also accepts one not yet made: a role run makes its agent dir after
+it), the broker answers `version` with the expected protocol (else it points to
+[Install](#install)), and
 `build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
-closed and `resume` continues it once fixed. A missing setup-token surfaces at the
-broker's `start`, still before any container: the start fails with the broker's own
-`agent-pm-broker login claude` message and is not retried.
+closed and `resume` continues it once fixed. Missing client credentials fail at the broker's `start`, before container creation, with
+its matching host `agent-pm-broker login <client>` repair command; the start is not retried.
 
 `agent-pm-crew` waits up to 1920 s for a start or resume, as the build alone may take
 1800 s (the first start after an upgrade, or once the image is 7 days old, rebuilds it), then sends SIGTERM and,
@@ -510,8 +511,8 @@ secrets in environments that need it.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
-- Every image build installs npm's latest Claude Code and Codex releases, trusting their
-  vendors' npm packages.
+- Image builds trust the client vendors' npm packages; Codex's policy is in
+  [Codex operations](docker-codex.md#docker-terminals).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running

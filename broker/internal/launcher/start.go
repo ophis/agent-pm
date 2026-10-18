@@ -71,8 +71,14 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}
-	if err := h.Creds.Ready(); err != nil {
-		return StartResult{}, err
+	if m.Client == "codex" {
+		if err := h.Codex.Ready(ctx); err != nil {
+			return StartResult{}, err
+		}
+	} else {
+		if err := h.Creds.Ready(); err != nil {
+			return StartResult{}, err
+		}
 	}
 	if m.GitHubApp != "" {
 		if err := h.GitHub.Ready(m.GitHubApp); err != nil {
@@ -122,7 +128,12 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, lap func(phase string)) (StartResult, error) {
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
-		"--network", "bridge", "--workdir", m.CWD, "--env", "CLAUDE_CONFIG_DIR=" + m.ClaudeDir}
+		"--network", "bridge", "--workdir", m.CWD}
+	if m.Client == "codex" {
+		args = append(args, "--env", "CODEX_HOME="+m.CodexDir)
+	} else {
+		args = append(args, "--env", "CLAUDE_CONFIG_DIR="+m.ClaudeDir)
+	}
 	for _, key := range []string{"npm_config_cache", "UV_CACHE_DIR", "PIP_CACHE_DIR"} {
 		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
 	}
@@ -136,7 +147,16 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	for _, k := range keys {
 		args = append(args, "--label", k+"="+m.Labels[k])
 	}
-	args = append(args, "--mount", volumeMount(m.Workspace, m.CWD, false), "--mount", bindMount(m.ClaudeDir, m.ClaudeDir),
+	args = append(args, "--mount", volumeMount(m.Workspace, m.CWD, false))
+	if m.Client == "codex" {
+		owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
+		args = append(args, "--tmpfs", m.CodexDir+":rw,noexec,nosuid,nodev,size=67108864"+owner,
+			"--tmpfs", "/run/agent-pm:rw,noexec,nosuid,nodev,size=1048576"+owner,
+			"--mount", bindMount(filepath.Join(m.CodexDir, "sessions"), filepath.Join(m.CodexDir, "sessions")))
+	} else {
+		args = append(args, "--mount", bindMount(m.ClaudeDir, m.ClaudeDir))
+	}
+	args = append(args,
 		"--tmpfs", docker.SecretsDir+":rw,noexec,nosuid,nodev,size=65536,mode=0700,uid="+labels["agent-pm.agent-uid"]+",gid="+labels["agent-pm.agent-gid"],
 		"--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
@@ -150,8 +170,8 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, e
 	}
 	lap("create")
-	if _, err := h.Docker.Run(ctx, asAgent(c, python, "-I", bootstrap, "claude", m.ClaudeDir, m.CWD), nil); err != nil {
-		return StartResult{}, failure(err, protocol.StartFailed, "Writing Claude's bootstrap state failed.")
+	if _, err := h.Docker.Run(ctx, asAgent(c, python, "-I", bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
+		return StartResult{}, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
 	}
 	if m.HasHook {
 		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, python, "-I", bootstrap, "hook", m.HookPath}, nil); err != nil {
@@ -164,9 +184,21 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
+	if m.Client == "codex" && clients.Codex != "codex-cli 0.162.1" {
+		return StartResult{}, protocol.New(protocol.StartFailed, "Docker Codex requires source-verified version 0.162.1; rebuild the worker image with that version.")
+	}
 	exec := h.agentExec(ctx, c)
-	if err := h.Creds.Inject(exec); err != nil {
-		return StartResult{}, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
+	var codexExpiry *string
+	if m.Client == "codex" {
+		expiry, err := h.Codex.Inject(ctx, exec)
+		if err != nil {
+			return StartResult{}, injected(err, protocol.StartFailed, "Injecting Codex credentials failed.")
+		}
+		codexExpiry = &expiry
+	} else {
+		if err := h.Creds.Inject(exec); err != nil {
+			return StartResult{}, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
+		}
 	}
 	lap("credentials")
 	expiries := []protocol.Expiry{}
@@ -176,7 +208,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		}
 		lap("github")
 	}
-	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries}, nil
+	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries, CodexExpiresAt: codexExpiry}, nil
 }
 
 // injected classifies a Credentials or Tokens error: its protocol error, an unreachable daemon, else code.

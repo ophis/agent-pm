@@ -11,3 +11,4 @@ class Started:
     image_digest: str
     clients: Mapping[str, str]  # client name → its runnable version
     github: Sequence[Mapping[str, str]]  # each GitHub token's {"account", "expires_at"}
+    credential_expires_at: str | None = None

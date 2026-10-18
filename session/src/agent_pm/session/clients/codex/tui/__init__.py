@@ -29,6 +29,7 @@ from agent_pm.session.clients.codex.common.types import Snapshot
 from agent_pm.session.clients.common import scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
+    ClientHome,
     ConfigError,
     HookCall,
     HookCallback,
@@ -40,7 +41,7 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.modes.client_adapters.tui import Tui
-from agent_pm.utils import json_records, module_roots, read_regular, source_path
+from agent_pm.utils import json_records, module_roots, read_beneath, source_path
 
 PASSED = ("-c", "--enable", "--disable")
 
@@ -126,7 +127,13 @@ class CodexTui(Tui):
     hooks = MappingProxyType({label: HookKind(kind) for label, _, kind in HOOKS})
     dialogs = tuple(DIALOGS)
 
+    def _home(self) -> ClientHome:
+        return ClientHome(
+            "codex_dir", "codex", "CODEX_HOME", "codex-access-token", persistent=("sessions",)
+        )
+
     def __init__(self, common: CodexCommon):
+        self._set_runtime(None)
         self.common = common
         self.state = None
         self.last_reply = ""
@@ -144,7 +151,18 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         store = self.store = common.store.root
-        exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
+        runtime = self._runtime
+        if runtime:
+            env = {
+                key: value
+                for key, value in env.items()
+                if key not in ("PYTHONPATH", CLIENT_PYTHONPATH)
+            }
+        exe = (
+            os.path.join(runtime.bin_dir, "codex")
+            if runtime
+            else shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
+        )
         if exe is None:
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
@@ -157,19 +175,35 @@ class CodexTui(Tui):
             HookPlan(tuple(hook)),
             self.state.workdir,
             self.state.sid,
-            store,
+            os.path.join(runtime.state_root, "codex-store") if runtime else store,
         )
+        self._runtime_files = SessionStore.project(self.state, plan.store) if runtime else {}
         pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))
         try:
             encoded = encode(plan)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
         launch = Launch(
-            (os.path.realpath(sys.executable), "-P", "-s", "-m", START, encoded),
+            (
+                runtime.python if runtime else os.path.realpath(sys.executable),
+                "-P",
+                "-s",
+                "-m",
+                START,
+                encoded,
+            ),
             env={
                 **env,
-                **source_path(module_roots(sys.modules[__name__], agent_pm.utils)),
-                **({CLIENT_PYTHONPATH: pythonpath} if pythonpath is not None else {}),
+                **(
+                    {"PYTHONPATH": runtime.pythonpath}
+                    if runtime
+                    else source_path(module_roots(sys.modules[__name__], agent_pm.utils))
+                ),
+                **(
+                    {CLIENT_PYTHONPATH: pythonpath}
+                    if pythonpath is not None and runtime is None
+                    else {}
+                ),
             },
             unset=(*common.UNSET, CLIENT_PYTHONPATH),
             cwd=snapshot.cwd,
@@ -209,7 +243,7 @@ class CodexTui(Tui):
                 self.transcript = self.common.transcript(replace(self.state, native_id=self.native))
             except (ConfigError, OSError):
                 return []
-        lines = (read_regular(self.transcript, offset=self.offset) or b"").split(b"\n")[:-1]
+        lines = (read_beneath("/", self.transcript, offset=self.offset) or b"").split(b"\n")[:-1]
         self.offset += sum(len(line) + 1 for line in lines)  # a line still being written waits
         return [reply for record in json_records(lines) for reply in self._record(record)]
 

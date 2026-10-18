@@ -1,5 +1,5 @@
 {
-  "protocol_version": "8",
+  "protocol_version": "9",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1393,6 +1393,86 @@
       "expected": {
         "stage": "response",
         "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-codex.json",
+      "definition": "manifest",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-missing-client.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-wrong-client.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-mixed-dirs.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-missing-codex_dir.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "start-output-codex.json",
+      "definition": "start_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "start-output-bad-expiry.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "start-output-malformed-expiry.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
         "error_code": null
       }
     }

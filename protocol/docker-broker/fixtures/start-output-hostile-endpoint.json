@@ -1,4 +1,5 @@
 {
+  "credential_expires_at": null,
   "container": "agent-pm-worker_1-0123456789abcdef0123456789abcdef",
   "endpoint": "tcp://example.com:2375",
   "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

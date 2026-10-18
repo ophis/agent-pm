@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -42,9 +43,60 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
     destination.chmod(0o755)
 
 
+def bootstrap_codex(directory, cwd, secrets=Path("/run/agent-pm/secrets")):
+    (directory / "config.toml").write_text(
+        'cli_auth_credentials_store = "file"\n'
+        'forced_login_method = "chatgpt"\n'
+        "check_for_update_on_startup = false\n"
+        f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n'
+    )
+    (directory / "auth.json").symlink_to(secrets / "codex/auth.json")
+
+
+def inject_codex(stream, secrets=Path("/run/agent-pm/secrets")):
+    directory = secrets / "codex"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    temporary = directory / "auth.new"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            shutil.copyfileobj(stream, output)
+        os.replace(temporary, directory / "auth.json")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def stage_runtime(stream, root=Path("/run/agent-pm")):
+    files = json.load(stream)
+    if not isinstance(files, dict) or len(files) != 1:
+        sys.exit("bootstrap: expected one recovery record")
+    for name, text in files.items():
+        path = Path(name)
+        if (
+            path.parent.parent != root
+            or not path.parent.name.endswith("-store")
+            or not re.fullmatch(r"[0-9a-f]{64}\.json", path.name)
+            or not isinstance(text, str)
+            or len(text.encode()) > 1 << 20
+        ):
+            sys.exit("bootstrap: invalid recovery projection")
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        if path.parent.is_symlink():
+            sys.exit("bootstrap: recovery directory is a link")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as output:
+            output.write(text)
+
+
 def main(argv):
     if len(argv) == 3 and argv[0] == "claude":
         bootstrap_claude(TEMPLATES, Path(argv[1]), argv[2])
+    elif len(argv) == 3 and argv[0] == "codex":
+        bootstrap_codex(Path(argv[1]), argv[2])
+    elif argv == ["codex-auth"]:
+        inject_codex(sys.stdin.buffer)
+    elif argv == ["runtime-files"]:
+        stage_runtime(sys.stdin)
     elif len(argv) == 2 and argv[0] == "hook":
         install_hook(STUB, Path(argv[1]))
     else:

@@ -49,7 +49,7 @@ func TestManifestDuplicatesTrailingUTF8(t *testing.T) {
 	if err != nil || !m.HasHook || m.HookPath != "/usr/local/bin/agent-pm-session" || m.Labels["team"] != "crew" {
 		t.Fatalf("%+v %v", m, err)
 	}
-	base := `"generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` +
+	base := `"client":"claude","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` +
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","cwd":"/w","workspace":"agent-pm-ws-w","claude_dir":"/c","github":null,"labels":{}`
 	if _, err := ParseManifest([]byte(`{"name":"w",` + base + `}`)); err != nil {
 		t.Fatal(err)

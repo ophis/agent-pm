@@ -22,7 +22,7 @@ func mountHost(missing ...string) Host {
 }
 
 func baseManifest() Manifest {
-	return Manifest{Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project", Workspace: "agent-pm-ws-w",
+	return Manifest{Client: "claude", Name: "w", Generation: strings.Repeat("0", 32), CWD: home + "/src/project", Workspace: "agent-pm-ws-w",
 		ClaudeDir: home + "/.agent-pm/docker-state/w/claude", HookPath: "/usr/local/bin/agent-pm-session", HasHook: true}
 }
 
