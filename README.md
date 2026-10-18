@@ -120,7 +120,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
 | [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags |
 | [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
-| [Upgrading](docs/upgrading.md) | upgrade steps, switching from v1, smoke checklist |
+| [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, risks |

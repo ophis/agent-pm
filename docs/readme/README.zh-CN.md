@@ -123,6 +123,6 @@ agent-pm 启动的 session 如何加载你的设置，以及为什么有些命�
 | [Linear board](../board.md) | 设置、issue 状态和 task 标签、运营 router、Agent 标签（每个 issue 的 client） |
 | [Sessions and client policy](../sessions.md) | session 设置、`agent-pm-session`、role run 的 client 参数 |
 | [State root](../state-root.md) | `~/.agent-pm/` 结构、每项由谁清理、哪些可以删除 |
-| [Upgrading](../upgrading.md) | 升级步骤、从 v1 迁移、冒烟检查清单 |
+| [Upgrading](../upgrading.md) | 从 v0.6.20 起的升级步骤 |
 | [Core architecture](../architecture.md) | 层和包（开发者） |
 | [Tests](../tests.md) | lint、测试套件、覆盖率（开发者） |

@@ -123,6 +123,6 @@ agent-pm が起動する session があなたの設定をどう読み込むか�
 | [Linear board](../board.md) | セットアップ、issue の状態と task ラベル、router の運用、Agent ラベル（issue ごとの client） |
 | [Sessions and client policy](../sessions.md) | session 設定、`agent-pm-session`、role run の client フラグ |
 | [State root](../state-root.md) | `~/.agent-pm/` の構成、各エントリを何が掃除するか、削除してよいもの |
-| [Upgrading](../upgrading.md) | アップグレード手順、v1 からの移行、スモークチェックリスト |
+| [Upgrading](../upgrading.md) | v0.6.20 以降からのアップグレード手順 |
 | [Core architecture](../architecture.md) | レイヤーとパッケージ（開発者向け） |
 | [Tests](../tests.md) | lint、テストスイート、カバレッジ（開発者向け） |
