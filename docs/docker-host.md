@@ -204,10 +204,16 @@ too, their harness staying on the host, which needs a Host of its own:
 harness_host = "tmux"
 ```
 
-Only a TUI agent runs there: a headless one (an unattended board run, `agent-pm-delegate
-run` without `--detach`) runs its client on this machine, as before, with none of the rules
-below. The Docker Host treats them as any session: their volume is `agent-pm-ws-<session name>`,
-mounted at `<workdir>/agent`, and a board issue's revision rounds keep its name and volume.
+A headless agent (an unattended board run, `agent-pm-delegate run` without `--detach`) runs
+there too, under its agent name and the rules below. Its client runs by `docker exec -i` in
+its own container, with no tmux, hook relay or supervisor, its output streamed back to the
+harness; `ls`, `attach` and the Viewer do not show it, and a TUI start of its name is
+refused while it runs. Its container closes when the client exits or is stopped; one whose
+harness died is closed by the next Docker start or close. The Docker Host treats them as any
+session: their volume is `agent-pm-ws-<agent name>`, mounted at `<workdir>/agent`, and a board
+issue's revision rounds keep its name and volume. `agent-pm-crew reopen` resumes a Docker run
+on the Docker Host under its agent name, with the same Claude config dir and volume, whichever
+mode started it.
 On the Docker Host the Delegate:
 
 - refuses, before any container and naming the key, a `harness_host` that is empty or the
@@ -271,7 +277,8 @@ start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
 (`<generation>.result.json`: container, image and digest, client versions, when the broker's start began and ended, and the [start timing](#start-timing)
 `phases` and `launched_at`),
-`host.json` (what the host knows of the session, with its events path), the hook
+`host.json` (what the host knows of the session, with its events path), a headless run's
+`pipe.lock` (held by its harness while its client runs), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
 (its image is no longer the current one) and `rejected.jsonl`
@@ -423,5 +430,11 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 - A workspace volume outlives its container: it stays until its cwd leaves the host or
   `workspace-rm`, and holds whatever the worker cloned. A crew worker whose cwd stays keeps
   its volume for good.
+- A headless run's output comes from its container, where its client and tools share uid
+  `agent`: a forged rate-limit line pauses the board for that client until its reset time,
+  as a forged transcript record already can for a TUI run. The harness holds up to 64 lines
+  of up to 8 MiB per stream (about 1 GiB at worst) before it reads them.
+- A harness killed with `kill -9` leaves its headless client running, with its token, until
+  the next Docker start or close closes its container.
 - Containers reach the host through `host.docker.internal`: a host service listening on
   all interfaces or on Docker's gateway is reachable from workers.
