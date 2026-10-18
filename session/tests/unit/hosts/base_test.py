@@ -14,12 +14,11 @@ from agent_pm.session import (
     ConfigError,
     Host,
     NotShowable,
-    Piped,
     Process,
     SessionError,
 )
 from agent_pm.session.engine.types import Hosts, Launch, Liveness
-from agent_pm.session.hosts.base import Interactive, InteractiveProcess
+from agent_pm.session.hosts.base import Interactive, InteractiveProcess, Piped
 from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import STOP_WAIT, Status, StatusState
 

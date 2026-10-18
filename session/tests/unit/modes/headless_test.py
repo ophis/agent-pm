@@ -6,6 +6,7 @@ process. Real children: session/tests/integration/modes/headless_integration_tes
 import contextlib
 import io
 import os
+import queue
 import sys
 import threading
 import time
@@ -430,6 +431,29 @@ class ThroughItsHost(Base):
             if ended := mode.poll(0.1)[1]:
                 break
         self.assertTrue(ended)
+
+    def test_an_item_queued_as_a_stopped_poll_times_out_is_kept(self):
+        mode = self.start_on(PipingHost(FakePiped()))
+        for done in mode.done:
+            self.assertTrue(done.wait(5))
+        mode.stop()
+        late, real = RuntimeError("late"), queue.Queue()
+
+        class Racy:
+            def get(self, timeout):
+                mode.items = real
+                real.put(late)
+                for done in mode.done:
+                    done.set()
+                raise queue.Empty
+
+        for done in mode.done:
+            done.clear()
+        mode.items = Racy()
+        self.assertEqual(mode.poll(0), ([], False))
+        with self.assertRaises(RuntimeError) as caught:
+            mode.poll(0)
+        self.assertIs(caught.exception, late)
 
     def test_the_event_queue_is_bounded_and_a_stop_frees_a_pump_waiting_on_it(self):
         piped = FakePiped()
