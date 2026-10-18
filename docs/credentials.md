@@ -67,7 +67,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 | Field | Value | Source |
 |---|---|---|
 | Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1171`, `…/engine/promote.py:366`, `…/engine/prune.py:467`, `…/engine/writeback.py:451` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/promote.py:90`, `…/engine/prune.py:76`, `…/engine/ops.py:20`, `…/engine/run_comments.py:114`; [Linear API keys] |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/promote.py:90`, `…/engine/prune.py:76`, `…/engine/ops.py:20`, `…/engine/run_comments.py:108`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `harness_key` | `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml:17` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
@@ -153,8 +153,9 @@ the user stores the key; `agent-pm-tokens` while a Docker session runs; `agent-p
 network off, until the next start, close or status online.
 
 Pass: `exists=0`, `exit=` non-zero (142 when the alarm stops it) and a byte count of `0`. Click Deny on any dialog, never Always
-Allow; if Always Allow was clicked, `/usr/bin/security` now reads the item: rerun its `login` command (none for the
-broker-created items: delete them as [Upgrading](upgrading.md) says) and note it here. Record only
+Allow; if Always Allow was clicked, `/usr/bin/security` now reads the item: rerun the `login` that writes it
+(`login github agent-pm-bot` for `agent-pm-bot` and `agent-pm-github-users`), or for `agent-pm-tokens` and
+`agent-pm-revocations` delete the item as [Upgrading](upgrading.md) says, and note it here. Record only
 `exists=<n>, exit=<n>, bytes=<n>`.
 A read that returns bytes fails this check unless the user accepts it: mark the row `silently readable, accepted <date>`.
 
