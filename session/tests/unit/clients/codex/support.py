@@ -10,7 +10,7 @@ from agent_pm.session.clients import registry
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.codex.common import SessionStore
 from agent_pm.session.engine.config import read_config
-from agent_pm.session.engine.types import Access, Launch, Spec
+from agent_pm.session.engine.types import Access, Launch, Permission, Spec
 
 from session.tests.case import REPO, Case
 
@@ -20,6 +20,9 @@ UNIFIED = (
     ("-c", 'approval_policy="on-request"'),
     ("-c", 'approvals_reviewer="auto_review"'),
 )
+AUTO = tuple(word for flag in UNIFIED for word in flag)
+BYPASS = "--dangerously-bypass-approvals-and-sandbox"
+MODES = {"auto": list(AUTO), "yolo": [BYPASS]}
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
 
@@ -31,15 +34,25 @@ def packaged() -> CodexClient:
     return CodexClient(table)
 
 
-def committed_headless(client: CodexClient, spec: Spec) -> Launch:
+def holds(argv, words) -> bool:
+    return any(tuple(argv[i : i + len(words)]) == tuple(words) for i in range(len(argv)))
+
+
+def committed_headless(
+    client: CodexClient, spec: Spec, permission: Permission = Permission.AUTO
+) -> Launch:
     run = client.headless()
+    run._permission = permission
     launch = run.launch(spec)
     run.commit()
     return launch
 
 
-def committed_tui(client: CodexClient, spec: Spec, hook) -> Launch:
+def committed_tui(
+    client: CodexClient, spec: Spec, hook, permission: Permission = Permission.AUTO
+) -> Launch:
     run = client.tui()
+    run._permission = permission
     launch = run.launch(spec, hook)
     run.commit()
     return launch

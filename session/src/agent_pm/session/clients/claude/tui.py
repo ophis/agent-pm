@@ -108,7 +108,7 @@ class ClaudeTui(Tui):
             for label in (*self.hooks, self.START)
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
-        launch = common.launch(spec, hooks, tail=tail, env=TUI_ENV)
+        launch = common.launch(spec, hooks, tail=tail, env=TUI_ENV, permission=self._permission)
         self._tracking(launch.transcript)
         self.start = self.offset = _size(launch.transcript)
         return launch

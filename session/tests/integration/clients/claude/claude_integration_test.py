@@ -535,7 +535,10 @@ class SessionInfoTest(Base):
         self.assertEqual(
             (resumed["argv"], os.path.realpath(resumed["cwd"])),
             (
-                ["--resume", SID, "--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}'],
+                [
+                    *("--resume", SID, "--permission-mode", "auto"),
+                    *("--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}'),
+                ],
                 self.workdir,
             ),
         )

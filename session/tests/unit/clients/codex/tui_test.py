@@ -29,6 +29,7 @@ from agent_pm.session.engine.types import (
     Key,
     LimitHit,
     Paste,
+    Permission,
     Reply,
     TurnEnd,
 )
@@ -40,12 +41,16 @@ from session.tests.codex_tui import PlanCase
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.clients.codex.support import (
+    AUTO,
+    BYPASS,
     CHILD,
+    MODES,
     NATIVE,
     PLUGIN_OFF,
     UNIFIED,
     Base,
     committed_tui,
+    holds,
     packaged,
 )
 
@@ -903,10 +908,13 @@ REFUSED = (
 
 
 class SuppliedFlagsTest(Base):
-    def launch(self, spec, *, resume=False, hook=HOOK):
+    def launch(self, spec, *, resume=False, hook=HOOK, permission=Permission.AUTO):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.client, dataclasses.replace(spec, prompt=PROMPT, resume=resume), hook
+                self.client,
+                dataclasses.replace(spec, prompt=PROMPT, resume=resume),
+                hook,
+                permission,
             )
         return launch, json.loads(launch.argv[-1])
 
@@ -919,6 +927,26 @@ class SuppliedFlagsTest(Base):
         argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
         start = argv.index(own[1]) - 1
         self.assertEqual(argv[start : start + 4], [*own, "--enable", "web"])
+
+    def test_only_the_runs_permission_modes_flags_reach_codex_and_its_trust_step(self):
+        self.client = CodexClient({**self.client.config, "modes": MODES})
+        for permission, present, absent in (
+            (Permission.AUTO, AUTO, BYPASS),
+            (Permission.YOLO, (BYPASS,), "-s"),
+        ):
+            with self.subTest(permission=permission):
+                spec = dataclasses.replace(self.spec, sid=f"run-{permission}")
+                _, data = self.launch(spec, permission=permission)
+                plan = tui.decode(data)
+                self.assertEqual(plan.permission, tuple(MODES[permission]))
+                snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+                self.assertEqual(snapshot.flags, ())
+                argv = tui.execution_argv(plan, snapshot, "hooks.state={trusted}")
+                self.assertTrue(holds(argv, present), argv)
+                self.assertNotIn(absent, argv)
+                trust = tui.trust_args(plan, snapshot)
+                for value in AUTO[3::2]:
+                    self.assertEqual(value in trust, permission == Permission.AUTO)
 
     def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
         self.client = packaged()
@@ -1097,6 +1125,7 @@ class PlanTest(PlanCase):
                 "workdir",
                 "sid",
                 "store",
+                "permission",
             },
         )
         self.assertEqual(data["hook"], list(self.plan.hook.argv))
@@ -1131,6 +1160,16 @@ class PlanTest(PlanCase):
         ):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "launch fields"):
                 tui.decode(data | {key: value})
+
+    def test_wire_permission_flags_grant_no_directory_hooks_or_cwd(self):
+        data = json.loads(tui.encode(self.plan))
+        for value in (["--add-dir", "/foreign"], ["-C", "/foreign"], ["-c", "hooks.Stop=[]"]):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "^Codex tui launch: "),
+            ):
+                tui.decode(data | {"permission": value})
+        self.assertEqual(tui.decode(data | {"permission": ["--yolo"]}).permission, ("--yolo",))
 
     def test_wire_validates_each_command_component_and_prompt(self):
         data = json.loads(tui.encode(self.plan))

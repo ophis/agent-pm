@@ -23,6 +23,7 @@ from agent_pm.session.clients.codex.common import (
     SessionStore,
     launch_options,
     native_id,
+    refuse_mode,
     reset_at,
 )
 from agent_pm.session.clients.codex.common.types import Snapshot
@@ -71,6 +72,7 @@ FIELDS = frozenset(
         "workdir",
         "sid",
         "store",
+        "permission",
     }
 )
 
@@ -89,6 +91,7 @@ class LaunchPlan:
     workdir: str
     sid: str
     store: str
+    permission: tuple[str, ...]  # its permission mode's flags
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -173,6 +176,7 @@ class CodexTui(Tui):
             self.state.workdir,
             self.state.sid,
             os.path.join(runtime.state_root, "codex-store") if runtime else store,
+            common.modes[self._permission],
         )
         self._runtime_files = SessionStore.project(self.state, plan.store) if runtime else {}
         pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))
@@ -378,6 +382,11 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
+    permission = _strs(data["permission"])
+    try:
+        refuse_mode(permission)
+    except ConfigError as exc:
+        raise ValueError(f"Codex tui launch: {exc}") from None
     return LaunchPlan(
         executable,
         selection,
@@ -386,6 +395,7 @@ def decode(data: object) -> LaunchPlan:
         workdir,
         data["sid"],
         store,
+        permission,
     )
 
 
@@ -393,6 +403,7 @@ def encode(plan: LaunchPlan) -> str:
     data = asdict(plan)
     data["selection"] = list(plan.selection)
     data["hook"] = list(plan.hook.argv)
+    data["permission"] = list(plan.permission)
     decode(data)
     encoded = json.dumps(data, ensure_ascii=False)
     encoded.encode("utf-8")
@@ -427,7 +438,7 @@ def passed(flags) -> list[str]:
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:
-    return [*hook_flags(plan.hook), *passed(snapshot.flags)]
+    return [*hook_flags(plan.hook), *passed((*plan.permission, *snapshot.flags))]
 
 
 def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> list[str]:
@@ -445,6 +456,7 @@ def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> 
         snapshot.cwd,
         "-c",
         'tui.notification_method="bel"',
+        *plan.permission,
         *supplied,
         *launch_options(snapshot),
         *hook_flags(plan.hook),

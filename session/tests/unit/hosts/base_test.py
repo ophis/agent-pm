@@ -146,6 +146,23 @@ class HostDefaults(Case):
         self.assertIsNot(host.settings, settings)
         self.assertEqual(MinimalHost("m").settings, {})
 
+    def test_isolated_is_the_hosts_own_bool_false_when_absent_and_never_in_settings(self):
+        for settings, isolated in (
+            ({}, False),
+            ({"isolated": False}, False),
+            ({"isolated": True, "root": "/x"}, True),
+        ):
+            with self.subTest(settings=settings):
+                host = MinimalHost("m", settings)
+                left = {k: v for k, v in settings.items() if k != "isolated"}
+                self.assertEqual((host._isolated, host.settings), (isolated, left))
+        for value in ("true", 1, None):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ConfigError, r"^\[hosts.m\] isolated: want true or false$"),
+            ):
+                MinimalHost("m", {"isolated": value})
+
     def test_each_host_gets_its_own_mutable_settings_even_from_read_only_ones(self):
         given = MappingProxyType({"sizes": (1, [2]), "grid": MappingProxyType({"a": 1})})
         first, second = MinimalHost("a", given), MinimalHost("b", given)

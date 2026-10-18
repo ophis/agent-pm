@@ -41,7 +41,8 @@ class CodexHeadless(Headless):
         self.limit_sent = False
         snapshot = self.state.snapshot
         executable = os.path.join(self._runtime.bin_dir, "codex") if self._runtime else "codex"
-        argv = [executable, "exec", *launch_flags(snapshot, interactive=False)]
+        mode = self.common.modes[self._permission]
+        argv = [executable, "exec", *launch_flags(snapshot, interactive=False, mode=mode)]
         if resume:
             argv.extend(self.common.selector(self.state.native_id, resume=True))
         _, literal = split_flags(snapshot.flags)

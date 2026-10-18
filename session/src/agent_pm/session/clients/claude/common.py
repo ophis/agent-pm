@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Effort,
     Launch,
+    Permission,
     Resumable,
     SessionStatus,
     Spec,
@@ -49,6 +50,15 @@ SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
 HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
 MODEL_KEYS = ("model", "effortLevel", "modelSettings")
+ENV_KEYS = ("CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION",)
+# A container worker runs unattended: no prompt may stop it.
+UNATTENDED = MappingProxyType(
+    {
+        "skipWorkflowUsageWarning": True,
+        "autoCompactEnabled": True,
+        "autoContinueAtUsageLimit": True,
+    }
+)
 HOME_READ_MAX = 64 << 20
 TUI_ENV = MappingProxyType({"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1"})
 
@@ -190,6 +200,7 @@ def _load(store: str, cwd: str, sid: str) -> dict:
 
 CHECKS = (
     common.FLAGS,
+    common.MODES,
     ("allow", strings, "a list of strings"),
     *common.CHECKS,
 )
@@ -245,10 +256,15 @@ class ClaudeCommon:
         self.selector = selector
         common.check_config(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
-        if any(flag.startswith("--setting-sources") for flag in self.flags):
-            raise ConfigError(
-                f"--setting-sources is set by the Claude client: remove it from {TABLE}.flags"
-            )
+        self.modes = {p: common.mode_flags(config, p) for p in Permission}
+        for key, flags in (
+            ("flags", self.flags),
+            *((f"modes.{p}", f) for p, f in self.modes.items()),
+        ):
+            if any(flag.startswith("--setting-sources") for flag in flags):
+                raise ConfigError(
+                    f"--setting-sources is set by the Claude client: remove it from {TABLE}.{key}"
+                )
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
@@ -284,19 +300,24 @@ class ClaudeCommon:
         return replace(HOME, files=self.home_files())
 
     def home_files(self) -> tuple[tuple[str, str], ...]:
-        """A container home's settings.json: only the host settings' MODEL_KEYS, so a worker runs
-        the host's default model and effort; none when unreadable or without them.
+        """A container home's settings.json: UNATTENDED, then only the host settings' MODEL_KEYS
+        and its env's ENV_KEYS, so a worker runs unattended on the host's default model and
+        effort; UNATTENDED alone when the host settings are unreadable or without them.
         """
         try:
             settings = json.loads(_read(os.path.join(self.config_dir(), "settings.json")))
         except (ConfigError, ValueError, RecursionError):
-            return ()
-        found = (
-            {k: settings[k] for k in MODEL_KEYS if k in settings}
-            if isinstance(settings, dict)
-            else {}
-        )
-        return (("settings.json", json.dumps(found)),) if found else ()
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        env = settings.get("env")
+        env = {k: env[k] for k in ENV_KEYS if k in env} if isinstance(env, dict) else {}
+        found = {
+            **UNATTENDED,
+            **{k: settings[k] for k in MODEL_KEYS if k in settings},
+            **({"env": env} if env else {}),
+        }
+        return (("settings.json", json.dumps(found)),)
 
     def transcript(self, cwd: str, sid: str, env: Mapping[str, str] = MappingProxyType({})) -> str:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
@@ -375,8 +396,9 @@ class ClaudeCommon:
             print(f"claude resume: {error}", file=sys.stderr)
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags, the
-        saved dirs and env over this environment, in CWD; 1 and one stderr line when it cannot.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags and auto
+        mode's, the saved dirs and env over this environment, in CWD; 1 and one stderr line when it
+        cannot.
         """
         try:
             store, cwd, sid = argv
@@ -387,7 +409,7 @@ class ClaudeCommon:
             state = _load(store, cwd, self.uuid(sid))
             added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
-            configured, own = _split(self.flags, state["cwd"])
+            configured, own = _split((*self.flags, *self.modes[Permission.AUTO]), state["cwd"])
             path = self.transcript(state["cwd"], sid, state["env"])
             native, _, _ = next(
                 hop
@@ -422,10 +444,11 @@ class ClaudeCommon:
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
+        permission: Permission,
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants, output arguments and
-        spec.flags before `tail`; env under the config's. Exactly one --settings: the config's,
-        then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
+        """Build a Claude command with configured settings, `permission`'s mode flags, access grants,
+        output arguments and spec.flags before `tail`; env under the config's. Exactly one
+        --settings: the config's and its mode's, then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
         docs leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that
         a --strict-mcp-config in spec.flags would drop.
         """
@@ -435,7 +458,7 @@ class ClaudeCommon:
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd
-        configured, own = _split(self.flags, cwd)
+        configured, own = _split((*self.flags, *self.modes[permission]), cwd)
         supplied, flags = _split(spec.flags, cwd)
         hooked = ({"hooks": dict(hooks)},) if hooks else ()
         mcp = os.path.join(cwd, ".mcp.json")

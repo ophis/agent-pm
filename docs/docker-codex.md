@@ -119,8 +119,8 @@ the same container authentication. The host needs the broker, not a personal Cod
 **No Codex sandbox** in the container: Codex's `workspace-write` sandbox runs each command under bwrap, which needs
 new namespaces, and the container grants none (no capabilities, `no-new-privileges`), so every command fails with
 `bwrap: No permissions to create new namespace` and Codex then asks to run it unsandboxed, stalling an unattended
-run. The container is the isolation: Codex runs with `danger-full-access` and auto-reviewed approvals, the flags
-every Codex session gets ([Client policy](sessions.md#client-policy)).
+run. The container is the isolation: Codex runs in yolo mode, `--dangerously-bypass-approvals-and-sandbox`, with no
+sandbox and no approval ([Client policy](sessions.md#client-policy)).
 
 **Login shells**: Codex runs commands in a login shell (`bash -lc`), whose `/etc/profile` resets `PATH`. The image's
 `/etc/profile.d/agent-pm.sh` puts `/opt/agent-pm/bin` back first, so `gh` (with the session's GitHub token), `codex`

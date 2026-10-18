@@ -37,6 +37,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     Mode,
     Paste,
+    Permission,
     Prepared,
     Reply,
     SessionError,
@@ -699,6 +700,20 @@ class StartTest(Base):
         metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
         self.assertEqual(json.loads(metadata["runtime_files"]), projection)
         self.assertEqual(json.loads(metadata["home_persistent"]), ["sessions"])
+
+    def test_the_run_gets_yolo_on_an_isolated_host_else_auto(self):
+        seen = []
+
+        class Seen(ScanTui):
+            def launch(self, spec, hook):
+                seen.append(self._permission)
+                return super().launch(spec, hook)
+
+        self.start(run=Seen(self.client))
+        self.host.processes.clear()
+        with mock.patch.object(self.host, "_isolated", new=True):
+            self.start(run=Seen(self.client))
+        self.assertEqual(seen, [Permission.AUTO, Permission.YOLO])
 
     def test_a_host_resume_argv_replaces_the_clients_resume_command(self):
         run = ScanTui(self.client)

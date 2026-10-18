@@ -243,6 +243,7 @@ class ResponseTest(Case):
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0"},
                 github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
+                github_user_id=343764394,
                 credential_expires_at=None,
             ),
         )
@@ -274,6 +275,21 @@ class ResponseTest(Case):
         other = (0, json.dumps({"volume": "agent-pm-ws-other", "removed": True}), "")
         with self.assertRaisesRegex(SessionError, "bad response to workspace-rm"):
             Broker(FakeBroker(other)).workspace_rm(VOLUME)
+
+    def test_start_takes_a_null_or_positive_integer_github_user_id(self):
+        good = data("start-output.json")
+        for value in (None, 1, 343764394):
+            with self.subTest(value=value):
+                found = (0, json.dumps(good | {"github_user_id": value}), "")
+                started = Broker(FakeBroker(found)).start(MANIFEST, clients=KEYS)
+                self.assertEqual(started.github_user_id, value)
+        missing = {k: v for k, v in good.items() if k != "github_user_id"}
+        for bad in (missing, *(good | {"github_user_id": v} for v in (0, -1, "1", True, 1.5))):
+            with (
+                self.subTest(bad=bad.get("github_user_id", "missing")),
+                self.assertRaisesRegex(SessionError, "bad response to start: fields"),
+            ):
+                Broker(FakeBroker((0, json.dumps(bad), ""))).start(MANIFEST, clients=KEYS)
 
     def test_build_passes_a_max_age(self):
         fake = FakeBroker(success("build-cached.json"))

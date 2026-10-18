@@ -5,7 +5,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from agent_pm.session.engine.types import ConfigError, Effort, Tier
+from agent_pm.session.engine.types import ConfigError, Effort, Permission, Tier
 from agent_pm.utils import environment_ok
 
 
@@ -21,6 +21,13 @@ def strings(value) -> bool:
 
 
 FLAGS = ("flags", strings, "a list of strings")
+MODES = (
+    "modes",
+    lambda v: (
+        isinstance(v, Mapping) and all(k in tuple(Permission) and strings(f) for k, f in v.items())
+    ),
+    "a table from auto and yolo to a list of strings",
+)
 
 CHECKS = (
     ("tiers", lambda v: _names(v, tuple(Tier)), 'a table from tier "1"–"4" to a model name'),
@@ -31,6 +38,11 @@ CHECKS = (
     ),
     ("env", environment_ok, "a table of environment names to strings without NUL"),
 )
+
+
+def mode_flags(config: Mapping, permission: Permission) -> tuple[str, ...]:
+    """[clients.<name>.modes]' flags for `permission`; none when absent."""
+    return tuple(config.get("modes", {}).get(permission, ()))
 
 
 def check_config(config: Mapping, table: str, checks=CHECKS) -> None:

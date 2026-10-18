@@ -209,3 +209,37 @@ func TestTransport(t *testing.T) {
 		t.Fatal(strconv.Quote(New().Base))
 	}
 }
+
+func TestBotUser(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/users/agent-pm-bot%5Bbot%5D" || r.Header.Get("Authorization") != "" ||
+			r.Header.Get("Accept") != "application/vnd.github+json" {
+			t.Errorf("request %s %s %v", r.Method, r.URL.EscapedPath(), r.Header)
+		}
+		_, _ = io.WriteString(w, `{"login":"agent-pm-bot[bot]","id":343764394,"type":"Bot","node_id":"x"}`)
+	})
+	id, err := c.BotUser(context.Background(), "agent-pm-bot[bot]")
+	if err != nil || id != 343764394 {
+		t.Fatalf("%d %v", id, err)
+	}
+}
+
+func TestBotUserRejects(t *testing.T) {
+	for name, body := range map[string]string{
+		"wrong login": `{"login":"someone[bot]","id":1,"type":"Bot"}`,
+		"user type":   `{"login":"agent-pm-bot[bot]","id":1,"type":"User"}`,
+		"zero id":     `{"login":"agent-pm-bot[bot]","id":0,"type":"Bot"}`,
+		"no id":       `{"login":"agent-pm-bot[bot]","type":"Bot"}`,
+		"not json":    `<html>`,
+	} {
+		c := client(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
+		if id, err := c.BotUser(context.Background(), "agent-pm-bot[bot]"); err == nil {
+			t.Errorf("%s: accepted %d", name, id)
+		}
+	}
+	var se *StatusError
+	_, err := client(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }).BotUser(context.Background(), "agent-pm-bot[bot]")
+	if !errors.As(err, &se) || se.Status != http.StatusNotFound {
+		t.Errorf("status error %v", err)
+	}
+}

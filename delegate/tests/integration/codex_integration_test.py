@@ -67,7 +67,7 @@ class Codex(CodexIntegration):
         for root in (*added, *recorded):
             self.assertNotIn(os.path.realpath(root), {self.work, layout.run})
 
-    def test_the_default_policy_reaches_the_argv_as_before_its_move(self):
+    def test_the_auto_mode_reaches_the_argv_before_the_configs_flags(self):
         res = self.drive(said(block(DONE)))
         self.assertEqual(res.returncode, 0, res.stderr)
         (call,) = self.calls()
@@ -77,14 +77,14 @@ class Codex(CodexIntegration):
                 "exec",
                 "--json",
                 "--skip-git-repo-check",
-                "-c",
-                "plugins.agent-pm@agent-pm.enabled=false",
                 "-s",
                 "danger-full-access",
                 "-c",
                 'approval_policy="on-request"',
                 "-c",
                 'approvals_reviewer="auto_review"',
+                "-c",
+                "plugins.agent-pm@agent-pm.enabled=false",
             ],
         )
         self.assertNotIn("-s", call["argv"][11:])

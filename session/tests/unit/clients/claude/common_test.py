@@ -16,22 +16,26 @@ from unittest import mock
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import HOME
 from agent_pm.session.clients.claude.usage import NO_PANEL
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Mode,
+    Permission,
     SessionInfo,
     SessionStatus,
 )
 from agent_pm.utils import LOCAL_ENV_VARS, docker_home
 
-from session.tests.case import SPAWNS, Case
+from session.tests.case import SPAWNS, Case, packaged_hosts
 from session.tests.unit.clients.claude.support import (
     CEILING,
     CONFIG,
     HOOK,
+    MODES,
     PROBE,
     SID,
+    SKIP_DIALOG,
     TUI_DEFAULTS,
     UNSET,
     Base,
@@ -42,6 +46,71 @@ from session.tests.unit.clients.claude.support import (
     store,
     tui_launch,
 )
+
+PLUGIN = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
+
+
+def holds(argv, words) -> bool:
+    return any(tuple(argv[i : i + len(words)]) == tuple(words) for i in range(len(argv)))
+
+
+class PermissionTest(Base):
+    def test_only_the_runs_permission_modes_flags_reach_claude_settings_merged(self):
+        config = {"flags": ["--settings", PLUGIN], "modes": MODES}
+        plugin = json.loads(PLUGIN)
+        rows = (
+            (Permission.AUTO, MODES["auto"], "--dangerously-skip-permissions", plugin),
+            (
+                Permission.YOLO,
+                ["--dangerously-skip-permissions"],
+                "--permission-mode",
+                {**plugin, **json.loads(SKIP_DIALOG)},
+            ),
+        )
+        for permission, present, absent, settings in rows:
+            for mode, launch in (
+                ("headless", self.launch),
+                ("tui", partial(tui_launch, self.work)),
+            ):
+                with self.subTest(permission=permission, mode=mode):
+                    argv = launch(config=config, permission=permission).argv
+                    self.assertTrue(holds(argv, present), argv)
+                    self.assertNotIn(absent, argv)
+                    self.assertEqual(argv.count("--settings"), 1)
+                    merged = json.loads(argv[argv.index("--settings") + 1])
+                    merged.pop("hooks", None)
+                    self.assertEqual(merged, settings)
+
+    def test_the_packaged_config_gives_docker_claude_only_yolo_flags_every_other_host_only_auto(
+        self,
+    ):
+        table = dict(read_config(local=os.devnull)["clients"]["claude"])
+        table.pop("implementation")
+        words = {
+            Permission.AUTO: "--permission-mode",
+            Permission.YOLO: "--dangerously-skip-permissions",
+        }
+        for name, permission in packaged_hosts().items():
+            for mode, launch in (
+                ("headless", self.launch),
+                ("tui", partial(tui_launch, self.work)),
+            ):
+                with self.subTest(host=name, mode=mode):
+                    argv = launch(config=table, permission=permission).argv
+                    self.assertEqual([w for w in argv if w in words.values()], [words[permission]])
+                    settings = json.loads(argv[argv.index("--settings") + 1])
+                    self.assertEqual(
+                        settings.get("skipDangerousModePermissionPrompt"),
+                        True if permission == Permission.YOLO else None,
+                    )
+
+    def test_without_modes_neither_permission_adds_a_flag(self):
+        for permission in Permission:
+            with self.subTest(permission=permission):
+                self.assertEqual(
+                    self.launch(config={}, permission=permission).argv,
+                    self.launch(config={}).argv,
+                )
 
 
 class ModelEffortTest(Base):
@@ -83,22 +152,55 @@ class HomeFilesTest(Base):
         with open(os.path.join(self.config_dir, "settings.json"), "wb") as f:
             f.write(text if isinstance(text, bytes) else text.encode())
 
-    def test_only_the_hosts_model_and_effort_keys_reach_a_container_home(self):
-        other = {"hooks": {"Stop": []}, "permissions": {"allow": ["Bash"]}, "env": {"K": "v"}}
+    UNATTENDED = {
+        "skipWorkflowUsageWarning": True,
+        "autoCompactEnabled": True,
+        "autoContinueAtUsageLimit": True,
+    }
+    SEARCHES = {"CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "50"}
+
+    def container_settings(self):
+        ((name, text),) = ClaudeCommon({}).home_files()
+        self.assertEqual(name, "settings.json")
+        return json.loads(text)
+
+    def test_only_the_hosts_model_keys_and_search_cap_reach_a_container_home(self):
+        other = {
+            "hooks": {"Stop": []},
+            "permissions": {"allow": ["Bash"]},
+            "statusLine": {"type": "command", "command": "x"},
+            "enabledPlugins": {"p@m": True},
+            "extraKnownMarketplaces": {"m": {}},
+            "theme": "dark",
+            "env": {"K": "v", **self.SEARCHES},
+        }
         self.settings(json.dumps({**self.MODEL, **other, "apiKeyHelper": "/bin/key"}))
         ((name, text),) = ClaudeClient(CONFIG).tui()._home().files
-        self.assertEqual((name, json.loads(text)), ("settings.json", self.MODEL))
+        self.assertEqual(
+            (name, json.loads(text)),
+            ("settings.json", {**self.UNATTENDED, **self.MODEL, "env": self.SEARCHES}),
+        )
         self.assertEqual(dataclasses.replace(ClaudeClient(CONFIG).tui()._home(), files=()), HOME)
 
-    def test_missing_or_invalid_host_settings_give_no_file(self):
-        self.assertEqual(ClaudeCommon({}).home_files(), ())
+    def test_the_unattended_keys_are_fixed_whatever_the_host_sets(self):
+        self.settings(json.dumps(dict.fromkeys(self.UNATTENDED, False)))
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
+
+    def test_no_env_without_the_hosts_search_cap(self):
+        for env in ({"K": "v"}, {}, ["x"], "x"):
+            with self.subTest(env=env):
+                self.settings(json.dumps({**self.MODEL, "env": env}))
+                self.assertEqual(self.container_settings(), {**self.UNATTENDED, **self.MODEL})
+
+    def test_missing_or_invalid_host_settings_give_only_the_unattended_keys(self):
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
         for text in ("not json", "[]", '{"theme": "dark"}', b"\xff"):
             with self.subTest(text=text):
                 self.settings(text)
-                self.assertEqual(ClaudeCommon({}).home_files(), ())
+                self.assertEqual(self.container_settings(), self.UNATTENDED)
         os.remove(os.path.join(self.config_dir, "settings.json"))
         os.mkdir(os.path.join(self.config_dir, "settings.json"))
-        self.assertEqual(ClaudeCommon({}).home_files(), ())
+        self.assertEqual(self.container_settings(), self.UNATTENDED)
 
     def test_an_explicit_model_or_effort_flag_still_wins(self):
         self.settings(json.dumps(self.MODEL))
@@ -544,6 +646,15 @@ class ResumeTest(Base):
             {"enabledPlugins": {"agent-pm@agent-pm": False}, "model": "x"},
         )
         self.assertEqual(argv[-4:], ["--add-dir", "/o x", "--add-dir", "/p"])
+
+    def test_the_resume_command_runs_in_auto_mode_here(self):
+        self.client = ClaudeClient({"flags": ["--settings", PLUGIN], "modes": MODES})
+        words = shlex.split(self.committed().resume)
+        _, _, _, execute = self.resumed(words[6:])
+        argv = execute[0].args[1]
+        self.assertEqual(argv[:5], ["claude", "--resume", SID, "--permission-mode", "auto"])
+        self.assertNotIn("--dangerously-skip-permissions", argv)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), json.loads(PLUGIN))
 
     def test_the_state_is_private(self):
         self.committed()

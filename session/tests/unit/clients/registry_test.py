@@ -568,6 +568,14 @@ class Committed(Case):
                 "implementation": "agent_pm.session.clients.claude:ClaudeClient",
                 "flags": ["--settings", PLUGIN_OFF],
                 "allow": [],
+                "modes": {
+                    "auto": ["--permission-mode", "auto"],
+                    "yolo": [
+                        "--dangerously-skip-permissions",
+                        "--settings",
+                        '{"skipDangerousModePermissionPrompt": true}',
+                    ],
+                },
                 "env": {},
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
@@ -591,8 +599,16 @@ class Committed(Case):
             .argv
         )
         self.assertEqual(
-            argv[4:10],
-            ("--model", "haiku", "--effort", "low", "--setting-sources", "user"),
+            argv[4:12],
+            (
+                "--model",
+                "haiku",
+                "--effort",
+                "low",
+                *("--permission-mode", "auto"),
+                "--setting-sources",
+                "user",
+            ),
         )
 
     def test_the_claude_flags_comment_says_how_settings_combine(self):
