@@ -1,4 +1,5 @@
 import argparse
+import base64
 import json
 import os
 import re
@@ -12,6 +13,15 @@ VERSION = "0.163.0"
 CONTAINERS = ("task647-codex-a-1", "task647-codex-a-2")
 AUTH = Path("/Users/francis/.agent-pm/work/TASK-647/agent/tmp/codex-live-0.163.0/broker/auth.json")
 STORE = 'cli_auth_credentials_store="file"'
+ITEM_TYPES = (
+    "command_execution",
+    "file_change",
+    "mcp_tool_call",
+    "collab_tool_call",
+    "web_search",
+    "todo_list",
+    "error",
+)
 
 
 def read_private_auth(path):
@@ -129,6 +139,9 @@ def summarize_turn(output, code):
         "exit_code": code,
         "completed_turn_count": None,
         "ok_reply_count": None,
+        "last_reply_ok": None,
+        "error_event_count": None,
+        "rejected_item_type_counts": None,
         "error": "redacted_or_incomplete",
     }
     if len(output) > 4 * 1024 * 1024:
@@ -147,9 +160,20 @@ def summarize_turn(output, code):
             event.get("item", {}).get("type") not in (None, "agent_message", "reasoning")
             for event in events
         )
+        rejected = {}
+        for event in events:
+            kind = event.get("item", {}).get("type")
+            if kind not in (None, "agent_message", "reasoning"):
+                label = kind if isinstance(kind, str) and kind in ITEM_TYPES else "other"
+                rejected[label] = rejected.get(label, 0) + 1
         result.update(
             completed_turn_count=completed,
             ok_reply_count=sum(text.strip() == "OK" for text in replies),
+            last_reply_ok=bool(replies) and replies[-1].strip() == "OK",
+            error_event_count=sum(
+                event.get("type") in ("error", "turn.failed") for event in events
+            ),
+            rejected_item_type_counts=rejected,
         )
         if (
             code == 0
@@ -204,6 +228,84 @@ def summarize_pair(observations):
     }
 
 
+def access_expiry(auth, observed_at):
+    if auth.get("auth_mode") != "chatgpt":
+        raise ValueError("auth_mode")
+    parts = auth["tokens"]["access_token"].split(".")
+    if len(parts) != 3:
+        raise ValueError("jwt_shape")
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    claims = json.loads(base64.b64decode(payload, altchars=b"-_", validate=True))
+    exp = claims["exp"]
+    if type(exp) is not int:
+        raise ValueError("expiry_type")
+    issued = claims.get("iat")
+    return {
+        "probe": "host_access_expiry",
+        "status": "observed",
+        "access_expires_at": datetime.fromtimestamp(exp, UTC).isoformat(),
+        "remaining_seconds": exp - int(observed_at.timestamp()),
+        "declared_lifetime_seconds": exp - issued if type(issued) is int else None,
+        "signature_status": "not_verified",
+    }
+
+
+def existing_session(container):
+    result = docker(
+        [
+            "docker",
+            "exec",
+            checked_container(container),
+            "find",
+            "/codex/sessions",
+            "-type",
+            "f",
+            "-name",
+            "rollout-*.jsonl",
+        ]
+    )
+    paths = result.stdout.decode("utf-8").splitlines()
+    if result.returncode != 0 or len(paths) != 1:
+        raise ValueError("single_existing_rollout_required")
+    match = re.fullmatch(
+        r"/codex/sessions/\d{4}/\d{2}/\d{2}/rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-"
+        r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl",
+        paths[0],
+    )
+    if not match:
+        raise ValueError("rollout_path")
+    return match[1]
+
+
+def resume_turn(container):
+    version = observed_version(container)
+    expected = existing_session(container)
+    argv = exec_command(container)
+    argv[-1:] = ["resume", expected, argv[-1]]
+    started = now()
+    result = docker(argv)
+    ended = now()
+    summary = summarize_turn(result.stdout, result.returncode)
+    same = False
+    if len(result.stdout) <= 4 * 1024 * 1024:
+        try:
+            events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            identities = [e.get("thread_id") for e in events if e.get("type") == "thread.started"]
+            same = identities == [expected]
+        except (ValueError, AttributeError, TypeError):
+            pass
+    if not same:
+        summary.update(status="incomplete", error="native_session_mismatch_or_missing")
+    return {
+        "container": container,
+        "version": version,
+        "started_at": started,
+        "ended_at": ended,
+        "same_native_session": same,
+        **summary,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="User-only TASK-647 A carrier probe")
     parser.add_argument("--user-run", action="store_true", required=True)
@@ -215,6 +317,8 @@ def main():
     status.add_argument("container", choices=CONTAINERS)
     commands.add_parser("pair")
     commands.add_parser("versions")
+    commands.add_parser("expiry")
+    commands.add_parser("resume-pair")
     args = parser.parse_args()
     try:
         if args.command == "inject":
@@ -237,16 +341,21 @@ def main():
                 result["error"] = "schema_missing_refresh_token"
         elif args.command == "versions":
             result = {"status": "pass", "versions": [observed_version(c) for c in CONTAINERS]}
+        elif args.command == "expiry":
+            result = access_expiry(read_private_auth(AUTH), datetime.now(UTC))
         else:
             with ThreadPoolExecutor(max_workers=2) as pool:
-                observations = list(pool.map(turn, CONTAINERS))
+                operation = resume_turn if args.command == "resume-pair" else turn
+                observations = list(pool.map(operation, CONTAINERS))
             result = summarize_pair(observations)
+            if args.command == "resume-pair":
+                result["probe"] = "concurrent_resume"
     except subprocess.TimeoutExpired:
         result = {"status": "incomplete", "error": "timeout_recreate_containers"}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
         result = {"status": "incomplete", "error": "redacted_probe_failure"}
     print(json.dumps({"recorded_at": now(), **result}, indent=2))
-    return 0 if result["status"] in ("pass", "loaded", "injected") else 1
+    return 0 if result["status"] in ("pass", "loaded", "injected", "observed") else 1
 
 
 if __name__ == "__main__":

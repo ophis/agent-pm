@@ -1,6 +1,8 @@
+import base64
 import io
 import json
 import runpy
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -151,3 +153,77 @@ class CodexACarrier(Case):
         self.assertEqual(self.probe["summarize_pair"](rows)["status"], "incomplete")
         rows[1]["started_at"] = "2026-10-18T01:00:03Z"
         self.assertEqual(self.probe["summarize_pair"](rows)["status"], "pass")
+
+    def test_rejection_diagnostics_keep_existing_strict_gate_and_redact_values(self):
+        events = [
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}},
+            {"type": "error", "message": "secret-error"},
+            {"type": "item.completed", "item": {"type": "error", "message": "secret-item"}},
+            {"type": "item.updated", "item": {"type": "secret-unknown-kind"}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "secret-last"}},
+            {"type": "turn.completed"},
+        ]
+        data = "\n".join(json.dumps(event) for event in events).encode()
+        result = self.probe["summarize_turn"](data, 0)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertFalse(result["last_reply_ok"])
+        self.assertEqual(result["error_event_count"], 1)
+        self.assertEqual(result["rejected_item_type_counts"], {"error": 1, "other": 1})
+        self.assertNotIn("secret", json.dumps(result))
+
+    def test_resume_uses_existing_explicit_identity_and_verifies_emitted_identity(self):
+        sid = "11111111-2222-4333-8444-555555555555"
+        path = f"/codex/sessions/2026/10/18/rollout-2026-10-18T01-49-05-{sid}.jsonl\n"
+        for emitted, expected in [(sid, "pass"), ("another-id", "incomplete")]:
+            events = [
+                {"type": "thread.started", "thread_id": emitted},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}},
+                {"type": "turn.completed"},
+            ]
+            outputs = [
+                b"codex-cli 0.163.0",
+                path.encode(),
+                "\n".join(map(json.dumps, events)).encode(),
+            ]
+            responses = [SimpleNamespace(returncode=0, stdout=data, stderr=b"") for data in outputs]
+            with mock.patch("subprocess.run", side_effect=responses) as run:
+                result = self.probe["resume_turn"]("task647-codex-a-1")
+            self.assertEqual(result["status"], expected)
+            self.assertEqual(result["same_native_session"], emitted == sid)
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[-3:], ["resume", sid, "Reply exactly OK. Do not use tools."])
+            self.assertIn("read-only", argv)
+            self.assertNotIn("--last", argv)
+            self.assertNotIn(sid, json.dumps(result))
+            self.assertNotIn("another-id", json.dumps(result))
+
+    def test_resume_missing_or_ambiguous_history_never_starts_a_fresh_turn(self):
+        for paths in (
+            b"",
+            b"/codex/sessions/x\n/codex/sessions/y\n",
+            b"/elsewhere/rollout.jsonl\n",
+        ):
+            responses = [
+                SimpleNamespace(returncode=0, stdout=b"codex-cli 0.163.0", stderr=b""),
+                SimpleNamespace(returncode=0, stdout=paths, stderr=b""),
+            ]
+            with (
+                mock.patch("subprocess.run", side_effect=responses) as run,
+                self.assertRaises(ValueError),
+            ):
+                self.probe["resume_turn"]("task647-codex-a-1")
+            self.assertEqual(run.call_count, 2)
+
+    def test_expiry_reports_only_unsigned_time_claims_from_fake_auth(self):
+        claims = {"exp": 1800003600, "iat": 1800000000, "secret": "secret-identity"}
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        self.auth["tokens"]["access_token"] = f"header.{payload}.signature"
+        result = self.probe["access_expiry"](self.auth, datetime.fromtimestamp(1800000100, UTC))
+        self.assertEqual(result["remaining_seconds"], 3500)
+        self.assertEqual(result["declared_lifetime_seconds"], 3600)
+        self.assertEqual(result["signature_status"], "not_verified")
+        self.assertNotIn("secret", json.dumps(result))
+        self.assertNotIn('signature"', json.dumps(result))
+        self.auth["tokens"]["access_token"] = "opaque"
+        with self.assertRaises(ValueError):
+            self.probe["access_expiry"](self.auth, datetime.now(UTC))

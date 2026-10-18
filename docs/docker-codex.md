@@ -190,7 +190,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run pair
 ```
 
-[`pair`:193](../scripts/docker_codex_a_probe.py#L193) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误，只回传实际版本、时间、退出状态与完成次数。成功要求两次执行时间重叠，且各自退出 0、收到 `turn.completed` 及末条回复 `OK`，没有失败或工具事件；事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
+[`pair`:217](../scripts/docker_codex_a_probe.py#L217) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
 
 ```sh
 docker exec task647-codex-a-1 codex -c 'cli_auth_credentials_store="file"' exec --skip-git-repo-check --sandbox read-only --json 'Reply exactly OK. Do not use tools.'
@@ -203,7 +203,34 @@ docker exec task647-codex-a-2 codex -c 'cli_auth_credentials_store="file"' exec 
 docker rm -f task647-codex-a-1 task647-codex-a-2
 ```
 
-停在这里等待用户结果，不先启动下一组刷新实验。
+第二组结果已记录，保留命令供追溯，不重跑。继续第三组，不先启动刷新实验。
+
+### 第三组：到期观察与现有原生会话恢复
+
+沿用保留的两容器和隔离登录，不重建、重登录或重新注入。官方 [命令参考](https://learn.chatgpt.com/docs/cli/reference) 支持 `codex exec resume`；固定源码 [cli.rs:206](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/cli.rs#L206) 定义显式身份参数。文档和源码不能证明当前登录的到期值、实际恢复身份或上轮未记录的拒绝原因，因此仅用户执行以下新增观察。
+
+先只读隔离宿主 access token 的 JWT（JSON 网络令牌）时间声明；不执行 Codex，不刷新、不修改登录文件，只回传到期时间、剩余秒数和声明寿命。`signature_status="not_verified"` 表示未校验签名，不将该时间单独当作上游有效性证明：
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run expiry
+```
+
+命令非零或 `remaining_seconds <= 300` 时停下并回传结果，先安排宿主刷新验证；300 秒只是避开 S5 主动刷新窗口的本组执行条件，不是实测提前量。否则执行一次恢复组：
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
+```
+
+[`resume_turn`:280](../scripts/docker_codex_a_probe.py#L280) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
+
+| 新增脱敏字段 | 观察含义 |
+|---|---|
+| `last_reply_ok` | 最后一条 agent 回复是否恰为 OK |
+| `error_event_count` | 顶层 `error`／`turn.failed` 次数，不包含消息正文 |
+| `rejected_item_type_counts` | 白名单外 item 的事件次数，含 started／updated／completed；仅回传固定源码中的类型，其他归为 `other`；不等于工具调用次数 |
+| `same_native_session` | 本次 `thread.started` 身份是否恰好一次且匹配既有身份 |
+
+字段实现见 [summarize_turn:136](../scripts/docker_codex_a_probe.py#L136)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
 
 ### 后续验证
 
@@ -226,7 +253,7 @@ flowchart TD
 
 | 待补用户命令组 | 必须记录的观察 |
 |---|---|
-| A 剩余载体与多轮 | 第二组的字段删除／空值和双容器命令已备，结果未完成；后续补最少身份字段、provider command、终端及 headless 的多轮观察。 |
+| A 剩余载体与多轮 | 第二组已有部分观察，第三组准备到期时间与原生恢复；仍补最少身份字段、provider command、终端及 headless 的多轮观察。 |
 | B 独立传输探针 | 根据实际镜像版本准备限定 origin 的一次性流式探针；token 只留宿主，容器无登录，禁止宿主监听 TCP（传输控制协议）；覆盖上节独立边界。正式 exec 帧协议仍 pending。 |
 | 真实刷新与到期 | 不更改时间；等待实际到期窗口，运行 S6 的固定 Codex 路径。留旧 access token 的隔离拒绝探针，证明旧值失效后的续用；第二次刷新重复。 |
 | 终端与恢复 | 同一终端活进程多轮；headless 原生 resume 另计。restart、close 后 resume 保持会话身份。每个不同候选版本重复，记录是否继续／报错／退出／等登录。 |
