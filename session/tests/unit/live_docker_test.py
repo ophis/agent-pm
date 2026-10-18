@@ -177,6 +177,15 @@ class BaselineTest(Case):
         ]
         self.assertEqual(self.check(inspect(Mounts=mounts), (sessions,)), [])
 
+    def test_docker_desktop_shared_folder_source(self):
+        volume = {"Type": "volume", "Name": "agent-pm-ws-live", "Destination": CWD}
+        bind = {"Type": "bind", "Source": "/host_mnt" + CLAUDE_DIR, "Destination": CLAUDE_DIR}
+        self.assertEqual(self.check(inspect(Mounts=[volume, bind])), [])
+        inside = {"Type": "bind", "Source": "/host_mnt" + CWD + "/src", "Destination": "/w"}
+        problems = gate.baseline(inspect(Mounts=[volume, inside]), "live", CWD, [CWD + "/src"])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("cwd", problems[0])
+
     def test_no_new_privileges_with_value(self):
         self.assertEqual(
             self.check(inspect(HostConfig__SecurityOpt=["no-new-privileges:true"])), []
@@ -223,6 +232,26 @@ class BaselineTest(Case):
         problems = gate.baseline(found, "live", CWD, [sock])
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("docker.sock", problems[0])
+
+
+class DrainedTest(Case):
+    def drained(self, backlog):
+        lines = iter(backlog)
+
+        def run(*argv, timeout):
+            try:
+                return next(lines)
+            except StopIteration:
+                raise gate.subprocess.TimeoutExpired(argv, timeout) from None
+
+        with mock.patch.object(gate, "run", run):
+            return gate.drained(("agent-pm-crew", "next-event"), "1540")
+
+    def test_skips_the_backlog(self):
+        self.assertEqual(self.drained(["1541 10:00:00 a done", "1542 10:00:01 b done"]), "1542")
+
+    def test_no_backlog(self):
+        self.assertEqual(self.drained([]), "1540")
 
 
 class ZeroCountsTest(Case):
