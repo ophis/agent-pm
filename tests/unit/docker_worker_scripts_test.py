@@ -831,6 +831,20 @@ class DefaultDockerfile(Case):
         self.assertNotIn("SHASUMS256", text)
 
 
+class ImageLayer(Case):
+    def test_pins_gh(self):
+        text = (ASSETS / "Dockerfile").read_text()
+        for needle in (
+            "GH_VERSION=2.102.0",
+            "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386",
+            "7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484",
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/",
+            "sha256sum -c",
+            "/usr/local/bin/gh",
+        ):
+            self.assertIn(needle, text)
+
+
 CACHE = ".agent-pm-cache"
 
 

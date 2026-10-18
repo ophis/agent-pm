@@ -31,7 +31,9 @@ until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` in
 it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
 the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions).
+upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions);
+the image's `gh` is the version agent-pm pins (`broker/internal/launcher/assets/Dockerfile`),
+whatever your Dockerfile installs, and upgrades with the broker.
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -203,6 +205,7 @@ one `{"account", "expires_at"}` per installation of the App.
 |---|---|
 | `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
 | `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work, with no login |
+| `docker exec -w <clone of a private repo> "$C" gh api 'repos/{owner}/{repo}' --jq .full_name` | works, with no login: `{owner}` is the clone's `origin` owner |
 | `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
 | `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
 
