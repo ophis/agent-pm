@@ -49,7 +49,7 @@ func TestCodexStartIsolation(t *testing.T) {
 	h.Codex = creds
 	h.Versions = &fakeVersions{allowed: []string{"0.162.1"}, target: "0.162.1"}
 	result, err := h.Start(context.Background(), codexManifest(t))
-	if err != nil || result.CodexExpiresAt == nil || *result.CodexExpiresAt != "2026-10-18T12:00:00Z" || creds.ready != 1 || creds.injected != 1 {
+	if err != nil || result.CredentialExpiresAt == nil || *result.CredentialExpiresAt != "2026-10-18T12:00:00Z" || creds.ready != 1 || creds.injected != 1 {
 		t.Fatalf("%+v %v", result, err)
 	}
 	var run []string
@@ -96,7 +96,7 @@ func TestClaudeDoesNotReadCodex(t *testing.T) {
 	creds := &fakeCodexCreds{err: errors.New("Codex must not be read")}
 	h.Codex = creds
 	result, err := h.Start(context.Background(), validManifest(t))
-	if err != nil || result.CodexExpiresAt != nil || creds.ready != 0 || creds.injected != 0 {
+	if err != nil || result.CredentialExpiresAt != nil || creds.ready != 0 || creds.injected != 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
 }

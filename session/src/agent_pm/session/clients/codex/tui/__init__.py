@@ -131,7 +131,6 @@ class CodexTui(Tui):
         return self.common.home()
 
     def __init__(self, common: CodexCommon):
-        self._set_runtime(None)
         self.common = common
         self.state = None
         self.last_reply = ""

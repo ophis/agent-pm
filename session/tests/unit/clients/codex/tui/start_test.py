@@ -146,7 +146,7 @@ class StartTest(Base):
             "/opt/agent-pm/bin", "/image/python", "/image/modules", str(self.root / "volatile")
         )
         run = self.client.tui()
-        run._set_runtime(runtime)
+        run._runtime = runtime
         with mock.patch("shutil.which", side_effect=AssertionError("host lookup")):
             launch = run.launch(dataclasses.replace(self.spec, resume=True), HOOK)
         run.commit()

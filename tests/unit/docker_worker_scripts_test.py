@@ -255,7 +255,7 @@ class WithSecrets(Case):
     def test_with_secrets_execs_with_token_in_child_env_only(self):
         self.secret.write_text("tok-123")
         with mock.patch("os.execvpe") as execvpe:
-            self.main(["claude", "--help"], secret=self.secret)
+            self.main(["--client", "claude", "claude", "--help"], secret=self.secret)
         (path, argv, env), _ = execvpe.call_args
         self.assertEqual((path, argv), ("claude", ["claude", "--help"]))
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "tok-123")
@@ -266,16 +266,23 @@ class WithSecrets(Case):
             if content is not None:
                 self.secret.write_text(content)
             with mock.patch("os.execvpe") as execvpe, self.assertRaises(SystemExit) as raised:
-                self.main(["claude"], secret=self.secret)
+                self.main(["--client", "claude", "claude"], secret=self.secret)
             execvpe.assert_not_called()
             self.assertIn("no Claude token", str(raised.exception.code))
 
-    def test_with_secrets_requires_command(self):
+    def test_with_secrets_requires_client_and_command(self):
         self.secret.write_text("tok-123")
-        with mock.patch("os.execvpe") as execvpe, self.assertRaises(SystemExit) as raised:
-            self.main([], secret=self.secret)
-        execvpe.assert_not_called()
-        self.assertNotIn("tok-123", str(raised.exception.code))
+        for argv in ([], ["claude"], ["--client", "claude"], ["--client", "other", "claude"]):
+            with (
+                self.subTest(argv=argv),
+                mock.patch("os.execvpe") as execvpe,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                self.main(argv, secret=self.secret)
+            execvpe.assert_not_called()
+            self.assertEqual(
+                raised.exception.code, "usage: with-secrets --client claude|codex COMMAND [ARG...]"
+            )
 
     def test_codex_uses_its_file_auth_without_reading_claude(self):
         with (

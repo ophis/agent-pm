@@ -78,7 +78,7 @@ func (h Host) checkWorkspace(ctx context.Context, volume, path string) ([]string
 	defer cancel()
 	out, err = h.Docker.Run(cctx, []string{"run", "--rm", "--name", name, "--label", "agent-pm.check=1", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--user", "agent", "--network", "none", "--mount", volumeMount(volume, path, true),
-		"--entrypoint", python, info.ID, "-I", checker, path, cache}, nil)
+		"--entrypoint", Python, info.ID, "-I", checker, path, cache}, nil)
 	if err != nil {
 		_, _ = h.Docker.Run(context.WithoutCancel(ctx), []string{"rm", "--force", name}, nil)
 		return nil, diagnosed(err, protocol.WorkspaceFailed, "The workspace check of "+volume+" failed.")

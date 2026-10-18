@@ -239,7 +239,7 @@ class ContainerLaunch(Base):
 
     def test_headless_native_events_resume_in_a_terminal_and_back(self):
         run = self.client.headless()
-        run._set_runtime(self.runtime)
+        run._runtime = self.runtime
         first = run.launch(dataclasses.replace(self.spec, prompt="one"))
         run.commit()
         self.assertEqual(first.argv[:2], ("/image/bin/codex", "exec"))
@@ -248,13 +248,13 @@ class ContainerLaunch(Base):
         )
         self.rollout()
         terminal = self.client.tui()
-        terminal._set_runtime(self.runtime)
+        terminal._runtime = self.runtime
         launch = terminal.launch(dataclasses.replace(self.spec, resume=True, prompt="two"), HOOK)
         plan = decode(json.loads(launch.argv[-1]))
         self.assertEqual(plan.selection, ("resume", NATIVE))
         self.assertEqual(plan.executable, "/image/bin/codex")
         resumed = self.client.headless()
-        resumed._set_runtime(self.runtime)
+        resumed._runtime = self.runtime
         command = resumed.launch(dataclasses.replace(self.spec, resume=True, prompt="three"))
         self.assertEqual(command.argv[command.argv.index("resume") + 1], NATIVE)
         self.assertEqual(command.env["CODEX_HOME"], first.env["CODEX_HOME"])
@@ -278,7 +278,7 @@ class ContainerLaunch(Base):
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         run = self.client.headless()
-        run._set_runtime(self.runtime)
+        run._runtime = self.runtime
         spec = dataclasses.replace(self.spec, resume=True)
         with self.assertRaisesRegex(ConfigError, "missing Codex session file"):
             run.launch(spec)

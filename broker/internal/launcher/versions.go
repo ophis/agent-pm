@@ -51,7 +51,7 @@ func (h Host) versionPolicy(ctx context.Context) (codex.Installation, error) {
 }
 
 func (h Host) updateCommand(ctx context.Context, c, action string, stdin []byte) error {
-	_, err := h.Docker.Run(ctx, []string{"exec", "--interactive", "--user", "root", c, python, "-I", updateScript, action}, stdin)
+	_, err := h.Docker.Run(ctx, []string{"exec", "--interactive", "--user", "root", c, Python, "-I", updateScript, action}, stdin)
 	return err
 }
 

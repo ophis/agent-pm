@@ -512,7 +512,7 @@ class TuiMode(BaseMode):
             replace(spec, name=name, events=events), run._home(), host, name
         )
         spec = cls._noted(spec, client)
-        run._set_runtime(host._client_runtime())
+        run._runtime = host._client_runtime()
         hook = store.hook_argv()
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env

@@ -97,7 +97,7 @@ func (h Host) checkMounts(m Manifest) error {
 				return reject("hook_path %s must be a clean absolute path.", m.HookPath)
 			}
 		}
-		for _, mount := range []string{m.CWD, dir, "/run/agent-pm"} {
+		for _, mount := range []string{m.CWD, dir, docker.RunDir} {
 			if inside(m.HookPath, mount) {
 				return reject("hook_path %s lies inside the mount %s.", m.HookPath, mount)
 			}

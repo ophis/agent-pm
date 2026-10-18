@@ -76,26 +76,30 @@ class PipedTest(Case):
         piped.close()
         self.assertTrue(self.refreshing.is_set())
 
-    def test_refresh_and_expiry_share_the_close_signal_and_run_concurrently(self):
-        jobs = []
-        with mock.patch("threading.Thread") as thread:
-            piped = DockerPiped(
-                "w",
-                self.proc,
-                close=lambda: None,
-                lock=self.lock,
-                refresh=lambda stopped: jobs.append(("refresh", stopped)),
-                expire=lambda stopped: jobs.append(("expiry", stopped)),
-            )
-        self.assertEqual(thread.call_count, 2)
-        for call in thread.call_args_list:
-            self.assertTrue(call.kwargs["daemon"])
-            call.kwargs["target"](*call.kwargs["args"])
-        self.assertEqual([name for name, _ in jobs], ["refresh", "expiry"])
-        self.assertIs(jobs[0][1], jobs[1][1])
-        self.assertFalse(jobs[0][1].is_set())
+    def test_refresh_and_expiry_run_concurrently_until_close_stops_both(self):
+        started = {"refresh": threading.Event(), "expiry": threading.Event()}
+        stopped = {"refresh": threading.Event(), "expiry": threading.Event()}
+
+        def task(name):
+            def run(signal):
+                started[name].set()
+                signal.wait()
+                stopped[name].set()
+
+            return run
+
+        piped = DockerPiped(
+            "w",
+            self.proc,
+            close=lambda: None,
+            lock=self.lock,
+            refresh=task("refresh"),
+            expire=task("expiry"),
+        )
+        self.assertTrue(all(event.wait(5) for event in started.values()))
+        self.assertFalse(any(event.is_set() for event in stopped.values()))
         piped.close()
-        self.assertTrue(jobs[0][1].is_set())
+        self.assertTrue(all(event.wait(5) for event in stopped.values()))
 
     def test_stop_kills_the_exec_group_then_closes(self):
         piped = self.piped()

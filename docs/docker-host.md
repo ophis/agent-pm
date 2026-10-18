@@ -205,7 +205,7 @@ one `{"account", "expires_at"}` per installation of the App.
 | `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
 | `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
 
-**Claude:** `docker exec -it "$C" with-secrets claude` opens with no login, theme or
+**Claude:** `docker exec -it "$C" with-secrets --client claude claude` opens with no login, theme or
 trust prompt and answers one sentence.
 
 **Hijack:** with `export DOCKER_HOST=tcp://127.0.0.1:9 DOCKER_CONTEXT=bogus`, a
