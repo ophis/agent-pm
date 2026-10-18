@@ -729,8 +729,8 @@ class StaleHolderRecovery(CliCase):
                 " --through <line> --gen 0, then attach; unacknowledged events replay",
                 "crew: until then, attach without a lease, keeping the prefix on the commands it"
                 f" prints: {LEASE_FREE} attach --manager mgr",
-                f"crew: and monitor: {LEASE_FREE} next-event --manager mgr --after 0 --gen 0"
-                " --content --follow",
+                "crew: and monitor with its monitor: line; with no ack first, this is that line:"
+                f" {LEASE_FREE} next-event --manager mgr --after 0 --gen 0 --content --follow",
             ],
         )
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()) as help:
@@ -741,7 +741,7 @@ class StaleHolderRecovery(CliCase):
     def test_printed_lease_free_commands_run(self):
         _, _, stderr = self.invoke("attach", "--manager", "mgr")
         attach = self.command(stderr, "until then")
-        monitor = self.command(stderr, "and monitor")
+        monitor = self.command(stderr, "this is that line")
         self.assertEqual(monitor[-1], "--follow")
         with self.lease_free():
             with self.listed():

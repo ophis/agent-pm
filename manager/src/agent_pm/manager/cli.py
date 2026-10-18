@@ -54,43 +54,51 @@ def _named(manager: str, option: str = "--manager") -> tuple[str, ...]:
     return (f"{option}={manager}",) if manager.startswith("-") else (option, manager)
 
 
+def _restart(manager: str, *force: str) -> str:
+    hold = ("agent-pm-crew", "hold", *force, *_named(manager), *_named(manager, "--session"), "--")
+    return f"{shlex.join(hold)} <client resume command> (agent-pm-crew hold --help)"
+
+
+def _lease_free(*words: str) -> str:
+    return shlex.join((*LEASE_FREE, "agent-pm-crew", *words))
+
+
+def _lease_free_recovery(
+    manager: str, cursor: int, generation: int, reader: tuple[int, int] | None
+) -> list[str]:
+    named = _named(manager)
+    if reader is not None and reader[0] > cursor and reader[1] == generation:
+        ack = _lease_free("ack", *named, "--through", str(reader[0]), "--gen", str(generation))
+        ack = f"handled through {reader[0]}? first: {ack}, then attach"
+    else:
+        ack = f"{_lease_free('ack', *named, '--through')} <line> --gen {generation}"
+        ack = f"handled events after N={cursor}? first: {ack}, then attach; unacknowledged events replay"
+    monitor = ("--after", str(cursor), "--gen", str(generation), "--content", "--follow")
+    return [
+        "lasting fix: restart the commander's client under a new holder, then attach and arm its"
+        f" monitor: command: {_restart(manager)}",
+        ack,
+        "until then, attach without a lease, keeping the prefix on the commands it prints:"
+        f" {_lease_free('attach', *named)}",
+        "and monitor with its monitor: line; with no ack first, this is that line:"
+        f" {_lease_free('next-event', *named, *monitor)}",
+    ]
+
+
 def _stale_holder_notes(args, reader: tuple[int, int] | None = None) -> list[str]:
     """Recovery for a pair whose holder ended; reader: the failed next-event's line and GEN."""
     roster = _roster(args)
     cursor, generation, holder = roster.lease_state()
     manager = os.path.basename(roster.directory)
-    named = _named(manager)
     state = f"handled N={cursor} GEN={generation}"
-
-    def restart(*force: str) -> str:
-        hold = ("agent-pm-crew", "hold", *force, *named, *_named(manager, "--session"), "--")
-        return f"{shlex.join(hold)} <client resume command> (agent-pm-crew hold --help)"
-
-    def lease_free(*words: str) -> str:
-        return shlex.join((*LEASE_FREE, "agent-pm-crew", *words))
-
     if holder is not None:
         return [
             f"{ENDED}; {holder} holds manager {manager} now; {state}",
-            f"use {holder}'s commander; take over only on purpose: {restart('--force')}",
+            f"use {holder}'s commander; take over only on purpose: {_restart(manager, '--force')}",
         ]
-    if reader is not None and reader[0] > cursor and reader[1] == generation:
-        through = str(reader[0])
-        ack = f"handled through {through}? first: "
-        ack += f"{lease_free('ack', *named, '--through', through, '--gen', str(generation))}"
-        ack += ", then attach"
-    else:
-        ack = f"handled events after N={cursor}? first: {lease_free('ack', *named, '--through')}"
-        ack += f" <line> --gen {generation}, then attach; unacknowledged events replay"
-    monitor = ("--after", str(cursor), "--gen", str(generation), "--content", "--follow")
     return [
         f"{ENDED}; no holder is active; {state}",
-        "lasting fix: restart the commander's client under a new holder, then attach and arm its"
-        f" monitor: command: {restart()}",
-        ack,
-        "until then, attach without a lease, keeping the prefix on the commands it prints:"
-        f" {lease_free('attach', *named)}",
-        f"and monitor: {lease_free('next-event', *named, *monitor)}",
+        *_lease_free_recovery(manager, cursor, generation, reader),
     ]
 
 
