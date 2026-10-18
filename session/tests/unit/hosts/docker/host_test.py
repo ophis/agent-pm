@@ -1254,10 +1254,22 @@ class PipeTest(Base):
         self.assertEqual(manifest["codex_dir"], home)
         self.assertNotIn("claude_dir", manifest)
         self.assertTrue(os.path.isdir(os.path.join(home, "sessions")))
-        self.assertIn("codex", self.popened[0])
-        self.assertIn("/opt/agent-pm/bin/codex", self.popened[0])
-        self.assertIn("client_auth_expired", logs.output[0])
-        self.assertIn("agent-pm-broker login codex", logs.output[0])
+        self.assertEqual(
+            self.popened[0],
+            [
+                *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
+                *("--env", "CODEX_HOME"),
+                *(CONTAINER, "with-secrets", "--client", "codex"),
+                *("/opt/agent-pm/bin/codex", "exec", "--json", "hello"),
+            ],
+        )
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:session:docker session w: client_auth_expired Client authentication"
+                " expired; run agent-pm-broker login codex; token refresh is not supported yet"
+            ],
+        )
         self.assertEqual(self.broker.closed, [CONTAINER])
         piped.close()
 

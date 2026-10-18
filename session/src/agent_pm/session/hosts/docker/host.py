@@ -906,7 +906,7 @@ class DockerHost(Host):
                 [
                     "with-secrets",
                     "--client",
-                    metadata["home_field"].removesuffix("_dir"),
+                    metadata["client"],
                     *launch.argv,
                 ],
                 cwd=cwd,
@@ -965,13 +965,14 @@ class DockerHost(Host):
         hook, root, (image, digest) = self._image(name)
         volume = workspace_volume(name)
         cwd = os.path.realpath(launch.cwd)
+        persistent = json.loads(metadata.get("home_persistent") or "null")
         if resume == "0":
             self._move_workspace(name, volume, cwd)
             shutil.rmtree(home, ignore_errors=True)
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
-            for directory in json.loads(metadata.get("home_persistent") or "null") or ():
+            for directory in persistent or ():
                 os.makedirs(os.path.join(home, directory), mode=0o700, exist_ok=True)
         clients = client_keys(root)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
@@ -995,10 +996,9 @@ class DockerHost(Host):
                 "image_digest": digest,
                 "workspace": {"volume": volume, "path": cwd},
                 "mounts": [
-                    {"path": os.path.join(home, directory), "rw": True}
-                    for directory in json.loads(metadata.get("home_persistent") or "null")
+                    {"path": os.path.join(home, directory), "rw": True} for directory in persistent
                 ]
-                if json.loads(metadata.get("home_persistent") or "null") is not None
+                if persistent is not None
                 else [{"path": home, "rw": True}],
                 "credential": credential,
             },
@@ -1078,7 +1078,7 @@ class DockerHost(Host):
                     container,
                     "with-secrets",
                     "--client",
-                    metadata["home_field"].removesuffix("_dir"),
+                    metadata["client"],
                     *launch.argv,
                 ),
             )
