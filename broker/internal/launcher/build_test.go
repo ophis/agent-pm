@@ -107,6 +107,10 @@ type buildEnv struct {
 	age                                time.Duration // of every inspected image
 	listErr, rmErr                     error
 	progress                           strings.Builder
+	// held lists the Docker verbs each hold of the image lock spanned; lockFail fails its nth taking (from 1).
+	held            [][]string
+	locks, lockFail int
+	locked          bool
 }
 
 func newBuildEnv(t *testing.T) *buildEnv {
@@ -174,7 +178,27 @@ func newBuildEnv(t *testing.T) *buildEnv {
 	return e
 }
 
-func (e *buildEnv) host() Host { return Host{Home: e.home, Docker: e.fake, Progress: &e.progress} }
+func (e *buildEnv) host() Host {
+	return Host{Home: e.home, Docker: e.fake, Progress: &e.progress, Lock: e.lock}
+}
+
+// lock is a non-reentrant image lock: taking it while held fails, as a second process would wait.
+func (e *buildEnv) lock() (func(), error) {
+	e.locks++
+	if e.locked || e.locks == e.lockFail {
+		return nil, errors.New("lock busy")
+	}
+	e.locked = true
+	from := len(e.fake.calls)
+	return func() {
+		e.locked = false
+		e.held = append(e.held, e.fake.verbs()[from:])
+	}, nil
+}
+
+func (e *buildEnv) leasePath(key string) string {
+	return filepath.Join(e.home, ".agent-pm/docker/images", key)
+}
 
 func TestBuildCacheAndStages(t *testing.T) {
 	e := newBuildEnv(t)
@@ -406,6 +430,29 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 			t.Fatalf("%q %q", got, e.progress.String())
 		}
 	})
+	t.Run("keeps the images of keys a build leased within the lease", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.images = listing
+		stale := time.Now().Add(-imageLease - time.Minute)
+		for _, key := range []string{old, kept} {
+			putFile(t, e.leasePath(key), "")
+		}
+		if err := os.Chtimes(e.leasePath(old), stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
+			t.Fatal(err)
+		}
+		if got := removed(e); !slices.Equal(got, []string{"agent-pm-worker:" + old, "agent-pm-user:" + old}) {
+			t.Fatalf("%q", got)
+		}
+		if _, err := os.Stat(e.leasePath(old)); !os.IsNotExist(err) {
+			t.Fatalf("a removed key keeps its lease: %v", err)
+		}
+		if _, err := os.Stat(e.leasePath(kept)); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestBuildRefreshesAnOldImage(t *testing.T) {
@@ -493,4 +540,150 @@ func TestAFailedRefreshKeepsTheImage(t *testing.T) {
 	if _, err := e.host().Build(context.Background(), e.pkg, nil, 7*24*time.Hour); err == nil || err.(*protocol.Error).Code != protocol.DockerUnreachable {
 		t.Fatalf("unreachable Docker kept the image: %v", err)
 	}
+}
+
+// otherPackage is a package whose build key differs from e.pkg's.
+func otherPackage(t *testing.T) string {
+	pkg := t.TempDir()
+	putFile(t, filepath.Join(pkg, ".claude-plugin/plugin.json"), `{"version":"1.2.3"}`)
+	for _, rel := range []string{"session/src/sample.py", "utils/src/sample.py", "delegate/src/sample.py"} {
+		putFile(t, filepath.Join(pkg, rel), "other")
+	}
+	return pkg
+}
+
+// share answers image ls and rm from e.built, so a prune removes what a build tagged;
+// tagged runs once Docker tags each worker image, before its build inspects it.
+func (e *buildEnv) share(tagged func()) {
+	inner := e.fake.respond
+	e.fake.respond = func(args []string) ([]byte, error) {
+		switch {
+		case args[0] == "image" && args[1] == "ls" && !slices.Contains(args, "--filter"):
+			var lines []string
+			for tag := range e.built {
+				lines = append(lines, tag+" sha256:"+strings.Repeat("a", 64))
+			}
+			slices.Sort(lines)
+			return []byte(strings.Join(lines, "\n")), nil
+		case args[0] == "image" && args[1] == "rm":
+			delete(e.built, args[2])
+			return nil, nil
+		}
+		out, err := inner(args)
+		if args[0] == "build" && strings.HasPrefix(args[slices.Index(args, "--tag")+1], "agent-pm-worker:") {
+			tagged()
+		}
+		return out, err
+	}
+}
+
+func (e *buildEnv) has(result BuildResult) bool {
+	_, worker := e.built[result.Image]
+	_, user := e.built[strings.Replace(result.Image, "agent-pm-worker:", "agent-pm-user:", 1)]
+	return worker && user
+}
+
+func TestConcurrentPackagesKeepEachOthersImages(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a rebuild pruning while another package's rebuild runs", func(t *testing.T) {
+		e := newBuildEnv(t)
+		other := otherPackage(t)
+		var first BuildResult
+		var firstErr error
+		ran := false
+		e.share(func() {
+			if !ran {
+				ran = true
+				first, firstErr = e.host().Build(ctx, other, nil, -1)
+			}
+		})
+		second, err := e.host().Build(ctx, e.pkg, nil, -1)
+		if err != nil || firstErr != nil || !first.Rebuilt || !second.Rebuilt || first.Image == second.Image {
+			t.Fatalf("%+v %v %+v %v", first, firstErr, second, err)
+		}
+		if !e.has(first) || !e.has(second) {
+			t.Fatalf("a pair pruned: %v", e.built)
+		}
+	})
+	t.Run("a reused image another package's rebuild then prunes", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.share(func() {})
+		built, err := e.host().Build(ctx, e.pkg, nil, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale := time.Now().Add(-imageLease - time.Minute)
+		if err := os.Chtimes(e.leasePath(strings.TrimPrefix(built.Image, "agent-pm-worker:")), stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		if reused, err := e.host().Build(ctx, e.pkg, nil, -1); err != nil || reused.Rebuilt {
+			t.Fatalf("%+v %v", reused, err)
+		}
+		if other, err := e.host().Build(ctx, otherPackage(t), nil, -1); err != nil || !other.Rebuilt {
+			t.Fatalf("%+v %v", other, err)
+		}
+		if !e.has(built) {
+			t.Fatalf("the reused pair pruned: %v", e.built)
+		}
+	})
+	t.Run("a pair no build leased within the lease", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.share(func() {})
+		built, err := e.host().Build(ctx, e.pkg, nil, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease := e.leasePath(strings.TrimPrefix(built.Image, "agent-pm-worker:"))
+		stale := time.Now().Add(-imageLease - time.Minute)
+		if err := os.Chtimes(lease, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		other, err := e.host().Build(ctx, otherPackage(t), nil, -1)
+		if err != nil || e.has(built) || !e.has(other) {
+			t.Fatalf("%+v %v %v", other, err, e.built)
+		}
+		if _, err := os.Stat(lease); !os.IsNotExist(err) {
+			t.Fatalf("a removed key keeps its lease: %v", err)
+		}
+	})
+}
+
+func TestBuildHoldsTheImageLock(t *testing.T) {
+	ctx := context.Background()
+	e := newBuildEnv(t)
+	e.images = "agent-pm-worker:" + strings.Repeat("1", 64) + " sha256:" + strings.Repeat("c", 64) + "\n"
+	built, err := e.host().Build(ctx, e.pkg, nil, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.host().Build(ctx, e.pkg, nil, -1); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"image inspect"}, {"container ls", "image ls", "image rm", "image ls"}, {"image inspect"}}
+	if !slices.EqualFunc(e.held, want, slices.Equal) {
+		t.Fatalf("%q", e.held)
+	}
+	info, err := os.Stat(e.leasePath(strings.TrimPrefix(built.Image, "agent-pm-worker:")))
+	if err != nil || time.Since(info.ModTime()) > time.Minute {
+		t.Fatalf("%v %v", info, err)
+	}
+	t.Run("a build that cannot take it", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.lockFail = 1
+		_, err := e.host().Build(ctx, e.pkg, nil, -1)
+		var pe *protocol.Error
+		if !errors.As(err, &pe) || pe.Code != protocol.BuildFailed || pe.Message != "Taking the image lock ~/.agent-pm/docker/images.lock failed." || len(e.fake.calls) != 0 {
+			t.Fatalf("%v %q", err, e.fake.verbs())
+		}
+	})
+	t.Run("a prune that cannot take it keeps every image", func(t *testing.T) {
+		e := newBuildEnv(t)
+		e.images, e.lockFail = "agent-pm-worker:"+strings.Repeat("1", 64)+" sha256:"+strings.Repeat("c", 64)+"\n", 2
+		if got, err := e.host().Build(ctx, e.pkg, nil, -1); err != nil || !got.Rebuilt {
+			t.Fatalf("%+v %v", got, err)
+		}
+		if slices.Contains(e.fake.verbs(), "image rm") || e.progress.String() != "agent-pm-broker: kept older images: cannot take the image lock: lock busy\n" {
+			t.Fatalf("%q %q", e.fake.verbs(), e.progress.String())
+		}
+	})
 }

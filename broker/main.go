@@ -199,6 +199,7 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home))
 	h.Codex = broker.NewCodex(home, nil)
 	h.Progress = progress
+	h.Lock = broker.FileLock(filepath.Join(home, ".agent-pm/docker/images.lock"))
 	return f(h)
 }
 

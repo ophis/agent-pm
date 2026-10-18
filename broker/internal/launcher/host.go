@@ -50,7 +50,8 @@ type Host struct {
 	Codex    CodexCredentials
 	GitHub   Tokens
 	Versions CodexVersions
-	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
+	Progress io.Writer                         // nil: none; build's notes on older images, after Docker's progress; start's phase times
+	Lock     func() (unlock func(), err error) // the image lock: build's lease and inspect, and prune
 }
 
 // NewHost wires the real filesystem; tests build Host with fakes.

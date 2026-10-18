@@ -209,7 +209,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
-| `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` not installed or unusable (message names it; before any Docker call), context hashing or either build stage failed |
+| `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` not installed or unusable (message names it; before any Docker call), context hashing, the image lock or lease ([Docker Host](docker-host.md#build)), or either build stage failed |
 | `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client version probing or token injection failed |
 | `10` | `close_failed` | close | Daemon reachable but container deletion failed |
 | `11` | `keychain_failed` | start/refresh/close/status | Keychain access denied, locked or otherwise failed; distinguish from absent entry. close: the container is deleted, but its tokens could not be revoked |
