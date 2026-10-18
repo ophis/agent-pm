@@ -133,6 +133,49 @@ class LauncherTest(Case):
         end.assert_called_once_with(124)
         self.assertTrue(child.killed)
 
+    def test_the_watch_spares_a_bound_run_whose_reader_hangs(self):
+        class Stuck(io.BytesIO):
+            def write(self, data):
+                Timers.made[0].function()  # the lock wait times out under this write
+                return super().write(data)
+
+        child = Child([BOUND, TEXT])
+        with (
+            mock.patch("sys.stdout", mock.Mock(buffer=Stuck())),
+            mock.patch("os._exit", side_effect=SystemExit) as end,
+        ):
+            self.assertEqual(self.run_with(child), 0)
+        end.assert_not_called()
+        self.assertFalse(child.killed)
+
+    def test_a_bound_or_ended_run_skips_the_lock(self):
+        for state in ("session", "ended"):
+            with self.subTest(state=state):
+                child = Child()
+                self.addCleanup(child.stderr.close)
+                watch = launcher.Watch(child, "120")
+                setattr(watch, state, True)
+                watch.lock = mock.Mock()
+                watch.expire()
+                watch.lock.acquire.assert_not_called()
+                self.assertFalse(child.killed)
+
+    def test_a_run_bound_during_the_lock_wait_is_spared(self):
+        child = Child()
+        self.addCleanup(child.stderr.close)
+        watch = launcher.Watch(child, "120")
+
+        def bind(**_):
+            watch.session = True
+            return False
+
+        watch.lock = mock.Mock(**{"acquire.side_effect": bind})
+        with mock.patch("os._exit", side_effect=SystemExit) as end:
+            watch.expire()
+        end.assert_not_called()
+        watch.lock.release.assert_not_called()
+        self.assertFalse(child.killed)
+
     def test_the_watch_spares_a_run_that_ended(self):
         child = Child([TEXT], code=1)
         self.assertEqual(self.run_with(child), 1)

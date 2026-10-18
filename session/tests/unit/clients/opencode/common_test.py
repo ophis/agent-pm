@@ -3,9 +3,11 @@
 import json
 import os
 import sys
+from types import SimpleNamespace
+from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, probe
-from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon
+from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon, worktree
 from agent_pm.session.engine.types import ConfigError, Effort, Usage
 
 from session.tests.case import Case
@@ -140,6 +142,19 @@ class StoreTest(Case):
     def test_native_pattern(self):
         self.assertTrue(NATIVE.fullmatch(SES))
         self.assertFalse(NATIVE.fullmatch("ses_-x"))
+
+
+class WorktreeTest(Case):
+    def test_only_a_trailing_line_end_is_cut_from_the_toplevel(self):
+        repo = os.path.realpath(os.path.join(self.home, "repo "))
+        os.makedirs(os.path.join(repo, ".git"))
+
+        def git(argv, *_, **__):
+            out = repo + "\r\n" if "--show-toplevel" in argv else ".git\n.git\n"
+            return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+        with mock.patch("subprocess.run", side_effect=git):
+            self.assertEqual(worktree(repo), repo)
 
 
 class UsageTest(Case):

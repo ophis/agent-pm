@@ -120,9 +120,10 @@ def worktree(cwd: str) -> str:
     except (GitError, OSError, subprocess.SubprocessError):
         return "/"
     try:
-        top = run_git(found, "rev-parse", "--show-toplevel", run=_git, timeout=GIT_WAIT).strip()
+        top = run_git(found, "rev-parse", "--show-toplevel", run=_git, timeout=GIT_WAIT)
     except (GitError, OSError, subprocess.SubprocessError):
         return found
+    top = top.rstrip("\r\n")
     return os.path.realpath(os.path.join(found, top)) if top else found
 
 

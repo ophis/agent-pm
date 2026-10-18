@@ -77,9 +77,14 @@ class Watch:
             self.ended = True
 
     def expire(self) -> None:
-        # A write stuck on a reader holds the lock: stop all the same.
-        if self.lock.acquire(timeout=LOCK_WAIT) and (self.session or self.ended):
+        # A write stuck on a reader holds the lock: stop all the same unless bound or ended.
+        if self.session or self.ended:
+            return
+        locked = self.lock.acquire(timeout=LOCK_WAIT)
+        spared = self.session or self.ended
+        if locked:
             self.lock.release()
+        if spared:
             return
         self.child.kill()
         _err(f"opencode: no session after {self.seconds} s; stopped\n".encode())
