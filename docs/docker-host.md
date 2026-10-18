@@ -109,11 +109,19 @@ keeps the image, printing `agent-pm-broker: kept <image>: refreshing it failed: 
 `--max-age 0` fails instead.
 
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
-images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
+images of other keys no build leased in the last hour, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
 stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
 each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
 line; a kept image goes at a later rebuild once no container uses it. A reused image
 removes nothing.
+
+Every `build` leases its key: it sets the time of `~/.agent-pm/docker/images/<key>` when it
+starts, reused image or not, and again before the second stage and at the end of a rebuild. So two
+packages building at once (two worktrees' plugin directories, or a worker's check beside a
+board run) keep each other's images, through a rebuild and until the start after it creates
+its container. `~/.agent-pm/docker/images.lock` keeps each removal pass apart from a build's
+lease and image check: a build that cannot take it fails with `build_failed`; a removal pass
+that cannot take it removes nothing, printing `agent-pm-broker: kept older images: cannot take the image lock: <reason>`.
 
 | Check (`I` = the printed image) | Expect |
 |---|---|
@@ -121,7 +129,9 @@ removes nothing.
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (the image's interpreter, which imports agent-pm's Delegate), then `repo.py`'s usage: role runs read the team and run its tools from `/opt/agent-pm/team`, the plugin's own version |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
-| `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
+| `docker image ls --filter reference='agent-pm-*'` after that rebuild | the new key's pair and the older one, which a build leased within the hour |
+| `rm ~/.agent-pm/docker/images/<older key>`, then `"$B" build --agent-pm "$PKG" --max-age 0` and `docker image ls --filter reference='agent-pm-*'` | only the new key's pair, plus the older worker image of any container still on it |
+| `"$B" build --agent-pm "$PKG" --max-age 0 & "$B" build --agent-pm "$PKG2" --max-age 0; wait`, `PKG2` another worktree's plugin directory with other content | both print `"rebuilt":true`; `docker image ls` lists both pairs |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
 
 ### Plugins
@@ -160,7 +170,7 @@ Whitelisting a plugin trusts its code beside the container's client and GitHub c
 Claude loads its hooks, MCP servers and scripts; [Codex's adaptation](docker-codex.md#native-plugins)
 defines which components it loads. Host-side upgrades reach containers at their next build.
 One whitelist per account: a build with another whitelist
-gives another key, and its rebuild removes the other's images.
+gives another key, and its rebuild removes the other's images once no build has leased them for an hour.
 
 | Check | Expect |
 |---|---|
