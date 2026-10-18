@@ -137,4 +137,23 @@ class Manage(Case):
         update = rule("bumps the agent-pm plugin version")
         self.assertIn("`claude plugin update agent-pm@agent-pm`", update)
         self.assertIn("`codex plugin marketplace upgrade agent-pm`", update)
+        wait = "once Release `v<version>` has its broker asset and provenance (`AGENTS.md` › Releasing)"
+        self.assertLess(update.index(wait), update.index("update the installed plugin"))
+
+    def test_releasing_waits_for_asset_and_provenance_before_plugin_update(self):
+        with open(os.path.join(REPO, "AGENTS.md"), encoding="utf-8") as f:
+            releasing = re.search(r"(?ms)^## Releasing\n(.*?)(?=^## |\Z)", f.read())[1]
+        asset = "agent-pm-broker-darwin-arm64.tar.gz"
+        order = [
+            "publish Release `v<version>`",
+            "`gh release view v<version> --repo ophis/agent-pm --json assets`",
+            f"`gh release download v<version> --repo ophis/agent-pm --pattern {asset} --dir <dir>`",
+            f"`gh attestation verify <dir>/{asset} --repo ophis/agent-pm"
+            " --signer-workflow ophis/agent-pm/.github/workflows/release.yml"
+            " --source-ref refs/tags/v<version> --deny-self-hosted-runners`",
+            "update the installed plugin",
+        ]
+        found = [releasing.find(step) for step in order]
+        self.assertNotIn(-1, found, releasing)
+        self.assertEqual(found, sorted(found))
         self.assertIn("A client without this plugin's `bin/` on its PATH", body("manage"))

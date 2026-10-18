@@ -19,6 +19,14 @@ Test boundaries and commands: `docs/tests.md`.
 - Keep `<work_dir>/logs/runs.jsonl` (`docs/board.md` › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
+## Releasing
+
+`<version>` is `.claude-plugin/plugin.json`'s `version`.
+
+1. Create and publish Release `v<version>`.
+2. Wait for its run of `.github/workflows/release.yml`, then confirm the broker asset, `gh release view v<version> --repo ophis/agent-pm --json assets` (lists `agent-pm-broker-darwin-arm64.tar.gz`), and its provenance: `gh release download v<version> --repo ophis/agent-pm --pattern agent-pm-broker-darwin-arm64.tar.gz --dir <dir>`, then `gh attestation verify <dir>/agent-pm-broker-darwin-arm64.tar.gz --repo ophis/agent-pm --signer-workflow ophis/agent-pm/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners`.
+3. Only then update the installed plugin (`manager/skills/manage/SKILL.md` › Git and reviews).
+
 ## Import rules
 
 Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package; exact test exceptions for removed exports are listed in `pyproject.toml`. Orchestration reaches session only through Delegate: its contract ignores no import. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
