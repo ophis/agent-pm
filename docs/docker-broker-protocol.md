@@ -45,8 +45,8 @@ manifest. References are internal, so Go and Python can load it without network 
 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
 order. They are test data, not JSON sent to the broker. These commands consume no
-stdin. `login claude` reads a token, and `login claude` and `login github <app>` the login keychain password
-once when the item's access needs a change, interactively without echo; neither has a JSON contract. `login github <app>` then
+stdin. `login claude` reads a token; both it and `login github <app>` read the login keychain password once
+when the item's access needs a change, interactively without echo; neither has a JSON contract. `login github <app>` then
 looks up `<app>[bot]` (`GET /users/<app>[bot]`, no credential) and saves its user ID ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
