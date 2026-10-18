@@ -13,8 +13,8 @@ from contextlib import AbstractContextManager
 from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     Hosts,
@@ -318,7 +318,7 @@ class Host(ABC):
 
     _inherit_env = True
 
-    def _client_runtime(self) -> ClientRuntime | None:
+    def _client_context(self) -> ClientContext | None:
         return None
 
     def _client_env(

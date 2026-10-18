@@ -8,8 +8,8 @@ from collections.abc import Iterable, Iterator
 
 from agent_pm.session.engine.types import (
     ClientBound,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     Launch,
     Permission,
     SessionEvent,
@@ -20,7 +20,7 @@ from agent_pm.utils import json_records
 
 
 class Headless(ABC):
-    _runtime: ClientRuntime | None = None
+    _context: ClientContext | None = None
     _permission: Permission = Permission.AUTO
 
     def _home(self) -> ClientHome | None:

@@ -25,8 +25,8 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     HookKind,
@@ -680,7 +680,7 @@ class StartTest(Base):
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 
     def test_host_runtime_reaches_adapter_and_projection_reaches_terminal(self):
-        runtime = ClientRuntime("/image/bin", "/image/python", "/image/modules", "/run/state")
+        runtime = ClientContext("/image/bin", "/image/python", "/image/modules", "/run/state")
         projection = {"/run/state/store/record.json": '{"native_id":"kept"}'}
         seen = []
 
@@ -691,12 +691,12 @@ class StartTest(Base):
                 )
 
             def launch(self, spec, hook):
-                seen.append(self._runtime)
+                seen.append(self._context)
                 self._runtime_files = projection
                 return super().launch(spec, hook)
 
         with (
-            mock.patch.object(self.host, "_client_runtime", return_value=runtime),
+            mock.patch.object(self.host, "_client_context", return_value=runtime),
             mock.patch.object(self.host, "_client_env", return_value={"FAKE_HOME": "/volatile"}),
         ):
             self.start(run=Projected(self.client))

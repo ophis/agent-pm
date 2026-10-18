@@ -39,8 +39,8 @@ from agent_pm.session.engine.types import (
     MARKS,
     RESUME,
     SESSION_NAME,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     Key,
@@ -775,8 +775,8 @@ class DockerHost(Host):
                 os.close(lock)
         return True
 
-    def _client_runtime(self) -> ClientRuntime:
-        return ClientRuntime(
+    def _client_context(self) -> ClientContext:
+        return ClientContext(
             "/opt/agent-pm/bin",
             "/opt/agent-pm/venv/bin/python",
             "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
@@ -922,7 +922,7 @@ class DockerHost(Host):
             supervisor = self._spawn_supervisor(
                 name, container, generation=generation, events=events, hook=hook, lock=lock
             )
-            runtime = self._client_runtime()
+            runtime = self._client_context()
             process = tmux.launch(
                 name,
                 [

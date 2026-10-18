@@ -40,7 +40,7 @@ class CodexHeadless(Headless):
         self.state = self.common.prepare(spec)
         self.limit_sent = False
         snapshot = self.state.snapshot
-        executable = os.path.join(self._runtime.bin_dir, "codex") if self._runtime else "codex"
+        executable = os.path.join(self._context.bin_dir, "codex") if self._context else "codex"
         mode = self.common.modes[self._permission]
         argv = [executable, "exec", *launch_flags(snapshot, interactive=False, mode=mode)]
         if resume:

@@ -181,7 +181,7 @@ class ClientHome:
 
 
 @dataclass(frozen=True)
-class ClientRuntime:
+class ClientContext:
     bin_dir: str
     python: str
     pythonpath: str

@@ -151,7 +151,7 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         store = self.store = common.store.root
-        runtime = self._runtime
+        runtime = self._context
         if runtime:
             env = {
                 key: value

@@ -6,8 +6,8 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     HookCallback,
     HookKind,
     Key,
@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
 
 
 class Tui(ABC):
-    _runtime: ClientRuntime | None = None
+    _context: ClientContext | None = None
     _permission: Permission = Permission.AUTO
     _runtime_files: Mapping[str, str] = MappingProxyType({})
     hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
