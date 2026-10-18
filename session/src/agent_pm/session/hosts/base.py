@@ -9,7 +9,8 @@ import signal
 import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
-from typing import ClassVar
+from contextlib import AbstractContextManager
+from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
     ClientHome,
@@ -38,6 +39,7 @@ from agent_pm.utils import (
     Status,
     append_line,
     kill_group,
+    piped_popen,
     printable_abs,
     resume_command,
     thaw,
@@ -157,12 +159,15 @@ class Interactive(ABC):
 class InteractiveProcess(Process, Interactive): ...
 
 
+class Lines(Iterable[str], AbstractContextManager[object], Protocol): ...
+
+
 class Piped(ABC):
     """wait: exit code or None, no side effect; stop (ended: pipes at EOF), then close: frees once
     what its Host holds."""
 
-    stdout: Iterable[str]
-    stderr: Iterable[str]
+    stdout: Lines
+    stderr: Lines
 
     @abstractmethod
     def wait(self, timeout: float) -> int | None: ...
@@ -172,20 +177,6 @@ class Piped(ABC):
 
     def close(self) -> None:
         return None
-
-
-def piped_popen(argv, *, env: Mapping[str, str], cwd: str | None = None) -> subprocess.Popen:
-    return subprocess.Popen(
-        argv,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        errors="replace",
-        process_group=0,
-    )
 
 
 class LocalPiped(Piped):
@@ -208,7 +199,6 @@ class LocalPiped(Piped):
 
 
 def host_resume(host: Host, name: str | None, cwd: str) -> str | None:
-    """None: the client's."""
     argv = None if name is None else host._resume_argv(name)
     return resume_command(cwd, {}, argv) if argv else None
 

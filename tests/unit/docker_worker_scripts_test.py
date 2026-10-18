@@ -2,6 +2,7 @@ import io
 import json
 import os
 import runpy
+import shutil
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -137,6 +138,125 @@ class WithSecrets(Case):
             self.main([], secret=self.secret)
         execvpe.assert_not_called()
         self.assertNotIn("tok-123", str(raised.exception.code))
+
+
+class GitHubTokens(Case):
+    def setUp(self):
+        self.tokens = Path(self.home, "github")
+        self.tokens.mkdir()
+        for name, token in (
+            ("Ophis", "ghs_ophis\n"),
+            ("other", "ghs_other"),
+            (".ophis.new", "ghs_dot"),
+        ):
+            (self.tokens / name).write_text(token)
+
+
+class GitCredential(GitHubTokens):
+    def get(self, text, argv=("get",)):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            script("git-credential-agent-pm")["main"](
+                list(argv), stdin=io.StringIO(text), tokens=self.tokens
+            )
+        return out.getvalue()
+
+    def test_get_answers_the_owners_token_for_github_https(self):
+        for path in ("ophis/agent-pm.git", "OPHIS/agent-pm", "ophis"):
+            with self.subTest(path=path):
+                found = self.get(f"protocol=https\nhost=github.com\npath={path}\n\n")
+                self.assertEqual(found, "username=x-access-token\npassword=ghs_ophis\n")
+
+    def test_anything_else_prints_nothing(self):
+        for text in (
+            "protocol=http\nhost=github.com\npath=ophis/x\n",
+            "protocol=https\nhost=gitlab.com\npath=ophis/x\n",
+            "protocol=https\nhost=github.com\n",
+            "protocol=https\nhost=github.com\npath=nobody/x\n",
+            "protocol=https\nhost=github.com\npath=../github/Ophis\n",
+            "protocol=https\nhost=github.com\npath=.ophis.new/x\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.get(text), "")
+        good = "protocol=https\nhost=github.com\npath=ophis/x\n"
+        for argv in (("store",), ("erase",), ()):
+            self.assertEqual(self.get(good, argv), "")
+
+
+class GhWrapper(GitHubTokens):
+    def setUp(self):
+        super().setUp()
+        lib, wrapper, self.real = (Path(self.home, d) for d in ("lib", "wrapper", "real"))
+        for folder in (lib, wrapper, self.real):
+            folder.mkdir()
+        for name in ("gh", "git-credential-agent-pm"):  # as in the image: lib/, linked from bin/
+            shutil.copy(ASSETS / name, lib)
+        (wrapper / "gh").symlink_to(lib / "gh")
+        self.wrapper = str(lib / "gh")
+        (self.real / "gh").write_text("#!/bin/sh\n")
+        (self.real / "gh").chmod(0o755)
+        self.path = f"{wrapper}:{self.real}"
+        self.origin = ""
+
+    def gh(self, *argv):
+        """The GH_TOKEN the real gh gets, None for none."""
+        origin = SimpleNamespace(returncode=0, stdout=self.origin + "\n")
+        with (
+            mock.patch.dict(os.environ, {"PATH": self.path}),
+            mock.patch("os.execve") as execve,
+            mock.patch("subprocess.run", return_value=origin),
+        ):
+            runpy.run_path(self.wrapper)["main"](list(argv), tokens=self.tokens)
+        (path, args, env), _ = execve.call_args
+        self.assertEqual((path, args), (str(self.real / "gh"), ["gh", *argv]))
+        self.assertNotIn("GH_TOKEN", os.environ)
+        return env.get("GH_TOKEN")
+
+    def test_the_repo_it_acts_on_picks_the_owners_token(self):
+        self.origin = "https://github.com/ophis/agent-pm.git"
+        for argv in (
+            ("repo", "clone", "other/x"),
+            ("repo", "clone", "https://github.com/Other/x"),
+            ("pr", "list", "-R", "other/x"),
+            ("pr", "list", "--repo", "github.com/other/x"),
+            ("pr", "list", "--repo=other/x"),
+            ("api", "repos/other/x/pulls"),
+            ("api", "-X", "GET", "/repos/other/x"),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.gh(*argv), "ghs_other")
+
+    def test_otherwise_the_origin_then_the_only_token(self):
+        for origin in ("https://github.com/other/x.git", "git@github.com:other/x.git"):
+            self.origin = origin
+            self.assertEqual(self.gh("pr", "view"), "ghs_other")
+        self.origin = "https://gitlab.com/other/x.git"
+        self.assertIsNone(self.gh("pr", "view"))
+        (self.tokens / "other").unlink()
+        self.assertEqual(self.gh("pr", "view"), "ghs_ophis")
+        self.origin = ""
+        self.assertEqual(self.gh("pr", "view"), "ghs_ophis")
+
+    def test_another_host_or_no_token_adds_none(self):
+        self.origin = "https://github.com/ophis/x"
+        for argv in (
+            ("pr", "list", "-R", "gitlab.com/ophis/x"),
+            ("repo", "clone", "https://gitlab.com/ophis/x"),
+            ("pr", "list", "-R", "nobody/x"),
+            ("pr", "list", "-R", "-bad/x"),
+        ):
+            with self.subTest(argv=argv):
+                self.assertIsNone(self.gh(*argv))
+
+    def test_no_real_gh_fails(self):
+        self.path = str(Path(self.home, "wrapper"))
+        with (
+            mock.patch.dict(os.environ, {"PATH": self.path}),
+            mock.patch("os.execve") as execve,
+            self.assertRaises(SystemExit),
+        ):
+            runpy.run_path(self.wrapper)["main"](["pr", "view"], tokens=self.tokens)
+        execve.assert_not_called()
 
 
 class DefaultDockerfile(Case):

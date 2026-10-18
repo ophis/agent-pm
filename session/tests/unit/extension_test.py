@@ -71,6 +71,7 @@ TYPES = {
     ),
     "SessionView": hosts_types,
     "CommandView": hosts_types,
+    "Lines": hosts_base,
     "Record": utils,
     "Status": utils,
     "Display": utils,

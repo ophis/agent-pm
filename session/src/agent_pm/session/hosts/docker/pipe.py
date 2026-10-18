@@ -1,6 +1,6 @@
 """DockerPiped, a headless client's `docker exec -i` (DockerHost.pipe): its lines capped, as the
-container's output is untrusted; close() removes its container once. Token refresh for a piped
-generation belongs here.
+container's output is untrusted; its GitHub tokens are refreshed until close(), which removes its
+container once.
 """
 
 import os
@@ -34,19 +34,31 @@ class _Capped:
 
 
 class DockerPiped(LocalPiped):
-    """lock: the pipe lock's fd, held while it runs; close: what frees its container."""
+    """lock: the pipe lock's fd, held while it runs; close: what frees its container; refresh: run
+    on a thread until the Event close() sets.
+    """
 
-    def __init__(self, name: str, proc, *, close: Callable[[], None], lock: int) -> None:
+    def __init__(
+        self,
+        name: str,
+        proc,
+        *,
+        close: Callable[[], None],
+        lock: int,
+        refresh: Callable[[threading.Event], None],
+    ) -> None:
         super().__init__(proc)
         self.stdout, self.stderr = _Capped(name, self.stdout), _Capped(name, self.stderr)
         self._close, self._lock = close, lock
-        self._once, self._closed = threading.Lock(), False
+        self._once, self._closed, self._stopped = threading.Lock(), False, threading.Event()
+        threading.Thread(target=refresh, args=(self._stopped,), daemon=True).start()
 
     def close(self) -> None:
         with self._once:
             if self._closed:
                 return
             self._closed = True
+            self._stopped.set()
             try:
                 self._close()
             finally:

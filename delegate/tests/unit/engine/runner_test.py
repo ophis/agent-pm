@@ -494,6 +494,12 @@ class TuiPolicy(Base):
                 )
                 self.assertEqual([type(e) for e in self.events], [Begun, Progress, Finished])
 
+    def test_a_failed_headless_turn_stops_its_session(self):
+        r = self.faked(Reply(START), TurnFailed("overloaded"), STOP, mode="headless")
+        self.assertEqual(
+            (r.error, self.handle.calls), ("the client's turn failed: overloaded", [("stop",)])
+        )
+
     def test_a_session_exiting_without_an_outcome_is_the_error(self):
         for events, result in (
             ([STOP, Exited(3)], Result(3, None, "the client exited 3")),

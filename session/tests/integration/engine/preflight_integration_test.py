@@ -225,16 +225,21 @@ print(json.dumps(result))
                 self.configure()
                 self.refusal(self.spec(mode, flags=("--resume",)), "picks the session")
 
-    def test_non_tui_placement_and_invalid_tui_name_are_refused_without_events_file(self):
+    def test_non_tui_placement_and_invalid_names_are_refused_without_events_file(self):
         for mode in (Mode.HEADLESS, Mode.IN_PROCESS):
             for spec, placement, message in (
-                (self.spec(mode, name="window"), {}, "name: tui mode only"),
+                *(
+                    ((self.spec(mode, name="window"), {}, "name: tui mode only"),)
+                    if mode == Mode.IN_PROCESS
+                    else ()
+                ),
                 (self.spec(mode, events=self.events), {}, "events: tui mode only"),
                 (self.spec(mode), {"display": "opaque"}, "display: tui mode only"),
             ):
                 with self.subTest(mode=mode, message=message):
                     self.refusal(spec, message, **placement)
         self.refusal(self.spec(Mode.TUI, name="bad name", events=self.events), "name must match")
+        self.refusal(self.spec(Mode.HEADLESS, name="bad name"), "name must match")
 
     def test_idle_display_client_launch_and_in_process_checks_have_startup_parity(self):
         for timeout in (0, -1, float("nan"), True, "1"):

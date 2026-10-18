@@ -2,7 +2,8 @@
 command, generation, the supervisor.lock fd its starter holds, then connector, dead-wait and
 dead-check argv as JSON). Each relay request that passes its checks and is newer than <gen>.seq runs
 `<hook> hook <TUI dir> <label>` once; every line gets one reply. SIGTERM closes the connector's
-stdin; lines already sent still run. A confirmed client exit writes the dead line.
+stdin; lines already sent still run. A confirmed client exit writes the dead line. The session's
+GitHub tokens (<gen>.github.json) are refreshed REFRESH_AHEAD s before the earliest expiry.
 """
 
 import base64
@@ -16,8 +17,11 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 
 from agent_pm.session.engine.status_log import SessionStatusLog
+from agent_pm.session.engine.types import SessionError
+from agent_pm.session.hosts.docker.broker import Broker
 from agent_pm.session.hosts.docker.relay import LINE_MAX, relay_request
 from agent_pm.utils import save
 
@@ -26,6 +30,8 @@ CHECK_WAIT = 10
 START_WAIT = 60
 POLL = 0.5
 LOG_MAX = 1 << 20
+REFRESH_AHEAD = 600
+REFRESH_RETRY = 60
 
 
 def _body(payload: str) -> dict | None:
@@ -53,6 +59,7 @@ class Supervisor:
         self.run, self.popen = run or subprocess.run, subprocess.Popen
         self.stopping, self.line_max = False, LINE_MAX
         self.seq_file = os.path.join(state, f"{generation}.seq")
+        self.broker, self.clock = Broker(), time.time
 
     def reject(self, gen: str | None, seq: int | None, reason: str) -> None:
         path = os.path.join(self.state, "rejected.jsonl")
@@ -147,6 +154,42 @@ class Supervisor:
                 deadline = 0.0
             stopped.wait(POLL)
 
+    def refresh(self, stopped) -> None:
+        """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
+        list saved; a failure writes github_refresh_failed and retries in REFRESH_RETRY s. No list:
+        returns.
+        """
+        path = os.path.join(self.state, f"{self.generation}.github.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                delay = self._delay(json.load(f))
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        while delay is not None and not stopped.wait(delay):
+            try:
+                found = self.broker.refresh(
+                    f"agent-pm-{self.name}-{self.generation}",
+                    os.path.join(self.state, f"{self.generation}.json"),
+                )
+            except SessionError as error:
+                if self.events:
+                    with contextlib.suppress(OSError, ValueError):
+                        SessionStatusLog(self.events).write(
+                            self.name, "github_refresh_failed", str(error)
+                        )
+                delay = REFRESH_RETRY
+                continue
+            with contextlib.suppress(OSError):
+                save(path, json.dumps(found), durable=True)
+            delay = self._delay(found)
+
+    def _delay(self, expiries: list) -> float | None:
+        """Seconds until the earliest expires_at less REFRESH_AHEAD, at least 0; None for no token."""
+        due = min(
+            (datetime.fromisoformat(e["expires_at"]).timestamp() for e in expiries), default=None
+        )
+        return None if due is None else max(0.0, due - REFRESH_AHEAD - self.clock())
+
     def _dead(self, check: list[str]) -> bool:
         try:
             with self.popen(
@@ -187,6 +230,7 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGTERM, stop)
     threading.Thread(target=supervisor.watch, args=(wait, check, stopped), daemon=True).start()
+    threading.Thread(target=supervisor.refresh, args=(stopped,), daemon=True).start()
     supervisor.serve(proc.stdout, proc.stdin)
     stopped.set()
     return 0

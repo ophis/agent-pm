@@ -5,7 +5,6 @@ parser.
 import inspect
 import operator
 import signal
-import subprocess
 import tomllib
 from types import MappingProxyType
 from unittest import mock
@@ -25,6 +24,7 @@ from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import STOP_WAIT, Status, StatusState
 
 from session.tests.case import Case
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 TWO = """[hosts]
 default = "a"
@@ -172,9 +172,9 @@ class Pipe(Case):
             ("cli", "-p"),
             cwd="/w",
             env={"K": "v"},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=PIPE,
             text=True,
             errors="replace",
             process_group=0,
@@ -183,7 +183,7 @@ class Pipe(Case):
 
     def test_a_local_piped_waits_within_its_timeout_and_stop_kills_its_group(self):
         proc = mock.Mock()
-        proc.wait.side_effect = [subprocess.TimeoutExpired("cli", 0), 3, 3]
+        proc.wait.side_effect = [TimeoutExpired("cli", 0), 3, 3]
         with mock.patch("subprocess.Popen", return_value=proc):
             piped = MinimalHost("m").pipe(None, Launch(("cli",), cwd="/w"))
         self.assertIsNone(piped.wait(0))

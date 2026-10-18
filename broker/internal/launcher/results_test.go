@@ -9,7 +9,7 @@ import (
 )
 
 func TestOutputFixturesRoundTrip(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "build_output", "start_output", "close_output") {
+	for _, c := range fixtures.Cases(t, "build_output", "start_output", "close_output", "refresh_output", "status_output") {
 		if !c.Valid {
 			continue
 		}
@@ -20,6 +20,10 @@ func TestOutputFixturesRoundTrip(t *testing.T) {
 				v = &BuildResult{}
 			case "start_output":
 				v = &StartResult{}
+			case "refresh_output":
+				v = &RefreshResult{}
+			case "status_output":
+				v = &StatusResult{}
 			default:
 				v = &CloseResult{}
 			}

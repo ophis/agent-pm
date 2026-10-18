@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -219,6 +220,7 @@ func TestRuntimeFixtures(t *testing.T) {
 				},
 				Docker: d,
 				Creds:  creds,
+				GitHub: &fakeTokens{},
 			}
 			_, err := h.Start(context.Background(), writeManifest(t, c.Data))
 			e := protoErr(t, err)
@@ -280,18 +282,6 @@ func detached(d *fakeDocker) []string {
 	return nil
 }
 
-func TestStartRefusesGitHubTokens(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(fixtures.Dir(), "manifest-github-app.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
-	_, err = h.Start(context.Background(), writeManifest(t, data))
-	if protoErr(t, err).Code != protocol.ManifestRejected || !strings.Contains(err.Error(), "github must be null") || len(d.calls) != 0 {
-		t.Fatalf("%v %q", err, d.verbs())
-	}
-}
-
 func TestStartVolume(t *testing.T) {
 	create := []string{"volume", "create", "--label", "agent-pm.kind=ws", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
 	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
@@ -350,8 +340,8 @@ func TestStartOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
-		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}}
-	if got != want {
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, GitHub: []protocol.Expiry{}}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}
 	var steps []string

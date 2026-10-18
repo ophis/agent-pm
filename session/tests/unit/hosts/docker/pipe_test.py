@@ -3,7 +3,6 @@
 import io
 import os
 import signal
-import subprocess
 import threading
 from unittest import mock
 
@@ -11,6 +10,7 @@ from agent_pm.session.engine.types import SessionError
 from agent_pm.session.hosts.docker.pipe import LINE_MAX, DockerPiped
 
 from session.tests.case import Case
+from utils.tests.process_fixtures import TimeoutExpired
 
 
 class PipedTest(Case):
@@ -22,7 +22,16 @@ class PipedTest(Case):
 
     def piped(self, out="", err=""):
         self.proc.stdout, self.proc.stderr = io.StringIO(out), io.StringIO(err)
-        return DockerPiped("w", self.proc, close=lambda: self.closes.append(1), lock=self.lock)
+        return DockerPiped(
+            "w",
+            self.proc,
+            close=lambda: self.closes.append(1),
+            lock=self.lock,
+            refresh=self.refresh,
+        )
+
+    def refresh(self, stopped):
+        self.refreshing = stopped
 
     def test_lines_stream_back_and_their_reader_closes_the_pipe(self):
         piped = self.piped("a\nb", "e\n")
@@ -43,7 +52,7 @@ class PipedTest(Case):
 
     def test_wait_has_no_side_effect(self):
         piped = self.piped()
-        self.proc.wait.side_effect = [subprocess.TimeoutExpired("docker", 0), 0]
+        self.proc.wait.side_effect = [TimeoutExpired("docker", 0), 0]
         self.assertEqual((piped.wait(0), piped.wait(1)), (None, 0))
         self.assertEqual(self.closes, [])
         os.fstat(self.lock)
@@ -60,6 +69,12 @@ class PipedTest(Case):
         with self.assertRaises(OSError):
             os.fstat(self.lock)
 
+    def test_its_token_refresh_runs_until_close(self):
+        piped = self.piped()
+        self.assertTrue(self.refreshing.wait(0) is False)
+        piped.close()
+        self.assertTrue(self.refreshing.is_set())
+
     def test_stop_kills_the_exec_group_then_closes(self):
         piped = self.piped()
         with mock.patch("os.killpg") as killpg:
@@ -70,7 +85,11 @@ class PipedTest(Case):
     def test_a_failing_close_still_releases_the_lock(self):
         self.proc.stdout, self.proc.stderr = io.StringIO(), io.StringIO()
         piped = DockerPiped(
-            "w", self.proc, close=mock.Mock(side_effect=OSError("x")), lock=self.lock
+            "w",
+            self.proc,
+            close=mock.Mock(side_effect=OSError("x")),
+            lock=self.lock,
+            refresh=self.refresh,
         )
         with self.assertRaises(OSError):
             piped.close()

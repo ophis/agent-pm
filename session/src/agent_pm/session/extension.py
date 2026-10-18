@@ -41,7 +41,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import Host, Interactive, InteractiveProcess, Piped, Process
+from agent_pm.session.hosts.base import Host, Interactive, InteractiveProcess, Lines, Piped, Process
 from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.session.modes.client_adapters.headless import Headless, JsonHeadless
 from agent_pm.session.modes.client_adapters.in_process import InProcess
@@ -59,6 +59,7 @@ __all__ = [
     "CommandView",
     "Process",
     "Piped",
+    "Lines",
     "Interactive",
     "InteractiveProcess",
     "Spec",

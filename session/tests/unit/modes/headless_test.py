@@ -7,6 +7,8 @@ import contextlib
 import io
 import os
 import sys
+import threading
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -406,9 +408,21 @@ class ThroughItsHost(Base):
                 )
                 self.assertEqual([c.args[0] for c in host.calls.validate.call_args_list], validated)
 
-    def test_the_event_queue_is_bounded(self):
-        mode = self.start_on(PipingHost(FakePiped()))
+    def test_the_event_queue_is_bounded_and_a_stop_frees_a_pump_waiting_on_it(self):
+        piped = FakePiped()
+        piped.stderr = io.StringIO("e\n" * (QUEUE_MAX + 2))
+        mode = self.start_on(PipingHost(piped))
         self.assertEqual(mode.items.maxsize, QUEUE_MAX)
+        deadline = time.monotonic() + 5
+        while not mode.items.full() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)
+        pumps = [t for t in threading.enumerate() if t.name.endswith("(_pump)")]
+        self.assertEqual((mode.items.full(), len(pumps)), (True, 1))
+        mode.stop()
+        for pump in pumps:
+            pump.join(5)
+        self.assertFalse(any(pump.is_alive() for pump in pumps))
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from agent_pm.session.modes.tui import checked_name
 from agent_pm.utils import Display
 
 QUEUE_MAX = 64  # events and Stderr lines a pump queues before it waits for poll
+PUT_WAIT = 0.5
 
 
 class HeadlessMode(BaseMode):
@@ -39,7 +40,7 @@ class HeadlessMode(BaseMode):
         super().__init__(prepared)
         self.piped, self.items, self.open = piped, queue.Queue(QUEUE_MAX), 2
         self.eof = (threading.Event(), threading.Event())
-        self.closed = False
+        self.closed, self.stopped = False, threading.Event()
 
     @classmethod
     def preflight(
@@ -120,12 +121,19 @@ class HeadlessMode(BaseMode):
         try:
             with pipe:
                 for event in events:
-                    self.items.put(event)
+                    self._put(event)
         except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
-            self.items.put(e)
+            self._put(e)
         else:
             eof.set()
-            self.items.put(None)
+            self._put(None)
+
+    def _put(self, item) -> None:
+        while not self.stopped.is_set():
+            try:
+                return self.items.put(item, timeout=PUT_WAIT)
+            except queue.Full:
+                pass
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
         try:
@@ -157,6 +165,7 @@ class HeadlessMode(BaseMode):
 
     def stop(self) -> None:
         self.closed = True
+        self.stopped.set()
         self.piped.stop(ended=all(eof.is_set() for eof in self.eof))
 
 

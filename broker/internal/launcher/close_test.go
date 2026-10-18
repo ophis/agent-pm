@@ -24,7 +24,7 @@ func TestClose(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := &fakeDocker{respond: func([]string) ([]byte, error) { return []byte(tc.out), tc.err }}
-			got, err := Host{Docker: d}.Close(context.Background(), container)
+			got, err := Host{Docker: d, GitHub: &fakeTokens{}}.Close(context.Background(), container)
 			if len(d.calls) != 1 || !slices.Equal(d.calls[0], []string{"rm", "--force", container}) {
 				t.Fatalf("%q", d.calls)
 			}

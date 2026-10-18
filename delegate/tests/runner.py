@@ -59,9 +59,7 @@ def executed(
     docker=False,
     session_name=None,
 ) -> Result:
-    """plan() then execute(), a session run's agent and run dirs made between; session_name: the
-    agent session's, as the Delegate names a Docker one.
-    """
+    """plan() then execute(), a session run's agent and run dirs made between."""
     composition = Composer(team=spec.team) if composition is None else composition
     accepted = plan(config, spec, driver=driver, composition=composition)
     accepted = replace(accepted, docker=docker or accepted.docker)

@@ -88,12 +88,14 @@ static OSStatus item_accounts(const char *path, const char *service, long *count
     CFRelease(kc);
     return s;
 }
-static OSStatus item_get(const char *path, const char *service, const char *account, void **bytes, long *length) {
+// no_ui: fail rather than ask, for a broker-only item a since-reinstalled broker can no longer read.
+static OSStatus item_get(const char *path, const char *service, const char *account, int no_ui, void **bytes, long *length) {
     SecKeychainRef kc = NULL;
     OSStatus s;
     CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+    if (no_ui) CFDictionarySetValue(q, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
     CFTypeRef result = NULL;
     s = SecItemCopyMatching(q, &result);
     if (s == errSecSuccess) {
@@ -121,16 +123,16 @@ static OSStatus self_access(const char *label, SecAccessRef *access) {
     CFRelease(self);
     return s;
 }
-// An existing item is deleted, never updated, so a pre-planted permissive ACL does not survive.
-static OSStatus token_put(const char *path, const void *bytes, long length) {
+// A broker-only item. An existing one is deleted, never updated, so a pre-planted permissive ACL does not survive.
+static OSStatus secret_put(const char *path, const char *service, const char *account, const char *label, const void *bytes, long length) {
     SecKeychainRef kc = NULL;
     OSStatus s;
-    CFMutableDictionaryRef q = item_query(path, "agent-pm-claude", "setup-token", &kc, &s);
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     s = SecItemDelete(q);
     if (s != errSecSuccess && s != errSecItemNotFound) goto done;
     SecAccessRef access = NULL;
-    s = self_access("agent-pm Claude setup-token", &access);
+    s = self_access(label, &access);
     if (s != errSecSuccess) goto done;
     CFDictionaryRemoveValue(q, kSecMatchSearchList);
     CFDataRef data = CFDataCreate(NULL, bytes, length);
@@ -141,6 +143,17 @@ static OSStatus token_put(const char *path, const void *bytes, long length) {
     CFRelease(data);
     CFRelease(access);
 done:
+    CFRelease(q);
+    CFRelease(kc);
+    return s;
+}
+static OSStatus secret_delete(const char *path, const char *service, const char *account) {
+    SecKeychainRef kc = NULL;
+    OSStatus s;
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
+    if (!q) return s;
+    CFDictionarySetValue(q, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
+    s = SecItemDelete(q);
     CFRelease(q);
     CFRelease(kc);
     return s;
@@ -183,6 +196,14 @@ static CFStringRef auth_name(CFStringRef a) {
     if (CFEqual(a, kSecACLAuthorizationExportClear)) return CFSTR("export_clear");
     if (CFEqual(a, kSecACLAuthorizationExportWrapped)) return CFSTR("export_wrapped");
     if (CFEqual(a, kSecACLAuthorizationPartitionID)) return CFSTR("partition_id");
+    if (CFEqual(a, kSecACLAuthorizationEncrypt)) return CFSTR("encrypt");
+    if (CFEqual(a, kSecACLAuthorizationDerive)) return CFSTR("derive");
+    if (CFEqual(a, kSecACLAuthorizationSign)) return CFSTR("sign");
+    if (CFEqual(a, kSecACLAuthorizationMAC)) return CFSTR("mac");
+    if (CFEqual(a, kSecACLAuthorizationChangeACL)) return CFSTR("change_acl");
+    if (CFEqual(a, kSecACLAuthorizationChangeOwner)) return CFSTR("change_owner");
+    if (CFEqual(a, kSecACLAuthorizationIntegrity)) return CFSTR("integrity");
+    if (CFEqual(a, kSecACLAuthorizationDelete)) return CFSTR("delete");
     return a;
 }
 static int reads(CFArrayRef auths) {
@@ -215,9 +236,10 @@ static CFStringRef partitions_description(CFStringRef id) {
 }
 // Edits the item's own entries in place: setting an access applies only changed entries, one at a time, so a
 // fresh SecAccessCreate access would be appended beside the old ones. Either the entries that read or export the
-// item get only this executable, or the partition list gets only its partition ID. Both apply with the keychain
-// password, as security's set-generic-password-partition-list does: SecKeychainItemSetAccess asks by dialog per
-// entry, and securityd refuses the partition change that way.
+// item get only this executable, or the partition list gets only its partition ID. With the keychain password
+// (as security's set-generic-password-partition-list does) securityd skips its owner check; without one (NULL,
+// read and export entries only) SecKeychainItemSetAccess asks by dialog per entry, which securityd refuses for
+// the partition list.
 static OSStatus item_trust_self(const char *path, const char *service, const char *account, int partition_list, const void *password, long length) {
     SecKeychainItemRef item = NULL;
     SecAccessRef access = NULL;
@@ -248,7 +270,7 @@ static OSStatus item_trust_self(const char *path, const char *service, const cha
         if (description) CFRelease(description);
         if (auths) CFRelease(auths);
     }
-    if (s == errSecSuccess) s = SecKeychainItemSetAccessWithPassword(item, access, (UInt32)length, password);
+    if (s == errSecSuccess) s = password ? SecKeychainItemSetAccessWithPassword(item, access, (UInt32)length, password) : SecKeychainItemSetAccess(item, access);
     if (acls) CFRelease(acls);
     if (apps) CFRelease(apps);
     if (partitions) CFRelease(partitions);
@@ -450,6 +472,8 @@ func status(s C.OSStatus) error {
 		return nil
 	case C.errSecItemNotFound:
 		return ErrNotFound
+	case C.errSecAuthFailed:
+		return ErrAuthFailed
 	}
 	return fmt.Errorf("keychain status %d", int(s))
 }
@@ -471,12 +495,16 @@ func cStrings(s ...string) (ps []*C.char, free func()) {
 	}
 }
 
-func (k fileKeychain) get(service, account string) ([]byte, error) {
+func (k fileKeychain) get(service, account string, noUI bool) ([]byte, error) {
 	p, free := cStrings(string(k), service, account)
 	defer free()
 	var data unsafe.Pointer
 	var n C.long
-	if err := status(C.item_get(p[0], p[1], p[2], &data, &n)); err != nil {
+	var ui C.int
+	if noUI {
+		ui = 1
+	}
+	if err := status(C.item_get(p[0], p[1], p[2], ui, &data, &n)); err != nil {
 		return nil, err
 	}
 	defer C.free(data)
@@ -491,15 +519,39 @@ func (k fileKeychain) Exists() error {
 	return status(C.item_exists(p[0], p[1], p[2]))
 }
 
-func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount) }
+func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount, false) }
 
 func (k fileKeychain) Put(token []byte) error {
 	if len(token) == 0 {
 		return errors.New("empty setup-token")
 	}
-	p := C.CString(string(k))
-	defer C.free(unsafe.Pointer(p))
-	return status(C.token_put(p, unsafe.Pointer(&token[0]), C.long(len(token))))
+	return k.put(tokenService, tokenAccount, "agent-pm Claude setup-token", token)
+}
+
+func (k fileKeychain) put(service, account, label string, data []byte) error {
+	p, free := cStrings(string(k), service, account, label)
+	defer free()
+	return status(C.secret_put(p[0], p[1], p[2], p[3], unsafe.Pointer(&data[0]), C.long(len(data))))
+}
+
+func (k fileKeychain) Secret(service, account string) ([]byte, error) {
+	return k.get(service, account, true)
+}
+
+func (k fileKeychain) PutSecret(service, account string, data []byte) error {
+	if len(data) == 0 {
+		return errors.New("empty secret")
+	}
+	return k.put(service, account, "agent-pm "+service, data)
+}
+
+func (k fileKeychain) DeleteSecret(service, account string) error {
+	p, free := cStrings(string(k), service, account)
+	defer free()
+	if err := status(C.secret_delete(p[0], p[1], p[2])); !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (k fileKeychain) AppAccount(app string) (string, error) {
@@ -518,10 +570,16 @@ func (k fileKeychain) AppAccount(app string) (string, error) {
 	return C.GoString(account), nil
 }
 
-func (k fileKeychain) AppKey(app, account string) ([]byte, error) { return k.get(app, account) }
+func (k fileKeychain) AppKey(app, account string) ([]byte, error) { return k.get(app, account, false) }
 
 func (k fileKeychain) TrustApps(app, account string, password []byte) error {
 	return k.trust(app, account, false, password)
+}
+
+func (k fileKeychain) TrustAppsByDialog(app, account string) error {
+	p, free := cStrings(string(k), app, account)
+	defer free()
+	return status(C.item_trust_self(p[0], p[1], p[2], 0, nil, 0))
 }
 
 func (k fileKeychain) TrustPartition(app, account string, password []byte) error {
@@ -604,6 +662,13 @@ func (k SystemKeychain) TrustApps(app, account string, password []byte) error {
 	return k.login().TrustApps(app, account, password)
 }
 
+func (k SystemKeychain) TrustAppsByDialog(app, account string) error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	return k.login().TrustAppsByDialog(app, account)
+}
+
 func (k SystemKeychain) TrustPartition(app, account string, password []byte) error {
 	if err := CheckInstalled(); err != nil {
 		return err
@@ -616,4 +681,25 @@ func (k SystemKeychain) AppAccess(app, account string) (AppAccess, error) {
 		return AppAccess{}, err
 	}
 	return k.login().AppAccess(app, account)
+}
+
+func (k SystemKeychain) Secret(service, account string) ([]byte, error) {
+	if err := CheckInstalled(); err != nil {
+		return nil, err
+	}
+	return k.login().Secret(service, account)
+}
+
+func (k SystemKeychain) PutSecret(service, account string, data []byte) error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	return k.login().PutSecret(service, account, data)
+}
+
+func (k SystemKeychain) DeleteSecret(service, account string) error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	return k.login().DeleteSecret(service, account)
 }

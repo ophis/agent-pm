@@ -64,6 +64,8 @@ class GiveUp:
 
 
 class Headless:
+    stops_failed = True  # a failed turn's client would hold its container on
+
     def __init__(self, note: Callable[..., None], driver: Driver):
         self.note, self.driver = note, driver
 
@@ -103,6 +105,8 @@ class Tui(Headless):
     gives up. The session is left open. A showable session started at a display is shown as the
     run's `show` says, unless hidden.
     """
+
+    stops_failed = False
 
     def __init__(self, note: Callable[..., None], driver: Driver):
         super().__init__(note, driver)
@@ -279,6 +283,8 @@ class _Attempts:
             if limit:
                 return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
             if failed:
+                if self.policy.stops_failed:
+                    self.stop(handle)
                 detail = f" ({failed.detail})" if failed.detail else ""
                 return Result(rc, None, f"the client's turn failed: {failed.error}{detail}")
             if (block := outcome_block(last or "")) is None:

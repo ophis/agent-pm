@@ -17,5 +17,9 @@ func (SystemKeychain) Put([]byte) error                            { return errP
 func (SystemKeychain) AppAccount(string) (string, error)           { return "", errPlatform }
 func (SystemKeychain) AppKey(string, string) ([]byte, error)       { return nil, errPlatform }
 func (SystemKeychain) TrustApps(string, string, []byte) error      { return errPlatform }
+func (SystemKeychain) TrustAppsByDialog(string, string) error      { return errPlatform }
 func (SystemKeychain) TrustPartition(string, string, []byte) error { return errPlatform }
 func (SystemKeychain) AppAccess(string, string) (AppAccess, error) { return AppAccess{}, errPlatform }
+func (SystemKeychain) Secret(string, string) ([]byte, error)       { return nil, errPlatform }
+func (SystemKeychain) PutSecret(string, string, []byte) error      { return errPlatform }
+func (SystemKeychain) DeleteSecret(string, string) error           { return errPlatform }

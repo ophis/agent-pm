@@ -34,6 +34,7 @@ CALLS = {
     "version_output": ("version", lambda b: b.version()),
     "build_output": ("build", lambda b: b.build("/opt/agent-pm")),
     "start_output": ("start", lambda b: b.start(MANIFEST, clients=KEYS)),
+    "refresh_output": ("refresh", lambda b: b.refresh(CONTAINER, MANIFEST)),
     "close_output": ("close", lambda b: b.close(CONTAINER)),
     "workspace_rm_output": ("workspace-rm", lambda b: b.workspace_rm(VOLUME)),
 }
@@ -41,6 +42,7 @@ COMMANDS = {
     "version": CALLS["version_output"],
     "build": CALLS["build_output"],
     "start": CALLS["start_output"],
+    "refresh": CALLS["refresh_output"],
     "close": CALLS["close_output"],
     "workspace-rm": CALLS["workspace_rm_output"],
     "unknown": CALLS["version_output"],
@@ -65,7 +67,12 @@ class ResponseTest(Case):
     def test_every_response_fixture_has_its_outcome(self):
         found = cases()
         self.assertTrue(any(c["definition"] == "error" for c in found))
-        for case in (c for c in found if c["expected"]["stage"] == "response"):
+        # Session never runs status: users do
+        for case in (
+            c
+            for c in found
+            if c["expected"]["stage"] == "response" and c["definition"] != "status_output"
+        ):
             name, definition, valid = case["file"], case["definition"], case["valid"]
             with self.subTest(name=name):
                 if definition == "error":
@@ -114,8 +121,27 @@ class ResponseTest(Case):
                 endpoint="unix:///Users/example/.docker/run/docker.sock",
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "0.100.0"},
+                github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
             ),
         )
+        self.assertEqual(
+            Broker(FakeBroker(success("refresh-output.json"))).refresh(CONTAINER, MANIFEST),
+            [{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
+        )
+        for bad in (
+            {"container": "agent-pm-other-" + "0" * 32, "github": []},
+            {
+                "container": CONTAINER,
+                "github": [{"account": "../x", "expires_at": "2026-10-17T13:00:00Z"}],
+            },
+            {"container": CONTAINER, "github": [{"account": "ophis"}]},
+            {"container": CONTAINER, "github": {}},
+        ):
+            with (
+                self.subTest(bad=bad),
+                self.assertRaisesRegex(SessionError, "bad response to refresh"),
+            ):
+                Broker(FakeBroker((0, json.dumps(bad), ""))).refresh(CONTAINER, MANIFEST)
         self.assertFalse(Broker(FakeBroker(success("close-absent.json"))).close(CONTAINER))
         self.assertTrue(
             Broker(FakeBroker(success("workspace-rm-output.json"))).workspace_rm(VOLUME)
@@ -212,6 +238,7 @@ class ManifestTest(Case):
             workspace="agent-pm-ws-w",
             home=("x_dir", "/home/x"),
             hook_path="/plugin/bin/agent-pm-session",
+            github="",
         )
         with open(path) as f:
             self.assertEqual(
@@ -229,6 +256,19 @@ class ManifestTest(Case):
                 },
             )
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        broker.write_manifest(
+            path,
+            name="w",
+            generation="0" * 32,
+            image="agent-pm-worker:" + "a" * 64,
+            cwd="/work",
+            workspace="agent-pm-ws-w",
+            home=("x_dir", "/home/x"),
+            hook_path="/plugin/bin/agent-pm-session",
+            github="agent-pm-bot",
+        )
+        with open(path) as f:
+            self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
 
 
 class StreamTest(Case):

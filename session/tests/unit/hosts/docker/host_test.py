@@ -11,7 +11,6 @@ import re
 import shlex
 import signal
 import stat
-import subprocess
 import threading
 import time
 import tomllib
@@ -45,7 +44,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
-from utils.tests.process_fixtures import TimeoutExpired
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 DOCKER = "/usr/local/bin/docker"
 GEN = "0123456789abcdef0123456789abcdef"
@@ -121,7 +120,7 @@ class FakeBroker:
 
     def __init__(self, order, started):
         self.order, self.started, self.error, self.closed = order, started, None, []
-        self.failing, self.max_ages = {}, []
+        self.failing, self.max_ages, self.refreshed = {}, [], threading.Event()
 
     def version(self):
         self.order.append("version")
@@ -140,6 +139,11 @@ class FakeBroker:
         if self.error:
             raise self.error
         return self.started
+
+    def refresh(self, container, manifest):
+        self.order.append(("refresh", container, manifest))
+        self.refreshed.set()
+        return []
 
     def close(self, container):
         self.order.append(("close", container))
@@ -166,7 +170,7 @@ class Base(Case):
         os.makedirs(self.cwd)
         self.order = []
         self.docker = FakeDocker(self.ep, self.order)
-        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {})
+        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, [])
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
@@ -263,11 +267,14 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
+                "github": {"app": "agent-pm-bot"},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
-        self.assertEqual(DockerHost("docker", settings).docker, "/usr/local/bin/docker")
+        host = DockerHost("docker", settings)
+        self.assertEqual((host.docker, host.github), ("/usr/local/bin/docker", "agent-pm-bot"))
+        self.assertEqual(DockerHost("docker", {"docker": DOCKER}).github, "")
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -277,6 +284,19 @@ class ConfigTest(Base):
                 {"docker": DOCKER, "mount_roots": ["~/src"]},
                 r"^unknown key 'mount_roots' in \[hosts.docker\]; see docs/upgrading.md$",
             ),
+            (
+                {"docker": DOCKER, "github": "agent-pm-bot"},
+                r"^\[hosts.docker\] github: want a table$",
+            ),
+            (
+                {"docker": DOCKER, "github": {"app": "a", "x": 1}},
+                r"^unknown key 'x' in \[hosts.docker.github\]$",
+            ),
+            (
+                {"docker": DOCKER, "github": {"app": 1}},
+                r"^\[hosts.docker.github\] app: want a string$",
+            ),
+            ({"docker": DOCKER, "github": {}}, r"^\[hosts.docker.github\] app: want a string$"),
         ):
             with self.subTest(settings=settings), self.assertRaisesRegex(ConfigError, key):
                 DockerHost("docker", settings)
@@ -344,6 +364,7 @@ class StartTest(Base):
         self.order.append("supervisor")
         self.spawned_lock_held = not _free(os.path.join(self.state, "supervisor.lock"))
         self.spawned_record = self.host_record()
+        self.spawned_github = not os.path.exists(os.path.join(self.state, f"{GEN}.github.json"))
         return self.supervisor
 
     def start(self, **metadata):
@@ -652,8 +673,28 @@ class StartTest(Base):
                 self.assertEqual(self.order, [])
                 self.assertEqual(os.listdir(self.home_dir), ["keep"])
 
+    def test_a_github_app_reaches_the_manifest_the_env_and_the_expiry_file(self):
+        expiries = [{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}]
+        self.host.github = "agent-pm-bot"
+        self.broker.started = replace(self.broker.started, github=expiries)
+        self.start()
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
+        self.assertIn("AGENT_PM_PR_AUTHOR=agent-pm-bot[bot]", self.docker.execs()[2])
+        with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
+            self.assertEqual(json.load(f), expiries)
+        self.assertFalse(self.spawned_github)
+
+    def test_no_github_app_writes_null_and_no_author(self):
+        self.start()
+        self.assertFalse(any("AGENT_PM_PR_AUTHOR" in arg for arg in self.docker.execs()[2]))
+        with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
+            self.assertEqual(json.load(f), [])
+
     def test_each_start_writes_its_generation_result(self):
-        self.broker.started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"})
+        self.broker.started = Started(
+            CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"}, []
+        )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
             with self.subTest(resume=resume):
@@ -1009,9 +1050,9 @@ class PipeTest(Base):
         self.assertEqual(
             {k: kw[k] for k in ("stdin", "stdout", "stderr", "text", "errors", "process_group")},
             {
-                "stdin": subprocess.DEVNULL,
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
+                "stdin": DEVNULL,
+                "stdout": PIPE,
+                "stderr": PIPE,
                 "text": True,
                 "errors": "replace",
                 "process_group": 0,
@@ -1030,6 +1071,20 @@ class PipeTest(Base):
         piped.close()
         self.assertEqual(self.broker.closed, [CONTAINER])
         self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_a_github_app_reaches_the_piped_client_and_its_tokens_are_refreshed(self):
+        expiries = [{"account": "ophis", "expires_at": "2000-01-01T00:00:00Z"}]
+        self.host.github = "agent-pm-bot"
+        self.broker.started = replace(self.broker.started, github=expiries)
+        piped = self.pipe()
+        argv, kw = self.popened
+        self.assertIn("AGENT_PM_PR_AUTHOR", argv)
+        self.assertEqual(kw["env"]["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
+        self.assertTrue(self.broker.refreshed.wait(5))
+        piped.close()
+        self.assertIn(("refresh", CONTAINER, os.path.join(self.state, f"{GEN}.json")), self.order)
 
     def test_stop_kills_the_exec_then_closes_and_a_close_failure_only_warns(self):
         piped = self.pipe()

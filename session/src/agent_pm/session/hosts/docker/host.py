@@ -57,7 +57,6 @@ from agent_pm.session.hosts.base import (
     Host,
     InteractiveProcess,
     Process,
-    piped_popen,
     tui_lock,
 )
 from agent_pm.session.hosts.docker import hook as docker_hook
@@ -99,6 +98,7 @@ from agent_pm.utils import (
     inode_lock,
     kill_group,
     module_roots,
+    piped_popen,
     read_beneath,
     read_regular,
     save,
@@ -308,12 +308,18 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
     return True
 
 
-def _check_started(started: Started, container: str) -> None:
+def _check_started(name: str, generation: str, started: Started, container: str) -> None:
+    """The broker started `container` here; its GitHub token expiries saved for refresh."""
     if (started.endpoint, started.container) != (endpoint(), container):
         raise SessionError(
             f"broker: started {started.container} at {started.endpoint},"
             f" want {container} at {endpoint()}"
         )
+    save(
+        os.path.join(state_dir(name), f"{generation}.github.json"),
+        json.dumps(list(started.github)),
+        durable=True,
+    )
 
 
 class DockerTerminal(InteractiveProcess):
@@ -476,8 +482,9 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Terminal and piped sessions run
-    here, each on its workspace volume.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path, and github.app, the GitHub App
+    whose tokens every session gets ("" or no table: none). Terminal and piped sessions run here,
+    each on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -492,12 +499,21 @@ class DockerHost(Host):
         broker: Broker | None = None,
     ) -> None:
         super().__init__(name, settings)
-        if extra := sorted(set(self.settings) - {"docker"}):
+        if extra := sorted(set(self.settings) - {"docker", "github"}):
             removed = "; see docs/upgrading.md" if extra[0] == "mount_roots" else ""
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]{removed}")
         self.docker = self.settings.get("docker")
         if not isinstance(self.docker, str) or not os.path.isabs(self.docker):
             raise ConfigError(f"[hosts.{name}] docker: want an absolute path")
+        github = self.settings.get("github", {"app": ""})
+        if not isinstance(github, Mapping):
+            raise ConfigError(f"[hosts.{name}] github: want a table")
+        if extra := sorted(set(github) - {"app"}):
+            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}.github]")
+        app = github.get("app")
+        if not isinstance(app, str):
+            raise ConfigError(f"[hosts.{name}.github] app: want a string")
+        self.github = app
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
@@ -803,7 +819,7 @@ class DockerHost(Host):
         supervisor = lock = None
         try:
             stops.check()
-            _check_started(started, container)
+            _check_started(name, generation, started, container)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -835,7 +851,7 @@ class DockerHost(Host):
                 name,
                 ["with-secrets", *launch.argv],
                 cwd=cwd,
-                env={k: v for k, v in launch.env.items() if k != "PATH"},
+                env=self._exec_env(launch),
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
             )
@@ -921,6 +937,7 @@ class DockerHost(Host):
             workspace=volume,
             home=(field, home),
             hook_path=hook,
+            github=self.github,
         )
         _report_plan(
             name,
@@ -987,7 +1004,7 @@ class DockerHost(Host):
         lock = proc = None
         try:
             stops.check()
-            _check_started(started, container)
+            _check_started(name, generation, started, container)
             lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
@@ -999,7 +1016,7 @@ class DockerHost(Host):
                     "mode": PIPED,
                 },
             )
-            env = {k: v for k, v in launch.env.items() if k != "PATH"}
+            env = self._exec_env(launch)
             argv, docker_env = docker_call(
                 self.docker,
                 *("exec", "-i", "--workdir", cwd),
@@ -1031,7 +1048,23 @@ class DockerHost(Host):
             cleanup = self._roll_back(None, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         laps.report(f"docker timing {name} {generation}")
-        return DockerPiped(name, proc, close=lambda: self._close_piped(name, container), lock=lock)
+        refresher = run_supervisor.Supervisor(
+            name, state_dir(name), "", "", "", generation=generation
+        )
+        refresher.broker = self.broker
+        return DockerPiped(
+            name,
+            proc,
+            close=lambda: self._close_piped(name, container),
+            lock=lock,
+            refresh=refresher.refresh,
+        )
+
+    def _exec_env(self, launch: Launch) -> dict[str, str]:
+        return {
+            **{k: v for k, v in launch.env.items() if k != "PATH"},
+            **({"AGENT_PM_PR_AUTHOR": f"{self.github}[bot]"} if self.github else {}),
+        }
 
     def _close_piped(self, name: str, container: str) -> None:
         try:
