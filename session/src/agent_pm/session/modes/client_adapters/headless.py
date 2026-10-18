@@ -19,8 +19,6 @@ from agent_pm.utils import json_records
 
 
 class Headless(ABC):
-    _runtime: ClientRuntime | None = None
-
     def _set_runtime(self, runtime: ClientRuntime | None) -> None:
         self._runtime = runtime
 

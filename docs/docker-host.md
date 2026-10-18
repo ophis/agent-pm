@@ -148,9 +148,10 @@ matches two marketplaces, resolves outside the plugin cache, has no valid
 `.claude-plugin/plugin.json` name, or holds a symlink leaving its directory or dangling; a start then
 fails in preflight with that message. Install the plugin, or drop it from the whitelist.
 
-Whitelisting a plugin trusts it: its hooks, MCP servers and scripts run in every container
-beside its Claude setup-token and GitHub tokens, and each host-side upgrade reaches the
-containers at their next build. One whitelist per account: a build with another whitelist
+Whitelisting a plugin trusts its code beside the container's client and GitHub credentials.
+Claude loads its hooks, MCP servers and scripts; [Codex's adaptation](docker-codex.md#native-plugins)
+defines which components it loads. Host-side upgrades reach containers at their next build.
+One whitelist per account: a build with another whitelist
 gives another key, and its rebuild removes the other's images.
 
 | Check | Expect |
