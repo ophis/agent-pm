@@ -240,25 +240,34 @@ func TestRefreshLineCodex(t *testing.T) {
 }
 
 func TestCloseLine(t *testing.T) {
+	claudeEnv := `["PATH=/usr/bin","CLAUDE_CONFIG_DIR=/Users/example/.agent-pm/docker-state/worker_1/claude"]`
+	codexEnv := `["CODEX_HOME=/Users/example/.agent-pm/docker-state/worker_1/codex"]`
+	config := func(env, labels string) string { return `{"env":` + env + `,"labels":` + labels + `}` }
 	for name, tc := range map[string]struct {
-		env     string
+		config  string
 		inspect error
 		rm      string
 		want    []string
 	}{
-		"claude":        {`["PATH=/usr/bin","CLAUDE_CONFIG_DIR=/Users/example/.agent-pm/docker-state/worker_1/claude"]`, nil, container, []string{"claude-setup-token withdrawn"}},
-		"codex":         {`["CODEX_HOME=/Users/example/.agent-pm/docker-state/worker_1/codex"]`, nil, container, []string{"codex-access-token withdrawn"}},
-		"absent":        {"", &docker.CommandError{Exit: 1, Stderr: "No such container"}, "", nil},
-		"inspect fails": {"", errors.New("inspect"), container, nil},
-		"no client":     {`["PATH=/usr/bin"]`, nil, container, nil},
+		"claude":                   {config(claudeEnv, `{"agent-pm.client":"claude"}`), nil, container, []string{"claude-setup-token withdrawn"}},
+		"codex":                    {config(codexEnv, `{"agent-pm.client":"codex","team":"crew"}`), nil, container, []string{"codex-access-token withdrawn"}},
+		"label beats image env":    {config(codexEnv, `{"agent-pm.client":"opencode"}`), nil, container, nil},
+		"label without env":        {config(`null`, `{"agent-pm.client":"claude"}`), nil, container, []string{"claude-setup-token withdrawn"}},
+		"unknown label":            {config(claudeEnv, `{"agent-pm.client":"other"}`), nil, container, nil},
+		"older broker: claude env": {config(claudeEnv, `null`), nil, container, []string{"claude-setup-token withdrawn"}},
+		"older broker: codex env":  {config(codexEnv, `{"team":"crew"}`), nil, container, []string{"codex-access-token withdrawn"}},
+		"absent":                   {"", &docker.CommandError{Exit: 1, Stderr: "No such container"}, "", nil},
+		"inspect fails":            {"", errors.New("inspect"), container, nil},
+		"older broker: no client":  {config(`["PATH=/usr/bin"]`, `null`), nil, container, nil},
+		"malformed inspect output": {`["PATH=/usr/bin"]`, nil, container, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := &fakeDocker{respond: func(args []string) ([]byte, error) {
 				if args[0] == "container" {
-					if !slices.Equal(args, []string{"container", "inspect", "--format", "{{json .Config.Env}}", container}) {
+					if !slices.Equal(args, []string{"container", "inspect", "--format", `{"env":{{json .Config.Env}},"labels":{{json .Config.Labels}}}`, container}) {
 						t.Errorf("%q", args)
 					}
-					return []byte(tc.env + "\n"), tc.inspect
+					return []byte(tc.config + "\n"), tc.inspect
 				}
 				return []byte(tc.rm + "\n"), nil
 			}}

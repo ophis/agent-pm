@@ -175,20 +175,21 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | Claude setup-token copy | `/run/agent-pm/secrets/claude`, through `docker exec` stdin; the client's environment only | until its container goes; the token itself a year | deleted with the container; not revoked | TASK-545 FR-8, FR-13; TASK-548 FR-12 |
 | GitHub installation tokens | `/run/agent-pm/secrets/github/<owner>`, one per installation | 1 hour, renewed 10 minutes ahead | revoked at `close`; backlog retried | TASK-549 FR-7 to FR-12 |
 | Codex access token, no refresh token | `/run/agent-pm/secrets/codex/auth.json`; `CODEX_HOME/auth.json` links to it | renewed 10 minutes ahead | deleted with the container; not revoked | TASK-550 FR-3 to FR-7, FR-12 |
+| nothing for OpenCode: it uses the host's Ollama | — | — | — | TASK-695 NFR-2 |
 | Bot user ID (not a secret) | the session's git author and committer identity | — | — | TASK-549 FR-14, FR-26 |
 
 ## What a container reaches
 
 | Resource | Requirements |
 |---|---|
-| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:166`) | TASK-549 FR-4, FR-17 |
-| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind (`broker/internal/launcher/start.go:169`) | TASK-549 FR-4; TASK-550 NFR-4 |
-| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:177`) | TASK-545 FR-13; TASK-549 FR-8 |
+| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:165`) | TASK-549 FR-4, FR-17 |
+| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind; OpenCode: its `opencode_dir` bind (`broker/internal/launcher/start.go:168`) | TASK-549 FR-4; TASK-550 NFR-4; TASK-695 FR-18 |
+| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:176`) | TASK-545 FR-13; TASK-549 FR-8 |
 | the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`
-(`broker/internal/launcher/start.go:146`): TASK-545 FR-10.
+(`broker/internal/launcher/start.go:185`): TASK-545 FR-10.
 
 ## What a container cannot reach
 

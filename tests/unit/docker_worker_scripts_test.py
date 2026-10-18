@@ -1,9 +1,12 @@
+import hashlib
+import http.client
 import io
 import json
 import os
 import runpy
 import shutil
 import stat
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -639,7 +642,8 @@ class WithSecrets(Case):
                 self.main(argv, secret=self.secret)
             execvpe.assert_not_called()
             self.assertEqual(
-                raised.exception.code, "usage: with-secrets --client claude|codex COMMAND [ARG...]"
+                raised.exception.code,
+                "usage: with-secrets --client claude|codex|opencode COMMAND [ARG...]",
             )
 
     def test_codex_uses_its_file_auth_without_reading_claude(self):
@@ -650,6 +654,19 @@ class WithSecrets(Case):
             self.main(["--client", "codex", "codex", "--version"], secret=self.secret)
         self.assertEqual(execvpe.call_args.args[:2], ("codex", ["codex", "--version"]))
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", execvpe.call_args.args[2])
+
+    def test_opencode_execs_with_unchanged_env_and_reads_no_secret(self):
+        self.secret.write_text("tok-123")
+        with (
+            mock.patch.dict(os.environ, {"XDG_DATA_HOME": "/state"}, clear=True),
+            mock.patch("pathlib.Path.read_text") as read,
+            mock.patch("os.execvpe") as execvpe,
+        ):
+            self.main(["--client", "opencode", "opencode", "--version"], secret=self.secret)
+            path, argv, env = execvpe.call_args.args
+            self.assertEqual(dict(env), {"XDG_DATA_HOME": "/state"})
+        read.assert_not_called()
+        self.assertEqual((path, argv), ("opencode", ["opencode", "--version"]))
 
     def test_claude_inherited_codex_home_still_requires_its_own_token(self):
         with mock.patch.dict(os.environ, {"CODEX_HOME": "/unrelated"}):
@@ -832,7 +849,210 @@ class DefaultDockerfile(Case):
         self.assertNotIn("SHASUMS256", text)
 
 
+def tarball(files):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path, data in files.items():
+            info = tarfile.TarInfo(path)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+class OpencodeInstall(Case):
+    def setUp(self):
+        self.ns = script("opencode-install.py")
+        version = self.ns["VERSION"]
+        self.tarballs = {
+            "opencode-ai": tarball(
+                {
+                    "package/package.json": json.dumps(
+                        {"name": "opencode-ai", "version": version}
+                    ).encode(),
+                    "package/LICENSE": b"MIT",
+                    "package/bin/opencode.exe": b"stub",
+                }
+            )
+        }
+        self.native = {}
+        for name in ("opencode-linux-arm64", "opencode-linux-x64"):
+            self.native[name] = self.binary(name, version)
+            self.tarballs[name] = tarball(
+                {
+                    "package/package.json": json.dumps({"name": name, "version": version}).encode(),
+                    "package/bin/opencode": self.native[name],
+                }
+            )
+        self.urls, self.runs = [], []
+        self.prefix = Path(self.home, "clients")
+        self.prefix.mkdir()
+
+    @staticmethod
+    def binary(name, version):
+        return f"native {name} {version}".encode()
+
+    def version_run(self, argv, **kw):
+        """subprocess.run for the version check: answers the version the binary was built with."""
+        executable = Path(argv[0])
+        self.runs.append((argv, kw, stat.S_IMODE(executable.stat().st_mode)))
+        version = executable.read_bytes().split()[-1].decode()
+        return SimpleNamespace(returncode=0, stdout=f"{version}\n")
+
+    def opener(self, url, timeout):
+        self.urls.append((url, timeout))
+        name = url.rsplit("/", 1)[1].removesuffix(f"-{self.ns['VERSION']}.tgz")
+        return io.BytesIO(self.tarballs[name])
+
+    def install(self, arch, opener=None):
+        sums = {n: hashlib.sha512(data).hexdigest() for n, data in self.tarballs.items()}
+        fetch = self.ns["fetch"]
+        with (
+            mock.patch.dict(self.ns["SHA512"], sums),
+            mock.patch("subprocess.run", self.version_run),
+        ):
+            self.ns["install"](
+                arch, self.prefix, fetch=lambda name: fetch(name, opener=opener or self.opener)
+            )
+
+    def assert_refused(self, arch="arm64", opener=None):
+        with self.assertRaises(SystemExit) as raised:
+            self.install(arch, opener)
+        self.assertTrue(str(raised.exception.code).startswith("opencode-install: "))
+        self.assertEqual(list(self.prefix.iterdir()), [])
+        return str(raised.exception.code)
+
+    def test_installs_the_package_with_its_platform_binary(self):
+        for arch, name in (("arm64", "opencode-linux-arm64"), ("amd64", "opencode-linux-x64")):
+            with self.subTest(arch=arch):
+                shutil.rmtree(self.prefix)
+                self.prefix.mkdir()
+                self.urls.clear()
+                self.install(arch)
+                root = self.prefix / "lib/node_modules/opencode-ai"
+                executable = root / "bin/opencode.exe"
+                self.assertEqual(executable.read_bytes(), self.native[name])
+                self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o755)
+                self.assertEqual((root / "LICENSE").read_bytes(), b"MIT")
+                self.assertEqual(
+                    json.loads((root / "package.json").read_text())["name"], "opencode-ai"
+                )
+                link = self.prefix / "bin/opencode"
+                self.assertEqual(
+                    os.readlink(link), "../lib/node_modules/opencode-ai/bin/opencode.exe"
+                )
+                self.assertEqual(link.resolve(), executable.resolve())
+                version = self.ns["VERSION"]
+                self.assertEqual(
+                    self.urls,
+                    [
+                        (f"https://registry.npmjs.org/{n}/-/{n}-{version}.tgz", 300)
+                        for n in ("opencode-ai", name)
+                    ],
+                )
+
+    def test_recorded_hashes_cover_both_platforms_and_the_package(self):
+        self.assertEqual(self.ns["VERSION"], "1.19.3")
+        self.assertEqual(set(self.ns["SHA512"]), {"opencode-ai", *self.ns["PLATFORMS"].values()})
+        self.assertEqual(
+            self.ns["PLATFORMS"],
+            {"arm64": "opencode-linux-arm64", "amd64": "opencode-linux-x64"},
+        )
+        for value in self.ns["SHA512"].values():
+            self.assertRegex(value, "^[0-9a-f]{128}$")
+
+    def test_a_tarball_that_does_not_match_its_hash_installs_nothing(self):
+        for name in ("opencode-ai", "opencode-linux-arm64"):
+            with self.subTest(name=name):
+                good = self.tarballs[name]
+
+                def tampered(url, timeout, good=good):
+                    data = self.opener(url, timeout).read()
+                    return io.BytesIO(data + b"x" if data == good else data)
+
+                message = self.assert_refused(opener=tampered)
+                self.assertIn(f"{name}@1.19.3 does not match its recorded sha512", message)
+
+    def test_wrong_package_name_or_version_installs_nothing(self):
+        for name, manifest in (
+            ("opencode-ai", {"name": "opencode-ai", "version": "1.19.2"}),
+            ("opencode-linux-arm64", {"name": "opencode-linux-x64", "version": "1.19.3"}),
+        ):
+            with self.subTest(name=name):
+                saved = self.tarballs[name]
+                self.tarballs[name] = tarball(
+                    {
+                        "package/package.json": json.dumps(manifest).encode(),
+                        "package/LICENSE": b"MIT",
+                        "package/bin/opencode": b"native",
+                    }
+                )
+                self.assertIn(f"{name}: package.json", self.assert_refused())
+                self.tarballs[name] = saved
+
+    def test_missing_member_unknown_arch_or_download_failure_installs_nothing(self):
+        self.assertIn("architecture 'riscv64'", self.assert_refused("riscv64"))
+
+        def broken(*_, **__):
+            raise OSError("no route")
+
+        self.assertIn("downloading opencode-ai@1.19.3 failed", self.assert_refused(opener=broken))
+
+        def truncated(*_, **__):
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.side_effect = http.client.IncompleteRead(b"partial")
+            return response
+
+        self.assertIn(
+            "downloading opencode-ai@1.19.3 failed", self.assert_refused(opener=truncated)
+        )
+        self.tarballs["opencode-linux-arm64"] = tarball(
+            {
+                "package/package.json": json.dumps(
+                    {"name": "opencode-linux-arm64", "version": "1.19.3"}
+                ).encode()
+            }
+        )
+        self.assertIn("no package/bin/opencode", self.assert_refused())
+
+    def test_a_binary_that_does_not_report_the_pinned_version_installs_nothing(self):
+        name = "opencode-linux-arm64"
+        self.tarballs[name] = tarball(
+            {
+                "package/package.json": json.dumps({"name": name, "version": "1.19.3"}).encode(),
+                "package/bin/opencode": self.binary(name, "1.19.2"),
+            }
+        )
+        self.assertIn("opencode --version gave '1.19.2', want 1.19.3", self.assert_refused())
+
+    def test_the_version_check_runs_in_a_scratch_home_it_removes(self):
+        self.install("arm64")
+        ((argv, kw, mode),) = self.runs
+        scratch = os.path.dirname(argv[0])
+        self.assertEqual(argv[1:], ["--version"])
+        self.assertEqual(mode, 0o755)
+        self.assertEqual(kw["env"]["HOME"], scratch)
+        self.assertNotEqual(scratch, self.home)
+        self.assertFalse(os.path.exists(scratch))
+
+    def test_main_requires_arch_and_absolute_prefix(self):
+        for argv in ([], ["arm64"], ["arm64", "relative"], ["arm64", "/p", "extra"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                self.ns["main"](argv)
+
+
 class ImageLayer(Case):
+    def test_installs_opencode_and_ripgrep(self):
+        text = (ASSETS / "Dockerfile").read_text()
+        for needle in (
+            "ripgrep",
+            "opencode-install.py",
+            'python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)"'
+            " /opt/agent-pm/clients",
+            "ln -s /opt/agent-pm/clients/bin/opencode /opt/agent-pm/bin/opencode",
+        ):
+            self.assertIn(needle, text)
+
     def test_pins_gh(self):
         text = (ASSETS / "Dockerfile").read_text()
         for needle in (

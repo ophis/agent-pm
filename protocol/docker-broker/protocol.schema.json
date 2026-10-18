@@ -187,10 +187,14 @@
         "client": {
           "enum": [
             "claude",
-            "codex"
+            "codex",
+            "opencode"
           ]
         },
         "codex_dir": {
+          "$ref": "#/$defs/path"
+        },
+        "opencode_dir": {
           "$ref": "#/$defs/path"
         }
       },
@@ -216,8 +220,17 @@
             "claude_dir"
           ],
           "not": {
-            "required": [
-              "codex_dir"
+            "anyOf": [
+              {
+                "required": [
+                  "codex_dir"
+                ]
+              },
+              {
+                "required": [
+                  "opencode_dir"
+                ]
+              }
             ]
           }
         },
@@ -231,8 +244,41 @@
             "codex_dir"
           ],
           "not": {
-            "required": [
-              "claude_dir"
+            "anyOf": [
+              {
+                "required": [
+                  "claude_dir"
+                ]
+              },
+              {
+                "required": [
+                  "opencode_dir"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "client": {
+              "const": "opencode"
+            }
+          },
+          "required": [
+            "opencode_dir"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "claude_dir"
+                ]
+              },
+              {
+                "required": [
+                  "codex_dir"
+                ]
+              }
             ]
           }
         }
@@ -261,7 +307,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "13"
+          "const": "14"
         }
       },
       "required": [
@@ -380,11 +426,15 @@
             },
             "codex": {
               "$ref": "#/$defs/text"
+            },
+            "opencode": {
+              "$ref": "#/$defs/text"
             }
           },
           "required": [
             "claude",
-            "codex"
+            "codex",
+            "opencode"
           ],
           "additionalProperties": false
         },

@@ -56,7 +56,7 @@ def argv(command):
 class PluginRootTest(Case):
     def test_plugin_root_from_hook_path(self):
         self.assertEqual(broker.plugin_root(HOOK), REPO)
-        self.assertEqual(KEYS, frozenset({"claude", "codex"}))
+        self.assertEqual(KEYS, frozenset({"claude", "codex", "opencode"}))
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "bin"))
             with self.assertRaisesRegex(ConfigError, "protocol.schema.json"):
@@ -241,7 +241,7 @@ class ResponseTest(Case):
                 container=CONTAINER,
                 endpoint="unix:///Users/example/.docker/run/docker.sock",
                 image_digest="sha256:" + "b" * 64,
-                clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0"},
+                clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0", "opencode": "1.19.3"},
                 github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
                 github_user_id=343764394,
                 credential_expires_at=None,

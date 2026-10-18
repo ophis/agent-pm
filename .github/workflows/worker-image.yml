@@ -136,6 +136,9 @@ jobs:
             node --version
             claude --version
             codex --version
+            test "$(command -v opencode)" = /opt/agent-pm/bin/opencode
+            test "$(opencode --version)" = 1.19.3
+            rg --version
             test -x /opt/agent-pm/bin/with-secrets
             test "$(command -v gh)" = /opt/agent-pm/bin/gh
             test "$(git config --system credential.helper)" = /opt/agent-pm/bin/git-credential-agent-pm
