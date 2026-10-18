@@ -4,6 +4,7 @@ import os
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.opencode.common import IDENTITY, SELECTORS, VALUED, OpenCodeCommon
+from agent_pm.session.clients.opencode.headless import OpenCodeHeadless
 from agent_pm.session.engine.types import Spec
 
 
@@ -22,6 +23,9 @@ class OpenCodeClient(Client):
     def __init__(self, config):
         super().__init__(config)
         self.common = OpenCodeCommon(self.config, selector=self.select_session)
+
+    def headless(self):
+        return OpenCodeHeadless(self.common)
 
     def writable_dirs(self, spec: Spec):
         dirs = (spec.access.cwd, *spec.access.dirs)

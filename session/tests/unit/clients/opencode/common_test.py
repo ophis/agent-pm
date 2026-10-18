@@ -5,7 +5,7 @@ import os
 
 from agent_pm.session.clients.opencode import OpenCodeClient
 from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon
-from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.engine.types import ConfigError, Effort
 
 from session.tests.case import Case
 from session.tests.unit.clients.opencode.support import SES, packaged_table
@@ -21,6 +21,7 @@ class ConfigTest(Case):
         self.assertEqual(found.port, 11434)
         for tier in range(1, 5):
             self.assertEqual(found.model(tier), "ollama/qwen3.6:35b-mlx")
+        self.assertEqual(found.variant(Effort.HIGH), "high")
         self.assertEqual(found.modes, {"auto": (), "yolo": ("--auto",)})
 
     def test_an_unknown_key_is_a_config_error(self):
@@ -41,11 +42,14 @@ class ConfigTest(Case):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, rf"\.{key} must be"):
                 common(**{key: value})
 
-    def test_a_missing_tier_is_a_config_error(self):
-        found = common(tiers={"1": "ollama/a"})
+    def test_a_missing_tier_or_effort_is_a_config_error(self):
+        found = common(tiers={"1": "ollama/a"}, efforts={"low": "low"})
         self.assertIsNone(found.model(None))
+        self.assertIsNone(found.variant(None))
         with self.assertRaisesRegex(ConfigError, r"no model for tier 3"):
             found.model(3)
+        with self.assertRaisesRegex(ConfigError, r"no variant for effort 'high'"):
+            found.variant(Effort.HIGH)
 
     def test_refused_flags(self):
         for flags in (

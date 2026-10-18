@@ -10,7 +10,7 @@ import sys
 from collections.abc import Iterable, Mapping
 
 from agent_pm.session.clients.common import CHECKS, FLAGS, MODES, check_config, mode_flags, scan
-from agent_pm.session.engine.types import ConfigError, Permission
+from agent_pm.session.engine.types import ClientContext, ConfigError, Effort, Permission, Spec
 from agent_pm.utils import LOCAL_ENV_VARS, STATE, drop_stale, read_beneath, save
 
 TABLE = "[clients.opencode]"
@@ -90,6 +90,60 @@ class OpenCodeCommon:
         if (model := self.tiers.get(str(tier))) is None:
             raise ConfigError(f"no model for tier {tier} in {TABLE}.tiers")
         return model
+
+    def variant(self, effort: Effort | None) -> str | None:
+        if effort is None:
+            return None
+        if (value := self.efforts.get(effort)) is None:
+            raise ConfigError(f"no variant for effort {str(effort)!r} in {TABLE}.efforts")
+        return value
+
+    def inline(self, spec: Spec, host_address: str) -> dict:
+        """The launch's OpenCode config: the ollama provider on `host_address`, auto-update off, and
+        shell calls asking, which a headless run refuses, but the run's pre-approved commands; dirs
+        outside the cwd are its Access.dirs alone, and OpenCode's own config files stay unedited.
+        """
+        access = spec.access
+        models = {
+            model.removeprefix("ollama/"): {"name": model.removeprefix("ollama/")}
+            for model in self.tiers.values()
+            if model.startswith("ollama/")
+        }
+        commands = dict.fromkeys(access.commands, "allow")
+        permission: dict = {
+            "bash": {"*": "ask", **commands} if commands else "ask",
+            "edit": {".opencode/*": "deny", "opencode.json": "deny", "opencode.jsonc": "deny"},
+        }
+        dirs = [os.path.realpath(d) for d in access.dirs]
+        if dirs:
+            permission["external_directory"] = {
+                pattern: "allow" for d in dirs for pattern in (d, f"{d}/*")
+            }
+        return {
+            "$schema": "https://opencode.ai/config.json",
+            "autoupdate": False,
+            "provider": {
+                "ollama": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Ollama",
+                    "options": {"baseURL": f"http://{host_address}:{self.port}/v1"},
+                    "models": models,
+                }
+            },
+            "permission": permission,
+        }
+
+    def environment(self, spec: Spec, context: ClientContext) -> dict[str, str]:
+        """The config's env, then Access's and the Spec's, under the client's own."""
+        access = spec.access
+        supplied = {**access.env, **spec.env}
+        refuse_env(supplied, "a run's env")
+        env = {k: v for k, v in {**self.env, **supplied}.items() if k not in LOCAL_ENV_VARS}
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address))
+        env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+        if not access.project:
+            env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+        return env
 
     @property
     def store(self) -> str:

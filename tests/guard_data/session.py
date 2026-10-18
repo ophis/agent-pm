@@ -62,7 +62,10 @@ OBJECT_EXPORTS_ALLOWED = {
 }
 
 
-STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("clients/codex/common/app_server.py",))
+STANDALONE = frozenset(
+    f"{SESSION_SRC}{path}"
+    for path in ("clients/codex/common/app_server.py", "clients/opencode/launcher.py")
+)
 
 
 NOQA_ALLOWED = {
