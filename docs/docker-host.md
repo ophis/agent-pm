@@ -54,7 +54,7 @@ one would ask at the next start. Each login asks its terminal questions first, w
 | `login claude` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
 | `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
 | `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
-| `start` | none | none: a token it cannot read without one fails with `login_required` naming `login claude` | |
+| `start` | none | none: a token it cannot read without one fails with `login_required` naming unlocking the login keychain or `login claude` | |
 
 ```sh
 claude setup-token          # copy the token it prints
@@ -267,6 +267,7 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 | `hook_path` inside `cwd` | 4 |
 | `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
 | reinstall the broker (`install.sh --build`), then start a Claude manifest without `login claude` | 5 `login_required`, "trusts another broker build"; no keychain dialog; log in again after |
+| `security lock-keychain ~/Library/Keychains/login.keychain-db`, then start a Claude manifest | 5 `login_required`, "unlock the login keychain, or run agent-pm-broker login claude"; no keychain dialog; `security unlock-keychain ~/Library/Keychains/login.keychain-db` after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container is untouched |
 | while `C` runs, the same manifest with a new `generation` | 4 `mount_rejected`: its volume is in use |
 | `docker volume create agent-pm-ws-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: the volume has no workspace labels; `docker volume rm agent-pm-ws-worker_3` after |

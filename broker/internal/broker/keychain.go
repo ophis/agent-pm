@@ -377,7 +377,7 @@ func keychainError(err error) *protocol.Error {
 	case errors.Is(err, ErrNotFound):
 		return protocol.New(protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude.")
 	case errors.Is(err, ErrNeedsDialog):
-		return protocol.New(protocol.LoginRequired, "The Claude setup-token needs keychain approval: run agent-pm-broker login claude.")
+		return protocol.New(protocol.LoginRequired, "The Claude setup-token needs keychain approval: unlock the login keychain, or run agent-pm-broker login claude.")
 	}
 	return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
 }

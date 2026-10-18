@@ -708,7 +708,7 @@ func TestInjectKeychainFailure(t *testing.T) {
 		if !errors.As(err, &pe) || pe.Code != code || pe.Cause != "" || strings.Contains(err.Error(), token) || len(e.argv) != 0 {
 			t.Fatalf("%v: %v %q", keyErr, err, e.argv)
 		}
-		if keyErr == ErrNeedsDialog && pe.Message != "The Claude setup-token needs keychain approval: run agent-pm-broker login claude." {
+		if keyErr == ErrNeedsDialog && pe.Message != "The Claude setup-token needs keychain approval: unlock the login keychain, or run agent-pm-broker login claude." {
 			t.Fatal(pe.Message)
 		}
 	}
