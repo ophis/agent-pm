@@ -1,0 +1,18 @@
+name: Codex synthetic probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mounts:
+    name: Codex synthetic mounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test nested volatile home with persistent sessions
+        run: bash scripts/docker-codex-mount-probe.sh
