@@ -43,6 +43,7 @@ from agent_pm.session.engine.types import (
     ClientContext,
     ClientHome,
     ConfigError,
+    Container,
     HookCallback,
     Key,
     Launch,
@@ -116,7 +117,7 @@ PIPE_LOCK = "pipe.lock"  # held by a headless run's harness while its client run
 PIPED = "pipe"
 READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
-STATE_ROOT = "/run/agent-pm"  # the client context's state_root
+STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
 LOCK_WAIT = 30
 KILL_WAIT = 5
 POLL = 0.2
@@ -782,10 +783,12 @@ class DockerHost(Host):
         return replace(
             super()._client_context(),
             host_address="host.docker.internal",
-            bin_dir="/opt/agent-pm/bin",
-            python=IMAGE_PYTHON,
-            pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            state_root=STATE_ROOT,
+            container=Container(
+                "/opt/agent-pm/bin",
+                IMAGE_PYTHON,
+                "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+                STATE_ROOT,
+            ),
         )
 
     def _client_env(

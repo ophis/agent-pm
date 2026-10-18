@@ -16,7 +16,6 @@ from agent_pm.session.clients.common import (
     FLAGS,
     MODES,
     check_config,
-    container,
     mode_flags,
     scan,
 )
@@ -240,7 +239,6 @@ class OpenCodeCommon:
         self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
     ) -> tuple[str, ...]:
         """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
-        container(context)  # refuses an incomplete container context
         refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
         if not spec.resume:
             return ()
@@ -256,14 +254,14 @@ class OpenCodeCommon:
 
     def executable_for(self, env: Mapping[str, str], cwd: str, context: ClientContext) -> str:
         """A container's image opencode (the broker checks its version), else program's."""
-        if (found := container(context)) is not None:
+        if (found := context.container) is not None:
             return os.path.join(found.bin_dir, "opencode")
         return self.program(env, cwd)
 
     @staticmethod
     def transcript(env: Mapping[str, str], context: ClientContext) -> str:
         """A container launch's opencode.db, which its Host checks before a resume; else ""."""
-        return database(env) if container(context) is not None else ""
+        return database(env) if context.container is not None else ""
 
     def program(self, env: Mapping[str, str], cwd: str) -> str:
         """The executable, once its --version, run as the launch would run it, is OpenCode 1.x."""

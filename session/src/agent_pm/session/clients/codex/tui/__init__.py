@@ -27,7 +27,7 @@ from agent_pm.session.clients.codex.common import (
     reset_at,
 )
 from agent_pm.session.clients.codex.common.types import Snapshot
-from agent_pm.session.clients.common import container, scan, split_flags
+from agent_pm.session.clients.common import scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
     ClientHome,
@@ -151,7 +151,7 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         store = self.store = common.store.root
-        runtime = container(self._context)
+        runtime = self._context.container
         if runtime:
             env = {
                 key: value

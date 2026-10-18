@@ -7,7 +7,6 @@ import json
 import os
 import sys
 
-from agent_pm.session.clients.common import container
 from agent_pm.session.clients.opencode import launcher
 from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon, image_path
 from agent_pm.session.engine.types import (
@@ -37,7 +36,7 @@ class OpenCodeHeadless(Headless):
     def launch(self, spec: Spec):
         context, common = self._context, self.common
         selection = common.selection(spec, context)
-        found = container(context)
+        found = context.container
         cwd, sid = spec.access.cwd, spec.sid or ""
         model, variant = common.model(spec.tier), common.variant(spec.effort)
         env = common.environment(spec, context)

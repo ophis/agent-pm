@@ -180,27 +180,24 @@ class ClientHome:
     persistent: tuple[str, ...] | None = None
 
 
+class Container(NamedTuple):
+    bin_dir: str
+    python: str
+    pythonpath: str  # first: the image's session/src
+    state_root: str
+
+    @property
+    def source(self) -> str:
+        return self.pythonpath.split(":")[0]
+
+
 @dataclass(frozen=True)
 class ClientContext:
     """What a Host hands its client."""
 
     host_address: str
     permission: Permission
-    bin_dir: str | None = None
-    python: str | None = None
-    pythonpath: str | None = None  # first: the image's session/src
-    state_root: str | None = None
-
-
-class Container(NamedTuple):
-    bin_dir: str
-    python: str
-    pythonpath: str
-    state_root: str
-
-    @property
-    def source(self) -> str:
-        return self.pythonpath.split(":")[0]
+    container: Container | None = None
 
 
 LOCAL_CONTEXT = ClientContext("127.0.0.1", Permission.AUTO)

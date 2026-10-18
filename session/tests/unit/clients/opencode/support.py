@@ -9,17 +9,19 @@ from types import SimpleNamespace
 
 from agent_pm.session.clients import registry
 from agent_pm.session.engine.config import read_config
-from agent_pm.session.engine.types import ClientContext, Permission
+from agent_pm.session.engine.types import ClientContext, Container, Permission
 
 SES = "ses_0123456789abABCDEFGHIJKLMN"
 # The Docker Host's (hosts/docker/host.py _client_context).
 DOCKER_CONTEXT = ClientContext(
     "host.docker.internal",
     Permission.YOLO,
-    bin_dir="/opt/agent-pm/bin",
-    python="/opt/agent-pm/venv/bin/python",
-    pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-    state_root="/run/agent-pm",
+    Container(
+        "/opt/agent-pm/bin",
+        "/opt/agent-pm/venv/bin/python",
+        "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+        "/run/agent-pm",
+    ),
 )
 IMAGE_CLIENT = "/opt/agent-pm/session/src/agent_pm/session/clients/opencode"
 

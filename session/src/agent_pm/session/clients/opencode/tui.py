@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
-from agent_pm.session.clients.common import container
 from agent_pm.session.clients.opencode.common import (
     NATIVE,
     TUI_RESERVED,
@@ -84,7 +83,7 @@ class OpenCodeTui(Tui):
         self.fresh = not spec.resume
         prompt = (f"--prompt={spec.prompt}",) if spec.prompt and not spec.resume else ()
         self.opening = (START, spec.prompt) if spec.prompt and spec.resume else None
-        found = container(context)
+        found = context.container
         plugin = Path(image_path(found, PLUGIN)) if found else Path(PLUGIN).resolve()
         env = common.environment(spec, context, plugin=plugin.as_uri())
         env[HOOK_ENV] = json.dumps(list(hook))

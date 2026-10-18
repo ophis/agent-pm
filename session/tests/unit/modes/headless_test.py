@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     ClientContext,
     ClientHome,
     ConfigError,
+    Container,
     Launch,
     Liveness,
     Permission,
@@ -404,7 +405,11 @@ class ThroughItsHost(Base):
         self.assertEqual(seen, [Permission.AUTO, Permission.YOLO])
 
     def test_the_run_gets_the_hosts_context_object(self):
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/image/bin")
+        context = ClientContext(
+            "host.docker.internal",
+            Permission.YOLO,
+            Container("/image/bin", "/image/python", "/image/modules", "/run/state"),
+        )
         seen = []
 
         class Seen(StubRun):

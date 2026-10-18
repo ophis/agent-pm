@@ -139,11 +139,6 @@ class LaunchTest(Base):
         self.assertEqual(launch.transcript, f"{data}/opencode/opencode.db")
         self.assertEqual(self.launch(self.spec()).transcript, "")
 
-    def test_an_incomplete_container_context_is_refused(self):
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
-        with self.assertRaisesRegex(ConfigError, "bin_dir without python"):
-            self.launch(self.spec(), context=context)
-
     def test_both_modes_name_the_docker_home(self):
         home = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
         self.assertEqual(self.run_tui()._home(), home)

@@ -350,11 +350,6 @@ class LaunchTest(Base):
     def test_a_local_launch_names_no_transcript(self):
         self.assertEqual(self.launch(self.spec()).transcript, "")
 
-    def test_an_incomplete_container_context_is_refused(self):
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
-        with self.assertRaisesRegex(ConfigError, "bin_dir without python"):
-            self.launch(self.spec(), context)
-
     def test_spec_selector_refused(self):
         for flags in (("--session", SES), ("--format", "default"), ("--dir", "/"), ("--auto",)):
             with self.subTest(flags=flags), self.assertRaises(ConfigError):

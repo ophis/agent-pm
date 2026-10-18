@@ -1,13 +1,5 @@
-from dataclasses import replace
-
-from agent_pm.session.clients.common import check_selection, container, scan, split_flags
-from agent_pm.session.engine.types import (
-    LOCAL_CONTEXT,
-    ClientContext,
-    ConfigError,
-    Container,
-    Permission,
-)
+from agent_pm.session.clients.common import check_selection, scan, split_flags
+from agent_pm.session.engine.types import ConfigError
 
 from session.tests.case import Case
 
@@ -91,38 +83,3 @@ class FlagsTest(Case):
             with self.subTest(flag=flag), self.assertRaisesRegex(ConfigError, "picks the session"):
                 check_selection((flag,), ("-r", "--resume"))
         check_selection(("--model", "--resume", "--", "-r"), ("-r", "--resume"), ("--model",))
-
-
-class ContainerTest(Case):
-    CONTEXT = ClientContext(
-        "host.docker.internal",
-        Permission.YOLO,
-        bin_dir="/opt/agent-pm/bin",
-        python="/opt/agent-pm/venv/bin/python",
-        pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-        state_root="/run/agent-pm/state",
-    )
-
-    def test_a_local_context_has_no_container(self):
-        self.assertIsNone(container(LOCAL_CONTEXT))
-
-    def test_a_container_context_gives_its_paths_and_image_source_root(self):
-        found = container(self.CONTEXT)
-        self.assertEqual(
-            found,
-            Container(
-                "/opt/agent-pm/bin",
-                "/opt/agent-pm/venv/bin/python",
-                "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-                "/run/agent-pm/state",
-            ),
-        )
-        self.assertEqual(found.source, "/opt/agent-pm/session/src")
-
-    def test_a_bin_dir_without_the_other_paths_is_refused(self):
-        for field in ("python", "pythonpath", "state_root"):
-            with (
-                self.subTest(field=field),
-                self.assertRaisesRegex(ConfigError, "bin_dir without python"),
-            ):
-                container(replace(self.CONTEXT, **{field: None}))
