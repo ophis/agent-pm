@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import SIGNALS, Host, Process
+from agent_pm.session.hosts.base import SIGNALS, Host, Piped, Process
 from agent_pm.session.viewer.viewer import Viewer
 
 __all__ = [
@@ -49,6 +49,7 @@ __all__ = [
     "RunLog",
     "Host",
     "Process",
+    "Piped",
     "Viewer",
     "get_viewer",
     "NotShowable",

@@ -15,13 +15,17 @@ from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Launch,
+    Liveness,
     Prepared,
     SessionError,
     SessionInfo,
     Spec,
 )
+from agent_pm.session.hosts.base import Piped
+from agent_pm.session.modes.headless import QUEUE_MAX, HeadlessMode
 
 from session.tests.case import PLUGIN_BIN
+from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
@@ -263,6 +267,77 @@ class Start(Base):
                 self.assertIs(caught.exception.__cause__, error)
                 popen.assert_called_once()
                 self.assertEqual((len(self.recorded), self.mode), (1, None))
+
+
+class FakePiped(Piped):
+    def __init__(self, codes=()):
+        self.stdout, self.stderr = io.StringIO(), io.StringIO()
+        self.codes, self.waits, self.stops, self.closes = list(codes), [], [], 0
+
+    def wait(self, timeout):
+        self.waits.append(timeout)
+        return self.codes.pop(0) if self.codes else None
+
+    def stop(self, *, ended):
+        self.stops.append(ended)
+
+    def close(self):
+        self.closes += 1
+
+
+class PipingHost(MemoryHost):
+    def __init__(self, piped):
+        super().__init__()
+        self.piped, self.pipes = piped, []
+
+    def pipe(self, name, launch, *, metadata=None):
+        self.pipes.append((name, launch, metadata))
+        return self.piped
+
+
+class ThroughItsHost(Base):
+    def start_on(self, host, **fields):
+        spec = Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub", **fields)
+        self.mode = HeadlessMode.start(
+            spec,
+            StubClient(Launch(NOTHING, transcript="/t.jsonl")),
+            registry=self.session_cls._config().registry,
+            record=self.recorded.append,
+            host=host,
+        )
+        return self.mode
+
+    def test_start_goes_through_its_host_pipe_never_popen(self):
+        host = PipingHost(FakePiped())
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("popen")):
+            mode = self.start_on(host)
+        ((name, launch, metadata),) = host.pipes
+        prepared = mode.prepared
+        self.assertEqual(
+            (name, launch, metadata),
+            (
+                None,
+                Launch(prepared.argv, env=prepared.env, cwd=self.dir, transcript="/t.jsonl"),
+                None,
+            ),
+        )
+        self.assertEqual(len(self.recorded), 1)
+
+    def test_returncode_closes_the_piped_once_and_state_never(self):
+        piped = FakePiped(codes=[None, None, 0, 0])
+        mode = self.start_on(PipingHost(piped))
+        self.assertEqual(mode.state(), Liveness.LIVE)
+        self.assertIsNone(mode.returncode(1))
+        self.assertEqual(piped.closes, 0)
+        self.assertEqual(mode.returncode(1), 0)
+        self.assertEqual(mode.returncode(1), 0)
+        self.assertEqual((piped.closes, piped.waits), (1, [0, 1, 1, 1]))
+        mode.stop()
+        self.assertEqual(piped.stops, [True])
+
+    def test_the_event_queue_is_bounded(self):
+        mode = self.start_on(PipingHost(FakePiped()))
+        self.assertEqual(mode.items.maxsize, QUEUE_MAX)
 
 
 if __name__ == "__main__":

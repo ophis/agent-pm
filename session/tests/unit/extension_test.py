@@ -24,6 +24,7 @@ ABCS = {
     "InProcess": in_process,
     "Host": hosts_base,
     "Process": hosts_base,
+    "Piped": hosts_base,
     "Interactive": hosts_base,
     "InteractiveProcess": hosts_base,
 }

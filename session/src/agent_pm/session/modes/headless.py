@@ -1,10 +1,10 @@
-"""The headless mode: a Headless's command on pipes, leading its own process group; two daemon
-threads pump its events and Stderr lines into one queue, and the session ends at both pipes' EOF.
-stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is bounded.
+"""The headless mode: a Headless's command on pipes, started by its Host (Host.pipe); two daemon
+threads pump its events and Stderr lines into one bounded queue, and the session ends at both
+pipes' EOF. stop() ends its Piped, whose local one kills the whole group, so a grandchild holding
+the pipes dies too; every wait is bounded.
 """
 
 import queue
-import subprocess
 import threading
 from collections.abc import Callable, Iterable
 from typing import Self
@@ -13,6 +13,7 @@ from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
+    Launch,
     Liveness,
     Mode,
     Prepared,
@@ -22,20 +23,22 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.base import Host, Piped
 from agent_pm.session.modes.base import BaseMode, identity_drop
 from agent_pm.session.modes.client_adapters.headless import Headless
-from agent_pm.utils import STOP_WAIT, Display, kill_group
+from agent_pm.utils import Display
+
+QUEUE_MAX = 64  # events and Stderr lines a pump queues before it waits for poll
 
 
 class HeadlessMode(BaseMode):
     kind = Mode.HEADLESS
-    stop_wait = STOP_WAIT
 
-    def __init__(self, prepared: Prepared, proc: subprocess.Popen):
+    def __init__(self, prepared: Prepared, piped: Piped):
         super().__init__(prepared)
-        self.proc, self.items, self.open = proc, queue.Queue(), 2
+        self.piped, self.items, self.open = piped, queue.Queue(QUEUE_MAX), 2
         self.eof = (threading.Event(), threading.Event())
+        self.closed = False
 
     @classmethod
     def preflight(
@@ -82,21 +85,12 @@ class HeadlessMode(BaseMode):
         prepared, run = cls._prepare(spec, client, registry=registry, display=display)
         run.commit()
         record(prepared.info)
+        info = prepared.info
+        launch = Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)
         try:
-            proc = subprocess.Popen(
-                prepared.argv,
-                cwd=prepared.info.cwd,
-                env=dict(prepared.env),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                process_group=0,
-            )
-            mode = cls(prepared, proc)
-            out, err = proc.stdout, proc.stderr
-            assert out is not None and err is not None
+            piped = host.pipe(None, launch)
+            mode = cls(prepared, piped)
+            out, err = piped.stdout, piped.stderr
             for pipe, events, eof in (
                 (out, run.events(out), mode.eof[0]),
                 (err, (Stderr(line.rstrip("\n")) for line in err), mode.eof[1]),
@@ -132,13 +126,14 @@ class HeadlessMode(BaseMode):
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
-        try:
-            return self.proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return None
+        code = self.piped.wait(timeout)
+        if code is not None and not self.closed:
+            self.closed = True
+            self.piped.close()
+        return code
 
     def state(self) -> Liveness:
-        return Liveness.LIVE if self.proc.poll() is None else Liveness.ABSENT
+        return Liveness.LIVE if self.piped.wait(0) is None else Liveness.ABSENT
 
     def send(self, text: str) -> None:
         raise SessionError("send: tui mode only")
@@ -147,4 +142,5 @@ class HeadlessMode(BaseMode):
         raise SessionError("screen: tui mode only")
 
     def stop(self) -> None:
-        kill_group(self.proc, ended=all(eof.is_set() for eof in self.eof), wait=self.stop_wait)
+        self.closed = True
+        self.piped.stop(ended=all(eof.is_set() for eof in self.eof))
