@@ -44,6 +44,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
+from session.tests.unit.hosts.docker.support import data
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 DOCKER = "/usr/local/bin/docker"
@@ -173,7 +174,14 @@ class Base(Case):
         os.makedirs(self.cwd)
         self.order = []
         self.docker = FakeDocker(self.ep, self.order)
-        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, [])
+        started = Started(
+            CONTAINER,
+            self.ep,
+            "sha256:" + "b" * 64,
+            {},
+            [],
+            data("start-output.json")["client_update"],
+        )
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
@@ -773,7 +781,12 @@ class StartTest(Base):
 
     def test_each_start_writes_its_generation_result(self):
         self.broker.started = Started(
-            CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"}, []
+            CONTAINER,
+            self.ep,
+            "sha256:" + "b" * 64,
+            {"claude": "2.1.0"},
+            [],
+            data("start-output.json")["client_update"],
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
@@ -794,9 +807,21 @@ class StartTest(Base):
                         "image": IMAGE,
                         "image_digest": "sha256:" + "b" * 64,
                         "client_versions": {"claude": "2.1.0"},
+                        "client_update": dict(self.broker.started.client_update),
                     },
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
+
+    def test_generation_versions_survive_later_client_setup_failure(self):
+        with (
+            mock.patch.object(self.host, "_stage_files", side_effect=SessionError("setup failed")),
+            self.assertRaisesRegex(SessionError, "setup failed"),
+        ):
+            self.start()
+        with open(os.path.join(self.state, f"{GEN}.result.json")) as source:
+            result = json.load(source)
+        self.assertEqual(result["image_digest"], self.broker.started.image_digest)
+        self.assertEqual(result["client_update"], dict(self.broker.started.client_update))
 
     def test_each_start_records_and_reports_its_phase_times(self):
         result = os.path.join(self.state, f"{GEN}.result.json")
@@ -895,8 +920,24 @@ class StartTest(Base):
                 self.supervisor.reset_mock()
                 with self.assertRaisesRegex(SessionError, "docker session w: "):
                     self.start(resume=resume)
-                self.supervisor.terminate.assert_called()
+                self.supervisor.terminate.assert_not_called()
                 self.assertEqual(self.order[-1], ("close", CONTAINER))
+
+    def test_final_result_write_failure_terminates_supervisor(self):
+        replace_file = os.replace
+
+        def fail_final_result(source, destination):
+            if str(destination).endswith(".result.json") and os.path.exists(destination):
+                raise OSError("result write failed")
+            return replace_file(source, destination)
+
+        with (
+            mock.patch("os.replace", side_effect=fail_final_result),
+            self.assertRaisesRegex(SessionError, "result write failed"),
+        ):
+            self.start()
+        self.supervisor.terminate.assert_called_once()
+        self.assertEqual(self.order[-1], ("close", CONTAINER))
 
     def test_existing_container_refuses_start(self):
         self.docker.ps = ["agent-pm-w-other\tw\tother\trunning"]

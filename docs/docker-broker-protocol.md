@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 9** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"9"}`.
+**Protocol 10** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"10"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -16,7 +16,7 @@ that App's installation tokens ([GitHub tokens](#github-tokens)): start's `githu
 codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
 `status.codex` object. Protocol 8 adds build's `--plugin`. Protocol 9 adds client-specific
 manifest directories and start's `credential_expires_at`; relay messages and GitHub fields
-remain unchanged.
+remain unchanged. Protocol 10 requires start's `client_update` audit object.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -121,15 +121,32 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `9` |
+| `version` | `protocol_version`: exact string `10` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
 
-`codex` has no identity or credential fields:
+`client_update` has no secrets; all fields are required, extra fields rejected:
+
+| Field | Meaning |
+|---|---|
+| `client` | Key in `clients` identifying the prepared executable; currently `codex` |
+| `pinned_version` | Verified host installation version |
+| `allowed_versions` | Nonempty exact stable-version rule snapshot |
+| `image_version` | Original image Codex, required in the rule |
+| `target_version` | Selected allowed registry version; empty for unavailable registry or no allowed release |
+| `result` | `updated`, `current`, `registry_unavailable`, `no_allowed_release`, `update_failed` |
+
+Stable versions use canonical `major.minor.patch`. `current` requires target=image;
+`updated` requires an allowed different target and matching `clients.codex`;
+`update_failed` requires an allowed different target and actual=image. The two empty-target
+outcomes also require actual=image. Python checks these cross-field relationships.
+Update operations and diagnostics: [Codex versions](docker-codex.md#container-versions).
+
+`status.codex` has no identity or credential fields:
 
 | Field | Meaning |
 |---|---|
@@ -150,7 +167,7 @@ flowchart LR
     V[Validate] --> W[Ensure volume]
     W --> C[Create secured container]
     C --> B[Bootstrap and hook stub]
-    B --> P[Probe both clients' versions]
+    B --> P[Prepare compatible client versions]
     P --> T[Inject token through exec stdin]
     T --> G[Issue and write GitHub tokens]
     G --> O[Return start output]

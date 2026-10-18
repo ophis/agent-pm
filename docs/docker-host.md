@@ -25,7 +25,7 @@ It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, e
 freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
 ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-terminals).
+upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions).
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -33,7 +33,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"9"}` |
+| `"$B" version` | `{"protocol_version":"10"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -89,7 +89,7 @@ same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
 Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
-latest Claude Code; the overlay supplies Codex's version boundary. To rebuild now:
+latest Claude Code; Codex preparation follows [Codex operations](docker-codex.md#container-versions). To rebuild now:
 
 ```sh
 "$B" build --agent-pm "$PKG" --max-age 0
@@ -396,6 +396,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | | `create` | `docker run`: the new container |
 | | `bootstrap` | Claude's bootstrap state and the hook stub |
 | | `clients` | both clients' `--version` in the container |
+| | `client_update` | [Codex preparation](docker-codex.md#container-versions) before secret injection |
 | | `credentials` | the token injection |
 | | `total` | the broker's whole `start` |
 | `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check |
@@ -512,7 +513,7 @@ secrets in environments that need it.
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
 - Image builds trust the client vendors' npm packages; Codex's policy is in
-  [Codex operations](docker-codex.md#docker-terminals).
+  [Codex operations](docker-codex.md#container-versions).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running

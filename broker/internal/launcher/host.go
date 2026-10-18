@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -44,6 +45,7 @@ type Host struct {
 	Creds    Credentials
 	Codex    CodexCredentials
 	GitHub   Tokens
+	Versions CodexVersions
 	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
 }
 
@@ -57,6 +59,7 @@ func NewHost(home, endpoint string, d docker.Runner, creds Credentials, tokens T
 		IsDir:    isDir,
 		Safe:     realSafe,
 		Docker:   d,
+		Versions: codex.New(),
 	}
 }
 
@@ -78,6 +81,7 @@ type StartResult struct {
 	Clients        Clients           `json:"clients"`
 	GitHub         []protocol.Expiry `json:"github"`
 	CodexExpiresAt *string           `json:"credential_expires_at"`
+	ClientUpdate   ClientUpdate      `json:"client_update"`
 }
 
 type RefreshResult struct {

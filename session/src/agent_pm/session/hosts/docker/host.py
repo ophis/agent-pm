@@ -284,6 +284,28 @@ class _Container(NamedTuple):
     ended: str
 
 
+def _save_result(
+    name: str, created: _Container, phases: Mapping[str, float], launched: str | None = None
+) -> None:
+    result = {
+        "container": created.started.container,
+        "image": created.image,
+        "image_digest": created.started.image_digest,
+        "client_versions": dict(created.started.clients),
+        "client_update": dict(created.started.client_update),
+        "started_at": created.began,
+        "ended_at": created.ended,
+        "phases": dict(phases),
+    }
+    if launched is not None:
+        result["launched_at"] = launched
+    save(
+        os.path.join(state_dir(name), f"{created.generation}.result.json"),
+        json.dumps(result),
+        durable=True,
+    )
+
+
 class _Laps:
     """Seconds per phase, since the previous one ended (docs/docker-host.md › Start timing)."""
 
@@ -845,13 +867,11 @@ class DockerHost(Host):
         self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
-        container, generation, hook, image, cwd, started, began, ended = self._container(
-            name, launch, stops, laps, metadata
-        )
+        created = self._container(name, launch, stops, laps, metadata)
+        container, generation, hook, _, cwd, _, _, _ = created
         supervisor = lock = None
         try:
             stops.check()
-            _accept_started(name, generation, started, container)
             self._stage_files(container, metadata)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
@@ -899,21 +919,7 @@ class DockerHost(Host):
                 raise SessionError(f"{container}: the client did not start in {READY_WAIT} s")
             laps("client")
             launched = datetime.now().astimezone().isoformat(timespec="milliseconds")
-            result = {
-                "container": started.container,
-                "image": image,
-                "image_digest": started.image_digest,
-                "client_versions": dict(started.clients),
-                "started_at": began,
-                "ended_at": ended,
-                "phases": laps.phases,
-                "launched_at": launched,
-            }
-            save(
-                os.path.join(state_dir(name), f"{generation}.result.json"),
-                json.dumps(result),
-                durable=True,
-            )
+            _save_result(name, created, laps.phases, launched)
             stops.check()
         except (SessionError, TuiError, OSError) as error:
             cleanup = self._roll_back(supervisor, container)
@@ -1002,17 +1008,23 @@ class DockerHost(Host):
         began = timestamp()
         try:
             started = self.broker.start(manifest, clients=clients)
+            _accept_started(name, generation, started, container)
+            ended = timestamp()
+            laps("start")
+            created = _Container(container, generation, hook, image, cwd, started, began, ended)
+            _save_result(name, created, laps.phases)
         except BrokerError as error:
             if error.cleanup == "failed" and error.container:
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
-        except SessionError as error:  # a timeout or bad response: the container may exist
+        except (
+            SessionError,
+            OSError,
+        ) as error:  # a timeout or bad response: the container may exist
             cleanup = self._roll_back(None, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
-        ended = timestamp()
-        laps("start")
-        return _Container(container, generation, hook, image, cwd, started, began, ended)
+        return created
 
     def pipe(
         self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
@@ -1043,13 +1055,11 @@ class DockerHost(Host):
     ) -> DockerPiped:
         laps = _Laps()
         self._check_cwd(name, launch)
-        container, generation, _, image, cwd, started, began, ended = self._container(
-            name, launch, stops, laps, metadata
-        )
+        created = self._container(name, launch, stops, laps, metadata)
+        container, generation, _, _, cwd, _, _, _ = created
         lock = proc = None
         try:
             stops.check()
-            _accept_started(name, generation, started, container)
             lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
@@ -1076,20 +1086,7 @@ class DockerHost(Host):
             )
             proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
-            result = {
-                "container": started.container,
-                "image": image,
-                "image_digest": started.image_digest,
-                "client_versions": dict(started.clients),
-                "started_at": began,
-                "ended_at": ended,
-                "phases": laps.phases,
-            }
-            save(
-                os.path.join(state_dir(name), f"{generation}.result.json"),
-                json.dumps(result),
-                durable=True,
-            )
+            _save_result(name, created, laps.phases)
             stops.check()
         except (SessionError, OSError, ValueError) as error:
             if proc is not None:

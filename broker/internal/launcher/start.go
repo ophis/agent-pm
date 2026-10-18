@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -34,7 +35,7 @@ func asAgent(container string, argv ...string) []string {
 func (h Host) probe(ctx context.Context, container string) (Clients, error) {
 	var versions [2]string
 	var errs []error
-	for i, client := range []string{"claude", "codex"} {
+	for i, client := range []string{"claude", "/opt/agent-pm/clients/bin/codex"} {
 		out, err := h.Docker.Run(ctx, asAgent(container, client, "--version"), nil)
 		line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 		versions[i] = strings.TrimSpace(line)
@@ -53,6 +54,9 @@ func taken(c string) *protocol.Error {
 // Start writes each phase's seconds to Progress only once it succeeds, so a failure's stderr stays one error object.
 func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	var times strings.Builder
+	var notes strings.Builder
+	progress := h.Progress
+	h.Progress = &notes
 	began := time.Now()
 	last := began
 	lap := func(phase string) {
@@ -69,6 +73,10 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	if err := h.checkMounts(m); err != nil {
+		return StartResult{}, err
+	}
+	policy, err := h.versionPolicy(ctx)
+	if err != nil {
 		return StartResult{}, err
 	}
 	if m.Client == "codex" {
@@ -105,7 +113,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	lap("checks")
-	result, err := h.create(ctx, c, m, info, lap)
+	result, err := h.create(ctx, c, m, info, policy, lap)
 	if errors.Is(err, errTaken) {
 		return StartResult{}, taken(c)
 	}
@@ -118,14 +126,14 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, e
 	}
 	fmt.Fprintf(&times, "agent-pm-broker: start total %.2f s\n", time.Since(began).Seconds())
-	if h.Progress != nil {
-		_, _ = io.WriteString(h.Progress, times.String())
+	if progress != nil {
+		_, _ = io.WriteString(progress, times.String()+notes.String())
 	}
 	return result, nil
 }
 
 // create runs every step after the absence check; any error makes Start roll back.
-func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, lap func(phase string)) (StartResult, error) {
+func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, policy codex.Installation, lap func(phase string)) (StartResult, error) {
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", m.CWD}
@@ -138,6 +146,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
 	}
 	args = append(args,
+		"--tmpfs", runtimeDir+":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
 		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation)
 	keys := make([]string, 0, len(m.Labels))
 	for k := range m.Labels {
@@ -184,9 +193,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
-	if m.Client == "codex" && clients.Codex != "codex-cli 0.162.1" {
-		return StartResult{}, protocol.New(protocol.StartFailed, "Docker Codex requires source-verified version 0.162.1; rebuild the worker image with that version.")
+	clients, update, err := h.updateCodex(ctx, c, info.Architecture, clients, policy)
+	if err != nil {
+		return StartResult{}, err
 	}
+	lap("client_update")
 	exec := h.agentExec(ctx, c)
 	var codexExpiry *string
 	if m.Client == "codex" {
@@ -208,7 +219,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		}
 		lap("github")
 	}
-	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries, CodexExpiresAt: codexExpiry}, nil
+	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries, CodexExpiresAt: codexExpiry, ClientUpdate: update}, nil
 }
 
 // injected classifies a Credentials or Tokens error: its protocol error, an unreachable daemon, else code.

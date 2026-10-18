@@ -64,6 +64,76 @@ class PluginRootTest(Case):
 
 
 class ResponseTest(Case):
+    def test_client_update_outcomes_and_invalid_shapes(self):
+        response = data("start-output.json")
+        for result, target, actual in (
+            ("current", "0.100.0", "0.100.0"),
+            ("updated", "0.162.1", "0.162.1"),
+            ("update_failed", "0.162.1", "0.100.0"),
+            ("registry_unavailable", "", "0.100.0"),
+            ("no_allowed_release", "", "0.100.0"),
+        ):
+            policy = {**response["client_update"], "result": result, "target_version": target}
+            found = {
+                **response,
+                "client_update": policy,
+                "clients": {**response["clients"], "codex": f"codex-cli {actual}"},
+            }
+            with self.subTest(result=result):
+                self.assertEqual(
+                    Broker(FakeBroker((0, json.dumps(found), "")))
+                    .start(MANIFEST, clients=KEYS)
+                    .client_update,
+                    policy,
+                )
+        for bad in (
+            None,
+            [],
+            {},
+            {**response["client_update"], "client": "unknown"},
+            {**response["client_update"], "target_version": []},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(SessionError):
+                Broker(FakeBroker((0, json.dumps({**response, "client_update": bad}), ""))).start(
+                    MANIFEST, clients=KEYS
+                )
+
+    def test_rejects_inconsistent_client_update(self):
+        good = data("start-output.json")
+        policy = {
+            "client": "codex",
+            "pinned_version": "0.162.1",
+            "allowed_versions": ["0.100.0", "0.162.1"],
+            "image_version": "0.100.0",
+            "target_version": "0.100.0",
+            "result": "current",
+        }
+        response = {
+            **good,
+            "client_update": policy,
+            "clients": {**good["clients"], "codex": "codex-cli 0.100.0"},
+        }
+        self.assertEqual(
+            Broker(FakeBroker((0, json.dumps(response), "")))
+            .start(MANIFEST, clients=KEYS)
+            .client_update,
+            policy,
+        )
+        for changes in (
+            {"result": "unknown"},
+            {"allowed_versions": []},
+            {"image_version": "1.0.0"},
+            {"target_version": "0.162.1"},
+            {"pinned_version": "latest"},
+            {"extra": "x"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(SessionError):
+                Broker(
+                    FakeBroker(
+                        (0, json.dumps({**response, "client_update": {**policy, **changes}}), "")
+                    )
+                ).start(MANIFEST, clients=KEYS)
+
     def test_every_response_fixture_has_its_outcome(self):
         found = cases()
         self.assertTrue(any(c["definition"] == "error" for c in found))
@@ -120,8 +190,9 @@ class ResponseTest(Case):
                 container=CONTAINER,
                 endpoint="unix:///Users/example/.docker/run/docker.sock",
                 image_digest="sha256:" + "b" * 64,
-                clients={"claude": "2.1.0", "codex": "0.100.0"},
+                clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0"},
                 github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
+                client_update=data("start-output.json")["client_update"],
             ),
         )
         self.assertEqual(

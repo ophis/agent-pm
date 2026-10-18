@@ -125,6 +125,56 @@ class CodexCIGuard(Case):
             run.assert_not_called()
 
 
+class CodexUpdate(Case):
+    def setUp(self):
+        self.update = script("codex-update.py")["update"]
+        self.target = Path(self.home, "runtime")
+        self.target.mkdir()
+
+    def call(self, action, data=b"native"):
+        real_lstat = Path.lstat
+
+        def root_owned(path):
+            info = real_lstat(path)
+            return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
+
+        with mock.patch.object(Path, "lstat", root_owned):
+            self.update(action, io.BytesIO(data), self.target)
+
+    def test_stage_publish_reset(self):
+        self.call("stage")
+        stage, active = self.target / "codex.next", self.target / "codex"
+        self.assertEqual(stage.read_bytes(), b"native")
+        self.assertEqual(stat.S_IMODE(stage.stat().st_mode), 0o755)
+        self.assertFalse(active.exists())
+        self.call("publish")
+        self.assertEqual(active.read_bytes(), b"native")
+        self.assertFalse(stage.exists())
+        self.call("reset")
+        self.call("reset")
+        self.assertEqual(list(self.target.iterdir()), [])
+
+    def test_refuses_empty_unknown_and_unsafe_paths(self):
+        with self.assertRaises(SystemExit):
+            self.call("stage", b"")
+        self.call("reset")
+        with self.assertRaises(SystemExit):
+            self.call("unknown")
+        self.target.chmod(0o777)
+        with self.assertRaises(SystemExit):
+            self.call("stage")
+        self.target.chmod(0o755)
+        elsewhere = self.target / "elsewhere"
+        elsewhere.write_bytes(b"untouched")
+        (self.target / "codex.next").symlink_to(elsewhere)
+        with self.assertRaises(FileExistsError):
+            self.call("stage")
+        with self.assertRaises(SystemExit):
+            self.call("publish")
+        self.call("reset")
+        self.assertEqual(elsewhere.read_bytes(), b"untouched")
+
+
 class InstallHook(Case):
     def setUp(self):
         self.install = script("bootstrap.py")["install_hook"]

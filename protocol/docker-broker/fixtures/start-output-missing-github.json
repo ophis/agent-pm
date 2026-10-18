@@ -5,6 +5,17 @@
   "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "clients": {
     "claude": "2.1.0",
-    "codex": "0.100.0"
+    "codex": "codex-cli 0.100.0"
+  },
+  "client_update": {
+    "client": "codex",
+    "pinned_version": "0.162.1",
+    "allowed_versions": [
+      "0.100.0",
+      "0.162.1"
+    ],
+    "image_version": "0.100.0",
+    "target_version": "0.100.0",
+    "result": "current"
   }
 }

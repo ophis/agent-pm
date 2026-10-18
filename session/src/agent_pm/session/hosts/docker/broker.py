@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "9"
+PROTOCOL = "10"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -37,6 +37,7 @@ CONTAINER = re.compile(r"agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}")
 ENDPOINT = re.compile(r"unix:///[^\x00-\x1f\x7f]+/\.docker/run/docker\.sock")
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 COMMANDS = frozenset(
     {"version", "build", "start", "refresh", "close", "status", "workspace-rm", "unknown"}
 )
@@ -129,6 +130,44 @@ def _credential_expiry(value) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _client_update(value, clients) -> bool:
+    if not isinstance(value, dict) or value.keys() != {
+        "client",
+        "pinned_version",
+        "allowed_versions",
+        "image_version",
+        "target_version",
+        "result",
+    }:
+        return False
+    allowed = value["allowed_versions"]
+    client = value["client"]
+    image, target, result = value["image_version"], value["target_version"], value["result"]
+    if not (
+        _text(client)
+        and client in clients
+        and _matches(VERSION, value["pinned_version"])
+        and _matches(VERSION, image)
+        and isinstance(allowed, list)
+        and bool(allowed)
+        and all(_matches(VERSION, v) for v in allowed)
+        and image in allowed
+        and isinstance(target, str)
+        and (target == "" or target in allowed)
+        and isinstance(result, str)
+    ):
+        return False
+    actual = clients[client].rsplit(" ", 1)[-1]
+    if result in {"registry_unavailable", "no_allowed_release"}:
+        return target == "" and actual == image
+    if result == "current":
+        return target == image and actual == image
+    if result in {"updated", "update_failed"}:
+        expected = target if result == "updated" else image
+        return bool(target) and target != image and actual == expected
+    return False
 
 
 def _error(command: str, returncode: int, data: dict) -> BrokerError:
@@ -283,6 +322,7 @@ class Broker:
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
             and _credential_expiry(started.credential_expires_at)
+            and _client_update(started.client_update, started.clients)
         ):
             raise SessionError("broker: bad response to start: fields")
         return started

@@ -30,9 +30,10 @@ var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-
 var builtPattern = regexp.MustCompile(`^agent-pm-(?:user|worker):[0-9a-f]{64}$`)
 
 type imageInfo struct {
-	ID      string `json:"Id"`
-	Created time.Time
-	Config  struct {
+	ID           string `json:"Id"`
+	Created      time.Time
+	Architecture string
+	Config       struct {
 		Labels map[string]string
 	}
 }
