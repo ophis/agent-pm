@@ -26,6 +26,9 @@ Every session, crew workers and role runs, gets one permission mode from the Hos
 |---|---|---|
 | Claude | `--permission-mode auto` | `--dangerously-skip-permissions --settings '{"skipDangerousModePermissionPrompt": true}'` (no first-start dialog) |
 | Codex | `-s danger-full-access -c approval_policy="on-request" -c approvals_reviewer="auto_review"` | `--dangerously-bypass-approvals-and-sandbox` |
+| OpenCode (headless only) | none: its config's `permission.bash = "ask"` refuses every shell call but the run's pre-approved commands | `--auto` |
+
+OpenCode's pre-approved commands match a command's text without its redirections, so an allowed `git status` also allows `git status > <file>`. Its `auto` mode lets the run edit inside its cwd and Access dirs, and read nothing outside them: OpenCode cannot grant a read without the write.
 
 `yolo` asks for nothing: no permission prompt, approval or sandbox; the container is the boundary ([Docker host](docker-host.md#permissions)). Claude refuses it as root; the container's clients run as `agent`. `danger-full-access` ignores writable roots and team dirs; a Docker container cannot run Codex's sandbox ([Docker sessions](docker-codex.md#docker-sessions)). For `workspace-write` outside the Docker Host:
 
