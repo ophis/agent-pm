@@ -448,7 +448,8 @@ flowchart LR
   adds a `rejected.jsonl` line and is not retried.
 - **Older image** (by digest, after a plugin upgrade or rebuild): no supervisor restart; the command warns `restart it
   to upgrade`, and `close` does not wait for its supervisor. The first restart attempt after a plugin upgrade runs
-  `build` to compare digests, once per generation (`<generation>.stale` records the result).
+  `build` to compare digests, once per generation: `<generation>.stale` records an older image; that first command
+  waits for the rebuild.
 - **Container gone** (Docker Desktop restart, `docker rm`): the worker shows `dead`; `agent-pm-session resume NAME`
   continues the conversation in a new container. Events queued in the old one are lost.
 - **Leftover containers**: before every start and close, a container labelled for a session goes when the session has
