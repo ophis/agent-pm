@@ -1,6 +1,6 @@
 # Docker host
 
-Pinned host Codex installation and independent broker login: [Codex operations](docker-codex.md).
+Codex installation, broker login and terminal containers: [Codex operations](docker-codex.md).
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
@@ -24,8 +24,9 @@ sh "$PKG/broker/install.sh"
 It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
 freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
 ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
-To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code and
-Codex upgrade with the image: a start rebuilds an image built 7 or more days ago, and
+To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
+upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-terminals).
+A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
 | Check | Expect |
@@ -88,7 +89,7 @@ same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
 Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
-latest Claude Code and Codex. To refresh them now:
+latest Claude Code; the overlay supplies Codex's version boundary. To rebuild now:
 
 ```sh
 "$B" build --agent-pm "$PKG" --max-age 0
@@ -464,8 +465,8 @@ secrets in environments that need it.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
-- Every image build installs npm's latest Claude Code and Codex releases, trusting their
-  vendors' npm packages.
+- Image builds trust the client vendors' npm packages; Codex's policy is in
+  [Codex operations](docker-codex.md#docker-terminals).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running

@@ -60,6 +60,71 @@ class Bootstrap(Case):
         self.assertTrue(template["theme"])
 
 
+class CodexBootstrap(Case):
+    def setUp(self):
+        self.code = script("bootstrap.py")
+        self.target = Path(self.home, "codex")
+        self.target.mkdir()
+        self.secrets = Path(self.home, "secrets")
+        self.secrets.mkdir()
+
+    def test_codex_home_has_file_auth_trusted_project_and_only_a_secret_link(self):
+        import tomllib
+
+        self.code["bootstrap_codex"](self.target, '/work/"project', self.secrets)
+        config = tomllib.loads((self.target / "config.toml").read_text())
+        self.assertEqual(config["cli_auth_credentials_store"], "file")
+        self.assertEqual(config["forced_login_method"], "chatgpt")
+        self.assertEqual(config["projects"]['/work/"project']["trust_level"], "trusted")
+        self.assertTrue((self.target / "auth.json").is_symlink())
+        self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+
+    def test_access_document_is_owner_read_only_and_atomically_replaced(self):
+        inject = self.code["inject_codex"]
+        inject(io.BytesIO(b'{"synthetic":"one"}'), self.secrets)
+        path = self.secrets / "codex/auth.json"
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
+        self.assertEqual(path.stat().st_uid, os.getuid())
+        inject(io.BytesIO(b'{"synthetic":"two"}'), self.secrets)
+        self.assertEqual(path.read_bytes(), b'{"synthetic":"two"}')
+        self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["auth.json"])
+
+    def test_projection_writes_one_record_and_rejects_escape_or_links(self):
+        stage = self.code["stage_runtime"]
+        root = Path(self.home, "run")
+        root.mkdir()
+        destination = root / "codex-store" / ("a" * 64 + ".json")
+        stage(io.StringIO(json.dumps({str(destination): "{}"})), root)
+        self.assertEqual(destination.read_text(), "{}")
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+        for files in (
+            {},
+            {str(root / "secrets/x"): "{}"},
+            {str(destination): 1},
+            {str(destination): "a" * ((1 << 20) + 1)},
+        ):
+            with self.subTest(paths=list(files)), self.assertRaises(SystemExit):
+                stage(io.StringIO(json.dumps(files)), root)
+        linked = root / "linked-store"
+        linked.symlink_to(destination.parent, target_is_directory=True)
+        with self.assertRaises(SystemExit):
+            stage(io.StringIO(json.dumps({str(linked / ("b" * 64 + ".json")): "{}"})), root)
+
+
+class CodexCIGuard(Case):
+    def test_ci_probe_refuses_local_execution_and_untrusted_image_without_docker(self):
+        main = runpy.run_path(str(Path(REPO, ".github/worker_codex.py")))["main"]
+        for ci, image in (("false", "agent-pm-worker:" + "a" * 64), ("true", "untrusted")):
+            with (
+                self.subTest(ci=ci),
+                mock.patch.dict(os.environ, {"CI": ci, "GITHUB_ACTIONS": ci}),
+                mock.patch("subprocess.run") as run,
+                self.assertRaises(SystemExit),
+            ):
+                main(image)
+            run.assert_not_called()
+
+
 class InstallHook(Case):
     def setUp(self):
         self.install = script("bootstrap.py")["install_hook"]
@@ -138,6 +203,15 @@ class WithSecrets(Case):
             self.main([], secret=self.secret)
         execvpe.assert_not_called()
         self.assertNotIn("tok-123", str(raised.exception.code))
+
+    def test_codex_uses_its_file_auth_without_reading_claude(self):
+        with (
+            mock.patch.dict(os.environ, {"CODEX_HOME": "/volatile"}),
+            mock.patch("os.execvpe") as execvpe,
+        ):
+            self.main(["codex", "--version"], secret=self.secret)
+        self.assertEqual(execvpe.call_args.args[:2], ("codex", ["codex", "--version"]))
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", execvpe.call_args.args[2])
 
 
 class GitHubTokens(Case):

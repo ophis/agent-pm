@@ -12,6 +12,7 @@ on:
       - delegate/src/**
       - .claude-plugin/plugin.json
       - .github/workflows/worker-image.yml
+      - .github/worker_codex.py
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -43,7 +44,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           changed=$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
-          if grep -qE '^(broker/|session/src/|utils/src/|delegate/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$)' <<<"$changed"; then
+          if grep -qE '^(broker/|session/src/|utils/src/|delegate/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$|\.github/worker_codex\.py$)' <<<"$changed"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "No image input changed; nothing to build."
@@ -131,3 +132,8 @@ jobs:
             test "$(command -v python3)" = /opt/agent-pm/bin/python3
             python3 -c "import agent_pm.delegate"
             python3 -P /opt/agent-pm/team/tools/repo.py --help'
+      - name: Check Codex volatile authentication and history mounts
+        if: ${{ steps.inputs.outputs.build != 'false' }}
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: python3 .github/worker_codex.py "$IMAGE"
