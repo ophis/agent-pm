@@ -1181,6 +1181,23 @@ class UnansweredTest(HarnessCase):
                 view.hide()
         self.assertEqual(FakeViewer.hidden, [harness])
 
+    def test_close_closes_the_harness_then_says_the_agent_was_not_checked(self):
+        HarnessSession.reset(showable=True)
+        self.settings(harness_host="harness")
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
+        harness, agent = record.sessions
+        with self.unanswered(), self.assertRaises(Unanswered) as caught:
+            view.close()
+        self.assertEqual(
+            str(caught.exception),
+            f"close {agent}: agent session not checked: docker ps: timed out",
+        )
+        self.assertFalse(RecordingHost.processes["harness", harness].alive())
+        self.assertEqual(FakeViewer.closed, [harness])
+        self.assertTrue(HarnessSession.live[agent].alive())
+
     def test_replace_resume_and_clean_refuse_while_the_agent_does_not_answer(self):
         view = self.gave_up()
         before = self.metadata()

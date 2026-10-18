@@ -764,8 +764,12 @@ class HarnessDelegate(Delegate):
             raise _unknown(unanswered)
 
     def close(self) -> None:
+        """Unanswered after closing the harness when the agent's Host could not tell."""
         state = self._read()
-        agent = self._agent(state)
+        try:
+            agent, unanswered = self._agent(state), None
+        except Unanswered as error:
+            agent, unanswered = None, error
         if agent is not None:
             agent.close()
         process = self._harness(state)
@@ -776,6 +780,8 @@ class HarnessDelegate(Delegate):
                     self._shown_by().close(state.harness_name, self._harness_host)
             except SessionError as error:
                 raise SessionError(f"close {state.harness_name}: {error}") from error
+        if unanswered is not None:
+            raise Unanswered(f"close {state.agent_name}: agent session not checked: {unanswered}")
 
     def session_status(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;
