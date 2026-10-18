@@ -1,6 +1,6 @@
 """TmuxCli: every tmux call through runner (subprocess.run's signature) and sleep. start and
-detach hand a launch to a new pane (EXEC); launch puts it on tmux's command line. Listings skip
-VIEW sessions. TmuxPane: a TmuxCli aimed at one session's captured pane.
+detach hand a launch to a new pane (EXEC); launch STAGEs it through runner for RELAUNCH. Listings
+skip VIEW sessions. TmuxPane: a TmuxCli aimed at one session's captured pane.
 """
 
 from __future__ import annotations
@@ -159,6 +159,24 @@ try:
 except BaseException as e:
     os.write(w, b'%d' % (isinstance(e, OSError) and e.errno or errno.EINVAL))
     raise"""
+
+
+STAGE = """import os, sys, tempfile
+fd, path = tempfile.mkstemp(prefix='launch-', dir=sys.argv[1])
+with os.fdopen(fd, 'w') as f: f.write(sys.stdin.read())
+print(path)"""
+
+
+RELAUNCH = """import json, os, signal, sys
+try:
+    with open(sys.argv[1]) as f: h = json.load(f)
+finally:
+    os.unlink(sys.argv[1])
+for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+os.execvpe(h['argv'][0], h['argv'], {**os.environ, **h['env']})"""
+
+
+STAGED = re.compile(r"launch-[A-Za-z0-9_]+")
 
 
 LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}\t#{@process}"
@@ -689,59 +707,91 @@ class TmuxCli:
         *,
         cwd: str,
         env: Mapping[str, str],
+        python: str,
+        handover_dir: str,
         tags: Mapping[str, str] | None = None,
         died: str = DIED,
     ) -> str:
-        """start's setup in one call, without events: argv as given (no PATH lookup or handover
-        file), only env's -e values, pane-died `died`. Returns process().
+        """start's setup in one call, without events, pane-died `died`: the runner's `python` STAGEs
+        argv and env (over the server's) in a 0600 file in its private `handover_dir` for RELAUNCH,
+        keeping tmux's command line short; a failed launch deletes it. Returns process().
         """
         session_name(session)
         tag_options = _tags(session, tags or {})
         if not argv:
             raise TuiError("no command")
-        if not os.path.isabs(cwd) or "#" in cwd or cwd.endswith(";"):
-            raise TuiError(f"tmux would misread cwd {cwd!r:.80}")
-        for arg in argv:
-            if arg.endswith(";"):
-                raise TuiError(f"tmux would misread argv item {arg!r:.80}")
-        values = []
-        for key, value in env.items():
-            if value.endswith(";"):
-                raise TuiError(f"tmux would misread env {key}")
-            values += ["-e", f"{key}={value}"]
+        for arg in (cwd, handover_dir):
+            if not os.path.isabs(arg) or "#" in arg or arg.endswith(";"):
+                raise TuiError(f"tmux would misread {arg!r:.80}")
+        if any("\0" in arg for arg in (*argv, *env, *env.values())):
+            raise TuiError("argv or env holds a NUL character")
+        path = self._stage(python, handover_dir, json.dumps({"argv": list(argv), "env": dict(env)}))
         cols, rows = shutil.get_terminal_size()
         decorations = [
             arg
             for args in _decorations(session, None, status_line=False, died=died)
             for arg in (";", *args)
         ]
-        res = self.run(
-            [
-                "new-session",
-                "-d",
-                "-P",
-                "-F",
-                PROCESS,
-                "-s",
-                session,
-                "-x",
-                str(cols),
-                "-y",
-                str(rows),
-                "-c",
-                cwd,
-                *values,
-                "--",
-                *argv,
-                *(";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"),
-                *tag_options,
-                *decorations,
-                *_recorded(session),
-            ]
-        )
+        try:
+            res = self.run(
+                [
+                    "new-session",
+                    "-d",
+                    "-P",
+                    "-F",
+                    PROCESS,
+                    "-s",
+                    session,
+                    "-x",
+                    str(cols),
+                    "-y",
+                    str(rows),
+                    "-c",
+                    cwd,
+                    "--",
+                    python,
+                    "-I",
+                    "-c",
+                    RELAUNCH,
+                    path,
+                    *(";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"),
+                    *tag_options,
+                    *decorations,
+                    *_recorded(session),
+                ]
+            )
+            if res.returncode:
+                raise TuiError(f"tmux: {error(res)}")
+            return _identity(res)
+        except TuiError:
+            with contextlib.suppress(OSError):
+                self.runner(
+                    ["rm", "-f", "--", path],
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                )
+            raise
+
+    def _stage(self, python: str, directory: str, handover: str) -> str:
+        try:
+            res = self.runner(
+                [python, "-I", "-c", STAGE, directory],
+                capture_output=True,
+                text=True,
+                input=handover,
+            )
+        except OSError as e:
+            raise TuiError(f"handover: {e}") from e
         if res.returncode:
-            raise TuiError(f"tmux: {error(res)}")
-        return _identity(res)
+            why = error(res).splitlines()
+            raise TuiError(f"handover: {why[-1] if why else f'exit status {res.returncode}'}")
+        path = res.stdout.strip()
+        if os.path.dirname(path) != os.path.normpath(directory) or not STAGED.fullmatch(
+            os.path.basename(path)
+        ):
+            raise TuiError(f"handover: bad staged file {path!r:.80}")
+        return path
 
     def start(
         self,
