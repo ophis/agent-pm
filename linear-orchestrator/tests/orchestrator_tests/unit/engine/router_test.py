@@ -3271,6 +3271,15 @@ class ExplicitIssueRuns(TickBase):
             " liveness unknown: docker ps: timed out)\n",
         )
 
+    def test_a_config_error_from_the_attach_command_still_fails(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        failure = DelegateConfigError("role engineer: refused")
+        with (
+            mock.patch.object(self.api, "attach_command", side_effect=failure),
+            self.assertRaisesRegex(DelegateConfigError, "^role engineer: refused$"),
+        ):
+            self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"])
+
     def test_in_progress_resumes_inside_recovers_time_windows(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 20)
