@@ -293,8 +293,50 @@ class HolderTest(Case):
                 stdout, stderr = process.communicate(timeout=10)
                 self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
 
+    def test_child_gets_default_terminal_stop_signals_when_the_caller_ignores_them(self):
+        ignoring = (
+            "import os,signal,sys\n"
+            "for signum in (signal.SIGTTIN,signal.SIGTTOU): signal.signal(signum,signal.SIG_IGN)\n"
+            "os.execv(sys.argv[1],sys.argv[1:])"
+        )
+        report = (
+            "import signal\n"
+            "print([int(signal.getsignal(s)) for s in (signal.SIGTTIN,signal.SIGTTOU)])"
+        )
+        result = subprocess.run(
+            (
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                ignoring,
+                *PY,
+                "-m",
+                "agent_pm.manager.cli",
+                "hold",
+                "--manager",
+                "mgr",
+                "--",
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                report,
+            ),
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        default = int(signal.SIG_DFL)
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr), (0, f"[{default}, {default}]\n", "")
+        )
+
     def test_spawn_failure_releases_lock_and_restores_signal_handlers(self):
-        previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+        signals = (signal.SIGINT, signal.SIGTERM, signal.SIGTTIN, signal.SIGTTOU)
+        previous = {signum: signal.getsignal(signum) for signum in signals}
         with self.assertRaises(FileNotFoundError):
             Holder(self.roster).run((os.path.join(self.home, "missing-manager"),))
         for signum, handler in previous.items():
