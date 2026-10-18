@@ -14,10 +14,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Roster, Spec, State, cli
+from agent_pm.manager import Roster, RosterError, Spec, State, cli
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
-from agent_pm.utils import Record, Status, StatusState
+from agent_pm.utils import Record, Status, StatusState, append_line
 
 from manager.tests.case import Case
 from manager.tests.cli_case import CliCase
@@ -679,6 +679,200 @@ class NextEventContent(CliCase):
         )
         self.assertEqual((result, stdout), (1, ""))
         self.assertIn("crew: stale line numbers", stderr)
+
+
+LEASE_FREE = "env -u AGENT_PM_HOLDER_ID -u AGENT_PM_HOLDER_GENERATION agent-pm-crew"
+PAIR = ("AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+
+
+class StaleHolderRecovery(CliCase):
+    """A commander whose holder ended keeps its pair: the error prints runnable recovery."""
+
+    def setUp(self):
+        super().setUp()
+        with self.roster.hold("old") as lease:
+            Path(self.roster.events).write_text(
+                "12:00:00 w1 done\n12:00:01 w1 done\n12:00:02 w1 done\n"
+            )
+        self.lease = lease
+        self.pair(lease)
+
+    def pair(self, lease):
+        values = (lease.id, str(lease.generation))
+        self.enterContext(mock.patch.dict(os.environ, dict(zip(PAIR, values, strict=True))))
+
+    @contextlib.contextmanager
+    def lease_free(self):
+        env = {key: value for key, value in os.environ.items() if key not in PAIR}
+        with mock.patch.dict(os.environ, env, clear=True):
+            yield
+
+    def command(self, stderr, label):
+        line = next(line for line in stderr.splitlines() if label in line)
+        words = shlex.split(line[line.index("env -u") :].removesuffix(", then attach"))
+        self.assertEqual(shlex.join(words[:6]), LEASE_FREE)
+        return words[6:]
+
+    def test_attach_after_holder_ended_prints_recovery_notes(self):
+        result, stdout, stderr = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual(
+            stderr.splitlines(),
+            [
+                f"crew: {self.directory}: stale holder generation; start a new manager holder",
+                "crew: this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an"
+                " ended holder; no holder is active; handled N=0 GEN=0",
+                "crew: lasting fix: restart the commander's client under a new holder, then"
+                " attach and arm its monitor: command: agent-pm-crew hold --manager mgr"
+                " --session mgr -- claude --continue (or: codex resume --last)",
+                f"crew: handled events after N=0? first: {LEASE_FREE} ack --manager mgr"
+                " --through <line> --gen 0, then attach; unacknowledged events replay",
+                "crew: until then, attach without a lease, keeping the prefix on the commands it"
+                f" prints: {LEASE_FREE} attach --manager mgr",
+                f"crew: and monitor: {LEASE_FREE} next-event --manager mgr --after 0 --gen 0"
+                " --content --follow",
+            ],
+        )
+        self.assertEqual(cli.CLIENT_RESUME[0], ("claude", "--continue"))
+
+    def test_printed_lease_free_commands_run(self):
+        _, _, stderr = self.invoke("attach", "--manager", "mgr")
+        attach = self.command(stderr, "until then")
+        monitor = self.command(stderr, "and monitor")
+        self.assertEqual(monitor[-1], "--follow")
+        with self.lease_free():
+            with self.listed():
+                result, stdout, error = self.invoke(*attach)
+            self.assertEqual(result, 0, error)
+            self.assertTrue(stdout.endswith("N=0 GEN=0\n"), stdout)
+            result, stdout, error = self.invoke(*monitor[:-1])
+        self.assertEqual(result, 0, error)
+        self.assertTrue(stdout.startswith("1 12:00:00 w1 done\n"), stdout)
+
+    def test_next_event_offers_ack_through_its_reader_line(self):
+        result, stdout, stderr = self.invoke(
+            "next-event", "--manager", "mgr", "--after", "2", "--gen", "0", "--follow"
+        )
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertIn(
+            f"crew: handled through 2? first: {LEASE_FREE} ack --manager mgr --through 2"
+            " --gen 0, then attach\n",
+            stderr,
+        )
+        self.assertNotIn("<line>", stderr)
+        ack = self.command(stderr, "handled through")
+        with self.lease_free():
+            self.assertEqual(self.invoke(*ack), (0, "", ""))
+            self.assertEqual(self.roster.lease_state(), (2, 0, None))
+            with self.listed():
+                result, stdout, error = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual(result, 0, error)
+        self.assertNotIn("1 12:00:00", stdout)
+        self.assertNotIn("2 12:00:01", stdout)
+        self.assertIn("3 12:00:02 w1 done\n", stdout)
+
+    def test_ack_note_keeps_placeholder_without_a_reader_line_past_n(self):
+        placeholder = "--through <line> --gen 0, then attach; unacknowledged events replay"
+        for argv in (
+            ("next-event", "--manager", "mgr", "--after", "end", "--gen", "0"),
+            ("next-event", "--manager", "mgr", "--after", "2", "--gen", "1"),
+            ("pending", "--manager", "mgr"),
+        ):
+            with self.subTest(argv=argv):
+                result, _, stderr = self.invoke(*argv)
+                self.assertEqual(result, 1)
+                self.assertIn(placeholder, stderr)
+                self.assertNotIn("handled through", stderr)
+        with self.lease_free():
+            self.assertEqual(
+                self.invoke("ack", "--manager", "mgr", "--through", "2", "--gen", "0")[0], 0
+            )
+        for after in ("1", "2"):
+            with self.subTest(after=after):
+                result, _, stderr = self.invoke(
+                    "next-event", "--manager", "mgr", "--after", after, "--gen", "0"
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("handled events after N=2? first:", stderr)
+                self.assertNotIn("handled through", stderr)
+
+    def follow_until_released(self, after, appended=None):
+        """Follow under a live holder that ends after the reader drains; appended arrives first."""
+        live = Roster(self.directory)
+        with live.hold("live") as lease, contextlib.ExitStack() as stack:
+            self.pair(lease)
+            steps = [live.release]
+            if appended is not None:
+                steps.insert(0, lambda: append_line(live.events, appended))
+            stack.enter_context(mock.patch("time.sleep", side_effect=lambda _: steps.pop(0)()))
+            return self.invoke(
+                "next-event", "--manager", "mgr", "--after", after, "--gen", "0", "--follow"
+            )
+
+    def test_follow_offers_ack_through_last_printed_line(self):
+        for after, appended, expected in (
+            ("0", None, "1 12:00:00 w1 done\n2 12:00:01 w1 done\n3 12:00:02 w1 done\n"),
+            ("end", "12:00:03 w1 done\n", "4 12:00:03 w1 done\n"),
+        ):
+            with self.subTest(after=after):
+                result, stdout, stderr = self.follow_until_released(after, appended)
+                self.assertEqual((result, stdout), (1, expected))
+                line = expected.splitlines()[-1].split()[0]
+                self.assertIn(
+                    f"crew: handled through {line}? first: {LEASE_FREE} ack --manager mgr"
+                    f" --through {line} --gen 0, then attach\n",
+                    stderr,
+                )
+
+    def test_takeover_names_the_live_holder_and_force(self):
+        with Roster(self.directory).hold("new"):
+            result, stdout, stderr = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual(
+            stderr.splitlines()[1:],
+            [
+                "crew: this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an"
+                " ended holder; new holds manager mgr now; handled N=0 GEN=0",
+                "crew: use new's commander; take over only on purpose: agent-pm-crew hold --force"
+                " --manager mgr --session mgr -- claude --continue (or: codex resume --last)",
+            ],
+        )
+
+    def test_resume_prints_notes_once_and_resumes_nothing(self):
+        with mock.patch("subprocess.run", side_effect=AssertionError("resumed")):
+            result, stdout, stderr = self.invoke("resume", "--manager", "mgr", "a", "b")
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual(stderr.count("stale holder generation"), 1)
+        self.assertEqual(stderr.count("lasting fix"), 1)
+
+    def test_holder_no_longer_alive_gets_notes(self):
+        data = json.loads(Path(self.roster.path).read_text())
+        data["holder"] = {"id": self.lease.id, "session": "old"}
+        Path(self.roster.path).write_text(json.dumps(data))
+        result, _, stderr = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual(result, 1)
+        self.assertTrue(stderr.startswith(f"crew: {self.directory}: holder no longer alive\n"))
+        self.assertIn("no holder is active; handled N=0 GEN=0", stderr)
+        self.assertIn("lasting fix", stderr)
+        with self.lease_free(), Roster(self.directory).hold("new"):
+            result, _, stderr = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual((result, stderr), (1, f"crew: {self.directory}: held by new\n"))
+
+    def test_notes_create_no_directory(self):
+        result, _, stderr = self.invoke("attach", "--manager", "fresh")
+        self.assertEqual(result, 1)
+        self.assertIn("no holder is active; handled N=0 GEN=0", stderr)
+        self.assertIn(f"{LEASE_FREE} attach --manager fresh", stderr)
+        self.assertFalse(Path(self.agent_pm, "managers", "fresh").exists())
+
+    def test_unreadable_roster_prints_error_without_notes(self):
+        with mock.patch.object(Roster, "lease_state", side_effect=RosterError("unreadable")):
+            result, stdout, stderr = self.invoke("attach", "--manager", "mgr")
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual(
+            stderr,
+            f"crew: {self.directory}: stale holder generation; start a new manager holder\n",
+        )
 
 
 URL = "https://github.com/o/r/pull/7"

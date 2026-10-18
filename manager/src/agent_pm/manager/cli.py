@@ -11,8 +11,12 @@ from pathlib import Path
 
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
-from agent_pm.manager.engine.types import Lease, StatusError
+from agent_pm.manager.engine.types import Lease, StaleHolder, StatusError
 from agent_pm.utils import STATE, LayerCommand, nested_start, printable
+
+CLIENT_RESUME = (("claude", "--continue"), ("codex", "resume", "--last"))
+LEASE_FREE = ("env", "-u", "AGENT_PM_HOLDER_ID", "-u", "AGENT_PM_HOLDER_GENERATION")
+ENDED = "this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an ended holder"
 
 
 def _number(value: str) -> int:
@@ -47,8 +51,61 @@ def _roster(args) -> Roster:
     return Roster(str(directory))
 
 
-def _named(manager: str) -> tuple[str, ...]:
-    return (f"--manager={manager}",) if manager.startswith("-") else ("--manager", manager)
+def _named(manager: str, option: str = "--manager") -> tuple[str, ...]:
+    return (f"{option}={manager}",) if manager.startswith("-") else (option, manager)
+
+
+def _stale_holder_notes(args, reader: tuple[int, int] | None = None) -> list[str]:
+    """Recovery for a pair whose holder ended; reader: the failed next-event's line and GEN."""
+    roster = _roster(args)
+    cursor, generation, holder = roster.lease_state()
+    manager = os.path.basename(roster.directory)
+    named = _named(manager)
+    state = f"handled N={cursor} GEN={generation}"
+
+    def restart(*force: str) -> str:
+        hold = ("agent-pm-crew", "hold", *force, *named, *_named(manager, "--session"), "--")
+        client, *others = CLIENT_RESUME
+        alternatives = "; ".join(shlex.join(argv) for argv in others)
+        return f"{shlex.join((*hold, *client))} (or: {alternatives})"
+
+    def lease_free(*words: str) -> str:
+        return shlex.join((*LEASE_FREE, "agent-pm-crew", *words))
+
+    if holder is not None:
+        return [
+            f"{ENDED}; {holder} holds manager {manager} now; {state}",
+            f"use {holder}'s commander; take over only on purpose: {restart('--force')}",
+        ]
+    if reader is not None and reader[0] > cursor and reader[1] == generation:
+        through = str(reader[0])
+        ack = f"handled through {through}? first: "
+        ack += f"{lease_free('ack', *named, '--through', through, '--gen', str(generation))}"
+        ack += ", then attach"
+    else:
+        ack = f"handled events after N={cursor}? first: {lease_free('ack', *named, '--through')}"
+        ack += f" <line> --gen {generation}, then attach; unacknowledged events replay"
+    monitor = ("--after", str(cursor), "--gen", str(generation), "--content", "--follow")
+    return [
+        f"{ENDED}; no holder is active; {state}",
+        "lasting fix: restart the commander's client under a new holder, then attach and arm its"
+        f" monitor: command: {restart()}",
+        ack,
+        "until then, attach without a lease, keeping the prefix on the commands it prints:"
+        f" {lease_free('attach', *named)}",
+        f"and monitor: {lease_free('next-event', *named, *monitor)}",
+    ]
+
+
+def _add_recovery(error: StaleHolder, args, reader: tuple[int, int] | None = None) -> None:
+    if any(note.startswith(ENDED) for note in getattr(error, "__notes__", ())):
+        return
+    try:
+        notes = _stale_holder_notes(args, reader)
+    except (OSError, RosterError, ValueError):
+        return
+    for note in notes:
+        error.add_note(note)
 
 
 def _crew(args) -> Crew:
@@ -146,6 +203,8 @@ def _resume(args) -> int:
             record = crew.resume(name, input=args.input)
             if record is not None:
                 print(record.to_line())
+        except StaleHolder:
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             _report_error(error)
             failed = max(failed, 2 if isinstance(error, ValueError) else 1)
@@ -188,15 +247,19 @@ def _release(args) -> int:
 def _next_event(args) -> int:
     crew = _crew(args)
     after = args.after
-    while True:
-        after, event = crew.next_event(after=after, gen=args.gen)
-        block = f"{after} {event}\n"
-        if args.content:
-            block += crew.event_content(event)
-        # One write per event: Monitor groups lines written within 200 ms into one notification.
-        print(block, end="", flush=True)
-        if not args.follow:
-            return 0
+    try:
+        while True:
+            after, event = crew.next_event(after=after, gen=args.gen)
+            block = f"{after} {event}\n"
+            if args.content:
+                block += crew.event_content(event)
+            # One write per event: Monitor groups lines written within 200 ms into one notification.
+            print(block, end="", flush=True)
+            if not args.follow:
+                return 0
+    except StaleHolder as error:
+        _add_recovery(error, args, None if after is None else (after, args.gen))
+        raise
 
 
 def _pending(args) -> int:
@@ -723,6 +786,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         _report_error(error)
         return 2
+    except StaleHolder as error:
+        _add_recovery(error, args)
+        _report_error(error)
+        return 1
     except (OSError, RosterError, RuntimeError) as error:
         _report_error(error)
         return 1
