@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from typing import ClassVar
+from collections.abc import Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager
+from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
     ClientHome,
@@ -31,11 +33,15 @@ from agent_pm.utils import (
     CLASS_PATH,
     CONFIG_NAME,
     STATE,
+    STOP_WAIT,
     Display,
     Record,
     Status,
     append_line,
+    kill_group,
+    piped_popen,
     printable_abs,
+    resume_command,
     thaw,
 )
 
@@ -153,6 +159,50 @@ class Interactive(ABC):
 class InteractiveProcess(Process, Interactive): ...
 
 
+class Lines(Iterable[str], AbstractContextManager[object], Protocol): ...
+
+
+class Piped(ABC):
+    """wait: exit code or None, no side effect; stop (ended: pipes at EOF), then close: frees once
+    what its Host holds."""
+
+    stdout: Lines
+    stderr: Lines
+
+    @abstractmethod
+    def wait(self, timeout: float) -> int | None: ...
+
+    @abstractmethod
+    def stop(self, *, ended: bool) -> None: ...
+
+    def close(self) -> None:
+        return None
+
+
+class LocalPiped(Piped):
+    stop_wait = STOP_WAIT
+
+    def __init__(self, proc: subprocess.Popen) -> None:
+        out, err = proc.stdout, proc.stderr
+        assert out is not None and err is not None
+        self.proc, self.stdout, self.stderr = proc, out, err
+
+    def wait(self, timeout: float) -> int | None:
+        try:
+            return self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+
+    def stop(self, *, ended: bool) -> None:
+        kill_group(self.proc, ended=ended, wait=self.stop_wait)
+        self.close()
+
+
+def host_resume(host: Host, name: str | None, cwd: str) -> str | None:
+    argv = None if name is None else host._resume_argv(name)
+    return resume_command(cwd, {}, argv) if argv else None
+
+
 def check_sid(name: str, process: Process | None, sid: str | None) -> None:
     if sid is not None:
         actual = None if process is None else process.session_identity()[0]
@@ -224,6 +274,12 @@ class Host(ABC):
     ) -> InteractiveProcess:
         """metadata carries private sid/client/generation separately from the published Record."""
         ...
+
+    def pipe(
+        self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
+    ) -> Piped:
+        """A headless client on pipes, run here."""
+        return LocalPiped(piped_popen(launch.argv, env=dict(launch.env), cwd=launch.cwd))
 
     @abstractmethod
     def attach(self, name: str) -> Process: ...

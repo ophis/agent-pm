@@ -9,6 +9,7 @@ import re
 import stat
 import sys
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from types import MappingProxyType
 
 from agent_pm.session.clients import common
@@ -278,6 +279,9 @@ class ClaudeCommon:
             or os.environ.get("CLAUDE_CONFIG_DIR")
             or os.path.expanduser("~/.claude")
         )
+
+    def home(self) -> ClientHome:
+        return replace(HOME, files=self.home_files())
 
     def home_files(self) -> tuple[tuple[str, str], ...]:
         """A container home's settings.json: only the host settings' MODEL_KEYS, so a worker runs

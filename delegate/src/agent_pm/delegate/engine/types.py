@@ -174,7 +174,7 @@ class Plan:
 
 @dataclass(frozen=True)
 class Preview:
-    """A construction's plan and placement; agent None outside tui mode."""
+    """A construction's plan and placement; agent None: unnamed."""
 
     plan: Plan
     agent: str | None

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+from unittest import mock
 
 from agent_pm.delegate.composer.base import TEAM
 
@@ -111,6 +112,11 @@ class Base(Case):
         self.dir = tmp.name
         self.wt = os.path.join(self.dir, "o", "n-TASK-1-x")
         self.none = os.devnull
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("AGENT_PM_USERS", "AGENT_PM_PR_AUTHOR"):
+            os.environ.pop(name, None)
 
     def existing(self, url=URL):
         os.makedirs(os.path.join(self.wt, ".git"), exist_ok=True)

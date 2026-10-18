@@ -289,6 +289,80 @@ class Status(Base):
             self.assertEqual((code, [e["body"] for e in r["user"]]), (0, ["from the bot"]), r)
             self.assertEqual([e["body"] for e in r["others"]], ["do Y"])
 
+    def test_the_pr_author_and_users_from_the_environment_replace_the_gh_login(self):
+        comments = [
+            [
+                {
+                    "created_at": f"2026-10-03T0{i}:00:00Z",
+                    "user": {"login": login},
+                    "body": login,
+                }
+                for i, login in enumerate(
+                    ("agent-pm-bot[bot]", "Alice", "me", "bob", "helper[bot]")
+                )
+            ]
+        ]
+        bot = {**pr(), "author": {"is_bot": True, "login": "app/agent-pm-bot"}}
+        for users, want in (
+            ('["alice", "helper[bot]", "agent-pm-bot[bot]"]', ["Alice"]),
+            ("[]", []),
+        ):
+            env = {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]", "AGENT_PM_USERS": users}
+            with self.subTest(users=users), unittest.mock.patch.dict(os.environ, env):
+                code, r, run = self.status(
+                    pr_list([{**pr(), "number": 9, "url": "u9"}, bot]),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                    NO_FEEDBACK,
+                    config=self.config('users = ["bob"]\n'),
+                )
+                self.assertEqual((code, r["pr"]["number"]), (0, 7), r)
+                self.assertEqual([e["body"] for e in r["user"]], want)
+                self.assertEqual(
+                    [e["body"] for e in r["others"]],
+                    [c["body"] for c in comments[0] if c["body"] not in want],
+                )
+                self.assertFalse(run.ran("gh", "api", "--hostname", "github.com", "user"))
+
+    def test_without_a_pr_the_app_reads_the_default_branch_without_permissions(self):
+        with unittest.mock.patch.dict(os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}):
+            code, r, _ = self.status(
+                pr_list([]), ([*REPO_API], ok(json.dumps({"default_branch": "trunk"})))
+            )
+        self.assertEqual((code, r["pr"], r["base"]), (0, None, "trunk"), r)
+
+    def test_users_from_the_environment_replace_the_configured_ones_on_the_host(self):
+        comments = [
+            [
+                {"created_at": "2026-10-03T00:00:00Z", "user": {"login": "bob"}, "body": "bob"},
+                {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "alice"}, "body": "alice"},
+            ]
+        ]
+        with unittest.mock.patch.dict(os.environ, {"AGENT_PM_USERS": '["alice"]'}):
+            code, r, run = self.status(
+                pr_list([pr()]),
+                (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                NO_FEEDBACK,
+                config=self.config('users = ["bob"]\n'),
+            )
+        self.assertEqual((code, r["pr"]["number"]), (0, 7), r)
+        self.assertEqual([e["body"] for e in r["user"]], ["alice"])
+        self.assertEqual([e["body"] for e in r["others"]], ["bob"])
+        self.assertTrue(run.ran("gh", "api", "--hostname", "github.com", "user"))
+
+    def test_an_invalid_agent_pm_users_is_reported_before_the_repo_is_read(self):
+        for value in ("[1]", "{}", '"me"', "not json", ""):
+            with (
+                self.subTest(value=value),
+                unittest.mock.patch.dict(os.environ, {"AGENT_PM_USERS": value}),
+            ):
+                run = Fake([])
+                code, out, err = self.main(
+                    ["status", "--dir", self.dir, "--branch", "b", "not a repo"], run
+                )
+                self.assertEqual((code, out), (1, ""))
+                self.assertEqual(err, "repo.py: AGENT_PM_USERS: want a JSON array of strings\n")
+                self.assertEqual(run.calls, [])
+
     def test_other_branches_plan_docs_and_no_pr(self):
         self.plan_doc(branch="other")
         self.assertEqual(
@@ -620,6 +694,23 @@ class Worktree(Base):
         (code, out, _), run = self.worktree(info(push=False))
         self.assertEqual((code, json.loads(out)["push"]), (0, False))
         self.assertTrue(run.ran("gh", "repo", "clone"))
+
+    def test_the_app_can_push_where_the_repo_names_no_push_permission(self):
+        for data in ({"default_branch": "main"}, {"permissions": {}, "default_branch": "main"}):
+            with self.subTest(data=data):
+                (code, out, err), _ = self.worktree(([*REPO_API], ok(json.dumps(data))))
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn("gh api repos/o/n", err)
+                with unittest.mock.patch.dict(
+                    os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}
+                ):
+                    (code, out, err), run = self.worktree(([*REPO_API], ok(json.dumps(data))))
+                self.assertEqual((code, json.loads(out)["push"]), (0, True), err)
+                self.assertTrue(run.ran("gh", "repo", "clone"))
+                shutil.rmtree(self.wt)
+        with unittest.mock.patch.dict(os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}):
+            (code, out, _), _ = self.worktree(info(push=False))
+        self.assertEqual((code, json.loads(out)["push"]), (0, False))
 
     def test_reuse_fetches_and_switches_to_the_local_branch(self):
         (code, _, _), run = self.worktree(

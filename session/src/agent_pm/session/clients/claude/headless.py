@@ -35,6 +35,9 @@ class ClaudeHeadless(JsonHeadless):
             env=common.ENV,
         )
 
+    def _home(self):
+        return self.common.home()
+
     def commit(self):
         if self.spec is not None:
             self.common.save(self.spec)

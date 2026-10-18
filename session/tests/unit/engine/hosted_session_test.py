@@ -870,7 +870,7 @@ class EventsOverAModeTest(Case):
         self.mode = StubMode(self.clock, script, code)
         return self.configured(
             "fake",
-            Mode.TUI,
+            kwargs.pop("mode", Mode.TUI),
             Spec(
                 workdir=self.dir,
                 access=Access(cwd=self.dir),
@@ -921,17 +921,24 @@ class EventsOverAModeTest(Case):
         resolver.side_effect = OSError("metadata unavailable")
         self.assertEqual(session.info(), previous)
 
-    def test_late_metadata_keeps_a_hosts_resume_command(self):
-        client = fake_client.FakeClient({})
-        client.session_metadata = lambda info: dataclasses.replace(info, resume="resume n1")
-        session = self.session((0, [ClientBound("n1")], True), client=client, name="w1")
-        RunLog(self.dir).note("session", sid="s1", cwd=self.dir, project=False)
-        argv = ("agent-pm-session", "resume", "w1")
-        wanted = f"cd {shlex.quote(self.dir)} && agent-pm-session resume w1"
-        with mock.patch.object(session._host, "_resume_argv", return_value=argv):
-            self.assertEqual(self.events(session), [Exited(0)])
-            self.assertEqual(session.info().resume, wanted)
-        self.assertEqual(RunLog(self.dir).session("s1").resume, wanted)
+    def test_late_metadata_keeps_a_hosts_resume_command_in_a_named_tui_or_headless_run(self):
+        tmp = self.dir
+        for mode in (Mode.TUI, Mode.HEADLESS):
+            with self.subTest(mode=mode):
+                self.dir = os.path.join(tmp, mode)
+                os.mkdir(self.dir)
+                client = fake_client.FakeClient({})
+                client.session_metadata = lambda info: dataclasses.replace(info, resume="resume n1")
+                session = self.session(
+                    (0, [ClientBound("n1")], True), client=client, name="w1", mode=mode
+                )
+                RunLog(self.dir).note("session", sid="s1", cwd=self.dir, project=False)
+                argv = ("agent-pm-session", "resume", "w1")
+                wanted = f"cd {shlex.quote(self.dir)} && agent-pm-session resume w1"
+                with mock.patch.object(session._host, "_resume_argv", return_value=argv):
+                    self.assertEqual(self.events(session), [Exited(0)])
+                    self.assertEqual(session.info().resume, wanted)
+                self.assertEqual(RunLog(self.dir).session("s1").resume, wanted)
 
     def test_binding_record_failure_remains_fatal(self):
         client = fake_client.FakeClient({})

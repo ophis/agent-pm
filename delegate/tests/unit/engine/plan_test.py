@@ -605,8 +605,16 @@ class Docker(Base):
     def planned(self, *args, **kw):
         return super().planned(*args, **{"mode": "tui", **kw})
 
-    def test_a_headless_run_is_planned_as_on_this_machine(self):
-        got, _ = self.planned(mode="headless", input="Reference: T\nRepo: a/b\nRepo: c/d\n\nX")
+    def test_a_headless_run_gets_the_docker_rules_and_an_in_process_one_none(self):
+        got, _ = self.planned(mode="headless", out=None)
+        self.assertTrue(got.docker)
+        self.assertEqual(got.session.env["AGENT_PM_USERS"], "[]")
+        self.assertIn("\n- `<tasks>`: `/opt/agent-pm/team/tasks`\n", got.prompt)
+        self.assertEqual(got.session.access.cwd, self.layout.agent)
+        two = "Reference: T\nRepo: a/b\nRepo: c/d\n\nX"
+        self.assertIn("Repo:", self.refused(mode="headless", input=two))
+        self.assertIn("read", self.refused(mode="headless", keys={"read": ["~/x"]}, out=None))
+        got, _ = self.planned(mode="in_process", input=two)
         self.assertEqual((got.docker, got.repo), (False, None))
         self.assertIn(f"- `<tasks>`: `{TASKS}`", got.prompt)
         self.assertNotIn("AGENT_PM_USERS", got.session.env)

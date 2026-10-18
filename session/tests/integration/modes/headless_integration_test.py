@@ -245,15 +245,17 @@ class Stop(Base):
                 self.begin((sys.executable, "-I", "-c", SLEEPER))
                 with mock.patch("os.killpg", side_effect=error) as killpg:
                     self.promptly(self.mode.stop)
-                killpg.assert_called_once_with(self.mode.proc.pid, signal.SIGKILL)
+                killpg.assert_called_once_with(self.mode.piped.proc.pid, signal.SIGKILL)
                 self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
 
     def test_waits_at_most_stop_wait_and_ignores_a_vanished_process(self):
         self.begin((sys.executable, "-I", "-c", SLEEPER))
-        self.mode.stop_wait = 0.3
+        self.mode.piped.stop_wait = 0.3
         with (
             mock.patch("os.killpg", side_effect=ProcessLookupError),
-            mock.patch.object(self.mode.proc, "kill", side_effect=ProcessLookupError) as killed,
+            mock.patch.object(
+                self.mode.piped.proc, "kill", side_effect=ProcessLookupError
+            ) as killed,
         ):
             began = time.monotonic()
             self.promptly(self.mode.stop)

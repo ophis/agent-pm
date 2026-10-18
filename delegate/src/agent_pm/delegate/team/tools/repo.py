@@ -14,6 +14,11 @@ gh login) and by anyone else since B's latest own commit (no merge; not on origi
 before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in
 <worktree>/.autopilot/ {"path", "phase"}, phase `S<n>` or `done`, newest (last modified) last.
 
+AGENT_PM_USERS, a JSON array of strings, replaces `users`. AGENT_PM_PR_AUTHOR (a Docker session's
+App bot, e.g. agent-pm-bot[bot]) replaces the gh login as B's PR author; `user` then holds only
+`users` other than it and any [bot], never the gh login; and a repo whose data has no
+permissions.push counts as pushable (the App can write wherever it can read).
+
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
 dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
@@ -76,7 +81,7 @@ def gh_json(run: Runner, argv: list[str]):
         raise RepoCommandError(f"gh {' '.join(argv)[:100]}: {e}") from None
 
 
-def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
+def info(repo: Repo, *, run: Runner, app: bool = False) -> tuple[bool, str]:
     res = run(["gh", "api", "--hostname", repo.host, f"repos/{repo.owner}/{repo.name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
@@ -85,6 +90,8 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         raise RepoCommandError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
+        if app and isinstance(data, dict) and "push" not in (data.get("permissions") or {}):
+            data = {**data, "permissions": {"push": True}}
         push, default = data["permissions"]["push"], data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
         raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
@@ -166,6 +173,7 @@ def worktree(
     temp=None,
     links=frozenset(),
     base_branch: str | None = None,
+    author: str | None = None,
 ) -> dict:
     # A local clone in a temp dir is refused: prune treats clones there as untrusted.
     check_branch(branch)
@@ -191,7 +199,7 @@ def worktree(
                     f"{wt} has core.symlinks={found or 'unset'}, trusted_dirs gives {symlinks}: "
                     "remove it and run again"
                 )
-    push, default = info(repo, run=run)
+    push, default = info(repo, run=run, app=author is not None)
     if not isinstance(default, str) or not BRANCH.fullmatch(default):
         raise Invalid(f"{repo.slug}: unsafe default branch name")
     if branch == default:
@@ -299,6 +307,7 @@ def status(
     base_branch: str | None = None,
     run: Runner = sh,
     users: list[str] | None = None,
+    author: str | None = None,
 ) -> dict:
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -306,14 +315,19 @@ def status(
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
-    account = gh_json(run, ["api", "--hostname", repo.host, "user"])
-    if (
-        not isinstance(account, dict)
-        or not isinstance(account.get("login"), str)
-        or not account["login"]
-    ):
-        raise RepoCommandError("gh api user: expected a login")
-    login = account["login"]
+    if author is None:
+        account = gh_json(run, ["api", "--hostname", repo.host, "user"])
+        if (
+            not isinstance(account, dict)
+            or not isinstance(account.get("login"), str)
+            or not account["login"]
+        ):
+            raise RepoCommandError("gh api user: expected a login")
+        login = account["login"]
+    else:
+        login = author
+    # gh names a bot author app/<slug>; the REST API, as AGENT_PM_PR_AUTHOR does, <slug>[bot]
+    by = f"app/{login.removesuffix('[bot]')}" if login.endswith("[bot]") else login
     rows = gh_json(
         run,
         [
@@ -333,10 +347,12 @@ def status(
     )
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise RepoCommandError("gh pr list: expected pull request objects")
-    mine = [
-        r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login
-    ]
-    by_user = {u.lower() for u in users} if users else {login.lower()}
+    mine = [r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == by]
+    if author is not None:
+        named = {u.lower() for u in users or ()}
+        by_user = {u for u in named if not u.endswith("[bot]")} - {login.lower()}
+    else:
+        by_user = {u.lower() for u in users} if users else {login.lower()}
     pr = (
         {k: mine[0].get(k) for k in ("number", "url", "state", "baseRefName", "isDraft")}
         if mine
@@ -347,7 +363,7 @@ def status(
         if pr
         else base_branch
         if base_branch is not None
-        else info(repo, run=run)[1]
+        else info(repo, run=run, app=author is not None)[1]
     )
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
@@ -444,6 +460,14 @@ def main(
         users = cfg.get("users", [])
         if not isinstance(users, list) or any(not isinstance(user, str) for user in users):
             raise ValueError("users: want a list of strings")
+        if (given := os.environ.get("AGENT_PM_USERS")) is not None:
+            try:
+                users = json.loads(given)
+            except ValueError:
+                users = None
+            if not isinstance(users, list) or any(not isinstance(user, str) for user in users):
+                raise ValueError("AGENT_PM_USERS: want a JSON array of strings")
+        author = os.environ.get("AGENT_PM_PR_AUTHOR") or None
         links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
     except (ValueError, OSError) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
@@ -459,6 +483,7 @@ def main(
                 run=run,
                 temp=temp,
                 links=links,
+                author=author,
             )
         else:
             r = status(
@@ -469,6 +494,7 @@ def main(
                 base_branch=a.base,
                 run=run,
                 users=users,
+                author=author,
             )
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")

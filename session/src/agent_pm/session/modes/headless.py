@@ -1,18 +1,19 @@
-"""The headless mode: a Headless's command on pipes, leading its own process group; two daemon
-threads pump its events and Stderr lines into one queue, and the session ends at both pipes' EOF.
-stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is bounded.
+"""The headless mode: a Headless's command on pipes, started by its Host (Host.pipe); two daemon
+threads pump its events and Stderr lines into one bounded queue, and the session ends at both
+pipes' EOF. stop() ends its Piped, whose local one kills the whole group, so a grandchild holding
+the pipes dies too; every wait is bounded.
 """
 
 import queue
-import subprocess
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Self
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
+    Launch,
     Liveness,
     Mode,
     Prepared,
@@ -22,20 +23,25 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.base import Host, Piped
 from agent_pm.session.modes.base import BaseMode, identity_drop
 from agent_pm.session.modes.client_adapters.headless import Headless
-from agent_pm.utils import STOP_WAIT, Display, kill_group
+from agent_pm.session.modes.tui import checked_name
+from agent_pm.utils import Display
+
+QUEUE_MAX = 64  # events and Stderr lines a pump queues before it waits for poll
+PUT_WAIT = 0.5
 
 
 class HeadlessMode(BaseMode):
     kind = Mode.HEADLESS
-    stop_wait = STOP_WAIT
 
-    def __init__(self, prepared: Prepared, proc: subprocess.Popen):
+    def __init__(self, prepared: Prepared, piped: Piped):
         super().__init__(prepared)
-        self.proc, self.items, self.open = proc, queue.Queue(), 2
+        self.piped, self.items, self.open = piped, queue.Queue(QUEUE_MAX), 2
         self.eof = (threading.Event(), threading.Event())
+        self.done = (threading.Event(), threading.Event())
+        self.closed, self.stopped = False, threading.Event()
 
     @classmethod
     def preflight(
@@ -47,7 +53,12 @@ class HeadlessMode(BaseMode):
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        return cls._prepare(spec, client, registry=registry, display=display)[0]
+        prepared, _, metadata = cls._prepare(
+            spec, client, registry=registry, host=host, display=display
+        )
+        if metadata is not None:
+            host.validate(prepared.spec.name or "", _launch(prepared))
+        return prepared
 
     @classmethod
     def _prepare(
@@ -56,16 +67,24 @@ class HeadlessMode(BaseMode):
         client: Client,
         *,
         registry: Registry,
+        host: Host,
         display: Display,
-    ) -> tuple[Prepared, Headless]:
+    ) -> tuple[Prepared, Headless, Mapping[str, str] | None]:
+        """metadata: a named run's, for its Host; None: a nameless run, as before Hosts piped."""
         run = client.headless()
         if run is None:
             raise cls._unsupported(spec)
-        cls._no_tui_keys(spec, display)
+        cls._no_tui_keys(spec, display, named=True)
         cls._selected(spec, client)
         drop = identity_drop(registry)
+        name, metadata = spec.name, None
+        if name is not None:
+            spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name))
         spec = cls._noted(spec, client)
-        return cls._launched(spec, run.launch, drop), run
+        prepared = cls._launched(spec, run.launch, drop, inherit=host._inherit_env)
+        if name is not None:
+            prepared = cls._host_resume(prepared, host, name)
+        return prepared, run, metadata
 
     @classmethod
     def start(
@@ -79,51 +98,60 @@ class HeadlessMode(BaseMode):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        prepared, run = cls._prepare(spec, client, registry=registry, display=display)
+        prepared, run, metadata = cls._prepare(
+            spec, client, registry=registry, host=host, display=display
+        )
         run.commit()
         record(prepared.info)
         try:
-            proc = subprocess.Popen(
-                prepared.argv,
-                cwd=prepared.info.cwd,
-                env=dict(prepared.env),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                process_group=0,
-            )
-            mode = cls(prepared, proc)
-            out, err = proc.stdout, proc.stderr
-            assert out is not None and err is not None
-            for pipe, events, eof in (
-                (out, run.events(out), mode.eof[0]),
-                (err, (Stderr(line.rstrip("\n")) for line in err), mode.eof[1]),
+            piped = host.pipe(prepared.spec.name, _launch(prepared), metadata=metadata)
+            mode = cls(prepared, piped)
+            out, err = piped.stdout, piped.stderr
+            for pipe, events, eof, done in (
+                (out, run.events(out), mode.eof[0], mode.done[0]),
+                (err, (Stderr(line.rstrip("\n")) for line in err), mode.eof[1], mode.done[1]),
             ):
-                threading.Thread(target=mode._pump, args=(pipe, events, eof), daemon=True).start()
+                threading.Thread(
+                    target=mode._pump, args=(pipe, events, eof, done), daemon=True
+                ).start()
         except (OSError, ValueError) as e:
             raise SessionError(f"cannot start {prepared.argv[0]}: {e}") from e
         return mode
 
     def _pump(
-        self, pipe, events: Iterable[SessionEvent | Stderr | ClientBound], eof: threading.Event
+        self,
+        pipe,
+        events: Iterable[SessionEvent | Stderr | ClientBound],
+        eof: threading.Event,
+        done: threading.Event,
     ) -> None:
         try:
             with pipe:
                 for event in events:
-                    self.items.put(event)
+                    self._put(event)
         except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
-            self.items.put(e)
+            self._put(e)
         else:
             eof.set()
-            self.items.put(None)
+            self._put(None)
+        finally:
+            done.set()
+
+    def _put(self, item) -> None:
+        """On a full queue, waits until stop()."""
+        while True:
+            try:
+                return self.items.put(item, timeout=PUT_WAIT)
+            except queue.Full:
+                if self.stopped.is_set():
+                    return
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
+        ended = self.stopped.is_set() and all(done.is_set() for done in self.done)
         try:
             item = self.items.get(timeout=timeout)
-        except queue.Empty:
-            return [], False
+        except queue.Empty:  # ended read first: a last item may land meanwhile
+            return [], ended
         if isinstance(item, BaseException):
             raise item
         if item is None:
@@ -132,13 +160,14 @@ class HeadlessMode(BaseMode):
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
-        try:
-            return self.proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return None
+        code = self.piped.wait(timeout)
+        if code is not None and not self.closed:
+            self.closed = True
+            self.piped.close()
+        return code
 
     def state(self) -> Liveness:
-        return Liveness.LIVE if self.proc.poll() is None else Liveness.ABSENT
+        return Liveness.LIVE if self.piped.wait(0) is None else Liveness.ABSENT
 
     def send(self, text: str) -> None:
         raise SessionError("send: tui mode only")
@@ -147,4 +176,11 @@ class HeadlessMode(BaseMode):
         raise SessionError("screen: tui mode only")
 
     def stop(self) -> None:
-        kill_group(self.proc, ended=all(eof.is_set() for eof in self.eof), wait=self.stop_wait)
+        self.closed = True
+        self.stopped.set()
+        self.piped.stop(ended=all(eof.is_set() for eof in self.eof))
+
+
+def _launch(prepared: Prepared) -> Launch:
+    info = prepared.info
+    return Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)
