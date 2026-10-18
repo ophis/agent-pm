@@ -135,7 +135,8 @@ class LauncherTest(Case):
         self.assertTrue(child.killed)
 
     def test_the_watch_spares_a_run_bound_while_its_lock_wait_times_out(self):
-        waits, expiry = [], threading.Thread(target=lambda: Timers.made[0].function())
+        waits, bound = [], threading.Event()
+        expiry = threading.Thread(target=lambda: Timers.made[0].function())
 
         class Gate:
             """The watch's lock, noting each timed wait and keeping it short."""
@@ -151,6 +152,7 @@ class LauncherTest(Case):
 
             def acquire(self, **kwargs):
                 self.waiting.set()
+                bound.wait(5)  # the line binds before this wait times out
                 waits.append((kwargs, self.lock.acquire(timeout=0.01)))
                 return waits[-1][1]
 
@@ -170,6 +172,7 @@ class LauncherTest(Case):
 
         class Stuck(io.BytesIO):
             def write(self, data):
+                bound.set()
                 expiry.join(5)  # holds the lock until the wait times out
                 return super().write(data)
 
