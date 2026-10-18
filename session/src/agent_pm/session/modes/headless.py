@@ -40,6 +40,7 @@ class HeadlessMode(BaseMode):
         super().__init__(prepared)
         self.piped, self.items, self.open = piped, queue.Queue(QUEUE_MAX), 2
         self.eof = (threading.Event(), threading.Event())
+        self.done = (threading.Event(), threading.Event())
         self.closed, self.stopped = False, threading.Event()
 
     @classmethod
@@ -106,17 +107,23 @@ class HeadlessMode(BaseMode):
             piped = host.pipe(prepared.spec.name, _launch(prepared), metadata=metadata)
             mode = cls(prepared, piped)
             out, err = piped.stdout, piped.stderr
-            for pipe, events, eof in (
-                (out, run.events(out), mode.eof[0]),
-                (err, (Stderr(line.rstrip("\n")) for line in err), mode.eof[1]),
+            for pipe, events, eof, done in (
+                (out, run.events(out), mode.eof[0], mode.done[0]),
+                (err, (Stderr(line.rstrip("\n")) for line in err), mode.eof[1], mode.done[1]),
             ):
-                threading.Thread(target=mode._pump, args=(pipe, events, eof), daemon=True).start()
+                threading.Thread(
+                    target=mode._pump, args=(pipe, events, eof, done), daemon=True
+                ).start()
         except (OSError, ValueError) as e:
             raise SessionError(f"cannot start {prepared.argv[0]}: {e}") from e
         return mode
 
     def _pump(
-        self, pipe, events: Iterable[SessionEvent | Stderr | ClientBound], eof: threading.Event
+        self,
+        pipe,
+        events: Iterable[SessionEvent | Stderr | ClientBound],
+        eof: threading.Event,
+        done: threading.Event,
     ) -> None:
         try:
             with pipe:
@@ -127,9 +134,11 @@ class HeadlessMode(BaseMode):
         else:
             eof.set()
             self._put(None)
+        finally:
+            done.set()
 
     def _put(self, item) -> None:
-        """Waits for poll, but only until stop() once the queue is full."""
+        """Waits for poll, but only until stop() once the queue is full: poll then ends on done."""
         while True:
             try:
                 return self.items.put(item, timeout=PUT_WAIT)
@@ -141,7 +150,7 @@ class HeadlessMode(BaseMode):
         try:
             item = self.items.get(timeout=timeout)
         except queue.Empty:
-            return [], False
+            return [], self.stopped.is_set() and all(done.is_set() for done in self.done)
         if isinstance(item, BaseException):
             raise item
         if item is None:

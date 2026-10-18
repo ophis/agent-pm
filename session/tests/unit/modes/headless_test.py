@@ -27,7 +27,7 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.hosts.base import Piped
-from agent_pm.session.modes.headless import QUEUE_MAX, HeadlessMode
+from agent_pm.session.modes.headless import PUT_WAIT, QUEUE_MAX, HeadlessMode
 
 from session.tests.case import PLUGIN_BIN
 from session.tests.fakes.terminal import MemoryHost
@@ -413,6 +413,23 @@ class ThroughItsHost(Base):
         mode.stop()
         ends = [mode.poll(5)[1] for _ in range(2)]
         self.assertEqual(ends, [False, True])
+
+    def test_a_pump_that_drops_its_end_after_stop_still_ends_the_poll(self):
+        piped = FakePiped()
+        piped.stderr = io.StringIO("e\n" * (QUEUE_MAX + 2))
+        mode = self.start_on(PipingHost(piped))
+        deadline = time.monotonic() + 5
+        while not mode.items.full() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        mode.stop()
+        time.sleep(PUT_WAIT * 6)  # its last lines and its end dropped
+        pumps = [t for t in threading.enumerate() if t.name.endswith("(_pump)")]
+        self.assertEqual((mode.items.full(), pumps), (True, []))
+        ended = False
+        for _ in range(QUEUE_MAX + 4):
+            if ended := mode.poll(0.1)[1]:
+                break
+        self.assertTrue(ended)
 
     def test_the_event_queue_is_bounded_and_a_stop_frees_a_pump_waiting_on_it(self):
         piped = FakePiped()
