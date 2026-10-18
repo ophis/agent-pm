@@ -10,6 +10,7 @@ import base64
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import select
 import signal
@@ -33,6 +34,8 @@ POLL = 0.5
 LOG_MAX = 1 << 20
 REFRESH_AHEAD = 600
 REFRESH_RETRY = 60
+LOG = logging.getLogger("session")
+AUTH_EXPIRED = "Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login codex on the host, then resume"
 
 
 def _body(payload: str) -> dict | None:
@@ -164,13 +167,20 @@ class Supervisor:
             self.broker,
             stopped,
             failed=self._refresh_failed,
+            expired=self._auth_expired,
             clock=self.clock,
         )
 
     def _refresh_failed(self, reason: str) -> None:
         if self.events:
             with contextlib.suppress(OSError, ValueError):
-                SessionStatusLog(self.events).write(self.name, "github_refresh_failed", reason)
+                SessionStatusLog(self.events).write(
+                    self.name,
+                    "client_refresh_failed"
+                    if _recorded_client(self.state) == "codex"
+                    else "github_refresh_failed",
+                    reason,
+                )
 
     def expire(self, stopped) -> None:
         expire_client(
@@ -184,6 +194,7 @@ class Supervisor:
         )
 
     def _auth_expired(self, reason: str) -> None:
+        LOG.warning("docker session %s: client_auth_expired %s", self.name, reason)
         if self.events:
             with contextlib.suppress(OSError, ValueError):
                 SessionStatusLog(self.events).write(self.name, "client_auth_expired", reason)
@@ -211,6 +222,8 @@ def expire_client(
     failed: Callable[[str], None],
     clock: Callable[[], float] = time.time,
 ) -> None:
+    if _recorded_client(state) == "codex":
+        return
     data = read_regular(os.path.join(state, f"{generation}.credential.json"))
     if data is None:
         return
@@ -253,11 +266,17 @@ def refresh_tokens(
     stopped: threading.Event,
     *,
     failed: Callable[[str], None],
+    expired: Callable[[str], None] | None = None,
     clock: Callable[[], float] = time.time,
 ) -> None:
     """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
     list saved; a failure goes to `failed` and retries in REFRESH_RETRY s. No list: returns.
     """
+    if _recorded_client(state) == "codex":
+        _renew_client(
+            name, state, generation, broker, stopped, failed=failed, expired=expired, clock=clock
+        )
+        return
     path = os.path.join(state, f"{generation}.github.json")
     try:
         with open(path, encoding="utf-8") as f:
@@ -274,8 +293,57 @@ def refresh_tokens(
             delay = REFRESH_RETRY
             continue
         with contextlib.suppress(OSError):
-            save(path, json.dumps(found), durable=True)
-        delay = _delay(found, clock())
+            save(path, json.dumps(found.github), durable=True)
+        delay = _delay(found.github, clock())
+
+
+def _client_deadline(state: str, generation: str) -> float:
+    try:
+        value = json.loads(
+            read_regular(os.path.join(state, f"{generation}.credential.json")) or b""
+        )
+        if not isinstance(value, str):
+            return 0.0
+        return datetime.fromisoformat(value).timestamp()
+    except (ValueError, TypeError, OSError):
+        return 0.0
+
+
+def _renew_client(name, state, generation, broker, stopped, *, failed, expired, clock) -> None:
+    path = os.path.join(state, f"{generation}.github.json")
+
+    def delay():
+        client = _client_deadline(state, generation) - REFRESH_AHEAD - clock()
+        try:
+            github = _delay(json.loads(read_regular(path) or b"[]"), clock())
+        except (ValueError, KeyError, TypeError):
+            github = None
+        return max(0.0, min(client, github) if github is not None else client)
+
+    wait = delay()
+    while not stopped.wait(wait):
+        try:
+            found = broker.refresh(
+                f"agent-pm-{name}-{generation}", os.path.join(state, f"{generation}.json")
+            )
+            save(path, json.dumps(found.github), durable=True)
+        except (SessionError, OSError) as error:
+            failed(str(error))
+        remaining = _client_deadline(state, generation) - clock()
+        if remaining <= 0:
+            if expired is not None:
+                expired(AUTH_EXPIRED)
+            else:
+                LOG.warning("docker session %s: client_auth_expired %s", name, AUTH_EXPIRED)
+            while True:
+                try:
+                    broker.close(f"agent-pm-{name}-{generation}")
+                except SessionError:
+                    if stopped.wait(REFRESH_RETRY):
+                        return
+                else:
+                    return
+        wait = min(remaining, max(REFRESH_RETRY, delay()))
 
 
 def _delay(expiries: list, now: float) -> float | None:

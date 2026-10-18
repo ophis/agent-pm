@@ -1106,7 +1106,15 @@ class DockerHost(Host):
                 self.broker,
                 stopped,
                 failed=lambda reason: LOG.warning(
-                    "docker session %s: github_refresh_failed %s", name, reason
+                    "docker session %s: %s %s",
+                    name,
+                    "client_refresh_failed"
+                    if metadata.get("client") == "codex"
+                    else "github_refresh_failed",
+                    reason,
+                ),
+                expired=lambda reason: LOG.warning(
+                    "docker session %s: client_auth_expired %s", name, reason
                 ),
             ),
             expire=lambda stopped: run_supervisor.expire_client(
