@@ -538,5 +538,117 @@ class CleanupTest(Case):
         self.assertEqual(err.getvalue().count("cleanup: "), 3)
 
 
+class Proc:
+    """A fake Popen: running until `ends` polls have passed."""
+
+    def __init__(self, ends=None, returncode=3):
+        self.polls, self.ends, self.code = 0, ends, returncode
+        self.returncode = None
+
+    def poll(self):
+        self.polls += 1
+        if self.ends is not None and self.polls > self.ends:
+            self.returncode = self.code
+        return self.returncode
+
+
+class Broker:
+    """A fake Broker: raises `fails` SessionErrors, then refreshes."""
+
+    def __init__(self, fails):
+        self.fails, self.calls = fails, []
+
+    def refresh(self, container, manifest):
+        self.calls.append((container, manifest))
+        if self.fails:
+            self.fails -= 1
+            raise gate.SessionError("not yet")
+
+
+class RoleRunTest(Case):
+    def plan(self, session, generation):
+        folder = os.path.join(self.agent_pm, "docker-state", session)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, f"{generation}.plan.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+
+    def test_sessions(self):
+        run = gate.RoleRun("role", "/bin/docker")
+        self.assertEqual(run.sessions(), set())
+        self.plan("role", G1)
+        self.plan("role-drive", G2)
+        self.plan("roles", G2)
+        self.assertEqual(run.sessions(), {("role", G1), ("role-drive", G2)})
+
+    def test_generation_appears_after_polls(self):
+        run, polls = gate.RoleRun("role", "/bin/docker"), []
+
+        def sleep(_):
+            polls.append(1)
+            if len(polls) == 2:
+                self.plan("role", G1)
+
+        with mock.patch("time.sleep", sleep):
+            self.assertEqual(run.generation(set(), Proc()), ("role", G1))
+        self.assertEqual(len(polls), 2)
+
+    def test_generation_run_exits_first(self):
+        with mock.patch("time.sleep"), self.assertRaises(SystemExit) as raised:
+            gate.RoleRun("role", "/bin/docker").generation(set(), Proc(ends=1))
+        self.assertEqual(str(raised.exception), "the run exited 3 before its container started")
+
+    def test_two_new_generations(self):
+        self.plan("role", G1)
+        self.plan("role", G2)
+        with self.assertRaises(SystemExit) as raised:
+            gate.RoleRun("role", "/bin/docker").generation(set(), Proc())
+        self.assertEqual(str(raised.exception), "want one new role generation, got 2")
+
+    def test_running(self):
+        container = f"agent-pm-role-{G1}"
+        listings = iter([[], [container]])
+        fake = Docker()
+
+        def run(argv, **kwargs):
+            fake.listed = next(listings)
+            return fake(argv, **kwargs)
+
+        with mock.patch("subprocess.run", run), mock.patch("time.sleep") as sleep:
+            gate.RoleRun("role", "/bin/docker").running(container, Proc())
+        self.assertEqual(sleep.call_count, 1)
+        self.assertNotIn("--all", fake.calls[0])
+
+    def test_running_run_exits_first(self):
+        container = f"agent-pm-role-{G1}"
+        with (
+            mock.patch("subprocess.run", Docker()),
+            mock.patch("time.sleep"),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            gate.RoleRun("role", "/bin/docker").running(container, Proc(ends=0))
+        self.assertEqual(str(raised.exception), f"the run exited 3 before {container} ran")
+
+    def test_refresh_retries(self):
+        broker = Broker(fails=2)
+        with (
+            mock.patch("time.sleep") as sleep,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            gate.RoleRun("role", "/bin/docker", broker=broker).refresh("c", "m.json")
+        self.assertEqual(broker.calls, [("c", "m.json")] * 3)
+        self.assertEqual([c.args for c in sleep.call_args_list], [(10,), (10,)])
+        self.assertIn("PASS token refresh of c", out.getvalue())
+
+    def test_refresh_gives_up_after_the_wait(self):
+        clock = iter([0.0, 50.0, gate.REFRESH_WAIT + 1.0])
+        with (
+            mock.patch("time.sleep"),
+            mock.patch("time.monotonic", lambda: next(clock)),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            gate.RoleRun("role", "/bin/docker", broker=Broker(fails=99)).refresh("c", "m.json")
+        self.assertEqual(str(raised.exception), "FAIL token refresh of c: not yet")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -630,15 +630,52 @@ def pr_checks(url: str) -> tuple[dict, list[str]]:
     return view, events
 
 
-def role(args: Args) -> int:
-    docker, _ = docker_host()
-    root = os.path.dirname(state_dir(args.name))
+class RoleRun:
+    def __init__(self, name: str, docker: str, broker: Broker | None = None) -> None:
+        self.name, self.docker = name, docker
+        self.broker = Broker() if broker is None else broker
 
-    def sessions() -> set[tuple[str, str]]:
-        names = [n for n in os.listdir(root) if n == args.name or n.startswith(f"{args.name}-")]
+    def sessions(self) -> set[tuple[str, str]]:
+        """(session, generation) of the run's agent sessions: `name` and `name-*`."""
+        root = os.path.dirname(state_dir(self.name))
+        if not os.path.isdir(root):
+            return set()
+        names = [n for n in os.listdir(root) if n == self.name or n.startswith(f"{self.name}-")]
         return {(n, g) for n in names for g in generations(n)}
 
-    before = sessions() if os.path.isdir(root) else set()
+    def generation(self, before: set[tuple[str, str]], proc) -> tuple[str, str]:
+        while not (new := self.sessions() - before):
+            if proc.poll() is not None:
+                raise SystemExit(f"the run exited {proc.returncode} before its container started")
+            time.sleep(POLL)
+        if len(new) != 1:
+            raise SystemExit(f"want one new role generation, got {len(new)}")
+        (found,) = new
+        return found
+
+    def running(self, container: str, proc) -> None:
+        while container not in containers(self.docker, running=True):
+            if proc.poll() is not None:
+                raise SystemExit(f"the run exited {proc.returncode} before {container} ran")
+            time.sleep(POLL)
+
+    def refresh(self, container: str, manifest: str) -> None:
+        deadline = time.monotonic() + REFRESH_WAIT
+        while True:
+            try:
+                self.broker.refresh(container, manifest)
+                break
+            except SessionError as error:
+                if time.monotonic() > deadline:
+                    raise SystemExit(f"FAIL token refresh of {container}: {error}") from None
+                time.sleep(10)
+        print(f"PASS token refresh of {container}", flush=True)
+
+
+def role(args: Args) -> int:
+    docker, _ = docker_host()
+    tracked = RoleRun(args.name, docker)
+    before = tracked.sessions()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     text = ROLE_INPUT.format(repo=args.repo, stamp=stamp)
     workdir = os.path.expanduser(f"~/.agent-pm/work/{args.name}-{stamp}")
@@ -659,31 +696,10 @@ def role(args: Args) -> int:
             text=True,
         )
         try:
-            while not (new := (sessions() if os.path.isdir(root) else set()) - before):
-                if proc.poll() is not None:
-                    raise SystemExit(
-                        f"the run exited {proc.returncode} before its container started"
-                    )
-                time.sleep(POLL)
-            if len(new) != 1:
-                raise SystemExit(f"want one new role generation, got {len(new)}")
-            ((session, generation),) = new
+            session, generation = tracked.generation(before, proc)
             container = f"agent-pm-{session}-{generation}"
-            manifest = os.path.join(state_dir(session), f"{generation}.json")
-            while container not in containers(docker, running=True):
-                if proc.poll() is not None:
-                    raise SystemExit(f"the run exited {proc.returncode} before {container} ran")
-                time.sleep(POLL)
-            deadline = time.monotonic() + REFRESH_WAIT
-            while True:
-                try:
-                    Broker().refresh(container, manifest)
-                    break
-                except SessionError as error:
-                    if time.monotonic() > deadline:
-                        raise SystemExit(f"FAIL token refresh of {container}: {error}") from None
-                    time.sleep(10)
-            print(f"PASS token refresh of {container}", flush=True)
+            tracked.running(container, proc)
+            tracked.refresh(container, os.path.join(state_dir(session), f"{generation}.json"))
             try:
                 proc.wait(timeout=args.timeout)
             except subprocess.TimeoutExpired:
