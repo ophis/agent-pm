@@ -8,5 +8,6 @@
     "codex": "codex-cli 0.100.0"
   },
   "extra": true,
-  "github": []
+  "github": [],
+  "github_user_id": null
 }

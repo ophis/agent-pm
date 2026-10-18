@@ -186,6 +186,7 @@ class Base(Case):
             "sha256:" + "b" * 64,
             {},
             [],
+            github_user_id=None,
             credential_expires_at=None,
         )
         self.broker = FakeBroker(self.order, started)
@@ -884,6 +885,7 @@ class StartTest(Base):
             "sha256:" + "b" * 64,
             {"claude": "2.1.0"},
             [],
+            github_user_id=None,
             credential_expires_at=None,
         )
         result = os.path.join(self.state, f"{GEN}.result.json")

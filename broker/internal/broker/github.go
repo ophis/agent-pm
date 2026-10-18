@@ -283,6 +283,23 @@ func (g GitHub) Ready(app string) error {
 	return err
 }
 
+// BotUserID is app's bot user ID as login github saved it.
+func (g GitHub) BotUserID(app string) (int64, error) {
+	rerun := ": run agent-pm-broker login github " + app + "."
+	data, err := g.Keychain.Secret(usersService, app)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return 0, protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
+	case err != nil:
+		return 0, protocol.New(protocol.KeychainFailed, "Keychain access to the GitHub bot user ID failed"+rerun)
+	}
+	id, err := strconv.ParseInt(string(data), 10, 64)
+	if err != nil || !appID.Match(data) {
+		return 0, protocol.New(protocol.LoginRequired, "No GitHub bot user ID for "+app+rerun)
+	}
+	return id, nil
+}
+
 func (g GitHub) appID(app string) (string, error) {
 	account, err := g.Apps.AppAccount(app)
 	switch {

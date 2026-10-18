@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 12** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"12"}`.
+**Protocol 13** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"13"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -19,6 +19,7 @@ manifest directories and start's `credential_expires_at`; relay messages and Git
 remain unchanged. Protocol 10 adds start's `client_update` audit object. Protocol 11 adds
 refresh's required nullable `credential_expires_at` and permits Codex refresh without GitHub.
 Protocol 12 replaces the exact-list audit with `min_version` and drops the status rule field.
+Protocol 13 adds start's required `github_user_id`.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -124,9 +125,9 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `12` |
+| `version` | `protocol_version`: exact string `13` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `github_user_id`: the App's bot user ID as `login github` saved it, `null` with `github` `null` (no saved ID: `login_required`, nothing created); `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |

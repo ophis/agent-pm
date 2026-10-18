@@ -275,6 +275,32 @@ func TestSaveUserRejects(t *testing.T) {
 	}
 }
 
+func TestBotUserID(t *testing.T) {
+	r := newRig(t)
+	r.keys.items[usersService+"/agent-pm-bot"] = []byte("343764394")
+	if id, err := r.g.BotUserID("agent-pm-bot"); err != nil || id != 343764394 {
+		t.Fatalf("%d %v", id, err)
+	}
+	rerun := ": run agent-pm-broker login github agent-pm-bot."
+	for _, bad := range []string{"0", "-1", "12a", "", "99999999999999999999"} {
+		r.keys.items[usersService+"/agent-pm-bot"] = []byte(bad)
+		_, err := r.g.BotUserID("agent-pm-bot")
+		wantCode(t, err, protocol.LoginRequired)
+		if err.(*protocol.Error).Message != "No GitHub bot user ID for agent-pm-bot"+rerun {
+			t.Fatalf("%q: %v", bad, err)
+		}
+	}
+	delete(r.keys.items, usersService+"/agent-pm-bot")
+	_, err := r.g.BotUserID("agent-pm-bot")
+	wantCode(t, err, protocol.LoginRequired)
+	r.keys.unreadable[usersService] = true
+	_, err = r.g.BotUserID("agent-pm-bot")
+	wantCode(t, err, protocol.KeychainFailed)
+	if err.(*protocol.Error).Message != "Keychain access to the GitHub bot user ID failed"+rerun {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestIssueWritesFiles(t *testing.T) {
 	r := newRig(t, "ophis", "Other-Org")
 	got, err := r.g.Issue(context.Background(), "agent-pm-bot", ctr, r.exec.run)

@@ -261,7 +261,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "12"
+          "const": "13"
         }
       },
       "required": [
@@ -391,6 +391,17 @@
         "github": {
           "$ref": "#/$defs/expiries"
         },
+        "github_user_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
         "credential_expires_at": {
           "oneOf": [
             {
@@ -411,6 +422,7 @@
         "image_digest",
         "clients",
         "github",
+        "github_user_id",
         "credential_expires_at"
       ],
       "additionalProperties": false,

@@ -39,7 +39,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"12"}` |
+| `"$B" version` | `{"protocol_version":"13"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -199,7 +199,8 @@ versions. Codex starts add the [version audit](docker-broker-protocol.md#success
 | `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
-one `{"account", "expires_at"}` per installation of the App.
+one `{"account", "expires_at"}` per installation of the App, and `github_user_id` the bot user ID
+`login github` saved.
 
 | Check | Expect |
 |---|---|

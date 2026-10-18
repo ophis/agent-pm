@@ -89,10 +89,16 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 			return StartResult{}, err
 		}
 	}
+	var userID *int64
 	if m.GitHubApp != "" {
 		if err := h.GitHub.Ready(m.GitHubApp); err != nil {
 			return StartResult{}, err
 		}
+		id, err := h.GitHub.BotUserID(m.GitHubApp)
+		if err != nil {
+			return StartResult{}, err
+		}
+		userID = &id
 	}
 	if _, err := h.GitHub.Retry(ctx); err != nil {
 		times.WriteString("agent-pm-broker: start revocations skipped\n")
@@ -126,6 +132,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		h.rollback(ctx, c, e)
 		return StartResult{}, e
 	}
+	result.GitHubUserID = userID
 	fmt.Fprintf(&times, "agent-pm-broker: start total %.2f s\n", time.Since(began).Seconds())
 	if progress != nil {
 		_, _ = io.WriteString(progress, times.String()+notes.String())

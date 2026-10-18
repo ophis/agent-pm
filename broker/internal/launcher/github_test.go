@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,13 +19,22 @@ var expiry = []protocol.Expiry{{Account: "ophis", ExpiresAt: "2026-10-17T13:00:0
 
 // fakeTokens records the launcher's Tokens calls; each err field fails its method.
 type fakeTokens struct {
-	calls                                []string
-	ready, issue, refresh, revoke, retry error
-	pending                              []protocol.Pending
-	onRevoke                             func()
+	calls                                      []string
+	ready, user, issue, refresh, revoke, retry error
+	pending                                    []protocol.Pending
+	onRevoke                                   func()
 }
 
+const botID int64 = 343764394
+
 func (f *fakeTokens) Ready(app string) error { f.calls = append(f.calls, "ready "+app); return f.ready }
+func (f *fakeTokens) BotUserID(app string) (int64, error) {
+	f.calls = append(f.calls, "user "+app)
+	if f.user != nil {
+		return 0, f.user
+	}
+	return botID, nil
+}
 func (f *fakeTokens) Issue(_ context.Context, app, c string, exec func([]string, []byte) error) ([]protocol.Expiry, error) {
 	f.calls = append(f.calls, "issue "+app+" "+c)
 	if f.issue != nil {
@@ -72,8 +82,14 @@ func TestStartGitHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.GitHub, expiry) || !slices.Equal(tokens.calls, []string{"ready agent-pm-bot", "retry", "issue agent-pm-bot " + container}) {
+	if !slices.Equal(got.GitHub, expiry) || !slices.Equal(tokens.calls, []string{"ready agent-pm-bot", "user agent-pm-bot", "retry", "issue agent-pm-bot " + container}) {
 		t.Fatalf("%v %q", got.GitHub, tokens.calls)
+	}
+	if got.GitHubUserID == nil || *got.GitHubUserID != botID {
+		t.Fatalf("user ID %v", got.GitHubUserID)
+	}
+	if out, _ := json.Marshal(got); !strings.Contains(string(out), `"github_user_id":343764394`) {
+		t.Fatalf("%s", out)
 	}
 	last := d.calls[len(d.calls)-1]
 	if !slices.Equal(last, []string{"exec", "--interactive", "--user", "agent", container, "write"}) || string(d.stdin[len(d.stdin)-1]) != "ghs_token" {
@@ -89,18 +105,22 @@ func TestStartGitHubNull(t *testing.T) {
 	tokens := &fakeTokens{}
 	h, _ := githubHost(&world{labels: goodLabels()}, tokens)
 	got, err := h.Start(context.Background(), validManifest(t))
-	if err != nil || got.GitHub == nil || len(got.GitHub) != 0 || !slices.Equal(tokens.calls, []string{"retry"}) {
-		t.Fatalf("%v %v %q", got.GitHub, err, tokens.calls)
+	if err != nil || got.GitHub == nil || len(got.GitHub) != 0 || got.GitHubUserID != nil || !slices.Equal(tokens.calls, []string{"retry"}) {
+		t.Fatalf("%v %v %v %q", got.GitHub, got.GitHubUserID, err, tokens.calls)
+	}
+	if out, _ := json.Marshal(got); !strings.Contains(string(out), `"github_user_id":null`) {
+		t.Fatalf("%s", out)
 	}
 }
 
 func TestStartGitHubRejectedBeforeContainer(t *testing.T) {
 	for _, code := range []protocol.Code{protocol.ManifestRejected, protocol.LoginRequired, protocol.KeychainFailed} {
-		tokens := &fakeTokens{ready: protocol.New(code, "no")}
-		h, d := githubHost(&world{labels: goodLabels()}, tokens)
-		_, err := h.Start(context.Background(), githubManifest(t))
-		if e := protoErr(t, err); e.Code != code || e.Cleanup != protocol.NotNeeded || hasCall(d, "run") || hasCall(d, "volume create") {
-			t.Fatalf("%s: %+v %q", code, e, d.verbs())
+		for _, tokens := range []*fakeTokens{{ready: protocol.New(code, "no")}, {user: protocol.New(code, "no")}} {
+			h, d := githubHost(&world{labels: goodLabels()}, tokens)
+			_, err := h.Start(context.Background(), githubManifest(t))
+			if e := protoErr(t, err); e.Code != code || e.Cleanup != protocol.NotNeeded || hasCall(d, "run") || hasCall(d, "volume create") {
+				t.Fatalf("%s %q: %+v %q", code, tokens.calls, e, d.verbs())
+			}
 		}
 	}
 }
@@ -176,6 +196,9 @@ func TestRefresh(t *testing.T) {
 	}
 	if !slices.Equal(d.calls[0], []string{"exec", "--interactive", "--user", "agent", container, "write"}) {
 		t.Fatalf("%q", d.calls)
+	}
+	if slices.ContainsFunc(tokens.calls, func(c string) bool { return strings.HasPrefix(c, "user ") }) {
+		t.Fatalf("refresh read the bot user ID: %q", tokens.calls)
 	}
 	other := "agent-pm-worker_1-ffffffffffffffffffffffffffffffff"
 	for name, tc := range map[string]struct {

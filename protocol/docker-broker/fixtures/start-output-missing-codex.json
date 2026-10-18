@@ -6,5 +6,6 @@
   "clients": {
     "claude": "2.1.0"
   },
-  "github": []
+  "github": [],
+  "github_user_id": null
 }
