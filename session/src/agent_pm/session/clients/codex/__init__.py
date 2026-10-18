@@ -28,7 +28,7 @@ class CodexClient(Client):
         "-s",
     )
     forbidden_selection = ("resume", "fork", "--last")
-    keys = frozenset({"flags", "tiers", "efforts", "env"})
+    keys = frozenset({"flags", "tiers", "efforts", "env", "modes"})
     client_note = "Run each shell call separately."
     session_env = "CODEX_THREAD_ID"
     identity_env = tuple(

@@ -16,6 +16,7 @@ from agent_pm.session.engine.types import (
     ClientRuntime,
     ConfigError,
     LimitHit,
+    Permission,
     Reply,
     Stderr,
     TurnEnd,
@@ -24,10 +25,14 @@ from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.unit.clients.codex.support import (
+    AUTO,
+    BYPASS,
+    MODES,
     NATIVE,
     PLUGIN_OFF,
     Base,
     committed_headless,
+    holds,
     packaged,
 )
 
@@ -447,6 +452,47 @@ class ConfiguredFlags(Base):
         argv = committed_headless(packaged(), spec).argv
         start = argv.index(PLUGIN_OFF[1]) - 1
         self.assertEqual(argv[start : start + 2], PLUGIN_OFF)
+
+    def test_only_the_runs_permission_modes_flags_reach_codex_never_its_record(self):
+        client = CodexClient({**self.client.config, "modes": MODES})
+        for permission, present, absent in (
+            (Permission.AUTO, AUTO, BYPASS),
+            (Permission.YOLO, (BYPASS,), "-s"),
+        ):
+            with self.subTest(permission=permission):
+                spec = dataclasses.replace(self.spec, sid=f"run-{permission}", prompt="hi")
+                argv = committed_headless(client, spec, permission).argv
+                self.assertTrue(holds(argv, present), argv)
+                self.assertNotIn(absent, argv)
+                record = client.common.load(str(self.work), spec.sid)
+                self.assertEqual(record.snapshot.flags, ())
+
+    def test_a_resume_runs_in_the_mode_of_the_host_it_runs_on(self):
+        client = CodexClient({**self.client.config, "modes": MODES})
+        committed_headless(client, dataclasses.replace(self.spec, prompt="one"))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        spec = dataclasses.replace(self.spec, prompt="two", resume=True)
+        argv = committed_headless(client, spec, Permission.YOLO).argv
+        self.assertIn(BYPASS, argv)
+        self.assertNotIn("-s", argv)
+
+    def test_bad_modes_are_refused(self):
+        for modes, message in (
+            (
+                {"turbo": []},
+                "[clients.codex].modes must be a table from auto and yolo to a list of strings",
+            ),
+            (
+                {"yolo": "x"},
+                "[clients.codex].modes must be a table from auto and yolo to a list of strings",
+            ),
+            ({"yolo": ["-C", "/x"]}, "-C /x: the Codex client sets hooks, session and cwd"),
+            ({"auto": ["--add-dir", "/x"]}, "--add-dir: a permission mode grants no directory"),
+        ):
+            with self.subTest(modes=modes), self.assertRaises(ConfigError) as caught:
+                CodexClient({**self.client.config, "modes": modes})
+            self.assertEqual(str(caught.exception), message)
 
     def test_bad_configured_flags_are_refused(self):
         for flags, message in (
