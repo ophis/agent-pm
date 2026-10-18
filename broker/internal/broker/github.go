@@ -81,7 +81,12 @@ func FileLock(path string) func() (func(), error) {
 	}
 }
 
-func tokensError() *protocol.Error {
+var errLock = errors.New("token lock")
+
+func tokensError(err error) *protocol.Error {
+	if errors.Is(err, errLock) {
+		return protocol.New(protocol.KeychainFailed, "Taking the GitHub token lock ~/.agent-pm/docker/tokens.lock failed.")
+	}
 	return protocol.New(protocol.KeychainFailed, "Keychain access to the GitHub tokens failed.")
 }
 
@@ -100,7 +105,7 @@ func loginError(app string) *protocol.Error {
 func (g GitHub) locked(f func() error) error {
 	unlock, err := g.Lock()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errLock, err)
 	}
 	defer unlock()
 	return f()
@@ -182,11 +187,13 @@ func tokenIn(entries []tokenEntry) func(string) bool {
 }
 
 // discard takes entries out of container's record (all of it, read in the same lock section, when whole) and
-// revokes them through the backlog; with the backlog unreadable it revokes them directly, failing only when one
-// of those revokes fails.
+// revokes them through the backlog. With the backlog unreadable, or the lock failing, it revokes them directly;
+// with the lock failing it queues the ones it could not revoke without the lock, so none is left untracked.
 func (g GitHub) discard(ctx context.Context, container string, entries []tokenEntry, whole bool) error {
 	var backlogErr error
+	ran := false
 	err := g.locked(func() error {
+		ran = true
 		if whole {
 			if rec, found, err := g.readRecord(container); err == nil && found {
 				in := tokenIn(entries)
@@ -209,17 +216,30 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 		rec.Tokens = slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return tokenIn(entries)(e.Token) })
 		return g.writeRecord(container, rec)
 	})
-	if backlogErr != nil {
+	if !ran && whole {
+		if rec, found, err := g.readRecord(container); err == nil && found {
+			in := tokenIn(entries)
+			entries = append(slices.Clone(entries), slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return in(e.Token) })...)
+		}
+	}
+	if backlogErr != nil || !ran {
+		var left []pending
 		for _, e := range entries {
 			if g.API.Revoke(ctx, e.Token) != nil {
-				return unrevoked(container)
+				left = append(left, pending{container, e.Account, e.Token, e.ExpiresAt})
 			}
+		}
+		if len(left) > 0 {
+			if !ran {
+				_ = g.editBacklog(func(list []pending) []pending { return append(list, left...) })
+			}
+			return unrevoked(container)
 		}
 	} else {
 		_, _ = g.Retry(ctx)
 	}
 	if err != nil {
-		return tokensError()
+		return tokensError(err)
 	}
 	return nil
 }
@@ -330,7 +350,7 @@ func (g GitHub) Issue(ctx context.Context, app, container string, exec func([]st
 		if _, err := g.editRecord(container, true, func(rec *tokenRecord, _ bool) {
 			rec.App, rec.Tokens = app, append(rec.Tokens, e)
 		}); err != nil {
-			return fail(tokensError())
+			return fail(tokensError(err))
 		}
 	}
 	for _, e := range issued {
@@ -349,7 +369,7 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 		rec, found, err = g.readRecord(container)
 		return err
 	}); err != nil {
-		return nil, tokensError()
+		return nil, tokensError(err)
 	}
 	if !found {
 		return nil, protocol.New(protocol.RefreshFailed, "No GitHub tokens recorded for "+container+".")
@@ -373,7 +393,7 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 		if err != nil || !found {
 			_ = g.discard(ctx, container, []tokenEntry{e}, false)
 			if err != nil {
-				return nil, tokensError()
+				return nil, tokensError(err)
 			}
 			return nil, protocol.New(protocol.RefreshFailed, container+" was closed during the refresh.")
 		}
@@ -395,11 +415,8 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 
 // Revoke revokes every token of container's record and deletes it. An unreadable record is deleted best-effort.
 func (g GitHub) Revoke(ctx context.Context, container string) error {
-	var found bool
-	if err := g.locked(func() (err error) {
-		_, found, err = g.readRecord(container)
-		return err
-	}); err != nil {
+	_, found, err := g.readRecord(container) // a peek: discard reads it again under the lock
+	if err != nil {
 		_ = g.Keychain.DeleteSecret(tokensService, container)
 		return unrevoked(container)
 	}
@@ -418,7 +435,7 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 		list, err = g.readBacklog()
 		return err
 	}); err != nil {
-		return nil, tokensError()
+		return nil, tokensError(err)
 	}
 	now := g.API.Now()
 	var done []string
@@ -441,7 +458,7 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 				return slices.DeleteFunc(list, func(p pending) bool { return slices.Contains(done, p.Token) })
 			})
 		}); err != nil {
-			return nil, tokensError()
+			return nil, tokensError(err)
 		}
 	}
 	out := []protocol.Pending{}

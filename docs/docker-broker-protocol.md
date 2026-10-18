@@ -194,6 +194,8 @@ manifest or log.
   the retry. A backlog the broker cannot read (a broker reinstalled since made it) is skipped by start and close,
   without stderr; close then revokes a readable record directly.
 - `~/.agent-pm/docker/tokens.lock` serializes each read-modify-write of these items, never a GitHub request.
+  If taking it fails, the tokens being discarded are revoked at once, and any revoke that fails puts its token
+  in the backlog without the lock; the command fails with `keychain_failed` naming the lock.
 - Nothing falls back to another credential.
 
 ## Shared fixtures

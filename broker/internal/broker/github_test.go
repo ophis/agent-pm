@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -315,6 +316,68 @@ func TestIssueRollbackOffline(t *testing.T) {
 	}
 }
 
+// lockFails makes every token lock after the first ok ones fail.
+func (r *rig) lockFails(ok int) {
+	lock, n := r.g.Lock, 0
+	r.g.Lock = func() (func(), error) {
+		if n++; n > ok {
+			return nil, errors.New("flock: input/output error")
+		}
+		return lock()
+	}
+}
+
+func TestLockFailureRevokesTheNewToken(t *testing.T) {
+	for name, run := range map[string]func(r *rig) error{
+		"issue": func(r *rig) error {
+			r.lockFails(0)
+			_, err := r.g.Issue(context.Background(), "agent-pm-bot", ctr, r.exec.run)
+			return err
+		},
+		"refresh": func(r *rig) error {
+			issued(t, r)
+			r.lockFails(1)
+			_, err := r.g.Refresh(context.Background(), "agent-pm-bot", ctr, r.exec.run)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, "ophis")
+			err := run(r)
+			wantCode(t, err, protocol.KeychainFailed)
+			if !strings.Contains(err.Error(), "token lock") {
+				t.Fatalf("unclear error: %v", err)
+			}
+			if !slices.Contains(r.api.revoked, "ghs_1_"+strconv.Itoa(r.api.issued)) || len(r.exec.argv) != 0 {
+				t.Fatalf("revoked %v writes %v", r.api.revoked, r.exec.argv)
+			}
+		})
+	}
+}
+
+func TestLockFailureQueuesAnUnrevokedToken(t *testing.T) {
+	r := newRig(t, "ophis")
+	r.lockFails(0)
+	r.api.revokeErr = func(string) int { return 503 }
+	_, err := r.g.Issue(context.Background(), "agent-pm-bot", ctr, r.exec.run)
+	wantCode(t, err, protocol.KeychainFailed)
+	if b := r.backlog(t); len(b) != 1 || b[0].Token != "ghs_1_1" {
+		t.Fatalf("backlog %v", b)
+	}
+}
+
+func TestRevokeLockFails(t *testing.T) {
+	r := newRig(t, "ophis", "other")
+	issued(t, r)
+	r.lockFails(0)
+	if err := r.g.Revoke(context.Background(), ctr); err == nil {
+		t.Fatal("no error")
+	}
+	if !slices.Equal(r.api.revoked, []string{"ghs_1_1", "ghs_2_2"}) {
+		t.Fatalf("revoked %v", r.api.revoked)
+	}
+}
+
 func TestIssueKeyProblems(t *testing.T) {
 	r := newRig(t, "ophis")
 	r.g.Apps = keys{account: "5352992", key: []byte("garbage")}
@@ -448,7 +511,7 @@ func TestRevokeTakesATokenRecordedMeanwhile(t *testing.T) {
 	issued(t, r)
 	lock, n := r.g.Lock, 0
 	r.g.Lock = func() (func(), error) {
-		if n++; n == 2 { // a refresh records its new token between close's lock sections
+		if n++; n == 1 { // a refresh records its new token after close's peek, before its lock section
 			rec, _ := r.record(t)
 			rec.Tokens = append(rec.Tokens, tokenEntry{"ophis", 1, "ghs_late", rec.Tokens[0].ExpiresAt})
 			data, _ := json.Marshal(rec)
