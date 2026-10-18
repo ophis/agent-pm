@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
 // Refresh replaces container credentials; path is its original manifest.
 func (h Host) Refresh(ctx context.Context, container, path string) (RefreshResult, error) {
+	h.Audit.Begin(container, nil)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return RefreshResult{}, protocol.New(protocol.ManifestRejected, "Cannot read manifest "+path+".")
@@ -43,6 +45,7 @@ func (h Host) Refresh(ctx context.Context, container, path string) (RefreshResul
 			return RefreshResult{}, injected(err, protocol.RefreshFailed, "Writing Codex credentials into "+container+" failed.")
 		}
 		result.CredentialExpiresAt = &expiry
+		h.Audit.Add(container, clientCredential(m.Client, audit.Renewed, &expiry), "")
 	}
 	if m.GitHubApp != "" {
 		if err := h.GitHub.Ready(m.GitHubApp); err != nil {

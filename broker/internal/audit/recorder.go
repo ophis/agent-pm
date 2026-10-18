@@ -34,6 +34,14 @@ type Recorder struct {
 	flushed bool
 }
 
+// Begin names the command's container and, for start, the facts only its line holds.
+func (r *Recorder) Begin(container string, start *StartFacts) {
+	if r == nil {
+		return
+	}
+	r.Container, r.Start = container, start
+}
+
 // merge appends c, or replaces the pending entry of the same token: its revocation resolves it.
 func merge(list []entry, c Credential, key string) []entry {
 	if key != "" {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -72,6 +73,10 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err != nil {
 		return StartResult{}, err
 	}
+	c := "agent-pm-" + m.Name + "-" + m.Generation
+	// Before the backlog retry and Issue, so this start's own tokens land on its line.
+	facts := &audit.StartFacts{Image: m.Image}
+	h.Audit.Begin(c, facts)
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}
@@ -109,7 +114,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	lap("image")
-	c := "agent-pm-" + m.Name + "-" + m.Generation
+	facts.ImageDigest = info.ID
 	if _, err := h.Docker.Run(ctx, []string{"container", "inspect", c}, nil); !docker.Absent(err) {
 		if err != nil {
 			return StartResult{}, failure(err, protocol.StartFailed, "Cannot check for container "+c+".")
@@ -120,7 +125,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	lap("checks")
-	result, err := h.create(ctx, c, m, info, policy, lap)
+	result, injected, err := h.create(ctx, c, m, info, policy, facts, lap)
 	if errors.Is(err, errTaken) {
 		return StartResult{}, taken(c)
 	}
@@ -130,6 +135,9 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 			e = protocol.New(protocol.StartFailed, "Start failed.")
 		}
 		h.rollback(ctx, c, e)
+		if injected && e.Cleanup == protocol.Removed {
+			h.Audit.Add(c, clientCredential(m.Client, audit.Withdrawn, nil), "")
+		}
 		return StartResult{}, e
 	}
 	result.GitHubUserID = userID
@@ -140,8 +148,37 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	return result, nil
 }
 
-// create runs every step after the absence check; any error makes Start roll back.
-func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, policy codex.Installation, lap func(phase string)) (StartResult, error) {
+// mounts are create's --mount and --tmpfs flags and, for the audit, what each one mounts.
+func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
+	var flags []string
+	var list []audit.Mount
+	add := func(flag, value string, mount audit.Mount) {
+		flags, list = append(flags, flag, value), append(list, mount)
+	}
+	tmpfs := func(target, options string) {
+		add("--tmpfs", target+":"+options, audit.Mount{Type: "tmpfs", Target: target, Mode: "rw"})
+	}
+	bind := func(path string) {
+		add("--mount", bindMount(path, path), audit.Mount{Type: "bind", Source: path, Target: path, Mode: "rw"})
+	}
+	add("--mount", volumeMount(m.Workspace, m.CWD, false), audit.Mount{Type: "volume", Source: m.Workspace, Target: m.CWD, Mode: "rw"})
+	owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
+	if m.Client == "codex" {
+		tmpfs(runtimeDir, "rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0")
+		tmpfs(m.CodexDir, "rw,noexec,nosuid,nodev,size=67108864"+owner)
+		tmpfs(docker.RunDir, "rw,noexec,nosuid,nodev,size=1048576"+owner)
+		bind(filepath.Join(m.CodexDir, "sessions"))
+	} else {
+		bind(m.ClaudeDir)
+	}
+	tmpfs(docker.SecretsDir, "rw,noexec,nosuid,nodev,size=65536"+owner)
+	return flags, list
+}
+
+// create runs every step after the absence check; any error makes Start roll back. injected: the client credential
+// is in the container.
+func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, policy codex.Installation, facts *audit.StartFacts,
+	lap func(phase string)) (_ StartResult, held bool, _ error) {
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", m.CWD}
@@ -163,42 +200,32 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	for _, k := range keys {
 		args = append(args, "--label", k+"="+m.Labels[k])
 	}
-	args = append(args, "--mount", volumeMount(m.Workspace, m.CWD, false))
-	if m.Client == "codex" {
-		owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
-		args = append(args, "--tmpfs", runtimeDir+":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
-			"--tmpfs", m.CodexDir+":rw,noexec,nosuid,nodev,size=67108864"+owner,
-			"--tmpfs", docker.RunDir+":rw,noexec,nosuid,nodev,size=1048576"+owner,
-			"--mount", bindMount(filepath.Join(m.CodexDir, "sessions"), filepath.Join(m.CodexDir, "sessions")))
-	} else {
-		args = append(args, "--mount", bindMount(m.ClaudeDir, m.ClaudeDir))
-	}
-	args = append(args,
-		"--tmpfs", docker.SecretsDir+":rw,noexec,nosuid,nodev,size=65536,mode=0700,uid="+labels["agent-pm.agent-uid"]+",gid="+labels["agent-pm.agent-gid"],
-		"--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
+	flags, list := mounts(m, labels)
+	facts.Mounts = list
+	args = append(append(args, flags...), "--entrypoint", "/usr/bin/tini", info.ID, "--", "sleep", "infinity")
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		if docker.Conflict(err) {
-			return StartResult{}, errTaken
+			return StartResult{}, false, errTaken
 		}
 		e := diagnosed(err, protocol.StartFailed, "Creating the container failed.")
 		if text := err.Error(); strings.Contains(text, "mounts denied") || strings.Contains(text, "not shared from the host") {
 			e.Message = sharing
 		}
-		return StartResult{}, e
+		return StartResult{}, false, e
 	}
 	lap("create")
 	if _, err := h.Docker.Run(ctx, asAgent(c, Python, "-I", Bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
-		return StartResult{}, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
+		return StartResult{}, false, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
 	}
 	if m.HasHook {
 		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, Python, "-I", Bootstrap, "hook", m.HookPath}, nil); err != nil {
-			return StartResult{}, failure(err, protocol.StartFailed, "Installing the hook stub failed.")
+			return StartResult{}, false, failure(err, protocol.StartFailed, "Installing the hook stub failed.")
 		}
 	}
 	lap("bootstrap")
 	clients, err := h.probe(ctx, c)
 	if err != nil {
-		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
+		return StartResult{}, false, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
 	var update *ClientUpdate
@@ -206,7 +233,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		var prepared ClientUpdate
 		clients, prepared, err = h.updateCodex(ctx, c, info.Architecture, clients, policy)
 		if err != nil {
-			return StartResult{}, err
+			return StartResult{}, false, err
 		}
 		update = &prepared
 		lap("client_update")
@@ -216,23 +243,25 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	if m.Client == "codex" {
 		expiry, err := h.Codex.Inject(ctx, exec)
 		if err != nil {
-			return StartResult{}, injected(err, protocol.StartFailed, "Injecting Codex credentials failed.")
+			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting Codex credentials failed.")
 		}
 		codexExpiry = &expiry
 	} else {
 		if err := h.Creds.Inject(exec); err != nil {
-			return StartResult{}, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
+			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
 		}
 	}
+	held = true
+	h.Audit.Add(c, clientCredential(m.Client, audit.Issued, codexExpiry), "")
 	lap("credentials")
 	expiries := []protocol.Expiry{}
 	if m.GitHubApp != "" {
 		if expiries, err = h.GitHub.Issue(ctx, m.GitHubApp, c, exec); err != nil {
-			return StartResult{}, injected(err, protocol.StartFailed, "Injecting the GitHub tokens failed.")
+			return StartResult{}, held, injected(err, protocol.StartFailed, "Injecting the GitHub tokens failed.")
 		}
 		lap("github")
 	}
-	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries, CredentialExpiresAt: codexExpiry, ClientUpdate: update}, nil
+	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries, CredentialExpiresAt: codexExpiry, ClientUpdate: update}, held, nil
 }
 
 // injected classifies a Credentials or Tokens error: its protocol error, an unreachable daemon, else code.
