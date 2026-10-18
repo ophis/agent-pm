@@ -129,6 +129,14 @@ class Install(Case):
         self.assertEqual(result.returncode, 1)
         self.assertIn("get-task-allow", result.stderr)
 
+    def test_build_script_without_one_output_is_a_usage_error(self):
+        self.fake("go", "codesign")
+        for args in ([], ["a", "b"]):
+            result = self.run_script("build.sh", *args)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertIn("build.sh: usage: sh build.sh <output>", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def assert_installed(self, calls, source):
         self.assertEqual(calls[0], f"sudo install -d -o root -g wheel -m 0755 {TARGET}")
         self.assertEqual(
