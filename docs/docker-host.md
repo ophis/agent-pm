@@ -30,7 +30,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"6"}` |
+| `"$B" version` | `{"protocol_version":"7"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -112,6 +112,50 @@ removes nothing.
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
 | `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
+
+### Plugins
+
+A container's Claude loads only the plugins its image holds: the Docker Host's whitelist,
+`[session.hosts.docker] plugins` ([Run workers](#run-workers)), default `["autopilot"]`,
+which the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review` need.
+Never agent-pm's own plugin: every session runs with it disabled, and the image already holds
+the team at `/opt/agent-pm/team`. To change the whitelist, set the key in
+`~/.agent-pm/config.local.toml`; `[]` gives containers no plugin:
+
+```toml
+[session.hosts.docker]
+plugins = ["autopilot", "other@its-marketplace"]
+```
+
+Each name is a plugin you installed in Claude Code at user scope (`claude plugin install`),
+as `name`, or `name@marketplace` when two marketplaces have one. `build` passes each as
+`--plugin NAME`: the broker looks it up in `~/.claude/plugins/installed_plugins.json`, copies
+the version Claude Code loads now (its `installPath`, under `~/.claude/plugins/cache/`) to
+`/opt/agent-pm/plugins/<name>`, root-owned and read-only for `agent`, and sets
+`CLAUDE_CODE_PLUGIN_DIRS` to those paths, so each loads as `<name>@inline` and keeps its
+`/<name>:` commands. The copied files are part of the image key, so a whitelist change or a
+plugin upgrade (`claude plugin update`) rebuilds the image at the next start; Claude Code's
+`.in_use/` and `.orphaned_at` markers are not copied and change nothing. A launch env's own
+`CLAUDE_CODE_PLUGIN_DIRS` replaces the image's. The whitelist names the account's Claude Code
+plugins; Codex plugins are not copied (TASK-651).
+
+A build fails before Docker runs, with `build_failed` naming the plugin, when a name has no
+user-scope install (`Plugin <name> is not installed: no user-scope entry in <record>.`),
+matches two marketplaces, resolves outside the plugin cache, has no valid
+`.claude-plugin/plugin.json` name, or holds a symlink leaving its directory; a start then
+fails in preflight with that message. Install the plugin, or drop it from the whitelist.
+
+Whitelisting a plugin trusts it: its hooks, MCP servers and scripts run in every container
+beside its Claude setup-token and GitHub tokens, and each host-side upgrade reaches the
+containers at their next build. One whitelist per account: a build with another whitelist
+gives another key, and its rebuild removes the other's images.
+
+| Check | Expect |
+|---|---|
+| `"$B" build --agent-pm "$PKG" --plugin autopilot`, then `docker run --rm "$I" sh -c 'echo "$CLAUDE_CODE_PLUGIN_DIRS"; stat -c %U /opt/agent-pm/plugins/autopilot; touch /opt/agent-pm/plugins/autopilot/x'` | `/opt/agent-pm/plugins/autopilot`, `root`, then `Permission denied` |
+| `"$B" build --agent-pm "$PKG" --plugin no-such-plugin` | exit 8, `build_failed`, `Plugin no-such-plugin is not installed: …`; no Docker build |
+| `claude plugin update autopilot@<marketplace>`, then the same `--plugin autopilot` build | `"rebuilt":true`, a new `image` key |
+| `/autopilot:build` typed in a container's Claude | the skill starts |
 
 ## Start
 
@@ -199,6 +243,7 @@ default = "docker"
 | `[session.hosts.docker]` key | Default | Meaning |
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
+| `plugins` | `["autopilot"]` | the installed Claude Code plugins every container's image holds ([Plugins](#plugins)); `[]`: none |
 | `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
 
 Each session's GitHub tokens are refreshed 10 minutes before the first one expires, a TUI
