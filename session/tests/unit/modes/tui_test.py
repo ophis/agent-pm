@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import signal
 import stat
 import sys
@@ -1500,12 +1499,12 @@ class CloseStopTest(Base):
 
     def test_close_kills_and_removes_under_the_names_lock(self):
         mode = self.started()
-        held, remove = [], shutil.rmtree
+        held, remove = [], tempfile.TemporaryDirectory.cleanup
         mode._terminal.calls.close.side_effect = lambda: held.append(self.locked())
         with mock.patch.object(
-            shutil,
-            "rmtree",
-            lambda path, **kwargs: (held.append(self.locked()), remove(path, **kwargs)),
+            tempfile.TemporaryDirectory,
+            "cleanup",
+            lambda retired: (held.append(self.locked()), remove(retired)),
         ):
             tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual((held, self.locked()), ([True, True], False))
