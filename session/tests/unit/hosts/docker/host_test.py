@@ -127,8 +127,9 @@ class FakeBroker:
         if "version" in self.failing:
             raise self.failing["version"]
 
-    def build(self, package, *, max_age=None):
+    def build(self, package, *, plugins=(), max_age=None):
         self.order.append(("build", package))
+        self.plugins = plugins
         self.max_ages.append(max_age)
         if "build" in self.failing:
             raise self.failing["build"]
@@ -269,14 +270,21 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
+                "plugins": ["autopilot"],
                 "github": {"app": "agent-pm-bot"},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
         host = DockerHost("docker", settings)
-        self.assertEqual((host.docker, host.github), ("/usr/local/bin/docker", "agent-pm-bot"))
-        self.assertEqual(DockerHost("docker", {"docker": DOCKER}).github, "")
+        self.assertEqual(
+            (host.docker, host.github, host.plugins),
+            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",)),
+        )
+        bare = DockerHost("docker", {"docker": DOCKER})
+        self.assertEqual((bare.github, bare.plugins), ("", ()))
+        named = DockerHost("docker", {"docker": DOCKER, "plugins": ["a", "b.c@market_1-x"]})
+        self.assertEqual(named.plugins, ("a", "b.c@market_1-x"))
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -299,6 +307,23 @@ class ConfigTest(Base):
                 r"^\[hosts.docker.github\] app: want a string$",
             ),
             ({"docker": DOCKER, "github": {}}, r"^\[hosts.docker.github\] app: want a string$"),
+            *(
+                (
+                    {"docker": DOCKER, "plugins": plugins},
+                    r"^\[hosts.docker\] plugins: want a list of unique plugin names$",
+                )
+                for plugins in (
+                    "autopilot",
+                    ["a", "a"],
+                    [1],
+                    [["a"]],
+                    [""],
+                    ["../a"],
+                    ["a@"],
+                    ["a@b@c"],
+                    ["-a"],
+                )
+            ),
         ):
             with self.subTest(settings=settings), self.assertRaisesRegex(ConfigError, key):
                 DockerHost("docker", settings)
@@ -443,6 +468,11 @@ class StartTest(Base):
         self.assertNotIn("version", self.order)
         self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.json")))
         self.popen_mock.assert_not_called()
+
+    def test_the_build_holds_the_whitelisted_plugins(self):
+        self.host.plugins = ("autopilot", "beta@market")
+        self.start()
+        self.assertEqual(self.broker.plugins, ("autopilot", "beta@market"))
 
     def test_start_order(self):
         os.makedirs(self.home_dir)

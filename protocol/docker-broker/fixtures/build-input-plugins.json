@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "build",
+    "--agent-pm",
+    "/opt/agent-pm",
+    "--plugin",
+    "autopilot",
+    "--plugin",
+    "beta@market",
+    "--max-age",
+    "604800"
+  ]
+}

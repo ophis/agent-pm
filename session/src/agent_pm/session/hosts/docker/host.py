@@ -133,6 +133,7 @@ VOLUME_FORMAT = '{{.Name}}\t{{.Label "' + WORKSPACE_LABEL + '"}}'
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
+PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?")
 STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 
 
@@ -488,9 +489,10 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path, and github.app, the GitHub App
-    whose tokens every session gets ("" or no table: none). Terminal and piped sessions run here,
-    each on its workspace volume.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path; plugins, the account's installed
+    plugins its image holds (none when absent); and github.app, the GitHub App whose tokens every
+    session gets ("" or no table: none). Terminal and piped sessions run here, each on its
+    workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -505,12 +507,20 @@ class DockerHost(Host):
         broker: Broker | None = None,
     ) -> None:
         super().__init__(name, settings)
-        if extra := sorted(set(self.settings) - {"docker", "github"}):
+        if extra := sorted(set(self.settings) - {"docker", "github", "plugins"}):
             removed = "; see docs/upgrading.md" if extra[0] == "mount_roots" else ""
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]{removed}")
         self.docker = self.settings.get("docker")
         if not isinstance(self.docker, str) or not os.path.isabs(self.docker):
             raise ConfigError(f"[hosts.{name}] docker: want an absolute path")
+        plugins = self.settings.get("plugins", [])
+        if (
+            not isinstance(plugins, list)
+            or not all(isinstance(p, str) and PLUGIN.fullmatch(p) for p in plugins)
+            or len(set(plugins)) != len(plugins)
+        ):
+            raise ConfigError(f"[hosts.{name}] plugins: want a list of unique plugin names")
+        self.plugins: tuple[str, ...] = tuple(plugins)
         github = self.settings.get("github", {"app": ""})
         if not isinstance(github, Mapping):
             raise ConfigError(f"[hosts.{name}] github: want a table")
@@ -768,7 +778,7 @@ class DockerHost(Host):
             raise ConfigError(f"docker session {name}: {COMMAND} is not on PATH (its hooks run it)")
         self.broker.version()
         root = plugin_root(hook)
-        return hook, root, self.broker.build(root, max_age=max_age)
+        return hook, root, self.broker.build(root, plugins=self.plugins, max_age=max_age)
 
     def _move_workspace(self, name: str, volume: str, cwd: str) -> None:
         """Deletes a new start's workspace volume mounted at another cwd, unless the broker's check

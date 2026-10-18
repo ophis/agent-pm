@@ -1,5 +1,5 @@
 {
-  "protocol_version": "8",
+  "protocol_version": "9",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -284,6 +284,36 @@
     },
     {
       "file": "build-input-max-age-missing.json",
+      "definition": "build_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "build-input-plugins.json",
+      "definition": "build_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "build-input-plugin-missing.json",
+      "definition": "build_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "build-input-plugin-path.json",
       "definition": "build_input",
       "valid": false,
       "expected": {

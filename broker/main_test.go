@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func recording(calls *[]call) app {
 		}
 	}
 	build, workspaceRm := result("build"), result("workspace-rm")
-	return app{build: func(ctx context.Context, arg string, _ time.Duration, p io.Writer) (any, error) {
+	return app{build: func(ctx context.Context, arg string, _ []string, _ time.Duration, p io.Writer) (any, error) {
 		return build(ctx, arg, p)
 	},
 		start: result("start"), close: result("close"),
@@ -50,7 +51,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"7"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"8"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -130,6 +131,10 @@ func TestUsageErrors(t *testing.T) {
 		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1234567890"}},
 		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1", "x"}},
 		{"build", []string{"build", "--agent-pm", "/x", "--max-ages", "1"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--plugin"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--plugin", "../x"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--plugin", "a@"}},
+		{"build", []string{"build", "--agent-pm", "/x", "--max-age", "1", "--plugin", "a"}},
 		{"start", []string{"start", "--manifest", "/bad\npath"}},
 		{"start", []string{"start", "--manifest", "/bad\xffpath"}},
 		{"close", []string{"close", "--container", "other"}},
@@ -253,12 +258,34 @@ func TestBuildMaxAge(t *testing.T) {
 		999999999 * time.Second: {"--max-age", "999999999"},
 	} {
 		got := time.Duration(-2)
-		a := app{build: func(_ context.Context, _ string, maxAge time.Duration, _ io.Writer) (any, error) {
+		a := app{build: func(_ context.Context, _ string, _ []string, maxAge time.Duration, _ io.Writer) (any, error) {
 			got = maxAge
 			return map[string]string{}, nil
 		}}
 		if code, _, errOut := invoke(a, append([]string{"build", "--agent-pm", "/pkg"}, args...)...); code != 0 || got != want {
 			t.Fatalf("%q: exit %d max age %v want %v: %s", args, code, got, want, errOut)
+		}
+	}
+}
+
+func TestBuildPlugins(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		plugins []string
+		maxAge  time.Duration
+	}{
+		{nil, nil, -1},
+		{[]string{"--plugin", "autopilot"}, []string{"autopilot"}, -1},
+		{[]string{"--plugin", "b", "--plugin", "a@m.x", "--max-age", "60"}, []string{"b", "a@m.x"}, time.Minute},
+	} {
+		var plugins []string
+		maxAge := time.Duration(-2)
+		a := app{build: func(_ context.Context, _ string, p []string, m time.Duration, _ io.Writer) (any, error) {
+			plugins, maxAge = p, m
+			return map[string]string{}, nil
+		}}
+		if code, _, errOut := invoke(a, append([]string{"build", "--agent-pm", "/pkg"}, c.args...)...); code != 0 || !slices.Equal(plugins, c.plugins) || maxAge != c.maxAge {
+			t.Fatalf("%q: exit %d plugins %q max age %v: %s", c.args, code, plugins, maxAge, errOut)
 		}
 	}
 }
@@ -277,7 +304,7 @@ func TestWorkspaceRmForce(t *testing.T) {
 }
 
 func TestChannels(t *testing.T) {
-	failing := app{build: func(context.Context, string, time.Duration, io.Writer) (any, error) {
+	failing := app{build: func(context.Context, string, []string, time.Duration, io.Writer) (any, error) {
 		return nil, protocol.New(protocol.BuildFailed, "stage failed")
 	}, close: func(context.Context, string, io.Writer) (any, error) {
 		return nil, errors.New("surprise")
@@ -391,7 +418,7 @@ func TestTokenNeverLeaves(t *testing.T) {
 func TestBuildProgressGoesToStderr(t *testing.T) {
 	result := map[string]any{"image": "agent-pm-worker:k", "digest": "sha256:d", "rebuilt": true}
 	build := func(fail bool) app {
-		return app{build: func(_ context.Context, _ string, _ time.Duration, progress io.Writer) (any, error) {
+		return app{build: func(_ context.Context, _ string, _ []string, _ time.Duration, progress io.Writer) (any, error) {
 			_, _ = io.WriteString(progress, "#1 [1/3] FROM base\n#2 DONE\n")
 			if fail {
 				return nil, protocol.New(protocol.BuildFailed, "stage failed")

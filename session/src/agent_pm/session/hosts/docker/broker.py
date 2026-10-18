@@ -10,6 +10,7 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import fields
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "8"
+PROTOCOL = "9"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -244,10 +245,13 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def build(self, package: str, *, max_age: int | None = None) -> tuple[str, str]:
-        """`package`'s image tag and digest; `max_age`: rebuild an image built at least that many
-        seconds ago.
+    def build(
+        self, package: str, *, plugins: Sequence[str] = (), max_age: int | None = None
+    ) -> tuple[str, str]:
+        """`package`'s image tag and digest, the image holding the account's installed `plugins`;
+        `max_age`: rebuild an image built at least that many seconds ago.
         """
+        named = [arg for name in plugins for arg in ("--plugin", name)]
         age = () if max_age is None else ("--max-age", str(max_age))
         found = self._parsed(
             "build",
@@ -259,6 +263,7 @@ class Broker:
             ),
             "--agent-pm",
             package,
+            *named,
             *age,
         )
         return found["image"], found["digest"]

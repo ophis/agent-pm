@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 8** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"8"}`.
+**Protocol 9** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"9"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -14,8 +14,9 @@ drops the mount roots and deny list, and adds `workspace-rm`; protocol 5 names e
 `agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`; protocol 6 issues
 that App's installation tokens ([GitHub tokens](#github-tokens)): start's `github`, `refresh`, `status`, and the
 codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
-`status.codex` object. Protocol 8 adds client-specific manifest directories and start's
-`credential_expires_at`; relay messages and GitHub fields remain unchanged.
+`status.codex` object. Protocol 8 adds build's `--plugin`. Protocol 9 adds client-specific
+manifest directories and start's `credential_expires_at`; relay messages and GitHub fields
+remain unchanged.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -32,7 +33,7 @@ manifest. References are internal, so Go and Python can load it without network 
 | Invocation | Input definition | Success definition |
 |---|---|---|
 | `agent-pm-broker version` | `version_input` | `version_output` |
-| `agent-pm-broker build --agent-pm /absolute/package [--max-age SECONDS]` | `build_input` | `build_output` |
+| `agent-pm-broker build --agent-pm /absolute/package [--plugin NAME]... [--max-age SECONDS]` | `build_input` | `build_output` |
 | `agent-pm-broker start --manifest /absolute/manifest.json` | `start_input` plus `manifest` for file contents | `start_output` |
 | `agent-pm-broker refresh --container <container> --manifest /absolute/manifest.json` | `refresh_input` | `refresh_output` |
 | `agent-pm-broker close --container <container>` | `close_input` | `close_output` |
@@ -44,6 +45,11 @@ order. They are test data, not JSON sent to the broker. These commands consume n
 stdin. `login claude` reads a token, and `login github <app>` the login keychain password once when the
 item's access needs a change, interactively without echo; neither has a JSON contract.
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
+
+`build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
+the account installed at user scope, `name` or `name@marketplace` (`#/$defs/plugin`), which the
+image holds ([Plugins](docker-host.md#plugins)). The schema checks each token; their pairing and
+order, which JSON Schema cannot express, are the broker's, failing with `usage`.
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|
@@ -115,7 +121,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `8` |
+| `version` | `protocol_version`: exact string `9` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
@@ -168,7 +174,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
-| `8` | `build_failed` | build | Package directory/version invalid, context hashing or either build stage failed |
+| `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` not installed or unusable (message names it; before any Docker call), context hashing or either build stage failed |
 | `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client version probing or token injection failed |
 | `10` | `close_failed` | close | Daemon reachable but container deletion failed |
 | `11` | `keychain_failed` | start/refresh/close/status | Keychain access denied, locked or otherwise failed; distinguish from absent entry. close: the container is deleted, but its tokens could not be revoked |

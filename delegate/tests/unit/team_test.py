@@ -1,6 +1,9 @@
 import os
 import re
+import tomllib
+from importlib.resources import files
 
+from agent_pm import session
 from agent_pm.delegate.composer.base import TEAM, outline
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils import unfenced
@@ -173,6 +176,15 @@ class Shipped(Case):
             self.assertIn(f" with `/autopilot:{t}` (", catalog()["engineer"][t])
             self.assertIn(f"`/autopilot:{t}`", task_text(t))
             self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
+
+    def test_every_plugin_the_team_calls_is_in_the_default_docker_whitelist(self):
+        prefix = re.compile(r"(?<![\w/.])/([a-z0-9][a-z0-9-]*):[a-z]")
+        called = {m for text in team_texts().values() for m in prefix.findall(text)}
+        ((package, name),) = session.CONFIG_RESOURCES
+        with files(package).joinpath(name).open("rb") as f:
+            whitelist = tomllib.load(f)["hosts"]["docker"]["plugins"]
+        self.assertTrue(called)
+        self.assertLessEqual(called, set(whitelist))
 
     def test_product_design_reviews_the_prd_with_autopilot_review_to_its_default_cap(self):
         text = task_text("product-design")
