@@ -245,3 +245,49 @@ func TestRetryAudit(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestListingFollowsTheRecord(t *testing.T) {
+	r := newRig(t, "ophis", "other")
+	var unrecorded []string
+	r.api.onRepos = func(token string) {
+		rec, _ := r.record(t)
+		if !slices.ContainsFunc(rec.Tokens, func(e tokenEntry) bool { return e.Token == token }) {
+			unrecorded = append(unrecorded, token)
+		}
+	}
+	r.audited("start", ctr)
+	issued(t, r)
+	if _, err := r.g.Refresh(context.Background(), "agent-pm-bot", ctr, r.exec.run); err != nil {
+		t.Fatal(err)
+	}
+	if r.api.issued != 4 || len(unrecorded) != 0 {
+		t.Fatalf("listed %v before recording them", unrecorded)
+	}
+}
+
+func TestUnrecordedTokenAudit(t *testing.T) {
+	r := newRig(t, "ophis")
+	r.lockFails(0)
+	rec, sink := r.audited("start", ctr)
+	if _, err := r.g.Issue(context.Background(), "agent-pm-bot", ctr, r.exec.run); err == nil {
+		t.Fatal("no error")
+	}
+	got := flush(t, rec, sink)[0]
+	if !slices.Equal(resultsOf(got), []string{audit.Issued, audit.Revoked}) || got.Credentials[0].ReposError != "not listed: the token could not be recorded" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestRetryAuditNotesAfterRemoval(t *testing.T) {
+	r := newRig(t)
+	data, _ := json.Marshal([]pending{{ctr2, "b", "ghs_live", "2026-10-17T12:30:00Z"}})
+	r.keys.items[revocationsService+"/"+revocationsAccount] = data
+	r.lockFails(1)
+	rec, sink := r.audited("status", "")
+	if _, err := r.g.Retry(context.Background()); err == nil {
+		t.Fatal("removal under a failing lock succeeded")
+	}
+	if got := flush(t, rec, sink); len(got) != 0 {
+		t.Fatalf("an entry the backlog still holds is noted: %+v", got)
+	}
+}

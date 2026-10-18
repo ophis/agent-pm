@@ -115,13 +115,12 @@ type WorkspaceResult struct {
 	Removed bool   `json:"removed"`
 }
 
-// clientCredential is the audit entry of the credential client's container holds; expiry nil: unknown.
-func clientCredential(client, result string, expiry *string) audit.Credential {
-	kind := audit.ClaudeSetupToken
+// clientKind is the audit kind of the credential client's container holds.
+func clientKind(client string) string {
 	if client == "codex" {
-		kind = audit.CodexAccessToken
+		return audit.CodexAccessToken
 	}
-	return audit.Credential{Kind: kind, Result: result, ExpiresAt: expiry}
+	return audit.ClaudeSetupToken
 }
 
 // failure classifies a Docker error: unreachable daemon, else code.

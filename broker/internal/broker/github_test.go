@@ -110,6 +110,7 @@ type api struct {
 	user      string // the bot user answer; "": 404
 	userAuth  []string
 	reposFail int // the repository listing's status; 0: each installation reaches <login>/one and <login>/two
+	onRepos   func(token string)
 }
 
 func (a *api) handler(t *testing.T) http.HandlerFunc {
@@ -143,6 +144,9 @@ func (a *api) handler(t *testing.T) http.HandlerFunc {
 			a.revoked = append(a.revoked, token)
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
+			if a.onRepos != nil {
+				a.onRepos(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			}
 			if a.reposFail != 0 {
 				w.WriteHeader(a.reposFail)
 				return

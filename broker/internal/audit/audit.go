@@ -21,7 +21,11 @@ const (
 	Pending          = "pending"           // in the backlog, with a reason
 	ExpiredUnrevoked = "expired-unrevoked" // dropped from the backlog at expiry
 
-	retryEvent = "revocation-retry"
+	// Events: a command line's is its command; a retry line's is retryEvent.
+	startEvent   = "start"
+	refreshEvent = "refresh"
+	closeEvent   = "close"
+	retryEvent   = "revocation-retry"
 )
 
 var containerName = regexp.MustCompile(`^agent-pm-([A-Za-z0-9_-]+)-([0-9a-f]{32})$`)
@@ -144,7 +148,7 @@ func (l Line) MarshalJSON() ([]byte, error) {
 	if out.Credentials == nil {
 		out.Credentials = []Credential{}
 	}
-	if l.Event == "start" {
+	if l.Event == startEvent {
 		facts := StartFacts{}
 		if l.Start != nil {
 			facts = *l.Start

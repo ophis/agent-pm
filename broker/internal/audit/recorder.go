@@ -100,7 +100,7 @@ func (r *Recorder) Flush(err error) {
 		lines = append(lines, Line{Time: at, Command: r.Command, Event: retryEvent, Container: c, Credentials: credentials(r.others[c])})
 	}
 	switch r.Command {
-	case "start", "refresh", "close":
+	case startEvent, refreshEvent, closeEvent:
 		line := Line{Time: at, Command: r.Command, Event: r.Command, Container: r.Container, Start: r.Start, Credentials: credentials(r.own)}
 		if err != nil {
 			line.Error = string(protocol.InternalError)

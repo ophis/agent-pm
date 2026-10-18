@@ -125,7 +125,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	lap("checks")
-	result, injected, err := h.create(ctx, c, m, info, policy, facts, lap)
+	result, held, err := h.create(ctx, c, m, info, policy, facts, lap)
 	if errors.Is(err, errTaken) {
 		return StartResult{}, taken(c)
 	}
@@ -135,8 +135,8 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 			e = protocol.New(protocol.StartFailed, "Start failed.")
 		}
 		h.rollback(ctx, c, e)
-		if injected && e.Cleanup == protocol.Removed {
-			h.Audit.Add(c, clientCredential(m.Client, audit.Withdrawn, nil), "")
+		if held && e.Cleanup == protocol.Removed {
+			h.Audit.Add(c, audit.Credential{Kind: clientKind(m.Client), Result: audit.Withdrawn}, "")
 		}
 		return StartResult{}, e
 	}
@@ -161,7 +161,11 @@ func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
 	bind := func(path string) {
 		add("--mount", bindMount(path, path), audit.Mount{Type: "bind", Source: path, Target: path, Mode: "rw"})
 	}
-	add("--mount", volumeMount(m.Workspace, m.CWD, false), audit.Mount{Type: "volume", Source: m.Workspace, Target: m.CWD, Mode: "rw"})
+	readonly, mode := false, "rw"
+	if readonly {
+		mode = "ro"
+	}
+	add("--mount", volumeMount(m.Workspace, m.CWD, readonly), audit.Mount{Type: "volume", Source: m.Workspace, Target: m.CWD, Mode: mode})
 	owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
 	if m.Client == "codex" {
 		tmpfs(runtimeDir, "rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0")
@@ -175,8 +179,8 @@ func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
 	return flags, list
 }
 
-// create runs every step after the absence check; any error makes Start roll back. injected: the client credential
-// is in the container.
+// create runs every step after the absence check; any error makes Start roll back. held: the client credential is in
+// the container.
 func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, policy codex.Installation, facts *audit.StartFacts,
 	lap func(phase string)) (_ StartResult, held bool, _ error) {
 	labels := info.Config.Labels
@@ -252,7 +256,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		}
 	}
 	held = true
-	h.Audit.Add(c, clientCredential(m.Client, audit.Issued, codexExpiry), "")
+	h.Audit.Add(c, audit.Credential{Kind: clientKind(m.Client), Result: audit.Issued, ExpiresAt: codexExpiry}, "")
 	lap("credentials")
 	expiries := []protocol.Expiry{}
 	if m.GitHubApp != "" {

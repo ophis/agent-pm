@@ -45,7 +45,7 @@ func (h Host) Refresh(ctx context.Context, container, path string) (RefreshResul
 			return RefreshResult{}, injected(err, protocol.RefreshFailed, "Writing Codex credentials into "+container+" failed.")
 		}
 		result.CredentialExpiresAt = &expiry
-		h.Audit.Add(container, clientCredential(m.Client, audit.Renewed, &expiry), "")
+		h.Audit.Add(container, audit.Credential{Kind: clientKind(m.Client), Result: audit.Renewed, ExpiresAt: &expiry}, "")
 	}
 	if m.GitHubApp != "" {
 		if err := h.GitHub.Ready(m.GitHubApp); err != nil {
