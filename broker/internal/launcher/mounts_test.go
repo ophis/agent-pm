@@ -96,10 +96,10 @@ func TestMountCSVQuoting(t *testing.T) {
 	if got := bindMount("/a,b", `/c"d`); got != `type=bind,"source=/a,b","target=/c""d"` {
 		t.Fatal(got)
 	}
-	if got := volumeMount("agent-pm-ws-w", "/a,b", true); got != `type=volume,source=agent-pm-ws-w,"target=/a,b",readonly` {
+	if got := volumeMount("agent-pm-ws-w", "/a,b", true); got != `type=volume,source=agent-pm-ws-w,"target=/a,b",readonly,volume-nocopy` {
 		t.Fatal(got)
 	}
-	if got := volumeMount("v", "/w", false); got != `type=volume,source=v,target=/w` {
+	if got := volumeMount("v", "/w", false); got != `type=volume,source=v,target=/w,volume-nocopy` {
 		t.Fatal(got)
 	}
 }

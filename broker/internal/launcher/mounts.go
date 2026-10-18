@@ -122,12 +122,14 @@ func bindMount(source, target string) string {
 	return mountSpec("type=bind", "source="+source, "target="+target)
 }
 
+// volumeMount mounts a workspace volume with volume-nocopy: without it, a container created on the still-empty volume
+// copies its mount point (the --workdir Docker made as root) onto the volume root, undoing ensureVolume's chown.
 func volumeMount(volume, target string, readonly bool) string {
 	fields := []string{"type=volume", "source=" + volume, "target=" + target}
 	if readonly {
 		fields = append(fields, "readonly")
 	}
-	return mountSpec(fields...)
+	return mountSpec(append(fields, "volume-nocopy")...)
 }
 
 // volumeLabels reads a volume's labels; an absent volume is an error docker.Absent recognizes.

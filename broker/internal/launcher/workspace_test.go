@@ -88,7 +88,7 @@ func TestWorkspaceRmClean(t *testing.T) {
 		t.Fatalf("check name %q", run[3])
 	}
 	want := []string{"run", "--rm", "--name", run[3], "--label", "agent-pm.check=1", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-		"--user", "agent", "--network", "none", "--mount", "type=volume,source=" + volume + ",target=" + workspace + ",readonly",
+		"--user", "agent", "--network", "none", "--mount", "type=volume,source=" + volume + ",target=" + workspace + ",readonly,volume-nocopy",
 		"--entrypoint", "/opt/agent-pm/venv/bin/python", digest, "-I", "/opt/agent-pm/lib/workspace-check", workspace, ".agent-pm-cache"}
 	if !slices.Equal(run, want) {
 		t.Fatalf("check run\n got %q\nwant %q", run, want)

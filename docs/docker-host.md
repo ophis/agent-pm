@@ -460,7 +460,8 @@ and pip caches go to `.agent-pm-cache` inside it.
 
 The broker creates the volume at its first start, labelled `agent-pm.kind` (`ws`) and
 `agent-pm.workspace` (the cwd),
-its root owned by the agent user. A volume of that name with other labels, or mounted by
+its root owned by the agent user. Every mount of it sets `volume-nocopy`, so Docker never
+copies the mount point's owner onto it and the root stays the agent's. A volume of that name with other labels, or mounted by
 another container, fails the start with `mount_rejected`; clear a foreign one with
 `docker volume rm`.
 
