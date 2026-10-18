@@ -20,6 +20,7 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientRuntime,
     ConfigError,
     HookCall,
     HookCallback,
@@ -117,6 +118,49 @@ DIALOG_SCREENS = {
 
 
 class TuiTest(Base):
+    def test_container_runtime_projects_only_this_identity_without_host_executable(self):
+        run = self.client.tui()
+        run._runtime = ClientRuntime(
+            "/opt/agent-pm/bin",
+            "/opt/agent-pm/venv/bin/python",
+            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            "/run/agent-pm",
+        )
+        with mock.patch("shutil.which", side_effect=AssertionError("host lookup")):
+            launch = run.launch(self.spec, HOOK)
+        plan = tui.decode(json.loads(launch.argv[-1]))
+        self.assertEqual(plan.executable, "/opt/agent-pm/bin/codex")
+        self.assertEqual(launch.argv[0], run._runtime.python)
+        self.assertEqual(plan.store, "/run/agent-pm/codex-store")
+        self.assertNotEqual(run.hook_callback().state["store"], plan.store)
+        self.assertEqual(len(run._runtime_files), 1)
+        path, text = next(iter(run._runtime_files.items()))
+        self.assertTrue(path.startswith(plan.store + "/"))
+        data = json.loads(text)
+        self.assertEqual((data["workdir"], data["sid"]), (self.spec.workdir, self.spec.sid))
+        self.assertEqual(launch.env["PYTHONPATH"], run._runtime.pythonpath)
+        self.assertNotIn(tui.CLIENT_PYTHONPATH, launch.env)
+
+    def test_history_scan_and_observation_never_follow_directory_or_file_links(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        path = self.rollout()
+        outside = self.root / "outside"
+        outside.mkdir()
+        moved = outside / path.name
+        path.rename(moved)
+        path.symlink_to(moved)
+        with self.assertRaises(common.RecoveryError):
+            common.session_file(
+                self.common.store.load(str(self.work), self.spec.sid).snapshot, NATIVE
+            )
+        path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(outside, target_is_directory=True)
+        self.assertEqual(
+            common.session_paths(self.common.store.load(str(self.work), self.spec.sid).snapshot), []
+        )
+
     def launch(self, *, resume=False, client=None):
         run = (client or self.client).tui()
         with (

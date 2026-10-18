@@ -24,7 +24,7 @@ from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import SessionError
 from agent_pm.session.hosts.docker.broker import Broker
 from agent_pm.session.hosts.docker.relay import LINE_MAX, relay_request
-from agent_pm.utils import save
+from agent_pm.utils import read_regular, save
 
 HOOK_WAIT = 60
 CHECK_WAIT = 10
@@ -172,6 +172,38 @@ class Supervisor:
             with contextlib.suppress(OSError, ValueError):
                 SessionStatusLog(self.events).write(self.name, "github_refresh_failed", reason)
 
+    def expire(self, stopped) -> None:
+        path = os.path.join(self.state, f"{self.generation}.credential.json")
+        data = read_regular(path)
+        if data is None:
+            return
+        try:
+            expiry = json.loads(data)
+            if expiry is None:
+                return
+            delay = max(0.0, datetime.fromisoformat(expiry).timestamp() - self.clock())
+        except (ValueError, TypeError):
+            delay = 0.0
+        if stopped.wait(delay):
+            return
+        record = read_regular(os.path.join(self.state, "host.json"))
+        try:
+            client = json.loads(record or b"{}").get("client") or "<client>"
+        except (ValueError, AttributeError):
+            client = "<client>"
+        reason = f"Client authentication expired; run agent-pm-broker login {client}; token refresh is not supported yet"
+        if self.events:
+            with contextlib.suppress(OSError, ValueError):
+                SessionStatusLog(self.events).write(self.name, "client_auth_expired", reason)
+        while True:
+            try:
+                self.broker.close(f"agent-pm-{self.name}-{self.generation}")
+            except SessionError:
+                if stopped.wait(REFRESH_RETRY):
+                    return
+            else:
+                return
+
     def _dead(self, check: list[str]) -> bool:
         try:
             with self.popen(
@@ -252,6 +284,7 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGTERM, stop)
     threading.Thread(target=supervisor.watch, args=(wait, check, stopped), daemon=True).start()
     threading.Thread(target=supervisor.refresh, args=(stopped,), daemon=True).start()
+    threading.Thread(target=supervisor.expire, args=(stopped,), daemon=True).start()
     supervisor.serve(proc.stdout, proc.stdin)
     stopped.set()
     return 0

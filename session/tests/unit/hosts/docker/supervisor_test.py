@@ -63,6 +63,56 @@ class Base(Case):
             return []
 
 
+class ExpiryTest(Base):
+    def test_no_credential_and_a_null_deadline_do_not_close(self):
+        self.supervisor.broker = mock.Mock()
+        stopped = mock.Mock()
+        self.supervisor.expire(stopped)
+        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
+            json.dump(None, f)
+        self.supervisor.expire(stopped)
+        stopped.wait.assert_not_called()
+        self.supervisor.broker.close.assert_not_called()
+
+    def test_invalid_deadline_fails_closed_and_close_failure_retries(self):
+        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
+            f.write('"invalid"')
+        self.supervisor.broker = mock.Mock()
+        self.supervisor.broker.close.side_effect = [SessionError("unavailable"), False]
+        self.supervisor.events = ""
+        stopped = mock.Mock()
+        stopped.wait.return_value = False
+        self.supervisor.expire(stopped)
+        self.assertEqual(stopped.wait.call_args_list, [mock.call(0.0), mock.call(60)])
+        self.assertEqual(self.supervisor.broker.close.call_count, 2)
+
+    def test_initial_deadline_closes_the_generation_and_reports_repair(self):
+        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
+            json.dump("2026-10-18T12:00:00Z", f)
+        self.supervisor.clock = lambda: datetime(2026, 10, 18, 11, 59, tzinfo=UTC).timestamp()
+        self.supervisor.broker = mock.Mock()
+        stopped = mock.Mock()
+        stopped.wait.return_value = False
+        self.supervisor.expire(stopped)
+        stopped.wait.assert_called_once_with(60.0)
+        self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
+        with open(self.events) as f:
+            text = f.read()
+        self.assertIn("client_auth_expired", text)
+        self.assertIn("agent-pm-broker login", text)
+
+    def test_recovery_after_expiry_is_immediate_and_stop_cancels_close(self):
+        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
+            json.dump("2026-10-18T12:00:00Z", f)
+        self.supervisor.clock = lambda: datetime(2026, 10, 18, 12, 1, tzinfo=UTC).timestamp()
+        self.supervisor.broker = mock.Mock()
+        stopped = mock.Mock()
+        stopped.wait.return_value = True
+        self.supervisor.expire(stopped)
+        stopped.wait.assert_called_once_with(0.0)
+        self.supervisor.broker.close.assert_not_called()
+
+
 class HandleTest(Base):
     def test_relay_fixtures_get_their_expected_reply(self):
         with open(os.path.join(FIXTURES, "index.json")) as f:
@@ -400,8 +450,9 @@ class MainTest(Base):
         threads = {
             c.kwargs["target"].__name__: c.kwargs["args"] for c in self.threads.call_args_list
         }
-        self.assertEqual(threads.keys(), {"watch", "refresh"})
+        self.assertEqual(threads.keys(), {"watch", "refresh", "expire"})
         self.assertTrue(threads["refresh"][0].is_set())
+        self.assertTrue(threads["expire"][0].is_set())
 
     def test_an_unheld_lock_fd_or_bad_args_exit_nonzero(self):
         self.assertEqual(supervisor.main(["too", "few"]), 2)

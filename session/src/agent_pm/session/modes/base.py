@@ -181,6 +181,11 @@ class BaseMode(ABC):
                     "home_dir": client_home.dir,
                     "credential": client_home.credential,
                     "home_files": json.dumps(dict(client_home.files)),
+                    **(
+                        {"home_persistent": json.dumps(client_home.persistent)}
+                        if client_home.persistent is not None
+                        else {}
+                    ),
                     "resume": "1" if spec.resume else "0",
                 }
                 if home and client_home

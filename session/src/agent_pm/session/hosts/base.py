@@ -14,6 +14,7 @@ from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
     ClientHome,
+    ClientRuntime,
     ConfigError,
     HookCallback,
     Hosts,
@@ -313,6 +314,9 @@ class Host(ABC):
         return None
 
     _inherit_env = True
+
+    def _client_runtime(self) -> ClientRuntime | None:
+        return None
 
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool

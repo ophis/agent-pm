@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -65,6 +66,28 @@ def inject_codex(stream, secrets=Path("/run/agent-pm/secrets")):
         temporary.unlink(missing_ok=True)
 
 
+def stage_runtime(stream, root=Path("/run/agent-pm")):
+    files = json.load(stream)
+    if not isinstance(files, dict) or len(files) != 1:
+        sys.exit("bootstrap: expected one recovery record")
+    for name, text in files.items():
+        path = Path(name)
+        if (
+            path.parent.parent != root
+            or not path.parent.name.endswith("-store")
+            or not re.fullmatch(r"[0-9a-f]{64}\.json", path.name)
+            or not isinstance(text, str)
+            or len(text.encode()) > 1 << 20
+        ):
+            sys.exit("bootstrap: invalid recovery projection")
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        if path.parent.is_symlink():
+            sys.exit("bootstrap: recovery directory is a link")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as output:
+            output.write(text)
+
+
 def main(argv):
     if len(argv) == 3 and argv[0] == "claude":
         bootstrap_claude(TEMPLATES, Path(argv[1]), argv[2])
@@ -72,6 +95,8 @@ def main(argv):
         bootstrap_codex(Path(argv[1]), argv[2])
     elif argv == ["codex-auth"]:
         inject_codex(sys.stdin.buffer)
+    elif argv == ["runtime-files"]:
+        stage_runtime(sys.stdin)
     elif len(argv) == 2 and argv[0] == "hook":
         install_hook(STUB, Path(argv[1]))
     else:
