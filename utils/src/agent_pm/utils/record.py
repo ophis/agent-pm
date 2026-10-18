@@ -1,7 +1,7 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
-nothing else), and Status, the line `<ctl> status` prints per Record (state: a StatusState word;
-hidden: hide closed what show opened; cwd, optional: where the run works). Display is opaque: only the
+nothing else), and Status, the line `<ctl> status` prints per Record (alive: its owner's own;
+state: its sessions' StatusState word; hidden: hide closed what show opened; cwd, optional: where the run works). Display is opaque: only the
 session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 
@@ -26,7 +26,7 @@ class LayerCommand(StrEnum):
 
 class StatusState(StrEnum):
     STARTING = "starting"  # launched, no Record yet
-    WORKING = "working"  # alive, not known to be done or blocked
+    WORKING = "working"  # its session is busy, not known to be done or blocked
     DONE = "done"
     BLOCKED = "blocked"
     DEAD = "dead"  # its session is listed, its client exited

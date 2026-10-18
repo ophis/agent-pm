@@ -1132,6 +1132,34 @@ class StatusTest(HarnessCase):
         self.stop(record)
         self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
 
+    def test_an_ended_tui_runs_state_is_its_agents_word_until_it_is_gone(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(record)
+        view._complete(Result(0, Outcome("done", "T", "S")))
+        RecordingHost.processes["agent", record.sessions[0]].close()
+        agent = HarnessSession.live[record.sessions[1]]
+        for word in ("done", "working", "blocked"):
+            with (
+                self.subTest(word=word),
+                mock.patch.object(agent, "status", return_value=replace(agent.status(), state=word)),
+            ):
+                status = view.status()
+                self.assertEqual((status.alive, status.state, status.outcome), (False, word, "done"))
+                self.assertFalse(view.alive())
+        agent.stop()
+        self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
+
+    def test_a_tui_run_ended_without_an_outcome_shows_its_agents_word(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view.close()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        self.assertIsNone(view.run().outcome)
+        status = view.status()
+        self.assertEqual((status.alive, status.state, status.outcome), (False, "working", None))
+
 
 class UnansweredTest(HarnessCase):
     """An agent attach that did not answer is no proof its run ended."""
@@ -1355,7 +1383,7 @@ class CrashTest(HarnessCase):
     def test_its_status_is_unknown_while_its_agent_sessions_host_cannot_tell(self):
         view, name = self.crashed()
         agent = HarnessSession.live[name]
-        self.assertEqual((view.status().state, view.status().hidden), ("gone", False))
+        self.assertEqual((view.status().state, view.status().hidden), ("working", False))
         agent.liveness = Liveness.UNKNOWN
         self.assertEqual(view.status().state, "unknown")
 

@@ -90,7 +90,8 @@ class Delegate(ABC):
     def alive(self) -> bool: ...
 
     @abstractmethod
-    def status(self) -> Status: ...
+    def status(self) -> Status:
+        """alive: its run's; once that ends, state is its left tui's word, else gone."""
 
     @abstractmethod
     def content(self) -> str: ...
