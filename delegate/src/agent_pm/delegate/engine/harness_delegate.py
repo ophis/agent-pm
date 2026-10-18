@@ -147,7 +147,7 @@ class HarnessDelegate(Delegate):
         state = view._state
         return Preview(
             state.plan,
-            state.agent_name if state.plan.spec.mode == "tui" else None,
+            state.agent_name if view._named(state.plan.spec.mode) else None,
             state.harness_name,
             state.host,
             state.harness_host,
@@ -236,10 +236,11 @@ class HarnessDelegate(Delegate):
             composition=self.composer,
         )
         name = spec.name or f"{role}-{accepted.sid[:8]}"
+        named = name if self._named(spec.mode) else None
         accepted = replace(
             accepted,
-            spec=replace(accepted.spec, name=name if tui else None),
-            session=replace(accepted.session, name=name if tui else None),
+            spec=replace(accepted.spec, name=named),
+            session=replace(accepted.session, name=named),
         )
         self.workdir = accepted.spec.workdir
         self.layout = Layout(self.workdir)
@@ -627,6 +628,9 @@ class HarnessDelegate(Delegate):
         result = self._read().result
         return None if result is None else result.outcome
 
+    def _named(self, mode: str) -> bool:
+        return mode == Mode.TUI or (self.driver.docker and mode == Mode.HEADLESS)
+
     def _record(self, state: _State) -> Record:
         sessions = (state.harness_name,) if state.detached else ()
         if state.plan.spec.mode == "tui":
@@ -1008,10 +1012,13 @@ class HarnessDelegate(Delegate):
                 driver=self.driver,
                 composition=self.composer,
             )
+            named = state.agent_name if self._named(mode) else None
             accepted = replace(
                 accepted,
+                spec=replace(accepted.spec, name=named),
                 session=replace(
                     accepted.session,
+                    name=named,
                     access=replace(
                         accepted.session.access, cwd=original.cwd, project=original.project
                     ),

@@ -2,7 +2,7 @@
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
-keychain and writes it only into a container's tmpfs. Its JSON interface:
+keychain and writes it, and the GitHub App's installation tokens, only into a container's tmpfs. Its JSON interface:
 [Docker broker protocol](docker-broker-protocol.md). Session's Docker Host calls it to run
 workers ([Run workers](#run-workers)); the sections up to Close install the broker and
 check it by hand.
@@ -30,7 +30,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"5"}` |
+| `"$B" version` | `{"protocol_version":"6"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -142,6 +142,16 @@ versions.
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
 | `lsof -nP -a -iTCP -c agent-pm` during a start | nothing: the broker opens no TCP socket |
 
+**GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
+one `{"account", "expires_at"}` per installation of the App.
+
+| Check | Expect |
+|---|---|
+| `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
+| `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work, with no login |
+| `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
+| `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
+
 **Claude:** `docker exec -it "$C" with-secrets claude` opens with no login, theme or
 trust prompt and answers one sentence.
 
@@ -189,6 +199,12 @@ default = "docker"
 | `[session.hosts.docker]` key | Default | Meaning |
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
+| `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
+
+Each session's GitHub tokens are refreshed 10 minutes before the first one expires, a TUI
+session's by its host run supervisor, a headless run's by its harness; a failed refresh writes
+`github_refresh_failed <reason>` to the TUI session's events or the harness's log, and retries
+every minute.
 
 Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container, and
 `send`, `read`, `attach`, `status`, `report`, `next-event`, `pending` and `close` work as
@@ -206,10 +222,16 @@ too, their harness staying on the host, which needs a Host of its own:
 harness_host = "tmux"
 ```
 
-Only a TUI agent runs there: a headless one (an unattended board run, `agent-pm-delegate
-run` without `--detach`) runs its client on this machine, as before, with none of the rules
-below. The Docker Host treats them as any session: their volume is `agent-pm-ws-<session name>`,
-mounted at `<workdir>/agent`, and a board issue's revision rounds keep its name and volume.
+A headless agent (an unattended board run, `agent-pm-delegate run` without `--detach`) runs
+there too, under its agent name and the rules below. Its client runs by `docker exec -i` in
+its own container, with no tmux, hook relay or supervisor, its output streamed back to the
+harness; `ls`, `attach` and the Viewer do not show it, and a TUI start of its name is
+refused while it runs. Its container closes when the client exits or is stopped; one whose
+harness died is closed by the next Docker start or close. The Docker Host treats them as any
+session: their volume is `agent-pm-ws-<agent name>`, mounted at `<workdir>/agent`, and a board
+issue's revision rounds keep its name and volume. `agent-pm-crew reopen` resumes a Docker run
+on the Docker Host under its agent name, with the same Claude config dir and volume, whichever
+mode started it.
 On the Docker Host the Delegate:
 
 - refuses, before any container and naming the key, a `harness_host` that is empty or the
@@ -287,7 +309,8 @@ start, kept by restart and resume), each generation's start manifest
 (`<generation>.json`), plan (`<generation>.plan.json`, above) and result
 (`<generation>.result.json`: container, image and digest, client versions, when the broker's start began and ended, and the [start timing](#start-timing)
 `phases` and `launched_at`),
-`host.json` (what the host knows of the session, with its events path), the hook
+`host.json` (what the host knows of the session, with its events path), a headless run's
+`pipe.lock` (held by its harness while its client runs), the hook
 supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`, each
 generation's `<generation>.seq` (the last hook event it delivered), `<generation>.stale`
 (its image is no longer the current one) and `rejected.jsonl`
@@ -433,6 +456,9 @@ secrets in environments that need it.
 
 - The token sits in every running container's tmpfs, readable by any process there;
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
+- So do the GitHub tokens, each valid for an hour; `close` revokes them. One the broker could
+  not revoke stays valid until it expires: `"$B" status` lists it, and the next start, close or
+  status retries it.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
@@ -477,5 +503,12 @@ secrets in environments that need it.
   [review before pulling](#review-before-pulling) guards against it.
 - A target repo's `push` and `pull_request` CI runs a worker's changed scripts with the
   repo's secrets before review ([Review before pulling](#review-before-pulling)).
+- A headless run's output comes from its container, where its client and tools share uid
+  `agent`: a forged rate-limit line pauses the board for that client until its reset time,
+  as a forged transcript record already can for a TUI run. The harness holds up to 66 lines
+  of up to 8 Mi characters each, both streams together (about 2 GiB at worst as Python
+  strings), before it reads them.
+- A harness killed with `kill -9` leaves its headless client running, with its token, until
+  the next Docker start or close closes its container.
 - Containers reach the host through `host.docker.internal`: a host service listening on
   all interfaces or on Docker's gateway is reachable from workers.

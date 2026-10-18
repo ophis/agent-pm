@@ -333,7 +333,7 @@ class Launch(CliCase):
 class Reopen(CliCase):
     start = Launch.start
 
-    def record(self, client="claude", base=None, **session):
+    def record(self, client="claude", base=None, *, top=None, **session):
         work = Path(base or self.agent_pm, "work", "TASK-9")
         self.agent, run = work / "agent", work / "run"
         self.agent.mkdir(parents=True)
@@ -346,8 +346,9 @@ class Reopen(CliCase):
             "access": {"cwd": str(self.agent)},
             **session,
         }
+        found = {"agent_name": "researcher-0f8fad5b", "host": "docker", **(top or {})}
         (run / "delegate.json").write_text(
-            json.dumps({"role": "researcher", "plan": {"session": plan}})
+            json.dumps({"role": "researcher", "plan": {"session": plan}, **found})
         )
         return run
 
@@ -389,7 +390,9 @@ class Reopen(CliCase):
                     (
                         "agent-pm-session",
                         "start",
-                        "researcher-TASK-9",
+                        "researcher-0f8fad5b",
+                        "--host",
+                        "docker",
                         "--client",
                         client,
                         "--cwd",
@@ -401,14 +404,17 @@ class Reopen(CliCase):
                     ),
                 )
                 self.assertEqual(self.calls[0][1]["AGENT_PM_SID"], self.sid)
-                entry = self.roster.entries()["researcher-TASK-9"]
+                entry = self.roster.entries()["researcher-0f8fad5b"]
                 self.assertEqual((entry.sid, entry.record), (self.sid, Record.parse(stdout)))
-                self.roster.remove("researcher-TASK-9")
+                self.roster.remove("researcher-0f8fad5b")
                 shutil.rmtree(Path(base, "work"))
 
     def test_reopen_refuses_options_the_run_record_sets(self):
         self.record()
-        for option in ("--client", "--cwd=/tmp", "--resume", "--c", "--cw", "--cl=codex", "--res"):
+        for option in (
+            *("--client", "--cwd=/tmp", "--resume", "--c", "--cw", "--cl=codex", "--res"),
+            *("--host", "--h=tmux", "--ho"),
+        ):
             with self.subTest(option=option):
                 result, stdout, stderr = self.reopen(option, "x", "--", "--cwd")
                 self.assertEqual((result, stdout), (2, ""))
@@ -434,7 +440,7 @@ class Reopen(CliCase):
                 self.assertEqual((self.calls, set(self.roster.entries())), ([], {"TASK-9"}))
         result, _, stderr = self.reopen(listed=(session,))
         self.assertEqual(result, 0, stderr)
-        self.assertIn("researcher-TASK-9", self.roster.entries())
+        self.assertIn("researcher-0f8fad5b", self.roster.entries())
 
     def test_reopen_without_a_run_record_or_session_id_fails_clearly(self):
         for case, prepare, message in (
@@ -442,6 +448,8 @@ class Reopen(CliCase):
             ("no record", lambda: os.remove(self.record() / "delegate.json"), "no run record"),
             ("no sid", lambda: self.record(sid=""), "no role, client, session id or cwd"),
             ("other run", lambda: self.record(workdir="/elsewhere"), "records another run"),
+            ("no agent name", lambda: self.record(top={"agent_name": None}), "no run record"),
+            ("no host", lambda: self.record(top={"host": ""}), "no run record"),
         ):
             with self.subTest(case=case):
                 prepare()

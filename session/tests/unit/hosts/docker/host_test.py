@@ -44,7 +44,7 @@ from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record, parse_time
 
 from session.tests.case import REPO, Case
-from utils.tests.process_fixtures import TimeoutExpired
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 DOCKER = "/usr/local/bin/docker"
 GEN = "0123456789abcdef0123456789abcdef"
@@ -120,7 +120,7 @@ class FakeBroker:
 
     def __init__(self, order, started):
         self.order, self.started, self.error, self.closed = order, started, None, []
-        self.failing, self.max_ages = {}, []
+        self.failing, self.max_ages, self.refreshed = {}, [], threading.Event()
 
     def version(self):
         self.order.append("version")
@@ -139,6 +139,13 @@ class FakeBroker:
         if self.error:
             raise self.error
         return self.started
+
+    def refresh(self, container, manifest):
+        self.order.append(("refresh", container, manifest))
+        self.refreshed.set()
+        if "refresh" in self.failing:
+            raise self.failing["refresh"]
+        return []
 
     def close(self, container):
         self.order.append(("close", container))
@@ -165,7 +172,7 @@ class Base(Case):
         os.makedirs(self.cwd)
         self.order = []
         self.docker = FakeDocker(self.ep, self.order)
-        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {})
+        started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {}, [])
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
             "docker",
@@ -262,11 +269,14 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
+                "github": {"app": "agent-pm-bot"},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
-        self.assertEqual(DockerHost("docker", settings).docker, "/usr/local/bin/docker")
+        host = DockerHost("docker", settings)
+        self.assertEqual((host.docker, host.github), ("/usr/local/bin/docker", "agent-pm-bot"))
+        self.assertEqual(DockerHost("docker", {"docker": DOCKER}).github, "")
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -276,6 +286,19 @@ class ConfigTest(Base):
                 {"docker": DOCKER, "mount_roots": ["~/src"]},
                 r"^unknown key 'mount_roots' in \[hosts.docker\]; see docs/upgrading.md$",
             ),
+            (
+                {"docker": DOCKER, "github": "agent-pm-bot"},
+                r"^\[hosts.docker\] github: want a table$",
+            ),
+            (
+                {"docker": DOCKER, "github": {"app": "a", "x": 1}},
+                r"^unknown key 'x' in \[hosts.docker.github\]$",
+            ),
+            (
+                {"docker": DOCKER, "github": {"app": 1}},
+                r"^\[hosts.docker.github\] app: want a string$",
+            ),
+            ({"docker": DOCKER, "github": {}}, r"^\[hosts.docker.github\] app: want a string$"),
         ):
             with self.subTest(settings=settings), self.assertRaisesRegex(ConfigError, key):
                 DockerHost("docker", settings)
@@ -343,6 +366,7 @@ class StartTest(Base):
         self.order.append("supervisor")
         self.spawned_lock_held = not _free(os.path.join(self.state, "supervisor.lock"))
         self.spawned_record = self.host_record()
+        self.spawned_github = not os.path.exists(os.path.join(self.state, f"{GEN}.github.json"))
         return self.supervisor
 
     def start(self, **metadata):
@@ -651,8 +675,28 @@ class StartTest(Base):
                 self.assertEqual(self.order, [])
                 self.assertEqual(os.listdir(self.home_dir), ["keep"])
 
+    def test_a_github_app_reaches_the_manifest_the_env_and_the_expiry_file(self):
+        expiries = [{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}]
+        self.host.github = "agent-pm-bot"
+        self.broker.started = replace(self.broker.started, github=expiries)
+        self.start()
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
+        self.assertIn("AGENT_PM_PR_AUTHOR=agent-pm-bot[bot]", self.docker.execs()[2])
+        with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
+            self.assertEqual(json.load(f), expiries)
+        self.assertFalse(self.spawned_github)
+
+    def test_no_github_app_writes_null_and_no_author(self):
+        self.start()
+        self.assertFalse(any("AGENT_PM_PR_AUTHOR" in arg for arg in self.docker.execs()[2]))
+        with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
+            self.assertEqual(json.load(f), [])
+
     def test_each_start_writes_its_generation_result(self):
-        self.broker.started = Started(CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"})
+        self.broker.started = Started(
+            CONTAINER, self.ep, "sha256:" + "b" * 64, {"claude": "2.1.0"}, []
+        )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
             with self.subTest(resume=resume):
@@ -928,6 +972,206 @@ class StartTest(Base):
     def test_detach_is_refused(self):
         with self.assertRaisesRegex(SessionError, "only terminal sessions"):
             self.host.detach("w", self.launch)
+
+
+class PipeTest(Base):
+    METADATA = StartTest.METADATA
+
+    def setUp(self):
+        super().setUp()
+        os.unlink(os.path.join(self.home, ".agent-pm", "tui", "w", "session.json"))
+        self.home_dir = os.path.join(self.state, "agent")
+        self.exec = mock.Mock(pid=4321, returncode=None)
+        self.exec.stdout, self.exec.stderr = io.StringIO("out\n"), io.StringIO()
+        self.exec.wait.return_value = 0
+        self.spawn_mock.side_effect = self.popen
+        self.launch = Launch(
+            ("agent", "-p"),
+            cwd=self.cwd,
+            env={"PATH": "/host/bin", "AGENT_HOME": self.home_dir, "K": "secret"},
+        )
+
+    def popen(self, argv, **kw):
+        self.order.append("exec")
+        self.popened = (argv, kw)
+        self.lock_held = not _free(os.path.join(self.state, "pipe.lock"))
+        self.popen_record = self.host_record()
+        return self.exec
+
+    def pipe(self, name="w", **metadata):
+        return self.host.pipe(
+            name,
+            self.launch,
+            metadata={k: v for k, v in {**self.METADATA, **metadata}.items() if v is not None},
+        )
+
+    def test_no_name_or_a_docker_env_key_is_refused_before_docker(self):
+        with self.assertRaisesRegex(
+            ConfigError, "^a headless session on the Docker Host needs a name$"
+        ):
+            self.pipe(None)
+        for key in (*CLEARED, "DOCKER_CERT_PATH"):
+            self.launch = replace(self.launch, env={**self.launch.env, key: "x"})
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(
+                    ConfigError, f"^docker session w: env {key} would reconfigure the docker CLI$"
+                ),
+            ):
+                self.pipe()
+            self.launch = replace(self.launch, env={"K": "v"})
+        self.assertEqual(self.order, [])
+
+    def test_pipe_starts_the_container_then_docker_exec_without_tmux(self):
+        piped = self.pipe()
+        manifest = os.path.join(self.state, f"{GEN}.json")
+        self.assertEqual(
+            [step if isinstance(step, str | tuple) else step[:5] for step in self.order],
+            [
+                ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
+                ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
+                "version",
+                ("build", REPO),
+                ["volume", "ls", "--filter", "label=agent-pm.kind", "--format"],
+                ("start", manifest, client_keys(REPO)),
+                "exec",
+            ],
+        )
+        argv, kw = self.popened
+        self.assertEqual(
+            argv,
+            [
+                *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
+                *("--env", "AGENT_HOME", "--env", "K"),
+                *(CONTAINER, "with-secrets", "agent", "-p"),
+            ],
+        )
+        self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))
+        self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
+        self.assertFalse(set(CLEARED) & kw["env"].keys())
+        self.assertEqual(
+            {k: kw[k] for k in ("stdin", "stdout", "stderr", "text", "errors", "process_group")},
+            {
+                "stdin": DEVNULL,
+                "stdout": PIPE,
+                "stderr": PIPE,
+                "text": True,
+                "errors": "replace",
+                "process_group": 0,
+            },
+        )
+        record = {"generation": GEN, "sid": "s1", "client": "agent", "mode": "pipe"}
+        self.assertEqual((self.popen_record, self.host_record()), (record, record))
+        self.assertTrue(self.lock_held)
+        self.assertFalse(_free(os.path.join(self.state, "pipe.lock")))
+        self.assertTrue(os.path.exists(os.path.join(self.state, f"{GEN}.result.json")))
+        self.assertFalse(os.path.lexists(os.path.join(self.home, ".agent-pm", "tui", "w.lock")))
+        with piped.stdout as out:
+            self.assertEqual(list(out), ["out\n"])
+        self.assertEqual((piped.wait(0), self.broker.closed), (0, []))
+        piped.close()
+        piped.close()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_a_github_app_reaches_the_piped_client_and_its_tokens_are_refreshed(self):
+        expiries = [{"account": "ophis", "expires_at": "2000-01-01T00:00:00Z"}]
+        self.host.github = "agent-pm-bot"
+        self.broker.started = replace(self.broker.started, github=expiries)
+        piped = self.pipe()
+        argv, kw = self.popened
+        self.assertIn("AGENT_PM_PR_AUTHOR", argv)
+        self.assertEqual(kw["env"]["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
+        self.assertTrue(self.broker.refreshed.wait(5))
+        piped.close()
+        self.assertIn(("refresh", CONTAINER, os.path.join(self.state, f"{GEN}.json")), self.order)
+
+    def test_a_failed_piped_token_refresh_is_logged(self):
+        self.broker.started = replace(
+            self.broker.started, github=[{"account": "o", "expires_at": "2000-01-01T00:00:00Z"}]
+        )
+        self.broker.failing["refresh"] = SessionError("broker: offline")
+        with self.assertLogs("session", "WARNING") as logs:
+            piped = self.pipe()
+            self.assertTrue(self.broker.refreshed.wait(5))
+            deadline = time.monotonic() + 5
+            while not logs.output and time.monotonic() < deadline:
+                time.sleep(0.01)
+            piped.close()
+        self.assertIn("docker session w: github_refresh_failed broker: offline", logs.output[0])
+
+    def test_stop_kills_the_exec_then_closes_and_a_close_failure_only_warns(self):
+        piped = self.pipe()
+        self.broker.close = mock.Mock(side_effect=SessionError("broker: boom"))
+        with mock.patch("os.killpg") as killpg, self.assertLogs("session", "WARNING") as logs:
+            piped.stop(ended=False)
+        killpg.assert_called_once_with(4321, signal.SIGKILL)
+        self.broker.close.assert_called_once_with(CONTAINER)
+        self.assertIn("docker session w: broker: boom", logs.output[0])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_a_busy_name_or_a_failed_exec_rolls_back(self):
+        os.makedirs(os.path.join(self.home, ".agent-pm", "tui"), exist_ok=True)
+        busy = os.open(
+            os.path.join(self.home, ".agent-pm", "tui", "w.lock"), os.O_RDWR | os.O_CREAT
+        )
+        fcntl.flock(busy, fcntl.LOCK_EX)
+        with self.assertRaisesRegex(SessionError, "^docker session w: busy$"):
+            self.pipe()
+        os.close(busy)
+        self.assertEqual(self.order, [])
+        self.spawn_mock.side_effect = OSError("no docker")
+        with self.assertRaisesRegex(SessionError, "^docker session w: no docker$"):
+            self.pipe()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_resume_keeps_home_and_checks_history(self):
+        with self.assertRaisesRegex(ConfigError, "no native history to resume"):
+            self.pipe(resume="1")
+        transcript = os.path.join(self.home_dir, "projects", "p", "s1.jsonl")
+        os.makedirs(os.path.dirname(transcript))
+        with open(transcript, "w") as f:
+            f.write("{}\n")
+        self.launch = replace(self.launch, transcript=transcript)
+        self.pipe(resume="1").close()
+        self.assertTrue(os.path.exists(transcript))
+
+    def piped_row(self, held):
+        """w's container, a headless generation, its pipe lock held or not."""
+        self.listed("w")
+        self.record(mode="pipe")
+        if held:
+            fd = os.open(os.path.join(self.state, "pipe.lock"), os.O_RDWR | os.O_CREAT)
+            self.addCleanup(_close, fd)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return fd
+        return None
+
+    def test_a_live_piped_container_is_kept_unlisted_and_an_orphan_closed(self):
+        fd = self.piped_row(held=True)
+        self.host.sweep("x")
+        self.host.sweep("w")
+        self.assertEqual(self.broker.closed, [])
+        self.assertEqual((self.host.list(), self.host.rows()), ([], []))
+        for call in (self.host.attach, self.host.attach_target):
+            with (
+                self.subTest(call=call),
+                self.assertRaisesRegex(SessionError, "^no docker session w$"),
+            ):
+                call("w")
+        self.tui_session("w")
+        with self.assertRaisesRegex(
+            SessionError,
+            "^docker session w: a headless run holds it; wait for it to end or stop its run$",
+        ):
+            StartTest.start(self)
+        self.assertEqual(self.broker.closed, [])
+        _close(fd)
+        self.host.sweep("x")
+        self.assertEqual(self.broker.closed, [CONTAINER])
 
 
 class PreflightTest(Base):

@@ -79,6 +79,7 @@ max = "max"
 #   outer_terminal    variables of an enclosing terminal a tui program on the pty never gets (its TERM: xterm-256color)
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
+#   github.app        the GitHub App whose installation tokens every Docker session gets; "": none
 [hosts]
 default = "tmux"
 
@@ -98,6 +99,9 @@ outer_terminal = ["TMUX", "TMUX_PANE"]
 # DockerHost (session/src/agent_pm/session/hosts/docker/host.py)
 implementation = "agent_pm.session.hosts.docker.host:DockerHost"
 docker = "/usr/local/bin/docker"
+
+[hosts.docker.github]
+app = "agent-pm-bot"
 
 # ── Viewer ──────────────────────────────────────────────
 # [viewer]            how the Viewer (session/src/agent_pm/session/viewer/viewer.py) shows every Host's sessions:

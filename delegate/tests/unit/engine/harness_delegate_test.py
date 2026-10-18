@@ -113,6 +113,34 @@ class DockerHarnessTest(HarnessCase):
         self.assertTrue(view._state.plan.docker and view.driver.docker)
 
 
+class DockerHeadlessTest(HarnessCase):
+    def test_a_headless_session_carries_the_agent_name_only_on_the_docker_host(self):
+        HarnessSession.hosts["box"] = RecordingHost("box")
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(
+                "[session.hosts.box]\n"
+                'implementation = "agent_pm.session.hosts.docker.host:DockerHost"\n'
+                'docker = "/usr/local/bin/docker"\n'
+            )
+        name = f"dummy-tester-{SID[:8]}"
+        for host, want in (("box", name), ("agent", None)):
+            with self.subTest(host=host):
+                spec = Spec(
+                    "input", self.work, task="echo", mode="headless", client="fake", sid=SID
+                )
+                placement = {"session_cls": HarnessSession, "host": host, "harness_host": "harness"}
+                preview = HarnessDelegate.preview("dummy-tester", spec, **placement)
+                self.assertEqual((preview.agent, preview.plan.session.name), (want, want))
+                self.assertEqual(preview.plan.docker, want is not None)
+                self.assertEqual(preview.plan.spec.name, want)
+        spec = Spec("input", self.work, task="echo", mode="headless", client="fake", sid=SID)
+        view = self.make(spec=spec, host="box", harness_host="harness")
+        self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
+        view._complete(Result(0, Outcome("needs_input", "Q", "A", questions=["Which?"])))
+        view.resume(input="The answer.")
+        self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
+
+
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)

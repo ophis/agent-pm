@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,11 +19,12 @@ import (
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-engineer|agent-pm-docs | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | close --container NAME | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-bot | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -34,6 +36,8 @@ type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 type app struct {
 	build        func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error)
 	start, close step
+	refresh      func(ctx context.Context, container, manifest string) (any, error)
+	status       func(ctx context.Context) (any, error)
 	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
 	login        func(out io.Writer) error
 	loginGitHub  func(app string, out io.Writer) error
@@ -62,7 +66,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	command := "unknown"
 	if len(args) > 0 {
 		switch args[0] {
-		case "version", "build", "start", "close", "workspace-rm":
+		case "version", "build", "start", "refresh", "close", "status", "workspace-rm":
 			command = args[0]
 		case "login":
 			var login func() error
@@ -103,6 +107,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		}, args[2]
 	case command == "start" && len(args) == 3 && args[1] == "--manifest" && isPath(args[2]):
 		s, arg = a.start, args[2]
+	case command == "refresh" && len(args) == 5 && args[1] == "--container" && containerPattern.MatchString(args[2]) &&
+		args[3] == "--manifest" && isPath(args[4]):
+		manifest := args[4]
+		s, arg = func(ctx context.Context, container string, _ io.Writer) (any, error) {
+			return a.refresh(ctx, container, manifest)
+		}, args[2]
+	case command == "status" && len(args) == 1:
+		s = func(ctx context.Context, _ string, _ io.Writer) (any, error) { return a.status(ctx) }
 	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
 		s, arg = a.close, args[2]
 	case command == "workspace-rm" && (len(args) == 3 || len(args) == 4 && args[3] == "--force") && args[1] == "--volume" &&
@@ -153,9 +165,15 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 	}
 	defer clean()
 	d.Progress = progress
-	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}})
+	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home))
 	h.Progress = progress
 	return f(h)
+}
+
+// tokens is the broker's GitHub App token store in the account's login keychain.
+func tokens(home string) broker.GitHub {
+	k := broker.SystemKeychain{Home: home}
+	return broker.GitHub{Keychain: k, Apps: k, API: github.New(), Lock: broker.FileLock(filepath.Join(home, ".agent-pm/docker/tokens.lock"))}
 }
 
 func system() app {
@@ -165,6 +183,16 @@ func system() app {
 		},
 		start: func(ctx context.Context, manifest string, progress io.Writer) (any, error) {
 			return withHost(progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
+		},
+		refresh: func(ctx context.Context, container, manifest string) (any, error) {
+			return withHost(nil, func(h launcher.Host) (any, error) { return h.Refresh(ctx, container, manifest) })
+		},
+		status: func(ctx context.Context) (any, error) {
+			home, err := accountHome()
+			if err != nil {
+				return nil, err
+			}
+			return launcher.Host{GitHub: tokens(home)}.Status(ctx)
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })

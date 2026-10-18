@@ -3,9 +3,11 @@ start() fixes a Prepared before anything starts, has `record` write the session 
 and returns the session, so none exists unstarted. stop() is idempotent.
 """
 
+import json
 import os
+import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from typing import ClassVar, Self
 
@@ -15,6 +17,7 @@ from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     ClientBound,
+    ClientHome,
     ConfigError,
     KeyPress,
     Launch,
@@ -27,7 +30,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.base import Host, host_resume
 from agent_pm.utils import (
     AGENT_SESSION_ENV,
     CLIENT_ENV,
@@ -156,10 +159,41 @@ class BaseMode(ABC):
         return ConfigError(f"client {spec.client!r} does not support {cls.kind.value} mode")
 
     @staticmethod
-    def _no_tui_keys(spec: Spec, display: Display = None) -> None:
-        for key, value in (("name", spec.name), ("events", spec.events), ("display", display)):
+    def _no_tui_keys(spec: Spec, display: Display = None, *, named: bool = False) -> None:
+        name = None if named else spec.name
+        for key, value in (("name", name), ("events", spec.events), ("display", display)):
             if value is not None:
                 raise ConfigError(f"{key}: tui mode only")
+
+    @staticmethod
+    def _hosted(
+        spec: Spec, client_home: ClientHome | None, host: Host, name: str
+    ) -> tuple[Spec, Mapping[str, str]]:
+        """spec with `host`'s client env for `name`, and the metadata its Host keeps."""
+        home = host._client_env(name, spec.client or "", client_home, resume=spec.resume)
+        metadata = {
+            "sid": spec.sid or "",
+            "client": spec.client or "session",
+            "generation": uuid.uuid4().hex,
+            **(
+                {
+                    "home_field": client_home.field,
+                    "home_dir": client_home.dir,
+                    "credential": client_home.credential,
+                    "home_files": json.dumps(dict(client_home.files)),
+                    "resume": "1" if spec.resume else "0",
+                }
+                if home and client_home
+                else {}
+            ),
+        }
+        return replace(spec, env={**spec.env, **home}), metadata
+
+    @staticmethod
+    def _host_resume(prepared: Prepared, host: Host, name: str) -> Prepared:
+        if resume := host_resume(host, name, prepared.info.cwd):
+            prepared = replace(prepared, info=replace(prepared.info, resume=resume))
+        return prepared
 
     @staticmethod
     def _selected(spec: Spec, client: Client) -> None:

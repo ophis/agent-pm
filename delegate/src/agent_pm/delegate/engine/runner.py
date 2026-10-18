@@ -64,13 +64,17 @@ class GiveUp:
 
 
 class Headless:
+    stops_failed = True  # a failed turn's client would hold its container on
+
     def __init__(self, note: Callable[..., None], driver: Driver):
         self.note, self.driver = note, driver
 
-    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
+    def start(self, p: Plan) -> Session:
+        return self._start(p, p.session)
+
+    def _start(self, p: Plan, session) -> Session:
         handle = self.driver.start(
-            replace(p.driver_spec, session=replace(p.session, name=name, events=events)),
-            idle_timeout=p.run.idle_timeout,
+            replace(p.driver_spec, session=session), idle_timeout=p.run.idle_timeout
         )
         if isinstance(handle, Instruction):
             raise ConfigError("session driver returned an Instruction")
@@ -102,12 +106,14 @@ class Tui(Headless):
     run's `show` says, unless hidden.
     """
 
+    stops_failed = False
+
     def __init__(self, note: Callable[..., None], driver: Driver):
         super().__init__(note, driver)
         self.nudged, self.count = False, 0
 
     def start(self, p: Plan) -> Session:
-        handle = super().start(p, p.spec.name, p.spec.events)
+        handle = self._start(p, replace(p.session, name=p.spec.name, events=p.spec.events))
         name = handle.name
         if name is None:
             raise SessionError("tui session has no name")
@@ -277,6 +283,8 @@ class _Attempts:
             if limit:
                 return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
             if failed:
+                if self.policy.stops_failed:
+                    self.stop(handle)
                 detail = f" ({failed.detail})" if failed.detail else ""
                 return Result(rc, None, f"the client's turn failed: {failed.error}{detail}")
             if (block := outcome_block(last or "")) is None:
