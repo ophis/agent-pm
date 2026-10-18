@@ -1,5 +1,5 @@
 {
-  "protocol_version": "6",
+  "protocol_version": "7",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1299,6 +1299,66 @@
     {
       "file": "error-refresh-cleanup.json",
       "definition": "error",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-ready.json",
+      "definition": "status_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-unavailable.json",
+      "definition": "status_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-secret.json",
+      "definition": "status_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-wrong-type.json",
+      "definition": "status_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-bad-expiry.json",
+      "definition": "status_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-codex-missing-expiry.json",
+      "definition": "status_output",
       "valid": false,
       "expected": {
         "stage": "response",

@@ -1,5 +1,7 @@
 # Docker host
 
+Pinned host Codex installation and independent broker login: [Codex operations](docker-codex.md).
+
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
 keychain and writes it, and the GitHub App's installation tokens, only into a container's tmpfs. Its JSON interface:
@@ -30,7 +32,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"6"}` |
+| `"$B" version` | `{"protocol_version":"7"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in

@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 6** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"6"}`.
+**Protocol 7** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"7"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -13,7 +13,8 @@ protocol 4 mounts the manifest's `workspace` volume at `cwd` instead of binding 
 drops the mount roots and deny list, and adds `workspace-rm`; protocol 5 names every volume
 `agent-pm-ws-<name>`, labelled `agent-pm.kind=ws`, and adds the manifest's `github`; protocol 6 issues
 that App's installation tokens ([GitHub tokens](#github-tokens)): start's `github`, `refresh`, `status`, and the
-codes `github_failed` and `refresh_failed`.
+codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
+`status.codex` object; container manifest and relay message shapes remain unchanged.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -41,6 +42,7 @@ Input fixtures' `argv` arrays represent arguments after the executable, in canon
 order. They are test data, not JSON sent to the broker. These commands consume no
 stdin. `login claude` reads a token, and `login github <app>` the login keychain password once when the
 item's access needs a change, interactively without echo; neither has a JSON contract.
+The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
 | Result | Process exit | stdout | stderr |
 |---|---|---|---|
@@ -109,13 +111,29 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `6` |
+| `version` | `protocol_version`: exact string `7` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: the image's runnable version strings; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
-| `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}` |
+| `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
+
+`codex` has no identity or credential fields:
+
+| Field | Meaning |
+|---|---|
+| `version`, `path`, `sha256` | Verified pinned native installation; empty strings if invalid |
+| `allowed_versions` | Exact container compatibility set; initially empty, preserved by updates |
+| `logged_in` | Local installation, ACL, credential shape and access-token expiry checks pass |
+| `state` | `installation_invalid`, `login_unavailable`, `busy`, `expired` or `ready` |
+| `expires_at` | Optional UTC access-token expiry; required for `ready`; no signature or online-validity claim |
+| `repair` | Host repair command, empty for `ready` |
+
+Status never prompts for Codex access or refreshes it. A held login lock reports `busy`
+after 250 ms. Existing GitHub revocation retry behavior is unchanged. Schema rejects
+unknown Codex fields, malformed types and expiry, and a ready state without installation
+metadata and expiry.
 
 ```mermaid
 flowchart LR
