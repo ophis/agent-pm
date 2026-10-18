@@ -174,8 +174,53 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	if err != nil && !missing {
 		return errors.New("cannot inspect Codex keychain access; retry " + codexLoginCommand)
 	}
+	// Every terminal question comes before the browser, which the user may not come back from: the item is
+	// created and made to trust only the broker first, and after the browser the password is never asked.
+	if missing {
+		if c.keychain.CreateCodex() != nil {
+			return errors.New("cannot create Codex keychain item")
+		}
+	}
+	var password []byte
+	var passwordErr error
+	passwordRead := false
+	defer func() { erase(password) }()
+	secure := func() error {
+		access, err := c.keychain.AppAccess(codexService, codexAccount)
+		if err != nil {
+			return errors.New("cannot inspect Codex keychain access")
+		}
+		if onlyBroker(access) != nil {
+			if !passwordRead {
+				passwordRead = true
+				password, passwordErr = c.password()
+			}
+			if passwordErr != nil || trust(codexService, codexAccount, c.keychain, access, password) != nil {
+				return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
+			}
+		}
+		return c.trusted()
+	}
+	if err := secure(); err != nil {
+		return err
+	}
+	if !passwordRead {
+		passwordRead, passwordErr = true, errors.New("no password question after the browser")
+	}
 	var previous []byte
 	defer func() { erase(previous) }()
+	if !missing {
+		old, err := c.keychain.Secret(codexService, codexAccount)
+		if err != nil {
+			erase(old)
+			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
+		}
+		if expiry, err := parseCodexAuth(old); err == nil && c.now().Before(expiry) {
+			previous = old
+		} else {
+			erase(old)
+		}
+	}
 	home, err := os.MkdirTemp(c.tempRoot, "agent-pm-codex-")
 	if err != nil {
 		return errors.New("cannot create private Codex login directory")
@@ -207,46 +252,6 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	}
 	if err := os.RemoveAll(home); err != nil {
 		return errors.New("cannot remove private Codex login directory; login was not saved")
-	}
-	if missing {
-		if c.keychain.CreateCodex() != nil {
-			return errors.New("cannot create Codex keychain item")
-		}
-	}
-	var password []byte
-	var passwordErr error
-	passwordRead := false
-	defer func() { erase(password) }()
-	secure := func() error {
-		access, err := c.keychain.AppAccess(codexService, codexAccount)
-		if err != nil {
-			return errors.New("cannot inspect Codex keychain access")
-		}
-		if onlyBroker(access) != nil {
-			if !passwordRead {
-				passwordRead = true
-				password, passwordErr = c.password()
-			}
-			if passwordErr != nil || trust(codexService, codexAccount, c.keychain, access, password) != nil {
-				return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
-			}
-		}
-		return c.trusted()
-	}
-	if err := secure(); err != nil {
-		return err
-	}
-	if !missing {
-		old, err := c.keychain.Secret(codexService, codexAccount)
-		if err != nil {
-			erase(old)
-			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
-		}
-		if expiry, err := parseCodexAuth(old); err == nil && c.now().Before(expiry) {
-			previous = old
-		} else {
-			erase(old)
-		}
 	}
 	if ctx.Err() != nil {
 		return errors.New("Codex login canceled")
