@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Roster, RosterError, Spec, State, cli
+from agent_pm.manager import Roster, Spec, State, cli
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState, append_line
@@ -724,7 +724,7 @@ class StaleHolderRecovery(CliCase):
                 " ended holder; no holder is active; handled N=0 GEN=0",
                 "crew: lasting fix: restart the commander's client under a new holder, then"
                 " attach and arm its monitor: command: agent-pm-crew hold --manager mgr"
-                " --session mgr -- claude --continue (or: codex resume --last)",
+                " --session mgr -- <client resume command> (agent-pm-crew hold --help)",
                 f"crew: handled events after N=0? first: {LEASE_FREE} ack --manager mgr"
                 " --through <line> --gen 0, then attach; unacknowledged events replay",
                 "crew: until then, attach without a lease, keeping the prefix on the commands it"
@@ -733,7 +733,10 @@ class StaleHolderRecovery(CliCase):
                 " --content --follow",
             ],
         )
-        self.assertEqual(cli.CLIENT_RESUME[0], ("claude", "--continue"))
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()) as help:
+            main(["hold", "--help"])
+        self.assertIn("-- claude --continue", help.getvalue())
+        self.assertIn("codex resume --last", help.getvalue())
 
     def test_printed_lease_free_commands_run(self):
         _, _, stderr = self.invoke("attach", "--manager", "mgr")
@@ -834,7 +837,8 @@ class StaleHolderRecovery(CliCase):
                 "crew: this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an"
                 " ended holder; new holds manager mgr now; handled N=0 GEN=0",
                 "crew: use new's commander; take over only on purpose: agent-pm-crew hold --force"
-                " --manager mgr --session mgr -- claude --continue (or: codex resume --last)",
+                " --manager mgr --session mgr -- <client resume command> (agent-pm-crew hold"
+                " --help)",
             ],
         )
 
@@ -866,8 +870,10 @@ class StaleHolderRecovery(CliCase):
         self.assertFalse(Path(self.agent_pm, "managers", "fresh").exists())
 
     def test_unreadable_roster_prints_error_without_notes(self):
-        with mock.patch.object(Roster, "lease_state", side_effect=RosterError("unreadable")):
-            result, stdout, stderr = self.invoke("attach", "--manager", "mgr")
+        holder_lock = Path(self.directory, "holder.lock")
+        holder_lock.unlink()
+        holder_lock.mkdir()
+        result, stdout, stderr = self.invoke("attach", "--manager", "mgr")
         self.assertEqual((result, stdout), (1, ""))
         self.assertEqual(
             stderr,

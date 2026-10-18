@@ -14,7 +14,6 @@ from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StaleHolder, StatusError
 from agent_pm.utils import STATE, LayerCommand, nested_start, printable
 
-CLIENT_RESUME = (("claude", "--continue"), ("codex", "resume", "--last"))
 LEASE_FREE = ("env", "-u", "AGENT_PM_HOLDER_ID", "-u", "AGENT_PM_HOLDER_GENERATION")
 ENDED = "this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an ended holder"
 
@@ -65,9 +64,7 @@ def _stale_holder_notes(args, reader: tuple[int, int] | None = None) -> list[str
 
     def restart(*force: str) -> str:
         hold = ("agent-pm-crew", "hold", *force, *named, *_named(manager, "--session"), "--")
-        client, *others = CLIENT_RESUME
-        alternatives = "; ".join(shlex.join(argv) for argv in others)
-        return f"{shlex.join((*hold, *client))} (or: {alternatives})"
+        return f"{shlex.join(hold)} <client resume command> (agent-pm-crew hold --help)"
 
     def lease_free(*words: str) -> str:
         return shlex.join((*LEASE_FREE, "agent-pm-crew", *words))
@@ -344,6 +341,9 @@ Examples:
   agent-pm-crew hold --manager demo --session commander -- codex
   Inside that commander's environment, reconcile its roster:
   agent-pm-crew attach --manager demo
+  Restart a commander whose holder ended, resuming its conversation
+  (Codex: codex resume --last):
+  agent-pm-crew hold --manager demo --session demo -- claude --continue
 
 Recovery and next help:
   Conflict: use the existing commander, or --force for deliberate takeover.
