@@ -27,7 +27,10 @@ from agent_pm.session.clients.codex.common import (
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo, SessionStatus
 
 from session.tests.unit.clients.codex.support import (
+    AUTO,
+    BYPASS,
     CHILD,
+    MODES,
     NATIVE,
     Base,
     committed_headless,
@@ -1379,6 +1382,14 @@ class ResumeMainTest(Base):
         self.assertEqual((argv[:2], argv[2:6], argv[-1]), (("codex", "resume"), FLAGS, NATIVE))
         self.assertEqual({key: env[key] for key in SECRETS}, SECRETS)
         self.assertEqual((env["CODEX_HOME"], env["CALLER"]), (str(self.codex_home), "kept"))
+
+    def test_main_runs_here_in_auto_mode(self):
+        self.client = CodexClient({**self.client.config, "modes": MODES})
+        self.common = self.client.common
+        self.bound()
+        argv = self.run_main()[1].call_args.args[1]
+        self.assertEqual((argv[:2], argv[2:8], argv[8:12]), (("codex", "resume"), AUTO, FLAGS))
+        self.assertNotIn(BYPASS, argv)
 
     def test_saved_env_wins_and_local_git_names_and_defaults_are_not_added(self):
         self.bound()

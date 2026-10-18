@@ -39,6 +39,8 @@ class ClassTest(Case):
         self.assertTrue(cls.attachable)
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
+        self.assertFalse(host._isolated)
+        self.assertTrue(TmuxHost("tmux", {"isolated": True})._isolated)
         self.assertIsInstance(host.tmux, TmuxCli)
         self.assertEqual(
             (f"{host.tmux.runner.__module__}.{host.tmux.runner.__name__}", host.tmux.sleep),

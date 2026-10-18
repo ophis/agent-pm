@@ -16,22 +16,26 @@ from unittest import mock
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import HOME
 from agent_pm.session.clients.claude.usage import NO_PANEL
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Mode,
+    Permission,
     SessionInfo,
     SessionStatus,
 )
 from agent_pm.utils import LOCAL_ENV_VARS, docker_home
 
-from session.tests.case import SPAWNS, Case
+from session.tests.case import SPAWNS, Case, packaged_hosts
 from session.tests.unit.clients.claude.support import (
     CEILING,
     CONFIG,
     HOOK,
+    MODES,
     PROBE,
     SID,
+    SKIP_DIALOG,
     TUI_DEFAULTS,
     UNSET,
     Base,
@@ -42,6 +46,71 @@ from session.tests.unit.clients.claude.support import (
     store,
     tui_launch,
 )
+
+PLUGIN = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
+
+
+def holds(argv, words) -> bool:
+    return any(tuple(argv[i : i + len(words)]) == tuple(words) for i in range(len(argv)))
+
+
+class PermissionTest(Base):
+    def test_only_the_runs_permission_modes_flags_reach_claude_settings_merged(self):
+        config = {"flags": ["--settings", PLUGIN], "modes": MODES}
+        plugin = json.loads(PLUGIN)
+        rows = (
+            (Permission.AUTO, MODES["auto"], "--dangerously-skip-permissions", plugin),
+            (
+                Permission.YOLO,
+                ["--dangerously-skip-permissions"],
+                "--permission-mode",
+                {**plugin, **json.loads(SKIP_DIALOG)},
+            ),
+        )
+        for permission, present, absent, settings in rows:
+            for mode, launch in (
+                ("headless", self.launch),
+                ("tui", partial(tui_launch, self.work)),
+            ):
+                with self.subTest(permission=permission, mode=mode):
+                    argv = launch(config=config, permission=permission).argv
+                    self.assertTrue(holds(argv, present), argv)
+                    self.assertNotIn(absent, argv)
+                    self.assertEqual(argv.count("--settings"), 1)
+                    merged = json.loads(argv[argv.index("--settings") + 1])
+                    merged.pop("hooks", None)
+                    self.assertEqual(merged, settings)
+
+    def test_the_packaged_config_gives_docker_claude_only_yolo_flags_every_other_host_only_auto(
+        self,
+    ):
+        table = dict(read_config(local=os.devnull)["clients"]["claude"])
+        table.pop("implementation")
+        words = {
+            Permission.AUTO: "--permission-mode",
+            Permission.YOLO: "--dangerously-skip-permissions",
+        }
+        for name, permission in packaged_hosts().items():
+            for mode, launch in (
+                ("headless", self.launch),
+                ("tui", partial(tui_launch, self.work)),
+            ):
+                with self.subTest(host=name, mode=mode):
+                    argv = launch(config=table, permission=permission).argv
+                    self.assertEqual([w for w in argv if w in words.values()], [words[permission]])
+                    settings = json.loads(argv[argv.index("--settings") + 1])
+                    self.assertEqual(
+                        settings.get("skipDangerousModePermissionPrompt"),
+                        True if permission == Permission.YOLO else None,
+                    )
+
+    def test_without_modes_neither_permission_adds_a_flag(self):
+        for permission in Permission:
+            with self.subTest(permission=permission):
+                self.assertEqual(
+                    self.launch(config={}, permission=permission).argv,
+                    self.launch(config={}).argv,
+                )
 
 
 class ModelEffortTest(Base):
@@ -544,6 +613,15 @@ class ResumeTest(Base):
             {"enabledPlugins": {"agent-pm@agent-pm": False}, "model": "x"},
         )
         self.assertEqual(argv[-4:], ["--add-dir", "/o x", "--add-dir", "/p"])
+
+    def test_the_resume_command_runs_in_auto_mode_here(self):
+        self.client = ClaudeClient({"flags": ["--settings", PLUGIN], "modes": MODES})
+        words = shlex.split(self.committed().resume)
+        _, _, _, execute = self.resumed(words[6:])
+        argv = execute[0].args[1]
+        self.assertEqual(argv[:5], ["claude", "--resume", SID, "--permission-mode", "auto"])
+        self.assertNotIn("--dangerously-skip-permissions", argv)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), json.loads(PLUGIN))
 
     def test_the_state_is_private(self):
         self.committed()

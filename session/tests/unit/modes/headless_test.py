@@ -22,6 +22,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
     Liveness,
+    Permission,
     Prepared,
     SessionError,
     SessionInfo,
@@ -386,6 +387,20 @@ class ThroughItsHost(Base):
         )
         resume = f"cd {self.dir} && agent-pm-session resume w1"
         self.assertEqual((mode.prepared.info.resume, self.recorded[0].resume), (resume, resume))
+
+    def test_the_run_gets_yolo_on_an_isolated_host_else_auto(self):
+        seen = []
+
+        class Seen(StubRun):
+            def launch(self, spec):
+                seen.append(self._permission)
+                return super().launch(spec)
+
+        for isolated in (False, True):
+            host = PipingHost(FakePiped())
+            host._isolated = isolated
+            self.start_on(host, client_class=Seen)
+        self.assertEqual(seen, [Permission.AUTO, Permission.YOLO])
 
     def test_a_nameless_spec_gets_no_host_env_metadata_or_resume(self):
         host = HomeHost(FakePiped())

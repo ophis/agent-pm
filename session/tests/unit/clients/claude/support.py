@@ -16,6 +16,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     HookKind,
     Launch,
+    Permission,
 )
 from agent_pm.session.engine.types import Spec as BaseSpec
 from agent_pm.utils import LOCAL_ENV_VARS
@@ -94,6 +95,13 @@ WHAT = {
     "tiers": 'a table from tier "1"–"4" to a model name',
     "efforts": "a table from effort (low, medium, high, xhigh, max) to a printable value",
     "env": "a table of environment names to strings without NUL",
+    "modes": "a table from auto and yolo to a list of strings",
+}
+
+SKIP_DIALOG = '{"skipDangerousModePermissionPrompt": true}'
+MODES = {
+    "auto": ["--permission-mode", "auto"],
+    "yolo": ["--dangerously-skip-permissions", "--settings", SKIP_DIALOG],
 }
 
 
@@ -120,7 +128,9 @@ class Base(Case):
             call()
         self.assertEqual(str(caught.exception), message)
 
-    def launch(self, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
+    def launch(
+        self, prompt="hi", config=CONFIG, *, resume=False, permission=Permission.AUTO, **spec
+    ) -> Launch:
         spec = Spec(
             **{
                 "workdir": self.work,
@@ -131,7 +141,9 @@ class Base(Case):
                 **spec,
             }
         )
-        return ClaudeClient(config).headless().launch(spec)
+        run = ClaudeClient(config).headless()
+        run._permission = permission
+        return run.launch(spec)
 
 
 def stream_line(record) -> str:
@@ -223,7 +235,9 @@ def reference(cwd: str, sid: str = SID) -> str:
     return f"cd {q(cwd)} && agent-pm-session client-resume claude {q(store())} {q(cwd)} {sid}"
 
 
-def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
+def tui_launch(
+    work, prompt="hi", config=CONFIG, *, resume=False, permission=Permission.AUTO, **spec
+) -> Launch:
     spec = Spec(
         **{
             "workdir": work,
@@ -234,7 +248,9 @@ def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Lau
             **spec,
         }
     )
-    return ClaudeClient(config).tui().launch(spec, HOOK)
+    run = ClaudeClient(config).tui()
+    run._permission = permission
+    return run.launch(spec, HOOK)
 
 
 def said(mid, *blocks) -> dict:

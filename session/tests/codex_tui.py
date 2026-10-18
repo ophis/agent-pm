@@ -58,6 +58,7 @@ class PlanCase(Case):
             workdir="/work",
             sid="caller-id",
             store="/private-state/recovery/codex",
+            permission=(),
         )
         self.frontend = (
             "/protected/codex",

@@ -29,12 +29,21 @@ from agent_pm.session.clients.codex.common.types import (
     SessionState,
     Snapshot,
 )
-from agent_pm.session.clients.common import CHECKS, FLAGS, check_config, scan, split_flags
+from agent_pm.session.clients.common import (
+    CHECKS,
+    FLAGS,
+    MODES,
+    check_config,
+    mode_flags,
+    scan,
+    split_flags,
+)
 from agent_pm.session.engine.types import (
     COMMAND,
     ClientHome,
     ConfigError,
     Launch,
+    Permission,
     Resumable,
     SessionInfo,
     SessionStatus,
@@ -688,6 +697,13 @@ def refuse(flags) -> None:
             raise ConfigError(f"{flag.text}: the Codex client sets hooks, session and cwd")
 
 
+def refuse_mode(flags) -> None:
+    """A permission mode's flags grant no directory, hooks, session or cwd."""
+    refuse(flags)
+    if any(flag.word == "--add-dir" for flag in scan(flags, VALUED)):
+        raise ConfigError("--add-dir: a permission mode grants no directory")
+
+
 def _native_id(state: SessionState) -> str:
     if state.native_id is None:
         raise ConfigError(f"missing Codex native ID for run ID {state.sid!r}")
@@ -770,9 +786,10 @@ def launch_options(snapshot: Snapshot) -> list[str]:
     return result
 
 
-def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
+def launch_flags(snapshot: Snapshot, *, interactive: bool, mode: Sequence[str]) -> list[str]:
+    """`mode`: the launch's permission mode flags, never in the snapshot."""
     supplied, _ = split_flags(snapshot.flags)
-    result = [*supplied, *launch_options(snapshot)]
+    result = [*mode, *supplied, *launch_options(snapshot)]
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result
@@ -823,9 +840,12 @@ class CodexCommon:
     def __init__(self, config, *, selector):
         self.selector = selector
         self.config = dict(config)
-        check_config(config, TABLE, (FLAGS, *CHECKS))
+        check_config(config, TABLE, (FLAGS, MODES, *CHECKS))
         self.flags = tuple(config.get("flags", ()))
+        self.modes = {p: mode_flags(config, p) for p in Permission}
         refuse(self.flags)
+        for flags in self.modes.values():
+            refuse_mode(flags)
 
     def home(self) -> ClientHome:
         return ClientHome(
@@ -999,14 +1019,14 @@ class CodexCommon:
         snapshot = limits.get("codex") if isinstance(limits, dict) else None
         return _usage(snapshot if isinstance(snapshot, dict) else result.get("rateLimits"))
 
-    def resume_launch(self, state: SessionState) -> Launch:
+    def resume_launch(self, state: SessionState, *, mode: Sequence[str] = ()) -> Launch:
         snapshot = state.snapshot
         selection = self.selector(_native_id(state), resume=True)
         _, literal = split_flags(snapshot.flags)
         argv = (
             "codex",
             *selection[:-1],
-            *launch_flags(snapshot, interactive=True),
+            *launch_flags(snapshot, interactive=True, mode=mode),
             *selection[-1:],
             *literal,
         )
@@ -1018,8 +1038,8 @@ class CodexCommon:
         return resume_command(state.snapshot.cwd, {}, (*argv, _native_id(state)))
 
     def resume_main(self, argv) -> int:
-        """resume_command's run (STORE WORKDIR SID NATIVE): execs the stored resume with the
-        environment its recovery state keeps; 1 and one stderr line when it cannot.
+        """resume_command's run (STORE WORKDIR SID NATIVE): execs the stored resume in auto mode
+        with the environment its recovery state keeps; 1 and one stderr line when it cannot.
         """
         try:
             store, workdir, sid, native = argv
@@ -1035,7 +1055,7 @@ class CodexCommon:
                     f"recovery state for run ID {sid!r} is bound to native ID "
                     f"{state.native_id!r}, not {native!r}"
                 )
-            launch = self.resume_launch(state)
+            launch = self.resume_launch(state, mode=self.modes[Permission.AUTO])
             os.chdir(launch.cwd)
             os.execvpe(launch.argv[0], launch.argv, {**os.environ, **launch.env})
         except (ConfigError, RecoveryError, OSError) as exc:

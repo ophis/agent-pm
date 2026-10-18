@@ -80,6 +80,13 @@ class Mode(StrEnum):
     IN_PROCESS = "in_process"
 
 
+class Permission(StrEnum):
+    """A client's permission mode ([clients.<name>.modes]): yolo skips every permission and approval."""
+
+    AUTO = "auto"
+    YOLO = "yolo"
+
+
 class Liveness(StrEnum):
     LIVE = "live"
     ABSENT = "absent"

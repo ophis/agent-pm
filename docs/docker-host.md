@@ -255,6 +255,7 @@ default = "docker"
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
 | `plugins` | `["autopilot"]` | the installed plugin payloads every container's image holds ([Plugins](#plugins)); `[]`: none |
 | `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
+| `isolated` | `true` | its sessions' clients run in yolo mode ([Permissions](#permissions)); `false`: auto mode, as on tmux |
 
 Each session's GitHub tokens are refreshed 10 minutes before the first one expires, a TUI
 session's by its host run supervisor, a headless run's by its harness; a failed refresh writes
@@ -266,6 +267,15 @@ Then `agent-pm-crew worker NAME --client claude` starts NAME in its own containe
 on tmux. The Viewer shows it as it shows a tmux session: `--display none` starts it hidden,
 `[session.viewer]` shapes its grid, and `ls --descendants` follows the sessions it opened. Every docker call goes to `unix://<account home>/.docker/run/docker.sock`,
 whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
+
+### Permissions
+
+The container is the isolation boundary, so every Docker session, crew worker, role run or
+headless run, at start, restart and resume, runs its client in yolo mode: Claude
+`--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`. No
+permission prompt or approval appears; the client writes files, runs `gh` and reaches the
+network unasked. Its reach is the container's: the workspace volume, the session's GitHub
+tokens and the network. Flags and table: [Client policy](sessions.md#client-policy).
 
 ### Role runs
 

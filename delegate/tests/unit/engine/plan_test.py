@@ -491,14 +491,7 @@ class Policy(Base):
     """
 
     SHIPPED = {
-        "claude": (
-            (
-                "--permission-mode",
-                "auto",
-                "--strict-mcp-config",
-            ),
-            {},
-        ),
+        "claude": (("--strict-mcp-config",), {}),
         "codex": ((), {}),
         "fake": ((), {}),
     }

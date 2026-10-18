@@ -11,6 +11,7 @@ from agent_pm.session.engine.types import (
     ClientHome,
     ClientRuntime,
     Launch,
+    Permission,
     SessionEvent,
     Spec,
     Stderr,
@@ -20,6 +21,7 @@ from agent_pm.utils import json_records
 
 class Headless(ABC):
     _runtime: ClientRuntime | None = None
+    _permission: Permission = Permission.AUTO
 
     def _home(self) -> ClientHome | None:
         return None

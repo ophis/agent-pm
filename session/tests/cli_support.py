@@ -33,7 +33,7 @@ CLAUDE_HOOKS = {
     "PostToolUse",
     "UserPromptSubmit",
 }
-POLICY = ("--permission-mode", "--allowedTools", "--add-dir", "--dangerously-skip-permissions")
+POLICY = ("--allowedTools", "--add-dir", "--dangerously-skip-permissions")
 
 
 def logged(path: str) -> list[dict]:
@@ -214,21 +214,23 @@ class WorkerCase(CliCase):
         return path
 
     def claude_argv(self, argv: list[str], sid: str, name: str, *tail: str) -> None:
-        """A worker's argv, then `tail`."""
+        """A worker's argv on a non-isolated Host, then `tail`."""
         self.assertEqual(
-            argv[:7] + argv[8:],
+            argv[:9] + argv[10:],
             [
                 "--session-id",
                 sid,
                 "--name",
                 name,
+                "--permission-mode",
+                "auto",
                 "--setting-sources",
                 "user,project,local",
                 "--settings",
                 *tail,
             ],
         )
-        settings = json.loads(argv[7])
+        settings = json.loads(argv[9])
         self.assertEqual(set(settings), {"enabledPlugins", "hooks"})
         self.assertEqual(settings["enabledPlugins"], {"agent-pm@agent-pm": False})
         self.assertEqual(set(settings["hooks"]), CLAUDE_HOOKS)

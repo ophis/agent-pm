@@ -27,6 +27,7 @@ class Settings(Case):
             PtyHost("pty", {"outer_terminal": ["A", "B"]}).outer_terminal, frozenset({"A", "B"})
         )
         self.assertEqual(PtyHost("pty").outer_terminal, frozenset())
+        self.assertTrue(PtyHost("pty", {"isolated": True})._isolated)
         for settings in ({"other": 1}, {"outer_terminal": "A"}, {"outer_terminal": ["A", ""]}):
             with self.subTest(settings=settings), self.assertRaises(ConfigError):
                 PtyHost("pty", settings)
