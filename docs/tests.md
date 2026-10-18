@@ -45,7 +45,8 @@ that method runs all its subtests.
 Docker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
 Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py tests/unit/docker_relay_protocol_test.py`.
 The Go broker (`broker/`, Go from `broker/go.mod`): `sh with-go-state.sh gofmt -l .`,
-`sh with-go-state.sh go vet ./...`, `sh with-go-state.sh go test ./...` in `broker/`; run every
+`sh with-go-state.sh go vet ./...`, `sh with-go-state.sh go test ./...`,
+`sh with-go-state.sh go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...` in `broker/`; run every
 Go tool through `broker/with-go-state.sh` (state in `.cache/go/`). CI's `Broker` jobs run them on
 Linux and macOS and build the darwin/arm64 binary.
 
