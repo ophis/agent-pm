@@ -136,7 +136,7 @@ extra fields rejected:
 
 | Field | Meaning |
 |---|---|
-| `client` | Key in `clients` identifying the prepared executable; currently `codex` |
+| `client` | Exactly `codex`, identifying the prepared executable in `clients` |
 | `pinned_version` | Verified host installation version |
 | `allowed_versions` | Nonempty exact stable-version rule snapshot |
 | `image_version` | Original image Codex, required in the rule |

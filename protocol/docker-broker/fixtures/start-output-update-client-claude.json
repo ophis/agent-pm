@@ -1,0 +1,27 @@
+{
+  "credential_expires_at": "2026-10-18T12:00:00Z",
+  "container": "agent-pm-worker_1-0123456789abcdef0123456789abcdef",
+  "endpoint": "unix:///Users/example/.docker/run/docker.sock",
+  "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "clients": {
+    "claude": "2.1.0",
+    "codex": "codex-cli 0.100.0"
+  },
+  "github": [
+    {
+      "account": "ophis",
+      "expires_at": "2026-10-17T13:00:00Z"
+    }
+  ],
+  "client_update": {
+    "client": "claude",
+    "pinned_version": "0.162.1",
+    "allowed_versions": [
+      "0.100.0",
+      "0.162.1"
+    ],
+    "image_version": "0.100.0",
+    "target_version": "0.100.0",
+    "result": "current"
+  }
+}
