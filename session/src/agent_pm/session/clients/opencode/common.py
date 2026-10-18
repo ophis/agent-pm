@@ -341,8 +341,6 @@ class OpenCodeCommon:
         env = {k: v for k, v in {**self.env, **supplied}.items() if k not in LOCAL_ENV_VARS}
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address, plugin))
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-        if not access.project:
-            env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
         return env
 
     def probe(self) -> Launch:

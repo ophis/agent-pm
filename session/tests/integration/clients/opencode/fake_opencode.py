@@ -17,7 +17,6 @@ NATIVE = "ses_0123456789abFakeFakeFakeFa"
 REJECTED = "The user rejected permission to use this specific tool call."
 ENV = (
     "OPENCODE_DISABLE_AUTOUPDATE",
-    "OPENCODE_DISABLE_PROJECT_CONFIG",
     "OPENCODE_PERMISSION",
     "OPENCODE_PID",
     "PWD",

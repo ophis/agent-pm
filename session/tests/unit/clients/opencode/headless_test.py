@@ -315,11 +315,6 @@ class LaunchTest(Base):
             {k: launch.env[k] for k in "ABC"}, {"A": "config", "B": "access", "C": "spec"}
         )
 
-    def test_project_config(self):
-        self.assertEqual(self.launch(self.spec()).env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
-        project = self.launch(self.spec(access=Access(cwd=self.cwd, project=True)))
-        self.assertNotIn("OPENCODE_DISABLE_PROJECT_CONFIG", project.env)
-
     def test_the_executable_is_argv0(self):
         client = OpenCodeClient({**packaged_table(), "executable": "/opt/oc1/bin/opencode"})
         self.assertEqual(
