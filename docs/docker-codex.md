@@ -206,7 +206,7 @@ It does not test model access, native conversation recovery or macOS file sharin
 empty set refuses Codex starts. Claude needs no pinned Codex and makes no registry
 query or update. An administrator must publish
 only versions backed by the M4 compatibility matrix in that root-owned metadata;
-this task neither certifies versions nor changes the installed rule. Host upgrades
+TASK-652's admission implementation neither certifies versions nor changes the installed rule. Host upgrades
 preserve it; matching major/minor alone grants nothing.
 
 ```mermaid
