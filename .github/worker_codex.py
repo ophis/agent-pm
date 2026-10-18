@@ -10,6 +10,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+DOCKERFILE = Path(__file__).resolve().parents[1] / "broker/internal/launcher/assets/Dockerfile"
 PYTHON = "/opt/agent-pm/venv/bin/python"
 BOOTSTRAP = "/opt/agent-pm/lib/bootstrap.py"
 SKILLS_PROBE = """
@@ -111,6 +112,8 @@ def main(image):
         sys.exit("worker_codex.py runs only in GitHub CI")
     if not re.fullmatch(r"agent-pm-worker:[0-9a-f]{64}", image):
         sys.exit("expected a broker-built worker image tag")
+    [pinned] = re.findall(r"@openai/codex@(\S+)", DOCKERFILE.read_text(encoding="utf-8"))
+    version = f"codex-cli {pinned}".encode()
     labels = json.loads(docker("image", "inspect", image))[0]["Config"]["Labels"]
     owner = f",mode=0700,uid={labels['agent-pm.agent-uid']},gid={labels['agent-pm.agent-gid']}"
     claims = (
@@ -199,7 +202,7 @@ with files[0].open('rb') as source:
                 docker("exec", "--user", "root", name, PYTHON, "-I", "-c", stage)
                 assert (
                     docker("exec", name, "/opt/agent-pm/runtime/codex.next", "--version").strip()
-                    == b"codex-cli 0.162.1"
+                    == version
                 )
                 for action in ("publish", "reset"):
                     docker(
@@ -212,12 +215,10 @@ with files[0].open('rb') as source:
                         "/opt/agent-pm/lib/codex-update.py",
                         action,
                     )
-                    assert (
-                        docker("exec", name, "codex", "--version").strip() == b"codex-cli 0.162.1"
-                    )
+                    assert docker("exec", name, "codex", "--version").strip() == version
                 docker("exec", name, PYTHON, "-I", "-c", SKILLS_PROBE)
                 docker("exec", "-i", name, PYTHON, "-I", BOOTSTRAP, "codex-auth", data=document)
-                assert docker("exec", name, "codex", "--version").strip() == b"codex-cli 0.162.1"
+                assert docker("exec", name, "codex", "--version").strip() == version
                 status = docker("exec", name, "codex", "login", "status")
                 assert access.encode() not in status
                 docker("exec", name, PYTHON, "-I", "-c", PROBE)
