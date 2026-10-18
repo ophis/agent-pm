@@ -31,6 +31,7 @@ class LinearRun:
         display: Display = None,
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
+        tier: int | None = None,
     ):
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
@@ -51,7 +52,7 @@ class LinearRun:
             ),
             display=display,
             callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
-            overlays=(cfg.core,),
+            overlays=(cfg.core,) if tier is None else (cfg.core, {"roles": {role: {"tier": tier}}}),
         )
 
     @staticmethod

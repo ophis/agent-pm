@@ -181,6 +181,7 @@ class PruneScenario(Case):
             harness_key="harness",
             task_label_group="",
             task_labels={},
+            task_tiers={},
             agent_label_group="",
             agent_labels={},
             roles={},

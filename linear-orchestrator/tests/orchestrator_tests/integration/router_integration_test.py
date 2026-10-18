@@ -183,6 +183,7 @@ class Router(TmuxFlow):
                     "project": PROJECT["id"],
                     "target": REPO,
                     "key": KEYS["engineer"],
+                    "task": None,
                 }
             ],
         )

@@ -333,6 +333,7 @@ class Undone(Run):
             "project": PROJECT["id"],
             "target": None,
             "key": KEYS["researcher"],
+            "task": None,
         }
         self.assertEqual(self.runs(), [start, note])
         self.assertEqual(self.state(ID), "in_review")
