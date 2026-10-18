@@ -9,6 +9,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | If you have | Do |
 |---|---|
 | Docker Host workspace volumes `agent-pm-ws-*` whose worker gets `Permission denied` writing its cwd (root-owned volume roots, from v0.6.23 or earlier) | Close the session, then `/usr/local/libexec/agent-pm/agent-pm-broker workspace-rm --volume <volume>`: such a volume holds no work. The next start creates the volume again with an agent-owned root ([Workspace volumes](docker-host.md#workspace-volumes)). |
+| a Docker Host with `[session.hosts.docker.github] app`, broker protocol 12 or earlier | After upgrading plugin and broker, run `/usr/local/libexec/agent-pm/agent-pm-broker login github agent-pm-bot` once ([Log in](docker-host.md#log-in)): until it saves the App's bot user ID, a start fails with `login_required`. |
 | Docker Codex installations from broker protocol 11 or earlier | Upgrade plugin and broker together, then follow [Codex installation migration](docker-codex.md#upgrade-existing-installations): move old metadata aside, reinstall a supported pinned version, and rebuild below-minimum images. |
 | running agent-pm sessions | Close them first. |
 | scripts calling `/opt/agent-pm/bin/with-secrets` by hand | Add `--client <client>` (`claude` or `codex`): without it the command now refuses to run. |

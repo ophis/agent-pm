@@ -51,7 +51,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"12"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"13"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -174,7 +174,10 @@ func TestUsageErrors(t *testing.T) {
 func TestLoginGitHubDispatch(t *testing.T) {
 	for _, name := range []string{"agent-pm-bot"} {
 		var got string
-		a := app{loginGitHub: func(app string, out io.Writer) error {
+		a := app{loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
+			if ctx == nil {
+				t.Error("no context")
+			}
 			got = app
 			_, err := io.WriteString(out, "ok\n")
 			return err
@@ -183,7 +186,7 @@ func TestLoginGitHubDispatch(t *testing.T) {
 			t.Fatalf("%s: exit %d app %q %q %q", name, code, got, out, errOut)
 		}
 	}
-	a := app{loginGitHub: func(string, io.Writer) error { return errors.New("no item") }}
+	a := app{loginGitHub: func(context.Context, string, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}

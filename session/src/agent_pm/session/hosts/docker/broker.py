@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "12"
+PROTOCOL = "13"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -131,6 +131,10 @@ def _credential_expiry(value) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _user_id(value) -> bool:
+    return value is None or (type(value) is int and value >= 1)
 
 
 def _client_update(value, clients) -> bool:
@@ -330,6 +334,7 @@ class Broker:
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
+            and _user_id(started.github_user_id)
             and _credential_expiry(started.credential_expires_at)
             and (
                 _client_update(started.client_update, started.clients)

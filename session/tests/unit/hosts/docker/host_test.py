@@ -167,6 +167,16 @@ class FakeBroker:
         return True
 
 
+BOT = "agent-pm-bot[bot]"
+BOT_EMAIL = "343764394+agent-pm-bot[bot]@users.noreply.github.com"
+GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": BOT,
+    "GIT_AUTHOR_EMAIL": BOT_EMAIL,
+    "GIT_COMMITTER_NAME": BOT,
+    "GIT_COMMITTER_EMAIL": BOT_EMAIL,
+}
+
+
 class Base(Case):
     def setUp(self):
         self.account = os.path.realpath(self.home)
@@ -186,6 +196,7 @@ class Base(Case):
             "sha256:" + "b" * 64,
             {},
             [],
+            github_user_id=None,
             credential_expires_at=None,
         )
         self.broker = FakeBroker(self.order, started)
@@ -864,18 +875,24 @@ class StartTest(Base):
     def test_a_github_app_reaches_the_manifest_the_env_and_the_expiry_file(self):
         expiries = [{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}]
         self.host.github = "agent-pm-bot"
-        self.broker.started = replace(self.broker.started, github=expiries)
+        self.broker.started = replace(
+            self.broker.started, github=expiries, github_user_id=343764394
+        )
         self.start()
         with open(os.path.join(self.state, f"{GEN}.json")) as f:
             self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
-        self.assertEqual(self.docker.staged[0]["env"]["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
+        env = self.docker.staged[0]["env"]
+        self.assertEqual(env["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
+        self.assertEqual({key: env.get(key) for key in GIT_IDENTITY}, GIT_IDENTITY)
         with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
             self.assertEqual(json.load(f), expiries)
         self.assertFalse(self.spawned_github)
 
     def test_no_github_app_writes_null_and_no_author(self):
         self.start()
-        self.assertNotIn("AGENT_PM_PR_AUTHOR", self.docker.staged[0]["env"])
+        env = self.docker.staged[0]["env"]
+        self.assertNotIn("AGENT_PM_PR_AUTHOR", env)
+        self.assertFalse(set(GIT_IDENTITY) & set(env))
         with open(os.path.join(self.state, f"{GEN}.github.json")) as f:
             self.assertEqual(json.load(f), [])
 
@@ -886,6 +903,7 @@ class StartTest(Base):
             "sha256:" + "b" * 64,
             {"claude": "2.1.0"},
             [],
+            github_user_id=None,
             credential_expires_at=None,
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
@@ -1088,6 +1106,18 @@ class StartTest(Base):
                 self.supervisor.terminate.assert_called()
                 self.assertEqual(self.order[-1], ("close", CONTAINER))
 
+    def test_a_bot_user_id_that_does_not_match_the_app_rolls_back(self):
+        for github, user_id in (("agent-pm-bot", None), ("", 343764394)):
+            with self.subTest(github=github, user_id=user_id):
+                self.host.github = github
+                self.broker.started = replace(self.broker.started, github_user_id=user_id)
+                with self.assertRaisesRegex(
+                    SessionError, "broker: bad response to start: github_user_id"
+                ):
+                    self.start()
+                self.assertEqual(self.order[-1], ("close", CONTAINER))
+                self.assertNotIn("supervisor", self.order)
+
     def test_a_foreign_container_or_endpoint_rolls_back(self):
         for changes in (
             {"container": f"agent-pm-x-{GEN}"},
@@ -1289,6 +1319,7 @@ class PipeTest(Base):
         self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))
         self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
+        self.assertFalse(set(GIT_IDENTITY) & kw["env"].keys())
         self.assertEqual(
             {k: kw[k] for k in ("stdin", "stdout", "stderr", "text", "errors", "process_group")},
             {
@@ -1323,11 +1354,17 @@ class PipeTest(Base):
     def test_a_github_app_reaches_the_piped_client_and_its_tokens_are_refreshed(self):
         expiries = [{"account": "ophis", "expires_at": "2000-01-01T00:00:00Z"}]
         self.host.github = "agent-pm-bot"
-        self.broker.started = replace(self.broker.started, github=expiries)
+        self.broker.started = replace(
+            self.broker.started, github=expiries, github_user_id=343764394
+        )
         piped = self.pipe()
         argv, kw = self.popened
         self.assertIn("AGENT_PM_PR_AUTHOR", argv)
         self.assertEqual(kw["env"]["AGENT_PM_PR_AUTHOR"], "agent-pm-bot[bot]")
+        for key, value in GIT_IDENTITY.items():
+            self.assertIn(key, argv)
+            self.assertNotIn(f"{key}={value}", argv)
+            self.assertEqual(kw["env"][key], value)
         with open(os.path.join(self.state, f"{GEN}.json")) as f:
             self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
         self.assertTrue(self.broker.refreshed.wait(5))

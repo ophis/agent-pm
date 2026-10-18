@@ -1,4 +1,5 @@
-// Package github is the broker's GitHub App client: the App JWT, its installations, and installation tokens.
+// Package github is the broker's GitHub App client: the App JWT, its installations, installation tokens, and its bot
+// user's ID.
 // Its errors carry an HTTP status at most, never a response body or a token.
 package github
 
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"time"
@@ -100,7 +102,8 @@ func (c Client) JWT(appID string, key *rsa.PrivateKey) (string, error) {
 	return signed + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// call sends one request authorized by bearer and decodes a want-status JSON answer into out (nil: no body read).
+// call sends one request authorized by bearer ("": none) and decodes a want-status JSON answer into out (nil: no body
+// read).
 func (c Client) call(ctx context.Context, method, path, bearer string, body any, want int, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -117,7 +120,9 @@ func (c Client) call(ctx context.Context, method, path, bearer string, body any,
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "agent-pm-broker")
-	req.Header.Set("Authorization", "Bearer "+bearer)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -189,4 +194,20 @@ func (c Client) Revoke(ctx context.Context, token string) error {
 		return nil
 	}
 	return err
+}
+
+// BotUser is the user ID of bot login (`<app>[bot]`), from the public user API, sent without a credential.
+func (c Client) BotUser(ctx context.Context, login string) (int64, error) {
+	var got struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+		Type  string `json:"type"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/users/"+url.PathEscape(login), "", nil, http.StatusOK, &got); err != nil {
+		return 0, err
+	}
+	if got.Login != login || got.Type != "Bot" || got.ID < 1 {
+		return 0, errors.New("GitHub answered no bot user with that login and a valid id")
+	}
+	return got.ID, nil
 }

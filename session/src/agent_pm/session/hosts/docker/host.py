@@ -333,13 +333,19 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
     return True
 
 
-def _accept_started(name: str, generation: str, started: Started, container: str) -> None:
-    """The broker started `container` here; its GitHub token expiries saved for refresh."""
+def _accept_started(
+    name: str, generation: str, started: Started, container: str, github: str
+) -> None:
+    """The broker started `container` here, with a bot user ID exactly when `github` names an App;
+    its GitHub token expiries saved for refresh.
+    """
     if (started.endpoint, started.container) != (endpoint(), container):
         raise SessionError(
             f"broker: started {started.container} at {started.endpoint},"
             f" want {container} at {endpoint()}"
         )
+    if (started.github_user_id is None) == bool(github):
+        raise SessionError("broker: bad response to start: github_user_id")
     save(
         os.path.join(state_dir(name), f"{generation}.credential.json"),
         json.dumps(started.credential_expires_at),
@@ -912,7 +918,7 @@ class DockerHost(Host):
                     *launch.argv,
                 ],
                 cwd=cwd,
-                env=self._exec_env(launch),
+                env=self._exec_env(launch, created.started),
                 python=runtime.python,
                 handover_dir=runtime.state_root,
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
@@ -1013,7 +1019,7 @@ class DockerHost(Host):
         began = timestamp()
         try:
             started = self.broker.start(manifest, clients=clients)
-            _accept_started(name, generation, started, container)
+            _accept_started(name, generation, started, container, self.github)
             ended = timestamp()
             laps("start")
             created = _Container(container, generation, hook, image, cwd, started, began, ended)
@@ -1074,7 +1080,7 @@ class DockerHost(Host):
                     "mode": PIPED,
                 },
             )
-            env = self._exec_env(launch)
+            env = self._exec_env(launch, created.started)
             argv, docker_env = docker_call(
                 self.docker,
                 *("exec", "-i", "--workdir", cwd),
@@ -1147,11 +1153,20 @@ class DockerHost(Host):
         if result.returncode:
             raise SessionError("staging client runtime failed")
 
-    def _exec_env(self, launch: Launch) -> dict[str, str]:
-        return {
-            **{k: v for k, v in launch.env.items() if k != "PATH"},
-            **({"AGENT_PM_PR_AUTHOR": f"{self.github}[bot]"} if self.github else {}),
-        }
+    def _exec_env(self, launch: Launch, started: Started) -> dict[str, str]:
+        """launch's env, plus with a GitHub App its bot as PR author and git identity."""
+        env = {k: v for k, v in launch.env.items() if k != "PATH"}
+        if self.github:
+            bot = f"{self.github}[bot]"
+            email = f"{started.github_user_id}+{bot}@users.noreply.github.com"
+            env |= {
+                "AGENT_PM_PR_AUTHOR": bot,
+                "GIT_AUTHOR_NAME": bot,
+                "GIT_AUTHOR_EMAIL": email,
+                "GIT_COMMITTER_NAME": bot,
+                "GIT_COMMITTER_EMAIL": email,
+            }
+        return env
 
     def _close_piped(self, name: str, container: str) -> None:
         try:

@@ -39,7 +39,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"12"}` |
+| `"$B" version` | `{"protocol_version":"13"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -65,7 +65,9 @@ entries that read or export the item get only the broker. If macOS refuses that 
 change with the password, the keychain dialog asks instead (allow it). It reads the access back, then
 the key once to check it is not empty, and only then prints its success line; otherwise it
 exits non-zero saying whether it changed the item, what is done and what is not: rerun the
-same command to finish. The broker is trusted by its code requirement (an ad hoc
+same command to finish. Then it looks up the App's bot user, `agent-pm-bot[bot]`, on GitHub's
+public user API (no credential sent; needs network) and keeps its ID in the broker-only keychain
+item `agent-pm-github-users`, for the containers' git identity ([What a container gets](#what-a-container-gets)). The broker is trusted by its code requirement (an ad hoc
 signature's is its cdhash), not its path: after reinstalling it, rerun `login github agent-pm-bot`.
 The App must be private (installable only on your account): every session gets a token for every
 repository of every installation.
@@ -77,7 +79,7 @@ repository of every installation.
 | Check | Expect |
 |---|---|
 | first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal; no macOS dialog, or one only after the password |
-| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, no key |
+| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, then `GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID <ID>` (`gh api 'users/agent-pm-bot[bot]' --jq .id`), no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
 | rerun `login github agent-pm-bot` | same output, no password question |
@@ -197,7 +199,8 @@ versions. Codex starts add the [version audit](docker-broker-protocol.md#success
 | `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
-one `{"account", "expires_at"}` per installation of the App.
+one `{"account", "expires_at"}` per installation of the App, and `github_user_id` the bot user ID
+`login github` saved.
 
 | Check | Expect |
 |---|---|
@@ -214,6 +217,21 @@ trust prompt and answers one sentence.
 `touch /tmp/fake-docker-ran` first on `PATH`, `"$B" build --agent-pm "$PKG"` still
 reports `"rebuilt":false` and `/tmp/fake-docker-ran` does not exist. Restore
 `~/.docker/config.json` after.
+
+## What a container gets
+
+Everything a worker container gets, each row pointing at its source; the source holds the exact values.
+
+| What | Source | Summary |
+|---|---|---|
+| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session` and `agent-pm.generation` labels |
+| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
+| Mounts | `create`, `mounts.go` | the workspace volume at cwd ([Workspace volumes](#workspace-volumes)); Claude: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
+| Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
+| Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
+| Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer, `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` ([Log in](#log-in)) |
+| Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code ([Build](#build)) |
+| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the allowed plugins ([Plugins](#plugins)), Codex, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Refusals
 
