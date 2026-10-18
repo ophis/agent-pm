@@ -81,8 +81,9 @@ def _drain(proc, deadline: float, timeout: float) -> tuple[bytes, bytes]:
 
 def exec_runner(docker: str, container: str, run=capped):
     """A subprocess.run-shaped runner of argv inside `container` (`docker exec -i`), within
-    RUN_TIMEOUT; a container gone or stopped, a timeout or an over-long output reads as
-    `no server running on <container>: <why>`.
+    RUN_TIMEOUT; a container gone or stopped reads as `no server running on <container>: <why>`
+    (the server absent), a timeout or an over-long output as a failed call, `docker exec in
+    <container>: <why>`: no proof the client exited.
     """
 
     def runner(argv, *, input=None, timeout=RUN_TIMEOUT, **_):
@@ -90,9 +91,7 @@ def exec_runner(docker: str, container: str, run=capped):
         try:
             res = run(args, env, input=input, timeout=min(timeout, RUN_TIMEOUT))
         except (subprocess.TimeoutExpired, Overflow) as why:
-            return subprocess.CompletedProcess(
-                args, 1, "", f"no server running on {container}: {why}"
-            )
+            return subprocess.CompletedProcess(args, 1, "", f"docker exec in {container}: {why}")
         if res.returncode and GONE.fullmatch(res.stderr.strip()):
             why = res.stderr.strip()
             return subprocess.CompletedProcess(
