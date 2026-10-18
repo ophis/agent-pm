@@ -18,13 +18,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
+	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-bot | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude | login github agent-pm-bot | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -41,6 +42,8 @@ type app struct {
 	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
 	login        func(out io.Writer) error
 	loginGitHub  func(app string, out io.Writer) error
+	loginCodex   func(context.Context, io.Writer) error
+	installCodex func(context.Context, string, bool) (any, error)
 }
 
 func main() {
@@ -66,11 +69,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	command := "unknown"
 	if len(args) > 0 {
 		switch args[0] {
+		case "install-codex", "update-codex":
+			if len(args) == 2 && codex.ValidVersion(args[1]) {
+				result, err := a.installCodex(ctx, args[1], args[0] == "update-codex")
+				if err != nil {
+					fmt.Fprintln(stderr, "agent-pm-broker:", err)
+					return 1
+				}
+				return emit(stdout, result)
+			}
 		case "version", "build", "start", "refresh", "close", "status", "workspace-rm":
 			command = args[0]
 		case "login":
 			var login func() error
 			switch {
+			case len(args) == 2 && args[1] == "codex":
+				login = func() error { return a.loginCodex(ctx, stdout) }
 			case len(args) == 2 && args[1] == "claude":
 				login = func() error { return a.login(stdout) }
 			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
@@ -192,7 +206,13 @@ func system() app {
 			if err != nil {
 				return nil, err
 			}
-			return launcher.Host{GitHub: tokens(home)}.Status(ctx)
+			status, err := launcher.Host{GitHub: tokens(home)}.Status(ctx)
+			if err != nil {
+				return nil, err
+			}
+			codexStatus := broker.NewCodex(home, nil).Status(ctx)
+			status.Codex = &codexStatus
+			return status, nil
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
@@ -227,6 +247,26 @@ func system() app {
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, out)
+		},
+		installCodex: func(ctx context.Context, version string, update bool) (any, error) {
+			if err := broker.CheckInstalled(); err != nil {
+				return nil, err
+			}
+			return codex.New().Install(ctx, version, update)
+		},
+		loginCodex: func(ctx context.Context, out io.Writer) error {
+			home, err := accountHome()
+			if err != nil {
+				return err
+			}
+			if err := broker.CheckInstalled(); err != nil {
+				return err
+			}
+			return broker.NewCodex(home, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to make Codex trust only the broker (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}).Login(ctx, out)
 		},
 	}
 }

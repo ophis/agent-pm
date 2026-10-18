@@ -158,6 +158,43 @@ static OSStatus secret_delete(const char *path, const char *service, const char 
     CFRelease(kc);
     return s;
 }
+static OSStatus codex_create(const char *path) {
+    SecKeychainRef kc = NULL;
+    OSStatus s;
+    CFMutableDictionaryRef q = item_query(path, "agent-pm-codex", "auth", &kc, &s);
+    if (!q) return s;
+    SecAccessRef access = NULL;
+    s = self_access("agent-pm Codex login", &access);
+    if (s == errSecSuccess) {
+        CFDictionaryRemoveValue(q, kSecMatchSearchList);
+        CFDictionarySetValue(q, kSecUseKeychain, kc);
+        CFDictionarySetValue(q, kSecAttrAccess, access);
+        CFDataRef data = CFDataCreate(NULL, (const UInt8 *)"pending", 7);
+        CFDictionarySetValue(q, kSecValueData, data);
+        s = SecItemAdd(q, NULL);
+        CFRelease(data);
+    }
+    if (access) CFRelease(access);
+    CFRelease(q);
+    CFRelease(kc);
+    return s;
+}
+static OSStatus codex_write(const char *path, const void *bytes, long length) {
+    SecKeychainRef kc = NULL;
+    OSStatus s;
+    CFMutableDictionaryRef q = item_query(path, "agent-pm-codex", "auth", &kc, &s);
+    if (!q) return s;
+    CFDictionarySetValue(q, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
+    CFDataRef data = CFDataCreate(NULL, bytes, length);
+    const void *keys[] = {kSecValueData}, *values[] = {data};
+    CFDictionaryRef attrs = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    s = SecItemUpdate(q, attrs);
+    CFRelease(attrs);
+    CFRelease(data);
+    CFRelease(q);
+    CFRelease(kc);
+    return s;
+}
 static OSStatus item_ref(const char *path, const char *service, const char *account, SecKeychainItemRef *item) {
     SecKeychainRef kc = NULL;
     OSStatus s;
@@ -702,4 +739,25 @@ func (k SystemKeychain) DeleteSecret(service, account string) error {
 		return err
 	}
 	return k.login().DeleteSecret(service, account)
+}
+
+func (k SystemKeychain) CreateCodex() error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	p, free := cStrings(string(k.login()))
+	defer free()
+	return status(C.codex_create(p[0]))
+}
+
+func (k SystemKeychain) WriteCodex(data []byte) error {
+	if err := CheckInstalled(); err != nil {
+		return err
+	}
+	if len(data) == 0 || len(data) > maxCodexAuth {
+		return errors.New("invalid Codex credential size")
+	}
+	p, free := cStrings(string(k.login()))
+	defer free()
+	return status(C.codex_write(p[0], unsafe.Pointer(&data[0]), C.long(len(data))))
 }
