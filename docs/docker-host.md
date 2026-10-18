@@ -201,9 +201,10 @@ default = "docker"
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
 | `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
 
-Each session's host run supervisor refreshes its GitHub tokens 10 minutes before the first one
-expires; a failed refresh writes `github_refresh_failed <reason>` to its events and retries every
-minute.
+Each session's GitHub tokens are refreshed 10 minutes before the first one expires, a TUI
+session's by its host run supervisor, a headless run's by its harness; a failed refresh writes
+`github_refresh_failed <reason>` to the TUI session's events or the harness's log, and retries
+every minute.
 
 Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container, and
 `send`, `read`, `attach`, `status`, `report`, `next-event`, `pending` and `close` work as

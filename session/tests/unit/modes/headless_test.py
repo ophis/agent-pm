@@ -408,6 +408,12 @@ class ThroughItsHost(Base):
                 )
                 self.assertEqual([c.args[0] for c in host.calls.validate.call_args_list], validated)
 
+    def test_after_stop_a_polling_caller_still_gets_the_end(self):
+        mode = self.start_on(PipingHost(FakePiped()))
+        mode.stop()
+        ends = [mode.poll(5)[1] for _ in range(2)]
+        self.assertEqual(ends, [False, True])
+
     def test_the_event_queue_is_bounded_and_a_stop_frees_a_pump_waiting_on_it(self):
         piped = FakePiped()
         piped.stderr = io.StringIO("e\n" * (QUEUE_MAX + 2))

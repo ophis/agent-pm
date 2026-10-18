@@ -308,7 +308,7 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
     return True
 
 
-def _check_started(name: str, generation: str, started: Started, container: str) -> None:
+def _accept_started(name: str, generation: str, started: Started, container: str) -> None:
     """The broker started `container` here; its GitHub token expiries saved for refresh."""
     if (started.endpoint, started.container) != (endpoint(), container):
         raise SessionError(
@@ -819,7 +819,7 @@ class DockerHost(Host):
         supervisor = lock = None
         try:
             stops.check()
-            _check_started(name, generation, started, container)
+            _accept_started(name, generation, started, container)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -1004,7 +1004,7 @@ class DockerHost(Host):
         lock = proc = None
         try:
             stops.check()
-            _check_started(name, generation, started, container)
+            _accept_started(name, generation, started, container)
             lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
@@ -1048,16 +1048,21 @@ class DockerHost(Host):
             cleanup = self._roll_back(None, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         laps.report(f"docker timing {name} {generation}")
-        refresher = run_supervisor.Supervisor(
-            name, state_dir(name), "", "", "", generation=generation
-        )
-        refresher.broker = self.broker
         return DockerPiped(
             name,
             proc,
             close=lambda: self._close_piped(name, container),
             lock=lock,
-            refresh=refresher.refresh,
+            refresh=lambda stopped: run_supervisor.refresh_tokens(
+                name,
+                state_dir(name),
+                generation,
+                self.broker,
+                stopped,
+                failed=lambda reason: LOG.warning(
+                    "docker session %s: github_refresh_failed %s", name, reason
+                ),
+            ),
         )
 
     def _exec_env(self, launch: Launch) -> dict[str, str]:

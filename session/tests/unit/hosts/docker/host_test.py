@@ -143,6 +143,8 @@ class FakeBroker:
     def refresh(self, container, manifest):
         self.order.append(("refresh", container, manifest))
         self.refreshed.set()
+        if "refresh" in self.failing:
+            raise self.failing["refresh"]
         return []
 
     def close(self, container):
@@ -1085,6 +1087,20 @@ class PipeTest(Base):
         self.assertTrue(self.broker.refreshed.wait(5))
         piped.close()
         self.assertIn(("refresh", CONTAINER, os.path.join(self.state, f"{GEN}.json")), self.order)
+
+    def test_a_failed_piped_token_refresh_is_logged(self):
+        self.broker.started = replace(
+            self.broker.started, github=[{"account": "o", "expires_at": "2000-01-01T00:00:00Z"}]
+        )
+        self.broker.failing["refresh"] = SessionError("broker: offline")
+        with self.assertLogs("session", "WARNING") as logs:
+            piped = self.pipe()
+            self.assertTrue(self.broker.refreshed.wait(5))
+            deadline = time.monotonic() + 5
+            while not logs.output and time.monotonic() < deadline:
+                time.sleep(0.01)
+            piped.close()
+        self.assertIn("docker session w: github_refresh_failed broker: offline", logs.output[0])
 
     def test_stop_kills_the_exec_then_closes_and_a_close_failure_only_warns(self):
         piped = self.pipe()

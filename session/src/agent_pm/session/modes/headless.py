@@ -129,11 +129,13 @@ class HeadlessMode(BaseMode):
             self._put(None)
 
     def _put(self, item) -> None:
-        while not self.stopped.is_set():
+        """Waits for poll, but only until stop() once the queue is full."""
+        while True:
             try:
                 return self.items.put(item, timeout=PUT_WAIT)
             except queue.Full:
-                pass
+                if self.stopped.is_set():
+                    return
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
         try:
