@@ -1,5 +1,5 @@
 {
-  "protocol_version": "10",
+  "protocol_version": "11",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1512,6 +1512,46 @@
       "valid": false,
       "expected": {
         "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-output-codex.json",
+      "definition": "refresh_output",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-output-missing-credential.json",
+      "definition": "refresh_output",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-output-secret.json",
+      "definition": "refresh_output",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-output-bad-credential.json",
+      "definition": "refresh_output",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
         "exit_code": null,
         "error_code": null
       }

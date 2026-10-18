@@ -1,4 +1,4 @@
-"""The broker's start response, as the Docker Host reads it."""
+"""Private parsed broker responses for the Docker Host."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -13,3 +13,9 @@ class Started:
     github: Sequence[Mapping[str, str]]  # each GitHub token's {"account", "expires_at"}
     credential_expires_at: str | None
     client_update: Mapping[str, str | Sequence[str]] | None = None
+
+
+@dataclass(frozen=True)
+class Refreshed:
+    github: list[dict]
+    credential_expires_at: str | None

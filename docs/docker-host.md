@@ -1,6 +1,7 @@
 # Docker host
 
 Codex installation, broker login and container runs: [Codex operations](docker-codex.md).
+Renewal, failure repair and pending live acceptance: [Refresh and recovery](docker-codex.md#refresh-and-recovery).
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
@@ -38,7 +39,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"10"}` |
+| `"$B" version` | `{"protocol_version":"11"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in

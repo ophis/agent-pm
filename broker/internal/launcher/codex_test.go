@@ -23,6 +23,17 @@ func (c *fakeCodexCreds) Inject(_ context.Context, exec func([]string, []byte) e
 	return "2026-10-18T12:00:00Z", exec([]string{"inject-codex"}, []byte("fake-access-only"))
 }
 
+func (c *fakeCodexCreds) Refresh(ctx context.Context, exec func([]string, []byte) error, publish func(string) error) (string, error) {
+	if c.err != nil {
+		return "", c.err
+	}
+	expiry, err := c.Inject(ctx, exec)
+	if err != nil {
+		return "", err
+	}
+	return expiry, publish(expiry)
+}
+
 func codexManifest(t *testing.T) string {
 	t.Helper()
 	data, err := os.ReadFile(validManifest(t))

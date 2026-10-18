@@ -13,7 +13,7 @@ COPY codex-plugins /opt/agent-pm/codex-plugins
 COPY .claude-plugin/plugin.json /opt/agent-pm/version.json
 COPY bootstrap.py codex-update.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
-RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.162.1 \
+RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.163.0 \
     && mkdir -p /opt/agent-pm/bin /opt/agent-pm/runtime
 COPY codex /opt/agent-pm/bin/codex
 # python3 on the agent's PATH is this venv's, importing agent-pm; system site keeps pip --user working.

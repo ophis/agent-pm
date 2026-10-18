@@ -10,7 +10,7 @@ from unittest import mock
 from agent_pm.session.engine.types import ConfigError, SessionError
 from agent_pm.session.hosts.docker import broker
 from agent_pm.session.hosts.docker.broker import BROKER, Broker, BrokerError
-from agent_pm.session.hosts.docker.types import Started
+from agent_pm.session.hosts.docker.types import Refreshed, Started
 
 from session.tests.case import REPO, Case
 from session.tests.unit.hosts.docker.support import (
@@ -203,6 +203,28 @@ class ResponseTest(Case):
                     },
                 )
 
+    def test_refresh_requires_public_deadline_and_rejects_secrets(self):
+        good = {
+            "container": CONTAINER,
+            "github": [],
+            "credential_expires_at": "2026-10-18T12:00:00Z",
+        }
+        result = Broker(FakeBroker((0, json.dumps(good), ""))).refresh(CONTAINER, MANIFEST)
+        self.assertEqual(result.credential_expires_at, good["credential_expires_at"])
+        self.assertEqual(result.github, [])
+        for change in (
+            {"credential_expires_at": "2026-02-30T00:00:00Z"},
+            {"credential_expires_at": "access-token"},
+            {"access_token": "secret"},
+            {"container": "wrong"},
+        ):
+            with self.subTest(change=change), self.assertRaises(SessionError):
+                Broker(FakeBroker((0, json.dumps(good | change), ""))).refresh(CONTAINER, MANIFEST)
+        with self.assertRaises(SessionError):
+            Broker(FakeBroker((0, json.dumps({"container": CONTAINER, "github": []}), ""))).refresh(
+                CONTAINER, MANIFEST
+            )
+
     def test_parsed_successes(self):
         self.assertEqual(
             Broker(FakeBroker(success("build-cached.json"))).build("/opt/agent-pm"),
@@ -222,7 +244,7 @@ class ResponseTest(Case):
         )
         self.assertEqual(
             Broker(FakeBroker(success("refresh-output.json"))).refresh(CONTAINER, MANIFEST),
-            [{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
+            Refreshed([{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}], None),
         )
         for bad in (
             {"container": "agent-pm-other-" + "0" * 32, "github": []},

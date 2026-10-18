@@ -42,28 +42,30 @@ type command struct {
 }
 
 type Runtime struct {
-	root      string
-	trustRoot string
-	tempRoot  string
-	http      *http.Client
-	uid       func() int
-	platform  func() (string, string)
-	owned     func(os.FileInfo) bool
-	execute   func(context.Context, command) ([]byte, error)
-	rename    func(string, string) error
+	root         string
+	trustRoot    string
+	tempRoot     string
+	http         *http.Client
+	uid          func() int
+	platform     func() (string, string)
+	owned        func(os.FileInfo) bool
+	execute      func(context.Context, command) ([]byte, error)
+	startRefresh func(context.Context, command) (refreshProcess, error)
+	rename       func(string, string) error
 }
 
 func New() Runtime {
 	return Runtime{
-		root:      installRoot,
-		trustRoot: "/",
-		tempRoot:  "/private/tmp",
-		http:      &http.Client{Timeout: 2 * time.Minute},
-		uid:       os.Geteuid,
-		platform:  func() (string, string) { return runtime.GOOS, runtime.GOARCH },
-		owned:     func(fi os.FileInfo) bool { s, ok := fi.Sys().(*syscall.Stat_t); return ok && s.Uid == 0 },
-		execute:   execute,
-		rename:    os.Rename,
+		root:         installRoot,
+		trustRoot:    "/",
+		tempRoot:     "/private/tmp",
+		http:         &http.Client{Timeout: 2 * time.Minute},
+		uid:          os.Geteuid,
+		platform:     func() (string, string) { return runtime.GOOS, runtime.GOARCH },
+		owned:        func(fi os.FileInfo) bool { s, ok := fi.Sys().(*syscall.Stat_t); return ok && s.Uid == 0 },
+		execute:      execute,
+		startRefresh: startRefresh,
+		rename:       os.Rename,
 	}
 }
 

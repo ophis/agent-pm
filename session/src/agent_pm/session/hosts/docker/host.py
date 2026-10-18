@@ -888,6 +888,7 @@ class DockerHost(Host):
                     "generation": generation,
                     "sid": sid,
                     "client": metadata.get("client"),
+                    "credential_refresh": created.started.credential_expires_at is not None,
                     "display": display,
                     "record": None if record is None else record.to_line(),
                     "events": events,
@@ -1066,6 +1067,7 @@ class DockerHost(Host):
                     "generation": generation,
                     "sid": metadata.get("sid"),
                     "client": metadata.get("client"),
+                    "credential_refresh": created.started.credential_expires_at is not None,
                     "mode": PIPED,
                 },
             )
@@ -1106,16 +1108,14 @@ class DockerHost(Host):
                 self.broker,
                 stopped,
                 failed=lambda reason: LOG.warning(
-                    "docker session %s: github_refresh_failed %s", name, reason
+                    "docker session %s: %s %s",
+                    name,
+                    "client_refresh_failed"
+                    if created.started.credential_expires_at is not None
+                    else "github_refresh_failed",
+                    reason,
                 ),
-            ),
-            expire=lambda stopped: run_supervisor.expire_client(
-                name,
-                state_dir(name),
-                generation,
-                self.broker,
-                stopped,
-                failed=lambda reason: LOG.warning(
+                expired=lambda reason: LOG.warning(
                     "docker session %s: client_auth_expired %s", name, reason
                 ),
             ),

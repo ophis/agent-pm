@@ -39,6 +39,10 @@ func (n *fakeCodexNative) Lock(ctx context.Context) (func(), error) {
 	return func() { n.locked = false }, nil
 }
 
+func (n *fakeCodexNative) Refresh(context.Context, string) error {
+	return errors.New("refresh unavailable in login fake")
+}
+
 func (n *fakeCodexNative) Run(ctx context.Context, home string, args ...string) error {
 	n.home, n.runs = home, n.runs+1
 	if !n.locked {
@@ -152,7 +156,8 @@ func codexFixture(t *testing.T) (Codex, *fakeCodexNative, *fakeCodexKeychain) {
 	t.Helper()
 	n := &fakeCodexNative{data: codexAuth(codexNow.Add(time.Hour).Unix())}
 	k := &fakeCodexKeychain{native: n, missing: true}
-	return Codex{native: n, keychain: k, tempRoot: t.TempDir(), now: func() time.Time { return codexNow }, uid: func() int { return 501 }, password: func() ([]byte, error) { return []byte(keychainPass), nil }}, n, k
+	root := t.TempDir()
+	return Codex{native: n, keychain: k, tempRoot: root, revisionDir: filepath.Join(root, "codex-coordination"), now: func() time.Time { return codexNow }, uid: func() int { return 501 }, password: func() ([]byte, error) { return []byte(keychainPass), nil }}, n, k
 }
 
 func TestCodexContainerCredential(t *testing.T) {
@@ -173,10 +178,10 @@ func TestCodexContainerCredential(t *testing.T) {
 		t.Fatalf("expiry %s: %v", expiry, err)
 	}
 	var auth codexAuthDocument
-	if json.Unmarshal(payload, &auth) != nil || auth.Mode != "chatgptAuthTokens" || auth.Tokens.Refresh != "" || auth.Tokens.ID != auth.Tokens.Access || auth.Tokens.Account != "fake-account-secret" {
+	if json.Unmarshal(payload, &auth) != nil || auth.Mode != "chatgpt" || auth.Tokens.Refresh != "" || auth.Tokens.ID != "fake-id-secret" || auth.Tokens.Account != "fake-account-secret" {
 		t.Fatal("wrong access-only document")
 	}
-	if bytes.Contains(payload, []byte("fake-refresh-secret")) || bytes.Contains(payload, []byte("fake-id-secret")) || !bytes.Equal(original, k.data) || n.runs != 1 || n.locked {
+	if bytes.Contains(payload, []byte("fake-refresh-secret")) || !bytes.Equal(original, k.data) || n.runs != 1 || n.locked {
 		t.Fatal("credential isolation failed")
 	}
 }

@@ -147,7 +147,7 @@ class FakeBroker:
         self.refreshed.set()
         if "refresh" in self.failing:
             raise self.failing["refresh"]
-        return []
+        return SimpleNamespace(github=[], credential_expires_at=self.started.credential_expires_at)
 
     def close(self, container):
         self.order.append(("close", container))
@@ -530,6 +530,7 @@ class StartTest(Base):
                 "generation": GEN,
                 "sid": "s1",
                 "client": "agent",
+                "credential_refresh": False,
                 "display": "lead/below",
                 "record": RECORD.to_line(),
                 "events": os.path.join(self.home, "events"),
@@ -633,6 +634,42 @@ class StartTest(Base):
         self.assertEqual(os.listdir(self.home_dir), ["settings.json"])
         with open(os.path.join(self.home_dir, "settings.json")) as f:
             self.assertEqual(f.read(), '{"model": "opus"}')
+
+    def test_codex_resume_after_host_login_preserves_native_history(self):
+        home = os.path.join(self.state, "codex")
+        transcript = os.path.join(home, "sessions", "rollout.jsonl")
+        os.makedirs(os.path.dirname(transcript))
+        native = '{"session_id":"same-native-identity"}\n'
+        with open(transcript, "w") as stream:
+            stream.write(native)
+        self.launch = replace(self.launch, transcript=transcript, env={"CODEX_HOME": home})
+        metadata = dict(
+            client="codex",
+            home_field="codex_dir",
+            home_dir="codex",
+            credential="codex-access-token",
+            home_persistent='["sessions"]',
+            resume="1",
+        )
+        self.broker.error = BrokerError(
+            5,
+            "login_required",
+            "/usr/local/libexec/agent-pm/agent-pm-broker login codex",
+            "not_needed",
+            None,
+        )
+        with self.assertRaisesRegex(SessionError, "login codex"):
+            self.start(**metadata)
+        self.broker.error = None
+        self.broker.started = replace(
+            self.broker.started, credential_expires_at="2100-01-01T00:00:00Z"
+        )
+        self.start(**metadata)
+        with open(transcript) as stream:
+            self.assertEqual(stream.read(), native)
+        self.assertEqual(self.host_record()["sid"], "s1")
+        with open(os.path.join(self.state, f"{GEN}.credential.json")) as stream:
+            self.assertEqual(json.load(stream), "2100-01-01T00:00:00Z")
 
     def test_resume_keeps_the_home_and_starts_a_new_container(self):
         transcript = self.history()
@@ -1200,7 +1237,13 @@ class PipeTest(Base):
                 "process_group": 0,
             },
         )
-        record = {"generation": GEN, "sid": "s1", "client": "agent", "mode": "pipe"}
+        record = {
+            "generation": GEN,
+            "sid": "s1",
+            "client": "agent",
+            "mode": "pipe",
+            "credential_refresh": False,
+        }
         self.assertEqual((self.popen_record, self.host_record()), (record, record))
         self.assertTrue(self.lock_held)
         self.assertFalse(_free(os.path.join(self.state, "pipe.lock")))
@@ -1274,7 +1317,7 @@ class PipeTest(Base):
             logs.output,
             [
                 "WARNING:session:docker session w: client_auth_expired Client authentication"
-                " expired; run agent-pm-broker login codex; token refresh is not supported yet"
+                " expired; run /usr/local/libexec/agent-pm/agent-pm-broker login codex on the host, then resume"
             ],
         )
         self.assertEqual(self.broker.closed, [CONTAINER])

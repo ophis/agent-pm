@@ -10,6 +10,7 @@ import base64
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import select
 import signal
@@ -22,7 +23,7 @@ from datetime import datetime
 
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import SessionError
-from agent_pm.session.hosts.docker.broker import Broker
+from agent_pm.session.hosts.docker.broker import BROKER, Broker
 from agent_pm.session.hosts.docker.relay import LINE_MAX, relay_request
 from agent_pm.utils import read_regular, save
 
@@ -33,6 +34,10 @@ POLL = 0.5
 LOG_MAX = 1 << 20
 REFRESH_AHEAD = 600
 REFRESH_RETRY = 60
+LOG = logging.getLogger("session")
+AUTH_EXPIRED = (
+    f"Client authentication expired; run {BROKER} login {{client}} on the host, then resume"
+)
 
 
 def _body(payload: str) -> dict | None:
@@ -156,7 +161,7 @@ class Supervisor:
             stopped.wait(POLL)
 
     def refresh(self, stopped) -> None:
-        """refresh_tokens(), a failure written as github_refresh_failed."""
+        """Renew the generation and report classified failures."""
         refresh_tokens(
             self.name,
             self.state,
@@ -164,26 +169,23 @@ class Supervisor:
             self.broker,
             stopped,
             failed=self._refresh_failed,
+            expired=self._auth_expired,
             clock=self.clock,
         )
 
     def _refresh_failed(self, reason: str) -> None:
         if self.events:
             with contextlib.suppress(OSError, ValueError):
-                SessionStatusLog(self.events).write(self.name, "github_refresh_failed", reason)
-
-    def expire(self, stopped) -> None:
-        expire_client(
-            self.name,
-            self.state,
-            self.generation,
-            self.broker,
-            stopped,
-            failed=self._auth_expired,
-            clock=self.clock,
-        )
+                SessionStatusLog(self.events).write(
+                    self.name,
+                    "client_refresh_failed"
+                    if refreshes_client(self.state)
+                    else "github_refresh_failed",
+                    reason,
+                )
 
     def _auth_expired(self, reason: str) -> None:
+        LOG.warning("docker session %s: client_auth_expired %s", self.name, reason)
         if self.events:
             with contextlib.suppress(OSError, ValueError):
                 SessionStatusLog(self.events).write(self.name, "client_auth_expired", reason)
@@ -201,43 +203,15 @@ class Supervisor:
         return out.strip() == b"1"
 
 
-def expire_client(
-    name: str,
-    state: str,
-    generation: str,
-    broker: Broker,
-    stopped: threading.Event,
-    *,
-    failed: Callable[[str], None],
-    clock: Callable[[], float] = time.time,
-) -> None:
-    data = read_regular(os.path.join(state, f"{generation}.credential.json"))
-    if data is None:
-        return
+def refreshes_client(state: str) -> bool:
     try:
-        expiry = json.loads(data)
-        if expiry is None:
-            return
-        delay = max(0.0, datetime.fromisoformat(expiry).timestamp() - clock())
-    except (ValueError, TypeError):
-        delay = 0.0
-    if stopped.wait(delay):
-        return
-    client = _recorded_client(state)
-    login = f"agent-pm-broker login {client}" if client else "agent-pm-broker login for this client"
-    failed(f"Client authentication expired; run {login}; token refresh is not supported yet")
-    while True:
-        try:
-            broker.close(f"agent-pm-{name}-{generation}")
-        except SessionError:
-            if stopped.wait(REFRESH_RETRY):
-                return
-        else:
-            return
+        record = json.loads(read_regular(os.path.join(state, "host.json")) or b"")
+    except (OSError, ValueError, RecursionError):
+        return False
+    return isinstance(record, dict) and record.get("credential_refresh") is True
 
 
 def _recorded_client(state: str) -> str | None:
-    """host.json's client; None for a missing, unreadable or malformed record."""
     try:
         client = json.loads(read_regular(os.path.join(state, "host.json")) or b"")["client"]
     except (ValueError, TypeError, KeyError):
@@ -253,11 +227,17 @@ def refresh_tokens(
     stopped: threading.Event,
     *,
     failed: Callable[[str], None],
+    expired: Callable[[str], None],
     clock: Callable[[], float] = time.time,
 ) -> None:
     """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
     list saved; a failure goes to `failed` and retries in REFRESH_RETRY s. No list: returns.
     """
+    if refreshes_client(state):
+        _renew_client(
+            name, state, generation, broker, stopped, failed=failed, expired=expired, clock=clock
+        )
+        return
     path = os.path.join(state, f"{generation}.github.json")
     try:
         with open(path, encoding="utf-8") as f:
@@ -274,8 +254,56 @@ def refresh_tokens(
             delay = REFRESH_RETRY
             continue
         with contextlib.suppress(OSError):
-            save(path, json.dumps(found), durable=True)
-        delay = _delay(found, clock())
+            save(path, json.dumps(found.github), durable=True)
+        delay = _delay(found.github, clock())
+
+
+def _client_deadline(state: str, generation: str) -> float:
+    try:
+        value = json.loads(
+            read_regular(os.path.join(state, f"{generation}.credential.json")) or b""
+        )
+        if not isinstance(value, str):
+            return 0.0
+        return datetime.fromisoformat(value).timestamp()
+    except (ValueError, TypeError, OSError):
+        return 0.0
+
+
+def _renew_client(name, state, generation, broker, stopped, *, failed, expired, clock) -> None:
+    path = os.path.join(state, f"{generation}.github.json")
+
+    def delay():
+        client = _client_deadline(state, generation) - REFRESH_AHEAD - clock()
+        try:
+            github = _delay(json.loads(read_regular(path) or b"[]"), clock())
+        except (ValueError, KeyError, TypeError):
+            github = None
+        return max(0.0, min(client, github) if github is not None else client)
+
+    wait = delay()
+    while not stopped.wait(wait):
+        retry = False
+        try:
+            found = broker.refresh(
+                f"agent-pm-{name}-{generation}", os.path.join(state, f"{generation}.json")
+            )
+            save(path, json.dumps(found.github), durable=True)
+        except (SessionError, OSError) as error:
+            retry = True
+            failed(str(error))
+        remaining = _client_deadline(state, generation) - clock()
+        if remaining <= 0:
+            expired(AUTH_EXPIRED.format(client=_recorded_client(state) or "for this client"))
+            while True:
+                try:
+                    broker.close(f"agent-pm-{name}-{generation}")
+                except SessionError:
+                    if stopped.wait(REFRESH_RETRY):
+                        return
+                else:
+                    return
+        wait = min(remaining, REFRESH_RETRY if retry else max(REFRESH_RETRY, delay()))
 
 
 def _delay(expiries: list, now: float) -> float | None:
@@ -312,7 +340,6 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGTERM, stop)
     threading.Thread(target=supervisor.watch, args=(wait, check, stopped), daemon=True).start()
     threading.Thread(target=supervisor.refresh, args=(stopped,), daemon=True).start()
-    threading.Thread(target=supervisor.expire, args=(stopped,), daemon=True).start()
     supervisor.serve(proc.stdout, proc.stdin)
     stopped.set()
     return 0

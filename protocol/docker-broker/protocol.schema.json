@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 10",
+  "title": "Docker broker protocol 11",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -261,7 +261,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "10"
+          "const": "11"
         }
       },
       "required": [
@@ -562,11 +562,22 @@
         },
         "github": {
           "$ref": "#/$defs/expiries"
+        },
+        "credential_expires_at": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/time"
+            }
+          ]
         }
       },
       "required": [
         "container",
-        "github"
+        "github",
+        "credential_expires_at"
       ],
       "additionalProperties": false
     },
@@ -800,7 +811,8 @@
                 },
                 "command": {
                   "enum": [
-                    "start"
+                    "start",
+                    "refresh"
                   ]
                 }
               }
