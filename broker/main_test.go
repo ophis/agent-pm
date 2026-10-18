@@ -15,6 +15,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/fixtures"
+	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -33,6 +34,10 @@ func recording(calls *[]call) app {
 		return build(ctx, arg, p)
 	},
 		start: result("start"), close: result("close"),
+		refresh: func(ctx context.Context, container, manifest string) (any, error) {
+			return result("refresh")(ctx, container+" "+manifest, nil)
+		},
+		status:      func(ctx context.Context) (any, error) { return result("status")(ctx, "", nil) },
 		workspaceRm: func(ctx context.Context, volume string, _ bool) (any, error) { return workspaceRm(ctx, volume, nil) }}
 }
 
@@ -44,7 +49,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"5"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"6"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -55,7 +60,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestInputFixtures(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "close_input", "workspace_rm_input") {
+	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "refresh_input", "close_input", "status_input", "workspace_rm_input") {
 		t.Run(c.File, func(t *testing.T) {
 			var in struct{ Argv []string }
 			if err := json.Unmarshal(c.Data, &in); err != nil {
@@ -67,7 +72,15 @@ func TestInputFixtures(t *testing.T) {
 				t.Fatalf("exit %d want %d: %s", code, *c.Expected.ExitCode, errOut)
 			}
 			if c.Valid {
-				if errOut != "" || out == "" || (in.Argv[0] != "version" && (len(calls) != 1 || calls[0] != call{in.Argv[0], in.Argv[2]})) {
+				want := call{in.Argv[0], ""}
+				switch in.Argv[0] {
+				case "refresh":
+					want.arg = in.Argv[2] + " " + in.Argv[4]
+				case "version", "status":
+				default:
+					want.arg = in.Argv[2]
+				}
+				if errOut != "" || out == "" || (in.Argv[0] != "version" && (len(calls) != 1 || calls[0] != want)) {
 					t.Fatalf("%q %q %v", out, errOut, calls)
 				}
 				return
@@ -119,6 +132,11 @@ func TestUsageErrors(t *testing.T) {
 		{"start", []string{"start", "--manifest", "/bad\npath"}},
 		{"start", []string{"start", "--manifest", "/bad\xffpath"}},
 		{"close", []string{"close", "--container", "other"}},
+		{"refresh", []string{"refresh", "--container", "agent-pm-x-0123456789abcdef0123456789abcdef"}},
+		{"refresh", []string{"refresh", "--container", "other", "--manifest", "/m.json"}},
+		{"refresh", []string{"refresh", "--manifest", "/m.json", "--container", "agent-pm-x-0123456789abcdef0123456789abcdef"}},
+		{"refresh", []string{"refresh", "--container", "agent-pm-x-0123456789abcdef0123456789abcdef", "--manifest", "m.json"}},
+		{"status", []string{"status", "x"}},
 		{"close", []string{"close", "--container", "agent-pm-x-0123"}},
 		{"version", []string{"version", "x"}},
 		{"workspace-rm", []string{"workspace-rm"}},
@@ -131,7 +149,9 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login"}},
 		{"unknown", []string{"login", "github"}},
 		{"unknown", []string{"login", "github", "agent-pm-other"}},
-		{"unknown", []string{"login", "github", "agent-pm-engineer", "x"}},
+		{"unknown", []string{"login", "github", "agent-pm-engineer"}},
+		{"unknown", []string{"login", "github", "agent-pm-docs"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
 		{"unknown", []string{"login", "claude", "x"}},
 	} {
 		code, out, errOut := invoke(a, tc.args...)
@@ -146,7 +166,7 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestLoginGitHubDispatch(t *testing.T) {
-	for _, name := range []string{"agent-pm-engineer", "agent-pm-docs"} {
+	for _, name := range []string{"agent-pm-bot"} {
 		var got string
 		a := app{loginGitHub: func(app string, out io.Writer) error {
 			got = app
@@ -158,7 +178,7 @@ func TestLoginGitHubDispatch(t *testing.T) {
 		}
 	}
 	a := app{loginGitHub: func(string, io.Writer) error { return errors.New("no item") }}
-	if code, out, errOut := invoke(a, "login", "github", "agent-pm-docs"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
+	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
 }
@@ -284,6 +304,7 @@ func TestTokenNeverLeaves(t *testing.T) {
 			Safe:   func(string) error { return nil },
 			Docker: d,
 			Creds:  broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
+			GitHub: broker.GitHub{Keychain: noSecrets{}, API: github.Client{Now: time.Now}, Lock: broker.FileLock(filepath.Join(t.TempDir(), "tokens.lock"))},
 		}
 		a := app{start: func(ctx context.Context, m string, _ io.Writer) (any, error) { return h.Start(ctx, m) }}
 		_, out, errOut := invoke(a, "start", "--manifest", path)
@@ -328,3 +349,26 @@ func TestBuildProgressGoesToStderr(t *testing.T) {
 	}
 	assertError(t, envelope, out, "build", protocol.BuildFailed)
 }
+
+func TestStatus(t *testing.T) {
+	a := app{status: func(context.Context) (any, error) {
+		return launcher.StatusResult{Revocations: []protocol.Pending{{Container: "c", Account: "ophis", ExpiresAt: "2026-10-17T13:00:00Z"}}}, nil
+	}}
+	code, out, errOut := invoke(a, "status")
+	if code != 0 || errOut != "" || out != `{"revocations":[{"container":"c","account":"ophis","expires_at":"2026-10-17T13:00:00Z"}]}`+"\n" {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	a = app{status: func(context.Context) (any, error) { return nil, protocol.New(protocol.KeychainFailed, "x") }}
+	code, out, errOut = invoke(a, "status")
+	if code != 11 {
+		t.Fatalf("%d %q", code, errOut)
+	}
+	assertError(t, errOut, out, "status", protocol.KeychainFailed)
+}
+
+// noSecrets is an empty broker-only keychain.
+type noSecrets struct{}
+
+func (noSecrets) Secret(string, string) ([]byte, error)  { return nil, broker.ErrNotFound }
+func (noSecrets) PutSecret(string, string, []byte) error { return errors.New("read-only") }
+func (noSecrets) DeleteSecret(string, string) error      { return nil }

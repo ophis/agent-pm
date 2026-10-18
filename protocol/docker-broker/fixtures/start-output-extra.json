@@ -6,5 +6,6 @@
     "claude": "2.1.0",
     "codex": "0.100.0"
   },
-  "extra": true
+  "extra": true,
+  "github": []
 }
