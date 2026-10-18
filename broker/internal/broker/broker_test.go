@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -710,6 +715,72 @@ func TestInjectKeychainFailure(t *testing.T) {
 		}
 		if keyErr == ErrNeedsDialog && pe.Message != "The Claude setup-token needs keychain approval: unlock the login keychain, or run agent-pm-broker login claude." {
 			t.Fatal(pe.Message)
+		}
+	}
+}
+
+// TestKeychainServices: KeychainServices lists exactly the package's ...Service string constants and GitHubApps, so a
+// new service cannot miss docs/credentials.md.
+func TestKeychainServices(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for app := range GitHubApps {
+		want[app] = true
+	}
+	constants := 0
+	fset := gotoken.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != gotoken.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value := spec.(*ast.ValueSpec)
+				for i, id := range value.Names {
+					if !strings.HasSuffix(id.Name, "Service") || i >= len(value.Values) {
+						continue
+					}
+					lit, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != gotoken.STRING {
+						continue
+					}
+					service, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want[service] = true
+					constants++
+				}
+			}
+		}
+	}
+	if constants < 5 {
+		t.Fatalf("found %d service constants, want at least 5", constants)
+	}
+	listed := map[string]bool{}
+	for _, service := range KeychainServices {
+		if listed[service] {
+			t.Errorf("KeychainServices lists %s twice", service)
+		}
+		listed[service] = true
+		if !want[service] {
+			t.Errorf("KeychainServices lists %s, neither a service constant nor a GitHub App", service)
+		}
+	}
+	for service := range want {
+		if !listed[service] {
+			t.Errorf("KeychainServices misses %s", service)
 		}
 	}
 }
