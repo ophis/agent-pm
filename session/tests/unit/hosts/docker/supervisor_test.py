@@ -63,106 +63,28 @@ class Base(Case):
             return []
 
 
-class ExpiryTest(Base):
-    def setUp(self):
-        super().setUp()
-        with open(os.path.join(self.state, "host.json"), "w") as f:
-            json.dump({"generation": GEN, "client": "claude", "credential_refresh": False}, f)
-
-    def test_refresh_capability_and_legacy_deadline_recovery(self):
-        record = os.path.join(self.state, "host.json")
-        deadline = os.path.join(self.state, f"{GEN}.credential.json")
-        cases = (
-            ({"client": "agent", "credential_refresh": True}, None, True),
-            ({"client": "agent", "credential_refresh": False}, "invalid", False),
-            ({"client": "agent"}, None, False),
-            ({"client": "agent"}, "2026-10-18T12:00:00Z", True),
-            ({"client": "agent"}, "invalid", True),
-            ({"client": "agent"}, ..., True),
-            ([], ..., False),
-        )
-        for found, expiry, expected in cases:
-            with self.subTest(record=found, expiry=expiry):
-                with open(record, "w") as stream:
-                    json.dump(found, stream)
-                with open(deadline, "w") as stream:
-                    stream.write("{" if expiry is ... else json.dumps(expiry))
-                self.assertEqual(supervisor.refreshes_client(self.state, GEN), expected)
-
-    def test_no_credential_and_a_null_deadline_do_not_close(self):
-        self.supervisor.broker = mock.Mock()
-        stopped = mock.Mock()
-        self.supervisor.expire(stopped)
-        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
-            json.dump(None, f)
-        self.supervisor.expire(stopped)
-        stopped.wait.assert_not_called()
-        self.supervisor.broker.close.assert_not_called()
-
-    def test_invalid_deadline_fails_closed_and_close_failure_retries(self):
-        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
-            f.write('"invalid"')
-        self.supervisor.broker = mock.Mock()
-        self.supervisor.broker.close.side_effect = [SessionError("unavailable"), False]
-        self.supervisor.events = ""
-        stopped = mock.Mock()
-        stopped.wait.return_value = False
-        self.supervisor.expire(stopped)
-        self.assertEqual(stopped.wait.call_args_list, [mock.call(0.0), mock.call(60)])
-        self.assertEqual(self.supervisor.broker.close.call_count, 2)
-
-    def test_initial_deadline_closes_the_generation_and_reports_repair(self):
-        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
-            json.dump("2026-10-18T12:00:00Z", f)
-        self.supervisor.clock = lambda: datetime(2026, 10, 18, 11, 59, tzinfo=UTC).timestamp()
-        self.supervisor.broker = mock.Mock()
-        stopped = mock.Mock()
-        stopped.wait.return_value = False
-        self.supervisor.expire(stopped)
-        stopped.wait.assert_called_once_with(60.0)
-        self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
-        with open(self.events) as f:
-            text = f.read()
-        self.assertEqual(
-            text.split(" ", 1)[1],
-            "worker_1 client_auth_expired Client authentication expired; run agent-pm-broker login"
-            " claude; token refresh is not supported yet\n",
-        )
-
-    def test_a_missing_or_bad_host_record_still_reports_and_closes(self):
-        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
-            json.dump("2000-01-01T00:00:00Z", f)
-        record = os.path.join(self.state, "host.json")
-        for content in (None, b"{", b"[]", b'{"generation": "g"}', b'{"client": ""}'):
-            with self.subTest(content=content):
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(record)
-                if content is not None:
-                    with open(record, "wb") as f:
-                        f.write(content)
-                self.supervisor.broker = mock.Mock()
-                stopped = mock.Mock()
-                stopped.wait.return_value = False
-                self.supervisor.expire(stopped)
-                self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
-                with open(self.events) as f:
-                    last = f.read().splitlines()[-1]
-                self.assertEqual(
-                    last.split(" ", 1)[1],
-                    "worker_1 client_auth_expired Client authentication expired; run"
-                    " agent-pm-broker login for this client; token refresh is not supported yet",
-                )
-
-    def test_recovery_after_expiry_is_immediate_and_stop_cancels_close(self):
-        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
-            json.dump("2026-10-18T12:00:00Z", f)
-        self.supervisor.clock = lambda: datetime(2026, 10, 18, 12, 1, tzinfo=UTC).timestamp()
-        self.supervisor.broker = mock.Mock()
-        stopped = mock.Mock()
-        stopped.wait.return_value = True
-        self.supervisor.expire(stopped)
-        stopped.wait.assert_called_once_with(0.0)
-        self.supervisor.broker.close.assert_not_called()
+class RefreshCapabilityTest(Base):
+    def test_only_a_true_capability_enables_refresh(self):
+        path = os.path.join(self.state, "host.json")
+        self.assertFalse(supervisor.refreshes_client(self.state))
+        for record, expected in (
+            ({"credential_refresh": True}, True),
+            ({"credential_refresh": False}, False),
+            ({"client": "agent"}, False),
+            ({"client": "agent", "credential_refresh": None}, False),
+            ({"client": "agent", "credential_refresh": 1}, False),
+            ({"client": "agent", "credential_refresh": "true"}, False),
+            ([], False),
+            (None, False),
+            (True, False),
+        ):
+            with self.subTest(record=record):
+                with open(path, "w") as stream:
+                    json.dump(record, stream)
+                self.assertEqual(supervisor.refreshes_client(self.state), expected)
+        with open(path, "w") as stream:
+            stream.write("{")
+        self.assertFalse(supervisor.refreshes_client(self.state))
 
 
 class HandleTest(Base):
@@ -502,9 +424,8 @@ class MainTest(Base):
         threads = {
             c.kwargs["target"].__name__: c.kwargs["args"] for c in self.threads.call_args_list
         }
-        self.assertEqual(threads.keys(), {"watch", "refresh", "expire"})
+        self.assertEqual(threads.keys(), {"watch", "refresh"})
         self.assertTrue(threads["refresh"][0].is_set())
-        self.assertTrue(threads["expire"][0].is_set())
 
     def test_an_unheld_lock_fd_or_bad_args_exit_nonzero(self):
         self.assertEqual(supervisor.main(["too", "few"]), 2)
@@ -601,6 +522,22 @@ class CodexRenewalTest(Base):
         self.assertEqual(self.waits, [0, 60])
         self.supervisor.broker.close.assert_not_called()
 
+    def test_missing_client_retains_full_fallback_event_and_log(self):
+        with open(os.path.join(self.state, "host.json"), "w") as stream:
+            json.dump({"credential_refresh": True}, stream)
+        self.deadline(-1)
+        self.supervisor.broker.refresh.side_effect = SessionError("offline")
+        with self.assertLogs("session", level="WARNING") as logged:
+            self.supervisor.refresh(self.stop(1))
+        reason = "Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login for this client on the host, then resume"
+        with open(self.events) as stream:
+            lines = stream.read().splitlines()
+        self.assertEqual(lines[-1].split(" ", 1)[1], f"worker_1 client_auth_expired {reason}")
+        self.assertIn(
+            f"WARNING:session:docker session worker_1: client_auth_expired {reason}", logged.output
+        )
+        self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
+
     def test_lost_reply_with_long_publication_retries_after_one_minute(self):
         self.deadline(30)
 
@@ -630,10 +567,9 @@ class CodexRenewalTest(Base):
                 self.supervisor.refresh(self.stop(1))
                 self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
 
-    def test_stop_cancels_due_refresh_and_old_expiry_owner(self):
+    def test_stop_cancels_due_refresh(self):
         self.deadline(30)
         self.supervisor.refresh(self.stop(0))
-        self.supervisor.expire(self.stop(0))
         self.supervisor.broker.refresh.assert_not_called()
         self.supervisor.broker.close.assert_not_called()
         self.assertEqual(self.waits, [0])

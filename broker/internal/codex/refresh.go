@@ -14,11 +14,11 @@ import (
 	"time"
 )
 
-const refreshVersion = "0.163.0"
+const RefreshVersion = "0.163.0"
 const refreshOutputLimit = 1024 * 1024
 const refreshLineLimit = 64 * 1024
 
-var ErrRefreshVersion = errors.New("Codex refresh requires pinned 0.163.0; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex 0.163.0")
+var ErrRefreshVersion = errors.New("Codex refresh requires pinned " + RefreshVersion)
 
 var errRefreshExchange = errors.New("pinned Codex refresh exchange failed")
 
@@ -116,7 +116,7 @@ func (r Runtime) Refresh(ctx context.Context, home string) error {
 	if err != nil {
 		return err
 	}
-	if installation.Version != refreshVersion {
+	if installation.Version != RefreshVersion {
 		return ErrRefreshVersion
 	}
 	if err := privateHome(home); err != nil {
@@ -278,7 +278,7 @@ func refreshExchange(process refreshProcess, home, before string) error {
 		}
 		return nil
 	}
-	if err := send(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"agent-pm-broker","title":null,"version":"0.163.0"},"capabilities":{"experimentalApi":false,"requestAttestation":false,"explicitGatewayOauth":true}}}`); err != nil {
+	if err := send(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"agent-pm-broker","title":null,"version":"` + RefreshVersion + `"},"capabilities":{"experimentalApi":false,"requestAttestation":false,"explicitGatewayOauth":true}}}`); err != nil {
 		return err
 	}
 	if _, err := exchange.response(1); err != nil {

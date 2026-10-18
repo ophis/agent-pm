@@ -156,7 +156,8 @@ func codexFixture(t *testing.T) (Codex, *fakeCodexNative, *fakeCodexKeychain) {
 	t.Helper()
 	n := &fakeCodexNative{data: codexAuth(codexNow.Add(time.Hour).Unix())}
 	k := &fakeCodexKeychain{native: n, missing: true}
-	return Codex{native: n, keychain: k, tempRoot: t.TempDir(), now: func() time.Time { return codexNow }, uid: func() int { return 501 }, password: func() ([]byte, error) { return []byte(keychainPass), nil }}, n, k
+	root := t.TempDir()
+	return Codex{native: n, keychain: k, tempRoot: root, revisionDir: filepath.Join(root, "codex-coordination"), now: func() time.Time { return codexNow }, uid: func() int { return 501 }, password: func() ([]byte, error) { return []byte(keychainPass), nil }}, n, k
 }
 
 func TestCodexContainerCredential(t *testing.T) {

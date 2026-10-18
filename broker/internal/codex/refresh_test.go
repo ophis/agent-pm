@@ -302,7 +302,7 @@ func TestRefreshValidation(t *testing.T) {
 				if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte("0.163.0"), []byte("0.162.1")), 0644); err != nil {
 					t.Fatal(err)
 				}
-				want = "update-codex 0.163.0"
+				want = "requires pinned 0.163.0"
 			case "home":
 				if err := os.Chmod(f.home, 0755); err != nil {
 					t.Fatal(err)

@@ -237,7 +237,7 @@ The generation closes, with one-minute close retries. Follow the message on the 
 then explicitly resume the worker; preserved native history remains authoritative.
 Missing login or invalid pinned files fail preflight with repair instructions.
 No run login, personal cache or different identity is selected.
-Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:327`.
+Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:273`.
 
 ### TASK-650 user-run acceptance, pending
 

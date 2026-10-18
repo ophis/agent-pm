@@ -23,9 +23,6 @@ var errRevision = errors.New("Codex refresh coordination unavailable; retry or r
 
 func (c Codex) revisionDirectory(create bool) (string, error) {
 	directory := c.revisionDir
-	if directory == "" {
-		directory = filepath.Join(c.tempRoot, "codex-coordination")
-	}
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
 		return "", errRevision
 	}

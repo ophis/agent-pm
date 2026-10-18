@@ -28,7 +28,6 @@ class PipedTest(Case):
             close=lambda: self.closes.append(1),
             lock=self.lock,
             refresh=self.refresh,
-            expire=lambda _stopped: None,
         )
 
     def refresh(self, stopped):
@@ -76,31 +75,6 @@ class PipedTest(Case):
         piped.close()
         self.assertTrue(self.refreshing.is_set())
 
-    def test_refresh_and_expiry_run_concurrently_until_close_stops_both(self):
-        started = {"refresh": threading.Event(), "expiry": threading.Event()}
-        stopped = {"refresh": threading.Event(), "expiry": threading.Event()}
-
-        def task(name):
-            def run(signal):
-                started[name].set()
-                signal.wait()
-                stopped[name].set()
-
-            return run
-
-        piped = DockerPiped(
-            "w",
-            self.proc,
-            close=lambda: None,
-            lock=self.lock,
-            refresh=task("refresh"),
-            expire=task("expiry"),
-        )
-        self.assertTrue(all(event.wait(5) for event in started.values()))
-        self.assertFalse(any(event.is_set() for event in stopped.values()))
-        piped.close()
-        self.assertTrue(all(event.wait(5) for event in stopped.values()))
-
     def test_stop_kills_the_exec_group_then_closes(self):
         piped = self.piped()
         with mock.patch("os.killpg") as killpg:
@@ -116,7 +90,6 @@ class PipedTest(Case):
             close=mock.Mock(side_effect=OSError("x")),
             lock=self.lock,
             refresh=self.refresh,
-            expire=lambda _stopped: None,
         )
         with self.assertRaises(OSError):
             piped.close()
