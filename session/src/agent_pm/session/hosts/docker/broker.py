@@ -15,13 +15,13 @@ from dataclasses import fields
 from datetime import datetime
 
 from agent_pm.session.engine.types import ConfigError, SessionError
-from agent_pm.session.hosts.docker.types import Started
+from agent_pm.session.hosts.docker.types import Refreshed, Started
 from agent_pm.utils import save
 
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "10"
+PROTOCOL = "11"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -44,7 +44,7 @@ COMMANDS = frozenset(
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
     "manifest_rejected": (3, {"start", "refresh"}),
-    "mount_rejected": (4, {"start"}),
+    "mount_rejected": (4, {"start", "refresh"}),
     "login_required": (5, {"start", "refresh"}),
     "image_rejected": (6, {"start"}),
     "docker_unreachable": (7, {"build", "start", "refresh", "close", "workspace-rm"}),
@@ -115,7 +115,8 @@ def _expiries(value) -> bool:
         isinstance(e, dict)
         and e.keys() == {"account", "expires_at"}
         and _matches(LOGIN, e["account"])
-        and _matches(TIME, e["expires_at"])
+        and e["expires_at"] is not None
+        and _credential_expiry(e["expires_at"])
         for e in value
     )
 
@@ -335,21 +336,23 @@ class Broker:
             raise SessionError("broker: bad response to start: fields")
         return started
 
-    def refresh(self, container: str, manifest: str) -> list[dict]:
-        """`container`'s new GitHub token expiries; `manifest`: the one it was started with."""
+    def refresh(self, container: str, manifest: str) -> Refreshed:
+        """Public credential deadlines; `manifest`: the one the container was started with."""
         found = self._parsed(
             "refresh",
             lambda d: (
-                d.keys() == {"container", "github"}
+                d.keys() == {"container", "github", "credential_expires_at"}
+                and _matches(CONTAINER, d["container"])
                 and d["container"] == container
                 and _expiries(d["github"])
+                and _credential_expiry(d["credential_expires_at"])
             ),
             "--container",
             container,
             "--manifest",
             manifest,
         )
-        return found["github"]
+        return Refreshed(found["github"], found["credential_expires_at"])
 
     def close(self, container: str) -> bool:
         """Whether it removed `container`; False: it was already gone."""

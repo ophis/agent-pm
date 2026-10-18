@@ -26,6 +26,7 @@ type CodexCredentials interface {
 	Ready(context.Context) error
 	// Inject writes the login through exec, as Credentials.Inject does, and returns its expiry (RFC 3339).
 	Inject(context.Context, func([]string, []byte) error) (string, error)
+	Refresh(context.Context, func([]string, []byte) error, func(string) error) (string, error)
 }
 
 // Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
@@ -87,8 +88,9 @@ type StartResult struct {
 }
 
 type RefreshResult struct {
-	Container string            `json:"container"`
-	GitHub    []protocol.Expiry `json:"github"`
+	Container           string            `json:"container"`
+	GitHub              []protocol.Expiry `json:"github"`
+	CredentialExpiresAt *string           `json:"credential_expires_at"`
 }
 
 type StatusResult struct {

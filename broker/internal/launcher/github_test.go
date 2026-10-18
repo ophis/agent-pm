@@ -168,7 +168,8 @@ func TestCloseKeychainFails(t *testing.T) {
 func TestRefresh(t *testing.T) {
 	tokens := &fakeTokens{}
 	d := &fakeDocker{}
-	h := Host{Docker: d, GitHub: tokens}
+	h := mountHost()
+	h.Docker, h.GitHub = d, tokens
 	got, err := h.Refresh(context.Background(), container, githubManifest(t))
 	if err != nil || got.Container != container || !slices.Equal(got.GitHub, expiry) {
 		t.Fatalf("%+v %v", got, err)
@@ -190,7 +191,9 @@ func TestRefresh(t *testing.T) {
 		"write":           {container, githubManifest(t), &fakeTokens{refresh: errors.New("opaque")}, protocol.RefreshFailed},
 		"unreachable":     {container, githubManifest(t), &fakeTokens{refresh: docker.ErrUnreachable}, protocol.DockerUnreachable},
 	} {
-		_, err := Host{Docker: &fakeDocker{}, GitHub: tc.tokens}.Refresh(context.Background(), tc.container, tc.manifest)
+		host := mountHost()
+		host.Docker, host.GitHub = &fakeDocker{}, tc.tokens
+		_, err := host.Refresh(context.Background(), tc.container, tc.manifest)
 		if protoErr(t, err).Code != tc.code {
 			t.Errorf("%s: %v", name, err)
 		}

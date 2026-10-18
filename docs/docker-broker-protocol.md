@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 10** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"10"}`.
+**Protocol 11** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"11"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -16,7 +16,8 @@ that App's installation tokens ([GitHub tokens](#github-tokens)): start's `githu
 codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
 `status.codex` object. Protocol 8 adds build's `--plugin`. Protocol 9 adds client-specific
 manifest directories and start's `credential_expires_at`; relay messages and GitHub fields
-remain unchanged. Protocol 10 adds start's `client_update` audit object.
+remain unchanged. Protocol 10 adds start's `client_update` audit object. Protocol 11 adds
+refresh's required nullable `credential_expires_at` and permits Codex refresh without GitHub.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -121,10 +122,10 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `10` |
+| `version` | `protocol_version`: exact string `11` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
-| `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}` |
+| `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
@@ -148,6 +149,14 @@ Stable versions use canonical `major.minor.patch`. `current` requires target=ima
 `update_failed` requires an allowed different target and actual=image. The two empty-target
 outcomes also require actual=image. Python checks these cross-field relationships.
 Update operations and diagnostics: [Codex versions](docker-codex.md#container-versions).
+
+Codex refresh validates the same canonical state paths as start. Its publication runs before
+GitHub renewal, including when GitHub is absent or unavailable. Under the login lock it
+replaces the effective container credential and durably publishes only the expiry JSON
+string to `~/.agent-pm/docker-state/<name>/<generation>.credential.json`. That record is
+authoritative after partial failure or a lost response; retry reconciles it before GitHub.
+A deadline-write failure reports `refresh_failed`. Publication does not acknowledge that
+the running terminal adopted the credential; see [refresh continuity](docker-codex.md).
 
 `status.codex` has no identity or credential fields:
 
@@ -192,8 +201,8 @@ The common `error` definition validates the exit/code/command combination. Examp
 | Exit | `error.code` | Commands | Failure class |
 |---|---|---|---|
 | `2` | `usage` | All, or `unknown` | Unknown command/flag, missing/extra argument, malformed argument value |
-| `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than `agent-pm-bot`; refresh: a manifest of another container or with `github` `null` |
-| `4` | `mount_rejected` | start | Runtime cwd, `claude_dir`, symlink or hook-placement rejection; a workspace volume with other labels or in use |
+| `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than `agent-pm-bot`; refresh: a manifest of another container, or Claude with `github` `null` |
+| `4` | `mount_rejected` | start/refresh | Runtime cwd, `claude_dir`, symlink or hook-placement rejection; a workspace volume with other labels or in use |
 | `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
@@ -205,7 +214,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `13` | `workspace_rejected` | workspace-rm | The volume has no `agent-pm.kind` label, or its `agent-pm.workspace` path is not clean, absolute and outside the container's own trees |
 | `14` | `workspace_failed` | workspace-rm | No worker image, the check failed or printed no result, or deletion failed |
 | `15` | `github_failed` | start/refresh | A GitHub request failed (`message` gives the HTTP status, never a body), or the App private key is unusable |
-| `16` | `refresh_failed` | refresh | No tokens recorded for the container, it was closed during the refresh, or writing a token into it failed |
+| `16` | `refresh_failed` | refresh | No tokens recorded for the container, it was closed during the refresh, writing a credential into it failed, or publishing its Codex deadline failed |
 | `70` | `internal_error` | All, or `unknown` | Unexpected broker failure |
 
 Classify the first fatal failing stage; daemon connectivity failures use exit 7.

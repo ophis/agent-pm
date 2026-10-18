@@ -102,15 +102,111 @@ class CodexBootstrap(Case):
         self.assertFalse((cache / "inline/autopilot/local").is_symlink())
         self.assertFalse((self.target / "sessions").exists())
 
+    def carrier(self, access="one", account="account"):
+        return json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": None,
+                "tokens": {
+                    "id_token": "identity",
+                    "access_token": access,
+                    "refresh_token": "",
+                    "account_id": account,
+                },
+                "last_refresh": "2026-10-18T12:00:00Z",
+            }
+        ).encode()
+
     def test_access_document_is_owner_read_only_and_atomically_replaced(self):
         inject = self.code["inject_codex"]
-        inject(io.BytesIO(b'{"synthetic":"one"}'), self.secrets)
-        path = self.secrets / "codex/auth.json"
+        self.code["bootstrap_codex"](self.target, "/work/project", self.secrets, self.plugins)
+        inject(io.BytesIO(self.carrier()), self.secrets, self.target)
+        path = self.target / "auth.json"
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
+        self.assertFalse(path.is_symlink())
         self.assertEqual(path.stat().st_uid, os.getuid())
-        inject(io.BytesIO(b'{"synthetic":"two"}'), self.secrets)
-        self.assertEqual(path.read_bytes(), b'{"synthetic":"two"}')
-        self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["auth.json"])
+        path.unlink()
+        path.write_bytes(self.carrier("native"))
+        inject(io.BytesIO(self.carrier("two")), self.secrets, self.target)
+        self.assertFalse(path.is_symlink())
+        self.assertEqual(path.read_bytes(), self.carrier("two"))
+        self.assertEqual(
+            sorted(p.name for p in path.parent.iterdir()), ["auth.json", "config.toml", "plugins"]
+        )
+
+    def test_refresh_reaches_native_replaced_effective_file(self):
+        path = self.target / "auth.json"
+        path.write_bytes(self.carrier("native"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.target)}):
+            self.code["inject_codex"](io.BytesIO(self.carrier("renewed")), self.secrets)
+        self.assertEqual(path.read_bytes(), self.carrier("renewed"))
+
+    def test_auth_rejects_account_change_secrets_and_arbitrary_links(self):
+        inject = self.code["inject_codex"]
+        path = self.target / "auth.json"
+        path.write_bytes(self.carrier())
+        for content in (
+            self.carrier(account="other"),
+            self.carrier().replace(b'"refresh_token": ""', b'"refresh_token": "secret"'),
+        ):
+            with self.assertRaises(SystemExit):
+                inject(io.BytesIO(content), self.secrets, self.target)
+            self.assertEqual(path.read_bytes(), self.carrier())
+        elsewhere = Path(self.home, "unrelated")
+        elsewhere.write_bytes(self.carrier())
+        path.unlink()
+        path.symlink_to(elsewhere)
+        with self.assertRaises(SystemExit):
+            inject(io.BytesIO(self.carrier("two")), self.secrets, self.target)
+        self.assertEqual(elsewhere.read_bytes(), self.carrier())
+
+    def test_auth_rejects_malformed_documents_without_leaking_contents(self):
+        for raw in (
+            b"[]",
+            b"{}",
+            b"not-json",
+            b"x" * ((1 << 16) + 1),
+            self.carrier().replace(
+                b'"refresh_token": ""', b'"refresh_token": "secret", "refresh_token": ""'
+            ),
+        ):
+            with (
+                self.subTest(length=len(raw)),
+                self.assertRaisesRegex(SystemExit, "^bootstrap: invalid managed"),
+            ):
+                self.code["inject_codex"](io.BytesIO(raw), self.secrets, self.target)
+        self.assertFalse((self.target / "auth.json").exists())
+
+    def test_auth_rejects_missing_home_and_special_destinations(self):
+        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets)
+        path = self.target / "auth.json"
+        path.mkdir()
+        with self.assertRaises(SystemExit):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        with self.assertRaises(SystemExit):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, Path("relative"))
+
+    def test_refresh_rejects_effective_home_different_from_manifest(self):
+        with (
+            mock.patch.dict(os.environ, {"CODEX_HOME": "/different"}),
+            self.assertRaisesRegex(SystemExit, "CODEX_HOME does not match"),
+        ):
+            self.code["main"](["codex-auth", str(self.target)])
+        self.assertFalse((self.target / "auth.json").exists())
+
+    def test_refresh_accepts_matching_home_and_cleans_failed_staging(self):
+        with (
+            mock.patch.dict(os.environ, {"CODEX_HOME": str(self.target)}),
+            mock.patch("sys.stdin", SimpleNamespace(buffer=io.BytesIO(self.carrier()))),
+        ):
+            self.code["main"](["codex-auth", str(self.target)])
+        path = self.target / "auth.json"
+        self.assertEqual(path.read_bytes(), self.carrier())
+        with mock.patch("os.replace", side_effect=OSError("failed")), self.assertRaises(OSError):
+            self.code["inject_codex"](io.BytesIO(self.carrier("two")), self.secrets, self.target)
+        self.assertEqual(path.read_bytes(), self.carrier())
+        self.assertEqual([p.name for p in self.target.iterdir()], ["auth.json"])
 
     def test_projection_writes_one_record_and_rejects_escape_or_links(self):
         stage = self.code["stage_runtime"]
