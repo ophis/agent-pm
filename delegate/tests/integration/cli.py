@@ -1,6 +1,7 @@
 """Public CLI runs and answers as subprocesses: Integration over
 session/tests/integration/clients/claude/fake_claude.py, CodexIntegration over
-session/tests/integration/clients/codex/fake_codex.py, their outcomes.
+session/tests/integration/clients/codex/fake_codex.py, OpenCodeIntegration over
+session/tests/integration/clients/opencode/fake_opencode.py, their outcomes.
 """
 
 import contextlib
@@ -20,6 +21,7 @@ from delegate.tests.case import PY, REPO, Case, child_env
 from session.tests import live_tmux
 from session.tests.integration.clients.claude import fake_claude
 from session.tests.integration.clients.codex import fake_codex
+from session.tests.integration.clients.opencode import fake_opencode
 from utils.tests.sandbox import reap
 
 RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")
@@ -224,6 +226,7 @@ class CodexIntegration(Runs):
     """ROLE's TASK, --client codex over fake_codex; HOME outside the temp dirs."""
 
     ROLE, TASK = "dummy-tester", "echo"
+    CLIENT = "codex"
 
     def setUp(self):
         home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
@@ -268,7 +271,7 @@ class CodexIntegration(Runs):
         argv = [
             *RUN,
             "--client",
-            "codex",
+            self.CLIENT,
             "--role",
             self.ROLE,
             "--task",
@@ -295,3 +298,20 @@ class CodexIntegration(Runs):
 
     def texts(self, kind: str, key: str = "text") -> list:
         return [e[key] for e in self.records() if e["kind"] == kind]
+
+
+class OpenCodeIntegration(CodexIntegration):
+    """ROLE's TASK, --client opencode over fake_opencode on PATH; HOME, its session bindings,
+    outside the temp dirs.
+    """
+
+    CLIENT = "opencode"
+
+    def setUp(self):
+        super().setUp()
+        opencode = os.path.join(self.root, "bin", "opencode")
+        with open(opencode, "w") as f:
+            f.write(
+                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_opencode.__file__)} "$@"\n'
+            )
+        os.chmod(opencode, 0o755)

@@ -294,7 +294,7 @@ class SettingsTest(Base):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("[session.hosts.tmux]\nstatus_line = true\n")
         found = registry.settings(read_config())
-        self.assertEqual(sorted(found["clients"]), ["claude", "codex"])
+        self.assertEqual(sorted(found["clients"]), ["claude", "codex", "opencode"])
         self.assertEqual(found["hosts"].default, "tmux")
         self.assertEqual(found["viewer"], {"workers_per_column": 3, "grid_retile": "open-close"})
         self.session_cls = HostedSession.configured(**found)
@@ -550,7 +550,9 @@ def committed() -> dict:
 class Committed(Case):
     def test_the_committed_clients_configure_agent_clients(self):
         self.session_cls = configured(committed())
-        self.assertEqual(registry_of(self.session_cls).configured(), ["claude", "codex"])
+        self.assertEqual(
+            registry_of(self.session_cls).configured(), ["claude", "codex", "opencode"]
+        )
         for name, table in committed().items():
             with self.subTest(name=name):
                 self.assertEqual({"roles", "output"} & set(table), set())

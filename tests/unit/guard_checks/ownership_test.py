@@ -169,6 +169,15 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
+    def test_client_names_find_opencode_outside_the_clients_package(self):
+        outside = "session/src/agent_pm/session/engine/x.py"
+        inside = "session/src/agent_pm/session/clients/opencode/common.py"
+        text = 'CLIENT = "opencode"\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({outside: text, inside: text})),
+            [f"{outside}:1: client name opencode"],
+        )
+
     def test_help_exemptions_preserve_same_line_code_and_interpolated_expressions(self):
         path = "manager/src/agent_pm/manager/cli.py"
         for text in (
