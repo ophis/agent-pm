@@ -195,6 +195,32 @@ class HomeFilesTest(Base):
         self.settings(json.dumps(host))
         self.assertEqual(self.container_settings(), self.UNATTENDED)
 
+    def test_each_models_auto_compact_window_stays_on_the_host(self):
+        models = {
+            "claude-opus-5-5": {"effortLevel": "medium", "autoCompactWindow": 400000},
+            "sonnet": {"autoCompactWindow": 1},
+            "haiku": "x",
+        }
+        self.settings(json.dumps({"modelSettings": models}))
+        self.assertEqual(
+            self.container_settings(),
+            {
+                **self.UNATTENDED,
+                "modelSettings": {"claude-opus-5-5": {"effortLevel": "medium"}, "haiku": "x"},
+            },
+        )
+
+    def test_no_model_settings_when_every_entry_is_left_empty(self):
+        for models in ({"opus": {"autoCompactWindow": 1}, "sonnet": {}}, {}):
+            with self.subTest(models=models):
+                self.settings(json.dumps({**self.MODEL, "modelSettings": models}))
+                expected = {k: v for k, v in self.MODEL.items() if k != "modelSettings"}
+                self.assertEqual(self.container_settings(), {**self.UNATTENDED, **expected})
+
+    def test_model_settings_that_are_not_an_object_reach_a_container_home_unchanged(self):
+        self.settings(json.dumps({"modelSettings": "x"}))
+        self.assertEqual(self.container_settings(), {**self.UNATTENDED, "modelSettings": "x"})
+
     def test_no_env_without_the_hosts_search_cap(self):
         for env in ({"K": "v"}, {}, ["x"], "x"):
             with self.subTest(env=env):

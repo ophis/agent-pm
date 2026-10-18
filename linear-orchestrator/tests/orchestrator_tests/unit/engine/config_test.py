@@ -141,6 +141,7 @@ DEPLOYMENT = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "task_tiers",
     "agent_label_group",
     "agent_labels",
     "project_repos",
@@ -425,6 +426,43 @@ class ConfigurationLoading(ConfigFile, Case):
         cfg = self.load(PIPELINE + f'[project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n')
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
 
+    def test_task_tiers(self):
+        self.assertEqual(self.load(PIPELINE).task_tiers, {})
+        self.assertEqual(self.load(PIPELINE + "[task_tiers]\n").task_tiers, {})
+        cfg = self.load(PIPELINE + "[task_tiers]\nlight-build = 3\nbuild = 1\n")
+        self.assertEqual(cfg.task_tiers, {"light-build": 3, "build": 1})
+
+    def test_task_tiers_rejected(self):
+        cases = [
+            (
+                PIPELINE.replace("[roles.", "task_tiers = 3\n[roles.", 1),
+                "task_tiers must be a table of <task> = <tier 1-4>",
+            ),
+            *[
+                (
+                    PIPELINE + f"[task_tiers]\nlight-build = {value}\n",
+                    f"task_tiers.light-build must be a tier, a whole number 1-4: {shown}",
+                )
+                for value, shown in (
+                    ("0", "0"),
+                    ("5", "5"),
+                    ("true", "True"),
+                    ('"3"', "'3'"),
+                    ("2.0", "2.0"),
+                )
+            ],
+            *[
+                (
+                    text + f"[task_tiers]\n{task} = 3\n",
+                    f"task_tiers.{task} is not a task of a role in linear-orchestrator/config.toml",
+                )
+                for task, text in (("ghost", PIPELINE), ("build", HEADER + role("researcher")))
+            ],
+        ]
+        for text, message in cases:
+            with self.subTest(message, text=text):
+                self.fails("linear-orchestrator/config.toml: " + message, text)
+
     def test_agent_labels(self):
         for top, table, group, labels in (
             ("", "", "", {}),
@@ -519,6 +557,7 @@ class ConfigurationLoading(ConfigFile, Case):
             "states",
             "roles",
             "task_labels",
+            "task_tiers",
             "project_repos",
             "local_clones",
             "stages",
@@ -599,7 +638,8 @@ class CommittedConfiguration(Case):
                 "states": dict.fromkeys(State, ""),
                 "human_members": [],
                 **dict.fromkeys(
-                    ("task_labels", "agent_labels", "project_repos", "local_clones"), {}
+                    ("task_labels", "task_tiers", "agent_labels", "project_repos", "local_clones"),
+                    {},
                 ),
                 "work_dir": "~/.agent-pm",
             },

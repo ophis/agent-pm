@@ -2691,6 +2691,7 @@ class RunLaunching(OuterBase):
                 "project": PROJECT,
                 "target": "Ophis/Agent-PM",
                 "key": KEY,
+                "task": None,
             },
         )
         self.assertEqual(
@@ -2713,6 +2714,28 @@ class RunLaunching(OuterBase):
     def test_a_given_task_reaches_the_run(self):
         self.assertEqual(self.outer(task="light-build"), 0)
         self.assertEqual(self.detached(), self.expected(task="light-build"))
+        self.assertEqual(json.loads(self.raw_runs().splitlines()[-1])["task"], "light-build")
+
+    def test_a_tiered_task_overlays_its_tier_on_start_and_resume(self):
+        self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n")
+        rows = (
+            ("listed", {"task": "light-build"}, 3, "light-build"),
+            ("unlisted", {"task": "build"}, None, "build"),
+            ("no task", {}, None, None),
+            ("resume", {"mode": "resume", "started_task": "light-build"}, 3, None),
+            ("resume unlisted", {"mode": "resume", "started_task": "build"}, None, None),
+            ("resume of an untasked start", {"mode": "resume"}, None, None),
+        )
+        for name, kw, tier, task in rows:
+            with self.subTest(name):
+                self.api.detached.clear()
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(self.runs)
+                self.assertEqual(self.outer(**kw), 0)
+                self.assertEqual(
+                    self.detached(tier=tier),
+                    self.expected(task=task, resume=kw.get("mode") == "resume"),
+                )
 
     def test_a_long_input_reaches_run_py_intact(self):
         big = "".join(
@@ -3085,7 +3108,7 @@ class RunStartRecords(Base):
         )
         claim = (
             f'"uuid": "{UUID}", "project": "{IDS[DR]}", "target": null, '
-            f'"key": "{cfg.roles["researcher"].key}"'
+            f'"key": "{cfg.roles["researcher"].key}", "task": "light-research"'
         )
         with open(cfg.runs_log) as f:
             self.assertEqual(
@@ -3258,6 +3281,28 @@ class ExplicitIssueRuns(TickBase):
             )
         self.assertEqual(self.err, "router.py: TASK-1 has a live agent run\n")
 
+    def test_a_live_agent_run_whose_attach_command_fails_is_refused_naming_why(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        failure = SessionError("delegate agent session liveness unknown: docker ps: timed out")
+        with mock.patch.object(self.api, "attach_command", side_effect=failure):
+            self.assertEqual(
+                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 2
+            )
+        self.assertEqual(
+            self.err,
+            "router.py: TASK-1 has a live agent run: unknown (SessionError: delegate agent session"
+            " liveness unknown: docker ps: timed out)\n",
+        )
+
+    def test_a_config_error_from_the_attach_command_still_fails(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        failure = DelegateConfigError("role engineer: refused")
+        with (
+            mock.patch.object(self.api, "attach_command", side_effect=failure),
+            self.assertRaisesRegex(DelegateConfigError, "^role engineer: refused$"),
+        ):
+            self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"])
+
     def test_in_progress_resumes_inside_recovers_time_windows(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 20)
@@ -3347,6 +3392,40 @@ class ExplicitIssueRuns(TickBase):
                     [q for q, _ in fake.queries if q == RECHECK],
                     [RECHECK] if name in ("todo", "resume") else [],
                 )
+
+    def test_dry_run_shows_the_task_tier(self):
+        tiers = HUMANS + CONFIG + TASK_LABELS + "[task_tiers]\nlight-research = 3\n"
+
+        def todo(labels):
+            return self.fake(issue("TASK-1", "Todo", "researcher", labels=labels))
+
+        def resumable(task):
+            self.moved("TASK-1", 21)
+            self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=20, task=task)
+            self.touch("a", 40)
+            return self.fake(issue("TASK-1", "In Progress", "researcher"))
+
+        light = [label("Light Research", LIGHT)]
+        deep = [label("Deep Research", DEEP)]
+        cases = (
+            ("listed", lambda: todo(light), "preview TASK-1 client=a client_source=default tier=3"),
+            ("unlisted", lambda: todo(deep), "preview TASK-1 client=a client_source=default"),
+            ("no task", lambda: todo([]), "preview TASK-1 client=a client_source=default"),
+            ("resume", lambda: resumable("light-research"), "plan TASK-1 mode=resume sid=a tier=3"),
+            (
+                "resume unlisted",
+                lambda: resumable("deep-research"),
+                "plan TASK-1 mode=resume sid=a",
+            ),
+            ("resume untasked", lambda: resumable(None), "plan TASK-1 mode=resume sid=a"),
+        )
+        for name, given, said in cases:
+            with self.subTest(name):
+                self.write_config(tiers)
+                self.lines, self.hist = [], {}
+                fake = given()
+                self.assertEqual(self.tick(fake, "--dry-run", "--issue", "TASK-1"), 0)
+                self.assertIn(said, self.said())
 
     def test_todo_not_claimable_starts_nothing(self):
         self.write_config(HUMANS + CONFIG)

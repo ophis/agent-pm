@@ -420,6 +420,35 @@ class DelegateOf(case.Case):
             runs.delegate_of(entries, "s")
 
 
+class StartedTask(Case):
+    def test_the_sids_start_row_task_else_none(self):
+        start = json.loads(row("start", "TASK-1", "s"))
+        self.write(
+            [
+                row("resume", "TASK-1", "s"),
+                json.dumps({**start, "sid": "other", "task": "build"}),
+                json.dumps({**start, "task": "light-build"}),
+                json.dumps({**start, "issue": "TASK-2"}),
+                json.dumps({**start, "issue": "TASK-3", "task": None}),
+                json.dumps({**start, "issue": "TASK-4", "task": 3}),
+                "{not json",
+            ]
+        )
+        for issue, sid, want in (
+            ("TASK-1", "s", "light-build"),
+            ("TASK-1", "other", "build"),
+            ("TASK-1", "missing", None),
+            ("TASK-2", "s", None),
+            ("TASK-3", "s", None),
+            ("TASK-4", "s", None),
+        ):
+            with self.subTest(issue=issue, sid=sid):
+                self.assertEqual(runs.started_task(self.log, issue, sid), want)
+
+    def test_a_missing_log_has_none(self):
+        self.assertIsNone(runs.started_task(self.log, "TASK-1", "s"))
+
+
 class NoteLimit(Case):
     def test_writes_the_limit_row_durably_and_limits_reads_it(self):
         at = stamp(NOW + timedelta(hours=1), EAST)

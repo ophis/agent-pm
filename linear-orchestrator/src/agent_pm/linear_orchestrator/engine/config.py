@@ -33,6 +33,7 @@ TOP_KEYS = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "task_tiers",
     "agent_label_group",
     "agent_labels",
     "roles",
@@ -180,6 +181,7 @@ def _load(cfg, work):
         for k in (
             "states",
             "task_labels",
+            "task_tiers",
             "agent_labels",
             "project_repos",
             "local_clones",
@@ -196,6 +198,7 @@ def _load(cfg, work):
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         states=frozen["states"],
         task_labels=frozen["task_labels"],
+        task_tiers=frozen["task_tiers"],
         agent_label_group=cfg["agent_label_group"],
         agent_labels=frozen["agent_labels"],
         project_repos=frozen["project_repos"],
@@ -276,6 +279,7 @@ def _load_config(cfg, local):
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
+    _task_tiers(cfg)
     _agent_labels(cfg)
 
 
@@ -365,6 +369,19 @@ def _task_labels(cfg):
                 f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
             )
         seen[v] = k
+
+
+def _task_tiers(cfg):
+    tiers = cfg.setdefault("task_tiers", {})
+    if not isinstance(tiers, dict):
+        raise ConfigError(
+            "linear-orchestrator/config.toml: task_tiers must be a table of <task> = <tier 1-4>"
+        )
+    for k, v in tiers.items():
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 4:
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: task_tiers.{k} must be a tier, a whole number 1-4: {v!r}"
+            )
 
 
 def _agent_labels(cfg):
@@ -478,11 +495,12 @@ def _role_links(cfg, out):
 
 def _runnable_inputs(cfg, roles):
     tasks = {t for r in roles.values() for t in r.tasks}
-    for task in cfg["task_labels"]:
-        if task not in tasks:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
-            )
+    for table in ("task_labels", "task_tiers"):
+        for task in cfg[table]:
+            if task not in tasks:
+                raise ConfigError(
+                    f"linear-orchestrator/config.toml: {table}.{task} is not a task of a role in linear-orchestrator/config.toml"
+                )
     for key, path in cfg["local_clones"].items():
         if reason := clone_error(path, key):
             raise ConfigError(f"linear-orchestrator/config.toml: local_clones.{key}: {reason}")

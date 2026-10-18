@@ -31,6 +31,7 @@ class HarnessRun(HarnessCase):
             harness_key="",
             task_label_group="",
             task_labels={},
+            task_tiers={},
             agent_label_group="",
             agent_labels={},
             roles={},

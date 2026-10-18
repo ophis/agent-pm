@@ -61,6 +61,14 @@ canceled = ""
 # local: build = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
+# Task tiers; optional: the model tier of a run whose issue's task is listed, overlaid on its role after [core].
+#   <task>  local: tier 1–4 (1 = strongest), as delegate/config.toml's tier; empty table → no change: the run keeps
+#           its role's or global tier
+[task_tiers]
+
+# local: [linear_orchestrator.task_tiers]
+# local: light-build = 3
+
 # Agent labels; optional: set agent_label_group to the Agent group's id and map each client to its child label id.
 # Both empty disables selection; otherwise set both. Client names come from Delegate configuration.
 [agent_labels]

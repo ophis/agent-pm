@@ -38,6 +38,7 @@ from agent_pm.session.engine.types import (
     TuiSettings,
     TurnEnd,
     TurnFailed,
+    Unanswered,
     Usage,
     Window,
 )
@@ -99,5 +100,6 @@ __all__ = [
     "Display",
     "ConfigError",
     "SessionError",
+    "Unanswered",
     "NotShowable",
 ]
