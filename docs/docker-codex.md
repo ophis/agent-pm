@@ -93,7 +93,7 @@ Docker [tmpfs（内存文件系统）文档](https://docs.docker.com/engine/stor
 
 命令：`bash scripts/docker-codex-mount-probe.sh`，由 `.github/workflows/codex-probe.yml` 的 `Codex synthetic mounts` 运行。[脚本:24](../scripts/docker-codex-mount-probe.sh#L24) 使用无身份、无网络容器、非 root、只读根目录、`CapDrop=ALL`、`no-new-privileges`；整个 `/probe/home` 为 tmpfs，仅其 `sessions/` bind。写入合成 auth、原子 rename、写历史、重启后确认 auth 消失，再删除容器。仅输出版本、digest 和状态；底层错误不输出原文。
 
-Linux 结果待本拉取请求检查；macOS 用户运行方式见下一节。即使通过，也只证明该引擎上的合成布局，不证明 S3 的实际保存、凭据无残留、原生历史可恢复或真实账号续用。
+Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世界时），两次启动检查成功。[脱敏记录](docker-codex-evidence/2026-10-17-mount-ci.json) 包含测试提交、命令、镜像 digest 和 [GitHub 运行证据](https://github.com/ophis/agent-pm/actions/runs/39085070423/job/117549791580)。macOS 用户运行方式见下一节；此结果不证明 S3 的实际保存、凭据无残留、原生历史可恢复或真实账号续用。
 
 ## 用户实测交接
 

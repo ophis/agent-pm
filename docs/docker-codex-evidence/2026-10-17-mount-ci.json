@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-18T01:03:40.5410438Z",
+  "status": "pass",
+  "scope": "synthetic_mount_restart_only",
+  "count": 2,
+  "engine_version": "28.0.4",
+  "image": "alpine:3.22.2",
+  "image_digest": "sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+  "tested_head": "5896238a6cf352ced0dfbea4f5f3fa033fef3e85",
+  "command": "bash scripts/docker-codex-mount-probe.sh",
+  "evidence": "https://github.com/ophis/agent-pm/actions/runs/39085070423/job/117549791580"
+}
