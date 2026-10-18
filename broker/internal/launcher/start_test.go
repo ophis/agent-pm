@@ -258,7 +258,7 @@ func TestRunArguments(t *testing.T) {
 		"--network", "bridge", "--workdir", cwd, "--env", "CLAUDE_CONFIG_DIR=" + claude,
 		"--env", "npm_config_cache=" + cwd + "/.agent-pm-cache", "--env", "UV_CACHE_DIR=" + cwd + "/.agent-pm-cache", "--env", "PIP_CACHE_DIR=" + cwd + "/.agent-pm-cache",
 		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "team=crew",
-		"--mount", "type=volume,source=" + volume + ",target=" + cwd, "--mount", "type=bind,source=" + claude + ",target=" + claude,
+		"--mount", "type=volume,source=" + volume + ",target=" + cwd + ",volume-nocopy", "--mount", "type=bind,source=" + claude + ",target=" + claude,
 		"--tmpfs", "/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536,mode=0700,uid=1001,gid=1002",
 		"--entrypoint", "/usr/bin/tini", digest, "--", "sleep", "infinity"}
 	if !slices.Equal(run, want) {
@@ -286,7 +286,7 @@ func detached(d *fakeDocker) []string {
 func TestStartVolume(t *testing.T) {
 	create := []string{"volume", "create", "--label", "agent-pm.kind=ws", "--label", "agent-pm.workspace=" + home + "/src/project", volume}
 	chown := []string{"run", "--rm", "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges", "--user", "0:0",
-		"--mount", "type=volume,source=" + volume + ",target=/workspace", "--entrypoint", "/bin/chown", digest, "1001:1002", "/workspace"}
+		"--mount", "type=volume,source=" + volume + ",target=/workspace,volume-nocopy", "--entrypoint", "/bin/chown", digest, "1001:1002", "/workspace"}
 	has := func(d *fakeDocker, call []string) bool {
 		return slices.ContainsFunc(d.calls, func(c []string) bool { return slices.Equal(c, call) })
 	}
@@ -297,6 +297,9 @@ func TestStartVolume(t *testing.T) {
 	h, d = startHost(&world{labels: goodLabels(), volume: "matching"}, &fakeCreds{})
 	if _, err := h.Start(context.Background(), validManifest(t)); err != nil || hasCall(d, "volume create") || hasCall(d, "run --rm") || detached(d) == nil {
 		t.Fatalf("matching: %v %q", err, d.verbs())
+	}
+	if mount := "type=volume,source=" + volume + ",target=" + home + "/src/project,volume-nocopy"; !slices.Contains(detached(d), mount) {
+		t.Fatalf("reused volume mount: %q", detached(d))
 	}
 	for name, w := range map[string]*world{
 		"mismatched":         {volume: "mismatched"},
