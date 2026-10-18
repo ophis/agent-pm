@@ -1021,7 +1021,11 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             return 0 if dry else 1
         if any(ident in ids for ids in live.values()):
             sid = latest(entries)[ident].sid
-            attach = LinearRun.attach(ident, cfg=cfg, sid=sid).delegate.attach_command()
+            view = LinearRun.attach(ident, cfg=cfg, sid=sid)
+            try:
+                attach = view.delegate.attach_command()
+            except (delegate.ConfigError, delegate.SessionError) as e:
+                attach = f"unknown ({one_line(e)})"
             shown = f": {attach}" if attach else ""
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop

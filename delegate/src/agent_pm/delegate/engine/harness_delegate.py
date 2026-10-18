@@ -89,6 +89,10 @@ def _loaded(payload: bytes) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _unknown(error: Unanswered) -> Unanswered:
+    return Unanswered(f"delegate agent session liveness unknown: {error}")
+
+
 def _encode(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: _encode(getattr(value, field.name)) for field in fields(value)}
@@ -689,7 +693,7 @@ class HarnessDelegate(Delegate):
             word = StatusState.UNKNOWN
         else:
             word = StatusState.WORKING if alive else StatusState.GONE
-        views = self._views(state)
+        views, _ = self._views(state)
         outcome = None if state.result is None else state.result.outcome
         return Status(
             name=state.agent_name,
@@ -702,22 +706,31 @@ class HarnessDelegate(Delegate):
         )
 
     def attach_command(self) -> str | None:
-        views = self._views(self._read())
-        return self._shown_by().attach_command(*views[0]) if views else None
+        views, unanswered = self._views(self._read())
+        if views:
+            return self._shown_by().attach_command(*views[0])
+        if unanswered is not None:
+            raise _unknown(unanswered)
+        return None
 
     def _shown_agent(self, state: _State) -> Session | None:
-        agent = self._answered_agent(state)
+        agent = self._agent(state)
         return agent if agent is not None and agent.alive() and agent.showable else None
 
-    def _views(self, state: _State) -> list[tuple[str, Host]]:
-        """Its live showable sessions and their Hosts, agent first."""
-        views = []
-        if self._shown_agent(state) is not None:
-            views.append((state.agent_name, self._session_host(state.host)))
+    def _views(self, state: _State) -> tuple[list[tuple[str, Host]], Unanswered | None]:
+        """Its live showable sessions and their Hosts, agent first; why its agent's Host could not
+        tell, if so.
+        """
+        views, unanswered = [], None
+        try:
+            if self._shown_agent(state) is not None:
+                views.append((state.agent_name, self._session_host(state.host)))
+        except Unanswered as error:
+            unanswered = error
         process = self._harness(state)
         if process is not None and process.alive() and self._harness_host.attachable:
             views.append((state.harness_name, self._harness_host))
-        return views
+        return views, unanswered
 
     def _shown_by(self) -> Viewer:
         """The Viewer given, else agent_pm.session's."""
@@ -731,18 +744,24 @@ class HarnessDelegate(Delegate):
 
     def show(self) -> str | None:
         state = self._read()
-        if self._shown_agent(state) is None:
+        try:
+            shown = self._shown_agent(state)
+        except Unanswered as error:
+            raise _unknown(error) from None
+        if shown is None:
             raise NotShowable("delegate has no live showable agent session")
         return self._shown_by().show(
             state.agent_name, self._session_host(state.host), display=state.display
         )
 
     def hide(self) -> None:
-        views = self._views(self._read())
-        if not views:
+        views, unanswered = self._views(self._read())
+        if not views and unanswered is None:
             raise NotShowable("delegate has no live showable session")
         for view in views:
             self._shown_by().hide(*view)
+        if unanswered is not None:
+            raise _unknown(unanswered)
 
     def close(self) -> None:
         state = self._read()

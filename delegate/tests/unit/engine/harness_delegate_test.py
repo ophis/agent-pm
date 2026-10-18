@@ -1153,6 +1153,34 @@ class UnansweredTest(HarnessCase):
         self.assertGreater(len(calls), 1)
         self.assertTrue(HarnessSession.live[record.sessions[1]].alive())
 
+    def test_show_hide_and_attach_command_say_its_liveness_is_unknown(self):
+        HarnessSession.reset(showable=True)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
+        RecordingHost.processes["agent", record.sessions[0]].close()
+        unknown = "^delegate agent session liveness unknown: docker ps: timed out$"
+        with self.unanswered():
+            for call in (view.show, view.hide, view.attach_command):
+                with self.subTest(call=call.__name__), self.assertRaisesRegex(Unanswered, unknown):
+                    call()
+            self.assertEqual((view.status().state, view.status().attach), ("unknown", None))
+        self.assertEqual((FakeViewer.shown, FakeViewer.hidden), ([], []))
+
+    def test_hide_hides_the_harness_then_says_the_agents_liveness_is_unknown(self):
+        HarnessSession.reset(showable=True)
+        self.settings(harness_host="harness")
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession, viewer=FakeViewer())
+        harness = self.metadata()["harness_name"]
+        with self.unanswered():
+            self.assertEqual(view.attach_command(), f"harness attach {harness}")
+            self.assertEqual(view.status().attach, f"harness attach {harness}")
+            with self.assertRaisesRegex(Unanswered, "^delegate agent session liveness unknown: "):
+                view.hide()
+        self.assertEqual(FakeViewer.hidden, [harness])
+
     def test_replace_resume_and_clean_refuse_while_the_agent_does_not_answer(self):
         view = self.gave_up()
         before = self.metadata()
