@@ -52,6 +52,7 @@ from agent_pm.session import (
     SessionError,
     SessionStatus,
     SessionStatusLog,
+    Unanswered,
     Usage,
     Viewer,
     get_viewer,
@@ -307,7 +308,7 @@ class HarnessDelegate(Delegate):
         except ConfigError:
             attempt = _loaded(payload).get("attempt")
             return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
-        agent = self._agent(previous)
+        agent = self._known_agent(previous)
         if agent is not None:
             try:
                 agent.close()
@@ -527,7 +528,7 @@ class HarnessDelegate(Delegate):
             if view._live(payload):
                 raise ConfigError(f"{layout.workdir}: delegate is still alive")
             if scratch and payload is not None:
-                session = view._agent(view._read())
+                session = view._known_agent(view._read())
                 if session is not None and session.alive():
                     raise ConfigError(f"{layout.workdir}: its agent session is still open")
             found = [
@@ -585,14 +586,29 @@ class HarnessDelegate(Delegate):
         return None
 
     def _agent(self, state: _State) -> Session | None:
+        """None when no such session; Unanswered when its Host could not tell."""
         if (agent := self._own(state)) is not None and agent.mode != Mode.TUI:
             return agent
         try:
             return self.session_cls.attach(state.agent_name, sid=state.plan.sid, host=state.host)
+        except Unanswered:
+            raise
         except SessionError:
             return None
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
+
+    def _answered_agent(self, state: _State) -> Session | None:
+        try:
+            return self._agent(state)
+        except Unanswered:
+            return None
+
+    def _known_agent(self, state: _State) -> Session | None:
+        try:
+            return self._agent(state)
+        except Unanswered as error:
+            raise ConfigError(f"{self.workdir}: agent session liveness unknown: {error}") from None
 
     def _harness(self, state: _State) -> Process | None:
         return (
@@ -654,17 +670,22 @@ class HarnessDelegate(Delegate):
         if (
             state.plan.spec.mode == Mode.TUI
             and (result is None or result.outcome is None and not result.error)
-            and (agent := self._agent(state)) is not None
+            and (agent := self._answered_agent(state)) is not None
         ):
             return agent.content()
         return self.status().to_line()
 
     def status(self) -> Status:
         state = self._read()
-        agent = self._agent(state)
+        try:
+            agent, unanswered = self._agent(state), False
+        except Unanswered:
+            agent, unanswered = None, True
         found = None if agent is None else agent.status()
-        alive = self._alive(state) and (state.plan.spec.mode != Mode.TUI or found is not None)
-        if found is not None and found.state == StatusState.UNKNOWN:
+        alive = self._alive(state) and (
+            state.plan.spec.mode != Mode.TUI or unanswered or found is not None
+        )
+        if unanswered or found is not None and found.state == StatusState.UNKNOWN:
             word = StatusState.UNKNOWN
         else:
             word = StatusState.WORKING if alive else StatusState.GONE
@@ -685,7 +706,7 @@ class HarnessDelegate(Delegate):
         return self._shown_by().attach_command(*views[0]) if views else None
 
     def _shown_agent(self, state: _State) -> Session | None:
-        agent = self._agent(state)
+        agent = self._answered_agent(state)
         return agent if agent is not None and agent.alive() and agent.showable else None
 
     def _views(self, state: _State) -> list[tuple[str, Host]]:
@@ -953,7 +974,7 @@ class HarnessDelegate(Delegate):
         harness = agent = None
         with contextlib.suppress(SessionError):
             while True:
-                agent = self._agent(state)
+                agent = self._answered_agent(state)
                 agent = agent if agent is not None and agent.sid == state.plan.sid else None
                 if agent is not None and agent.alive():
                     return
@@ -1024,7 +1045,7 @@ class HarnessDelegate(Delegate):
                     ),
                 ),
             )
-            agent = self._agent(state)
+            agent = self._known_agent(state)
             probe = accepted.session
             if agent is not None and probe.name == state.agent_name:
                 # the tui preflight refuses a live same-named session: the one this closes

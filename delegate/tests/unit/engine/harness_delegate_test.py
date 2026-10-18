@@ -25,7 +25,17 @@ from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Finished, Layout, Result
-from agent_pm.session import Access, Exited, Launch, Mode, NotShowable, Reply, Session, SessionError
+from agent_pm.session import (
+    Access,
+    Exited,
+    Launch,
+    Mode,
+    NotShowable,
+    Reply,
+    Session,
+    SessionError,
+    Unanswered,
+)
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.engine.types import Liveness
@@ -1089,6 +1099,74 @@ class StatusTest(HarnessCase):
         self.assertEqual((view.status().state, view.status().hidden), ("working", False))
         self.stop(record)
         self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
+
+
+class UnansweredTest(HarnessCase):
+    """An agent attach that did not answer is no proof its run ended."""
+
+    def unanswered(self):
+        return mock.patch.object(
+            HarnessSession, "attach", side_effect=Unanswered("docker ps: timed out")
+        )
+
+    def gave_up(self):
+        """A detached tui run whose harness ended without an outcome, its agent session left open."""
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view.close()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        self.assertIsNone(view.run().outcome)
+        return view
+
+    def test_a_live_run_whose_agent_did_not_answer_is_unknown_not_gone(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(record)
+        with self.unanswered():
+            status = view.status()
+            self.assertEqual((status.alive, status.state), (True, "unknown"))
+            self.assertEqual(view.content(), status.to_line())
+        self.stop(record)
+        with self.unanswered():
+            self.assertEqual((view.status().alive, view.status().state), (False, "unknown"))
+
+    def test_an_agent_confirmed_gone_is_gone(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(record)
+        HarnessSession.live[record.sessions[1]].stop()
+        self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
+
+    def test_a_start_waits_through_an_attach_that_did_not_answer(self):
+        attach, calls = HarnessSession.attach, []
+
+        def flaky(*args, **kw):
+            calls.append(args)
+            if len(calls) == 1:
+                raise Unanswered("docker ps: timed out")
+            return attach(*args, **kw)
+
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        with mock.patch.object(HarnessSession, "attach", side_effect=flaky):
+            record = self.make(spec=spec).detach()
+        self.assertGreater(len(calls), 1)
+        self.assertTrue(HarnessSession.live[record.sessions[1]].alive())
+
+    def test_replace_resume_and_clean_refuse_while_the_agent_does_not_answer(self):
+        view = self.gave_up()
+        before = self.metadata()
+        agent = HarnessSession.live[before["agent_name"]]
+        refusal = f"^{self.work}: agent session liveness unknown: docker ps: timed out$"
+        with self.unanswered():
+            with self.assertRaisesRegex(ConfigError, refusal):
+                self.make()
+            with self.assertRaisesRegex(ConfigError, refusal):
+                view.resume()
+            with self.assertRaisesRegex(ConfigError, refusal):
+                HarnessDelegate.clean(self.work, scratch=True)
+        self.assertEqual(self.metadata(), before)
+        self.assertTrue(agent.alive())
 
 
 class ViewTest(HarnessCase):
