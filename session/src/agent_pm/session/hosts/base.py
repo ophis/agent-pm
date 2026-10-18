@@ -174,6 +174,20 @@ class Piped(ABC):
         return None
 
 
+def piped_popen(argv, *, env: Mapping[str, str], cwd: str | None = None) -> subprocess.Popen:
+    return subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
+        process_group=0,
+    )
+
+
 class LocalPiped(Piped):
     stop_wait = STOP_WAIT
 
@@ -275,19 +289,7 @@ class Host(ABC):
         self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
     ) -> Piped:
         """A headless client on pipes, run here."""
-        return LocalPiped(
-            subprocess.Popen(
-                launch.argv,
-                cwd=launch.cwd,
-                env=dict(launch.env),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                process_group=0,
-            )
-        )
+        return LocalPiped(piped_popen(launch.argv, env=dict(launch.env), cwd=launch.cwd))
 
     @abstractmethod
     def attach(self, name: str) -> Process: ...

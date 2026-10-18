@@ -57,6 +57,7 @@ from agent_pm.session.hosts.base import (
     Host,
     InteractiveProcess,
     Process,
+    piped_popen,
     tui_lock,
 )
 from agent_pm.session.hosts.docker import hook as docker_hook
@@ -1005,16 +1006,7 @@ class DockerHost(Host):
                 *(arg for key in env for arg in ("--env", key)),
                 *(container, "with-secrets", *launch.argv),
             )
-            proc = subprocess.Popen(
-                argv,
-                env={**docker_env, **env},
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                process_group=0,
-            )
+            proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
             result = {
                 "container": started.container,
