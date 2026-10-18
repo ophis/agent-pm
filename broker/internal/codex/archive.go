@@ -10,20 +10,6 @@ import (
 	"strings"
 )
 
-const nativeEntry = "package/vendor/aarch64-apple-darwin/bin/codex"
-
-func readArchive(b []byte, native bool) ([]byte, error) {
-	return readArchiveBounded(b, native, maxExpanded)
-}
-
-func readArchiveBounded(b []byte, native bool, limit int64) ([]byte, error) {
-	entry := ""
-	if native {
-		entry = nativeEntry
-	}
-	return readEntryBounded(b, entry, limit)
-}
-
 func readEntryBounded(b []byte, entry string, limit int64) ([]byte, error) {
 	z, err := gzip.NewReader(bytes.NewReader(b))
 	if err != nil {

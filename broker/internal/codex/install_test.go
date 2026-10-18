@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+const nativeEntry = "package/vendor/aarch64-apple-darwin/bin/codex"
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -48,6 +50,10 @@ func archive(t *testing.T, entries ...*tar.Header) []byte {
 }
 
 func fixture(t *testing.T) (Runtime, map[string][]byte) {
+	return platformFixture(t, "darwin", "arm64", "aarch64-apple-darwin", true)
+}
+
+func platformFixture(t *testing.T, goos, cpu, triple string, alias bool) (Runtime, map[string][]byte) {
 	t.Helper()
 	r := New()
 	r.root = filepath.Join(t.TempDir(), "codex")
@@ -58,7 +64,7 @@ func fixture(t *testing.T) (Runtime, map[string][]byte) {
 	r.owned = func(os.FileInfo) bool { return true }
 	r.execute = func(_ context.Context, _ command) ([]byte, error) { return []byte("codex-cli 0.162.1\n"), nil }
 	main := archive(t, &tar.Header{Name: "package/package.json", Typeflag: tar.TypeReg, Mode: 0644, Size: 1})
-	native := archive(t, &tar.Header{Name: nativeEntry, Typeflag: tar.TypeReg, Mode: 0755, Size: 6})
+	native := archive(t, &tar.Header{Name: "package/vendor/" + triple + "/bin/codex", Typeflag: tar.TypeReg, Mode: 0755, Size: 6})
 	data := map[string][]byte{"https://registry.npmjs.org/main.tgz": main, "https://registry.npmjs.org/native.tgz": native}
 	metadata := func(name, version, tarball string, body []byte, extra map[string]any) []byte {
 		sum := sha512.Sum512(body)
@@ -69,8 +75,14 @@ func fixture(t *testing.T) (Runtime, map[string][]byte) {
 		b, _ := json.Marshal(m)
 		return b
 	}
-	data["https://registry.npmjs.org/@openai%2Fcodex/0.162.1"] = metadata("@openai/codex", "0.162.1", "https://registry.npmjs.org/main.tgz", main, map[string]any{"optionalDependencies": map[string]string{"@openai/codex-darwin-arm64": "npm:@openai/codex@0.162.1-darwin-arm64"}})
-	data["https://registry.npmjs.org/@openai%2Fcodex/0.162.1-darwin-arm64"] = metadata("@openai/codex", "0.162.1-darwin-arm64", "https://registry.npmjs.org/native.tgz", native, map[string]any{"os": []string{"darwin"}, "cpu": []string{"arm64"}})
+	name, version := "@openai/codex-"+goos+"-"+cpu, "0.162.1"
+	dependency := version
+	if alias {
+		name, version = "@openai/codex", version+"-"+goos+"-"+cpu
+		dependency = "npm:" + name + "@" + version
+	}
+	data["https://registry.npmjs.org/@openai%2Fcodex/0.162.1"] = metadata("@openai/codex", "0.162.1", "https://registry.npmjs.org/main.tgz", main, map[string]any{"optionalDependencies": map[string]string{"@openai/codex-" + goos + "-" + cpu: dependency}})
+	data["https://registry.npmjs.org/"+strings.ReplaceAll(name, "/", "%2F")+"/"+version] = metadata(name, version, "https://registry.npmjs.org/native.tgz", native, map[string]any{"os": []string{goos}, "cpu": []string{cpu}})
 	r.http = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
 		body, ok := data[req.URL.String()]
 		if !ok {
@@ -133,7 +145,7 @@ func TestPublishedPlatformArchiveSize(t *testing.T) {
 	if err := z.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readArchive(compressed.Bytes(), true)
+	got, err := readEntryBounded(compressed.Bytes(), nativeEntry, maxExpanded)
 	if err != nil || string(got) != "native" {
 		t.Fatalf("published size rejected: %v", err)
 	}
@@ -181,10 +193,10 @@ func TestIntegrityMismatchPreservesInstallation(t *testing.T) {
 
 func TestArchiveTotalSizeBound(t *testing.T) {
 	body := archive(t, &tar.Header{Name: "package/one", Typeflag: tar.TypeReg, Mode: 0644, Size: 1024}, &tar.Header{Name: "package/two", Typeflag: tar.TypeReg, Mode: 0644, Size: 1024})
-	if _, err := readArchiveBounded(body, false, 4096); err != nil {
+	if _, err := readEntryBounded(body, "", 4096); err != nil {
 		t.Fatalf("exact total size refused: %v", err)
 	}
-	if _, err := readArchiveBounded(body, false, 4095); err == nil {
+	if _, err := readEntryBounded(body, "", 4095); err == nil {
 		t.Fatal("total expanded size exceeded bound")
 	}
 }
@@ -302,15 +314,15 @@ func TestUnsafeArchives(t *testing.T) {
 	} {
 		t.Run(h.Name+string(h.Typeflag), func(t *testing.T) {
 			body := archive(t, &tar.Header{Name: nativeEntry, Typeflag: tar.TypeReg, Mode: 0755, Size: 1}, h)
-			if _, err := readArchive(body, true); err == nil {
+			if _, err := readEntryBounded(body, nativeEntry, maxExpanded); err == nil {
 				t.Fatal("unsafe archive accepted")
 			}
 		})
 	}
-	if _, err := readArchive([]byte("not gzip"), true); err == nil {
+	if _, err := readEntryBounded([]byte("not gzip"), nativeEntry, maxExpanded); err == nil {
 		t.Fatal("bad gzip accepted")
 	}
-	if _, err := readArchive(archive(t, &tar.Header{Name: "package/unrelated", Typeflag: tar.TypeReg, Mode: 0755}), true); err == nil {
+	if _, err := readEntryBounded(archive(t, &tar.Header{Name: "package/unrelated", Typeflag: tar.TypeReg, Mode: 0755}), nativeEntry, maxExpanded); err == nil {
 		t.Fatal("missing binary accepted")
 	}
 }

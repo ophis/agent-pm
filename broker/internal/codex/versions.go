@@ -79,26 +79,5 @@ func (r Runtime) Linux(ctx context.Context, version, arch string) ([]byte, error
 	if !ValidVersion(version) {
 		return nil, errors.New("Codex requires an exact stable version")
 	}
-	main, err := r.metadata(ctx, "@openai/codex", version)
-	if err != nil {
-		return nil, err
-	}
-	name, platformVersion := "@openai/codex-linux-"+cpu, version
-	dependency := main.Optional[name]
-	if dependency == "npm:@openai/codex@"+version+"-linux-"+cpu {
-		name, platformVersion = "@openai/codex", version+"-linux-"+cpu
-	} else if dependency != version {
-		return nil, errors.New("Codex Linux platform dependency rejected")
-	}
-	if _, err := r.packageArchive(ctx, main, false); err != nil {
-		return nil, err
-	}
-	platform, err := r.metadata(ctx, name, platformVersion)
-	if err != nil {
-		return nil, err
-	}
-	if len(platform.OS) != 1 || platform.OS[0] != "linux" || len(platform.CPU) != 1 || platform.CPU[0] != cpu {
-		return nil, errors.New("Codex platform package target rejected")
-	}
-	return r.packageEntry(ctx, platform, "package/vendor/"+triple+"/bin/codex")
+	return r.platformEntry(ctx, version, "linux", cpu, triple)
 }

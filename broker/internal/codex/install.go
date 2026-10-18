@@ -82,14 +82,6 @@ func (r Runtime) metadata(ctx context.Context, name, version string) (packageMet
 	return m, nil
 }
 
-func (r Runtime) packageArchive(ctx context.Context, m packageMetadata, native bool) ([]byte, error) {
-	entry := ""
-	if native {
-		entry = nativeEntry
-	}
-	return r.packageEntry(ctx, m, entry)
-}
-
 func (r Runtime) packageEntry(ctx context.Context, m packageMetadata, entry string) ([]byte, error) {
 	if !strings.HasPrefix(m.Dist.Integrity, "sha512-") {
 		return nil, errors.New("Codex package requires SHA-512 integrity")
@@ -107,6 +99,37 @@ func (r Runtime) packageEntry(ctx context.Context, m packageMetadata, entry stri
 		return nil, errors.New("Codex package integrity mismatch")
 	}
 	return readEntryBounded(b, entry, maxExpanded)
+}
+
+func (r Runtime) platformEntry(ctx context.Context, version, goos, cpu, triple string) ([]byte, error) {
+	main, err := r.metadata(ctx, "@openai/codex", version)
+	if err != nil {
+		return nil, err
+	}
+	dependency, ok := main.Optional["@openai/codex-"+goos+"-"+cpu]
+	if !ok {
+		return nil, errors.New("Codex platform dependency missing")
+	}
+	name, platformVersion := "@openai/codex-"+goos+"-"+cpu, version
+	if strings.HasPrefix(dependency, "npm:") {
+		if dependency != "npm:@openai/codex@"+version+"-"+goos+"-"+cpu {
+			return nil, errors.New("Codex platform alias rejected")
+		}
+		name, platformVersion = "@openai/codex", version+"-"+goos+"-"+cpu
+	} else if dependency != version {
+		return nil, errors.New("Codex platform version rejected")
+	}
+	if _, err := r.packageEntry(ctx, main, ""); err != nil {
+		return nil, err
+	}
+	platform, err := r.metadata(ctx, name, platformVersion)
+	if err != nil {
+		return nil, err
+	}
+	if len(platform.OS) != 1 || platform.OS[0] != goos || len(platform.CPU) != 1 || platform.CPU[0] != cpu {
+		return nil, errors.New("Codex platform package target rejected")
+	}
+	return r.packageEntry(ctx, platform, "package/vendor/"+triple+"/bin/codex")
 }
 
 func (r Runtime) Install(ctx context.Context, version string, update bool) (Installation, error) {
@@ -147,37 +170,11 @@ func (r Runtime) Install(ctx context.Context, version string, update bool) (Inst
 	if update && verifyErr != nil {
 		return empty, verifyErr
 	}
-	main, err := r.metadata(ctx, "@openai/codex", version)
+	native, err := r.platformEntry(ctx, version, "darwin", "arm64", "aarch64-apple-darwin")
 	if err != nil {
 		return empty, err
 	}
-	dependency, ok := main.Optional["@openai/codex-darwin-arm64"]
-	if !ok {
-		return empty, errors.New("Codex macOS arm64 dependency missing")
-	}
-	name, platformVersion := "@openai/codex-darwin-arm64", version
-	if strings.HasPrefix(dependency, "npm:") {
-		if dependency != "npm:@openai/codex@"+version+"-darwin-arm64" {
-			return empty, errors.New("Codex platform alias rejected")
-		}
-		name, platformVersion = "@openai/codex", version+"-darwin-arm64"
-	} else if dependency != version {
-		return empty, errors.New("Codex platform version rejected")
-	}
-	if _, err := r.packageArchive(ctx, main, false); err != nil {
-		return empty, err
-	}
-	platform, err := r.metadata(ctx, name, platformVersion)
-	if err != nil {
-		return empty, err
-	}
-	if len(platform.OS) != 1 || platform.OS[0] != "darwin" || len(platform.CPU) != 1 || platform.CPU[0] != "arm64" {
-		return empty, errors.New("Codex platform package target rejected")
-	}
-	native, err := r.packageArchive(ctx, platform, true)
-	if err != nil {
-		return empty, err
-	}
+
 	releases := filepath.Join(r.root, "releases")
 	if err := r.mkdir(releases); err != nil {
 		return empty, err

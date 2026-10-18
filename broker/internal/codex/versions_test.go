@@ -1,15 +1,13 @@
 package codex
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha512"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -78,51 +76,76 @@ func TestLatestHint(t *testing.T) {
 	}
 }
 
-func TestLinuxArtifacts(t *testing.T) {
-	for _, arch := range []string{"arm64", "amd64"} {
-		for _, alias := range []bool{false, true} {
-			t.Run(arch+map[bool]string{true: "-alias"}[alias], func(t *testing.T) {
-				cpu, triple := "arm64", "aarch64-unknown-linux-musl"
-				if arch == "amd64" {
-					cpu, triple = "x64", "x86_64-unknown-linux-musl"
+func TestPlatformArtifacts(t *testing.T) {
+	for _, target := range []struct{ goos, cpu, triple, arch string }{
+		{"darwin", "arm64", "aarch64-apple-darwin", "arm64"},
+		{"linux", "arm64", "aarch64-unknown-linux-musl", "arm64"},
+		{"linux", "x64", "x86_64-unknown-linux-musl", "amd64"},
+	} {
+		for _, mode := range []string{"direct", "alias", "missing", "version", "alias_package", "alias_version", "alias_target", "main_integrity", "platform_integrity", "os", "cpu", "entry"} {
+			t.Run(target.goos+"-"+target.cpu+"/"+mode, func(t *testing.T) {
+				triple := target.triple
+				if mode == "entry" {
+					triple = "wrong-target"
 				}
-				r, data := fixture(t)
-				main := archive(t, &tar.Header{Name: "package/package.json", Typeflag: tar.TypeReg, Mode: 0644, Size: 1})
-				native := archive(t, &tar.Header{Name: "package/vendor/" + triple + "/bin/codex", Typeflag: tar.TypeReg, Mode: 0755, Size: 6})
-				metadata := func(name, v, tarball string, body []byte, extra map[string]any) []byte {
-					sum := sha512.Sum512(body)
-					m := map[string]any{"name": name, "version": v, "dist": map[string]string{"tarball": tarball, "integrity": "sha512-" + base64.StdEncoding.EncodeToString(sum[:])}}
-					for k, v := range extra {
-						m[k] = v
+				r, data := platformFixture(t, target.goos, target.cpu, triple, mode != "direct")
+				mainURL := "https://registry.npmjs.org/@openai%2Fcodex/0.162.1"
+				var main map[string]any
+				if err := json.Unmarshal(data[mainURL], &main); err != nil {
+					t.Fatal(err)
+				}
+				dependencies := main["optionalDependencies"].(map[string]any)
+				key := "@openai/codex-" + target.goos + "-" + target.cpu
+				switch mode {
+				case "missing":
+					delete(dependencies, key)
+				case "version":
+					dependencies[key] = "0.162.2"
+				case "alias_package":
+					dependencies[key] = "npm:@evil/codex@0.162.1-" + target.goos + "-" + target.cpu
+				case "alias_version":
+					dependencies[key] = "npm:@openai/codex@0.162.2-" + target.goos + "-" + target.cpu
+				case "alias_target":
+					dependencies[key] = "npm:@openai/codex@0.162.1-other-" + target.cpu
+				case "main_integrity":
+					data["https://registry.npmjs.org/main.tgz"] = []byte("corrupt")
+				case "platform_integrity":
+					data["https://registry.npmjs.org/native.tgz"] = []byte("corrupt")
+				}
+				data[mainURL], _ = json.Marshal(main)
+				if mode == "os" || mode == "cpu" {
+					platformURL := mainURL + "-" + target.goos + "-" + target.cpu
+					var platform map[string]any
+					if err := json.Unmarshal(data[platformURL], &platform); err != nil {
+						t.Fatal(err)
 					}
-					b, _ := json.Marshal(m)
-					return b
+					platform[mode] = []string{"other"}
+					data[platformURL], _ = json.Marshal(platform)
 				}
-				name, version := "@openai/codex-linux-"+cpu, "0.162.1"
-				dep := version
-				if alias {
-					name, version = "@openai/codex", version+"-linux-"+cpu
-					dep = "npm:" + name + "@" + version
+				var got []byte
+				var err error
+				if target.goos == "darwin" {
+					var installed Installation
+					installed, err = r.Install(context.Background(), "0.162.1", false)
+					if err == nil {
+						got, err = os.ReadFile(installed.Path)
+					}
+				} else {
+					got, err = r.Linux(context.Background(), "0.162.1", target.arch)
 				}
-				data["https://registry.npmjs.org/@openai%2Fcodex/0.162.1"] = metadata("@openai/codex", "0.162.1", "https://registry.npmjs.org/main.tgz", main, map[string]any{"optionalDependencies": map[string]string{"@openai/codex-linux-" + cpu: dep}})
-				platformURL := "https://registry.npmjs.org/" + strings.ReplaceAll(name, "/", "%2F") + "/" + version
-				data[platformURL] = metadata(name, version, "https://registry.npmjs.org/native.tgz", native, map[string]any{"os": []string{"linux"}, "cpu": []string{cpu}})
-				data["https://registry.npmjs.org/main.tgz"], data["https://registry.npmjs.org/native.tgz"] = main, native
-				got, err := r.Linux(context.Background(), "0.162.1", arch)
-				if err != nil || !bytes.Equal(got, []byte("xxxxxx")) {
-					t.Fatalf("%q %v", got, err)
-				}
-				data["https://registry.npmjs.org/native.tgz"] = []byte("corrupt")
-				if _, err := r.Linux(context.Background(), "0.162.1", arch); err == nil {
-					t.Fatal("corrupt accepted")
-				}
-				data[platformURL] = metadata(name, version, "https://registry.npmjs.org/native.tgz", native, map[string]any{"os": []string{"darwin"}, "cpu": []string{cpu}})
-				if _, err := r.Linux(context.Background(), "0.162.1", arch); err == nil {
-					t.Fatal("wrong target accepted")
+				if mode == "direct" || mode == "alias" {
+					if err != nil || !bytes.Equal(got, []byte("xxxxxx")) {
+						t.Fatalf("%q %v", got, err)
+					}
+				} else if err == nil {
+					t.Fatal("invalid platform artifact accepted")
 				}
 			})
 		}
 	}
+}
+
+func TestLinuxTargetGuards(t *testing.T) {
 	for _, c := range [][2]string{{"0.162.1", "ppc64"}, {"latest", "arm64"}} {
 		if _, err := New().Linux(context.Background(), c[0], c[1]); err == nil {
 			t.Fatal("invalid target accepted")
