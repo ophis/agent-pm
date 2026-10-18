@@ -3,11 +3,12 @@ import hashlib
 import io
 import runpy
 import tarfile
-import unittest
 from pathlib import Path
 
+from tests.case import Case
 
-class DockerCodexProbeTest(unittest.TestCase):
+
+class DockerCodexProbeTest(Case):
     def setUp(self):
         self.probe = runpy.run_path(
             str(Path(__file__).resolve().parents[2] / "scripts/docker_codex_probe.py")
