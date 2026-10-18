@@ -145,6 +145,9 @@ class LaunchTest(Base):
         headless = self.client.headless()
         assert headless is not None
         self.assertEqual(headless._home(), home)
+        for adapter in (tui.OpenCodeTui, type(headless)):
+            with self.subTest(adapter=adapter.__name__):
+                self.assertNotIn("_home", vars(adapter))
 
 
 class RefusalTest(Base):

@@ -8,7 +8,13 @@ import os
 import sys
 
 from agent_pm.session.clients.opencode import launcher
-from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon, image_path
+from agent_pm.session.clients.opencode.common import (
+    NATIVE,
+    UNSET,
+    Homed,
+    OpenCodeCommon,
+    image_path,
+)
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
@@ -24,14 +30,11 @@ from agent_pm.session.modes.client_adapters.headless import Headless
 SESSION_TIMEOUT = 120  # seconds a run may take to print its first sessionID
 
 
-class OpenCodeHeadless(Headless):
+class OpenCodeHeadless(Homed, Headless):
     def __init__(self, common: OpenCodeCommon):
         self.common = common
         self.cwd, self.sid = "", ""
         self.bound, self.failed, self.last = False, False, ""
-
-    def _home(self):
-        return self.common.home()
 
     def launch(self, spec: Spec):
         context, common = self._context, self.common

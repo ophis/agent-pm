@@ -13,6 +13,7 @@ from agent_pm.session.clients.opencode.common import (
     TUI_RESERVED,
     UNSET,
     Bindings,
+    Homed,
     OpenCodeCommon,
     image_path,
     refuse,
@@ -46,7 +47,7 @@ def _paths(state) -> tuple[str, str] | None:
     return None
 
 
-class OpenCodeTui(Tui):
+class OpenCodeTui(Homed, Tui):
     hooks = MappingProxyType(
         {
             "session.idle": HookKind.TURN_END,
@@ -62,9 +63,6 @@ class OpenCodeTui(Tui):
         self.common = common
         self.cwd, self.sid, self.fresh = "", "", False
         self.opening = None
-
-    def _home(self):
-        return self.common.home()
 
     def launch(self, spec: Spec, hook):
         context, common = self._context, self.common

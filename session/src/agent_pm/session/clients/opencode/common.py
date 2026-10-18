@@ -399,6 +399,15 @@ class OpenCodeCommon:
         return SessionStatus(Resumable.YES, updated, "")
 
 
+class Homed:
+    """The Docker home both OpenCode adapters name."""
+
+    common: OpenCodeCommon
+
+    def _home(self) -> ClientHome:
+        return self.common.home()
+
+
 class Bindings:
     """Each run's (cwd, sid) bound to its OpenCode session, one file each under `store`."""
 
