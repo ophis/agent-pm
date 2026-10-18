@@ -6,6 +6,7 @@ only with team dirs (their other overlap cases: plan_team_integration_test.py).
 import io
 import json
 import os
+import tempfile
 import uuid
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -21,10 +22,12 @@ from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, RunLog
 
-from delegate.tests.case import SRC, packaged
+from delegate.tests.case import REPO, SRC, packaged
 from delegate.tests.plans import SID, TASKS, Base, write_team
 from delegate.tests.repo import fail, ok
 from delegate.tests.unit.engine.instruction import CLIENTS, GITHUB, ROLES, InstructionCase
+from session.tests.unit.clients.codex.support import UNIFIED, committed_headless
+from session.tests.unit.clients.codex.support import packaged as codex_client
 from utils.tests.case import local_section
 
 
@@ -496,17 +499,7 @@ class Policy(Base):
             ),
             {},
         ),
-        "codex": (
-            (
-                "-s",
-                "danger-full-access",
-                "-c",
-                'approval_policy="on-request"',
-                "-c",
-                'approvals_reviewer="auto_review"',
-            ),
-            {},
-        ),
+        "codex": ((), {}),
         "fake": ((), {}),
     }
 
@@ -515,6 +508,23 @@ class Policy(Base):
             with self.subTest(client=client):
                 got, _ = self.planned(client=client)
                 self.assertEqual((got.session.flags, dict(got.session.env)), want)
+
+    def test_a_codex_role_runs_argv_has_each_codex_policy_flag_once(self):
+        got, _ = self.planned(client="codex")
+        os.makedirs(got.session.access.cwd)
+        # Codex refuses a recovery store under /tmp, the Case's HOME.
+        home = self.enterContext(
+            tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
+        )
+        codex_home = os.path.join(home, ".codex")
+        os.mkdir(codex_home)
+        with mock.patch.dict(os.environ, {"HOME": home, "CODEX_HOME": codex_home}):
+            argv = committed_headless(codex_client(), replace(got.session, prompt="hi")).argv
+        for flag, value in UNIFIED:
+            with self.subTest(value=value):
+                self.assertEqual(argv.count(value), 1)
+                self.assertEqual(argv[argv.index(value) - 1], flag)
+        self.assertEqual(argv.count("-s"), 1)
 
     def test_a_local_policy_replaces_the_shipped_one(self):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')

@@ -15,6 +15,11 @@ from agent_pm.session.engine.types import Access, Launch, Spec
 from session.tests.case import REPO, Case
 
 PLUGIN_OFF = ("-c", "plugins.agent-pm@agent-pm.enabled=false")
+UNIFIED = (
+    ("-s", "danger-full-access"),
+    ("-c", 'approval_policy="on-request"'),
+    ("-c", 'approvals_reviewer="auto_review"'),
+)
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
 
