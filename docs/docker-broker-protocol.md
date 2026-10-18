@@ -19,7 +19,8 @@ manifest directories and start's `credential_expires_at`; relay messages and Git
 remain unchanged. Protocol 10 adds start's `client_update` audit object. Protocol 11 adds
 refresh's required nullable `credential_expires_at` and permits Codex refresh without GitHub.
 Protocol 12 replaces the exact-list audit with `min_version` and drops the status rule field.
-Protocol 13 adds start's required `github_user_id`.
+Protocol 13 adds start's required `github_user_id`. Protocol 14 adds the `opencode` client with
+`opencode_dir`, start's required `clients.opencode` and the `agent-pm.client` container label.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 

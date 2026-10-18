@@ -4,6 +4,7 @@ postinstall would replace, as npm and that postinstall leave it.
 """
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -38,7 +39,7 @@ def fetch(name, opener=urllib.request.urlopen):
     try:
         with opener(url, timeout=300) as response:
             data = response.read(LIMIT + 1)
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         fail(f"downloading {name}@{VERSION} failed: {error}")
     if len(data) > LIMIT:
         fail(f"{name}@{VERSION} exceeds {LIMIT} bytes")

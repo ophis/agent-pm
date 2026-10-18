@@ -12,10 +12,10 @@ import (
 )
 
 const runtimeDir = "/opt/agent-pm/runtime"
+const updateScript = "/opt/agent-pm/lib/codex-update.py"
 
 // opencodeMinVersion is the lowest image OpenCode an opencode start accepts; the image pins it (assets/opencode-install.py).
 const opencodeMinVersion = "1.19.3"
-const updateScript = "/opt/agent-pm/lib/codex-update.py"
 
 type CodexVersions interface {
 	Verify() (codex.Installation, error)

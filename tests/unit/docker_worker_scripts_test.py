@@ -1,4 +1,5 @@
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -995,6 +996,16 @@ class OpencodeInstall(Case):
             raise OSError("no route")
 
         self.assertIn("downloading opencode-ai@1.19.3 failed", self.assert_refused(opener=broken))
+
+        def truncated(*_, **__):
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.side_effect = http.client.IncompleteRead(b"partial")
+            return response
+
+        self.assertIn(
+            "downloading opencode-ai@1.19.3 failed", self.assert_refused(opener=truncated)
+        )
         self.tarballs["opencode-linux-arm64"] = tarball(
             {
                 "package/package.json": json.dumps(
