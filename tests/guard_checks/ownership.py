@@ -23,7 +23,7 @@ from tests.guard_data.session import (
 )
 from tests.guards import PKG, PROJECTS
 
-CLIENT = re.compile(r"claude|codex", re.I)
+CLIENT = re.compile(r"claude|codex|opencode", re.I)
 
 
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
