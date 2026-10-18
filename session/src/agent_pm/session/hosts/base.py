@@ -10,11 +10,13 @@ import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     Hosts,
@@ -24,6 +26,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     NotShowable,
     Paste,
+    Permission,
     SessionError,
     SessionRow,
     StatusState,
@@ -318,8 +321,10 @@ class Host(ABC):
 
     _inherit_env = True
 
-    def _client_runtime(self) -> ClientRuntime | None:
-        return None
+    def _client_context(self) -> ClientContext:
+        if self._isolated:
+            return replace(LOCAL_CONTEXT, permission=Permission.YOLO)
+        return LOCAL_CONTEXT
 
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool

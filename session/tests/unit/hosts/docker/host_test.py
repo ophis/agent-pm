@@ -22,6 +22,7 @@ from agent_pm.session import Viewer
 from agent_pm.session.engine import tmux_cli, worker
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import (
+    ClientContext,
     ClientHome,
     ConfigError,
     IdleTimeout,
@@ -29,6 +30,7 @@ from agent_pm.session.engine.types import (
     Launch,
     Liveness,
     Paste,
+    Permission,
     SessionError,
     StatusState,
     Unanswered,
@@ -379,6 +381,21 @@ class ClientEnvTest(Base):
     def test_resume_argv_names_the_session(self):
         self.assertEqual(self.host._resume_argv("w"), ("agent-pm-session", "resume", "w"))
         self.assertIsNone(Host._resume_argv(self.host, "w"))
+
+    def test_client_context_is_host_docker_internal_with_container_paths(self):
+        paths = {
+            "bin_dir": "/opt/agent-pm/bin",
+            "python": "/opt/agent-pm/venv/bin/python",
+            "pythonpath": "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            "state_root": "/run/agent-pm",
+        }
+        for isolated, permission in ((True, Permission.YOLO), (False, Permission.AUTO)):
+            with self.subTest(isolated=isolated):
+                host = DockerHost("docker", {"docker": DOCKER, "isolated": isolated})
+                self.assertEqual(
+                    host._client_context(),
+                    ClientContext("host.docker.internal", permission, **paths),
+                )
 
     def test_client_env_points_at_the_home(self):
         self.assertEqual(

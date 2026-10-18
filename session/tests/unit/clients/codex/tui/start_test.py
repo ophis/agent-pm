@@ -13,7 +13,7 @@ from unittest import mock
 
 from agent_pm.session.clients.codex import tui
 from agent_pm.session.clients.codex.tui import start as tui_start
-from agent_pm.session.engine.types import ClientRuntime
+from agent_pm.session.engine.types import ClientContext, Permission
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
@@ -142,11 +142,16 @@ class StartTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         record = self.record()
         before = record.read_bytes()
-        runtime = ClientRuntime(
-            "/opt/agent-pm/bin", "/image/python", "/image/modules", str(self.root / "volatile")
+        runtime = ClientContext(
+            "host.docker.internal",
+            Permission.AUTO,
+            bin_dir="/opt/agent-pm/bin",
+            python="/image/python",
+            pythonpath="/image/modules",
+            state_root=str(self.root / "volatile"),
         )
         run = self.client.tui()
-        run._runtime = runtime
+        run._context = runtime
         with mock.patch("shutil.which", side_effect=AssertionError("host lookup")):
             launch = run.launch(dataclasses.replace(self.spec, resume=True), HOOK)
         run.commit()

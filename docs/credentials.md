@@ -33,7 +33,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:146`, `manager/src/agent_pm/manager/engine/crew.py:541` |
+| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:151`, `manager/src/agent_pm/manager/engine/crew.py:541` |
 | Minimum permission | an account that can push to and open pull requests on every target repo; `gh auth login`'s scopes (a classic token needs at least `repo`, `read:org`, `gist`) | [gh auth login] |
 | Stored at | the system credential store, else a plain-text file; `gh auth status` says which | [gh auth login] |
 | Readers | any process running as the user (`gh auth token`); never mounted into a container | [gh auth login]; [What a container cannot reach](#what-a-container-cannot-reach) |
@@ -139,12 +139,12 @@ The broker's services are `KeychainServices` (`broker/internal/broker/keychain.g
 
 Each broker item is read twice: from a `/agent-pm:manage` session's shell tool (manager) and from Terminal (shell);
 both read through `security`, which is how a process reads a generic password, so they cover the manager, a shell and
-`security`. First check the item exists (attributes only, no value), then read it; neither prints the value, and
-`perl … alarm 10` stands for `timeout 10`, which macOS lacks:
+`security`. For each item the loop first checks it exists (attributes only, no value), then reads it; neither prints
+the value, and `perl … alarm 10` stands for `timeout 10`, which macOS lacks. Paste it into Terminal for the shell
+column, and after `!` in the manager's Claude Code prompt for the manager column:
 
 ```sh
-security find-generic-password -s <service> >/dev/null 2>&1; echo "exists=$?"
-bash -c 'perl -e "alarm 10; exec @ARGV" security find-generic-password -s <service> -w 2>/dev/null | wc -c; echo "exit=${PIPESTATUS[0]}"'
+for s in agent-pm-claude agent-pm-bot agent-pm-github-users agent-pm-tokens agent-pm-revocations agent-pm-codex; do security find-generic-password -s "$s" >/dev/null 2>&1; e=$?; r=$(bash -c 'perl -e "alarm 10; exec @ARGV" security find-generic-password -s "$0" -w 2>/dev/null | wc -c | tr -d " "; echo "exit=${PIPESTATUS[0]}"' "$s" | tr '\n' ' '); echo "$s exists=$e bytes/$r"; done
 ```
 
 An item must exist to be measured (`exists=0`); `exists=44` means absent: record `absent, not measured` and make it
@@ -152,7 +152,7 @@ first. `agent-pm-claude`, `agent-pm-github-users` and `agent-pm-codex` exist aft
 the user stores the key; `agent-pm-tokens` while a Docker session runs; `agent-pm-revocations` after a `close` with the
 network off, until the next start, close or status online.
 
-Pass: `exists=0`, `exit=` non-zero (142 when the alarm stops it) and a byte count of `0`. Click Deny on any dialog, never Always
+Pass: `exists=0`, `exit=` non-zero (142 when the alarm stops it, 128 when the dialog is denied) and a byte count of `0`. Click Deny on any dialog, never Always
 Allow; if Always Allow was clicked, `/usr/bin/security` now reads the item: rerun the `login` that writes it
 (`login github agent-pm-bot` for `agent-pm-bot` and `agent-pm-github-users`), or for `agent-pm-tokens` and
 `agent-pm-revocations` delete the item as [Upgrading](upgrading.md) says, and note it here. Record only
@@ -161,12 +161,12 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 
 | Service | Manager | Shell |
 |---|---|---|
-| `agent-pm-claude` | pending | pending |
-| `agent-pm-bot` | pending | pending |
-| `agent-pm-github-users` | pending | pending |
-| `agent-pm-tokens` | pending | pending |
-| `agent-pm-revocations` | pending | pending |
-| `agent-pm-codex` | pending | pending |
+| `agent-pm-claude` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
+| `agent-pm-bot` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
+| `agent-pm-github-users` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
+| `agent-pm-tokens` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
+| `agent-pm-revocations` | absent, not measured | absent, not measured |
+| `agent-pm-codex` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
 
 ## Broker issues
 
@@ -185,7 +185,7 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:165`) | TASK-549 FR-4, FR-17 |
 | Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind; OpenCode: its `opencode_dir` bind (`broker/internal/launcher/start.go:168`) | TASK-549 FR-4; TASK-550 NFR-4; TASK-695 FR-18 |
 | `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:176`) | TASK-545 FR-13; TASK-549 FR-8 |
-| the network, the host's `host.docker.internal` included | TASK-545 FR-10 |
+| the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`
@@ -198,10 +198,10 @@ once for a Claude and once for a Codex worker. Each prints counts only.
 
 | Resource | Command | Pass | Requirements | Claude | Codex |
 |---|---|---|---|---|---|
-| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
-| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
-| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
-| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | pending | pending |
+| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
+| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
+| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
+| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` |
 
 Each search covers every mount (the workspace volume, the binds, the tmpfs), skipping only `/proc` and `/sys`. The
 container's own tmux socket is not Docker's, so the socket search names `docker`.
@@ -242,13 +242,15 @@ Keys, one per account:
 
 ## Live checks
 
-For the manager and the user, on macOS with Docker Desktop; write each result in this page.
+For the manager and the user, on macOS with Docker Desktop; write each result in this page. Last run 2026-10-18,
+agent-pm 0.6.28.
 
-- [ ] [Measured readers](#measured-readers): six services, manager and shell.
-- [ ] [What a container cannot reach](#what-a-container-cannot-reach): four commands, a Claude and a Codex worker.
+- [x] [Measured readers](#measured-readers): six services, manager and shell.
+- [x] [What a container cannot reach](#what-a-container-cannot-reach): four commands, a Claude and a Codex worker
+  (run by `live_docker.py worker`).
 - [ ] [Linear presets](#linear-presets): in a new Linear team, only this section and the config; both dry-runs report
-  no config error.
-- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
+  no config error. Deferred until there is a new Linear team (the user, 2026-10-18).
+- [x] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
   board run's PR, each exits 0.
 
 ## Risks
