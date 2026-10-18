@@ -8,13 +8,15 @@
 
 | 方案 | 状态 | 尚缺的决定性证据 |
 |---|---|---|
-| A 集中刷新 | 未完成 | 最小载体、活进程取得新 token、真实到期后续用及共同门槛 |
+| A 集中刷新 | 未完成 | 最小载体、活进程取得新 token、真实刷新后续用及共同门槛 |
 | B relay（转发程序） | 未完成 | 无 token 的实际模型流、刷新续用、受限边界及共同门槛 |
 | C 本机回退 | 不满足选择条件 | A、B 各自可复现失败，或共同宿主刷新失败证据 |
 
 以下区分**源码证据**、**合成检查**、**订阅观察**。前两者不能代替第三者。缺身份、断网、待依赖均记未完成；单次模型回复或仅认证头成功不能通过共同门槛。
 
 The upstream broker operations below describe a separate `0.162.1` product baseline. They do not establish the FR-1 live gates for this investigation’s `0.163.0` candidate.
+
+**Current gate revision**, user decision 2026-10-17: do not wait for or test a real access-token expiry. Crossing real expiry is removed from the TASK-647 A/B verdict gate; every other evidence item remains. Expiry claims, refresh lead, two real refreshes, old-value acceptance/rejection and live reload are still recorded. Historical command groups retain their original scope; they are not instructions to resume expiry testing. The upstream broker operations at the end describe a separate product milestone.
 
 ## 版本与兼容规则
 
@@ -34,6 +36,8 @@ The upstream broker operations below describe a separate `0.162.1` product basel
 
 ```json
 {
+  "verdict_gate_revision": "user-2026-10-17-no-real-expiry",
+  "real_access_expiry_crossing_required": false,
   "fixed_codex_version": "0.163.0",
   "container_version_rule": {"kind": "exact", "versions": []},
   "measured_refresh_lead_seconds": null,
@@ -69,7 +73,7 @@ The upstream broker operations below describe a separate `0.162.1` product basel
 | 验证项 | A 状态／证据 | B 状态／证据 | 待执行及判据 |
 |---|---|---|---|
 | 认证载体 | 未完成；S1、S2、S7；已测子项见第二组观察 | 未完成；下节协议候选 | 在独立测试登录上比较删除字段、空 refresh 字符串、必要身份字段及 S7；两种现有 client 都要实际回复。容器从未获得 refresh token（刷新令牌）；B 无 ChatGPT token。 |
-| 多轮与到期 | 未完成；S4、S5 | 未完成 | 同一终端活进程到期前后各两轮，记录实际 `exp`、服务器状态及继续／报错／退出／等登录；headless 另测连续任务与原生恢复，不能把多个 exec 进程称为一个活进程。 |
+| Multi-turn and refresh | Incomplete; S4, S5 | Incomplete | Same terminal process across real refreshes; headless consecutive tasks and native resume separately. Record expiry claims and response/reload behavior without waiting for natural expiry. Separate exec processes never prove live-process reload. |
 | 刷新与并发 | 未完成；S6 | 未完成 | 两容器和独立本机登录，第一次真实宿主刷新前后各一轮，下一次仍成功；并发请求共享账号锁。分别记录旧 access token 被接受还是拒绝、活进程使用新值的证据，不推定立即失效。 |
 | B 协议 | 不适用 | 未完成；下节 | 多轮实际流、流中断、取消、账号头与受限路由；禁止只凭一次转发定案。 |
 | 版本兼容 | 未完成；版本表 | 未完成；版本表 | 每个不同候选产物都跑终端、headless、跨刷新、restart（重启）、close 后 resume；记录原生会话标识相同。 |
@@ -138,6 +142,19 @@ Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世�
 
 [Redacted record](docker-codex-evidence/2026-10-18-manager-a-notice.json): the manager ran a-1 once, as reported in this session. Native Codex exited 0, completed one turn with final OK, retained the native session and emitted no top-level error. One `ErrorItem` matched no existing category. The helper exited 1 with `incomplete`; its body was not retained. No category can be reconstructed from this record or assigned retrospectively to earlier runs.
 
+### Group 5 observation and Code Mode disposition
+
+[Redacted record](docker-codex-evidence/2026-10-18-manager-a-code-mode.json), manager executed each command once:
+
+| Observation | Recorded result |
+|---|---|
+| Public inventory, 2026-10-18T03:27:19.001075Z | Candidate, same-minor latest and latest stable all `0.163.0`; inventory `live_refresh_count=0` is a source-only constant, not a measurement of runtime requests. |
+| a-1 resume, 03:27:19.166041–03:27:26.249180Z | Same native session; Codex exit0, one completed turn, final OK, no top-level error; one `code_mode_unavailable`. Helper exit1 and `incomplete` remain unchanged. |
+
+**Code Mode disposition**: the requested tool runtime is unavailable. The pinned source emits either `Falling back to direct tools` or `Code mode will fail closed`, depending on the effective tool mode: [tools/mod.rs:63](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/mod.rs#L63), [code_mode/mod.rs:110](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/code_mode/mod.rs#L110), [turn_context.rs:1410](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/session/turn_context.rs#L1410). The exported category combines both branches; this record does not identify one.
+
+For A, this turn shows that a tool-free reply completed using the injected carrier; the notice is not evidence of token rejection. It is a known non-fatal notice for this observation, **not an unconditional benign-warning exemption**: the fail-closed branch can prevent tools, and direct-tool fallback has not been validated here. No strict-gate waiver, warning suppression or retrospective pass is adopted. Do not spend another round merely reclassifying this notice; continue independent refresh/transport evidence while retaining `incomplete`.
+
 ### ErrorItem 的含义与判据
 
 官方 [非交互说明](https://learn.chatgpt.com/docs/non-interactive-mode) 定义 JSON 事件流，但未区分下面的通知映射；固定源码补齐此项。`ErrorItem` 只有 `message`，没有原始通知类型或严重性字段，见 [exec_events.rs:310](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L310)。
@@ -194,7 +211,7 @@ env AGENT_PM_CODEX_USER_PROBE=1 bash /Users/francis/.agent-pm/work/TASK-647/agen
 
 ### 第二组：A 载体与两个容器
 
-本组只验证载体加载和两个容器的初次 headless 回复，无须 TASK-643。保留真实 `id_token`、`access_token`、`account_id` 及原有 `last_refresh`；比较删除 `refresh_token` 字段与空字符串。没有修改宿主登录文件，也不改变凭据日期。最少身份字段、provider command、终端活进程、真实到期与刷新、原生恢复仍未完成。
+本组只验证载体加载和两个容器的初次 headless 回复，无须 TASK-643。保留真实 `id_token`、`access_token`、`account_id` 及原有 `last_refresh`；比较删除 `refresh_token` 字段与空字符串。没有修改宿主登录文件，也不改变凭据日期。最少身份字段、provider command、终端活进程、真实刷新、原生恢复仍未完成。
 
 以下为第二组历史命令，不再执行。除明确列出的“省略字段”加载失败外，任一步非零即停，回传脱敏状态；不更改沙箱或容器隔离标志。构建目录和容器名必须是新的，已存在时不复用。
 
@@ -315,24 +332,94 @@ Return the two redacted records and the helper exit code, then stop. Exit 1 may 
 
 #### User commands
 
-None in Group 5. Host credential reads, injection and refresh remain user-owned and are not prerequisites for this diagnostic observation. The next identity group needs a separate reviewed, redacting harness for the fixed Codex refresh path; no manual refresh endpoint or credential-date edit.
+None in Group 5. Host credential reads, injection and refresh remain user-owned and are not prerequisites for this diagnostic observation. The next group below exercises Codex-owned refresh; no manual refresh endpoint or credential-date edit.
+
+### Group 6: first proactive host refresh and unchanged-versus-updated carriers
+
+No expiry wait, new login or rebuild. Use only the retained a-1/a-2 containers and isolated test login. There must be no other login or refresh of that identity during this group. The per-login probe lock serializes this harness; it does not yet prove the product broker's cross-process account locking.
+
+The [official app-server documentation](https://learn.chatgpt.com/docs/app-server#1-check-auth-state) permits proactive refresh in managed ChatGPT mode. Pinned source confirms `account/read` invokes the own-Codex refresh path without an expiry condition: [GetAccountParams:543](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server-protocol/src/protocol/v2/account.rs#L543), [workspace_routing.rs:174](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor/workspace_routing.rs#L174), [manager.rs:2845](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2845). These sources cannot tell whether this isolated identity will actually rotate or whether its old access value will remain accepted, hence the live observations below.
+
+```mermaid
+sequenceDiagram
+    participant M as Manager
+    participant U as User
+    M->>M: Existing pair before refresh
+    U->>U: Codex-owned host refresh
+    M->>M: Same old pair after refresh
+    U->>U: Inject new carrier into a-2 only
+    M->>M: Resume updated a-2
+```
+
+Run in this order, once per step. The sequence preserves a-1's original carrier as an immediate old-value comparison; it creates no calendar-based expiry test.
+
+**Step 1, manager:**
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
+```
+
+This is the before-refresh observation, not another classification-only rerun. Keep the strict status. If each observation has native exit0, same session, completed turn, final OK and no top-level error, record any notice-only `incomplete` without upgrading it; the independent host-refresh observation can proceed. Other failures stop this group for diagnosis, without retrying or re-login.
+
+**Step 2, user:**
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run host-refresh
+```
+
+`rotation_observed` describes changed access, advanced normalized expiry/last-refresh metadata and stable account in the isolated file; it is not an A/B pass or proof that the replacement is usable. The helper uses bounded private stdio, discards raw responses/stderr and calls no OAuth endpoint itself. Codex alone rewrites its login. A returned account/read result is insufficient because its handler discards refresh errors: [account_processor.rs:1103](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1103). An unchanged refresh token is allowed by [persist_tokens:1600](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1600); record its changed boolean, not its value. The RPC request count is not a measured upstream-request count. Nonzero, cancellation, timeout, account change or no observed rotation: return the redacted record and stop, with no automatic retry.
+
+**Step 3, manager:**
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
+```
+
+Both containers still hold the pre-refresh carrier. Return this observation even if a request fails; successful replies show old-value acceptance at this point, while redacted failures alone do not prove rejection. Do not retry the old requests. Stop on timeout, missing container/history or malformed output; otherwise proceed to the planned new-value comparison on a-2 only.
+
+**Step 4, user:**
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run inject task647-codex-a-2 empty-refresh
+```
+
+Proceed only on `injected`/exit0. a-1 is unchanged.
+
+**Step 5, manager:**
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-2
+```
+
+This new exec process must retain a-2’s native identity; it does not prove a live process reloaded a changed value. Return all five redacted records with owner, step and helper exit code, then stop. Preserve the containers and isolated login; no expiry command or repeated classification/inventory is needed.
 
 ## Remaining gates before TASK-650 can use an A/B verdict
 
-The diagnostic category is not the deciding gate. TASK-650 remains blocked while FR-1 is incomplete; neither the current product path nor a successful single turn selects A.
+The current gate revision above removes the calendar wait, not the remaining FR-1 requirements. Run shared, likely-disqualifying checks first; prepare independent A/B work in parallel. No pending work selects C.
 
-| Gate | Missing evidence / next work | Execution owner |
+```mermaid
+flowchart TD
+    G[First own-Codex refresh now] --> A[A carrier and live reload]
+    G --> B[B stream and boundaries]
+    A --> R[Second real refresh and recovery]
+    B --> R
+    R --> V[State modes and versions]
+    V --> M[Final M3 checks]
+    M --> D[Rule lead and verdict]
+```
+
+Arrows show the order of live evidence; source/fake harness preparation and final-M3 source checks can run alongside Group6.
+
+| Priority | Run now / next | Missing evidence and owner |
 |---|---|---|
-| A carrier and modes | Minimum identity fields, applicable existing-client auth interfaces, terminal live-process turns and complete headless observations | manager for existing injected credentials; user for host reads/new injection |
-| Common host refresh | Reviewed harness for pinned Codex `account/read` with `refreshToken: true`; first and subsequent real refresh, rotation/expiry changes and usable new credentials; two containers plus independently logged-in host; measured timings | user; manager can prepare source and fake-data harness |
-| Actual expiry and reload | Same live terminal across actual expiry; old access acceptance/rejection, new value actually used, later refresh still works; resumed exec is a distinct process | manager for existing container requests; user for host refresh/injection |
-| B transport and limits | Token-free containers, host-authenticated actual multi-turn streaming; fixed origin/routes/headers/config/transports, safe 401 replay, redirects, limits, interruption/cancellation | manager for secret-free source/fake checks; user for host-authenticated relay setup/refresh |
-| State and versions | Native saving, restart/close/resume, credential-residue checks, executable/history compatibility; product `0.162.1` and investigation `0.163.0` remain separate, with current registry candidates recorded | manager for metadata/existing-container operations; user for credential scans/reads or injection |
-| Final M3 and verdict | Checks in the following dependency table; exact passing version set and measured lead; A preferred if all gates pass, otherwise B only if A fails and B passes; C requires reproducible failure of both | manager/CI for secret-free checks; user for host identity operations |
+| 1 | Group6 now | Shared host refresh path, immediate old/new carrier observations. manager uses existing copies; user owns host read/refresh/injection. A reproducible host-refresh failure needs cause-specific evidence; network/unavailability is still incomplete. |
+| 2 | Prepare now, execute after first refresh observations | A minimum identity fields, applicable external-token interfaces for existing clients and same live terminal reload; independently prepare B's token-free container, fixed-origin model stream, routes/headers/config/transports and FR-10 limits. Source/fake preparation by worker; identity setup by user, existing-credential requests by manager. |
+| 3 | Next, without waiting for expiry | Second real refresh; two containers plus independently logged-in host before/after each; account serialization, actual use of changed values and rejection recovery. If old access remains accepted, record that observation; do not call it invalid or treat it as proof of recovery after rejection. Live-process evidence remains separate from the Group6 snapshots. |
+| 4 | Now in preparation, complete after candidate modes work | Terminal/headless multi-turn, native save and restart/close/resume, credential-residue scanning, executable/history compatibility, image digest and each distinct version. Use the Group5 registry record; product0.162.1 is not substituted for the investigation candidate. User handles credential reads/scans/injection; manager handles metadata and allowed existing-credential operations. |
+| 5 | Source checks now; live checks once prerequisites exist | Final M3 checks below; they do not wait for a date. Retain each unavailable dependency with its issue, not a fabricated pass. |
+| 6 | After all retained gates | Exact passing version set, measured refresh/injection/reload timing plus clock uncertainty, lead=max(measured,600s), then A preferred; B only if A fails and B passes; C only with reproducible dual failure. Final review stays pending until then. |
 
-The host refresh candidate invokes Codex's own guarded reload/refresh path, not a hand-written OAuth request: [account_processor.rs:1099](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1099), [manager.rs:2845](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2845), [persistence:3089](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L3089). Requesting it need not wait for the declared expiry, but a successful response does not prove rotation or immediate old-token invalidation. If old access remains accepted, actual-expiry evidence may require waiting for the reported 2026-10-28 window. No finish date is established.
-
-These gates remain in TASK-647. Pending work, network failure or an unknown notice never selects C. Once observations resolve them, finalize the matrix, compatibility rule and lead time, then run final work review. The prepared TASK-647 dependency comment is still unpublished because this session has no issue connector; the manager must post it.
+Nothing is scheduled for the 10-28 expiry window. A remaining rejection-recovery or integration gap must be reported as its own pending evidence; the removed real-expiry gate is not reintroduced as its workaround. The prepared TASK-647 dependency comment is still unpublished because this session has no issue connector; manager must post it.
 
 ## M3 待补项
 
