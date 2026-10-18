@@ -271,7 +271,8 @@ workers run none of these checks. Real expiry is outside TASK-647.
 
 ## Plan A validation report
 
-**Verdict: pending.** TASK-647 validates M4 FR-1 against candidate `0.163.0`;
+**Verdict: A, for the narrowed 2026-10-18 scope.** The running native app-server
+loaded the replaced access token without restart. TASK-647 certifies `0.163.0`;
 [the operations above](#docker-sessions) describe the separate `0.162.1` product
 baseline. Neither grants the other's compatibility. Sources:
 [TASK-647](https://linear.app/ophis-workgroup/issue/TASK-647) and the
@@ -289,11 +290,11 @@ failures stay incomplete; C requires reproducible A failure.
 All live results are user/manager observations, not worker reruns. A new exec process
 reading a replacement is distinct from a running process changing its cached value.
 
-| Retained item | Status and evidence | Next observation |
+| Retained item | Status and evidence | Qualification |
 |---|---|---|
-| Running-process token replacement | Incomplete: refreshed carriers produce new-process replies; no same-process cache comparison yet ([second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json)) | One persistent native app-server connection: old cache, file replacement, native guarded reload, new cache; no restart |
-| Version matrix and rule | Incomplete: fixed candidate and experimental containers are `0.163.0`; same-minor/latest coincide. Product image baseline `0.162.1` is not certified by these observations | Record experimental image content ID; admit only exact versions passing retained gates |
-| Refresh trigger and measured lead | Incomplete: two genuine own-Codex rotations observed. Second native interval is 1.222276 s, including initialization/RPC/cleanup | Measure complete host-refresh, injection and verified live-cache reload interval; source's 300 s window is not measured lead |
+| Running-process token replacement | Pass: initial old cache matched; cache stayed old after replacement; native guarded reload loaded the new value through the same process connection ([live reload](docker-codex-evidence/2026-10-18-a-live-reload.json), 2026-10-18 04:46 UTC) | None within retained scope |
+| Version matrix and rule | Pass for exact `0.163.0`: fixed host/container verified, same-minor/latest coincide, image content ID captured in live evidence. Product baseline `0.162.1` remains untested/excluded | No range or additional version admitted |
+| Refresh trigger and measured lead | Pass: third genuine own-Codex rotation; complete refresh/write/reload interval 1.467578 s, rounded-up observed lead 2 s | Scheduler floor 600 s applies; observation is not a worst-case bound |
 
 | Moved item | Destination |
 |---|---|
@@ -307,7 +308,7 @@ helpers. From the repository root:
 `python3 -I scripts/docker_codex_a_probe.py --user-run --live-root <isolated-root> live-reload task647-codex-a-1`.
 The live root is required and absolute; personal login directories have no default.
 The manager runs these nonprivileged commands, including credential injection and
-host refresh. Only sudo/password steps go to the user; none is needed in this group.
+host refresh. Only sudo/password steps go to the user.
 Workers never run live probes or inspect real credentials. No browser/login flow.
 Source inventory: `python3 -I scripts/docker_codex_probe.py inventory`.
 Exact task handoffs stay outside this user document.
@@ -322,10 +323,11 @@ Exact task handoffs stay outside this user document.
 | [Notice](docker-codex-evidence/2026-10-18-manager-a-notice.json), 02:22 UTC | Same native identity, exit0, final OK; one `unknown` error item | Raw message discarded; earlier categories cannot be reconstructed |
 | [Categorized notice](docker-codex-evidence/2026-10-18-manager-a-code-mode.json), 03:27 UTC | Same native identity, exit0, final OK; one `code_mode_unavailable` item | Category is diagnostic only; helper exit1 and incomplete remain |
 | [Real refresh](docker-codex-evidence/2026-10-18-user-a-refresh.json), 03:49–03:58 UTC | One proactive host request rotates access and refresh values, retains account, advances `last_refresh` and `exp` to 2026-10-28T03:57:02Z. Unchanged containers resume before/after; a-2 resumes again after reinjection. Each native run exits0, retains identity, completes one turn and ends OK | Helper exits are 1/0/1/0/1 in execution order. Every resume has only `code_mode_unavailable`, so strict status stays incomplete. No live-process reload, old-value invalidation or refresh duration was measured |
-| [Second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json), 04:22–04:24 UTC | External-access injection excludes original ID/refresh values. Second genuine rotation retains account and advances expiry. Unchanged and replaced carriers each produce new-process replies | Helper exits0/1/0/1/0/0/1; each resume remains incomplete solely on the known notice. Native host interval1.222276 s includes process/RPC overhead; no running-process reload inferred |
+| [Second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json), 04:22–04:24 UTC | External-access injection excludes original ID/refresh values. Second genuine rotation retains account and advances expiry. Unchanged and replaced carriers each produce new-process replies | Helper exits0/1/0/1/0/0/1; each resume remains incomplete solely on the known notice. Native host interval 1.222276 s includes process/RPC overhead; no running-process reload inferred |
+| [Live reload and inventory](docker-codex-evidence/2026-10-18-a-live-reload.json), 04:46 UTC | Both helpers exit0. Four cache/connection checks true; both injections exclude original refresh value. Third rotation retains account; native cleanup exits0 with error null. Pipeline 1.467578 s gives observed lead 2 s | Proves the same native app-server cache reload with a managed empty-refresh carrier. Ordinary terminal/headless acceptance is moved; no expiry crossing or latency guarantee inferred |
 
 The inventory's `live_refresh_count=0` is a source-only constant. The observed live
-rotation count is now **2**. An unchanged old carrier remaining usable after rotation
+rotation count is now **3**. An unchanged old carrier remaining usable after rotation
 records acceptance; it does not prove invalidation or recovery from rejection.
 
 ### Pinned source evidence
@@ -353,51 +355,51 @@ Tool-free OK replies do not establish tool availability. It is not automatically
 benign release warning; classification never changes a strict result to pass. Only
 fixed category IDs/counts leave classifier memory; unknown stays unknown.
 
-### Compatibility and shortest remaining path
+### Compatibility and decision
 
 | Version role | Version | Retained-gate result |
 |---|---|---|
-| Fixed host candidate | `0.163.0` | Two real rotations; live cache reload/complete lead not yet observed |
-| Experimental container | `0.163.0` | Headless replies observed; live cache reload incomplete; image content ID not captured |
-| Latest same minor | `0.163.0` | Same artifact as candidate, not a separate test |
-| Latest stable | `0.163.0` | Same artifact, registry observed 2026-10-18, published 2026-10-15T21:37:11.083Z |
+| Fixed host | `0.163.0` | Pass: three real rotations and measured refresh pipeline |
+| Experimental container | `0.163.0` | Pass: same-process cache reload; image `sha256:0979a801ea59c7ef5e4f124b7d9dbf060007172e631490a4a1355daefdb94361` |
+| Latest same minor | `0.163.0` | Pass: same tested artifact, not a separate test |
+| Latest stable | `0.163.0` | Pass: same artifact; registry observed 2026-10-18 04:46 UTC, published 2026-10-15T21:37:11.083Z |
 | Product image baseline | `0.162.1` | Untested for retained gates; excluded from this validation's rule |
 
-Source inventory is in the [categorized notice evidence](docker-codex-evidence/2026-10-18-manager-a-code-mode.json).
+Final inventory and live observation are in the [live-reload evidence](docker-codex-evidence/2026-10-18-a-live-reload.json).
 Untested same-minor versions gain no admission; an unproved range narrows to an exact
 passing set. The current product image needs its own passing record or an image
-upgrade before an eventual `0.163.0`-only rule can enable its starts.
+upgrade before this `0.163.0`-only rule can enable its starts. This report does not change installed admission metadata.
 
 ```json
 {
   "verdict_gate_revision": "user-2026-10-18-live-reload-version-lead-only",
   "real_access_expiry_crossing_required": false,
   "fixed_codex_version": "0.163.0",
-  "container_version_rule": {"kind": "exact", "versions": []},
-  "observed_live_refresh_count": 2,
-  "measured_refresh_lead_seconds": null,
+  "container_version_rule": {"kind": "exact", "versions": ["0.163.0"]},
+  "observed_live_refresh_count": 3,
+  "measured_refresh_lead_seconds": 2,
   "scheduler_floor_seconds": 600,
-  "selected_scheme": null
+  "effective_refresh_lead_seconds": 600,
+  "selected_scheme": "A"
 }
 ```
 
-The next single-process probe uses the managed empty-refresh carrier. Its original
-ID/access/account fields remain in memory or volatile container state; no original
-refresh value enters the container. It verifies old cache, performs native host
-refresh and replacement, checks that the old cache remains, then requests guarded
-reload and compares the new cache, all through one native app-server connection.
-Only booleans, version/image metadata, fixed errors, counts and times leave memory.
-This establishes that backend process's cache, not terminal/headless product acceptance.
+**Validated carrier:** managed `auth_mode=chatgpt`, original ID/access/account
+fields and refresh timestamp, with an empty refresh string. Original refresh values
+never enter this probe's container. File-based `chatgptAuthTokens` was not certified
+for the explicit reload path. The deprecated diagnostic is pinned to this version;
+product integration must preserve an effective native reload trigger.
 
 ```mermaid
-flowchart TD
-    I[Confirm version inventory] --> P[Single-process cache probe]
-    P --> M[Record measured pipeline lead]
-    M --> D{Retained gates}
-    D -->|Pass| A[Select A and exact versions]
-    D -->|Reproducible A failure| C[Select C]
-    D -->|Incomplete| W[Keep verdict incomplete]
+flowchart LR
+    O[Old cache matched] --> F[Host refresh and file replacement]
+    F --> S[Old cache retained]
+    S --> R[Native guarded reload]
+    R --> N[New cache matched]
+    N --> A[Select A for exact tested version]
 ```
-The measured lead is the rounded-up observed monotonic refresh/write/reload interval,
-not a guaranteed worst-case bound; the scheduler uses max(measured lead, 600 s).
-No calendar wait or moved acceptance check stands between this probe and the verdict.
+All cache comparisons stayed in memory through one native app-server connection.
+The measured lead is the rounded-up observed monotonic interval, not a worst-case
+bound; the effective scheduler lead is shown in the rule. This decision certifies
+the retained backend/version/lead gates only; moved product acceptance remains with
+its named owners above. No additional TASK-647 live commands remain.
