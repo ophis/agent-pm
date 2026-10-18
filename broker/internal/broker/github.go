@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -62,12 +65,47 @@ type AppKeys interface {
 
 // GitHub issues, refreshes and revokes a container's installation tokens. Every token it issues is in the
 // container's record or the backlog until revoked or expired; revocation uses only those values, never the
-// container's files. Lock guards each read-modify-write of either item, never a GitHub request.
+// container's files. Lock guards each read-modify-write of either item, never a GitHub request. Audit (nil: none)
+// gets each token's outcome, never its value.
 type GitHub struct {
 	Keychain SecretKeychain
 	Apps     AppKeys
 	API      github.Client
 	Lock     func() (unlock func(), err error)
+	Audit    *audit.Recorder
+}
+
+// note gives the audit recorder e's outcome for container, keyed by a hash of its token.
+func (g GitHub) note(container, result, reason string, e tokenEntry, repos *audit.Repositories) {
+	if g.Audit == nil {
+		return
+	}
+	sum := sha256.Sum256([]byte(e.Token))
+	expires := e.ExpiresAt
+	g.Audit.Add(container, audit.Credential{Kind: audit.GitHubToken, Result: result, Reason: reason, ExpiresAt: &expires,
+		Account: e.Account, Installation: e.Installation, Repos: repos}, hex.EncodeToString(sum[:]))
+}
+
+// unlisted is a new token's repositories when it could not be recorded, so was never listed.
+var unlisted = audit.Repositories{Error: "not listed: the token could not be recorded"}
+
+// issued notes a recorded token with the repositories it reaches; a failed listing is noted, never returned. Only
+// after the record write: the listing's requests must not widen the window in which a token is untracked.
+func (g GitHub) issued(ctx context.Context, container, result string, e tokenEntry) {
+	if g.Audit == nil {
+		return
+	}
+	repos := &audit.Repositories{}
+	if selection, names, err := g.API.Repositories(ctx, e.Token); err != nil {
+		repos.Error = err.Error()
+	} else {
+		repos.Selection, repos.Names = &selection, names
+	}
+	g.note(container, result, "", e, repos)
+}
+
+func (p pending) entry() tokenEntry {
+	return tokenEntry{Account: p.Account, Token: p.Token, ExpiresAt: p.ExpiresAt}
 }
 
 // FileLock is an exclusive flock on path, created 0600 in a 0700 directory.
@@ -214,6 +252,11 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 			}
 			return list
 		})
+		if backlogErr == nil {
+			for _, e := range entries {
+				g.note(container, audit.Pending, "queued for revocation", e, nil)
+			}
+		}
 		if whole {
 			return g.Keychain.DeleteSecret(tokensService, container)
 		}
@@ -231,14 +274,29 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 		}
 	}
 	if backlogErr != nil || !ran {
+		type miss struct {
+			entry  tokenEntry
+			reason string
+		}
 		var left []pending
+		var missed []miss
 		for _, e := range entries {
-			if g.API.Revoke(ctx, e.Token) != nil {
+			if err := g.API.Revoke(ctx, e.Token); err != nil {
 				left = append(left, pending{container, e.Account, e.Token, e.ExpiresAt})
+				missed = append(missed, miss{e, err.Error()})
+			} else {
+				g.note(container, audit.Revoked, "", e, nil)
 			}
 		}
+		queued := !ran && (len(left) == 0 || g.editBacklog(func(list []pending) []pending { return append(list, left...) }) == nil)
+		for _, m := range missed {
+			if !queued {
+				m.reason += "; not queued"
+			}
+			g.note(container, audit.Pending, m.reason, m.entry, nil)
+		}
 		if !ran {
-			if len(left) > 0 && g.editBacklog(func(list []pending) []pending { return append(list, left...) }) != nil {
+			if !queued {
 				return unrevoked(container) // the record keeps them tracked
 			}
 			g.untrack(container, entries)
@@ -402,8 +460,10 @@ func (g GitHub) Issue(ctx context.Context, app, container string, exec func([]st
 		if _, err := g.editRecord(container, true, func(rec *tokenRecord, _ bool) {
 			rec.App, rec.Tokens = app, append(rec.Tokens, e)
 		}); err != nil {
+			g.note(container, audit.Issued, "", e, &unlisted)
 			return fail(tokensError(err))
 		}
+		g.issued(ctx, container, audit.Issued, e)
 	}
 	for _, e := range issued {
 		if err := write(exec, e); err != nil {
@@ -443,12 +503,14 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 			}
 		})
 		if err != nil || !found {
+			g.note(container, audit.Renewed, "", e, &unlisted)
 			_ = g.discard(ctx, container, []tokenEntry{e}, false)
 			if err != nil {
 				return nil, tokensError(err)
 			}
 			return nil, protocol.New(protocol.RefreshFailed, container+" was closed during the refresh.")
 		}
+		g.issued(ctx, container, audit.Renewed, e)
 		if err := write(exec, e); err != nil {
 			_ = g.discard(ctx, container, []tokenEntry{e}, false)
 			return nil, err
@@ -456,6 +518,7 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 		if g.API.Revoke(ctx, old.Token) != nil {
 			_ = g.discard(ctx, container, []tokenEntry{old}, false)
 		} else {
+			g.note(container, audit.Revoked, "", old, nil)
 			_, _ = g.editRecord(container, false, func(rec *tokenRecord, _ bool) {
 				rec.Tokens = slices.DeleteFunc(rec.Tokens, func(t tokenEntry) bool { return t.Token == old.Token })
 			})
@@ -487,7 +550,7 @@ func (g GitHub) Revoke(ctx context.Context, container string) error {
 }
 
 // Retry revokes the backlog: expired entries are dropped unrevoked, and the first request that gets no answer
-// stops the run, keeping the rest for next time.
+// stops the run, keeping the rest for next time. Audit gets every entry's outcome; it keeps what it needs.
 func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 	var list []pending
 	if err := g.locked(func() (err error) {
@@ -497,19 +560,30 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 		return nil, tokensError(err)
 	}
 	now := g.API.Now()
+	type outcome struct {
+		entry  pending
+		result string
+	}
 	var done []string
-	for _, p := range list {
+	var resolved []outcome // done's: noted once the backlog no longer holds them, so a failed removal notes nothing twice
+	for i, p := range list {
 		expires, err := time.Parse(time.RFC3339, p.ExpiresAt)
 		if err != nil || !now.Before(expires) {
-			done = append(done, p.Token)
+			done, resolved = append(done, p.Token), append(resolved, outcome{p, audit.ExpiredUnrevoked})
 			continue
 		}
 		err = g.API.Revoke(ctx, p.Token)
 		if err == nil {
-			done = append(done, p.Token)
-		} else if github.Transport(err) {
+			done, resolved = append(done, p.Token), append(resolved, outcome{p, audit.Revoked})
+			continue
+		}
+		if github.Transport(err) {
+			for _, rest := range list[i:] {
+				g.note(rest.Container, audit.Pending, err.Error(), rest.entry(), nil)
+			}
 			break
 		}
+		g.note(p.Container, audit.Pending, err.Error(), p.entry(), nil)
 	}
 	if len(done) > 0 {
 		if err := g.locked(func() error {
@@ -519,6 +593,9 @@ func (g GitHub) Retry(ctx context.Context) ([]protocol.Pending, error) {
 		}); err != nil {
 			return nil, tokensError(err)
 		}
+	}
+	for _, o := range resolved {
+		g.note(o.entry.Container, o.result, "", o.entry.entry(), nil)
 	}
 	out := []protocol.Pending{}
 	for _, p := range list {

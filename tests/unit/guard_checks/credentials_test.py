@@ -1,0 +1,180 @@
+"""The credentials inventory is checked against config and broker without real secrets."""
+
+import tomllib
+
+from tests.case import REPO
+from tests.guard_checks import credentials
+from tests.guard_checks.credentials import _required_keys, _services, _violations
+from tests.guard_samples import Sample
+
+CONFIG = """
+team = ""
+harness_key = ""
+task_label_group = ""
+agent_label_group = ""
+work_dir = "~/.agent-pm"
+
+[states]
+todo = ""
+done = ""
+
+[task_labels]
+
+[agent_labels]
+
+[roles.pm]
+account = ""
+key = ""
+next = ""
+"""
+
+KEYS = [
+    "harness_key",
+    "task_label_group",
+    "agent_label_group",
+    "states.todo",
+    "states.done",
+    "task_labels",
+    "agent_labels",
+    "roles.pm.key",
+    "roles.pm.account",
+]
+
+SERVICES = ["agent-pm-claude", "agent-pm-tokens"]
+
+GO = """package broker
+
+var KeychainServices = []string{
+	"agent-pm-claude",
+	// a comment
+	"agent-pm-tokens", // trailing
+
+}
+"""
+
+# Built by concatenation so no file holds a secret-like literal.
+SECRETS = {
+    "ghs" + "_": "ghs_",
+    "ghp" + "_": "ghp_",
+    "gho" + "_": "gho_",
+    "ghu" + "_": "ghu_",
+    "ghr" + "_": "ghr_",
+    "github" + "_pat_": "github_pat_",
+    "lin" + "_api_": "lin_api_",
+    "sk" + "-ant-": "sk-ant-",
+    "-----BEGIN RSA PRIVATE" + " KEY-----": "-----BEGIN … PRIVATE KEY-----",
+    "eyJ" + "a" * 12 + ".eyJ" + "b" * 12 + ".sig": "JWT",
+}
+
+
+def inventory(missing=()):
+    return "\n".join(f"- `{name}`" for name in [*KEYS, *SERVICES] if name not in missing) + "\n"
+
+
+class CredentialsInventory(Sample):
+    def config(self):
+        return tomllib.loads(CONFIG)
+
+    def test_the_real_inventory_is_complete(self):
+        self.assertEqual(credentials.credentials_inventory(REPO), [])
+
+    def test_a_complete_inventory_passes(self):
+        self.assertEqual(_violations(self.config(), SERVICES, inventory()), [])
+
+    def test_required_keys_follow_the_config(self):
+        self.assertEqual(_required_keys(self.config()), KEYS)
+
+    def test_each_missing_config_key_is_reported(self):
+        for key in KEYS:
+            with self.subTest(key=key):
+                self.assertEqual(
+                    _violations(self.config(), SERVICES, inventory(missing={key})),
+                    [f"docs/credentials.md: missing config key `{key}`"],
+                )
+
+    def test_a_key_named_without_backticks_is_missing(self):
+        text = inventory(missing={"states.todo"}) + "states.todo\n"
+        self.assertEqual(
+            _violations(self.config(), SERVICES, text),
+            ["docs/credentials.md: missing config key `states.todo`"],
+        )
+
+    def test_a_missing_service_is_reported(self):
+        self.assertEqual(
+            _violations(self.config(), SERVICES, inventory(missing={"agent-pm-tokens"})),
+            ["docs/credentials.md: missing keychain service `agent-pm-tokens`"],
+        )
+
+    def test_each_secret_pattern_is_reported_by_line_without_the_value(self):
+        for value, pattern in SECRETS.items():
+            with self.subTest(pattern=pattern):
+                text = inventory() + f"intro\nsee {value}tail\n"
+                found = _violations(self.config(), SERVICES, text)
+                line = len(KEYS) + len(SERVICES) + 2
+                self.assertEqual(
+                    found, [f"docs/credentials.md:{line}: secret-like value ({pattern})"]
+                )
+                self.assertNotIn("tail", found[0])
+
+    def test_services_reads_only_the_declared_list(self):
+        go = 'const codexService = "agent-pm-codex"\n' + GO + 'var other = []string{"x"}\n'
+        self.assertEqual(_services(go), (SERVICES, []))
+
+    def test_a_non_literal_service_entry_is_reported(self):
+        go = GO.replace("\t// a comment\n", "\tcodexService,\n")
+        names, found = _services(go)
+        self.assertEqual(names, SERVICES)
+        self.assertEqual(
+            found,
+            [
+                "broker/internal/broker/keychain.go: KeychainServices entry is not a string"
+                " literal: codexService,"
+            ],
+        )
+
+    def test_a_list_of_only_non_literals_reports_each_entry_and_no_list(self):
+        go = "var KeychainServices = []string{\n\tcodexService,\n}\n"
+        root = self.tree(
+            {
+                "docs/credentials.md": inventory(),
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+                "broker/internal/broker/keychain.go": go,
+            }
+        )
+        self.assertEqual(
+            credentials.credentials_inventory(root),
+            [
+                "broker/internal/broker/keychain.go: KeychainServices entry is not a string"
+                " literal: codexService,",
+                "broker/internal/broker/keychain.go: no KeychainServices list",
+            ],
+        )
+
+    def test_missing_files_and_list_are_violations(self):
+        files = {
+            "docs/credentials.md": inventory(),
+            "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+            "broker/internal/broker/keychain.go": GO,
+        }
+        self.assertEqual(credentials.credentials_inventory(self.tree(files)), [])
+        for rel in files:
+            with self.subTest(missing=rel):
+                root = self.tree({k: v for k, v in files.items() if k != rel})
+                self.assertEqual(credentials.credentials_inventory(root), [f"{rel}: missing"])
+        for go in ("package broker\n", "var KeychainServices = []string{\n}\n"):
+            with self.subTest(go=go):
+                root = self.tree({**files, "broker/internal/broker/keychain.go": go})
+                self.assertEqual(
+                    credentials.credentials_inventory(root),
+                    ["broker/internal/broker/keychain.go: no KeychainServices list"],
+                )
+        root = self.tree(
+            {**files, "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": "team ="}
+        )
+        found = credentials.credentials_inventory(root)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(
+            found[0].startswith(
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml: "
+            )
+        )

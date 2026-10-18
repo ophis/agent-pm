@@ -174,8 +174,43 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	if err != nil && !missing {
 		return errors.New("cannot inspect Codex keychain access; retry " + codexLoginCommand)
 	}
+	// Every terminal question comes before the browser, which the user may not come back from: the item is
+	// created and made to trust only the broker first, and after the browser the password is never asked.
+	if missing {
+		if c.keychain.CreateCodex() != nil {
+			return errors.New("cannot create Codex keychain item")
+		}
+	}
+	password := onePassword{read: c.password}
+	defer password.erase()
+	secure := func() error {
+		err := secureItem(codexService, codexAccount, "retry "+codexLoginCommand, c.keychain, password.get)
+		switch {
+		case errors.Is(err, errAccessUnread):
+			return errors.New("cannot inspect Codex keychain access")
+		case err != nil:
+			return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
+		}
+		return nil
+	}
+	if err := secure(); err != nil {
+		return err
+	}
+	password.close()
 	var previous []byte
 	defer func() { erase(previous) }()
+	if !missing {
+		old, err := c.keychain.Secret(codexService, codexAccount)
+		if err != nil {
+			erase(old)
+			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
+		}
+		if expiry, err := parseCodexAuth(old); err == nil && c.now().Before(expiry) {
+			previous = old
+		} else {
+			erase(old)
+		}
+	}
 	home, err := os.MkdirTemp(c.tempRoot, "agent-pm-codex-")
 	if err != nil {
 		return errors.New("cannot create private Codex login directory")
@@ -208,46 +243,6 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	if err := os.RemoveAll(home); err != nil {
 		return errors.New("cannot remove private Codex login directory; login was not saved")
 	}
-	if missing {
-		if c.keychain.CreateCodex() != nil {
-			return errors.New("cannot create Codex keychain item")
-		}
-	}
-	var password []byte
-	var passwordErr error
-	passwordRead := false
-	defer func() { erase(password) }()
-	secure := func() error {
-		access, err := c.keychain.AppAccess(codexService, codexAccount)
-		if err != nil {
-			return errors.New("cannot inspect Codex keychain access")
-		}
-		if onlyBroker(access) != nil {
-			if !passwordRead {
-				passwordRead = true
-				password, passwordErr = c.password()
-			}
-			if passwordErr != nil || trust(codexService, codexAccount, c.keychain, access, password) != nil {
-				return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
-			}
-		}
-		return c.trusted()
-	}
-	if err := secure(); err != nil {
-		return err
-	}
-	if !missing {
-		old, err := c.keychain.Secret(codexService, codexAccount)
-		if err != nil {
-			erase(old)
-			return errors.New("cannot read existing Codex login; retry " + codexLoginCommand)
-		}
-		if expiry, err := parseCodexAuth(old); err == nil && c.now().Before(expiry) {
-			previous = old
-		} else {
-			erase(old)
-		}
-	}
 	if ctx.Err() != nil {
 		return errors.New("Codex login canceled")
 	}
@@ -266,6 +261,31 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	_, err = fmt.Fprintln(out, "Codex login saved; keychain trusts only the broker")
 	return err
 }
+
+// onePassword reads the keychain password at most once, and never once closed: login codex closes it before the
+// browser. get returns a copy, since secureItem erases what it gets.
+type onePassword struct {
+	read  func() ([]byte, error)
+	value []byte
+	err   error
+	done  bool
+}
+
+func (p *onePassword) get() ([]byte, error) {
+	if !p.done {
+		p.done = true
+		p.value, p.err = p.read()
+	}
+	return bytes.Clone(p.value), p.err
+}
+
+func (p *onePassword) close() {
+	if !p.done {
+		p.done, p.err = true, errors.New("no password question after the browser")
+	}
+}
+
+func (p *onePassword) erase() { erase(p.value) }
 
 func (c Codex) matches(expected []byte) bool {
 	saved, err := c.keychain.Secret(codexService, codexAccount)

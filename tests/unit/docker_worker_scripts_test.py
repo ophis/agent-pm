@@ -769,6 +769,22 @@ class GhWrapper(GitHubTokens):
         self.origin = ""
         self.assertEqual(self.gh("pr", "view"), "ghs_ophis")
 
+    def test_owner_placeholder_is_the_current_repos(self):
+        self.origin = "https://github.com/other/x.git"
+        for argv in (
+            ("api", "repos/{owner}/{repo}"),
+            ("api", "/repos/{owner}/{repo}/pulls"),
+            ("api", "-X", "PATCH", "repos/{owner}/{repo}/pulls/1"),
+            ("api", "repos/:owner/:repo/pulls"),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.gh(*argv), "ghs_other")
+        self.origin = "https://gitlab.com/other/x.git"
+        self.assertIsNone(self.gh("api", "repos/{owner}/{repo}"))
+        (self.tokens / "other").unlink()
+        self.origin = ""
+        self.assertEqual(self.gh("api", "repos/{owner}/{repo}"), "ghs_ophis")
+
     def test_another_host_or_no_token_adds_none(self):
         self.origin = "https://github.com/ophis/x"
         for argv in (
@@ -814,6 +830,20 @@ class DefaultDockerfile(Case):
         ):
             self.assertIn(needle, text)
         self.assertNotIn("SHASUMS256", text)
+
+
+class ImageLayer(Case):
+    def test_pins_gh(self):
+        text = (ASSETS / "Dockerfile").read_text()
+        for needle in (
+            "GH_VERSION=2.102.0",
+            "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386",
+            "7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484",
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/",
+            "sha256sum -c",
+            "/usr/local/bin/gh",
+        ):
+            self.assertIn(needle, text)
 
 
 CACHE = ".agent-pm-cache"

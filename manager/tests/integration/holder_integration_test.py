@@ -34,6 +34,18 @@ SIGNALED = (
     "ready.touch()\n"
     "while not done.exists(): time.sleep(.01)"
 )
+# argv: a command, then a terminal's slave fd to log in on, or "-" for none
+IGNORING = (
+    "import os,signal,subprocess,sys\n"
+    "if sys.argv[-1]!='-': os.login_tty(int(sys.argv[-1]))\n"
+    "for signum in (signal.SIGTTIN,signal.SIGTTOU): signal.signal(signum,signal.SIG_IGN)\n"
+    "sys.exit(subprocess.run(sys.argv[1:-1],check=False).returncode)"
+)
+STOP_SIGNALS = (
+    "import json,pathlib,signal,sys\n"
+    "signals=(signal.SIGTTIN,signal.SIGTTOU)\n"
+    "pathlib.Path(sys.argv[1]).write_text(json.dumps([int(signal.getsignal(s)) for s in signals]))"
+)
 
 
 def _hold_contender(directory, barrier, release, outcomes):
@@ -293,8 +305,54 @@ class HolderTest(Case):
                 stdout, stderr = process.communicate(timeout=10)
                 self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
 
+    def child_stop_signals(self, *, terminal):
+        """The SIGTTIN and SIGTTOU dispositions a held child gets from a caller ignoring both."""
+        result = Path(self.home, "stop-signals")
+        argv = (
+            *PY,
+            "-c",
+            IGNORING,
+            *PY,
+            "-m",
+            "agent_pm.manager.cli",
+            "hold",
+            "--manager",
+            "mgr",
+            "--",
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            STOP_SIGNALS,
+            str(result),
+        )
+        if terminal:
+            process, master = self.terminal(argv)
+            self.assertEqual(self.wait_terminal(process, master), 0)
+        else:
+            done = subprocess.run(
+                (*argv, "-"),
+                env=child_env(),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        return json.loads(result.read_text())
+
+    def test_terminal_child_gets_default_stop_signals_when_the_caller_ignores_them(self):
+        default = int(signal.SIG_DFL)
+        self.assertEqual(self.child_stop_signals(terminal=True), [default, default])
+
+    def test_child_without_a_terminal_keeps_the_callers_ignored_stop_signals(self):
+        ignored = int(signal.SIG_IGN)
+        self.assertEqual(self.child_stop_signals(terminal=False), [ignored, ignored])
+
     def test_spawn_failure_releases_lock_and_restores_signal_handlers(self):
-        previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+        signals = (signal.SIGINT, signal.SIGTERM, signal.SIGTTIN, signal.SIGTTOU)
+        previous = {signum: signal.getsignal(signum) for signum in signals}
         with self.assertRaises(FileNotFoundError):
             Holder(self.roster).run((os.path.join(self.home, "missing-manager"),))
         for signum, handler in previous.items():

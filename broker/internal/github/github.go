@@ -1,5 +1,5 @@
-// Package github is the broker's GitHub App client: the App JWT, its installations, installation tokens, and its bot
-// user's ID.
+// Package github is the broker's GitHub App client: the App JWT, its installations, installation tokens and the
+// repositories each reaches, and its bot user's ID.
 // Its errors carry an HTTP status at most, never a response body or a token.
 package github
 
@@ -20,18 +20,23 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 )
 
 const (
 	perPage   = 100
+	maxPages  = 100
 	maxBody   = 1 << 20
 	apiTarget = "https://api.github.com"
 )
 
 // Login is a GitHub account login, safe as a file name and argv element.
 var Login = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+
+// fullName is a repository's owner/name.
+var fullName = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 
 // permissions are every token's, the App's fixed set.
 var permissions = map[string]string{"contents": "write", "pull_requests": "write", "checks": "read", "actions": "read"}
@@ -184,6 +189,41 @@ func (c Client) Issue(ctx context.Context, jwt string, id int64) (string, time.T
 		return "", time.Time{}, errors.New("GitHub answered a token without a token or expiry")
 	}
 	return got.Token, expires.UTC(), nil
+}
+
+// Repositories is what installation token reaches: its installation's repository_selection and every repository's
+// full name, sorted, reading every page up to maxPages.
+func (c Client) Repositories(ctx context.Context, token string) (string, []string, error) {
+	names := []string{}
+	var selection string
+	for page := 1; page <= maxPages; page++ {
+		var got struct {
+			Total        int    `json:"total_count"`
+			Selection    string `json:"repository_selection"`
+			Repositories []struct {
+				FullName string `json:"full_name"`
+			} `json:"repositories"`
+		}
+		path := fmt.Sprintf("/installation/repositories?per_page=%d&page=%d", perPage, page)
+		if err := c.call(ctx, http.MethodGet, path, token, nil, http.StatusOK, &got); err != nil {
+			return "", nil, err
+		}
+		if got.Selection != "all" && got.Selection != "selected" || selection != "" && got.Selection != selection {
+			return "", nil, errors.New("GitHub answered no valid repository_selection")
+		}
+		selection = got.Selection
+		for _, r := range got.Repositories {
+			if !fullName.MatchString(r.FullName) {
+				return "", nil, errors.New("GitHub listed a repository without a valid full name")
+			}
+			names = append(names, r.FullName)
+		}
+		if len(got.Repositories) < perPage || len(names) >= got.Total {
+			slices.Sort(names)
+			return selection, names, nil
+		}
+	}
+	return "", nil, fmt.Errorf("GitHub listed more than %d repositories", maxPages*perPage)
 }
 
 // Revoke invalidates token; 401 and 404 mean it is already invalid.

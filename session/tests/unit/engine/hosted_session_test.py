@@ -39,6 +39,7 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     Key,
     KeyPress,
+    Liveness,
     Mode,
     Paste,
     Reply,
@@ -1719,6 +1720,16 @@ class AttachTest(HostedTuiBase):
         self.assertEqual(session.info().transcript, "/attached")
         self.assertEqual(RunLog(self.workdir).session(SID).resume, "resume n1")
         self.assertEqual(sum(e["kind"] == "session" for e in self.written()), 1)
+
+    def test_attached_while_its_terminal_cannot_tell_is_unknown(self):
+        self.started()
+        process = self.host.processes["w1"]
+        process.calls.state.return_value = Liveness.UNKNOWN
+        process.calls.activity.side_effect = SessionError("tmux: docker exec in c: timed out")
+        session = self.session.attach("w1")
+        self.assertEqual(
+            (session.status().state, session.status().alive), (StatusState.UNKNOWN, False)
+        )
 
     def test_attached_while_blocked_no_idle_timeout_until_its_next_event(self):
         """On a fake clock (the session's, time.monotonic, time.sleep), a tool record comes at

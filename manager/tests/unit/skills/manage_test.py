@@ -13,6 +13,7 @@ from manager.tests.skills.commands import (
     examples,
     paths,
     references,
+    rules,
     section,
     sections,
 )
@@ -50,6 +51,32 @@ class Manage(Case):
         for word in RETIRED:
             self.assertNotIn(word, body("manage"))
         self.assertNotIn("## Crew commands", body("manage"))
+
+    def test_stale_holder_recovery_restarts_under_hold_without_polling(self):
+        lease_free = "env -u AGENT_PM_HOLDER_ID -u AGENT_PM_HOLDER_GENERATION"
+        [item] = [
+            line
+            for line in section("manage", "Recover").splitlines()
+            if line.startswith("- **Stale holder**")
+        ]
+        for phrase in (
+            "`stale holder generation`",
+            "`holder no longer alive`",
+            "ack --through",
+            f"`{lease_free}`",
+            "those `attach` prints",
+            "`agent-pm-crew hold --manager <manager> --session <manager> -- claude --continue`",
+            "`codex resume --last`",
+            "never run `hold --force` yourself",
+            "Manual",
+            "polling loop",
+        ):
+            self.assertIn(phrase, item)
+        self.assertIn("[Recover](#recover)", section("manage", "Start"))
+        events = section("manage", "Events")
+        self.assertIn("Unacknowledged events replay at every recovery", events)
+        self.assertIn("`stale holder generation`", events)
+        self.assertFalse([rule for rule in rules("manage") if rule.startswith("env ")])
 
     def test_events_arrive_with_their_content_and_need_no_pane_read(self):
         monitor = section("manage", "Start")

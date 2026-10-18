@@ -109,6 +109,8 @@ type api struct {
 	revokeErr func(token string) int
 	user      string // the bot user answer; "": 404
 	userAuth  []string
+	reposFail int // the repository listing's status; 0: each installation reaches <login>/one and <login>/two
+	onRepos   func(token string)
 }
 
 func (a *api) handler(t *testing.T) http.HandlerFunc {
@@ -141,6 +143,18 @@ func (a *api) handler(t *testing.T) http.HandlerFunc {
 			}
 			a.revoked = append(a.revoked, token)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
+			if a.onRepos != nil {
+				a.onRepos(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			}
+			if a.reposFail != 0 {
+				w.WriteHeader(a.reposFail)
+				return
+			}
+			var id int
+			_, _ = fmt.Sscanf(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ghs_"), "%d_", &id)
+			login := a.installs[id-1]
+			_, _ = fmt.Fprintf(w, `{"total_count":2,"repository_selection":"all","repositories":[{"full_name":"%s/two"},{"full_name":"%s/one"}]}`, login, login)
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/users/agent-pm-bot%5Bbot%5D":
 			a.userAuth = append(a.userAuth, r.Header.Get("Authorization"))
 			if a.user == "" {

@@ -6,6 +6,7 @@ import threading
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session.engine import tmux_cli
 from agent_pm.session.hosts.docker import daemon
 from agent_pm.session.hosts.docker.daemon import OUT_MAX, Overflow, capped, exec_runner
 
@@ -95,17 +96,24 @@ class ExecRunnerTest(Case):
             ],
         )
 
-    def test_a_gone_container_a_timeout_or_overflow_reads_as_no_server(self):
+    def test_a_gone_or_stopped_container_reads_as_no_server(self):
         for result in (
             (1, "Error response from daemon: No such container: c1\n"),
             (1, "Error response from daemon: container c1 is not running"),
-            TimeoutExpired("docker", 10),
-            Overflow("output over 1 bytes"),
         ):
             with self.subTest(result=result):
                 res = self.runner(result)(["tmux", "ls"])
                 self.assertEqual(res.returncode, 1)
                 self.assertTrue(res.stderr.startswith("no server running on c1: "))
+                self.assertTrue(tmux_cli.absent(res))
+
+    def test_a_timeout_or_overflow_is_a_failed_call_not_an_absent_server(self):
+        for result in (TimeoutExpired("docker", 10), Overflow("output over 1 bytes")):
+            with self.subTest(result=result):
+                res = self.runner(result)(["tmux", "ls"])
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertTrue(res.stderr.startswith("docker exec in c1: "))
+                self.assertFalse(tmux_cli.absent(res))
 
     def test_other_failures_pass_through(self):
         res = self.runner((1, "can't find session: =w"))(["tmux", "ls"])

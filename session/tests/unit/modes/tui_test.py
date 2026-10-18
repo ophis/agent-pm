@@ -481,6 +481,11 @@ class AttachTest(Base):
                 self.assertIs(mode.marked_blocked(), blocked)
         self.assertEqual(self.process.calls.activity.call_count, 3)
 
+    def test_a_terminal_that_cannot_tell_is_not_marked_blocked(self):
+        mode = self.attach()
+        self.process.calls.activity.side_effect = SessionError("tmux: docker exec in c: timed out")
+        self.assertFalse(mode.marked_blocked())
+
     def test_another_sid_absent_or_unknown_is_no_tui_session(self):
         for sid in ("other", None):
             with self.subTest(sid=sid):

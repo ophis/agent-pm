@@ -11,6 +11,8 @@ from unittest import mock
 
 import ci_scope as scope
 
+from tests.guard_checks.credentials import INVENTORY
+
 MODULES = [
     "agent_pm.manager",
     "agent_pm.linear_orchestrator",
@@ -108,6 +110,8 @@ class Repository(unittest.TestCase):
         for paths, event, full in (
             (["README.md", "session/src/agent_pm/session/cli.py"], "pull_request", True),
             (["docs/tests.md", ".github/ci_scope.py"], "pull_request", True),
+            (["docs/credentials.md"], "pull_request", True),
+            (["README.md", "docs/credentials.md"], "pull_request", True),
             (["delegate/skills/act-as/SKILL.md"], "pull_request", True),
             (["manager/skills/manage/SKILL.md"], "pull_request", False),
             (["delegate/src/agent_pm/delegate/team/roles/engineer.md"], "pull_request", True),
@@ -117,6 +121,9 @@ class Repository(unittest.TestCase):
                 result = scope.classify(self.root, paths, event)
                 self.assertFalse(result["docs"])
                 self.assertEqual(result["full"], full)
+
+    def test_the_checked_inventory_is_never_docs_only(self):
+        self.assertIn(INVENTORY, scope.CHECKED_DOCS)
 
     def test_unsafe_or_non_normal_paths_are_full(self):
         for path in (

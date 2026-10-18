@@ -4,7 +4,21 @@ USER root
 ARG AGENT_UID
 ARG AGENT_GID
 RUN test "$(id -u agent):$(id -g agent)" = "${AGENT_UID}:${AGENT_GID}"
-RUN apt-get update && apt-get install -y --no-install-recommends tini python3 python3-venv && rm -rf /var/lib/apt/lists/*
+ARG GH_VERSION=2.102.0
+# /usr/local/bin precedes /usr/bin on PATH: the gh wrapper runs this gh, not a gh the user image installs.
+RUN apt-get update && apt-get install -y --no-install-recommends tini python3 python3-venv curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$(dpkg --print-architecture)" in \
+         amd64) arch=amd64 sum=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 ;; \
+         arm64) arch=arm64 sum=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484 ;; \
+         *) exit 1 ;; \
+       esac \
+    && name="gh_${GH_VERSION}_linux_${arch}" \
+    && curl -fsSL -o "/tmp/${name}.tar.gz" "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${name}.tar.gz" \
+    && echo "${sum}  /tmp/${name}.tar.gz" | sha256sum -c - \
+    && tar -xzf "/tmp/${name}.tar.gz" -C /usr/local/bin --strip-components=2 "${name}/bin/gh" \
+    && rm "/tmp/${name}.tar.gz" \
+    && chown root:root /usr/local/bin/gh && chmod 755 /usr/local/bin/gh
 COPY session/src /opt/agent-pm/session/src
 COPY utils/src /opt/agent-pm/utils/src
 COPY delegate/src /opt/agent-pm/delegate/src
