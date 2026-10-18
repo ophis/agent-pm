@@ -6,7 +6,7 @@ the pipes dies too; every wait is bounded.
 
 import queue
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Self
 
 from agent_pm.session.clients.base import Client
@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Host, Piped
 from agent_pm.session.modes.base import BaseMode, identity_drop
 from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.session.modes.tui import checked_name
 from agent_pm.utils import Display
 
 QUEUE_MAX = 64  # events and Stderr lines a pump queues before it waits for poll
@@ -50,7 +51,12 @@ class HeadlessMode(BaseMode):
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        return cls._prepare(spec, client, registry=registry, display=display)[0]
+        prepared, _, metadata = cls._prepare(
+            spec, client, registry=registry, host=host, display=display
+        )
+        if metadata is not None:
+            host.validate(prepared.spec.name or "", _launch(prepared))
+        return prepared
 
     @classmethod
     def _prepare(
@@ -59,16 +65,24 @@ class HeadlessMode(BaseMode):
         client: Client,
         *,
         registry: Registry,
+        host: Host,
         display: Display,
-    ) -> tuple[Prepared, Headless]:
+    ) -> tuple[Prepared, Headless, Mapping[str, str] | None]:
+        """metadata: a named run's, for its Host; None: a nameless run, as before Hosts piped."""
         run = client.headless()
         if run is None:
             raise cls._unsupported(spec)
-        cls._no_tui_keys(spec, display)
+        cls._no_tui_keys(spec, display, named=True)
         cls._selected(spec, client)
         drop = identity_drop(registry)
+        name, metadata = spec.name, None
+        if name is not None:
+            spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name))
         spec = cls._noted(spec, client)
-        return cls._launched(spec, run.launch, drop), run
+        prepared = cls._launched(spec, run.launch, drop, inherit=host._inherit_env)
+        if name is not None:
+            prepared = cls._host_resume(prepared, host, name)
+        return prepared, run, metadata
 
     @classmethod
     def start(
@@ -82,13 +96,13 @@ class HeadlessMode(BaseMode):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        prepared, run = cls._prepare(spec, client, registry=registry, display=display)
+        prepared, run, metadata = cls._prepare(
+            spec, client, registry=registry, host=host, display=display
+        )
         run.commit()
         record(prepared.info)
-        info = prepared.info
-        launch = Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)
         try:
-            piped = host.pipe(None, launch)
+            piped = host.pipe(prepared.spec.name, _launch(prepared), metadata=metadata)
             mode = cls(prepared, piped)
             out, err = piped.stdout, piped.stderr
             for pipe, events, eof in (
@@ -144,3 +158,8 @@ class HeadlessMode(BaseMode):
     def stop(self) -> None:
         self.closed = True
         self.piped.stop(ended=all(eof.is_set() for eof in self.eof))
+
+
+def _launch(prepared: Prepared) -> Launch:
+    info = prepared.info
+    return Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)

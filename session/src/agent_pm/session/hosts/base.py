@@ -39,6 +39,7 @@ from agent_pm.utils import (
     append_line,
     kill_group,
     printable_abs,
+    resume_command,
     thaw,
 )
 
@@ -190,6 +191,12 @@ class _LocalPiped(Piped):
     def stop(self, *, ended: bool) -> None:
         kill_group(self.proc, ended=ended, wait=self.stop_wait)
         self.close()
+
+
+def host_resume(host: Host, name: str | None, cwd: str) -> str | None:
+    """None: the client's."""
+    argv = None if name is None else host._resume_argv(name)
+    return resume_command(cwd, {}, argv) if argv else None
 
 
 def check_sid(name: str, process: Process | None, sid: str | None) -> None:

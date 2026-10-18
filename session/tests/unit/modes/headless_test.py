@@ -8,11 +8,14 @@ import io
 import os
 import sys
 import unittest
+import uuid
 from unittest import mock
 
+from agent_pm.session import SESSION_NAME_RULE
 from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import (
     Access,
+    ClientHome,
     ConfigError,
     Launch,
     Liveness,
@@ -198,7 +201,12 @@ class Start(Base):
     def test_refused_before_its_session_line_or_a_process(self):
         for client, fields, error, message in (
             (NoHeadless(), {}, ConfigError, "client 'stub' does not support headless mode"),
-            (StubClient(), {"name": "w1"}, ConfigError, "name: tui mode only"),
+            (
+                StubClient(),
+                {"name": "w 1"},
+                ConfigError,
+                f"name must match {SESSION_NAME_RULE}, got 'w 1'",
+            ),
             (StubClient(), {"events": "/e"}, ConfigError, "events: tui mode only"),
             (StubClient(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
             (
@@ -226,7 +234,7 @@ class Start(Base):
             {"broken": {"implementation": "agent_pm.session.clients.broken:BrokenClient"}}
         )
         for fields, message in (
-            ({"name": "w1", "flags": ("--resume",)}, "name: tui mode only"),
+            ({"events": "/e", "flags": ("--resume",)}, "events: tui mode only"),
             ({"flags": ("--resume",)}, "--resume: picks the session; use sid= or resume="),
             ({}, "[clients.broken].implementation: "),
         ):
@@ -295,12 +303,27 @@ class PipingHost(MemoryHost):
         return self.piped
 
 
+class HomedRun(StubRun):
+    def _home(self):
+        return ClientHome("f", "d", "HOME_DIR", "c", (("a", "b"),))
+
+
+class HomeHost(PipingHost):
+    _inherit_env = False
+
+    def _client_env(self, name, client, home, *, resume):
+        return {home.env: f"/state/{name}/{home.dir}"} if home else {}
+
+    def _resume_argv(self, name):
+        return ("agent-pm-session", "resume", name)
+
+
 class ThroughItsHost(Base):
-    def start_on(self, host, **fields):
+    def start_on(self, host, client_class=StubRun, **fields):
         spec = Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub", **fields)
         self.mode = HeadlessMode.start(
             spec,
-            StubClient(Launch(NOTHING, transcript="/t.jsonl")),
+            StubClient(Launch(NOTHING, transcript="/t.jsonl"), run=client_class),
             registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=host,
@@ -334,6 +357,54 @@ class ThroughItsHost(Base):
         self.assertEqual((piped.closes, piped.waits), (1, [0, 1, 1, 1]))
         mode.stop()
         self.assertEqual(piped.stops, [True])
+
+    def test_a_named_headless_spec_gets_the_hosts_client_env_and_metadata(self):
+        host = HomeHost(FakePiped())
+        with (
+            mock.patch.object(uuid, "uuid4", return_value=uuid.UUID(int=7)),
+            mock.patch.dict(os.environ, {"HM_AMBIENT": "1"}),
+        ):
+            mode = self.start_on(host, name="w1", resume=True, client_class=HomedRun)
+        ((name, launch, metadata),) = host.pipes
+        self.assertEqual((name, StubRun.specs[-1].env), ("w1", {"HOME_DIR": "/state/w1/d"}))
+        self.assertNotIn("HM_AMBIENT", launch.env)
+        self.assertEqual(
+            dict(metadata),
+            {
+                "sid": SID,
+                "client": "stub",
+                "generation": uuid.UUID(int=7).hex,
+                "home_field": "f",
+                "home_dir": "d",
+                "credential": "c",
+                "home_files": '{"a": "b"}',
+                "resume": "1",
+            },
+        )
+        resume = f"cd {self.dir} && agent-pm-session resume w1"
+        self.assertEqual((mode.prepared.info.resume, self.recorded[0].resume), (resume, resume))
+
+    def test_a_nameless_spec_gets_no_host_env_metadata_or_resume(self):
+        host = HomeHost(FakePiped())
+        self.start_on(host, client_class=HomedRun)
+        ((name, launch, metadata),) = host.pipes
+        self.assertEqual((name, metadata, self.recorded[0].resume), (None, None, ""))
+        self.assertEqual(StubRun.specs[-1].env, {})
+
+    def test_preflight_validates_a_named_run_on_its_host(self):
+        for name, validated in ((None, []), ("w1", ["w1"])):
+            with self.subTest(name=name):
+                host = HomeHost(FakePiped())
+                spec = Spec(
+                    workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub", name=name
+                )
+                HeadlessMode.preflight(
+                    spec,
+                    StubClient(Launch(NOTHING), run=HomedRun),
+                    registry=self.session_cls._config().registry,
+                    host=host,
+                )
+                self.assertEqual([c.args[0] for c in host.calls.validate.call_args_list], validated)
 
     def test_the_event_queue_is_bounded(self):
         mode = self.start_on(PipingHost(FakePiped()))

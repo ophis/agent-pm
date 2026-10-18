@@ -15,9 +15,11 @@ from agent_pm.session.engine.types import (
     Reply,
     TurnEnd,
 )
+from agent_pm.utils import docker_home
 
 from session.tests.case import Case
 from session.tests.unit.clients.claude.support import (
+    CONFIG,
     INIT,
     NOW,
     SID,
@@ -30,6 +32,7 @@ from session.tests.unit.clients.claude.support import (
     stream_line,
     text,
     tool,
+    tui_launch,
 )
 
 CLAUDE = ("--permission-mode", "auto", "--strict-mcp-config")
@@ -506,3 +509,14 @@ class SuppliedPolicy(Base):
         launch = client.headless().launch(spec)
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)
+
+
+class SharedConversationTest(Base):
+    def test_headless_and_tui_share_their_container_home_and_transcript(self):
+        client = ClaudeClient(CONFIG)
+        self.assertEqual(client.headless()._home(), client.tui()._home())
+        for env in ({}, {"CLAUDE_CONFIG_DIR": docker_home("w", "claude")}):
+            with self.subTest(env=env):
+                headless = self.launch(env=env).transcript
+                self.assertEqual(headless, tui_launch(self.work, env=env).transcript)
+                self.assertTrue(headless.startswith(env.get("CLAUDE_CONFIG_DIR", self.config_dir)))

@@ -6,11 +6,21 @@ SessionEvents, Stderr and ClientBound (JsonHeadless: parse(record) per JSON line
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 
-from agent_pm.session.engine.types import ClientBound, Launch, SessionEvent, Spec, Stderr
+from agent_pm.session.engine.types import (
+    ClientBound,
+    ClientHome,
+    Launch,
+    SessionEvent,
+    Spec,
+    Stderr,
+)
 from agent_pm.utils import json_records
 
 
 class Headless(ABC):
+    def _home(self) -> ClientHome | None:
+        return None
+
     def commit(self) -> None:
         return None
 
