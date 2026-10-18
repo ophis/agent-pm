@@ -67,7 +67,7 @@ the key once to check it is not empty, and only then prints its success line; ot
 exits non-zero saying whether it changed the item, what is done and what is not: rerun the
 same command to finish. Then it looks up the App's bot user, `agent-pm-bot[bot]`, on GitHub's
 public user API (no credential sent; needs network) and keeps its ID in the broker-only keychain
-item `agent-pm-github-users`, for the containers' git identity. The broker is trusted by its code requirement (an ad hoc
+item `agent-pm-github-users`, for the containers' git identity ([What a container gets](#what-a-container-gets)). The broker is trusted by its code requirement (an ad hoc
 signature's is its cdhash), not its path: after reinstalling it, rerun `login github agent-pm-bot`.
 The App must be private (installable only on your account): every session gets a token for every
 repository of every installation.
@@ -217,6 +217,21 @@ trust prompt and answers one sentence.
 `touch /tmp/fake-docker-ran` first on `PATH`, `"$B" build --agent-pm "$PKG"` still
 reports `"rebuilt":false` and `/tmp/fake-docker-ran` does not exist. Restore
 `~/.docker/config.json` after.
+
+## What a container gets
+
+Everything a worker container gets, each row pointing at its source; the source holds the exact values.
+
+| What | Source | Summary |
+|---|---|---|
+| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session` and `agent-pm.generation` labels |
+| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
+| Mounts | `create`, `mounts.go` | the workspace volume at cwd ([Workspace volumes](#workspace-volumes)); Claude: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
+| Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
+| Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
+| Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer, `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` ([Log in](#log-in)) |
+| Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code ([Build](#build)) |
+| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the allowed plugins ([Plugins](#plugins)), Codex, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Refusals
 
