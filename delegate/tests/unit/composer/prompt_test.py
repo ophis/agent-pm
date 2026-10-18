@@ -443,9 +443,7 @@ class Prompt(Fake):
             ),
             "`[agent-pm-progress:start] <what that line asks you to report>`",
             "all background work and every agent you spawned have finished",
-            (
-                "end your last reply with one fenced code block whose info string is `agent-pm-outcome`"
-            ),
+            ("your last reply is one fenced code block whose info string is `agent-pm-outcome`"),
             "one JSON object of the fields in [Output](#output)",
             "`deliverable_file`",
         ):
@@ -955,7 +953,9 @@ class Real(RealConfig):
             self.assertEqual(run.language, "Chinese")
             self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
             self.assertIn("are in Chinese", prompt, role)
-            self.assertEqual(prompt.count("is a point to tell the user your progress"), 1, role)
+            self.assertEqual(
+                prompt.count("at each `[agent-pm-progress:<name>] …` line in your steps"), 1, role
+            )
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role, task in runs():
