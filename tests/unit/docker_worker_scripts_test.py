@@ -350,6 +350,27 @@ class CodexCIReload(Case):
         for stream in (process.stdin, process.stdout, process.stderr):
             stream.close.assert_called()
 
+    def test_reload_retains_image_node_path_without_personal_environment(self):
+        code = self.reload_code()
+        documents = [
+            json.loads(document)
+            for _ in range(2)
+            for document in self.worker["synthetic_credentials"]()
+        ]
+        with (
+            mock.patch.dict(os.environ, {"PATH": "/personal/bin", "NODE_OPTIONS": "private"}),
+            mock.patch("runpy.run_path", return_value={"inject_codex": mock.Mock()}),
+            mock.patch("subprocess.Popen", side_effect=FileNotFoundError("fake start")) as start,
+            self.assertRaises(FileNotFoundError),
+        ):
+            code["run_reload"](Path(self.home), *documents)
+        environment = start.call_args.kwargs["env"]
+        self.assertIn("/usr/local/bin", environment["PATH"].split(":"))
+        self.assertNotIn("/personal/bin", environment["PATH"])
+        self.assertNotIn("NODE_OPTIONS", environment)
+        self.assertEqual(environment["HOME"], self.home)
+        self.assertEqual(environment["CODEX_HOME"], self.home)
+
     def test_ci_generates_distinct_managed_synthetic_values_without_date_changes(self):
         self.assertTrue("synthetic_credentials" in self.worker)
         first, second = self.worker["synthetic_credentials"]()

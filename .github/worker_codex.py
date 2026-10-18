@@ -257,7 +257,7 @@ def run_reload(home, initial, replacement, near, adopted):
         ['codex', '-c', 'cli_auth_credentials_store="file"', 'app-server', '--listen', 'stdio://'],
         cwd=home,
         env={'HOME': str(home), 'CODEX_HOME': str(home),
-             'PATH': '/opt/agent-pm/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+             'PATH': '/opt/agent-pm/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
     )
     try:
