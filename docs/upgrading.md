@@ -82,7 +82,7 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
 6. **Do the [Upgrading](#upgrading-steps) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
 7. **Run the [Smoke checklist](#smoke-checklist).**
-8. **Install launchd** by [Setup](board.md#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the checkouts and temp files `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
+8. **Install launchd** by [Setup](board.md#setup) step 4 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the checkouts and temp files `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
 
 `show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing until `show`.
 
