@@ -31,7 +31,6 @@ ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
 import functools
 import os
 import re
-import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -51,7 +50,16 @@ from agent_pm.linear_orchestrator.engine.types import (
     LinearError,
     Unavailable,
 )
-from agent_pm.utils import GUARD, SHORT, GitError, StatusState, common_dir, one_line, under
+from agent_pm.utils import (
+    GUARD,
+    SHORT,
+    GitError,
+    StatusState,
+    common_dir,
+    one_line,
+    remove_tree,
+    under,
+)
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=2)
@@ -413,7 +421,7 @@ class Pruner:
         try:
             self.delegate(ident).clean(workdir, dry=self.dry)
             if not self.dry:
-                shutil.rmtree(workdir)
+                remove_tree(workdir)
         except (config.ConfigError, DelegateConfigError) as error:
             self.say("prune-skip", ident, once=True, reason=one_line(error))
             return

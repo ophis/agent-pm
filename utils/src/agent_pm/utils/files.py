@@ -2,6 +2,7 @@ import contextlib
 import errno
 import fcntl
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -164,6 +165,37 @@ def drop_stale(directory: str, keep: Container[str] = ()) -> list[OSError]:
     except OSError as error:
         errors.append(error)
     return errors
+
+
+def remove_tree(path: str, *, dir_fd: int | None = None) -> None:
+    """shutil.rmtree of `path` (relative to `dir_fd`); refused (PermissionError), it gives the user
+    rwx on each directory of the tree, never following a link, and tries once more.
+    """
+    try:
+        shutil.rmtree(path, dir_fd=dir_fd)
+    except PermissionError:
+        _owner_rwx(path, dir_fd)
+        shutil.rmtree(path, dir_fd=dir_fd)
+
+
+def _owner_rwx(name: str, dir_fd: int | None) -> None:
+    """Best effort: a directory it cannot open or change is skipped, its subtree with it."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError:
+        return
+    try:
+        mode = os.fstat(fd).st_mode
+        if mode & stat.S_IRWXU != stat.S_IRWXU:
+            os.fchmod(fd, stat.S_IMODE(mode) | stat.S_IRWXU)
+        with os.scandir(fd) as entries:
+            subdirs = [e.name for e in entries if e.is_dir(follow_symlinks=False)]
+        for subdir in subdirs:
+            _owner_rwx(subdir, fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def sync_directory(path: str | Path) -> None:

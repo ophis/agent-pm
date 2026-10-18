@@ -20,7 +20,6 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome, Spec
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
@@ -407,6 +406,18 @@ def tree(top):
     return found
 
 
+def go_cache(root):
+    """A Go module cache below `root`: read-only directories holding a read-only file."""
+    module = os.path.join(root, "gopath", "mod", "github.com", "mattn", "go-shellwords@v1.0.12")
+    os.makedirs(module)
+    with open(os.path.join(module, "go.mod"), "w") as file:
+        file.write("module x\n")
+    os.chmod(os.path.join(module, "go.mod"), 0o444)
+    while module != os.path.join(root, "gopath"):
+        os.chmod(module, 0o555)
+        module = os.path.dirname(module)
+
+
 class CleanTest(HarnessCase):
     def agent(self):
         return Layout(self.work).agent
@@ -486,6 +497,18 @@ class CleanTest(HarnessCase):
         self.assertFalse(HarnessDelegate.clean(self.work, scratch=True))
         self.assertFalse(HarnessDelegate.clean(os.path.join(self.home, "never"), scratch=True))
 
+    def test_clean_and_scratch_delete_a_read_only_go_module_cache(self):
+        for scratch, left in ((True, ["prd.md"]), (False, None)):
+            with self.subTest(scratch=scratch):
+                self.make()
+                go_cache(os.path.join(self.agent(), "tmp"))
+                go_cache(os.path.join(self.agent(), "src", "o", "r-TASK-1"))
+                open(os.path.join(self.agent(), "prd.md"), "w").close()
+                self.assertTrue(HarnessDelegate.clean(self.work, scratch=scratch))
+                self.assertEqual(
+                    os.listdir(self.agent()) if os.path.lexists(self.agent()) else None, left
+                )
+
     def test_scratch_refuses_a_live_run_or_one_whose_liveness_is_unknown(self):
         self.make()
         os.makedirs(os.path.join(self.agent(), "tmp"))
@@ -564,14 +587,14 @@ class CleanTest(HarnessCase):
         self.make()
         held = []
 
-        def rmtree(path):
+        def rmtree(path, **_kwargs):
             with open(Layout(self.work).run + "/delegate.lock", "rb") as file:
                 try:
                     fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     held.append(path)
 
-        with mock.patch.object(harness_delegate.shutil, "rmtree", side_effect=rmtree):
+        with mock.patch.object(shutil, "rmtree", side_effect=rmtree):
             HarnessDelegate.clean(self.work)
         self.assertEqual(held, [self.agent()])
 
@@ -647,11 +670,20 @@ class RunEndTest(HarnessCase):
         view.run()
         self.assertEqual(sorted(os.listdir(self.tmp)), ["deep", "deliverable.md", "link", "msg"])
 
+    def test_a_read_only_go_module_cache_is_cleared_too(self):
+        for kept, left in ((True, ["deliverable.md"]), (False, None)):
+            with self.subTest(kept=kept):
+                view = self.kept(task="echo") if kept else self.make()
+                self.fill()
+                go_cache(self.tmp)
+                view.run()
+                self.assertEqual(os.listdir(self.tmp) if os.path.lexists(self.tmp) else None, left)
+
     def test_a_removal_error_is_printed_and_the_result_kept(self):
         view = self.make()
         self.fill()
         with (
-            mock.patch.object(harness_delegate.shutil, "rmtree", side_effect=PermissionError("no")),
+            mock.patch.object(shutil, "rmtree", side_effect=PermissionError("no")),
             mock.patch("sys.stderr", new_callable=io.StringIO) as err,
         ):
             result = view.run()

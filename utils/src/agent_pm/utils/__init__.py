@@ -34,6 +34,7 @@ from agent_pm.utils.files import (
     read_beneath,
     read_confined,
     read_regular,
+    remove_tree,
     save,
     sync_directory,
 )
@@ -175,6 +176,7 @@ __all__ = [
     "read_resources",
     "real_dirs",
     "redact",
+    "remove_tree",
     "renamed_key",
     "repo_slug",
     "resolve",
