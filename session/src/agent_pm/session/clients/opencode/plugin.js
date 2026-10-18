@@ -14,6 +14,9 @@ delete process.env.AGENT_PM_OPENCODE_SESSION;
 const children = new Set();
 const seen = new Set();
 const TOOL = new Set(["running", "completed", "error"]);
+const REPLY_WAIT = 5000; // ms an idle waits for its turn's final message to be saved
+const REPLY_POLL = 200;
+let turnUser = null; // the root's latest user message id
 let busy = false;
 let failed = false;
 let started = false;
@@ -52,20 +55,42 @@ function call(label, fields = {}) {
   chain = chain.then(async () => run(label, { session_id: session, ...(await extra) }));
 }
 
-async function reply(client) {
-  const found = await client.session.messages({ path: { id: root } });
-  const list = Array.isArray(found) ? found : found?.data;
-  if (!Array.isArray(list)) return "";
-  const last = list.findLastIndex((m) => m?.info?.role === "user");
-  for (let i = list.length - 1; i > last; i--) {
-    if (list[i]?.info?.role !== "assistant") continue;
-    const text = (list[i].parts ?? [])
-      .filter((p) => p?.type === "text" && typeof p.text === "string" && !p.synthetic && !p.ignored)
-      .map((p) => p.text)
-      .join("\n");
-    if (text.trim()) return text;
+function texts(message) {
+  return (message?.parts ?? [])
+    .filter((p) => p?.type === "text" && typeof p.text === "string" && !p.synthetic && !p.ignored)
+    .map((p) => p.text)
+    .join("\n");
+}
+
+// The turn's messages: those after its user message (unknown: after the last one), up to the
+// next; null while that message is not saved yet.
+function slice(list, user) {
+  const start = user ? list.findIndex((m) => m?.info?.id === user) : list.findLastIndex((m) => m?.info?.role === "user");
+  if (user && start < 0) return null;
+  const rest = list.slice(start + 1);
+  const end = rest.findIndex((m) => m?.info?.role === "user");
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+// The turn's newest assistant text, read until its last assistant message is saved: completed
+// with text, or failed. An idle can come before that save; after REPLY_WAIT, the best found.
+async function reply(client, user) {
+  const until = Date.now() + REPLY_WAIT;
+  let best = "";
+  for (;;) {
+    try {
+      const found = await client.session.messages({ path: { id: root } });
+      const list = Array.isArray(found) ? found : found?.data;
+      const turn = Array.isArray(list) ? slice(list, user) : null;
+      const answers = (turn ?? []).filter((m) => m?.info?.role === "assistant");
+      best = answers.map(texts).findLast((t) => t.trim()) ?? best;
+      const last = answers.at(-1);
+      const saved = typeof last?.info?.time?.completed === "number" && texts(last).trim();
+      if (turn && last && (saved || last.info.error != null)) return best;
+    } catch {}
+    if (Date.now() >= until) return best;
+    await new Promise((resolve) => setTimeout(resolve, REPLY_POLL));
   }
-  return "";
 }
 
 function owned(session) {
@@ -98,7 +123,7 @@ function handle(event, client) {
       busy = false;
       // A fatal error's turn idles twice (its halt, then its run's end); only a busy clears it.
       if (failed) return;
-      const text = reply(client).catch(() => "");
+      const text = reply(client, turnUser).catch(() => "");
       call("session.idle", text.then((last) => ({ last_assistant_message: last })));
       return;
     }
@@ -114,6 +139,9 @@ function handle(event, client) {
     case "permission.replied":
       if (!owned(p.sessionID)) return;
       call("permission.replied", { reply: p.reply ?? "" });
+      return;
+    case "message.updated":
+      if (p.sessionID === root && p.info?.role === "user" && p.info.id) turnUser = p.info.id;
       return;
     case "message.part.updated": {
       const part = p.part ?? {};

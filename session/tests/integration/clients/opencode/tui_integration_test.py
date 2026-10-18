@@ -179,6 +179,26 @@ class TuiSessions(Case):
         )
         self.assertEqual(handle.reply, "two")
 
+    def test_a_reply_saved_after_idle_is_still_read(self):
+        self.scene([[{"text": "saved late", "late": 800}]])
+        handle, stream = self.start()
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("saved late"))
+        self.assertEqual(handle.reply, "saved late")
+
+    def test_a_late_reply_is_not_the_previous_turns(self):
+        self.scene([[{"text": "first answer"}], [{"text": "second answer", "late": 800}]])
+        handle, stream = self.start()
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("first answer"))
+        handle.send("next")
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("second answer"))
+
+    def test_a_turn_never_saved_ends_after_the_wait(self):
+        self.scene([[{"unsaved": True}]])
+        _, stream = self.start()
+        started = time.monotonic()
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd(""))
+        self.assertGreater(time.monotonic() - started, 3)
+
     def test_a_bash_ask_blocks_until_answered(self):
         self.scene([[{"bash": "rm -rf build"}, {"text": "cleaned"}]])
         handle, stream = self.start()

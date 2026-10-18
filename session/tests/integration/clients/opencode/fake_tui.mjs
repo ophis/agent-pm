@@ -2,7 +2,8 @@
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
 // {text}, {tool}, {bash, child?} (asks unless --auto, then waits for the stdin line "allow"),
-// {error, recover?} (recovered: the turn goes on, as after a compaction), {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
+// {error, recover?} (recovered: the turn goes on, as after a compaction), {text, late: ms} (saved
+// ms after the turn's idle), {unsaved} (an assistant message never completed), {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -94,10 +95,15 @@ function asks(command) {
 async function step(item) {
   if ("text" in item) {
     const text = { id: `prt_${++part}`, sessionID: native, type: "text", text: item.text };
-    messages.push({ info: { role: "assistant" }, parts: [text] });
+    const message = assistant([text]);
+    if (item.late) late.push([item.late, message]);
+    else messages.push(message);
     await emit("message.part.updated", { sessionID: native, part: text, time: Date.now() });
+  } else if ("unsaved" in item) {
+    messages.push({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() } }, parts: [] });
   } else if ("tool" in item) {
     await tool(native, item.tool);
+    messages.push(assistant([{ type: "tool", tool: item.tool }]));
   } else if ("bash" in item) {
     const session = item.child ? CHILD : native;
     if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
@@ -133,13 +139,22 @@ async function step(item) {
   return false;
 }
 
+function assistant(parts) {
+  const now = Date.now();
+  return { info: { id: `msg_${++part}`, role: "assistant", time: { created: now, completed: now } }, parts };
+}
+
+const late = []; // [ms after the turn's idle, a message saved then]
 async function turn(text, steps, first) {
   if (first && !opts.session) await emit("session.created", { info: { id: native } });
-  messages.push({ info: { role: "user" }, parts: [{ type: "text", text }] });
+  const user = { id: `msg_${++part}`, role: "user", time: { created: Date.now() } };
+  messages.push({ info: user, parts: [{ type: "text", text }] });
+  await emit("message.updated", { sessionID: native, info: user });
   await emit("session.status", { sessionID: native, status: { type: "busy" } });
   for (const item of steps) if (await step(item)) break;
   await emit("session.status", { sessionID: native, status: { type: "idle" } });
   await emit("session.idle", { sessionID: native });
+  for (const [ms, message] of late.splice(0)) setTimeout(() => messages.push(message), ms);
 }
 
 await init();
