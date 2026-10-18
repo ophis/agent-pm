@@ -65,7 +65,9 @@ from agent_pm.utils import run_git as git
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 DENIED = re.compile(
-    r"\b403\b|denied|could not read Username|Authentication failed|terminal prompts disabled"
+    r"remote: Permission to \S+ denied to |remote: Write access to repository not granted"
+    r"|returned error: 403$|fatal: could not read Username for |fatal: Authentication failed for ",
+    re.M,
 )
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 

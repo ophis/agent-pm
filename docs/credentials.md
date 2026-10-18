@@ -33,7 +33,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:149`, `manager/src/agent_pm/manager/engine/crew.py:541` |
+| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:151`, `manager/src/agent_pm/manager/engine/crew.py:541` |
 | Minimum permission | an account that can push to and open pull requests on every target repo; `gh auth login`'s scopes (a classic token needs at least `repo`, `read:org`, `gist`) | [gh auth login] |
 | Stored at | the system credential store, else a plain-text file; `gh auth status` says which | [gh auth login] |
 | Readers | any process running as the user (`gh auth token`); never mounted into a container | [gh auth login]; [What a container cannot reach](#what-a-container-cannot-reach) |

@@ -4,7 +4,6 @@ import io
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import unittest
 import unittest.mock
@@ -21,6 +20,7 @@ from delegate.tests.repo import (
     SHA,
     Base,
     Fake,
+    done,
     fail,
     info,
     ok,
@@ -741,8 +741,7 @@ class Worktree(Base):
                 shutil.rmtree(self.wt)
 
     def test_a_rejected_ref_still_shows_the_app_can_push(self):
-        rejected = subprocess.CompletedProcess(
-            [],
+        rejected = done(
             1,
             "To https://github.com/o/n.git\n!\tHEAD:refs/heads/TASK-1-x\t[rejected] "
             "(non-fast-forward)\nDone\n",
@@ -760,27 +759,30 @@ class Worktree(Base):
             "fatal: could not read Username for 'https://github.com': No such device or address\n",
             "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
             "fatal: Authentication failed for 'https://github.com/o/n.git/'\n",
+            "remote: Write access to repository not granted.\nfatal: unable to access "
+            "'https://github.com/o/n.git/': The requested URL returned error: 403\n",
         ):
             with self.subTest(stderr=stderr):
-                denied = subprocess.CompletedProcess([], 128, "", stderr)
-                (code, out, err), run = self.app_worktree(info(), (dry_push, denied))
+                (code, out, err), run = self.app_worktree(info(), (dry_push, done(128, "", stderr)))
                 self.assertEqual((code, json.loads(out)["push"]), (0, False), err)
                 self.assertTrue(run.ran("gh", "repo", "clone"))
                 shutil.rmtree(self.wt)
 
     def test_another_dry_run_push_failure_is_a_command_error(self):
-        failed = subprocess.CompletedProcess(
-            [],
-            128,
-            "",
-            "fatal: unable to access 'https://x:secret@github.com/o/n.git/': "
-            "Could not resolve host: github.com\n",
-        )
-        (code, out, err), _ = self.app_worktree(info(), (dry_push, failed))
-        self.assertEqual((code, out), (1, ""))
-        self.assertIn("git push --dry-run", err)
-        self.assertIn("Could not resolve host", err)
-        self.assertNotIn("secret", err)
+        """A repo or path naming `denied` or `403` is no denial."""
+        for url in ("https://x:secret@github.com/o/n.git/", "https://github.com/o/denied-403.git/"):
+            with self.subTest(url=url):
+                failed = done(
+                    128,
+                    "",
+                    f"fatal: unable to access '{url}': Could not resolve host: github.com\n",
+                )
+                (code, out, err), _ = self.app_worktree(info(), (dry_push, failed))
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn("git push --dry-run", err)
+                self.assertIn("Could not resolve host", err)
+                self.assertNotIn("secret", err)
+                shutil.rmtree(self.wt)
 
     def test_a_user_token_never_runs_a_dry_run_push(self):
         for push in (True, False):
