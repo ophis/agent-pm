@@ -57,6 +57,9 @@ func (r Runtime) download(ctx context.Context, raw string, limit int64) ([]byte,
 		return nil, errors.New("Codex registry unavailable")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errReleaseMissing
+	}
 	if resp.StatusCode != http.StatusOK || resp.ContentLength > limit {
 		return nil, errors.New("Codex registry response rejected")
 	}
@@ -80,6 +83,14 @@ func (r Runtime) metadata(ctx context.Context, name, version string) (packageMet
 }
 
 func (r Runtime) packageArchive(ctx context.Context, m packageMetadata, native bool) ([]byte, error) {
+	entry := ""
+	if native {
+		entry = nativeEntry
+	}
+	return r.packageEntry(ctx, m, entry)
+}
+
+func (r Runtime) packageEntry(ctx context.Context, m packageMetadata, entry string) ([]byte, error) {
 	if !strings.HasPrefix(m.Dist.Integrity, "sha512-") {
 		return nil, errors.New("Codex package requires SHA-512 integrity")
 	}
@@ -95,7 +106,7 @@ func (r Runtime) packageArchive(ctx context.Context, m packageMetadata, native b
 	if !bytes.Equal(got[:], want) {
 		return nil, errors.New("Codex package integrity mismatch")
 	}
-	return readArchive(b, native)
+	return readEntryBounded(b, entry, maxExpanded)
 }
 
 func (r Runtime) Install(ctx context.Context, version string, update bool) (Installation, error) {

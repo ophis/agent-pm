@@ -17,6 +17,14 @@ func readArchive(b []byte, native bool) ([]byte, error) {
 }
 
 func readArchiveBounded(b []byte, native bool, limit int64) ([]byte, error) {
+	entry := ""
+	if native {
+		entry = nativeEntry
+	}
+	return readEntryBounded(b, entry, limit)
+}
+
+func readEntryBounded(b []byte, entry string, limit int64) ([]byte, error) {
 	z, err := gzip.NewReader(bytes.NewReader(b))
 	if err != nil {
 		return nil, errors.New("invalid Codex gzip archive")
@@ -48,7 +56,7 @@ func readArchiveBounded(b []byte, native bool, limit int64) ([]byte, error) {
 			}
 			continue
 		}
-		if name == nativeEntry && native {
+		if name == entry && entry != "" {
 			if h.Size == 0 || h.Mode&0111 == 0 {
 				return nil, errors.New("Codex native executable is empty or not executable")
 			}
@@ -61,7 +69,7 @@ func readArchiveBounded(b []byte, native bool, limit int64) ([]byte, error) {
 	if _, err := io.Copy(io.Discard, expanded); err != nil || expanded.N == 0 {
 		return nil, errors.New("Codex expanded archive exceeds limit or is corrupt")
 	}
-	if native && executable == nil {
+	if entry != "" && executable == nil {
 		return nil, errors.New("Codex native executable missing")
 	}
 	return executable, nil
