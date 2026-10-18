@@ -1,0 +1,87 @@
+{
+  "source": "user_provided_redacted_manager_results",
+  "probe_revision": "a24b8919f2b75c052a1c82c52b66d86a3228294f",
+  "platform": "macOS Apple silicon with Docker Desktop",
+  "records_in_execution_order": [
+    {
+      "helper_exit_code": 0,
+      "record": {
+        "date": "2026-10-18T04:46:44.669266+00:00",
+        "status": "source_only",
+        "fixed_candidate": "0.163.0",
+        "source_commit": "83086188ae0614bd882818ff1aa23f3194962012",
+        "latest_stable": "0.163.0",
+        "latest_same_minor": "0.163.0",
+        "published": "2026-10-15T21:37:11.083Z",
+        "allowed_versions": [],
+        "refresh_lead_seconds": null,
+        "live_refresh_count": 0
+      }
+    },
+    {
+      "helper_exit_code": 0,
+      "record": {
+        "recorded_at": "2026-10-18T04:46:46.496181+00:00",
+        "probe": "live_reload",
+        "version": "0.163.0",
+        "status": "live_reload_observed",
+        "container_image_id": "sha256:0979a801ea59c7ef5e4f124b7d9dbf060007172e631490a4a1355daefdb94361",
+        "initial_injection": {
+          "probe": "empty-refresh",
+          "status": "injected",
+          "exit_code": 0,
+          "refresh_value_count": 0
+        },
+        "started_at": "2026-10-18T04:46:44.942564+00:00",
+        "replacement_injection": {
+          "probe": "empty-refresh",
+          "status": "injected",
+          "exit_code": 0,
+          "refresh_value_count": 0
+        },
+        "exit_code": 0,
+        "cleanup_status": "exited",
+        "error": null,
+        "initial_cache_matched": true,
+        "old_cache_retained_after_replace": true,
+        "replacement_loaded": true,
+        "next_rpc_id": null,
+        "reload_request_count": 1,
+        "notification_count": 3,
+        "refresh_reload_elapsed_seconds": 1.467578,
+        "observed_refresh_lead_seconds": 2,
+        "host_refresh": {
+          "probe": "host_refresh",
+          "version": "0.163.0",
+          "status": "rotation_observed",
+          "started_at": "2026-10-18T04:46:45.016728+00:00",
+          "exit_code": 0,
+          "cleanup_status": "exited",
+          "error": null,
+          "proactive_request_count": 1,
+          "notification_count": 2,
+          "account_read_completed": true,
+          "ended_at": "2026-10-18T04:46:46.130462+00:00",
+          "signature_status": "not_verified",
+          "access_changed": true,
+          "refresh_changed": true,
+          "same_account": true,
+          "expiry_advanced": true,
+          "expiry_future": true,
+          "last_refresh_advanced": true,
+          "before_access_expires_at": "2026-10-28T04:23:45+00:00",
+          "access_expires_at": "2026-10-28T04:46:45+00:00",
+          "before_last_refresh_at": "2026-10-18T04:23:45.664499+00:00",
+          "last_refresh_at": "2026-10-18T04:46:45.500051+00:00"
+        },
+        "ended_at": "2026-10-18T04:46:46.496109+00:00",
+        "same_process_connection": true
+      }
+    }
+  ],
+  "observed_live_refresh_count": 3,
+  "measurement_scope": "one native app-server connection; host-refresh, carrier replacement, cache checks and native reload; monotonic observed sample, not worst-case guarantee",
+  "excluded_acceptance": "independent-host concurrency moved to TASK-650; lifecycle, residue and Host.pipe/manifest/hook acceptance moved to PR408/409/411 post-M4-release live checklists",
+  "selected_scheme": "A",
+  "verdict_scope": "user-2026-10-18-live-reload-version-lead-only"
+}

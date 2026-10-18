@@ -122,6 +122,6 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, risks |
-| [Broker Codex](docs/docker-codex.md) | pinned native installation, independent browser login and status |
+| [Docker Codex](docs/docker-codex.md) | broker operations, source evidence and narrowed plan A verdict |
 | [Docker broker protocol](docs/docker-broker-protocol.md) | broker schemas, errors and shared fixtures (developers) |
 | [Docker relay protocol](docs/docker-relay-protocol.md) | hook relay wire format and shared fixtures (developers) |
