@@ -133,40 +133,153 @@ def exec_command(container):
     ]
 
 
+ERROR_ITEM_TEMPLATES = (
+    (
+        "diagnostic_log_write",
+        "app-server/src/log_write_warning.rs:14",
+        re.escape(
+            "Codex couldn't save diagnostic logs to its local database. "
+            "Run `codex doctor` for diagnostics."
+        ),
+    ),
+    (
+        "diagnostic_log_write",
+        "app-server/src/log_write_warning.rs:14",
+        re.escape(
+            "Codex couldn't save diagnostic logs to its local database. "
+            "Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics."
+        ),
+    ),
+    (
+        "under_development_features",
+        "features/src/lib.rs:2136",
+        r"Under-development features enabled: .+\. Under-development features are incomplete "
+        r"and may behave unpredictably\. To suppress this warning, set "
+        r"`suppress_unstable_features_warning = true` in .+\.",
+    ),
+    (
+        "model_metadata_fallback",
+        "core/src/session/turn_context.rs:1401",
+        r"Model metadata for `[^`]+` not found\. Defaulting to fallback metadata; "
+        r"this can degrade performance and cause issues\.",
+    ),
+    (
+        "transport_fallback",
+        "core/src/responses_retry.rs:133",
+        r"Falling back from WebSockets to HTTPS transport\. .+",
+    ),
+    (
+        "event_stream_lag",
+        "exec/src/lib.rs:1668",
+        r"in-process app-server event stream lagged; dropped [0-9]+ events",
+    ),
+    (
+        "model_rerouted",
+        "exec/src/event_processor_with_jsonl_output.rs:499",
+        r"model rerouted: .+ -> .+ \(.+\)",
+    ),
+    (
+        "credential_masking_sandbox_disabled",
+        "core/src/config/mod.rs:4876",
+        re.escape(
+            "Credential masking is inactive because sandboxing is disabled. Commands will receive "
+            "unmasked credentials. Select a sandboxed permission profile to use credential masking."
+        ),
+    ),
+    (
+        "credential_masking_key_conflict",
+        "core/src/config/mod.rs:4894",
+        re.escape(
+            "Credential masking is inactive because shell environment overrides contain conflicting "
+            "case-insensitive provider keys. Commands will receive unmasked credentials. Remove the "
+            "conflicting entries from `shell_environment_policy.set`."
+        ),
+    ),
+    (
+        "credential_masking_proxy_disabled",
+        "core/src/config/mod.rs:4898",
+        re.escape(
+            "Credential masking is inactive because the network proxy is disabled. Commands will "
+            "receive unmasked credentials. Enable `features.network_proxy` or configure managed "
+            "network requirements to use credential masking."
+        ),
+    ),
+    (
+        "hook_trust_bypassed",
+        "core/src/config/mod.rs:3431",
+        re.escape(
+            "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review "
+            "for this invocation."
+        ),
+    ),
+    (
+        "requirements_value_fallback",
+        "core/src/config/mod.rs:2318",
+        r"Configured value for `[^`]+` is disallowed by requirements; falling back to required "
+        r"value .+\. Details: .+",
+    ),
+    (
+        "requirements_profile_fallback",
+        "core/src/config/mod.rs:5025",
+        r"Configured value for `permission_profile` is disallowed by requirements; falling back "
+        r"from `[^`]+` to required value `[^`]+`\.",
+    ),
+    (
+        "execpolicy_parse",
+        "app-server/src/in_process.rs:381",
+        r"Error parsing rules; custom rules not applied\.(?: \(.+\))?",
+    ),
+    (
+        "code_mode_unavailable",
+        "core/src/tools/code_mode/mod.rs:120",
+        r"Code Mode is unavailable because .+\. "
+        r"(?:Falling back to direct tools|Code mode will fail closed); "
+        r"enable `features\.code_mode_host` and install `codex-code-mode-host`\.",
+    ),
+    (
+        "code_mode_unsupported",
+        "core/src/session/code_mode_warning.rs:20",
+        r"Code Mode is enabled in configuration, but model `[^`]+` does not advertise Code Mode "
+        r"support\. This may degrade model performance\. Disable `features\.code_mode` and "
+        r"`features\.code_mode_only`, or select a model whose metadata enables Code Mode\.",
+    ),
+    (
+        "transcript_save_retry",
+        "core/src/tasks/mod.rs:395",
+        r"Failed to save the conversation transcript; Codex will continue retrying\. Error: .+",
+    ),
+    (
+        "compaction_accuracy",
+        "core/src/compact.rs:432",
+        re.escape(
+            "Heads up: Long threads and multiple compactions can cause the model to be less "
+            "accurate. Start a new thread when possible to keep threads small and targeted."
+        ),
+    ),
+    (
+        "resume_model_changed",
+        "core/src/session/mod.rs:1699",
+        r"This session was recorded with model `([^`]+)` but is resuming with `[^`]+`\. "
+        r"Consider switching back to `\1` as it may affect Codex performance\.",
+    ),
+    (
+        "service_tier_unsupported",
+        "core/src/session/mod.rs:1219",
+        r"Configured service tier `[^`]+` is not advertised as supported for model `[^`]+` "
+        r"and will be omitted from requests\.",
+    ),
+)
+
+
 def error_item_category(message):
-    if not isinstance(message, str):
+    if not isinstance(message, str) or len(message) > 64 * 1024:
         return "unknown"
-    if message in (
-        "Codex couldn't save diagnostic logs to its local database. "
-        "Run `codex doctor` for diagnostics.",
-        "Codex couldn't save diagnostic logs to its local database. "
-        "Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.",
-    ):
-        return "diagnostic_log_write"
-    if (
-        message.startswith("Under-development features enabled: ")
-        and ". Under-development features are incomplete and may behave unpredictably. "
-        "To suppress this warning, set `suppress_unstable_features_warning = true` in "
-        in message
-        and message.endswith(".")
-    ):
-        return "under_development_features"
-    if message.startswith("Model metadata for `") and message.endswith(
-        "` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
-    ):
-        return "model_metadata_fallback"
-    if message.startswith("Falling back from WebSockets to HTTPS transport. "):
-        return "transport_fallback"
-    if re.fullmatch(r"in-process app-server event stream lagged; dropped [0-9]+ events", message):
-        return "event_stream_lag"
-    if (
-        message.startswith("model rerouted: ")
-        and " -> " in message
-        and " (" in message
-        and message.endswith(")")
-    ):
-        return "model_rerouted"
-    return "unknown"
+    matches = {
+        category
+        for category, _source, pattern in ERROR_ITEM_TEMPLATES
+        if re.fullmatch(pattern, message, re.DOTALL)
+    }
+    return matches.pop() if len(matches) == 1 else "unknown"
 
 
 def summarize_turn(output, code):

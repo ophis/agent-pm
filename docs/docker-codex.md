@@ -134,6 +134,10 @@ Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世�
 
 本轮唯一未通过的是白名单外的 `error` item；原生身份与回复子项已观察到成功，整组不补记通过。第二组原始事件已丢弃，不能据第三组推断第二组拒绝原因。真实刷新与 A/B 定案仍未完成。
 
+### Group 4 observation
+
+[Redacted record](docker-codex-evidence/2026-10-18-manager-a-notice.json): the manager ran a-1 once, as reported in this session. Native Codex exited 0, completed one turn with final OK, retained the native session and emitted no top-level error. One `ErrorItem` matched no existing category. The helper exited 1 with `incomplete`; its body was not retained. No category can be reconstructed from this record or assigned retrospectively to earlier runs.
+
 ### ErrorItem 的含义与判据
 
 官方 [非交互说明](https://learn.chatgpt.com/docs/non-interactive-mode) 定义 JSON 事件流，但未区分下面的通知映射；固定源码补齐此项。`ErrorItem` 只有 `message`，没有原始通知类型或严重性字段，见 [exec_events.rs:310](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L310)。
@@ -150,7 +154,15 @@ Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世�
 
 ## 用户实测交接
 
-**身份边界**：以下命令仅用户在 macOS Apple silicon 宿主执行。worker 不运行 Docker、不读取真实 `auth.json`、不调用 keychain（钥匙串）或 Security API。所有测试登录在新建 0700 目录；不复制或挂载个人 `~/.codex`，不写用户配置。登录输出只在用户终端显示，不记录或粘贴授权码。回传仅版本、时间、状态、次数及脱敏错误。
+**Execution owners**, under the user's latest standing mandate:
+
+| Owner | Allowed experiment commands |
+|---|---|
+| manager | Checks touching no secrets; redacted Codex requests using credentials already injected into the two existing containers. No secret printing, extraction or copying. |
+| user | Reading host credential files or keychain; login, injection and host refresh. |
+| worker | Source, fake-data unit tests and lint only; Docker/Linux execution stays on GitHub CI. No real credentials or keychain. |
+
+Ownership follows the entire process tree. `--user-run` remains the helper's explicit live-execution opt-in, not an ownership override. Earlier command groups below are historical: use only the next group unless instructed otherwise. Return only the wrapper's redacted record and exit code; do not run the raw child commands, capture verbose logs or paste login output.
 
 先在现有工作树准备独立原生文件。[下载器:77](../scripts/docker_codex_probe.py#L77) 只读公共 registry、核对 SHA-512（安全散列算法 512 位）integrity、只取精确平台的普通文件、不执行包脚本，目标存在则失败。逐条执行，任一步失败即停，目录已存在时不复用：
 
@@ -184,7 +196,7 @@ env AGENT_PM_CODEX_USER_PROBE=1 bash /Users/francis/.agent-pm/work/TASK-647/agen
 
 本组只验证载体加载和两个容器的初次 headless 回复，无须 TASK-643。保留真实 `id_token`、`access_token`、`account_id` 及原有 `last_refresh`；比较删除 `refresh_token` 字段与空字符串。没有修改宿主登录文件，也不改变凭据日期。最少身份字段、provider command、终端活进程、真实到期与刷新、原生恢复仍未完成。
 
-全部命令仍由用户逐条执行。除明确列出的“省略字段”加载失败外，任一步非零即停，回传脱敏状态；不更改沙箱或容器隔离标志。构建目录和容器名必须是新的，已存在时不复用。
+以下为第二组历史命令，不再执行。除明确列出的“省略字段”加载失败外，任一步非零即停，回传脱敏状态；不更改沙箱或容器隔离标志。构建目录和容器名必须是新的，已存在时不复用。
 
 准备无凭据镜像，构建上下文只含公开 Linux arm64 原生文件。使用独立实验镜像，不代表产品 worker 镜像版本已验证：
 
@@ -218,7 +230,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run pair
 ```
 
-[`pair`:259](../scripts/docker_codex_a_probe.py#L259) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
+[`summarize_pair`](../scripts/docker_codex_a_probe.py#L372) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
 
 ```sh
 docker exec task647-codex-a-1 codex -c 'cli_auth_credentials_store="file"' exec --skip-git-repo-check --sandbox read-only --json 'Reply exactly OK. Do not use tools.'
@@ -249,7 +261,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
 ```
 
-[`resume_turn`:322](../scripts/docker_codex_a_probe.py#L322) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
+[`resume_turn`](../scripts/docker_codex_a_probe.py#L435) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
 
 | 新增脱敏字段 | 观察含义 |
 |---|---|
@@ -258,60 +270,69 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 | `rejected_item_type_counts` | 白名单外 item 的事件次数，含 started／updated／completed；仅回传固定源码中的类型，其他归为 `other`；不等于工具调用次数 |
 | `same_native_session` | 本次 `thread.started` 身份是否恰好一次且匹配既有身份 |
 
-字段实现见 [summarize_turn:172](../scripts/docker_codex_a_probe.py#L172)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
+字段实现见 [summarize_turn](../scripts/docker_codex_a_probe.py#L285)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
 
 第三组结果已记录；以下只补缺失的通知类别，不重复到期命令或双容器基线。
 
 ### 第四组：单容器通知分类
 
-第三组仅回传了类型计数，旧消息已丢弃；源码又说明类型不能唯一确定来源。因此需用户在现有 a-1 原生会话上新增一轮捕获分类，a-2 不重复。沿用第三组的到期执行条件，不重建、不重登录、不重新注入，不刷新宿主登录。
+第三组仅回传了类型计数，旧消息已丢弃；源码又说明类型不能唯一确定来源。第四组已在现有 a-1 原生会话上执行一次，结果见 Group 4 observation；a-2 不重复。沿用第三组的到期执行条件，不重建、不重登录、不重新注入，不刷新宿主登录。
 
 ```sh
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-1
 ```
 
-[`error_item_category`:136](../scripts/docker_codex_a_probe.py#L136) 在内存中按固定版本消息模板分类，只增加 `error_item_category_counts`。除固定标签和次数外，不输出消息、动态替换值、片段或哈希，不保存原始事件。标签描述消息形状，不恢复丢失的原始通知类型，也不代表获准放行：
+The original six-category classifier returned `unknown` in Group 4. Its historical command above is retained for traceability; do not repeat it with that revision.
 
-| 标签 | 模板含义 | 固定源码 |
-|---|---|---|
-| `diagnostic_log_write` | 两条精确固定消息之一：本地诊断数据库写入失败 | [log_write_warning.rs:14](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/log_write_warning.rs#L14) |
-| `under_development_features` | 显式启用开发中特性；不是仅因默认特性开启 | [features/lib.rs:2095](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/features/src/lib.rs#L2095) |
-| `model_metadata_fallback` | 模型元数据缺失，使用回退数据 | [turn_context.rs:1395](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/session/turn_context.rs#L1395) |
-| `transport_fallback` | WebSocket 改走 HTTPS；需补录 B 的实际传输 | [responses_retry.rs:120](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/responses_retry.rs#L120) |
-| `event_stream_lag` | 事件流丢失，不可用计数证明完整性 | [exec/lib.rs:1668](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1668) |
-| `model_rerouted` | 本次请求发生模型改路由 | [输出器:494](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L494) |
-| `unknown` | 其余消息或缺失／非字符串消息 | 不猜测、不回显 |
+### Group 5: expanded source-template classification
 
-只执行一次，回传完整脱敏记录和退出码后停止。即使已识别通知，原 `ErrorItem` 门槛仍保留，可能继续返回 `incomplete` 和退出 1；这是分类结果，不要求反复重试。后续是否放行按上文放行建议另行评估；本组不验证刷新或到期，也不能把新类别补写为第三组历史消息的已知类别。
-
-### 后续验证
-
-完整订阅流程保留以下待办，不能据初次回复跳过：
+**Catalog**: [`ERROR_ITEM_TEMPLATES`](../scripts/docker_codex_a_probe.py#L136) contains 19 fixed category IDs with source locations under pinned Codex commit `83086188ae0614bd882818ff1aa23f3194962012`. It covers config/requirements and credential-masking warnings, unapplied rules, Code Mode availability, transcript-save failures, compaction, resumed-model changes and service-tier notices in addition to the original families. Full-message patterns discard all substitutions; unmatched, ambiguous, non-string or over-64-KiB messages remain `unknown`. The catalog is finite, not an exhaustive decoder of notification origins.
 
 ```mermaid
-flowchart TD
-    P[用户隔离登录与版本] --> H[独立本机登录基线]
-    H --> A[A 两容器 终端与 exec]
-    H --> B[B 两容器 无 token 模型流]
-    A --> E[真实到期与两次宿主刷新]
-    B --> E
-    E --> R[重建 恢复与持久状态检查]
-    R --> V[逐版本矩阵与提前量]
-    V --> M[M3 最终接入验证]
-    M --> D[按规则定案]
+flowchart LR
+    R[Capture in process memory] --> T[Match public source templates]
+    T --> C[Export fixed category counts]
+    T --> U[Unknown on no unique match]
 ```
 
-箭头表示证据依赖；本图不表示任何节点已通过。
+The classifier writes no raw events, message fragments, substitutions or message hashes. This describes the probe's diagnostic handling; native Codex persistence remains a separate pending gate. The unchanged strict turn gate rejects every `ErrorItem`, including recognized categories.
 
-| 待补用户命令组 | 必须记录的观察 |
-|---|---|
-| A 剩余载体与多轮 | 前三组已有部分观察，第四组只补通知分类；仍补最少身份字段、provider command、终端及 headless 的完整多轮观察。 |
-| B 独立传输探针 | 根据实际镜像版本准备限定 origin 的一次性流式探针；token 只留宿主，容器无登录，禁止宿主监听 TCP（传输控制协议）；覆盖上节独立边界。正式 exec 帧协议仍 pending。 |
-| 真实刷新与到期 | 不更改时间；等待实际到期窗口，运行 S6 的固定 Codex 路径。留旧 access token 的隔离拒绝探针，证明旧值失效后的续用；第二次刷新重复。 |
-| 终端与恢复 | 同一终端活进程多轮；headless 原生 resume 另计。restart、close 后 resume 保持会话身份。每个不同候选版本重复，记录是否继续／报错／退出／等登录。 |
-| 状态扫描 | 用户本地扫描测试持久目录及工作区，检测器只报位置和命中种类，不回传任何值；实际保存和原子替换情形分别记录。 |
+#### Manager commands
 
-上述组仍属本任务，待补具体命令和观察，未移交后续产品实现票。用户结束全部实测后需清理新测试登录目录；在跨刷新和恢复验证结束前保留它，不上传该目录。
+The public inventory refresh is needed for the current-latest version row; it reads no login/config and does not execute Codex:
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_probe.py inventory
+```
+
+Then run exactly one a-1 resume using the already-injected credentials. This is a new observation because prior message bodies were discarded; do not repeat a-2, login, build, injection or baseline. The last reported expiry claim was 2026-10-28T01:27:14Z; if that time has arrived, or the container/login changed since Group 4, stop and hand off to the user instead.
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-1
+```
+
+Return the two redacted records and the helper exit code, then stop. Exit 1 may remain expected from the strict notice gate; neither retry nor treat a recognized category as a pass. If still `unknown`, retain that result rather than exporting more message detail.
+
+#### User commands
+
+None in Group 5. Host credential reads, injection and refresh remain user-owned and are not prerequisites for this diagnostic observation. The next identity group needs a separate reviewed, redacting harness for the fixed Codex refresh path; no manual refresh endpoint or credential-date edit.
+
+## Remaining gates before TASK-650 can use an A/B verdict
+
+The diagnostic category is not the deciding gate. TASK-650 remains blocked while FR-1 is incomplete; neither the current product path nor a successful single turn selects A.
+
+| Gate | Missing evidence / next work | Execution owner |
+|---|---|---|
+| A carrier and modes | Minimum identity fields, applicable existing-client auth interfaces, terminal live-process turns and complete headless observations | manager for existing injected credentials; user for host reads/new injection |
+| Common host refresh | Reviewed harness for pinned Codex `account/read` with `refreshToken: true`; first and subsequent real refresh, rotation/expiry changes and usable new credentials; two containers plus independently logged-in host; measured timings | user; manager can prepare source and fake-data harness |
+| Actual expiry and reload | Same live terminal across actual expiry; old access acceptance/rejection, new value actually used, later refresh still works; resumed exec is a distinct process | manager for existing container requests; user for host refresh/injection |
+| B transport and limits | Token-free containers, host-authenticated actual multi-turn streaming; fixed origin/routes/headers/config/transports, safe 401 replay, redirects, limits, interruption/cancellation | manager for secret-free source/fake checks; user for host-authenticated relay setup/refresh |
+| State and versions | Native saving, restart/close/resume, credential-residue checks, executable/history compatibility; product `0.162.1` and investigation `0.163.0` remain separate, with current registry candidates recorded | manager for metadata/existing-container operations; user for credential scans/reads or injection |
+| Final M3 and verdict | Checks in the following dependency table; exact passing version set and measured lead; A preferred if all gates pass, otherwise B only if A fails and B passes; C requires reproducible failure of both | manager/CI for secret-free checks; user for host identity operations |
+
+The host refresh candidate invokes Codex's own guarded reload/refresh path, not a hand-written OAuth request: [account_processor.rs:1099](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1099), [manager.rs:2845](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2845), [persistence:3089](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L3089). Requesting it need not wait for the declared expiry, but a successful response does not prove rotation or immediate old-token invalidation. If old access remains accepted, actual-expiry evidence may require waiting for the reported 2026-10-28 window. No finish date is established.
+
+These gates remain in TASK-647. Pending work, network failure or an unknown notice never selects C. Once observations resolve them, finalize the matrix, compatibility rule and lead time, then run final work review. The prepared TASK-647 dependency comment is still unpublished because this session has no issue connector; the manager must post it.
 
 ## M3 待补项
 

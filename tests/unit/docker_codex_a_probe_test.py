@@ -286,6 +286,110 @@ class CodexACarrier(Case):
             self.assertNotIn("private-canary", json.dumps(result))
             self.assertNotIn("Credential masking", json.dumps(result))
 
+    def test_additional_source_templates_export_only_fixed_categories(self):
+        messages = [
+            ("Error parsing rules; custom rules not applied. (private-canary)", "execpolicy_parse"),
+            (
+                "Credential masking is inactive because the network proxy is disabled. "
+                "Commands will receive unmasked credentials. Enable `features.network_proxy` "
+                "or configure managed network requirements to use credential masking.",
+                "credential_masking_proxy_disabled",
+            ),
+            (
+                "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run "
+                "without review for this invocation.",
+                "hook_trust_bypassed",
+            ),
+            (
+                "Configured value for `private-canary` is disallowed by requirements; "
+                "falling back to required value private-canary. Details: private-canary",
+                "requirements_value_fallback",
+            ),
+            (
+                "Configured value for `permission_profile` is disallowed by requirements; "
+                "falling back from `private-canary` to required value `private-target`.",
+                "requirements_profile_fallback",
+            ),
+            (
+                "Code Mode is unavailable because private-canary. Falling back to direct tools; "
+                "enable `features.code_mode_host` and install `codex-code-mode-host`.",
+                "code_mode_unavailable",
+            ),
+            (
+                "Code Mode is unavailable because private-canary. Code mode will fail closed; "
+                "enable `features.code_mode_host` and install `codex-code-mode-host`.",
+                "code_mode_unavailable",
+            ),
+            (
+                "Code Mode is enabled in configuration, but model `private-canary` does not "
+                "advertise Code Mode support. This may degrade model performance. Disable "
+                "`features.code_mode` and `features.code_mode_only`, or select a model whose "
+                "metadata enables Code Mode.",
+                "code_mode_unsupported",
+            ),
+            (
+                "Failed to save the conversation transcript; Codex will continue retrying. "
+                "Error: private-canary\nprivate-detail",
+                "transcript_save_retry",
+            ),
+            (
+                "This session was recorded with model `private-canary` but is resuming with "
+                "`private-target`. Consider switching back to `private-canary` as it may affect "
+                "Codex performance.",
+                "resume_model_changed",
+            ),
+            (
+                "Configured service tier `private-canary` is not advertised as supported for "
+                "model `private-target` and will be omitted from requests.",
+                "service_tier_unsupported",
+            ),
+        ]
+        for message, category in messages:
+            events = [
+                {"type": "item.completed", "item": {"type": "error", "message": message}},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}},
+                {"type": "turn.completed"},
+            ]
+            result = self.probe["summarize_turn"]("\n".join(map(json.dumps, events)).encode(), 0)
+            self.assertEqual(result["error_item_category_counts"], {category: 1})
+            self.assertEqual(result["status"], "incomplete")
+            self.assertNotIn("private-", json.dumps(result))
+
+    def test_template_lookalikes_remain_unknown_and_counts_never_export_content(self):
+        unknowns = [
+            "prefix Error parsing rules; custom rules not applied. (private-canary)",
+            "Error parsing rules; custom rules not applied. private-canary",
+            "Code Mode is unavailable because private-canary. Everything is safe; "
+            "enable `features.code_mode_host` and install `codex-code-mode-host`.",
+            "This session was recorded with model `private-canary` but is resuming with "
+            "`private-target`. Consider switching back to `different-model` as it may affect "
+            "Codex performance.",
+        ]
+        events = [
+            {"type": "item.completed", "item": {"type": "error", "message": message}}
+            for message in unknowns
+        ]
+        result = self.probe["summarize_turn"]("\n".join(map(json.dumps, events)).encode(), 0)
+        self.assertEqual(result["error_item_category_counts"], {"unknown": len(unknowns)})
+        self.assertEqual(result["status"], "incomplete")
+        self.assertNotIn("private-", json.dumps(result))
+        self.assertNotIn("different-model", json.dumps(result))
+
+    def test_classifier_needs_no_files_or_processes_and_bounds_unknown_messages(self):
+        message = "Error parsing rules; custom rules not applied. (synthetic-secret)"
+        events = [{"type": "item.completed", "item": {"type": "error", "message": message}}] * 2
+        with (
+            mock.patch("builtins.open", side_effect=AssertionError("no file reads")),
+            mock.patch("os.open", side_effect=AssertionError("no descriptor reads")),
+            mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
+        ):
+            result = self.probe["summarize_turn"]("\n".join(map(json.dumps, events)).encode(), 0)
+            oversized = self.probe["error_item_category"](message + "x" * (64 * 1024))
+        self.assertEqual(result["error_item_category_counts"], {"execpolicy_parse": 2})
+        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(oversized, "unknown")
+        self.assertNotIn("synthetic-secret", json.dumps(result))
+
     def test_single_resume_keeps_nonzero_strict_result_and_redacts_notice_body(self):
         sid = "11111111-2222-4333-8444-555555555555"
         path = f"/codex/sessions/2026/10/18/rollout-2026-10-18T01-49-05-{sid}.jsonl\n"
