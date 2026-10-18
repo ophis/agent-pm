@@ -10,7 +10,9 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import fields
+from datetime import datetime
 
 from agent_pm.session.engine.types import ConfigError, SessionError
 from agent_pm.session.hosts.docker.types import Started
@@ -19,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "6"
+PROTOCOL = "9"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -115,6 +117,18 @@ def _expiries(value) -> bool:
         and _matches(TIME, e["expires_at"])
         for e in value
     )
+
+
+def _credential_expiry(value) -> bool:
+    if value is None:
+        return True
+    if not _matches(TIME, value):
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _error(command: str, returncode: int, data: dict) -> BrokerError:
@@ -231,10 +245,13 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def build(self, package: str, *, max_age: int | None = None) -> tuple[str, str]:
-        """`package`'s image tag and digest; `max_age`: rebuild an image built at least that many
-        seconds ago.
+    def build(
+        self, package: str, *, plugins: Sequence[str] = (), max_age: int | None = None
+    ) -> tuple[str, str]:
+        """`package`'s image tag and digest, the image holding the account's installed `plugins`;
+        `max_age`: rebuild an image built at least that many seconds ago.
         """
+        named = [arg for name in plugins for arg in ("--plugin", name)]
         age = () if max_age is None else ("--max-age", str(max_age))
         found = self._parsed(
             "build",
@@ -246,6 +263,7 @@ class Broker:
             ),
             "--agent-pm",
             package,
+            *named,
             *age,
         )
         return found["image"], found["digest"]
@@ -264,6 +282,7 @@ class Broker:
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
+            and _credential_expiry(started.credential_expires_at)
         ):
             raise SessionError("broker: bad response to start: fields")
         return started
@@ -366,6 +385,7 @@ def write_manifest(
         "image": image,
         "cwd": cwd,
         "workspace": workspace,
+        "client": field.removesuffix("_dir"),
         field: home_path,
         "hook_path": hook_path,
         "github": {"app": github} if github else None,

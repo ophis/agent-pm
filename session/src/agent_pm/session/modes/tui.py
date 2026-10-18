@@ -428,6 +428,9 @@ class _Start:
     def validate(self) -> None:
         self.store.host.validate(self.store.name, self.launch)
 
+    def preflight(self) -> None:
+        self.store.host._preflight(self.store.name, self.launch)
+
     @property
     def launch(self) -> Launch:
         info = self.prepared.info
@@ -481,7 +484,7 @@ class TuiMode(BaseMode):
     ) -> Prepared:
         pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         try:
-            pending.validate()
+            pending.preflight()
             _stale(pending.store)
         except SessionError as error:
             raise ConfigError(str(error)) from error
@@ -509,11 +512,14 @@ class TuiMode(BaseMode):
             replace(spec, name=name, events=events), run._home(), host, name
         )
         spec = cls._noted(spec, client)
+        run._set_runtime(host._client_runtime())
         hook = store.hook_argv()
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
         )
         prepared = cls._host_resume(prepared, host, name)
+        if run._runtime_files:
+            metadata = {**metadata, "runtime_files": json.dumps(dict(run._runtime_files))}
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise SessionError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")

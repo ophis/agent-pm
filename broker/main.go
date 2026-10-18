@@ -18,29 +18,33 @@ import (
 	"unicode/utf8"
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
+	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/github"
 	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | login claude | login github agent-pm-bot | build --agent-pm DIR [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude | login github agent-pm-bot | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
+var pluginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
 var volumePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 // step runs a command; progress is the broker's stderr, for build's Docker progress and start's phase times.
 type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 
 type app struct {
-	build        func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error)
+	build        func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error)
 	start, close step
 	refresh      func(ctx context.Context, container, manifest string) (any, error)
 	status       func(ctx context.Context) (any, error)
 	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
 	login        func(out io.Writer) error
 	loginGitHub  func(app string, out io.Writer) error
+	loginCodex   func(context.Context, io.Writer) error
+	installCodex func(context.Context, string, bool) (any, error)
 }
 
 func main() {
@@ -66,11 +70,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	command := "unknown"
 	if len(args) > 0 {
 		switch args[0] {
+		case "install-codex", "update-codex":
+			if len(args) == 2 && codex.ValidVersion(args[1]) {
+				result, err := a.installCodex(ctx, args[1], args[0] == "update-codex")
+				if err != nil {
+					fmt.Fprintln(stderr, "agent-pm-broker:", err)
+					return 1
+				}
+				return emit(stdout, result)
+			}
 		case "version", "build", "start", "refresh", "close", "status", "workspace-rm":
 			command = args[0]
 		case "login":
 			var login func() error
 			switch {
+			case len(args) == 2 && args[1] == "codex":
+				login = func() error { return a.loginCodex(ctx, stdout) }
 			case len(args) == 2 && args[1] == "claude":
 				login = func() error { return a.login(stdout) }
 			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
@@ -95,15 +110,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	switch {
 	case command == "version" && len(args) == 1:
 		return emit(stdout, map[string]string{"protocol_version": protocol.Version})
-	case command == "build" && (len(args) == 3 || (len(args) == 5 && args[3] == "--max-age" && secondsPattern.MatchString(args[4]))) &&
-		args[1] == "--agent-pm" && isPath(args[2]):
-		maxAge := time.Duration(-1)
-		if len(args) == 5 {
-			n, _ := strconv.Atoi(args[4])
-			maxAge = time.Duration(n) * time.Second
-		}
+	case command == "build" && len(args) >= 3 && args[1] == "--agent-pm" && isPath(args[2]) && buildOptions(args[3:]) != nil:
+		o := buildOptions(args[3:])
 		s, arg = func(ctx context.Context, pkg string, progress io.Writer) (any, error) {
-			return a.build(ctx, pkg, maxAge, progress)
+			return a.build(ctx, pkg, o.plugins, o.maxAge, progress)
 		}, args[2]
 	case command == "start" && len(args) == 3 && args[1] == "--manifest" && isPath(args[2]):
 		s, arg = a.start, args[2]
@@ -137,6 +147,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 	return emit(stdout, result)
 }
 
+type buildArgs struct {
+	plugins []string
+	maxAge  time.Duration
+}
+
+// buildOptions parses build's [--plugin NAME]... [--max-age SECONDS], else nil.
+func buildOptions(args []string) *buildArgs {
+	o := &buildArgs{maxAge: -1}
+	for len(args) >= 2 && args[0] == "--plugin" && pluginPattern.MatchString(args[1]) {
+		o.plugins, args = append(o.plugins, args[1]), args[2:]
+	}
+	if len(args) == 2 && args[0] == "--max-age" && secondsPattern.MatchString(args[1]) {
+		n, _ := strconv.Atoi(args[1])
+		o.maxAge, args = time.Duration(n)*time.Second, nil
+	}
+	if len(args) != 0 {
+		return nil
+	}
+	return o
+}
+
 func emit(stdout io.Writer, v any) int {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -166,6 +197,7 @@ func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, erro
 	defer clean()
 	d.Progress = progress
 	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home))
+	h.Codex = broker.NewCodex(home, nil)
 	h.Progress = progress
 	return f(h)
 }
@@ -178,8 +210,8 @@ func tokens(home string) broker.GitHub {
 
 func system() app {
 	return app{
-		build: func(ctx context.Context, pkg string, maxAge time.Duration, progress io.Writer) (any, error) {
-			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, maxAge) })
+		build: func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error) {
+			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, plugins, maxAge) })
 		},
 		start: func(ctx context.Context, manifest string, progress io.Writer) (any, error) {
 			return withHost(progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
@@ -192,7 +224,13 @@ func system() app {
 			if err != nil {
 				return nil, err
 			}
-			return launcher.Host{GitHub: tokens(home)}.Status(ctx)
+			status, err := launcher.Host{GitHub: tokens(home)}.Status(ctx)
+			if err != nil {
+				return nil, err
+			}
+			codexStatus := broker.NewCodex(home, nil).Status(ctx)
+			status.Codex = &codexStatus
+			return status, nil
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
 			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
@@ -227,6 +265,26 @@ func system() app {
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, out)
+		},
+		installCodex: func(ctx context.Context, version string, update bool) (any, error) {
+			if err := broker.CheckInstalled(); err != nil {
+				return nil, err
+			}
+			return codex.New().Install(ctx, version, update)
+		},
+		loginCodex: func(ctx context.Context, out io.Writer) error {
+			home, err := accountHome()
+			if err != nil {
+				return err
+			}
+			if err := broker.CheckInstalled(); err != nil {
+				return err
+			}
+			return broker.NewCodex(home, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to make Codex trust only the broker (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}).Login(ctx, out)
 		},
 	}
 }

@@ -12,6 +12,7 @@ on:
       - delegate/src/**
       - .claude-plugin/plugin.json
       - .github/workflows/worker-image.yml
+      - .github/worker_codex.py
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -43,7 +44,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           changed=$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
-          if grep -qE '^(broker/|session/src/|utils/src/|delegate/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$)' <<<"$changed"; then
+          if grep -qE '^(broker/|session/src/|utils/src/|delegate/src/|\.claude-plugin/plugin\.json$|\.github/workflows/worker-image\.yml$|\.github/worker_codex\.py$)' <<<"$changed"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "No image input changed; nothing to build."
@@ -73,11 +74,20 @@ jobs:
       - name: Seed the default worker image definition
         if: ${{ steps.inputs.outputs.build != 'false' }}
         run: install -D -m 0644 broker/worker/Dockerfile "$HOME/.agent-pm/docker/worker/Dockerfile"
+      - name: Install a probe plugin
+        if: ${{ steps.inputs.outputs.build != 'false' }}
+        run: |
+          dir="$HOME/.claude/plugins/cache/ci/ci-probe/0.0.1"
+          install -d "$dir/.claude-plugin" "$dir/skills/probe" "$dir/.in_use"
+          echo '{"name":"ci-probe","version":"0.0.1"}' > "$dir/.claude-plugin/plugin.json"
+          printf '%s\n' '---' 'description: CI probe' '---' 'Probe.' > "$dir/skills/probe/SKILL.md"
+          jq -n --arg dir "$dir" '{version: 2, plugins: {"ci-probe@ci": [{scope: "user", installPath: $dir, version: "0.0.1"}]}}' \
+            > "$HOME/.claude/plugins/installed_plugins.json"
       - name: Build with agent-pm-broker
         id: build
         if: ${{ steps.inputs.outputs.build != 'false' }}
         run: |
-          "$RUNNER_TEMP/agent-pm-broker" build --agent-pm "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/build.json"
+          "$RUNNER_TEMP/agent-pm-broker" build --agent-pm "$GITHUB_WORKSPACE" --plugin ci-probe > "$RUNNER_TEMP/build.json"
           cat "$RUNNER_TEMP/build.json"
           image=$(jq -er 'select(.rebuilt == true) | .image' "$RUNNER_TEMP/build.json")
           echo "image=$image" >> "$GITHUB_OUTPUT"
@@ -130,4 +140,18 @@ jobs:
             test "$(git config --system credential.useHttpPath)" = true
             test "$(command -v python3)" = /opt/agent-pm/bin/python3
             python3 -c "import agent_pm.delegate"
-            python3 -P /opt/agent-pm/team/tools/repo.py --help'
+            python3 -P /opt/agent-pm/team/tools/repo.py --help
+            plugin=/opt/agent-pm/plugins/ci-probe
+            test "$CLAUDE_CODE_PLUGIN_DIRS" = "$plugin"
+            test "$(stat -c %u:%g "$plugin" "$plugin/skills/probe/SKILL.md" | sort -u)" = 0:0
+            test -r "$plugin/skills/probe/SKILL.md"
+            test ! -e "$plugin/.in_use"
+            if touch "$plugin/x" 2>/dev/null || touch "$plugin/skills/probe/SKILL.md" 2>/dev/null; then
+              echo "agent can write the plugin"
+              exit 1
+            fi'
+      - name: Check Codex volatile authentication and history mounts
+        if: ${{ steps.inputs.outputs.build != 'false' }}
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: python3 .github/worker_codex.py "$IMAGE"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 6",
+  "title": "Docker broker protocol 9",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -183,6 +183,15 @@
         },
         "labels": {
           "$ref": "#/$defs/labels"
+        },
+        "client": {
+          "enum": [
+            "claude",
+            "codex"
+          ]
+        },
+        "codex_dir": {
+          "$ref": "#/$defs/path"
         }
       },
       "required": [
@@ -191,11 +200,43 @@
         "image",
         "cwd",
         "workspace",
-        "claude_dir",
         "github",
-        "labels"
+        "labels",
+        "client"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "client": {
+              "const": "claude"
+            }
+          },
+          "required": [
+            "claude_dir"
+          ],
+          "not": {
+            "required": [
+              "codex_dir"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "client": {
+              "const": "codex"
+            }
+          },
+          "required": [
+            "codex_dir"
+          ],
+          "not": {
+            "required": [
+              "claude_dir"
+            ]
+          }
+        }
+      ]
     },
     "version_input": {
       "type": "object",
@@ -220,7 +261,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "6"
+          "const": "9"
         }
       },
       "required": [
@@ -232,6 +273,7 @@
       "type": "object",
       "properties": {
         "argv": {
+          "$comment": "Then any --plugin NAME pairs, then an optional --max-age SECONDS; JSON Schema cannot pair repeated tokens, so the broker checks the order (usage).",
           "type": "array",
           "prefixItems": [
             {
@@ -242,16 +284,21 @@
             },
             {
               "$ref": "#/$defs/path"
-            },
-            {
-              "const": "--max-age"
-            },
-            {
-              "type": "string",
-              "pattern": "^[0-9]{1,9}$"
             }
           ],
-          "items": false,
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "--plugin",
+                  "--max-age"
+                ]
+              },
+              {
+                "$ref": "#/$defs/plugin"
+              }
+            ]
+          },
           "minItems": 3,
           "anyOf": [
             {
@@ -343,6 +390,16 @@
         },
         "github": {
           "$ref": "#/$defs/expiries"
+        },
+        "credential_expires_at": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/time"
+            }
+          ]
         }
       },
       "required": [
@@ -350,7 +407,8 @@
         "endpoint",
         "image_digest",
         "clients",
-        "github"
+        "github",
+        "credential_expires_at"
       ],
       "additionalProperties": false
     },
@@ -530,6 +588,9 @@
             ],
             "additionalProperties": false
           }
+        },
+        "codex": {
+          "$ref": "#/$defs/codex_status"
         }
       },
       "required": [
@@ -1011,6 +1072,105 @@
         ],
         "additionalProperties": false
       }
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "codex_status": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^((0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*))?$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(/usr/local/libexec/agent-pm/codex/releases/[^/\\x00-\\x20\\x7f]+/codex)?$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "allowed_versions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          }
+        },
+        "logged_in": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "installation_invalid",
+            "login_unavailable",
+            "busy",
+            "expired",
+            "ready"
+          ]
+        },
+        "expires_at": {
+          "$ref": "#/$defs/time"
+        },
+        "repair": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "path",
+        "sha256",
+        "allowed_versions",
+        "logged_in",
+        "state",
+        "repair"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expires_at"
+            ],
+            "properties": {
+              "logged_in": {
+                "const": true
+              },
+              "version": {
+                "minLength": 1
+              },
+              "path": {
+                "minLength": 1
+              },
+              "sha256": {
+                "minLength": 64
+              },
+              "repair": {
+                "const": ""
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "logged_in": {
+                "const": false
+              },
+              "repair": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

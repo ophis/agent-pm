@@ -23,3 +23,5 @@ func (SystemKeychain) AppAccess(string, string) (AppAccess, error) { return AppA
 func (SystemKeychain) Secret(string, string) ([]byte, error)       { return nil, errPlatform }
 func (SystemKeychain) PutSecret(string, string, []byte) error      { return errPlatform }
 func (SystemKeychain) DeleteSecret(string, string) error           { return errPlatform }
+func (SystemKeychain) CreateCodex() error                          { return errPlatform }
+func (SystemKeychain) WriteCodex([]byte) error                     { return errPlatform }

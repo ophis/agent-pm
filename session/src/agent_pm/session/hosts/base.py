@@ -14,6 +14,7 @@ from typing import ClassVar, Protocol
 
 from agent_pm.session.engine.types import (
     ClientHome,
+    ClientRuntime,
     ConfigError,
     HookCallback,
     Hosts,
@@ -314,6 +315,9 @@ class Host(ABC):
 
     _inherit_env = True
 
+    def _client_runtime(self) -> ClientRuntime | None:
+        return None
+
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
     ) -> Mapping[str, str]:
@@ -326,6 +330,10 @@ class Host(ABC):
 
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()
+
+    def _preflight(self, name: str, launch: Launch) -> None:
+        """validate, before its caller makes the cwd."""
+        self.validate(name, launch)
 
     def validate(self, name: str, launch: Launch) -> None:
         if not launch.argv:

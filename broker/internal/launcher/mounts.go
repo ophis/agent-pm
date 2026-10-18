@@ -76,14 +76,20 @@ func (h Host) checkMounts(m Manifest) error {
 	if err := checkTree(m.CWD, protocol.MountRejected); err != nil {
 		return err
 	}
-	if want := filepath.Join(h.Home, ".agent-pm/docker-state", m.Name, "claude"); m.ClaudeDir != want {
-		return reject("claude_dir must be %s.", want)
+	dir := m.StateDir()
+	if want := filepath.Join(h.Home, ".agent-pm/docker-state", m.Name, m.Client); dir != want {
+		return reject("%s_dir must be %s.", m.Client, want)
 	}
-	if err := h.Safe(m.ClaudeDir); err != nil {
-		return reject("claude_dir %s must be an existing directory without symlinks: %v.", m.ClaudeDir, err)
+	if err := h.Safe(dir); err != nil {
+		return reject("%s_dir %s must be an existing directory without symlinks: %v.", m.Client, dir, err)
 	}
-	if inside(m.CWD, m.ClaudeDir) || inside(m.ClaudeDir, m.CWD) {
-		return reject("Workspace %s overlaps claude_dir %s.", m.CWD, m.ClaudeDir)
+	if m.Client == "codex" {
+		if err := h.Safe(filepath.Join(dir, "sessions")); err != nil {
+			return reject("codex sessions must be an existing directory without symlinks.")
+		}
+	}
+	if inside(m.CWD, dir) || inside(dir, m.CWD) {
+		return reject("Workspace %s overlaps %s_dir %s.", m.CWD, m.Client, dir)
 	}
 	if m.HasHook {
 		for _, part := range strings.Split(m.HookPath[1:], "/") {
@@ -91,7 +97,7 @@ func (h Host) checkMounts(m Manifest) error {
 				return reject("hook_path %s must be a clean absolute path.", m.HookPath)
 			}
 		}
-		for _, mount := range []string{m.CWD, m.ClaudeDir, docker.SecretsDir} {
+		for _, mount := range []string{m.CWD, dir, "/run/agent-pm"} {
 			if inside(m.HookPath, mount) {
 				return reject("hook_path %s lies inside the mount %s.", m.HookPath, mount)
 			}

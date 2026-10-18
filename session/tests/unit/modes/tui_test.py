@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ClientHome,
+    ClientRuntime,
     ConfigError,
     HookCallback,
     HookKind,
@@ -672,6 +673,32 @@ class StartTest(Base):
                 self.assertEqual(json.loads(metadata["home_files"]), {"settings.json": "{}"})
                 self.assertNotIn("approval", metadata)
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
+
+    def test_host_runtime_reaches_adapter_and_projection_reaches_terminal(self):
+        runtime = ClientRuntime("/image/bin", "/image/python", "/image/modules", "/run/state")
+        projection = {"/run/state/store/record.json": '{"native_id":"kept"}'}
+        seen = []
+
+        class Projected(ScanTui):
+            def _home(self):
+                return ClientHome(
+                    "fake_dir", "fake", "FAKE_HOME", "fake-token", persistent=("sessions",)
+                )
+
+            def launch(self, spec, hook):
+                seen.append(self._runtime)
+                self._runtime_files = projection
+                return super().launch(spec, hook)
+
+        with (
+            mock.patch.object(self.host, "_client_runtime", return_value=runtime),
+            mock.patch.object(self.host, "_client_env", return_value={"FAKE_HOME": "/volatile"}),
+        ):
+            self.start(run=Projected(self.client))
+        self.assertEqual(seen, [runtime])
+        metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
+        self.assertEqual(json.loads(metadata["runtime_files"]), projection)
+        self.assertEqual(json.loads(metadata["home_persistent"]), ["sessions"])
 
     def test_a_host_resume_argv_replaces_the_clients_resume_command(self):
         run = ScanTui(self.client)

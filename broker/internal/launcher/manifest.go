@@ -13,10 +13,10 @@ import (
 )
 
 type Manifest struct {
-	Name, Generation, Image, CWD, Workspace, ClaudeDir, HookPath string
-	HasHook                                                      bool
-	Labels                                                       map[string]string
-	GitHubApp                                                    string // the App whose tokens the session gets; "": github null
+	Name, Generation, Image, CWD, Workspace, Client, ClaudeDir, CodexDir, HookPath string
+	HasHook                                                                        bool
+	Labels                                                                         map[string]string
+	GitHubApp                                                                      string // the App whose tokens the session gets; "": github null
 }
 
 // A workspace volume's labels: its kind (always kind) and its mount point.
@@ -108,7 +108,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	}
 	var m Manifest
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
-		"cwd": &m.CWD, "workspace": &m.Workspace, "claude_dir": &m.ClaudeDir, "hook_path": &m.HookPath}
+		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
 		if key == "labels" || key == "github" {
 			continue
@@ -121,12 +121,17 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return reject("field %q must be a string without control characters", key)
 		}
 	}
-	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "claude_dir", "github", "labels"} {
+	for _, key := range []string{"name", "generation", "image", "cwd", "workspace", "client", "github", "labels"} {
 		if _, ok := fields[key]; !ok {
 			return reject("missing field %q", key)
 		}
 	}
 	_, m.HasHook = fields["hook_path"]
+	_, claude := fields["claude_dir"]
+	_, codex := fields["codex_dir"]
+	if !((m.Client == "claude" && claude && !codex) || (m.Client == "codex" && codex && !claude)) {
+		return reject("client requires exactly its own state directory")
+	}
 	switch {
 	case !namePattern.MatchString(m.Name) || m.Name == "none":
 		return reject("invalid name")
@@ -136,7 +141,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return reject("image must be agent-pm-worker:<64 hex>")
 	case m.Workspace != "agent-pm-ws-"+m.Name:
 		return reject("workspace must be agent-pm-ws-<name>")
-	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.ClaudeDir, "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
+	case !strings.HasPrefix(m.CWD, "/") || !strings.HasPrefix(m.StateDir(), "/") || m.HasHook && !strings.HasPrefix(m.HookPath, "/"):
 		return reject("paths must be absolute")
 	}
 	m.CWD = filepath.Clean(m.CWD) // Docker mounts at the cleaned target
@@ -165,4 +170,11 @@ func ParseManifest(data []byte) (Manifest, error) {
 		m.Labels[key] = value
 	}
 	return m, nil
+}
+
+func (m Manifest) StateDir() string {
+	if m.Client == "codex" {
+		return m.CodexDir
+	}
+	return m.ClaudeDir
 }

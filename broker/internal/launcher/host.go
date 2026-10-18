@@ -22,6 +22,11 @@ type Credentials interface {
 
 // Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
 // Errors are *protocol.Error, wrap docker.ErrUnreachable, or are opaque, carrying no Docker stderr.
+type CodexCredentials interface {
+	Ready(context.Context) error
+	Inject(context.Context, func([]string, []byte) error) (string, error)
+}
+
 type Tokens interface {
 	Ready(app string) error // manifest_rejected for another App; login_required or keychain_failed for its key
 	Issue(ctx context.Context, app, container string, exec func(argv []string, stdin []byte) error) ([]protocol.Expiry, error)
@@ -37,6 +42,7 @@ type Host struct {
 	Safe     func(string) error
 	Docker   docker.Runner
 	Creds    Credentials
+	Codex    CodexCredentials
 	GitHub   Tokens
 	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
 }
@@ -66,11 +72,12 @@ type Clients struct {
 }
 
 type StartResult struct {
-	Container   string            `json:"container"`
-	Endpoint    string            `json:"endpoint"`
-	ImageDigest string            `json:"image_digest"`
-	Clients     Clients           `json:"clients"`
-	GitHub      []protocol.Expiry `json:"github"`
+	Container      string            `json:"container"`
+	Endpoint       string            `json:"endpoint"`
+	ImageDigest    string            `json:"image_digest"`
+	Clients        Clients           `json:"clients"`
+	GitHub         []protocol.Expiry `json:"github"`
+	CodexExpiresAt *string           `json:"credential_expires_at"`
 }
 
 type RefreshResult struct {
@@ -79,7 +86,8 @@ type RefreshResult struct {
 }
 
 type StatusResult struct {
-	Revocations []protocol.Pending `json:"revocations"`
+	Revocations []protocol.Pending    `json:"revocations"`
+	Codex       *protocol.CodexStatus `json:"codex,omitempty"`
 }
 
 type CloseResult struct {

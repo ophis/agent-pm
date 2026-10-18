@@ -476,7 +476,7 @@ func TestManifestUnreadable(t *testing.T) {
 }
 
 func TestHookUnderUncleanCWD(t *testing.T) {
-	m := `{"name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
+	m := `{"client":"claude","name":"worker_1","generation":"0123456789abcdef0123456789abcdef","image":"agent-pm-worker:` + imageKey +
 		`","cwd":"` + home + `/src/project/.","workspace":"agent-pm-ws-worker_1","claude_dir":"` + home + `/.agent-pm/docker-state/worker_1/claude","hook_path":"` + home + `/src/project/hook","github":null,"labels":{}}`
 	h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 	_, err := h.Start(context.Background(), writeManifest(t, []byte(m)))

@@ -127,8 +127,9 @@ class FakeBroker:
         if "version" in self.failing:
             raise self.failing["version"]
 
-    def build(self, package, *, max_age=None):
+    def build(self, package, *, plugins=(), max_age=None):
         self.order.append(("build", package))
+        self.plugins = plugins
         self.max_ages.append(max_age)
         if "build" in self.failing:
             raise self.failing["build"]
@@ -269,14 +270,21 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
+                "plugins": ["autopilot"],
                 "github": {"app": "agent-pm-bot"},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
         host = DockerHost("docker", settings)
-        self.assertEqual((host.docker, host.github), ("/usr/local/bin/docker", "agent-pm-bot"))
-        self.assertEqual(DockerHost("docker", {"docker": DOCKER}).github, "")
+        self.assertEqual(
+            (host.docker, host.github, host.plugins),
+            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",)),
+        )
+        bare = DockerHost("docker", {"docker": DOCKER})
+        self.assertEqual((bare.github, bare.plugins), ("", ()))
+        named = DockerHost("docker", {"docker": DOCKER, "plugins": ["a", "b.c@market_1-x"]})
+        self.assertEqual(named.plugins, ("a", "b.c@market_1-x"))
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -299,6 +307,23 @@ class ConfigTest(Base):
                 r"^\[hosts.docker.github\] app: want a string$",
             ),
             ({"docker": DOCKER, "github": {}}, r"^\[hosts.docker.github\] app: want a string$"),
+            *(
+                (
+                    {"docker": DOCKER, "plugins": plugins},
+                    r"^\[hosts.docker\] plugins: want a list of unique plugin names$",
+                )
+                for plugins in (
+                    "autopilot",
+                    ["a", "a"],
+                    [1],
+                    [["a"]],
+                    [""],
+                    ["../a"],
+                    ["a@"],
+                    ["a@b@c"],
+                    ["-a"],
+                )
+            ),
         ):
             with self.subTest(settings=settings), self.assertRaisesRegex(ConfigError, key):
                 DockerHost("docker", settings)
@@ -335,6 +360,53 @@ class ClientEnvTest(Base):
 
 
 class StartTest(Base):
+    def test_runtime_staging_errors_are_reported_without_container_output(self):
+        files = json.dumps({"/run/agent-pm/agent-store/" + "a" * 64 + ".json": "{}"})
+        for result in (
+            done(1, "private", "private"),
+            OSError("unavailable"),
+            TimeoutExpired("exec", 1),
+        ):
+            with self.subTest(result=type(result).__name__):
+                with (
+                    mock.patch.object(
+                        self.host,
+                        "run",
+                        **(
+                            {"side_effect": result}
+                            if isinstance(result, Exception)
+                            else {"return_value": result}
+                        ),
+                    ),
+                    self.assertRaises(SessionError) as raised,
+                ):
+                    self.host._stage_files(CONTAINER, {"runtime_files": files})
+                self.assertNotIn("private", str(raised.exception))
+
+    def test_runtime_projection_and_initial_expiry_are_staged_before_client(self):
+        expiry = "2026-10-18T12:00:00Z"
+        self.broker.started = replace(self.broker.started, credential_expires_at=expiry)
+        files = json.dumps({"/run/agent-pm/agent-store/" + "a" * 64 + ".json": "{}"})
+        self.start(runtime_files=files, home_persistent='["sessions"]')
+        self.assertTrue(os.path.isdir(os.path.join(self.home_dir, "sessions")))
+        self.assertIn(files, self.docker.inputs)
+        with open(os.path.join(self.state, f"{GEN}.credential.json")) as f:
+            self.assertEqual(json.load(f), expiry)
+        with open(os.path.join(self.state, f"{GEN}.plan.json")) as f:
+            self.assertEqual(
+                json.load(f)["mounts"], [{"path": self.home_dir + "/sessions", "rw": True}]
+            )
+
+    def test_staging_failure_rolls_back_the_container(self):
+        with (
+            mock.patch.object(
+                self.host, "_stage_files", side_effect=SessionError("projection failed")
+            ),
+            self.assertRaisesRegex(SessionError, "projection failed"),
+        ):
+            self.start()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
     METADATA = {
         "sid": "s1",
         "client": "agent",
@@ -397,6 +469,11 @@ class StartTest(Base):
         self.assertFalse(os.path.exists(os.path.join(self.state, f"{GEN}.json")))
         self.popen_mock.assert_not_called()
 
+    def test_the_build_holds_the_whitelisted_plugins(self):
+        self.host.plugins = ("autopilot", "beta@market")
+        self.start()
+        self.assertEqual(self.broker.plugins, ("autopilot", "beta@market"))
+
     def test_start_order(self):
         os.makedirs(self.home_dir)
         with open(os.path.join(self.home_dir, "old"), "w"):
@@ -431,6 +508,7 @@ class StartTest(Base):
                     "image": IMAGE,
                     "cwd": self.cwd,
                     "workspace": "agent-pm-ws-w",
+                    "client": "agent",
                     "agent_dir": self.home_dir,
                     "hook_path": os.path.join(REPO, "bin", "agent-pm-session"),
                     "github": None,
@@ -507,7 +585,7 @@ class StartTest(Base):
         self.assertEqual(SOCKET, "/run/agent-pm/relay.sock")
         new = self.docker.execs()[2]
         tail = new[new.index("--") :]
-        self.assertEqual(tail[:4], ["--", "with-secrets", "agent", "--flag"])
+        self.assertEqual(tail[:6], ["--", "with-secrets", "--client", "agent", "agent", "--flag"])
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
         self.assertIn(f"AGENT_HOME={self.home_dir}", new)
         self.assertIn("K=v", new)
@@ -1043,7 +1121,7 @@ class PipeTest(Base):
             [
                 *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
                 *("--env", "AGENT_HOME", "--env", "K"),
-                *(CONTAINER, "with-secrets", "agent", "-p"),
+                *(CONTAINER, "with-secrets", "--client", "agent", "agent", "-p"),
             ],
         )
         self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))
@@ -1205,9 +1283,26 @@ class PreflightTest(Base):
         self.assertFalse(os.path.exists(self.state))
 
     def test_a_missing_cwd_is_refused_before_the_broker(self):
-        self.cwd = os.path.join(self.account, "src", "gone")
-        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.cwd}: no such directory"):
-            self.validate()
+        launch = Launch(("agent",), cwd=os.path.join(self.account, "src", "gone"), env={})
+        for check in (self.host.validate, self.host.terminal, self.host.pipe):
+            with (
+                self.subTest(check=check.__name__),
+                self.assertRaisesRegex(ConfigError, f"Docker cwd {launch.cwd}: no such directory"),
+            ):
+                check("w", launch)
+        self.assertEqual(self.order, [])
+
+    def test_a_session_preflight_accepts_a_cwd_not_yet_made(self):
+        cwd = os.path.join(self.account, "src", "later")
+        self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(cwd))
+
+    def test_a_session_preflight_refuses_a_cwd_that_is_no_directory(self):
+        cwd = os.path.join(self.account, "src", "file")
+        open(cwd, "w").close()
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: no such directory"):
+            self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
         self.assertEqual(self.order, [])
 
 

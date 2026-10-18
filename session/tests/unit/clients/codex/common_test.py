@@ -849,7 +849,9 @@ class SessionStatusTest(Base):
         original = os.open
 
         def opening(location, *args, **kwargs):
-            if str(location) == str(path):
+            if str(location) == str(path) or (
+                kwargs.get("dir_fd") is not None and str(location) == path.name
+            ):
                 raise PermissionError("denied")
             return original(location, *args, **kwargs)
 
@@ -879,7 +881,9 @@ class SessionStatusTest(Base):
         original = os.open
 
         def opening(location, *args, **kwargs):
-            if str(location) == str(path):
+            if str(location) == str(path) or (
+                kwargs.get("dir_fd") is not None and str(location) == path.name
+            ):
                 raise PermissionError("denied")
             return original(location, *args, **kwargs)
 
