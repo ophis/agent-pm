@@ -16,7 +16,16 @@ from typing import BinaryIO
 from uuid import UUID, uuid4
 
 from agent_pm.manager.engine.events import Events
-from agent_pm.manager.engine.types import Entry, Held, Lease, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import (
+    Entry,
+    Held,
+    Lease,
+    RosterError,
+    Spec,
+    Stale,
+    StaleHolder,
+    State,
+)
 from agent_pm.utils import Record, file_lock, printable, read_regular, save
 
 VERSION = 2
@@ -264,9 +273,11 @@ class Roster:
                 raise Held(f"{self.directory}: held by {_label(holder)}")
             return
         if holder is None or holder["id"] != lease.id or data["lease_gen"] != lease.generation:
-            raise Stale(f"{self.directory}: stale holder generation; start a new manager holder")
+            raise StaleHolder(
+                f"{self.directory}: stale holder generation; start a new manager holder"
+            )
         if not self._active_holder():
-            raise Stale(f"{self.directory}: holder no longer alive")
+            raise StaleHolder(f"{self.directory}: holder no longer alive")
 
     def _maintenance_allowed(self, data: dict) -> bool:
         if not any(entry["receipt"] is not None for entry in data["entries"].values()):
@@ -315,6 +326,12 @@ class Roster:
             if fd is not None:
                 os.close(fd)
             self.bind(previous)
+
+    def lease_state(self) -> tuple[int, int, str | None]:
+        """Handled cursor, generation and the active holder's label, read without a lease."""
+        with self._locked() as data:
+            holder = _label(data["holder"]) if self._active_holder() else None
+            return data["cursor"], data["gen"], holder
 
     def check_lease(self) -> None:
         with self._locked() as data:
