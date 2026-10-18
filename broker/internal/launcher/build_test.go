@@ -178,7 +178,7 @@ func (e *buildEnv) host() Host { return Host{Home: e.home, Docker: e.fake, Progr
 
 func TestBuildCacheAndStages(t *testing.T) {
 	e := newBuildEnv(t)
-	first, err := e.host().Build(context.Background(), e.pkg, -1)
+	first, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestBuildCacheAndStages(t *testing.T) {
 		t.Fatalf("%q", probe)
 	}
 	stage2 := e.fake.calls[3]
-	want := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=agent-pm-user:" + e.key, "--build-arg", "AGENT_PM_VERSION=1.2.3", "--build-arg", "AGENT_UID=1001", "--build-arg", "AGENT_GID=1002", "--label", "agent-pm.key=" + e.key, "--tag", "agent-pm-worker:" + e.key}
+	want := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=agent-pm-user:" + e.key, "--build-arg", "AGENT_PM_VERSION=1.2.3", "--build-arg", "AGENT_UID=1001", "--build-arg", "AGENT_GID=1002", "--build-arg", "AGENT_PM_PLUGIN_DIRS=", "--label", "agent-pm.key=" + e.key, "--tag", "agent-pm-worker:" + e.key}
 	if !slices.Equal(stage2[:len(want)], want) || len(stage2) != len(want)+1 {
 		t.Fatalf("%q", stage2)
 	}
@@ -210,21 +210,21 @@ func TestBuildCacheAndStages(t *testing.T) {
 		}
 	}
 	calls := len(e.fake.calls)
-	second, err := e.host().Build(context.Background(), e.pkg, -1)
+	second, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 	if err != nil || second.Rebuilt || second.Image != first.Image || len(e.fake.calls) != calls+1 {
 		t.Fatalf("%+v %v %q", second, err, e.fake.verbs())
 	}
 	putFile(t, filepath.Join(e.pkg, "session/src/sample.py"), "changed")
-	third, err := e.host().Build(context.Background(), e.pkg, -1)
+	third, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 	if err != nil || !third.Rebuilt || third.Image == first.Image {
 		t.Fatalf("%+v %v", third, err)
 	}
 	putFile(t, filepath.Join(e.pkg, "delegate/src/sample.py"), "changed")
-	if team, err := e.host().Build(context.Background(), e.pkg, -1); err != nil || !team.Rebuilt || team.Image == third.Image {
+	if team, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil || !team.Rebuilt || team.Image == third.Image {
 		t.Fatalf("%+v %v", team, err)
 	}
 	putFile(t, filepath.Join(e.home, ".agent-pm/docker/worker/Dockerfile"), "FROM other")
-	fourth, err := e.host().Build(context.Background(), e.pkg, -1)
+	fourth, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 	if err != nil || !fourth.Rebuilt || fourth.Image == third.Image {
 		t.Fatalf("%+v %v", fourth, err)
 	}
@@ -252,7 +252,7 @@ func TestBuildFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newBuildEnv(t)
 			mutate(e)
-			_, err := e.host().Build(context.Background(), e.pkg, -1)
+			_, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 			if code(err) != protocol.BuildFailed {
 				t.Fatal(err)
 			}
@@ -273,14 +273,14 @@ func TestBuildFailures(t *testing.T) {
 			}
 			return inner(args)
 		}
-		if _, err := e.host().Build(context.Background(), e.pkg, -1); code(err) != protocol.BuildFailed {
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); code(err) != protocol.BuildFailed {
 			t.Fatal(err)
 		}
 	})
 	t.Run("unreachable", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.fake.respond = func([]string) ([]byte, error) { return nil, docker.ErrUnreachable }
-		if _, err := e.host().Build(context.Background(), e.pkg, -1); code(err) != protocol.DockerUnreachable {
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); code(err) != protocol.DockerUnreachable {
 			t.Fatal(err)
 		}
 	})
@@ -334,7 +334,7 @@ func TestWorkerImageHasItsScripts(t *testing.T) {
 func TestBuildContextOutsideTMPDIR(t *testing.T) {
 	e := newBuildEnv(t)
 	t.Setenv("TMPDIR", t.TempDir())
-	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(e.home, ".agent-pm/docker/tmp") + "/"
@@ -365,7 +365,7 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 	t.Run("keeps the current pair and images containers use", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.containers, e.used = listing, "c1\nc2\n", id("e")+"\n"+id("0")+"\n"
-		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 			t.Fatal(err)
 		}
 		want := []string{"agent-pm-worker:" + old, "agent-pm-user:" + old, "agent-pm-user:" + kept}
@@ -380,14 +380,14 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 			t.Fatalf("%q", got)
 		}
 		calls := len(e.fake.calls)
-		if again, err := e.host().Build(context.Background(), e.pkg, -1); err != nil || again.Rebuilt || len(e.fake.calls) != calls+1 {
+		if again, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil || again.Rebuilt || len(e.fake.calls) != calls+1 {
 			t.Fatalf("a reused image pruned: %v %q", err, e.fake.verbs()[calls:])
 		}
 	})
 	t.Run("a failed removal keeps the image", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.rmErr = listing, &docker.CommandError{Exit: 1, Stderr: "Error response from daemon: conflict: image is in use"}
-		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(e.progress.String(), "agent-pm-broker: kept agent-pm-worker:"+old+": Error response from daemon: conflict: image is in use\n") {
@@ -397,7 +397,7 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 	t.Run("unknown containers keep every image", func(t *testing.T) {
 		e := newBuildEnv(t)
 		e.images, e.listErr = listing, &docker.CommandError{Exit: 1, Stderr: "boom"}
-		if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+		if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 			t.Fatal(err)
 		}
 		if got := removed(e); got != nil || e.progress.String() != "agent-pm-broker: kept older images: cannot list containers: boom\n" {
@@ -409,7 +409,7 @@ func TestBuildRemovesOlderImages(t *testing.T) {
 func TestBuildRefreshesAnOldImage(t *testing.T) {
 	const week = 7 * 24 * time.Hour
 	e := newBuildEnv(t)
-	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -427,7 +427,7 @@ func TestBuildRefreshesAnOldImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e.age = tc.age
 			calls := len(e.fake.calls)
-			got, err := e.host().Build(context.Background(), e.pkg, tc.maxAge)
+			got, err := e.host().Build(context.Background(), e.pkg, nil, tc.maxAge)
 			if err != nil || got.Rebuilt != tc.rebuilt || got.Image != "agent-pm-worker:"+e.key {
 				t.Fatalf("%+v %v", got, err)
 			}
@@ -448,7 +448,7 @@ func TestBuildRemovesUntaggedImages(t *testing.T) {
 	id := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
 	e := newBuildEnv(t)
 	e.dangling, e.containers, e.used = id("3")+"\n"+id("4")+"\n", "c1\n", id("4")+"\n"
-	if _, err := e.host().Build(context.Background(), e.pkg, -1); err != nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, nil, -1); err != nil {
 		t.Fatal(err)
 	}
 	listing := e.fake.calls[len(e.fake.calls)-2]
@@ -465,20 +465,20 @@ func TestBuildRemovesUntaggedImages(t *testing.T) {
 
 func TestAFailedRefreshKeepsTheImage(t *testing.T) {
 	e := newBuildEnv(t)
-	first, err := e.host().Build(context.Background(), e.pkg, -1)
+	first, err := e.host().Build(context.Background(), e.pkg, nil, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.age, e.failStage = 8*24*time.Hour, "agent-pm-user"
 	e.progress.Reset()
-	got, err := e.host().Build(context.Background(), e.pkg, 7*24*time.Hour)
+	got, err := e.host().Build(context.Background(), e.pkg, nil, 7*24*time.Hour)
 	if err != nil || got != (BuildResult{Image: first.Image, Digest: first.Digest}) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	if want := "agent-pm-broker: kept " + first.Image + ": refreshing it failed: Building the worker image definition failed. (RUN false)\n"; e.progress.String() != want {
 		t.Fatalf("%q", e.progress.String())
 	}
-	if _, err := e.host().Build(context.Background(), e.pkg, 0); err == nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, nil, 0); err == nil {
 		t.Fatal("a forced rebuild kept the image")
 	}
 	inner := e.fake.respond
@@ -488,7 +488,7 @@ func TestAFailedRefreshKeepsTheImage(t *testing.T) {
 		}
 		return inner(args)
 	}
-	if _, err := e.host().Build(context.Background(), e.pkg, 7*24*time.Hour); err == nil || err.(*protocol.Error).Code != protocol.DockerUnreachable {
+	if _, err := e.host().Build(context.Background(), e.pkg, nil, 7*24*time.Hour); err == nil || err.(*protocol.Error).Code != protocol.DockerUnreachable {
 		t.Fatalf("unreachable Docker kept the image: %v", err)
 	}
 }

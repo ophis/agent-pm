@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 7",
+  "title": "Docker broker protocol 8",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -220,7 +220,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "7"
+          "const": "8"
         }
       },
       "required": [
@@ -232,6 +232,7 @@
       "type": "object",
       "properties": {
         "argv": {
+          "$comment": "Then any --plugin NAME pairs, then an optional --max-age SECONDS; JSON Schema cannot pair repeated tokens, so the broker checks the order (usage).",
           "type": "array",
           "prefixItems": [
             {
@@ -242,16 +243,21 @@
             },
             {
               "$ref": "#/$defs/path"
-            },
-            {
-              "const": "--max-age"
-            },
-            {
-              "type": "string",
-              "pattern": "^[0-9]{1,9}$"
             }
           ],
-          "items": false,
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "--plugin",
+                  "--max-age"
+                ]
+              },
+              {
+                "$ref": "#/$defs/plugin"
+              }
+            ]
+          },
           "minItems": 3,
           "anyOf": [
             {
@@ -1014,6 +1020,10 @@
         ],
         "additionalProperties": false
       }
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$"
     },
     "codex_status": {
       "type": "object",
