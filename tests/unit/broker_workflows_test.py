@@ -33,3 +33,9 @@ class BrokerJob(Case):
         self.assertEqual(names.index("Staticcheck"), names.index("Go vet") + 1)
         self.assertEqual(found["Staticcheck"].strip(), f"run: {STATICCHECK}")
         self.assertNotIn("continue-on-error", job("test.yml", "broker"))
+
+    def test_macos_build_step_builds_and_signs_with_build_script(self):
+        step = steps(job("test.yml", "broker"))["Build darwin/arm64 binary with cgo"]
+        self.assertIn('run: sh build.sh "$RUNNER_TEMP/agent-pm-broker-darwin-arm64"', step)
+        self.assertIn("GOOS: darwin", step)
+        self.assertIn("GOARCH: arm64", step)

@@ -352,8 +352,7 @@ jobs:
         env:
           GOOS: darwin
           GOARCH: arm64
-          CGO_ENABLED: "1"
-        run: sh with-go-state.sh go build -trimpath -o "$RUNNER_TEMP/agent-pm-broker-darwin-arm64" .
+        run: sh build.sh "$RUNNER_TEMP/agent-pm-broker-darwin-arm64"
       - name: Upload darwin/arm64 binary
         if: ${{ runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7.0.2
