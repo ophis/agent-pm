@@ -16,7 +16,7 @@ that App's installation tokens ([GitHub tokens](#github-tokens)): start's `githu
 codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional administrative
 `status.codex` object. Protocol 8 adds build's `--plugin`. Protocol 9 adds client-specific
 manifest directories and start's `credential_expires_at`; relay messages and GitHub fields
-remain unchanged. Protocol 10 requires start's `client_update` audit object.
+remain unchanged. Protocol 10 adds start's `client_update` audit object.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -129,7 +129,10 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
 
-`client_update` has no secrets; all fields are required, extra fields rejected:
+`client_update` is required for Codex starts and absent for Claude starts; null is
+rejected. Schema and Python use non-null `credential_expires_at` as the existing
+Codex response discriminator. The object has no secrets; all its fields are required,
+extra fields rejected:
 
 | Field | Meaning |
 |---|---|
@@ -167,8 +170,11 @@ flowchart LR
     V[Validate] --> W[Ensure volume]
     W --> C[Create secured container]
     C --> B[Bootstrap and hook stub]
-    B --> P[Prepare compatible client versions]
-    P --> T[Inject token through exec stdin]
+    B --> P[Probe image clients]
+    P --> Q{Codex}
+    Q -->|yes| U[Prepare compatible Codex]
+    U --> T[Inject token through exec stdin]
+    Q -->|no| T
     T --> G[Issue and write GitHub tokens]
     G --> O[Return start output]
 ```

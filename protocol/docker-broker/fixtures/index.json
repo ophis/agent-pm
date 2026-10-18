@@ -1495,6 +1495,16 @@
         "exit_code": null,
         "error_code": null
       }
+    },
+    {
+      "file": "start-output-claude-update.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
     }
   ]
 }

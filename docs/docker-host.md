@@ -173,8 +173,8 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest`, prepared actual `clients`
-versions and the [version audit](docker-broker-protocol.md#success-fields).
+It prints `container` (`C` below), `endpoint`, `image_digest` and actual `clients`
+versions. Codex starts add the [version audit](docker-broker-protocol.md#success-fields).
 
 | Check | Expect |
 |---|---|
@@ -188,7 +188,7 @@ versions and the [version audit](docker-broker-protocol.md#success-fields).
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
-| `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; version preparation may open outbound HTTPS connections to the official registry |
+| `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
 one `{"account", "expires_at"}` per installation of the App.
@@ -397,7 +397,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | | `create` | `docker run`: the new container |
 | | `bootstrap` | Claude's bootstrap state and the hook stub |
 | | `clients` | both clients' `--version` in the container |
-| | `client_update` | [Codex preparation](docker-codex.md#container-versions) before secret injection |
+| | `client_update` | Codex starts only: [version preparation](docker-codex.md#container-versions) before secret injection |
 | | `credentials` | the token injection |
 | | `total` | the broker's whole `start` |
 | `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check |

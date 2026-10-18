@@ -257,7 +257,6 @@ func TestRunArguments(t *testing.T) {
 	want := []string{"run", "--detach", "--name", container, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", cwd, "--env", "CLAUDE_CONFIG_DIR=" + claude,
 		"--env", "npm_config_cache=" + cwd + "/.agent-pm-cache", "--env", "UV_CACHE_DIR=" + cwd + "/.agent-pm-cache", "--env", "PIP_CACHE_DIR=" + cwd + "/.agent-pm-cache",
-		"--tmpfs", runtimeDir + ":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
 		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "team=crew",
 		"--mount", "type=volume,source=" + volume + ",target=" + cwd, "--mount", "type=bind,source=" + claude + ",target=" + claude,
 		"--tmpfs", "/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536,mode=0700,uid=1001,gid=1002",
@@ -342,7 +341,7 @@ func TestStartOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
-		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, GitHub: []protocol.Expiry{}, ClientUpdate: ClientUpdate{Client: "codex", PinnedVersion: "0.162.1", AllowedVersions: []string{"0.100.0", "0.162.1"}, ImageVersion: "0.100.0", TargetVersion: "0.100.0", Result: "current"}}
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, GitHub: []protocol.Expiry{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}
@@ -527,18 +526,14 @@ func TestStartPhaseTimes(t *testing.T) {
 	}
 	line := regexp.MustCompile(`^agent-pm-broker: start ([a-z_]+) [0-9]+\.[0-9]{2} s$`)
 	var phases []string
-	statusLine := "agent-pm-broker: Codex update current; image=0.100.0 actual=0.100.0\n"
-	if !strings.HasSuffix(progress.String(), statusLine) {
-		t.Fatal(progress.String())
-	}
-	for _, l := range strings.Split(strings.TrimSuffix(strings.TrimSuffix(progress.String(), statusLine), "\n"), "\n") {
+	for _, l := range strings.Split(strings.TrimSuffix(progress.String(), "\n"), "\n") {
 		m := line.FindStringSubmatch(l)
 		if m == nil {
 			t.Fatalf("line %q in %q", l, progress.String())
 		}
 		phases = append(phases, m[1])
 	}
-	if want := []string{"preflight", "image", "checks", "create", "bootstrap", "clients", "client_update", "credentials", "total"}; !slices.Equal(phases, want) {
+	if want := []string{"preflight", "image", "checks", "create", "bootstrap", "clients", "credentials", "total"}; !slices.Equal(phases, want) {
 		t.Fatalf("phases %q want %q", phases, want)
 	}
 	for name, w := range map[string]*world{

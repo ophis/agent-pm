@@ -13,16 +13,5 @@
       "expires_at": "2026-10-17T13:00:00Z",
       "token": "ghs_example"
     }
-  ],
-  "client_update": {
-    "client": "codex",
-    "pinned_version": "0.162.1",
-    "allowed_versions": [
-      "0.100.0",
-      "0.162.1"
-    ],
-    "image_version": "0.100.0",
-    "target_version": "0.100.0",
-    "result": "current"
-  }
+  ]
 }

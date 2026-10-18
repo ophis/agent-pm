@@ -309,8 +309,12 @@ class Broker:
 
     def start(self, manifest: str, *, clients: frozenset[str]) -> Started:
         """`clients`: the client names the protocol requires in the response."""
+        required = {f.name for f in fields(Started)} - {"client_update"}
         found = self._parsed(
-            "start", lambda d: set(d) == {f.name for f in fields(Started)}, "--manifest", manifest
+            "start",
+            lambda d: required <= set(d) <= required | {"client_update"},
+            "--manifest",
+            manifest,
         )
         started = Started(**found)
         if not (
@@ -322,7 +326,11 @@ class Broker:
             and all(map(_text, started.clients.values()))
             and _expiries(started.github)
             and _credential_expiry(started.credential_expires_at)
-            and _client_update(started.client_update, started.clients)
+            and (
+                _client_update(started.client_update, started.clients)
+                if started.credential_expires_at is not None
+                else "client_update" not in found
+            )
         ):
             raise SessionError("broker: bad response to start: fields")
         return started

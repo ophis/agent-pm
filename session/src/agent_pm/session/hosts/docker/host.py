@@ -292,11 +292,12 @@ def _save_result(
         "image": created.image,
         "image_digest": created.started.image_digest,
         "client_versions": dict(created.started.clients),
-        "client_update": dict(created.started.client_update),
         "started_at": created.began,
         "ended_at": created.ended,
         "phases": dict(phases),
     }
+    if created.started.client_update is not None:
+        result["client_update"] = dict(created.started.client_update)
     if launched is not None:
         result["launched_at"] = launched
     save(

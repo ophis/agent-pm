@@ -75,11 +75,12 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}
-	policy, err := h.versionPolicy(ctx)
-	if err != nil {
-		return StartResult{}, err
-	}
+	var policy codex.Installation
 	if m.Client == "codex" {
+		policy, err = h.versionPolicy(ctx)
+		if err != nil {
+			return StartResult{}, err
+		}
 		if err := h.Codex.Ready(ctx); err != nil {
 			return StartResult{}, err
 		}
@@ -146,7 +147,6 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
 	}
 	args = append(args,
-		"--tmpfs", runtimeDir+":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
 		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation)
 	keys := make([]string, 0, len(m.Labels))
 	for k := range m.Labels {
@@ -159,7 +159,8 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	args = append(args, "--mount", volumeMount(m.Workspace, m.CWD, false))
 	if m.Client == "codex" {
 		owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
-		args = append(args, "--tmpfs", m.CodexDir+":rw,noexec,nosuid,nodev,size=67108864"+owner,
+		args = append(args, "--tmpfs", runtimeDir+":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
+			"--tmpfs", m.CodexDir+":rw,noexec,nosuid,nodev,size=67108864"+owner,
 			"--tmpfs", "/run/agent-pm:rw,noexec,nosuid,nodev,size=1048576"+owner,
 			"--mount", bindMount(filepath.Join(m.CodexDir, "sessions"), filepath.Join(m.CodexDir, "sessions")))
 	} else {
@@ -193,11 +194,16 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
-	clients, update, err := h.updateCodex(ctx, c, info.Architecture, clients, policy)
-	if err != nil {
-		return StartResult{}, err
+	var update *ClientUpdate
+	if m.Client == "codex" {
+		var prepared ClientUpdate
+		clients, prepared, err = h.updateCodex(ctx, c, info.Architecture, clients, policy)
+		if err != nil {
+			return StartResult{}, err
+		}
+		update = &prepared
+		lap("client_update")
 	}
-	lap("client_update")
 	exec := h.agentExec(ctx, c)
 	var codexExpiry *string
 	if m.Client == "codex" {

@@ -180,7 +180,6 @@ class Base(Case):
             "sha256:" + "b" * 64,
             {},
             [],
-            data("start-output.json")["client_update"],
         )
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
@@ -786,7 +785,6 @@ class StartTest(Base):
             "sha256:" + "b" * 64,
             {"claude": "2.1.0"},
             [],
-            data("start-output.json")["client_update"],
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
@@ -807,21 +805,35 @@ class StartTest(Base):
                         "image": IMAGE,
                         "image_digest": "sha256:" + "b" * 64,
                         "client_versions": {"claude": "2.1.0"},
-                        "client_update": dict(self.broker.started.client_update),
                     },
                 )
                 self.assertFalse(result.startswith(self.home_dir + os.sep))
 
     def test_generation_versions_survive_later_client_setup_failure(self):
-        with (
-            mock.patch.object(self.host, "_stage_files", side_effect=SessionError("setup failed")),
-            self.assertRaisesRegex(SessionError, "setup failed"),
-        ):
-            self.start()
+        for audit in (data("start-output-codex.json")["client_update"], None):
+            self.broker.started = replace(self.broker.started, client_update=audit)
+            with (
+                self.subTest(audit=audit),
+                mock.patch.object(
+                    self.host, "_stage_files", side_effect=SessionError("setup failed")
+                ),
+                self.assertRaisesRegex(SessionError, "setup failed"),
+            ):
+                self.start()
+            with open(os.path.join(self.state, f"{GEN}.result.json")) as source:
+                result = json.load(source)
+            self.assertEqual(result["image_digest"], self.broker.started.image_digest)
+            if audit is None:
+                self.assertNotIn("client_update", result)
+            else:
+                self.assertEqual(result["client_update"], audit)
+
+    def test_successful_start_records_the_update_when_present(self):
+        audit = data("start-output-codex.json")["client_update"]
+        self.broker.started = replace(self.broker.started, client_update=audit)
+        self.start()
         with open(os.path.join(self.state, f"{GEN}.result.json")) as source:
-            result = json.load(source)
-        self.assertEqual(result["image_digest"], self.broker.started.image_digest)
-        self.assertEqual(result["client_update"], dict(self.broker.started.client_update))
+            self.assertEqual(json.load(source)["client_update"], audit)
 
     def test_each_start_records_and_reports_its_phase_times(self):
         result = os.path.join(self.state, f"{GEN}.result.json")

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/broker"
-	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/fixtures"
 	"github.com/ophis/agent-pm/broker/internal/github"
@@ -354,17 +353,6 @@ type scripted struct {
 	fail  string
 }
 
-type pinnedVersions struct{}
-
-func (pinnedVersions) Verify() (codex.Installation, error) {
-	return codex.Installation{Version: "0.100.0", AllowedVersions: []string{"0.100.0"}}, nil
-}
-func (pinnedVersions) LatestAllowed(context.Context, []string) (string, error) { return "0.100.0", nil }
-func (pinnedVersions) Latest(context.Context) (string, error)                  { return "0.100.0", nil }
-func (pinnedVersions) Linux(context.Context, string, string) ([]byte, error) {
-	return nil, errors.New("unexpected download")
-}
-
 func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, error) {
 	s.calls = append(s.calls, args)
 	s.stdin = append(s.stdin, append([]byte(nil), stdin...))
@@ -404,12 +392,11 @@ func TestTokenNeverLeaves(t *testing.T) {
 		d := &scripted{fail: fail}
 		h := launcher.Host{
 			Home: home, Endpoint: "unix://" + home + "/.docker/run/docker.sock",
-			IsDir:    func(string) bool { return true },
-			Safe:     func(string) error { return nil },
-			Docker:   d,
-			Versions: pinnedVersions{},
-			Creds:    broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
-			GitHub:   broker.GitHub{Keychain: noSecrets{}, API: github.Client{Now: time.Now}, Lock: broker.FileLock(filepath.Join(t.TempDir(), "tokens.lock"))},
+			IsDir:  func(string) bool { return true },
+			Safe:   func(string) error { return nil },
+			Docker: d,
+			Creds:  broker.Credentials{Keychain: &memKeychain{token: []byte(token)}},
+			GitHub: broker.GitHub{Keychain: noSecrets{}, API: github.Client{Now: time.Now}, Lock: broker.FileLock(filepath.Join(t.TempDir(), "tokens.lock"))},
 		}
 		a := app{start: func(ctx context.Context, m string, _ io.Writer) (any, error) { return h.Start(ctx, m) }}
 		_, out, errOut := invoke(a, "start", "--manifest", path)

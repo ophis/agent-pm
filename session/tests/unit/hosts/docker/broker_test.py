@@ -64,8 +64,33 @@ class PluginRootTest(Case):
 
 
 class ResponseTest(Case):
+    def test_update_record_presence_follows_the_client_expiry(self):
+        claude = data("start-output.json")
+        claude.pop("client_update", None)
+        self.assertIsNone(
+            Broker(FakeBroker((0, json.dumps(claude), "")))
+            .start(MANIFEST, clients=KEYS)
+            .client_update
+        )
+        codex = data("start-output-codex.json")
+        self.assertEqual(
+            Broker(FakeBroker((0, json.dumps(codex), "")))
+            .start(MANIFEST, clients=KEYS)
+            .client_update,
+            codex["client_update"],
+        )
+        missing = {key: value for key, value in codex.items() if key != "client_update"}
+        for bad in (
+            missing,
+            {**claude, "client_update": codex["client_update"]},
+            {**claude, "client_update": None},
+            {**codex, "client_update": None},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(SessionError):
+                Broker(FakeBroker((0, json.dumps(bad), ""))).start(MANIFEST, clients=KEYS)
+
     def test_client_update_outcomes_and_invalid_shapes(self):
-        response = data("start-output.json")
+        response = data("start-output-codex.json")
         for result, target, actual in (
             ("current", "0.100.0", "0.100.0"),
             ("updated", "0.162.1", "0.162.1"),
@@ -99,7 +124,7 @@ class ResponseTest(Case):
                 )
 
     def test_rejects_inconsistent_client_update(self):
-        good = data("start-output.json")
+        good = data("start-output-codex.json")
         policy = {
             "client": "codex",
             "pinned_version": "0.162.1",
@@ -192,7 +217,6 @@ class ResponseTest(Case):
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0"},
                 github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
-                client_update=data("start-output.json")["client_update"],
             ),
         )
         self.assertEqual(

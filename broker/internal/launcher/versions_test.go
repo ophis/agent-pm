@@ -14,6 +14,7 @@ import (
 )
 
 type fakeVersions struct {
+	calls                             []string
 	allowed                           []string
 	target, latest                    string
 	verifyErr, registryErr, binaryErr error
@@ -21,19 +22,83 @@ type fakeVersions struct {
 }
 
 func (v *fakeVersions) Verify() (codex.Installation, error) {
+	v.calls = append(v.calls, "verify")
 	return codex.Installation{Version: "0.162.1", AllowedVersions: v.allowed}, v.verifyErr
 }
 func (v *fakeVersions) LatestAllowed(context.Context, []string) (string, error) {
+	v.calls = append(v.calls, "allowed")
 	return v.target, v.registryErr
 }
-func (v *fakeVersions) Latest(context.Context) (string, error) { return v.latest, v.registryErr }
+func (v *fakeVersions) Latest(context.Context) (string, error) {
+	v.calls = append(v.calls, "latest")
+	return v.latest, v.registryErr
+}
 func (v *fakeVersions) Linux(_ context.Context, _ string, arch string) ([]byte, error) {
+	v.calls = append(v.calls, "linux")
 	v.arch = arch
 	return []byte("fake-native"), v.binaryErr
 }
 
 func defaultVersions() *fakeVersions {
 	return &fakeVersions{allowed: []string{"0.100.0", "0.162.1"}, target: "0.100.0"}
+}
+
+func TestClaudeStartsWithoutCodexVersionPreparation(t *testing.T) {
+	for _, mode := range []string{"no_provider", "not_installed", "empty_rule", "registry_unavailable"} {
+		t.Run(mode, func(t *testing.T) {
+			h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+			v := defaultVersions()
+			switch mode {
+			case "not_installed":
+				v.verifyErr = codex.ErrNotInstalled
+			case "empty_rule":
+				v.allowed = []string{}
+			case "registry_unavailable":
+				v.registryErr = errors.New("offline")
+				v.binaryErr = errors.New("offline")
+			}
+			h.Versions = v
+			if mode == "no_provider" {
+				h.Versions = nil
+			}
+			h.Codex = &fakeCodexCreds{err: errors.New("Codex credentials must not be read")}
+			var progress bytes.Buffer
+			h.Progress = &progress
+			got, err := h.Start(context.Background(), githubManifest(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(v.calls) != 0 {
+				t.Fatalf("Claude called Codex version runtime: %v", v.calls)
+			}
+			data, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result map[string]any
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatal(err)
+			}
+			if _, present := result["client_update"]; present {
+				t.Fatal("Claude response includes Codex audit")
+			}
+			if strings.Contains(progress.String(), "client_update") || strings.Contains(progress.String(), "Codex update") || strings.Contains(progress.String(), "update-codex") {
+				t.Fatal(progress.String())
+			}
+			secrets := 0
+			for _, call := range d.calls {
+				if strings.Contains(strings.Join(call, " "), runtimeDir) || slices.Contains(call, updateScript) {
+					t.Fatalf("Claude runtime preparation: %v", call)
+				}
+				if slices.Contains(call, "inject") || slices.Contains(call, "write") {
+					secrets++
+				}
+			}
+			if secrets != 2 {
+				t.Fatalf("Claude/GitHub injection count %d", secrets)
+			}
+		})
+	}
 }
 
 func TestCodexVersionLifecycle(t *testing.T) {
@@ -81,14 +146,15 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			h.Versions = v
 			var progress bytes.Buffer
 			h.Progress = &progress
-			got, err := h.Start(context.Background(), validManifest(t))
+			h.Codex = &fakeCodexCreds{}
+			got, err := h.Start(context.Background(), codexManifest(t))
 			blocked := slices.Contains([]string{"reset_failed", "restore_failed", "forbidden", "empty", "invalid_install"}, mode)
 			if (err != nil) != blocked {
 				t.Fatalf("%+v %v", got, err)
 			}
 			injected := false
 			for _, call := range d.calls {
-				if slices.Contains(call, "inject") {
+				if slices.Contains(call, "inject-codex") {
 					injected = true
 				}
 			}
@@ -101,7 +167,7 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			index := func(arg string) int {
 				return slices.IndexFunc(d.calls, func(call []string) bool { return slices.Contains(call, arg) })
 			}
-			stage, stagedProbe, publish, reset, firstPublic, inject := index("stage"), index(runtimeDir+"/codex.next"), index("publish"), index("reset"), index("/opt/agent-pm/bin/codex"), index("inject")
+			stage, stagedProbe, publish, reset, firstPublic, inject := index("stage"), index(runtimeDir+"/codex.next"), index("publish"), index("reset"), index("/opt/agent-pm/bin/codex"), index("inject-codex")
 			lastPublic, publicCount := -1, 0
 			for n, call := range d.calls {
 				if slices.Contains(call, "/opt/agent-pm/bin/codex") {
@@ -159,53 +225,48 @@ func TestCodexVersionLifecycle(t *testing.T) {
 }
 
 func TestCodexUpdateBeforeAllSecrets(t *testing.T) {
-	for _, client := range []string{"claude", "codex"} {
-		for _, blocked := range []bool{false, true} {
-			t.Run(client+map[bool]string{true: "-rejected"}[blocked], func(t *testing.T) {
-				v := &fakeVersions{allowed: []string{"0.162.1", "0.162.10"}, target: "0.162.10"}
-				if blocked {
-					v.allowed = []string{"0.162.10"}
+	for _, blocked := range []bool{false, true} {
+		t.Run("codex"+map[bool]string{true: "-rejected"}[blocked], func(t *testing.T) {
+			v := &fakeVersions{allowed: []string{"0.162.1", "0.162.10"}, target: "0.162.10"}
+			if blocked {
+				v.allowed = []string{"0.162.10"}
+			}
+			h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.10"}}, &fakeCreds{})
+			h.Versions = v
+			h.Codex = &fakeCodexCreds{}
+			b, _ := os.ReadFile(codexManifest(t))
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			m["github"] = map[string]string{"app": "agent-pm-bot"}
+			b, _ = json.Marshal(m)
+			manifest := writeManifest(t, b)
+			_, err := h.Start(context.Background(), manifest)
+			if (err != nil) != blocked {
+				t.Fatal(err)
+			}
+			stage, publish, probe, secrets := -1, -1, -1, 0
+			for i, call := range d.calls {
+				if slices.Contains(call, "stage") {
+					stage = i
 				}
-				h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.10"}}, &fakeCreds{})
-				h.Versions = v
-				h.Codex = &fakeCodexCreds{}
-				manifest := githubManifest(t)
-				if client == "codex" {
-					b, _ := os.ReadFile(codexManifest(t))
-					var m map[string]any
-					if err := json.Unmarshal(b, &m); err != nil {
-						t.Fatal(err)
-					}
-					m["github"] = map[string]string{"app": "agent-pm-bot"}
-					b, _ = json.Marshal(m)
-					manifest = writeManifest(t, b)
+				if slices.Contains(call, "publish") {
+					publish = i
 				}
-				_, err := h.Start(context.Background(), manifest)
-				if (err != nil) != blocked {
-					t.Fatal(err)
+				if slices.Contains(call, "--version") {
+					probe = i
 				}
-				stage, publish, probe, secrets := -1, -1, -1, 0
-				for i, call := range d.calls {
-					if slices.Contains(call, "stage") {
-						stage = i
-					}
-					if slices.Contains(call, "publish") {
-						publish = i
-					}
-					if slices.Contains(call, "--version") {
-						probe = i
-					}
-					if slices.Contains(call, "inject") || slices.Contains(call, "inject-codex") || slices.Contains(call, "write") {
-						secrets++
-						if blocked || !(stage < publish && publish < probe && probe < i) {
-							t.Fatalf("secret before verified update: %v", d.calls)
-						}
+				if slices.Contains(call, "inject") || slices.Contains(call, "inject-codex") || slices.Contains(call, "write") {
+					secrets++
+					if blocked || !(stage < publish && publish < probe && probe < i) {
+						t.Fatalf("secret before verified update: %v", d.calls)
 					}
 				}
-				if (!blocked && secrets != 2) || (blocked && secrets != 0) {
-					t.Fatal(secrets)
-				}
-			})
-		}
+			}
+			if (!blocked && secrets != 2) || (blocked && secrets != 0) {
+				t.Fatal(secrets)
+			}
+		})
 	}
 }

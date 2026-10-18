@@ -164,7 +164,8 @@ the run cancels both tasks. A killed harness leaves cleanup to the next Docker s
 ### Native plugins
 
 The shared [plugin whitelist](docker-host.md#plugins) supplies both clients from the
-same installed payload. No host Codex installation or personal CODEX_HOME is consulted.
+same installed payload. Plugin staging consults neither a host Codex installation
+nor personal CODEX_HOME.
 
 | Artifact | Codex behavior |
 |---|---|
@@ -201,8 +202,9 @@ It does not test model access, native conversation recovery or macOS file sharin
 ## Container versions
 
 **Compatibility rule** is the protected pinned installation's `active.json`
-`allowed_versions` exact set. Initial installation leaves it empty, so all new Docker
-generations fail closed, including Claude generations. An administrator must publish
+`allowed_versions` exact set. Only Codex container generations read it; an initial
+empty set refuses Codex starts. Claude needs no pinned Codex and makes no registry
+query or update. An administrator must publish
 only versions backed by the M4 compatibility matrix in that root-owned metadata;
 this task neither certifies versions nor changes the installed rule. Host upgrades
 preserve it; matching major/minor alone grants nothing.
@@ -219,7 +221,7 @@ flowchart TD
     F -->|verified| S
     F -->|failed| X
 ```
-Source: `broker/internal/launcher/versions.go`; start, restart and resume share this
+Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share this
 preparation. Attach leaves its running generation alone.
 
 Selection compares stable version components numerically, querying each allowed npm
@@ -234,13 +236,12 @@ staging, publication or actual-version verification remove the override and requ
 a successful image reprobe. Registry failure or no allowed release follows the same
 fallback. An incompatible image always rejects, even if an update exists.
 
-Every generation's `<generation>.result.json` retains the image digest, actual clients
+Each Codex generation's `<generation>.result.json` retains the image digest, actual clients
 and [version audit object](docker-broker-protocol.md#success-fields). Startup stderr
 reports its classified update outcome. Preflight's three-second advisory lookup of
 the official stable `latest` release prints the explicit pinned-upgrade command from
 the command table with its version; lookup failure does not block a compatible start.
-The hint neither upgrades the host nor expands the rule. Claude's own update policy
-is unchanged.
+The hint neither upgrades the host nor expands the rule.
 
 ## User-run acceptance, pending
 
