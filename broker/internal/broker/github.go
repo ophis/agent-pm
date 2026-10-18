@@ -181,11 +181,18 @@ func tokenIn(entries []tokenEntry) func(string) bool {
 	}
 }
 
-// discard takes entries out of container's record (all of it when whole) and revokes them through the backlog;
-// with the backlog unreadable it revokes them directly, failing only when one of those revokes fails.
+// discard takes entries out of container's record (all of it, read in the same lock section, when whole) and
+// revokes them through the backlog; with the backlog unreadable it revokes them directly, failing only when one
+// of those revokes fails.
 func (g GitHub) discard(ctx context.Context, container string, entries []tokenEntry, whole bool) error {
 	var backlogErr error
 	err := g.locked(func() error {
+		if whole {
+			if rec, found, err := g.readRecord(container); err == nil && found {
+				in := tokenIn(entries)
+				entries = append(slices.Clone(entries), slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return in(e.Token) })...)
+			}
+		}
 		backlogErr = g.editBacklog(func(list []pending) []pending {
 			for _, e := range entries {
 				list = append(list, pending{container, e.Account, e.Token, e.ExpiresAt})
@@ -388,10 +395,9 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 
 // Revoke revokes every token of container's record and deletes it. An unreadable record is deleted best-effort.
 func (g GitHub) Revoke(ctx context.Context, container string) error {
-	var rec tokenRecord
 	var found bool
 	if err := g.locked(func() (err error) {
-		rec, found, err = g.readRecord(container)
+		_, found, err = g.readRecord(container)
 		return err
 	}); err != nil {
 		_ = g.Keychain.DeleteSecret(tokensService, container)
@@ -401,7 +407,7 @@ func (g GitHub) Revoke(ctx context.Context, container string) error {
 		_, _ = g.Retry(ctx)
 		return nil
 	}
-	return g.discard(ctx, container, rec.Tokens, true)
+	return g.discard(ctx, container, nil, true)
 }
 
 // Retry revokes the backlog: expired entries are dropped unrevoked, and the first request that gets no answer

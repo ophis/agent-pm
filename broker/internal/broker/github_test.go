@@ -443,6 +443,27 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
+func TestRevokeTakesATokenRecordedMeanwhile(t *testing.T) {
+	r := newRig(t, "ophis")
+	issued(t, r)
+	lock, n := r.g.Lock, 0
+	r.g.Lock = func() (func(), error) {
+		if n++; n == 2 { // a refresh records its new token between close's lock sections
+			rec, _ := r.record(t)
+			rec.Tokens = append(rec.Tokens, tokenEntry{"ophis", 1, "ghs_late", rec.Tokens[0].ExpiresAt})
+			data, _ := json.Marshal(rec)
+			r.keys.items[tokensService+"/"+ctr] = data
+		}
+		return lock()
+	}
+	if err := r.g.Revoke(context.Background(), ctr); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(r.api.revoked, "ghs_late") || len(r.backlog(t)) != 0 {
+		t.Fatalf("revoked %v backlog %v", r.api.revoked, r.backlog(t))
+	}
+}
+
 func TestRevokeOffline(t *testing.T) {
 	r := newRig(t, "ophis", "other")
 	issued(t, r)
