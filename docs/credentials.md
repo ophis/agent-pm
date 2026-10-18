@@ -184,7 +184,7 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:166`) | TASK-549 FR-4, FR-17 |
 | Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind (`broker/internal/launcher/start.go:169`) | TASK-549 FR-4; TASK-550 NFR-4 |
 | `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:177`) | TASK-545 FR-13; TASK-549 FR-8 |
-| the network, and through `host.docker.internal` every Mac service, those listening only on `127.0.0.1` included ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
+| the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`

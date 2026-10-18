@@ -488,4 +488,6 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
   credentials) got Ollama's `/api/version` while Ollama listened only on `127.0.0.1:11434`. The host side of such a
   connection belongs to `com.docker.backend`, running as you, so pf cannot tell container traffic apart
   ([Docker networking](https://docs.docker.com/desktop/features/networking/)); the Mac has no Docker gateway address
-  to listen on instead. The user accepted this risk (TASK-695 FR-24): no forwarder, firewall or Docker Business.
+  to listen on instead: docker0 lives inside the VM
+  ([Docker networking how-tos](https://docs.docker.com/desktop/features/networking/networking-how-tos/)). The user
+  accepted this risk on 2026-10-18 (TASK-695 FR-24): no forwarder, firewall or Docker Business.
