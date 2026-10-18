@@ -1,8 +1,11 @@
-"""utils/files.py: read_regular, read_beneath, open_beneath, append_line, holds, file_lock, save and drop_stale."""
+"""utils/files.py: read_regular, read_beneath, open_beneath, append_line, holds, file_lock, save, drop_stale and
+remove_tree.
+"""
 
 import errno
 import json
 import os
+import shutil
 import stat
 import tempfile
 import threading
@@ -495,6 +498,106 @@ class Save(Base):
             self.assertEqual(
                 (f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"])
             )
+
+
+class RemoveTree(Base):
+    """A Go module cache's shape: read-only directories holding read-only files."""
+
+    def setUp(self):
+        super().setUp()
+        self.tree = os.path.join(self.dir, "tree")
+        self.outside = os.path.join(self.dir, "outside")
+
+    def read_only(self, *paths):
+        for path in paths:
+            os.chmod(path, 0o555 if os.path.isdir(path) else 0o444)
+
+    def test_a_read_only_file_in_a_read_only_directory_is_removed(self):
+        os.makedirs(self.tree)
+        Path(self.tree, "go.mod").write_text("module x\n")
+        self.read_only(os.path.join(self.tree, "go.mod"), self.tree)
+        files.remove_tree(self.tree)
+        self.assertFalse(os.path.lexists(self.tree))
+
+    def test_nested_read_only_directories_are_removed(self):
+        module = os.path.join(self.tree, "mod", "github.com", "x@v1.0.12")
+        os.makedirs(os.path.join(module, "sub"))
+        for name in ("go.mod", "sub/a.go"):
+            Path(module, name).write_text("x")
+        self.read_only(
+            os.path.join(module, "go.mod"),
+            os.path.join(module, "sub", "a.go"),
+            os.path.join(module, "sub"),
+            module,
+            os.path.dirname(module),
+        )
+        with mock.patch.object(files.shutil, "rmtree", wraps=shutil.rmtree) as rmtree:
+            files.remove_tree(self.tree)
+        self.assertEqual((os.path.lexists(self.tree), rmtree.call_count), (False, 2))
+
+    def test_links_inside_are_removed_never_followed(self):
+        os.makedirs(os.path.join(self.outside, "d"))
+        for name in ("f", "d/f"):
+            Path(self.outside, name).write_text("kept")
+        targets = (os.path.join(self.outside, "d", "f"), os.path.join(self.outside, "f"))
+        self.read_only(*targets, os.path.join(self.outside, "d"))
+        inner = os.path.join(self.tree, "inner")
+        os.makedirs(inner)
+        os.symlink(os.path.join(self.outside, "d"), os.path.join(inner, "dir-link"))
+        os.symlink(targets[1], os.path.join(inner, "file-link"))
+        self.read_only(inner)
+        outside = (*targets, os.path.join(self.outside, "d"), self.outside)
+        modes = [os.stat(path).st_mode for path in outside]
+        files.remove_tree(self.tree)
+        self.assertFalse(os.path.lexists(self.tree))
+        self.assertEqual([os.stat(path).st_mode for path in outside], modes)
+        self.assertEqual([Path(path).read_text() for path in targets], ["kept", "kept"])
+
+    def test_a_link_as_the_tree_is_refused_and_its_target_kept(self):
+        os.makedirs(self.outside)
+        os.symlink(self.outside, self.tree)
+        with self.assertRaises(OSError):
+            files.remove_tree(self.tree)
+        self.assertTrue(os.path.isdir(self.outside))
+
+    def test_a_tree_relative_to_dir_fd_is_removed(self):
+        os.makedirs(os.path.join(self.tree, "ro"))
+        Path(self.tree, "ro", "f").write_text("x")
+        self.read_only(os.path.join(self.tree, "ro"), self.tree)
+        fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        files.remove_tree("tree", dir_fd=fd)
+        self.assertEqual(os.listdir(self.dir), [])
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores permissions")
+    def test_an_unreadable_directory_is_skipped_and_the_retry_raises(self):
+        unreadable = os.path.join(self.tree, "unreadable")
+        os.makedirs(unreadable)
+        Path(unreadable, "f").write_text("x")
+        os.chmod(unreadable, 0)
+        self.addCleanup(os.chmod, unreadable, stat.S_IRWXU)
+        with self.assertRaises(PermissionError):
+            files.remove_tree(self.tree)
+        self.assertEqual(stat.S_IMODE(os.stat(unreadable).st_mode), 0)
+
+    def test_a_refusal_after_the_retry_is_raised(self):
+        os.makedirs(self.tree)
+        with (
+            mock.patch.object(
+                files.shutil, "rmtree", side_effect=PermissionError("denied")
+            ) as rmtree,
+            self.assertRaisesRegex(PermissionError, "denied"),
+        ):
+            files.remove_tree(self.tree)
+        self.assertEqual(rmtree.call_count, 2)
+
+    def test_other_errors_are_raised_with_no_retry(self):
+        with (
+            mock.patch.object(files.shutil, "rmtree", wraps=shutil.rmtree) as rmtree,
+            self.assertRaises(FileNotFoundError),
+        ):
+            files.remove_tree(self.tree)
+        self.assertEqual(rmtree.call_count, 1)
 
 
 class ConfinedRead(Case):
