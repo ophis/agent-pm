@@ -45,15 +45,11 @@ function run(label, payload) {
   });
 }
 
-function call(label, fields = async () => ({})) {
+function call(label, fields = {}) {
+  // fields (or its promise) is taken when the event comes, not when the call's turn does.
   const session = root;
-  chain = chain.then(async () => {
-    let extra = {};
-    try {
-      extra = await fields();
-    } catch {}
-    await run(label, { session_id: session, ...extra });
-  });
+  const extra = Promise.resolve(fields).catch(() => ({}));
+  chain = chain.then(async () => run(label, { session_id: session, ...(await extra) }));
 }
 
 async function reply(client) {
@@ -103,23 +99,21 @@ function handle(event, client) {
         failed = false;
         return;
       }
-      call("session.idle", async () => ({ last_assistant_message: await reply(client).catch(() => "") }));
+      const text = reply(client).catch(() => "");
+      call("session.idle", text.then((last) => ({ last_assistant_message: last })));
       return;
     case "session.error":
       if (p.sessionID !== root || root === null) return;
       failed = true;
-      call("session.error", async () => ({
-        error: p.error?.name || "unknown",
-        message: p.error?.data?.message || "",
-      }));
+      call("session.error", { error: p.error?.name || "unknown", message: p.error?.data?.message || "" });
       return;
     case "permission.asked":
       if (!owned(p.sessionID)) return;
-      call("permission.asked", async () => ({ permission: p.permission ?? "", patterns: p.patterns ?? [] }));
+      call("permission.asked", { permission: p.permission ?? "", patterns: p.patterns ?? [] });
       return;
     case "permission.replied":
       if (!owned(p.sessionID)) return;
-      call("permission.replied", async () => ({ reply: p.reply ?? "" }));
+      call("permission.replied", { reply: p.reply ?? "" });
       return;
     case "message.part.updated": {
       const part = p.part ?? {};
@@ -128,7 +122,7 @@ function handle(event, client) {
       const key = `${part.id}:${status}`;
       if (seen.has(key)) return;
       seen.add(key);
-      call("tool", async () => ({ tool_name: part.tool ?? "" }));
+      call("tool", { tool_name: part.tool ?? "" });
       return;
     }
   }
