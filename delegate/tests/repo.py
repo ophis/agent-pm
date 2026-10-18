@@ -40,6 +40,10 @@ def fail(stderr):
     return subprocess.CompletedProcess([], 1, "", stderr)
 
 
+def done(code, stdout, stderr):
+    return subprocess.CompletedProcess([], code, stdout, stderr)
+
+
 class Fake:
     """A `run` that answers by argv prefix (a list answers in turn) and records every call; `gh repo
     clone` makes the checkout's .git.
