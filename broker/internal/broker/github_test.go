@@ -370,11 +370,42 @@ func TestRevokeLockFails(t *testing.T) {
 	r := newRig(t, "ophis", "other")
 	issued(t, r)
 	r.lockFails(0)
-	if err := r.g.Revoke(context.Background(), ctr); err == nil {
-		t.Fatal("no error")
+	if err := r.g.Revoke(context.Background(), ctr); err == nil || !strings.Contains(err.Error(), "token lock") {
+		t.Fatalf("unclear error: %v", err)
 	}
 	if !slices.Equal(r.api.revoked, []string{"ghs_1_1", "ghs_2_2"}) {
 		t.Fatalf("revoked %v", r.api.revoked)
+	}
+	if _, ok := r.record(t); ok {
+		t.Fatal("stale record of revoked tokens kept")
+	}
+}
+
+func TestIssueLockFailureLeavesNoRecord(t *testing.T) {
+	r := newRig(t, "ophis", "other")
+	r.lockFails(1)
+	_, err := r.g.Issue(context.Background(), "agent-pm-bot", ctr, r.exec.run)
+	wantCode(t, err, protocol.KeychainFailed)
+	if _, ok := r.record(t); ok || !slices.Contains(r.api.revoked, "ghs_1_1") {
+		t.Fatalf("record kept or revoked %v", r.api.revoked)
+	}
+}
+
+func TestRevokeReadsTheRecordUnderTheLock(t *testing.T) {
+	r := newRig(t, "ophis")
+	lock, n := r.g.Lock, 0
+	r.g.Lock = func() (func(), error) {
+		if n++; n == 1 { // a refresh's record write lands just before close takes the lock
+			data, _ := json.Marshal(tokenRecord{"agent-pm-bot", []tokenEntry{{"ophis", 1, "ghs_late", "2026-10-17T13:00:00Z"}}})
+			r.keys.items[tokensService+"/"+ctr] = data
+		}
+		return lock()
+	}
+	if err := r.g.Revoke(context.Background(), ctr); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.record(t); ok || !slices.Contains(r.api.revoked, "ghs_late") {
+		t.Fatalf("record kept or revoked %v", r.api.revoked)
 	}
 }
 
@@ -511,7 +542,7 @@ func TestRevokeTakesATokenRecordedMeanwhile(t *testing.T) {
 	issued(t, r)
 	lock, n := r.g.Lock, 0
 	r.g.Lock = func() (func(), error) {
-		if n++; n == 1 { // a refresh records its new token after close's peek, before its lock section
+		if n++; n == 2 { // a refresh records its new token between close's lock sections
 			rec, _ := r.record(t)
 			rec.Tokens = append(rec.Tokens, tokenEntry{"ophis", 1, "ghs_late", rec.Tokens[0].ExpiresAt})
 			data, _ := json.Marshal(rec)

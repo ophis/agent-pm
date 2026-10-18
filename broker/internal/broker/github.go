@@ -188,7 +188,8 @@ func tokenIn(entries []tokenEntry) func(string) bool {
 
 // discard takes entries out of container's record (all of it, read in the same lock section, when whole) and
 // revokes them through the backlog. With the backlog unreadable, or the lock failing, it revokes them directly;
-// with the lock failing it queues the ones it could not revoke without the lock, so none is left untracked.
+// with the lock failing it queues the ones it could not revoke without the lock, so none is left untracked, then
+// takes them out of the record.
 func (g GitHub) discard(ctx context.Context, container string, entries []tokenEntry, whole bool) error {
 	var backlogErr error
 	ran := false
@@ -229,10 +230,12 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 				left = append(left, pending{container, e.Account, e.Token, e.ExpiresAt})
 			}
 		}
-		if len(left) > 0 {
-			if !ran {
-				_ = g.editBacklog(func(list []pending) []pending { return append(list, left...) })
+		if !ran {
+			if len(left) > 0 && g.editBacklog(func(list []pending) []pending { return append(list, left...) }) != nil {
+				return unrevoked(container) // the record keeps them tracked
 			}
+			g.untrack(container, entries, whole)
+		} else if len(left) > 0 {
 			return unrevoked(container)
 		}
 	} else {
@@ -242,6 +245,20 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 		return tokensError(err)
 	}
 	return nil
+}
+
+// untrack takes entries, revoked or queued, out of container's record without the lock: best effort, as the lock
+// is what failed.
+func (g GitHub) untrack(container string, entries []tokenEntry, whole bool) {
+	if whole {
+		_ = g.Keychain.DeleteSecret(tokensService, container)
+		return
+	}
+	if rec, found, err := g.readRecord(container); err == nil && found {
+		in := tokenIn(entries)
+		rec.Tokens = slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return in(e.Token) })
+		_ = g.writeRecord(container, rec)
+	}
 }
 
 // Ready checks, without reading the key, that app is the broker's App and its key item is in place.
@@ -415,7 +432,14 @@ func (g GitHub) Refresh(ctx context.Context, app, container string, exec func([]
 
 // Revoke revokes every token of container's record and deletes it. An unreadable record is deleted best-effort.
 func (g GitHub) Revoke(ctx context.Context, container string) error {
-	_, found, err := g.readRecord(container) // a peek: discard reads it again under the lock
+	var found bool
+	err := g.locked(func() (err error) {
+		_, found, err = g.readRecord(container)
+		return err
+	})
+	if errors.Is(err, errLock) {
+		return g.discard(ctx, container, nil, true)
+	}
 	if err != nil {
 		_ = g.Keychain.DeleteSecret(tokensService, container)
 		return unrevoked(container)
