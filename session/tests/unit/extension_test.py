@@ -66,6 +66,7 @@ TYPES = {
             "ConfigError",
             "SessionError",
             "NotShowable",
+            "Unanswered",
         ),
         engine_types,
     ),

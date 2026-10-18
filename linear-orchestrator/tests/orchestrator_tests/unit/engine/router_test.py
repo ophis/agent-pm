@@ -3281,6 +3281,28 @@ class ExplicitIssueRuns(TickBase):
             )
         self.assertEqual(self.err, "router.py: TASK-1 has a live agent run\n")
 
+    def test_a_live_agent_run_whose_attach_command_fails_is_refused_naming_why(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        failure = SessionError("delegate agent session liveness unknown: docker ps: timed out")
+        with mock.patch.object(self.api, "attach_command", side_effect=failure):
+            self.assertEqual(
+                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 2
+            )
+        self.assertEqual(
+            self.err,
+            "router.py: TASK-1 has a live agent run: unknown (SessionError: delegate agent session"
+            " liveness unknown: docker ps: timed out)\n",
+        )
+
+    def test_a_config_error_from_the_attach_command_still_fails(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        failure = DelegateConfigError("role engineer: refused")
+        with (
+            mock.patch.object(self.api, "attach_command", side_effect=failure),
+            self.assertRaisesRegex(DelegateConfigError, "^role engineer: refused$"),
+        ):
+            self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"])
+
     def test_in_progress_resumes_inside_recovers_time_windows(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 20)
