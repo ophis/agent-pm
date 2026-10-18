@@ -1,7 +1,17 @@
-"""The Docker Host's live gate, run by hand from a manager session: `python3
-session/tests/live_docker.py CWD [NAME]` times build, worker start and first event, then kills
-the hook supervisor during a turn and checks that the turn's event waits in the relay queue, that
-`read` restarts the supervisor, and that the event then comes exactly once.
+"""The Docker Host's live acceptance gate, run by hand on macOS with Docker Desktop
+(docs/docker-host.md › Live acceptance). Each command prints a PASS line per check and a timing
+line per generation, and exits 1 at the first failed check:
+
+  python3 session/tests/live_docker.py worker --client claude|codex CWD [NAME]
+      from a manager session: build once, then start a worker on the default Host, check its
+      container's security baseline and isolation, kill its hook supervisor mid-turn (the event
+      comes exactly once), restart, close and resume, `docker rm -f` and resume, each new
+      generation answering a prompt; every close reclaims the generation's credentials
+  python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]
+      a headless engineer run on OWNER/NAME, an authorized test repo: one forced token refresh,
+      then a draft PR by agent-pm-bot[bot], opened after it; the run's credentials reclaimed
+  python3 session/tests/live_docker.py pr URL
+      the PR at URL was opened as a draft by agent-pm-bot[bot]
 """
 
 import fcntl
@@ -11,15 +21,31 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from agent_pm.session.hosts.docker.broker import Broker, plugin_root
+from agent_pm.session.engine.config import read_config
+from agent_pm.session.engine.types import SessionError
+from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.docker.broker import BROKER, REFRESH, Broker, plugin_root
+from agent_pm.session.hosts.docker.mounts import state_dir
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(REPO, "bin")
 WAIT = 300
 QUIET = 30
+POLL = 2
+REFRESH_WAIT = 120
+DOCKER_HOST = "agent_pm.session.hosts.docker.host:DockerHost"
+PROMPT = "Reply with the single word ready."
+PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/([0-9]+)")
+OWNER_NAME = re.compile(r"[\w.-]+/[\w.-]+")
+ROLE_INPUT = (
+    "Repo: {repo}\n\nUse light-build. Add the file docker-live/{stamp}.md holding the one line"
+    " `Docker Host live acceptance {stamp}`. Change nothing else."
+)
 AUDIT = os.path.expanduser("~/Library/Logs/agent-pm/broker.jsonl")
 GITHUB = "github-installation-token"
 CLIENT_KIND = {"claude": "claude-setup-token", "codex": "codex-access-token"}
@@ -240,18 +266,117 @@ def pending_except(status: dict, removed: str | None) -> list[str]:
     ]
 
 
-def run(*argv: str, timeout: float = WAIT) -> str:
+@dataclass(frozen=True)
+class Args:
+    command: str
+    name: str
+    client: str = ""
+    cwd: str = ""
+    repo: str = ""
+    timeout: float = 7200.0
+    url: str = ""
+
+
+def _split(argv: list[str]) -> tuple[dict[str, str], list[str]] | None:
+    options, positional, rest = {}, [], list(argv)
+    while rest:
+        arg = rest.pop(0)
+        if arg in ("--client", "--repo", "--timeout") and rest and arg[2:] not in options:
+            options[arg[2:]] = rest.pop(0)
+        elif arg.startswith("-"):
+            return None
+        else:
+            positional.append(arg)
+    return options, positional
+
+
+def parse(argv: list[str]) -> Args | None:
+    split = _split(argv[1:]) if argv else None
+    if split is None:
+        return None
+    (options, positional), command = split, argv[0]
+    if command == "worker":
+        client = options.get("client")
+        if set(options) != {"client"} or client not in CLIENT_KIND or len(positional) not in (1, 2):
+            return None
+        if not os.path.isabs(positional[0]):
+            return None
+        name = positional[1] if len(positional) == 2 else f"docker-live-{client}"
+        return Args("worker", name, client=client, cwd=positional[0])
+    if command == "role":
+        repo, timeout = options.get("repo", ""), options.get("timeout", "7200")
+        if set(options) - {"repo", "timeout"} or not OWNER_NAME.fullmatch(repo):
+            return None
+        try:
+            seconds = float(timeout)
+        except ValueError:
+            return None
+        if seconds <= 0 or len(positional) > 1:
+            return None
+        name = positional[0] if positional else "docker-live-role"
+        return Args("role", name, repo=repo, timeout=seconds)
+    if command == "pr" and not options and len(positional) == 1 and PR_URL.fullmatch(positional[0]):
+        return Args("pr", "", url=positional[0])
+    return None
+
+
+def call(argv: list[str], timeout: float = WAIT) -> tuple[str, str]:
     res = subprocess.run(
-        [os.path.join(BIN, argv[0]), *argv[1:]],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        timeout=timeout,
-        check=False,
+        argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout, check=False
     )
     if res.returncode:
-        raise SystemExit(f"{' '.join(argv)}: exit {res.returncode}: {res.stderr.strip()}")
-    return res.stdout
+        raise SystemExit(f"{' '.join(argv[:3])}: exit {res.returncode}: {res.stderr.strip()}")
+    return res.stdout, res.stderr
+
+
+def run(*argv: str, timeout: float = WAIT) -> str:
+    return call([os.path.join(BIN, argv[0]), *argv[1:]], timeout)[0]
+
+
+def passed(problems: list[str], label: str) -> None:
+    if problems:
+        raise SystemExit(f"FAIL {label}:\n  " + "\n  ".join(problems))
+    print(f"PASS {label}", flush=True)
+
+
+def load(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+def generations(name: str) -> set[str]:
+    try:
+        files = os.listdir(state_dir(name))
+    except FileNotFoundError:
+        return set()
+    return {f.removesuffix(".plan.json") for f in files if f.endswith(".plan.json")}
+
+
+def docker_host() -> tuple[str, tuple[str, ...]]:
+    """The default Host's docker CLI and plugins, read as agent-pm-session reads them."""
+    hosts = Host.parse_hosts(read_config().get("hosts"))
+    table = hosts.tables.get(hosts.default, {})
+    if table.get("implementation") != DOCKER_HOST:
+        raise SystemExit(
+            f"default Host is {hosts.default}, not a Docker Host (docs/docker-host.md)"
+        )
+    return table["docker"], tuple(table.get("plugins", ()))
+
+
+def containers(docker: str) -> set[str]:
+    return set(call([docker, "ps", "--all", "--format", "{{.Names}}"])[0].split())
+
+
+def broker_status() -> dict:
+    return json.loads(call([BROKER, "status"])[0])
 
 
 def supervisor_running(name: str) -> bool:
@@ -290,55 +415,249 @@ def timed(times: dict, step: str, action):
     return found
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) not in (1, 2) or not os.path.isabs(argv[0]):
-        print(__doc__, file=sys.stderr)
-        return 2
-    cwd, name = argv[0], argv[1] if len(argv) == 2 else "docker-live"
+@dataclass
+class Start:
+    step: str
+    generation: str
+    stderr: str
+
+
+class Worker:
+    def __init__(self, args: Args, manager: str, docker: str) -> None:
+        self.name, self.client, self.cwd = args.name, args.client, args.cwd
+        self.manager, self.docker = manager, docker
+        self.starts: list[Start] = []
+        self.events: tuple[str, ...] = ()
+        self.cursor = ""
+        self.open = False
+
+    def container(self, start: Start) -> str:
+        return f"agent-pm-{self.name}-{start.generation}"
+
+    def launch(self, step: str, argv: list[str]) -> Start:
+        before = generations(self.name)
+        self.open = True
+        stderr = call(argv, 1920)[1]
+        start = Start(step, new_generation(before, generations(self.name), step=step), stderr)
+        self.starts.append(start)
+        if self.container(start) not in containers(self.docker):
+            raise SystemExit(f"{step}: {self.container(start)} is not running")
+        return start
+
+    def answer(self, step: str) -> None:
+        run("agent-pm-session", "send", self.name, PROMPT)
+        self.cursor = run(*self.events, "--after", self.cursor).split()[0]
+        print(f"PASS {step}: an event after a prompt", flush=True)
+
+    def close(self, start: Start) -> None:
+        run("agent-pm-crew", "close", "--manager", self.manager, self.name)
+        self.open = False
+        if self.container(start) in containers(self.docker):
+            raise SystemExit(f"close left {self.container(start)}")
+        lines = audit_lines(read_text(AUDIT))
+        passed(
+            reclaimed(lines, start.generation, self.client), f"close reclaims {start.generation}"
+        )
+
+    def isolation(self, start: Start) -> None:
+        container = self.container(start)
+        plan = load(os.path.join(state_dir(self.name), f"{start.generation}.plan.json"))
+        (found,) = json.loads(call([self.docker, "inspect", container])[0])
+        mounts = [m["path"] for m in plan["mounts"]]
+        passed(baseline(found, self.name, plan["workspace"]["path"], mounts), "security baseline")
+        for resource, command in UNREACHABLE.items():
+            counts = call([self.docker, "exec", container, "sh", "-c", command])[0]
+            if not zero_counts(counts):
+                raise SystemExit(f"FAIL cannot reach {resource}: {' '.join(counts.split())}")
+            print(f"PASS cannot reach {resource}: {' '.join(counts.split())}", flush=True)
+
+
+def worker(args: Args) -> int:
     manager = os.environ.get("AGENT_PM_MANAGER")
     if not manager:
         raise SystemExit("run from a manager session: AGENT_PM_MANAGER is unset")
+    docker, plugins = docker_host()
     times: dict[str, float] = {}
     broker = Broker()
     broker.version()
-    timed(times, "build", lambda: broker.build(plugin_root(os.path.join(BIN, "agent-pm-session"))))
+    package = plugin_root(os.path.join(BIN, "agent-pm-session"))
+    _, digest = timed(
+        times, "build", lambda: broker.build(package, plugins=plugins, max_age=REFRESH)
+    )
+    named = [arg for p in plugins for arg in ("--plugin", p)]
+    again = json.loads(
+        call([BROKER, "build", "--agent-pm", package, *named, "--max-age", str(REFRESH)], 1920)[0]
+    )
+    if again.get("rebuilt") is not False or again.get("digest") != digest:
+        raise SystemExit("FAIL a second build rebuilt the image or changed its digest")
+    print("PASS a current image is not rebuilt", flush=True)
+    w = Worker(args, manager, docker)
     cursor = run("agent-pm-crew", "attach", "--manager", manager)
     after, gen = (re.search(rf"\b{key}=(\d+)", cursor) for key in ("N", "GEN"))
     if after is None or gen is None:
         raise SystemExit(f"agent-pm-crew attach printed no N= and GEN=: {cursor!r:.200}")
-    timed(
-        times,
-        "container start",
-        lambda: run(
-            *("agent-pm-crew", "worker", "--manager", manager, name),
-            *("--client", "claude", "--cwd", cwd, "--display", "none"),
-            *("--prompt", "Reply with the single word ready."),
-        ),
-    )
-    events = ("agent-pm-crew", "next-event", "--manager", manager, "--gen", gen.group(1))
+    w.events = ("agent-pm-crew", "next-event", "--manager", manager, "--gen", gen.group(1))
+    removed = None
     try:
-        first = timed(
-            times,
-            "client ready (first event)",
-            lambda: run(*events, "--after", after.group(1)),
+        crew = [os.path.join(BIN, "agent-pm-crew"), "worker", "--manager", manager, w.name]
+        first = w.launch(
+            "start",
+            [*crew, "--client", w.client, "--cwd", w.cwd, "--display", "none", "--prompt", PROMPT],
         )
-        cursor = first.split()[0]
-        run("agent-pm-session", "send", name, "Count from 1 to 200, one number per line.")
-        kill_supervisor(name)
-        if quiet(events, cursor):
+        w.cursor = run(*w.events, "--after", after.group(1)).split()[0]
+        print("PASS start: the default Host put the worker in a container; first event", flush=True)
+        w.isolation(first)
+        run("agent-pm-session", "send", w.name, "Count from 1 to 200, one number per line.")
+        kill_supervisor(w.name)
+        if quiet(w.events, w.cursor):
             raise SystemExit("an event arrived while the supervisor was gone")
-        run("agent-pm-session", "read", name)
-        if not supervisor_running(name):
+        run("agent-pm-session", "read", w.name)
+        if not supervisor_running(w.name):
             raise SystemExit("read did not restart the supervisor")
-        line = run(*events, "--after", cursor).split()[0]
-        if extra := quiet(events, line):
+        w.cursor = run(*w.events, "--after", w.cursor).split()[0]
+        if extra := quiet(w.events, w.cursor):
             raise SystemExit(f"a second event after the restart: {extra!r:.200}")
-        print(run("agent-pm-session", "read", name))
+        print("PASS a supervisor restart delivers the event exactly once", flush=True)
+        session = os.path.join(BIN, "agent-pm-session")
+        w.launch("restart", [session, "restart", w.name])
+        w.answer("restart")
+        w.close(w.starts[-1])
+        w.launch("resume after close", [session, "resume", w.name])
+        w.answer("resume after close")
+        removed = w.container(w.starts[-1])
+        call([docker, "rm", "--force", removed])
+        w.launch("resume after docker rm -f", [session, "resume", w.name])
+        w.answer("resume after docker rm -f")
     finally:
-        timed(times, "close", lambda: run("agent-pm-crew", "close", "--manager", manager, name))
-    for step, seconds in times.items():
-        print(f"{step}: {seconds:.1f} s")
+        if w.open and w.starts:
+            w.close(w.starts[-1])
+        elif w.open:
+            run("agent-pm-crew", "close", "--manager", manager, w.name)
+    passed(pending_except(broker_status(), removed), "no pending revocation but the removed one")
+    lines = audit_lines(read_text(AUDIT))
+    if removed:
+        print(removed_tokens(lines, removed.rsplit("-", 1)[1]), flush=True)
+    report(w.name, w.client, w.starts, digest, times)
     return 0
+
+
+def report(name: str, client: str, starts: list[Start], digest: str, times: dict) -> None:
+    hooks = read_text(os.path.expanduser(f"~/.agent-pm/tui/{name}/hooks.jsonl"))
+    problems = []
+    for start in starts:
+        result = load(os.path.join(state_dir(name), f"{start.generation}.result.json"))
+        if result.get("image_digest") != digest:
+            problems.append(
+                f"{start.generation}: started on {result.get('image_digest')}, built {digest}"
+            )
+        problems += [
+            f"{start.generation}: {p}" for p in install_steps(result, start.stderr, client)
+        ]
+        print(
+            f"timing {name} {start.generation} ({start.step}): build {times.get('build', 0):.1f} s"
+            f" | {timing(result, hooks, start.stderr, name)}",
+            flush=True,
+        )
+    passed(problems, "every start reused the built image, with no install step")
+
+
+def pr_checks(url: str) -> tuple[dict, list[str]]:
+    repo, number = PR_URL.fullmatch(url).groups()
+    view = json.loads(
+        call(["gh", "pr", "view", url, "--json", "author,isDraft,createdAt,number"])[0]
+    )
+    timeline = ["gh", "api", f"repos/{repo}/issues/{number}/timeline", "--paginate"]
+    events = call([*timeline, "--jq", ".[].event"])[0].split()
+    return view, events
+
+
+def role(args: Args) -> int:
+    docker, _ = docker_host()
+    root = os.path.dirname(state_dir(args.name))
+
+    def sessions() -> set[tuple[str, str]]:
+        names = [n for n in os.listdir(root) if n == args.name or n.startswith(f"{args.name}-")]
+        return {(n, g) for n in names for g in generations(n)}
+
+    before = sessions() if os.path.isdir(root) else set()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    text = ROLE_INPUT.format(repo=args.repo, stamp=stamp)
+    argv = [os.path.join(BIN, "agent-pm-delegate"), "run", "--role", "engineer"]
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        proc = subprocess.Popen(
+            [*argv, "--name", args.name, "--input", text],
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            text=True,
+        )
+        try:
+            while not (new := (sessions() if os.path.isdir(root) else set()) - before):
+                if proc.poll() is not None:
+                    raise SystemExit(
+                        f"the run exited {proc.returncode} before its container started"
+                    )
+                time.sleep(POLL)
+            if len(new) != 1:
+                raise SystemExit(f"want one new role generation, got {len(new)}")
+            ((session, generation),) = new
+            container = f"agent-pm-{session}-{generation}"
+            manifest = os.path.join(state_dir(session), f"{generation}.json")
+            deadline = time.monotonic() + REFRESH_WAIT
+            while True:
+                try:
+                    Broker().refresh(container, manifest)
+                    break
+                except SessionError as error:
+                    if time.monotonic() > deadline:
+                        raise SystemExit(f"FAIL token refresh of {container}: {error}") from None
+                    time.sleep(10)
+            print(f"PASS token refresh of {container}", flush=True)
+            try:
+                proc.wait(timeout=args.timeout)
+            except subprocess.TimeoutExpired:
+                raise SystemExit(f"FAIL the run did not finish in {args.timeout:.0f} s") from None
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait()
+        err.seek(0)
+        stderr = err.read()
+    outcome = json.loads(run("agent-pm-delegate", "outcome", args.name))
+    url = (outcome or {}).get("url", "")
+    if not PR_URL.fullmatch(url):
+        raise SystemExit(f"FAIL the run's outcome names no PR: {(outcome or {}).get('status')}")
+    print(f"PR {url}", flush=True)
+    lines = audit_lines(read_text(AUDIT))
+    view, events = pr_checks(url)
+    refreshed = refreshed_at(lines, container)
+    passed(
+        bot_pr(view, events, refreshed, need_refresh=True), "agent-pm-bot[bot] opened a draft PR"
+    )
+    if container in containers(docker):
+        raise SystemExit(f"FAIL the run left {container}")
+    plan = load(os.path.join(state_dir(session), f"{generation}.plan.json"))
+    client = {kind: c for c, kind in CLIENT_KIND.items()}[plan["credential"]]
+    passed(reclaimed(lines, generation, client), f"close reclaims {generation}")
+    result = load(os.path.join(state_dir(session), f"{generation}.result.json"))
+    print(
+        f"timing {session} {generation} (role): {timing(result, '', stderr, session)}", flush=True
+    )
+    return 0
+
+
+def pr(args: Args) -> int:
+    view, events = pr_checks(args.url)
+    passed(bot_pr(view, events, None, need_refresh=False), "agent-pm-bot[bot] opened a draft PR")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    args = parse(argv)
+    if args is None:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return {"worker": worker, "role": role, "pr": pr}[args.command](args)
 
 
 if __name__ == "__main__":

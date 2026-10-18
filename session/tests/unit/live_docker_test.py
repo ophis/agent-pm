@@ -1,9 +1,11 @@
 """The live Docker gate's checks, fed recorded shapes of the audit log, docker inspect, results and PRs."""
 
+import io
 import json
 import os
 import re
 import unittest
+from unittest import mock
 
 from session.tests import live_docker as gate
 
@@ -411,6 +413,54 @@ class NoSecretTest(unittest.TestCase):
         ]
         for text in outputs:
             self.assertNotIn(FAKE, text)
+
+
+class ParseTest(unittest.TestCase):
+    def test_bad_forms(self):
+        for argv in (
+            [],
+            ["start"],
+            ["worker", CWD],
+            ["worker", "--client", "gemini", CWD],
+            ["worker", "--client", "claude", "relative"],
+            ["worker", "--client", "claude", CWD, "a", "b"],
+            ["worker", "--client"],
+            ["worker", "--client", "claude", "--repo", "o/n", CWD],
+            ["role"],
+            ["role", "--repo", "not-a-repo"],
+            ["role", "--repo", "o/n", "--timeout", "0"],
+            ["role", "--repo", "o/n", "--timeout", "soon"],
+            ["pr"],
+            ["pr", "https://example.com/o/n/pull/1"],
+            ["pr", "https://github.com/o/n/pull/1", "--client", "claude"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertIsNone(gate.parse(argv))
+
+    def test_good_forms(self):
+        self.assertEqual(
+            gate.parse(["worker", "--client", "codex", CWD]),
+            gate.Args("worker", "docker-live-codex", client="codex", cwd=CWD),
+        )
+        self.assertEqual(
+            gate.parse(["worker", CWD, "--client", "claude", "w1"]),
+            gate.Args("worker", "w1", client="claude", cwd=CWD),
+        )
+        self.assertEqual(
+            gate.parse(["role", "--repo", "o/n"]),
+            gate.Args("role", "docker-live-role", repo="o/n", timeout=7200.0),
+        )
+        self.assertEqual(
+            gate.parse(["role", "--repo", "o/n", "--timeout", "60", "r1"]),
+            gate.Args("role", "r1", repo="o/n", timeout=60.0),
+        )
+        url = "https://github.com/o/n/pull/12"
+        self.assertEqual(gate.parse(["pr", url]), gate.Args("pr", "", url=url))
+
+    def test_main_prints_usage(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(gate.main([]), 2)
+        self.assertIn("live_docker.py worker", err.getvalue())
 
 
 if __name__ == "__main__":
