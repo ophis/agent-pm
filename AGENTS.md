@@ -21,11 +21,12 @@ Test boundaries and commands: `docs/tests.md`.
 
 ## Releasing
 
-`<version>` is `.claude-plugin/plugin.json`'s `version`.
+`<version>` is `.claude-plugin/plugin.json`'s `version`, `X.Y.Z`.
 
-1. Create and publish Release `v<version>`.
-2. Wait for its run of `.github/workflows/release.yml`, then confirm the broker asset, `gh release view v<version> --repo ophis/agent-pm --json assets` (lists `agent-pm-broker-darwin-arm64.tar.gz`), and its provenance: `gh release download v<version> --repo ophis/agent-pm --pattern agent-pm-broker-darwin-arm64.tar.gz --dir <dir>`, then `gh attestation verify <dir>/agent-pm-broker-darwin-arm64.tar.gz --repo ophis/agent-pm --signer-workflow ophis/agent-pm/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners`.
-3. Only then update the installed plugin (`manager/skills/manage/SKILL.md` › Git and reviews).
+1. Bump `version` to the same `X.Y.Z` in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` (nothing else), commit `agent-pm X.Y.Z` on `main`, push `main`.
+2. Create and publish Release `v<version>`: `gh release create vX.Y.Z --target <that commit's full sha> --title 'vX.Y.Z: <summary>' --notes-file <notes>`. Notes, in the format of earlier releases: first line `Changes on top of v<previous> (agent-pm X.Y.Z).`; one bullet per user-facing change with its PR numbers; internal PRs in one `Internal` bullet; last an **Upgrading** section with every step a user must take (config keys, CLI verbs, paths, data the release deletes), checked against each PR body, or "Nothing to do beyond v<previous>'s steps." Steps that stay needed also go into `docs/upgrading.md`.
+3. Wait for its run of `.github/workflows/release.yml`, then confirm the broker asset, `gh release view v<version> --repo ophis/agent-pm --json assets` (lists `agent-pm-broker-darwin-arm64.tar.gz`), and its provenance: `gh release download v<version> --repo ophis/agent-pm --pattern agent-pm-broker-darwin-arm64.tar.gz --dir <dir>`, then `gh attestation verify <dir>/agent-pm-broker-darwin-arm64.tar.gz --repo ophis/agent-pm --signer-workflow ophis/agent-pm/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners`.
+4. Only then update the installed plugin (`manager/skills/manage/SKILL.md` › Git and reviews): `claude plugin marketplace update agent-pm`, then `claude plugin update agent-pm@agent-pm` (a running Claude Code applies it after `/reload-plugins` or a restart); `codex plugin marketplace upgrade agent-pm`.
 
 ## Import rules
 
