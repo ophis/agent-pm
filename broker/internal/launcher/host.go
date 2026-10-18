@@ -21,13 +21,15 @@ type Credentials interface {
 	Inject(exec func(argv []string, stdin []byte) error) error
 }
 
-// Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
-// Errors are *protocol.Error, wrap docker.ErrUnreachable, or are opaque, carrying no Docker stderr.
+// CodexCredentials is the broker package's side of a Codex start; the launcher never sees the login.
 type CodexCredentials interface {
 	Ready(context.Context) error
+	// Inject writes the login through exec, as Credentials.Inject does, and returns its expiry (RFC 3339).
 	Inject(context.Context, func([]string, []byte) error) (string, error)
 }
 
+// Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
+// Errors are *protocol.Error, wrap docker.ErrUnreachable, or are opaque, carrying no Docker stderr.
 type Tokens interface {
 	Ready(app string) error // manifest_rejected for another App; login_required or keychain_failed for its key
 	Issue(ctx context.Context, app, container string, exec func(argv []string, stdin []byte) error) ([]protocol.Expiry, error)
@@ -75,13 +77,13 @@ type Clients struct {
 }
 
 type StartResult struct {
-	Container      string            `json:"container"`
-	Endpoint       string            `json:"endpoint"`
-	ImageDigest    string            `json:"image_digest"`
-	Clients        Clients           `json:"clients"`
-	GitHub         []protocol.Expiry `json:"github"`
-	CodexExpiresAt *string           `json:"credential_expires_at"`
-	ClientUpdate   *ClientUpdate     `json:"client_update,omitempty"`
+	Container           string            `json:"container"`
+	Endpoint            string            `json:"endpoint"`
+	ImageDigest         string            `json:"image_digest"`
+	Clients             Clients           `json:"clients"`
+	GitHub              []protocol.Expiry `json:"github"`
+	CredentialExpiresAt *string           `json:"credential_expires_at"`
+	ClientUpdate        *ClientUpdate     `json:"client_update,omitempty"`
 }
 
 type RefreshResult struct {

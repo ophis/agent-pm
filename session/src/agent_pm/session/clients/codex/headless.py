@@ -30,7 +30,6 @@ class CodexHeadless(Headless):
         return self.common.home()
 
     def __init__(self, common: CodexCommon):
-        self._set_runtime(None)
         self.common = common
         self.state: SessionState | None = None
         self.last_reply = ""

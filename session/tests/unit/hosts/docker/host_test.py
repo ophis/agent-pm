@@ -180,6 +180,7 @@ class Base(Case):
             "sha256:" + "b" * 64,
             {},
             [],
+            credential_expires_at=None,
         )
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
@@ -785,6 +786,7 @@ class StartTest(Base):
             "sha256:" + "b" * 64,
             {"claude": "2.1.0"},
             [],
+            credential_expires_at=None,
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
@@ -1153,6 +1155,13 @@ class PipeTest(Base):
             self.launch = replace(self.launch, env={"K": "v"})
         self.assertEqual(self.order, [])
 
+    def test_with_secrets_gets_the_implementations_client_not_the_table_name(self):
+        piped = self.pipe(client="work")
+        argv, _ = self.popened
+        start = argv.index("with-secrets")
+        self.assertEqual(argv[start : start + 4], ["with-secrets", "--client", "agent", "agent"])
+        piped.close()
+
     def test_pipe_starts_the_container_then_docker_exec_without_tmux(self):
         piped = self.pipe()
         manifest = os.path.join(self.state, f"{GEN}.json")
@@ -1252,10 +1261,22 @@ class PipeTest(Base):
         self.assertEqual(manifest["codex_dir"], home)
         self.assertNotIn("claude_dir", manifest)
         self.assertTrue(os.path.isdir(os.path.join(home, "sessions")))
-        self.assertIn("codex", self.popened[0])
-        self.assertIn("/opt/agent-pm/bin/codex", self.popened[0])
-        self.assertIn("client_auth_expired", logs.output[0])
-        self.assertIn("agent-pm-broker login codex", logs.output[0])
+        self.assertEqual(
+            self.popened[0],
+            [
+                *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
+                *("--env", "CODEX_HOME"),
+                *(CONTAINER, "with-secrets", "--client", "codex"),
+                *("/opt/agent-pm/bin/codex", "exec", "--json", "hello"),
+            ],
+        )
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:session:docker session w: client_auth_expired Client authentication"
+                " expired; run agent-pm-broker login codex; token refresh is not supported yet"
+            ],
+        )
         self.assertEqual(self.broker.closed, [CONTAINER])
         piped.close()
 

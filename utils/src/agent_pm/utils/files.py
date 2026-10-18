@@ -30,30 +30,33 @@ def read_regular(
     return _read_fd(fd, offset, limit, tail=tail)
 
 
-def read_beneath(
-    root: str, path: str, *, offset: int = 0, limit: int | None = None, tail: bool = False
-) -> bytes | None:
-    """read_regular of `path` below `root`, opened part by part from `root` without following a
-    link; None also for a path outside `root` or a link anywhere below it.
+def open_beneath(root: str, path: str, *, directory: bool = False) -> int:
+    """A read-only fd of `path` below `root` (`directory`: it must be one), opened part by part
+    from `root` without following a link. OSError also for a path outside `root` (EXDEV).
     """
     parts = os.path.relpath(os.path.abspath(path), os.path.abspath(root)).split(os.sep)
     if parts[0] in {os.curdir, os.pardir}:
-        return None
-    try:
-        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError:
-        return None
+        raise OSError(errno.EXDEV, f"not below {root}", path)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[:-1]:
             fd, parent = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd), fd
             os.close(parent)
-        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
-        final = os.open(parts[-1], flags, dir_fd=fd)
-    except OSError:
-        return None
+        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | (os.O_DIRECTORY if directory else 0)
+        return os.open(parts[-1], flags, dir_fd=fd)
     finally:
         os.close(fd)
-    return _read_fd(final, offset, limit, tail=tail)
+
+
+def read_beneath(
+    root: str, path: str, *, offset: int = 0, limit: int | None = None, tail: bool = False
+) -> bytes | None:
+    """read_regular of open_beneath's `path`; None also for any OSError of open_beneath."""
+    try:
+        fd = open_beneath(root, path)
+    except OSError:
+        return None
+    return _read_fd(fd, offset, limit, tail=tail)
 
 
 def _read_fd(fd: int, offset: int, limit: int | None, *, tail: bool) -> bytes | None:

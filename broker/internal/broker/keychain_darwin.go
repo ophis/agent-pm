@@ -158,13 +158,13 @@ static OSStatus secret_delete(const char *path, const char *service, const char 
     CFRelease(kc);
     return s;
 }
-static OSStatus codex_create(const char *path) {
+static OSStatus codex_create(const char *path, const char *service, const char *account, const char *label) {
     SecKeychainRef kc = NULL;
     OSStatus s;
-    CFMutableDictionaryRef q = item_query(path, "agent-pm-codex", "auth", &kc, &s);
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     SecAccessRef access = NULL;
-    s = self_access("agent-pm Codex login", &access);
+    s = self_access(label, &access);
     if (s == errSecSuccess) {
         CFDictionaryRemoveValue(q, kSecMatchSearchList);
         CFDictionarySetValue(q, kSecUseKeychain, kc);
@@ -179,10 +179,10 @@ static OSStatus codex_create(const char *path) {
     CFRelease(kc);
     return s;
 }
-static OSStatus codex_write(const char *path, const void *bytes, long length) {
+static OSStatus codex_write(const char *path, const char *service, const char *account, const void *bytes, long length) {
     SecKeychainRef kc = NULL;
     OSStatus s;
-    CFMutableDictionaryRef q = item_query(path, "agent-pm-codex", "auth", &kc, &s);
+    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
     if (!q) return s;
     CFDictionarySetValue(q, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
     CFDataRef data = CFDataCreate(NULL, bytes, length);
@@ -745,9 +745,9 @@ func (k SystemKeychain) CreateCodex() error {
 	if err := CheckInstalled(); err != nil {
 		return err
 	}
-	p, free := cStrings(string(k.login()))
+	p, free := cStrings(string(k.login()), codexService, codexAccount, "agent-pm Codex login")
 	defer free()
-	return status(C.codex_create(p[0]))
+	return status(C.codex_create(p[0], p[1], p[2], p[3]))
 }
 
 func (k SystemKeychain) WriteCodex(data []byte) error {
@@ -757,7 +757,7 @@ func (k SystemKeychain) WriteCodex(data []byte) error {
 	if len(data) == 0 || len(data) > maxCodexAuth {
 		return errors.New("invalid Codex credential size")
 	}
-	p, free := cStrings(string(k.login()))
+	p, free := cStrings(string(k.login()), codexService, codexAccount)
 	defer free()
-	return status(C.codex_write(p[0], unsafe.Pointer(&data[0]), C.long(len(data))))
+	return status(C.codex_write(p[0], p[1], p[2], unsafe.Pointer(&data[0]), C.long(len(data))))
 }

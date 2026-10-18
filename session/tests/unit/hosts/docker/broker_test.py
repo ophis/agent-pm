@@ -217,6 +217,7 @@ class ResponseTest(Case):
                 image_digest="sha256:" + "b" * 64,
                 clients={"claude": "2.1.0", "codex": "codex-cli 0.100.0"},
                 github=[{"account": "ophis", "expires_at": "2026-10-17T13:00:00Z"}],
+                credential_expires_at=None,
             ),
         )
         self.assertEqual(

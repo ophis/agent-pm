@@ -86,8 +86,10 @@ def _named(hint) -> set:
 
 
 def _signature_types(cls: type) -> set:
-    """The classes named by cls's annotations and its public methods' and __init__'s signatures."""
-    hints = list(typing.get_type_hints(cls).values())
+    """The classes named by cls's public annotations and its public methods' and __init__'s
+    signatures.
+    """
+    hints = [hint for name, hint in typing.get_type_hints(cls).items() if not name.startswith("_")]
     for name, member in vars(cls).items():
         function = getattr(member, "__func__", member)
         if inspect.isfunction(function) and (not name.startswith("_") or name == "__init__"):

@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
 import os
@@ -31,10 +32,12 @@ from agent_pm.session.engine.types import (
     Reply,
     TurnEnd,
 )
+from agent_pm.session.modes.tui import TuiMode
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import ROOTS, SRC
 from session.tests.codex_tui import PlanCase
+from session.tests.fakes.terminal import MemoryHost
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.clients.codex.support import (
     CHILD,
@@ -119,27 +122,50 @@ DIALOG_SCREENS = {
 
 class TuiTest(Base):
     def test_container_runtime_projects_only_this_identity_without_host_executable(self):
-        run = self.client.tui()
-        run._runtime = ClientRuntime(
+        host = MemoryHost()
+        runtime = ClientRuntime(
             "/opt/agent-pm/bin",
             "/opt/agent-pm/venv/bin/python",
             "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
             "/run/agent-pm",
         )
-        with mock.patch("shutil.which", side_effect=AssertionError("host lookup")):
-            launch = run.launch(self.spec, HOOK)
+        spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
+        with (
+            mock.patch.object(host, "_client_runtime", return_value=runtime),
+            mock.patch.object(
+                host, "_client_env", return_value={"CODEX_HOME": str(self.codex_home)}
+            ),
+            mock.patch(
+                "shutil.which",
+                side_effect=lambda name, **_: (
+                    f"/hooks/{name}" if name == "agent-pm-session" else None
+                ),
+            ) as which,
+        ):
+            TuiMode.start(
+                spec,
+                self.client,
+                registry=self.session_cls._config().registry,
+                record=lambda _: None,
+                host=host,
+            )
+        _, launch = host.calls.terminal.call_args.args
+        metadata = host.calls.terminal.call_args.kwargs["metadata"]
         plan = tui.decode(json.loads(launch.argv[-1]))
+        self.assertEqual(launch.argv[0], "/opt/agent-pm/venv/bin/python")
         self.assertEqual(plan.executable, "/opt/agent-pm/bin/codex")
-        self.assertEqual(launch.argv[0], run._runtime.python)
         self.assertEqual(plan.store, "/run/agent-pm/codex-store")
-        self.assertNotEqual(run.hook_callback().state["store"], plan.store)
-        self.assertEqual(len(run._runtime_files), 1)
-        path, text = next(iter(run._runtime_files.items()))
-        self.assertTrue(path.startswith(plan.store + "/"))
-        data = json.loads(text)
-        self.assertEqual((data["workdir"], data["sid"]), (self.spec.workdir, self.spec.sid))
-        self.assertEqual(launch.env["PYTHONPATH"], run._runtime.pythonpath)
+        self.assertEqual(
+            launch.env["PYTHONPATH"], "/opt/agent-pm/session/src:/opt/agent-pm/utils/src"
+        )
         self.assertNotIn(tui.CLIENT_PYTHONPATH, launch.env)
+        self.assertNotIn("codex", [call.args[0] for call in which.call_args_list])
+        digest = hashlib.sha256(f"{self.work}\x00caller-id".encode()).hexdigest()
+        [(path, text)] = json.loads(metadata["runtime_files"]).items()
+        self.assertEqual(path, f"/run/agent-pm/codex-store/{digest}.json")
+        self.assertEqual(
+            (json.loads(text)["workdir"], json.loads(text)["sid"]), (str(self.work), "caller-id")
+        )
 
     def test_history_scan_and_observation_never_follow_directory_or_file_links(self):
         self.prepare()
