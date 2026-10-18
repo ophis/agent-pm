@@ -1,18 +1,23 @@
-"""OpenCode's Client, client `opencode`, headless only; the rest is OpenCodeCommon's."""
+"""OpenCode's Client, client `opencode`: OpenCodeHeadless (headless.py), OpenCodeTui (tui.py); the
+rest is OpenCodeCommon's.
+"""
 
 import os
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.opencode.common import IDENTITY, SELECTORS, VALUED, OpenCodeCommon
 from agent_pm.session.clients.opencode.headless import OpenCodeHeadless
-from agent_pm.session.engine.types import Spec
+from agent_pm.session.clients.opencode.tui import OpenCodeTui
+from agent_pm.session.engine.types import SessionInfo, Spec
 
 
 class OpenCodeClient(Client):
     selection = ((), ("--session",))
     valued_flags = VALUED
     forbidden_selection = SELECTORS
-    keys = frozenset({"flags", "modes", "tiers", "efforts", "env", "ollama_port"})
+    keys = frozenset({"flags", "modes", "tiers", "efforts", "env", "ollama_port", "executable"})
     client_note = (
         "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else is "
         "refused."
@@ -27,11 +32,17 @@ class OpenCodeClient(Client):
     def headless(self):
         return OpenCodeHeadless(self.common)
 
+    def tui(self):
+        return OpenCodeTui(self.common)
+
     def usage_probe(self):
         return self.common.probe()
 
     def usage(self, output):
         return self.common.parse_usage(output)
+
+    def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
+        return self.common.session_status(info.cwd, info.sid, env)
 
     def writable_dirs(self, spec: Spec):
         dirs = (spec.access.cwd, *spec.access.dirs)

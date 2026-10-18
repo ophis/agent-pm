@@ -3,15 +3,33 @@
 import json
 import os
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, probe
-from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon, worktree
-from agent_pm.session.engine.types import ConfigError, Effort, Usage
+from agent_pm.session.clients.opencode import common as common_module
+from agent_pm.session.clients.opencode.common import (
+    NATIVE,
+    Bindings,
+    OpenCodeCommon,
+    worktree,
+)
+from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
+    Access,
+    ClientContext,
+    ConfigError,
+    Effort,
+    Permission,
+    Resumable,
+    SessionInfo,
+    Spec,
+    Usage,
+)
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, packaged_table
+from session.tests.unit.clients.opencode.support import SES, make_db, packaged_table
 
 
 def common(**config) -> OpenCodeCommon:
@@ -142,6 +160,190 @@ class StoreTest(Case):
     def test_native_pattern(self):
         self.assertTrue(NATIVE.fullmatch(SES))
         self.assertFalse(NATIVE.fullmatch("ses_-x"))
+
+    def test_unbind_removes_the_binding_and_a_missing_one_is_fine(self):
+        self.common.bind(self.cwd, "run-1", SES)
+        self.common.unbind(self.cwd, "run-1")
+        self.assertIsNone(self.common.native(self.cwd, "run-1"))
+        self.common.unbind(self.cwd, "run-1")
+
+    def test_unbind_fails_on_any_other_error(self):
+        with (
+            mock.patch("os.unlink", side_effect=PermissionError(13, "denied")),
+            self.assertRaisesRegex(ConfigError, "opencode session binding"),
+        ):
+            self.common.unbind(self.cwd, "run-1")
+
+    def test_bindings_by_store_share_the_records(self):
+        bindings = Bindings(self.common.store)
+        bindings.bind(self.cwd, "run-1", SES)
+        self.assertEqual(self.common.native(self.cwd, "run-1"), SES)
+        self.assertEqual(bindings.native(self.cwd, "run-1"), SES)
+
+
+class SessionStatusTest(Case):
+    def setUp(self):
+        self.cwd = os.path.realpath(self.home)
+        self.data = os.path.join(self.home, "data")
+        self.db = os.path.join(self.data, "opencode", "opencode.db")
+        self.enterContext(mock.patch.dict(os.environ, {"XDG_DATA_HOME": self.data}))
+        self.client = OpenCodeClient(packaged_table())
+        self.info = SessionInfo("run-1", self.cwd, project=False, transcript="", resume="")
+
+    def status(self, **env):
+        return self.client.session_status(self.info, env=env)
+
+    def test_a_bound_session_in_the_db_is_resumable(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        make_db(self.db, {SES: 1_760_000_000_250})
+        found = self.status()
+        self.assertEqual(found.resumable, Resumable.YES)
+        self.assertEqual(found.last_active, 1_760_000_000.25)
+        self.assertEqual(found.resume_command, "")
+
+    def test_no_binding_or_no_row_is_not_resumable(self):
+        make_db(self.db, {SES: 1})
+        self.assertEqual(self.status().resumable, Resumable.NO)
+        self.client.common.bind(self.cwd, "run-1", "ses_notInTheDb")
+        self.assertEqual(self.status().resumable, Resumable.NO)
+
+    def test_session_status_unknown_without_a_db(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_session_status_unknown_on_a_query_error(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        os.makedirs(os.path.dirname(self.db))
+        with open(self.db, "w", encoding="utf-8") as f:
+            f.write("not sqlite " * 200)
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_session_status_unknown_on_a_corrupt_binding(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        (name,) = os.listdir(self.client.common.store)
+        with open(os.path.join(self.client.common.store, name), "w", encoding="utf-8") as f:
+            f.write("not json")
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_the_db_follows_the_session_env_over_the_caller(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        other = os.path.join(self.home, "other")
+        make_db(os.path.join(other, "opencode", "opencode.db"), {SES: 1000})
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+        self.assertEqual(self.status(XDG_DATA_HOME=other).resumable, Resumable.YES)
+        configured = OpenCodeClient({**packaged_table(), "env": {"XDG_DATA_HOME": other}})
+        self.assertEqual(configured.session_status(self.info).resumable, Resumable.YES)
+
+
+EXTRA = ("--prompt", "--pure")
+
+
+class ProgramTest(Case):
+    def program(self, result=None, *, error=None, config=None):
+        common = OpenCodeCommon({**packaged_table(), **(config or {})}, selector=lambda *_: ())
+        with mock.patch("subprocess.run", side_effect=error, return_value=result) as run:
+            found = common.program({"PATH": "/opt/oc1/bin", "A": "b"}, self.home)
+        return found, run
+
+    def done(self, stdout, code=0):
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr="")
+
+    def test_executable_is_checked_and_defaults(self):
+        self.assertEqual(
+            OpenCodeCommon(packaged_table(), selector=lambda *_: ()).executable, "opencode"
+        )
+        empty = OpenCodeCommon({**packaged_table(), "executable": ""}, selector=lambda *_: ())
+        self.assertEqual(empty.executable, "opencode")
+        for value in (" ", 3, "a\nb"):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "executable"):
+                OpenCodeCommon({**packaged_table(), "executable": value}, selector=lambda *_: ())
+
+    def test_a_1x_version_launches(self):
+        found, run = self.program(self.done("1.19.3\n"), config={"executable": "/opt/oc1/opencode"})
+        self.assertEqual(found, "/opt/oc1/opencode")
+        ((args, kwargs),) = run.call_args_list
+        self.assertEqual(args[0], ["/opt/oc1/opencode", "--version"])
+        self.assertEqual(kwargs["cwd"], self.home)
+        self.assertEqual((kwargs["env"]["PATH"], kwargs["env"]["A"]), ("/opt/oc1/bin", "b"))
+        self.assertEqual(kwargs["timeout"], 10)
+
+    def test_a_cwd_not_made_yet_is_not_the_checks(self):
+        common = OpenCodeCommon(packaged_table(), selector=lambda *_: ())
+        with mock.patch("subprocess.run", return_value=self.done("1.19.3")) as run:
+            common.program({}, os.path.join(self.home, "not-yet"))
+        self.assertIsNone(run.call_args.kwargs["cwd"])
+
+    def test_a_2x_version_is_refused_naming_it_and_the_key(self):
+        with self.assertRaises(ConfigError) as raised:
+            self.program(self.done("2.0.32\n"))
+        message = str(raised.exception)
+        self.assertIn("2.0.32", message)
+        self.assertIn("is not 1.x", message)
+        self.assertIn("[clients.opencode] executable", message)
+
+    def test_a_missing_failing_or_silent_executable_is_refused(self):
+        for case, kwargs, words in (
+            (
+                "missing",
+                {"error": FileNotFoundError(2, "No such file or directory")},
+                "No such file",
+            ),
+            (
+                "timeout",
+                {"error": common_module.subprocess.TimeoutExpired(["opencode"], 10)},
+                "timed out",
+            ),
+            ("failed", {"result": self.done("1.19.3", code=1)}, "no version"),
+            ("silent", {"result": self.done("opencode\n")}, "no version"),
+        ):
+            with self.subTest(case=case), self.assertRaises(ConfigError) as raised:
+                self.program(**kwargs)
+            self.assertIn(words, str(raised.exception))
+            self.assertIn("[clients.opencode] executable", str(raised.exception))
+
+
+class SelectionTest(Case):
+    def setUp(self):
+        self.common = common()
+        self.cwd = os.path.realpath(self.home)
+        self.spec = Spec(workdir=self.home, access=Access(cwd=self.cwd), sid="run-1")
+
+    def test_a_fresh_run_selects_nothing_and_a_resume_its_bound_session(self):
+        self.assertEqual(self.common.selection(self.spec, LOCAL_CONTEXT), ())
+        self.common.bind(self.cwd, "run-1", SES)
+        resumed = self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
+        self.assertEqual(resumed, ("--session", SES))
+
+    def test_an_unbound_resume_or_a_container_host_fails(self):
+        with self.assertRaisesRegex(ConfigError, "no OpenCode session bound to run ID 'run-1'"):
+            self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
+        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
+        with self.assertRaisesRegex(ConfigError, "runs on a local Host only"):
+            self.common.selection(self.spec, context)
+
+    def test_extra_flags_are_refused_with_the_reserved_ones(self):
+        for flags in (("-c",), ("--prompt=x",), ("--pure",)):
+            with self.subTest(flags=flags), self.assertRaises(ConfigError):
+                self.common.selection(replace(self.spec, flags=flags), LOCAL_CONTEXT, EXTRA)
+        self.assertEqual(
+            self.common.selection(replace(self.spec, flags=("--pure",)), LOCAL_CONTEXT), ()
+        )
+
+    def test_the_prompt_takes_a_value(self):
+        with self.assertRaises(ConfigError):
+            self.common.selection(
+                replace(self.spec, flags=("--prompt", "-c")), LOCAL_CONTEXT, EXTRA
+            )
+        self.assertEqual(
+            self.common.selection(replace(self.spec, flags=("--title", "-c")), LOCAL_CONTEXT), ()
+        )
+
+    def test_a_plugin_is_listed_in_the_inline_config(self):
+        plugin = "file:///opt/plugin.js"
+        env = self.common.environment(self.spec, LOCAL_CONTEXT, plugin=plugin)
+        self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"])["plugin"], [plugin])
+        plain = self.common.environment(self.spec, LOCAL_CONTEXT)
+        self.assertNotIn("plugin", json.loads(plain["OPENCODE_CONFIG_CONTENT"]))
 
 
 class WorktreeTest(Case):

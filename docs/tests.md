@@ -35,7 +35,7 @@ typos --config pyproject.toml
 Run tests only through these supervised, sandboxed entries; they retain diagnostics and cleanup.
 
 Single-test and file selection need the same repository-root `PYTHONPATH` above and the
-selected test's dependencies (tmux for live tmux tests). Copy the complete ID from the
+selected test's dependencies (tmux for live tmux tests; `node` for the OpenCode TUI tests, which run its plugin and skip without it). Copy the complete ID from the
 failure annotation or summary; no shard number is needed. Files must be repository test
 files named `*_test.py`; invalid, missing, empty or ambiguous selections fail without
 running a broader suite.

@@ -12,13 +12,16 @@ import sys
 from collections.abc import Iterable, Mapping
 
 from agent_pm.session.clients.common import CHECKS, FLAGS, MODES, check_config, mode_flags, scan
-from agent_pm.session.clients.opencode import probe
+from agent_pm.session.clients.opencode import probe, transcript
+from agent_pm.session.clients.opencode.transcript import NATIVE
 from agent_pm.session.engine.types import (
     ClientContext,
     ConfigError,
     Effort,
     Launch,
     Permission,
+    Resumable,
+    SessionStatus,
     Spec,
     Usage,
 )
@@ -35,7 +38,6 @@ from agent_pm.utils import (
 
 TABLE = "[clients.opencode]"
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
-NATIVE = re.compile(r"ses_[0-9A-Za-z]{1,128}")
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
 BINDING_MAX = 4096
 OLLAMA_PORT = 11434
@@ -52,6 +54,7 @@ UNSET = (*sorted(LOCAL_ENV_VARS), *IDENTITY, *OVERRIDES)
 SELECTORS = ("-s", "--session", "-c", "--continue", "--fork")
 RESERVED = (*SELECTORS, "--format", "--attach", "--dir")
 PERMISSIONS = ("--auto", "--yolo", "--dangerously-skip-permissions")
+TUI_RESERVED = ("--prompt", "--pure")  # the client's prompt; --pure would skip its plugin
 VALUED = (
     "-m",
     "--model",
@@ -68,9 +71,18 @@ VALUED = (
     "--username",
     "--dir",
     "--port",
+    "--prompt",
     "-s",
     "--session",
 )
+EXECUTABLE = (
+    "executable",
+    lambda v: isinstance(v, str) and (v == "" or v.strip() != "") and v.isprintable(),
+    "a printable command, or empty for opencode on PATH",
+)
+VERSION = re.compile(r"(\d+)\.\d+\.\d+")
+VERSION_WAIT = 10  # seconds
+MAJOR = 1  # the OpenCode release the client supports (TASK-695)
 PORT = (
     "ollama_port",
     lambda v: type(v) is int and 0 < v < 65536,
@@ -177,7 +189,8 @@ def refuse_env(env: Mapping[str, str], where: str) -> None:
 class OpenCodeCommon:
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        check_config(config, TABLE, (FLAGS, MODES, PORT, *CHECKS))
+        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, *CHECKS))
+        self.executable = config.get("executable") or "opencode"
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
         refuse(self.flags, (*RESERVED, *PERMISSIONS), f"{TABLE}.flags")
@@ -203,7 +216,52 @@ class OpenCodeCommon:
     def variant(self, effort: Effort | None) -> str | None:
         return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
 
-    def inline(self, spec: Spec, host_address: str) -> dict:
+    def selection(
+        self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
+    ) -> tuple[str, ...]:
+        """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
+        if context.bin_dir is not None:
+            raise ConfigError("the opencode client runs on a local Host only")
+        refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
+        if not spec.resume:
+            return ()
+        sid = spec.sid or ""
+        native = self.native(spec.access.cwd, sid)
+        if native is None:
+            raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
+        return self.selector(native, resume=True)
+
+    def program(self, env: Mapping[str, str], cwd: str) -> str:
+        """The executable, once its --version, run as the launch would run it, is OpenCode 1.x."""
+        exe, fix = self.executable, f"set {TABLE} executable to an OpenCode {MAJOR}.x"
+        run = {k: v for k, v in {**os.environ, **env}.items() if k not in LOCAL_ENV_VARS}
+        try:
+            done = subprocess.run(
+                [exe, "--version"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=VERSION_WAIT,
+                stdin=subprocess.DEVNULL,
+                env=run,
+                cwd=cwd
+                if os.path.isdir(cwd)
+                else None,  # a run's cwd may not exist before its start
+            )
+        except OSError as error:
+            raise ConfigError(
+                f"opencode executable {exe!r}: {error.strerror or error}: {fix}"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise ConfigError(f"opencode executable {exe!r}: --version timed out: {fix}") from None
+        found = VERSION.search(done.stdout or "") if done.returncode == 0 else None
+        if found is None:
+            raise ConfigError(f"opencode executable {exe!r}: --version printed no version: {fix}")
+        if int(found[1]) != MAJOR:
+            raise ConfigError(f"opencode {found[0]} ({exe}) is not {MAJOR}.x: {fix}")
+        return exe
+
+    def inline(self, spec: Spec, host_address: str, plugin: str | None = None) -> dict:
         """The launch's OpenCode config: ollama on `host_address`, no auto-update, shell calls asking
         but pre-approved commands, Access dirs and reads outside the cwd, edit_rules.
         """
@@ -226,6 +284,7 @@ class OpenCodeCommon:
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
         return {
             "$schema": "https://opencode.ai/config.json",
+            **({"plugin": [plugin]} if plugin is not None else {}),
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
@@ -240,13 +299,15 @@ class OpenCodeCommon:
             "permission": permission,
         }
 
-    def environment(self, spec: Spec, context: ClientContext) -> dict[str, str]:
+    def environment(
+        self, spec: Spec, context: ClientContext, plugin: str | None = None
+    ) -> dict[str, str]:
         """The config's env, then Access's and the Spec's, under the client's own."""
         access = spec.access
         supplied = {**access.env, **spec.env}
         refuse_env(supplied, "a run's env")
         env = {k: v for k, v in {**self.env, **supplied}.items() if k not in LOCAL_ENV_VARS}
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address))
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address, plugin))
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         if not access.project:
             env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
@@ -275,6 +336,39 @@ class OpenCodeCommon:
     def store(self) -> str:
         return os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
 
+    def bind(self, cwd: str, sid: str, native: str) -> None:
+        Bindings(self.store).bind(cwd, sid, native)
+
+    def native(self, cwd: str, sid: str) -> str | None:
+        return Bindings(self.store).native(cwd, sid)
+
+    def unbind(self, cwd: str, sid: str) -> None:
+        Bindings(self.store).unbind(cwd, sid)
+
+    def session_status(self, cwd: str, sid: str, env: Mapping[str, str]) -> SessionStatus:
+        """From the bound session's row in opencode.db, read as the run's opencode would find it."""
+        try:
+            native = self.native(cwd, sid)
+        except ConfigError:
+            return SessionStatus(Resumable.UNKNOWN, None, "")
+        if native is None:
+            return SessionStatus(Resumable.NO, None, "")
+        db = transcript.database({**os.environ, **self.env, **env})
+        try:
+            updated = transcript.updated(db, native)
+        except transcript.Refused:
+            return SessionStatus(Resumable.UNKNOWN, None, "")
+        if updated is None:
+            return SessionStatus(Resumable.NO, None, "")
+        return SessionStatus(Resumable.YES, updated, "")
+
+
+class Bindings:
+    """Each run's (cwd, sid) bound to its OpenCode session, one file each under `store`."""
+
+    def __init__(self, store: str):
+        self.store = store
+
     def _binding(self, cwd: str, sid: str) -> str:
         key = hashlib.sha256(f"{os.path.realpath(cwd)}\0{sid}".encode()).hexdigest()
         return os.path.join(self.store, f"{key}.json")
@@ -290,6 +384,14 @@ class OpenCodeCommon:
             raise ConfigError(f"opencode session binding: {error}") from None
         for error in drop_stale(self.store):
             print(f"opencode session binding: {error}", file=sys.stderr)
+
+    def unbind(self, cwd: str, sid: str) -> None:
+        try:
+            os.unlink(self._binding(cwd, sid))
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise ConfigError(f"opencode session binding: {error}") from None
 
     def native(self, cwd: str, sid: str) -> str | None:
         """The session bound to (cwd, sid); None when none is (a symlink counts as none)."""

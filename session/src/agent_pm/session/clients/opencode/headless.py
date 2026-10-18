@@ -8,18 +8,10 @@ import os
 import sys
 
 from agent_pm.session.clients.opencode import launcher
-from agent_pm.session.clients.opencode.common import (
-    NATIVE,
-    PERMISSIONS,
-    RESERVED,
-    UNSET,
-    OpenCodeCommon,
-    refuse,
-)
+from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
-    ConfigError,
     Launch,
     Reply,
     Spec,
@@ -40,19 +32,12 @@ class OpenCodeHeadless(Headless):
 
     def launch(self, spec: Spec):
         context, common = self._context, self.common
-        if context.bin_dir is not None:
-            raise ConfigError("the opencode client runs on a local Host only")
-        refuse(spec.flags, (*RESERVED, *PERMISSIONS), "a run's flags")
+        selection = common.selection(spec, context)
         cwd, sid = spec.access.cwd, spec.sid or ""
-        selection: tuple[str, ...] = ()
-        if spec.resume:
-            native = common.native(cwd, sid)
-            if native is None:
-                raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
-            selection = common.selector(native, resume=True)
         model, variant = common.model(spec.tier), common.variant(spec.effort)
+        env = common.environment(spec, context)
         command = (
-            "opencode",
+            common.program(env, cwd),
             "run",
             "--format",
             "json",
@@ -77,7 +62,7 @@ class OpenCodeHeadless(Headless):
                 "--",
                 *command,
             ),
-            env=common.environment(spec, context),
+            env=env,
             unset=UNSET,
             cwd=cwd,
             project=spec.access.project,
