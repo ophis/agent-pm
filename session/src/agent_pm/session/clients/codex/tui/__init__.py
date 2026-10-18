@@ -128,9 +128,7 @@ class CodexTui(Tui):
     dialogs = tuple(DIALOGS)
 
     def _home(self) -> ClientHome:
-        return ClientHome(
-            "codex_dir", "codex", "CODEX_HOME", "codex-access-token", persistent=("sessions",)
-        )
+        return self.common.home()
 
     def __init__(self, common: CodexCommon):
         self._set_runtime(None)

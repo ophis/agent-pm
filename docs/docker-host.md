@@ -1,6 +1,6 @@
 # Docker host
 
-Codex installation, broker login and terminal containers: [Codex operations](docker-codex.md).
+Codex installation, broker login and container runs: [Codex operations](docker-codex.md).
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
@@ -15,17 +15,22 @@ directory.
 
 ## Install
 
-Needs Docker Desktop (running), Go (`brew install go`) and the Xcode command line tools.
+Needs Docker Desktop (running) and `gh` (logged in).
 
 ```sh
 sh "$PKG/broker/install.sh"
 ```
 
-It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
-freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
-ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
+It downloads the broker release asset of the plugin's version, installs it only after
+`gh attestation verify` proves the agent-pm release workflow built it from that version's
+tag, seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
+freely) only if `~/.agent-pm/docker/worker` does not exist, and installs the broker
+root-owned (`sudo` asks once). The asset appears a few minutes after a Release is published:
+until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` instead builds
+it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
+the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-terminals).
+upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-sessions).
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -118,7 +123,7 @@ removes nothing.
 
 ### Plugins
 
-A container's Claude loads only the plugins its image holds: the Docker Host's whitelist,
+A container's clients load the plugins its image holds: the Docker Host's whitelist,
 `[session.hosts.docker] plugins` ([Run workers](#run-workers)), default `["autopilot"]`,
 which the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review` need.
 Never agent-pm's own plugin: every session runs with it disabled, and the image already holds
@@ -140,17 +145,18 @@ the version Claude Code loads now (its `installPath`, under `~/.claude/plugins/c
 plugin upgrade (`claude plugin update`) rebuilds the image at the next start; Claude Code's
 `.in_use/` and `.orphaned_at` markers are not copied and change nothing. A launch env's own
 `CLAUDE_CODE_PLUGIN_DIRS` replaces the image's. The whitelist names the account's Claude Code
-plugins; Codex plugins are not copied (TASK-651).
+plugins; [Codex's native adaptation](docker-codex.md#native-plugins) uses that same payload.
 
 A build fails before Docker runs, with `build_failed` naming the plugin, when a name has no
 user-scope install (`Plugin <name> is not installed: no user-scope entry in <record>.`),
 matches two marketplaces, resolves outside the plugin cache, has no valid
-`.claude-plugin/plugin.json` name, or holds a symlink leaving its directory; a start then
+`.claude-plugin/plugin.json` name, or holds a symlink leaving its directory or dangling; a start then
 fails in preflight with that message. Install the plugin, or drop it from the whitelist.
 
-Whitelisting a plugin trusts it: its hooks, MCP servers and scripts run in every container
-beside its Claude setup-token and GitHub tokens, and each host-side upgrade reaches the
-containers at their next build. One whitelist per account: a build with another whitelist
+Whitelisting a plugin trusts its code beside the container's client and GitHub credentials.
+Claude loads its hooks, MCP servers and scripts; [Codex's adaptation](docker-codex.md#native-plugins)
+defines which components it loads. Host-side upgrades reach containers at their next build.
+One whitelist per account: a build with another whitelist
 gives another key, and its rebuild removes the other's images.
 
 | Check | Expect |
@@ -246,7 +252,7 @@ default = "docker"
 | `[session.hosts.docker]` key | Default | Meaning |
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
-| `plugins` | `["autopilot"]` | the installed Claude Code plugins every container's image holds ([Plugins](#plugins)); `[]`: none |
+| `plugins` | `["autopilot"]` | the installed plugin payloads every container's image holds ([Plugins](#plugins)); `[]`: none |
 | `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
 
 Each session's GitHub tokens are refreshed 10 minutes before the first one expires, a TUI
@@ -278,7 +284,7 @@ refused while it runs. Its container closes when the client exits or is stopped;
 harness died is closed by the next Docker start or close. The Docker Host treats them as any
 session: their volume is `agent-pm-ws-<agent name>`, mounted at `<workdir>/agent`, and a board
 issue's revision rounds keep its name and volume. `agent-pm-crew reopen` resumes a Docker run
-on the Docker Host under its agent name, with the same Claude config dir and volume, whichever
+on the Docker Host under its agent name, with the same client history and volume, whichever
 mode started it.
 On the Docker Host the Delegate:
 
@@ -319,8 +325,8 @@ with `no native history to resume`. The worker's resume command is
 `agent-pm-session resume <name>`, never `client-resume`, which would start the client on the
 host.
 
-Docker supports Claude terminals and headless runs, plus [Codex terminals](docker-codex.md).
-Unsupported clients, Codex headless runs, detached sessions, and a start while a container
+Docker supports Claude and [Codex](docker-codex.md#docker-sessions) terminals and headless runs.
+Unsupported clients, detached sessions, and a start while a container
 of that name still exists fail before container creation. The broker's Refusals above apply too.
 
 Every start first runs a preflight: the client and mode are supported, the cwd exists
@@ -512,7 +518,7 @@ secrets in environments that need it.
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
 - Image builds trust the client vendors' npm packages; Codex's policy is in
-  [Codex operations](docker-codex.md#docker-terminals).
+  [Codex operations](docker-codex.md#docker-sessions).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running
