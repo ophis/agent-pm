@@ -85,6 +85,7 @@ Nothing checks these. A missing one fails the agent run.
 | tmux 3.3+ | tui runs on the `tmux` Host |
 | `git`, `gh` logged in | coding (checkouts, pull requests) and GitHub destinations. Not needed otherwise. |
 | iTerm2 running | the default iTerm2 split |
+| Docker Desktop running; the broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), installed by `sh <plugin dir>/broker/install.sh` (needs `sudo` and `gh` logged in); one login each: `B login claude` (paste a `claude setup-token`), `B login github agent-pm-bot`, and for Codex `sudo B install-codex <version>`, then `B login codex` | the Docker Host only ([Docker host](docs/docker-host.md)); no Node on the host. What each credential grants, where it lives and how to revoke it: [Credentials](docs/credentials.md). |
 
 How the sessions agent-pm starts load your settings, and why some commands refuse inside them: [Session settings](docs/sessions.md#session-settings).
 
@@ -122,6 +123,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, risks |
+| [Credentials](docs/credentials.md) | every credential agent-pm uses: purpose, least privilege, storage, readers, lifetime, revocation |
 | [Docker Codex](docs/docker-codex.md) | broker operations, source evidence and narrowed plan A verdict |
 | [Docker broker protocol](docs/docker-broker-protocol.md) | broker schemas, errors and shared fixtures (developers) |
 | [Docker relay protocol](docs/docker-relay-protocol.md) | hook relay wire format and shared fixtures (developers) |

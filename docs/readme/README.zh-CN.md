@@ -87,6 +87,7 @@ Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再�
 | tmux 3.3+ | 在 `tmux` Host 上的 tui run |
 | `git`、已登录的 `gh` | 写代码（checkout、pull request）和 GitHub 目标。其他情况不需要。 |
 | 正在运行的 iTerm2 | 默认的 iTerm2 分屏 |
+| 正在运行的 Docker Desktop；broker `B`（`/usr/local/libexec/agent-pm/agent-pm-broker`），用 `sh <plugin dir>/broker/install.sh` 安装（需要 `sudo` 和已登录的 `gh`）；每项登录一次：`B login claude`（粘贴一个 `claude setup-token`）、`B login github agent-pm-bot`，Codex 先 `sudo B install-codex <version>`，再 `B login codex` | 只有 Docker Host 需要（[Docker host](../docker-host.md)）；宿主不需要 Node。每份凭据的权限、存放位置和吊销方式：[Credentials](../credentials.md)。 |
 
 agent-pm 启动的 session 如何加载你的设置，以及为什么有些命令在其中会拒绝执行：[Session settings](../sessions.md#session-settings)。
 
