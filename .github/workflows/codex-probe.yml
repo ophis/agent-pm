@@ -2,6 +2,10 @@ name: Codex synthetic probe
 
 on:
   pull_request:
+    paths:
+      - 'scripts/docker-codex-*'
+      - 'scripts/docker_codex_*.py'
+      - '.github/workflows/codex-probe.yml'
   workflow_dispatch:
 
 permissions:
