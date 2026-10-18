@@ -125,6 +125,9 @@ jobs:
             claude --version
             codex --version
             test -x /opt/agent-pm/bin/with-secrets
+            test "$(command -v gh)" = /opt/agent-pm/bin/gh
+            test "$(git config --system credential.helper)" = /opt/agent-pm/bin/git-credential-agent-pm
+            test "$(git config --system credential.useHttpPath)" = true
             test "$(command -v python3)" = /opt/agent-pm/bin/python3
             python3 -c "import agent_pm.delegate"
             python3 -P /opt/agent-pm/team/tools/repo.py --help'
