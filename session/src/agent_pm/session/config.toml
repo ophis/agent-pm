@@ -85,6 +85,42 @@ max = "max"
 # Launch/probe variables, including CODEX_HOME; empty → none; resume keeps the saved CODEX_HOME.
 [clients.codex.env]
 
+# [clients.opencode]  OpenCode 1.x, headless only (session/src/agent_pm/session/clients/opencode/); its models run on
+#                    the host's Ollama, which stays on 127.0.0.1. Each launch's OpenCode config (OPENCODE_CONFIG_CONTENT)
+#                    holds the ollama provider at http://<the Host's address>:<ollama_port>/v1, autoupdate off and
+#                    permission.bash = "ask", which refuses a shell call headless (but a run's pre-approved commands)
+#   flags            opencode run flags added to every launch; never a session selector, --format, --attach, --dir
+#                    or a permission flag (modes'); empty → none
+#   ollama_port      the host's Ollama port
+#   env              variables added to every launch; never one that overrides the launch's OpenCode config
+#                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
+# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted
+# [clients.opencode.tiers]    tier "1".."4" → its --model, provider/model; ollama/<model> is listed under the provider
+# [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
+[clients.opencode]
+implementation = "agent_pm.session.clients.opencode:OpenCodeClient"
+flags = []
+ollama_port = 11434
+
+[clients.opencode.modes]
+auto = []
+yolo = ["--auto"]
+
+[clients.opencode.env]
+
+[clients.opencode.tiers]
+1 = "ollama/qwen3.6:35b-mlx"
+2 = "ollama/qwen3.6:35b-mlx"
+3 = "ollama/qwen3.6:35b-mlx"
+4 = "ollama/qwen3.6:35b-mlx"
+
+[clients.opencode.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
 # ── Hosts ───────────────────────────────────────────────
 # [hosts]             default: the [hosts.<name>] sessions run on
 # [hosts.<name>]      one table per Host, parsed only by Host.parse_hosts (session/src/agent_pm/session/hosts/base.py)
