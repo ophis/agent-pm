@@ -28,6 +28,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
     TurnFailed,
+    Unanswered,
     Usage,
     Window,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "TurnEnd",
     "TurnFailed",
     "SessionError",
+    "Unanswered",
     "ConfigError",
 ]
 

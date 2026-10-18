@@ -31,6 +31,7 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionError,
     StatusState,
+    Unanswered,
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
@@ -1674,9 +1675,9 @@ class TerminalTest(Base):
                     ("tmux", "display-message"): pane("1 0 "),
                     ("kill", "-0"): reply,
                 }
-                with self.assertRaisesRegex(SessionError, "^process group w: "):
+                with self.assertRaisesRegex(Unanswered, "^process group w: "):
                     process.wait_exit(0)
-                with self.assertRaisesRegex(SessionError, "^process group w: "):
+                with self.assertRaisesRegex(Unanswered, "^process group w: "):
                     process.kill()
 
     def test_record_and_display_ignore_container_options(self):
@@ -2339,6 +2340,32 @@ class ListTest(Base):
                 with self.assertRaisesRegex(SessionError, "docker ps"):
                     self.host.list()
 
+    def test_a_docker_ps_that_does_not_answer_leaves_attach_unanswered(self):
+        self.listed("w")
+        for run in (
+            mock.Mock(side_effect=TimeoutExpired("docker", RUN_TIMEOUT)),
+            mock.Mock(return_value=done(1, "", "Cannot connect")),
+            mock.Mock(side_effect=PermissionError(13, "denied")),
+        ):
+            with self.subTest(run=run):
+                self.host.run = run
+                with self.assertRaisesRegex(Unanswered, "^docker ps: "):
+                    self.host.attach("w")
+                with self.assertRaisesRegex(Unanswered, "^docker ps: "):
+                    self.host.list()
+
+    def test_a_client_probe_that_does_not_answer_leaves_attach_unanswered(self):
+        self.listed("w")
+        for reply in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over 8388608 bytes"),
+            (1, "", "server exited unexpectedly"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {("tmux", "display-message"): reply}
+                with self.assertRaisesRegex(Unanswered, "^docker session w: "):
+                    self.host.attach("w")
+
     def test_a_daemon_that_does_not_answer_lists_no_rows_but_fails_list(self):
         self.listed("w")
         self.host.run = mock.Mock(side_effect=TimeoutExpired("docker", RUN_TIMEOUT))
@@ -2357,12 +2384,20 @@ class ListTest(Base):
         self.assertEqual((self.host.list(), self.host.rows(), self.order), ([], [], []))
 
     def test_attach_unknown_or_without_client(self):
-        with self.assertRaisesRegex(SessionError, "no docker session w"):
+        with self.assertRaisesRegex(SessionError, "no docker session w") as caught:
             self.host.attach("w")
+        self.assertNotIsInstance(caught.exception, Unanswered)
         self.listed("w")
-        self.docker.replies = {("tmux", "display-message"): (1, "", "can't find session: =w")}
-        with self.assertRaisesRegex(SessionError, "runs no client"):
-            self.host.attach("w")
+        for reply in (
+            (1, "", "can't find session: =w"),
+            (1, "", f"Error response from daemon: No such container: {CONTAINER}"),
+            (1, "", f"Error response from daemon: container {CONTAINER} is not running"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {("tmux", "display-message"): reply}
+                with self.assertRaisesRegex(SessionError, "runs no client") as caught:
+                    self.host.attach("w")
+                self.assertNotIsInstance(caught.exception, Unanswered)
         self.docker.replies = {("tmux", "display-message"): (0, PROCESS + "\n", "")}
         self.assertEqual(self.host.attach("w").identity, PROCESS)
 

@@ -592,6 +592,10 @@ class SessionError(Exception):
     """A failed start, or a call its mode lacks."""
 
 
+class Unanswered(SessionError):
+    """A Host probe that timed out or failed: no proof the session ended."""
+
+
 class NoRecordedSession(SessionError):
     """The requested sid has no durable session record in its workdir."""
 

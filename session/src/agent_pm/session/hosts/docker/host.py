@@ -51,6 +51,7 @@ from agent_pm.session.engine.types import (
     SessionError,
     SessionRow,
     StatusState,
+    Unanswered,
 )
 from agent_pm.session.hosts.base import (
     TUI_DIR,
@@ -455,7 +456,7 @@ class DockerTerminal(InteractiveProcess):
 
     def _group_live(self) -> bool:
         """False only when the container's kill finds no such group or Docker reports the
-        container gone or stopped; a probe that did not answer raises SessionError.
+        container gone or stopped; a probe that did not answer raises Unanswered.
         """
         res = self._signal("0")
         if res.returncode == 0:
@@ -463,7 +464,7 @@ class DockerTerminal(InteractiveProcess):
         if "No such process" in res.stderr or absent(res):
             return False
         why = res.stderr.strip() or f"kill exited {res.returncode}"
-        raise SessionError(f"process group {self.name}: {why}")
+        raise Unanswered(f"process group {self.name}: {why}")
 
     def _kill_group(self) -> None:
         self._signal("KILL")
@@ -579,7 +580,9 @@ class DockerHost(Host):
         return self._listed("ps", "-a", "--filter", f"label={LABEL}", "--format", PS_FORMAT) or []
 
     def _listed(self, *args: str) -> list[list[str]] | None:
-        """docker `args`' tab-separated rows; None with no daemon socket or docker CLI."""
+        """docker `args`' tab-separated rows; None with no daemon socket or docker CLI; Unanswered
+        when docker fails or times out.
+        """
         if not os.path.exists(endpoint().removeprefix("unix://")):
             return None
         argv, env = docker_call(self.docker, *args)
@@ -588,9 +591,9 @@ class DockerHost(Host):
         except FileNotFoundError:
             return None
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise SessionError(f"docker {args[0]}: {error}") from None
+            raise Unanswered(f"docker {args[0]}: {error}") from None
         if res.returncode:
-            raise SessionError(f"docker {args[0]}: {res.stderr.strip()}")
+            raise Unanswered(f"docker {args[0]}: {res.stderr.strip()}")
         return [line.split("\t") for line in res.stdout.splitlines()]
 
     def _rows(self) -> list[Row]:
@@ -1269,7 +1272,7 @@ class DockerHost(Host):
             try:
                 process = tmux.process(name)
             except TuiError as error:
-                raise SessionError(f"docker session {name}: {error}") from None
+                raise Unanswered(f"docker session {name}: {error}") from None
         if process is None:
             raise SessionError(f"no docker session {name}: its container runs no client")
         return DockerTerminal(
