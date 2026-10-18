@@ -43,7 +43,7 @@ pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile in
 After every install or reinstall, run all three logins: `login claude`, `login github agent-pm-bot` and
 `login codex` ([Codex operations](docker-codex.md#commands)). The keychain trusts the broker by its code requirement
 (an ad hoc signature's cdhash), not its path, so a reinstalled broker cannot read the old one's items without asking;
-`start` never asks, failing with `login_required` instead. Each login asks its terminal questions first, without
+`start` never asks, failing instead (`login_required`, or `keychain_failed` for an old GitHub item). Each login asks its terminal questions first, without
 echo:
 
 | Login | Terminal | macOS dialog, at most | Click |
@@ -108,9 +108,9 @@ every installation.
 ```
 
 A changed Dockerfile or agent-pm version gives a new key. No build log shows a secret. Rebuilds skip Docker's cache,
-so they install npm's latest Claude Code. `--max-age N` rebuilds an image N or more seconds old under the same key; a
-start passes 604800 (7 days) and, if that rebuild fails (e.g. offline), keeps the image with `agent-pm-broker: kept
-<image>: refreshing it failed: <reason>`; `--max-age 0` fails instead.
+so they install npm's latest Claude Code. `--max-age N` rebuilds an image N or more seconds old under the same key (a
+start passes 604800, 7 days); if that rebuild fails (e.g. offline) it keeps the image, printing `agent-pm-broker: kept
+<image>: refreshing it failed: <reason>`, except `--max-age 0`, which fails.
 
 After a rebuild, `build` removes other keys' `agent-pm-user:<key>` and `agent-pm-worker:<key>` images not leased in
 the last hour, and untagged ones a same-key rebuild left, keeping any image a container (running or stopped) came
@@ -441,14 +441,14 @@ flowchart LR
 
 - **Supervisor or daemon gone** (killed, not a host reboot): the worker's next `attach`, `read`, `send`, `status`,
   `restart` or `close` starts both and replays the queue; an event arrives once, or twice if its hook ran just before
-  the kill, never lost. `next-event` restarts nothing: it reads only the events file. Until restarted, the hook stub
-  gives up on an event after 10 s and it is lost; `status` still shows the worker running, replies still come from
+  the kill, never lost. `next-event` restarts nothing: it reads only the events file. Until the daemon is restarted,
+  the hook stub gives up on an event after 10 s and it is lost; `status` still shows the worker running, replies still come from
   the transcript.
 - **Refused events**: one for another generation or session dir, a malformed one, or one whose hook exits non-zero
   adds a `rejected.jsonl` line and is not retried.
 - **Older image** (by digest, after a plugin upgrade or rebuild): no supervisor restart; the command warns `restart it
-  to upgrade`, and `close` does not wait for its supervisor. The first supervisor restart after a plugin upgrade runs
-  `build`, once per generation (`<generation>.stale`).
+  to upgrade`, and `close` does not wait for its supervisor. The first restart attempt after a plugin upgrade runs
+  `build` to compare digests, once per generation (`<generation>.stale` records the result).
 - **Container gone** (Docker Desktop restart, `docker rm`): the worker shows `dead`; `agent-pm-session resume NAME`
   continues the conversation in a new container. Events queued in the old one are lost.
 - **Leftover containers**: before every start and close, a container labelled for a session goes when the session has
@@ -511,7 +511,8 @@ secrets in environments that need it.
 
 - Container credentials are readable by every process in the container and by any process running as you
   ([Credentials](credentials.md)); each restart and resume writes them into a new container.
-- A broker reinstall needs all three logins again ([Log in](#log-in)); until then starts fail with `login_required`.
+- A broker reinstall needs all three logins again ([Log in](#log-in)); until then starts fail (`login_required`, or
+  `keychain_failed` for the GitHub items).
 - A GitHub token the broker could not revoke stays valid until it expires (an hour); `"$B" status` lists it.
 - Every Docker session can push to any unprotected branch of every repo the App is installed on, `private_docs`'s
   `main` included.
