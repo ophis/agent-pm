@@ -512,7 +512,9 @@ Each new start writes the fresh Claude config dir a `settings.json` holding:
   fullscreen, with no flicker in tmux;
 - `model`, `effortLevel`, `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`
   from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`, else
-  `~/.claude/settings.json`), so the worker runs the host's default model and effort.
+  `~/.claude/settings.json`), so the worker runs the host's default model and effort. Each
+  `modelSettings` entry comes without its `autoCompactWindow`, and an entry left empty is
+  not written.
 
 No other host setting, credential, hook, plugin, status line or permission reaches it.
 Without readable host settings it runs on Claude's default model. `--model`/`--effort` and
