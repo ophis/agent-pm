@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from agent_pm.session.engine.types import (
     ClientBound,
     ClientHome,
+    ClientRuntime,
     Launch,
     SessionEvent,
     Spec,
@@ -18,6 +19,11 @@ from agent_pm.utils import json_records
 
 
 class Headless(ABC):
+    _runtime: ClientRuntime | None = None
+
+    def _set_runtime(self, runtime: ClientRuntime | None) -> None:
+        self._runtime = runtime
+
     def _home(self) -> ClientHome | None:
         return None
 
