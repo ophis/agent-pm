@@ -1,7 +1,6 @@
-"""Runs COMMAND, `opencode run`, with TEXT on its stdin; copies its stdout lines and its stderr, and
-kills it, exiting 124, when none of its stdout lines is a JSON object with a string sessionID
-within SECONDS. A COMMAND it cannot start: 127; bad arguments: 2. Standalone: the standard
-library only.
+"""Runs COMMAND with TEXT on its stdin, copying its stdout and stderr; kills it, exiting 124, when
+no stdout line is a JSON object with a string sessionID within SECONDS. Unstartable: 127; bad
+arguments: 2. Standalone: the standard library only.
 """
 
 import json
@@ -12,6 +11,7 @@ import threading
 
 USAGE = "usage: launcher.py --timeout SECONDS --prompt TEXT -- COMMAND..."
 STDERR_WAIT = 2  # seconds to copy COMMAND's last stderr after it exits
+LOCK_WAIT = 1  # seconds the watch waits for a line being copied
 
 
 def _arguments(argv: list[str]) -> tuple[float, str, list[str]]:
@@ -58,9 +58,8 @@ def _copy(stream) -> None:
 
 
 class Watch:
-    """COMMAND's stdout copied line by line, noting the first that binds a session; expired with
-    none, it kills COMMAND and ends the launcher, whatever still holds COMMAND's pipes. One lock
-    orders the two, so no line passes once the watch fired.
+    """Copies stdout lines, noting a session; expired without one, kills COMMAND and exits, whatever
+    holds its pipes. One lock orders the two.
     """
 
     def __init__(self, child, seconds: str):
@@ -78,12 +77,13 @@ class Watch:
             self.ended = True
 
     def expire(self) -> None:
-        with self.lock:
-            if self.session or self.ended:
-                return
-            self.child.kill()
-            _err(f"opencode: no session after {self.seconds} s; stopped\n".encode())
-            os._exit(124)
+        # A write stuck on a reader holds the lock: stop all the same.
+        if self.lock.acquire(timeout=LOCK_WAIT) and (self.session or self.ended):
+            self.lock.release()
+            return
+        self.child.kill()
+        _err(f"opencode: no session after {self.seconds} s; stopped\n".encode())
+        os._exit(124)
 
 
 def main(argv: list[str]) -> int:

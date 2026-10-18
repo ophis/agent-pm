@@ -63,6 +63,7 @@ class LauncherTest(Case):
             self.enterContext(mock.patch(target, value))
 
     def run_with(self, child, *, prompt="Hi there") -> int:
+        self.addCleanup(child.stderr.close)
         argv = ["--timeout", "120", "--prompt", prompt, "--", "opencode", "run"]
         with mock.patch.object(launcher.subprocess, "Popen", return_value=child) as popen:
             code = launcher.main(argv)
@@ -114,6 +115,23 @@ class LauncherTest(Case):
         self.assertEqual(self.run_with(child), 0)
         self.assertFalse(child.killed)
         self.assertEqual(self.written()[0], BOUND + TEXT)
+
+    def test_the_watch_stops_a_run_whose_reader_hangs(self):
+        class Stuck(io.BytesIO):
+            def write(self, data):
+                Timers.made[0].function()  # the watch fires while this write holds its lock
+                return super().write(data)
+
+        stuck = mock.Mock(buffer=Stuck())
+        child = Child([TEXT])
+        with (
+            mock.patch("sys.stdout", stuck),
+            mock.patch("os._exit", side_effect=SystemExit) as end,
+            self.assertRaises(SystemExit),
+        ):
+            self.run_with(child)
+        end.assert_called_once_with(124)
+        self.assertTrue(child.killed)
 
     def test_the_watch_spares_a_run_that_ended(self):
         child = Child([TEXT], code=1)

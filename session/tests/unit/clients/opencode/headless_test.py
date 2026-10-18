@@ -5,6 +5,8 @@ import os
 import re
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, launcher
 from agent_pm.session.engine.types import (
@@ -25,7 +27,7 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, packaged_table
+from session.tests.unit.clients.opencode.support import SES, fake_git, packaged_table
 
 MODEL = "ollama/qwen3.6:35b-mlx"
 
@@ -50,6 +52,7 @@ class Base(Case):
         self.cwd = os.path.realpath(os.path.join(self.home, "project"))
         os.mkdir(self.cwd)
         self.client = OpenCodeClient(packaged_table())
+        self.enterContext(mock.patch("subprocess.run", side_effect=fake_git))
 
     def spec(self, **fields) -> Spec:
         access = fields.pop("access", Access(cwd=self.cwd))
@@ -254,6 +257,27 @@ class LaunchTest(Base):
             rules,
             repo,
             {os.path.join(repo, "src", "a.py"): "allow", os.path.join(repo, ".git", "x"): "deny"},
+        )
+
+    def test_git_in_any_case_is_never_edited(self):
+        repo = self.made("repo")
+        os.mkdir(os.path.join(repo, ".git"))
+        rules = self.rules_for(Access(cwd=repo))
+        for path in (".GIT/hooks/pre-commit", ".Git/config", "sub/.gIt/x", ".git"):
+            with self.subTest(path=path):
+                self.assertEqual(decide(rules, path), "deny")
+
+    def test_a_repo_git_cannot_read_is_under_the_root_worktree(self):
+        repo = self.made("repo")
+        os.mkdir(os.path.join(repo, ".git"))
+        read = self.made("read")
+        failed = SimpleNamespace(returncode=128, stdout="", stderr="fatal: dubious ownership")
+        with mock.patch("subprocess.run", return_value=failed):
+            rules = self.rules_for(Access(cwd=repo, reads=(read,)))
+        self.assert_edits(
+            rules,
+            "/",
+            {os.path.join(repo, "a.py"): "allow", os.path.join(read, "task.md"): "deny"},
         )
 
     def test_a_wildcard_in_a_granted_path_is_refused(self):

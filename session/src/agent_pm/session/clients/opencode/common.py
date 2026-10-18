@@ -3,9 +3,11 @@ session id (`ses_…`) OpenCode chose, which a resume selects.
 """
 
 import hashlib
+import itertools
 import json
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 
@@ -20,7 +22,16 @@ from agent_pm.session.engine.types import (
     Spec,
     Usage,
 )
-from agent_pm.utils import LOCAL_ENV_VARS, STATE, drop_stale, read_beneath, save
+from agent_pm.utils import (
+    LOCAL_ENV_VARS,
+    STATE,
+    GitError,
+    drop_stale,
+    read_beneath,
+    run_git,
+    save,
+    sh,
+)
 
 TABLE = "[clients.opencode]"
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
@@ -68,6 +79,8 @@ PORT = (
 
 
 PROTECTED = (".git", ".opencode", "opencode.json", "opencode.jsonc")  # names no run edits
+CASED = (".git",)  # also denied in every case: OpenCode's patterns are case-sensitive, macOS's not
+GIT_WAIT = 10  # seconds
 
 
 def _ancestors(path: str) -> list[str]:
@@ -79,44 +92,71 @@ def _ancestors(path: str) -> list[str]:
     return found
 
 
-def checkout(cwd: str) -> str | None:
-    """The git checkout holding `cwd`: the nearest dir with a .git, OpenCode's worktree."""
-    for path in (cwd, *_ancestors(cwd)):
-        if os.path.lexists(os.path.join(path, ".git")):
-            return path
-    return None
+def _spellings(name: str) -> list[str]:
+    if name not in CASED:
+        return [name]
+    return [
+        "".join(c)
+        for c in itertools.product(*(dict.fromkeys((ch.lower(), ch.upper())) for ch in name))
+    ]
+
+
+def _git(argv: list[str], timeout: int):
+    env = {k: v for k, v in os.environ.items() if k not in LOCAL_ENV_VARS}
+    return sh(argv, timeout, env=env)
+
+
+def worktree(cwd: str) -> str:
+    """OpenCode's worktree for `cwd` (its core/src/git.ts): the toplevel of the nearest .git's dir;
+    "/" without one or when git cannot read it.
+    """
+    found = next(
+        (p for p in (cwd, *_ancestors(cwd)) if os.path.lexists(os.path.join(p, ".git"))), None
+    )
+    if found is None:
+        return "/"
+    try:
+        run_git(found, "rev-parse", "--git-dir", "--git-common-dir", run=_git, timeout=GIT_WAIT)
+    except (GitError, OSError, subprocess.SubprocessError):
+        return "/"
+    try:
+        top = run_git(found, "rev-parse", "--show-toplevel", run=_git, timeout=GIT_WAIT).strip()
+    except (GitError, OSError, subprocess.SubprocessError):
+        return found
+    return os.path.realpath(os.path.join(found, top)) if top else found
 
 
 def edit_rules(cwd: str, dirs: list[str], reads: list[str]) -> dict[str, str]:
-    """OpenCode's edit rules, in order, its last matching rule winning (a deny holds under --auto):
-    it matches an edit by its path relative to its worktree, `cwd`'s checkout, else "/". The cwd
-    and dirs editable, reads not, each path by its deepest grant; nothing else, nor PROTECTED
-    names. A path `j` levels above the worktree ("../" j times) gets the grant on that ancestor or
-    above, one rule per level, as "*" also matches "../".
+    """OpenCode's edit rules: the last match wins, a deny even under --auto, on a path relative to
+    `worktree`. Each path by its deepest grant (cwd and dirs allow, reads deny), else deny; never
+    PROTECTED. One rule per level above the worktree, as "*" also matches "../".
     """
     for path in (cwd, *dirs, *reads):
         if "*" in path or "?" in path:
             raise ConfigError(f"{path!r}: a wildcard in a path the opencode client grants")
-    worktree = checkout(cwd) or "/"
+    top = worktree(cwd)
     grants = dict(
         sorted(
             [*((path, "allow") for path in (cwd, *dirs)), *((path, "deny") for path in reads)],
             key=lambda grant: len(_ancestors(grant[0])),
         )
     )
-    lineage = _ancestors(worktree)
+    lineage = _ancestors(top)
 
     def above(level: int) -> str:
         return next((grants[p] for p in lineage[level - 1 :] if p in grants), "deny")
 
-    rules = {"*": grants.get(worktree) or above(1)}
+    rules = {"*": grants.get(top) or above(1)}
     levels = range(1, len(lineage) + 1) if any(p in grants for p in lineage) else (1,)
     rules.update({"../" * level + "*": above(level) for level in levels})
     for path, action in grants.items():
-        if path != worktree and path not in lineage:
-            rules[f"{os.path.relpath(path, worktree)}/*"] = action
+        if path != top and path not in lineage:
+            rules[f"{os.path.relpath(path, top)}/*"] = action
     for name in PROTECTED:
-        rules.update(dict.fromkeys((name, f"{name}/*", f"*/{name}", f"*/{name}/*"), "deny"))
+        for spelled in _spellings(name):
+            rules.update(
+                dict.fromkeys((spelled, f"{spelled}/*", f"*/{spelled}", f"*/{spelled}/*"), "deny")
+            )
     return rules
 
 
@@ -163,9 +203,8 @@ class OpenCodeCommon:
         return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
 
     def inline(self, spec: Spec, host_address: str) -> dict:
-        """The launch's OpenCode config: the ollama provider on `host_address`, auto-update off, and
-        shell calls asking, which a headless run refuses, but the run's pre-approved commands; dirs
-        outside the cwd its Access dirs and reads, edits as edit_rules says.
+        """The launch's OpenCode config: ollama on `host_address`, no auto-update, shell calls asking
+        but pre-approved commands, Access dirs and reads outside the cwd, edit_rules.
         """
         access = spec.access
         models = {

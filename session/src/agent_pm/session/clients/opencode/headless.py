@@ -1,8 +1,6 @@
-"""OpenCode's headless Mode: `opencode run --format json` behind the launcher (launcher.py), which
-feeds it the prompt on stdin, since `run` quotes a message argument holding a space, and stops a
-run that starts no session within SESSION_TIMEOUT seconds. Each JSON line carries its sessionID:
-the first binds the run's sid to it; text parts are Replies, tools Activity, an error the failed
-turn; the run's end is its turn's, with its last text.
+"""OpenCode's headless Mode: `opencode run --format json` behind launcher.py, which feeds it the
+prompt on stdin (`run` quotes an argument holding a space). The first sessionID binds the run; text
+parts are Replies, tools Activity, an error the failed turn; the end is the turn's, its last text.
 """
 
 import json
