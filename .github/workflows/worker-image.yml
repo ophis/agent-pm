@@ -80,7 +80,7 @@ jobs:
           dir="$HOME/.claude/plugins/cache/ci/ci-probe/0.0.1"
           install -d "$dir/.claude-plugin" "$dir/skills/probe" "$dir/.in_use"
           echo '{"name":"ci-probe","version":"0.0.1"}' > "$dir/.claude-plugin/plugin.json"
-          printf '%s\n' '---' 'description: CI probe' '---' 'Probe.' > "$dir/skills/probe/SKILL.md"
+          printf '%s\n' '---' 'name: probe' 'description: CI probe' '---' 'Probe.' > "$dir/skills/probe/SKILL.md"
           jq -n --arg dir "$dir" '{version: 2, plugins: {"ci-probe@ci": [{scope: "user", installPath: $dir, version: "0.0.1"}]}}' \
             > "$HOME/.claude/plugins/installed_plugins.json"
       - name: Build with agent-pm-broker
