@@ -48,6 +48,7 @@ from agent_pm.utils import (
     drop_stale,
     environment_ok,
     number,
+    open_beneath,
     resume_command,
 )
 
@@ -183,27 +184,9 @@ def inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
 
 
-def _history_open(path: str, *, directory: bool = False) -> int:
-    parts = os.path.abspath(path).split(os.sep)[1:]
-    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for index, part in enumerate(parts):
-            flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
-            if directory or index < len(parts) - 1:
-                flags |= os.O_DIRECTORY
-            child = os.open(part, flags, dir_fd=fd)
-            os.close(fd)
-            fd = child
-        result, fd = fd, -1
-        return result
-    finally:
-        if fd >= 0:
-            os.close(fd)
-
-
 def read_metadata(path: str) -> SessionFile:
     try:
-        fd = _history_open(path)
+        fd = open_beneath("/", path)
     except FileNotFoundError:
         raise
     except OSError as exc:
@@ -258,7 +241,7 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
     for length in (4, 2, 2):
         children = []
         for directory in directories:
-            fd = _history_open(directory, directory=True)
+            fd = open_beneath("/", directory, directory=True)
             try:
                 entries = os.scandir(fd)
                 with entries:
@@ -275,7 +258,7 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
         directories = children
     matches = []
     for directory in directories:
-        fd = _history_open(directory, directory=True)
+        fd = open_beneath("/", directory, directory=True)
         try:
             with os.scandir(fd) as entries:
                 matches.extend(
@@ -415,7 +398,7 @@ class _StoreOperation:
             return None
         return root if _private_dir(root, create=create) else None
 
-    def _path(self, workdir: str, sid: str) -> str:
+    def path(self, workdir: str, sid: str) -> str:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
         return os.path.join(self.root, digest + ".json")
 
@@ -448,14 +431,14 @@ class _StoreOperation:
 
     def _validated_state(self, path: str, data: dict, workdir: str, sid: str) -> SessionState:
         state = _state(data, workdir, sid)
-        if path != self._path(workdir, sid):
+        if path != self.path(workdir, sid):
             raise RecoveryError("invalid recovery state identity")
         self._validate_recovery(state)
         check_writable_roots(self.root, state.writable_roots)
         return state
 
     def load(self, workdir: str, sid: str) -> SessionState | None:
-        path = self._path(workdir, sid)
+        path = self.path(workdir, sid)
         data = self._read(path)
         if data is None:
             return None
@@ -510,7 +493,7 @@ class _StoreOperation:
 
     def write(self, state: SessionState, *, exclusive: bool) -> None:
         payload = self.encoded(state)
-        path = self._path(state.workdir, state.sid)
+        path = self.path(state.workdir, state.sid)
         fd, tmp = tempfile.mkstemp(prefix=".state-", dir=self.root)
         try:
             with os.fdopen(fd, "wb") as stream:
@@ -596,7 +579,7 @@ class SessionStore:
     @staticmethod
     def project(state: SessionState, root: str) -> dict[str, str]:
         operation = _StoreOperation(root)
-        return {operation._path(state.workdir, state.sid): operation.encoded(state).decode()}
+        return {operation.path(state.workdir, state.sid): operation.encoded(state).decode()}
 
     def load(self, workdir: str, sid: object) -> SessionState | None:
         operation = _StoreOperation(self.root)

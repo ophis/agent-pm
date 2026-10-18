@@ -1,4 +1,4 @@
-"""utils/files.py: read_regular, read_beneath, append_line, holds, file_lock, save and drop_stale."""
+"""utils/files.py: read_regular, read_beneath, open_beneath, append_line, holds, file_lock, save and drop_stale."""
 
 import errno
 import json
@@ -104,7 +104,7 @@ class ReadRegular(Base):
             self.assertIsNone(files.read_regular(self.path))
 
 
-class ReadBeneath(Base):
+class Beneath(Base):
     def setUp(self):
         super().setUp()
         self.sub = os.path.join(self.dir, "a", "b")
@@ -113,6 +113,8 @@ class ReadBeneath(Base):
         with open(self.file, "wb") as f:
             f.write(DATA)
 
+
+class ReadBeneath(Beneath):
     def test_reads_a_file_below_root_as_read_regular(self):
         self.assertEqual(files.read_beneath(self.dir, self.file), DATA)
         self.assertEqual(files.read_beneath(self.dir, self.file, offset=3, limit=4), b"3456")
@@ -144,6 +146,44 @@ class ReadBeneath(Base):
         before = len(os.listdir("/dev/fd"))
         for path in (self.file, os.path.join(self.sub, "missing")):
             files.read_beneath(self.dir, path)
+        self.assertEqual(len(os.listdir("/dev/fd")), before)
+
+
+class OpenBeneath(Beneath):
+    def test_opens_a_file_or_a_directory_below_root(self):
+        fd = files.open_beneath(self.dir, self.file)
+        try:
+            self.assertEqual(os.read(fd, 16), DATA)
+        finally:
+            os.close(fd)
+        fd = files.open_beneath(self.dir, self.sub, directory=True)
+        try:
+            self.assertEqual(os.listdir(fd), ["f"])
+        finally:
+            os.close(fd)
+
+    def test_a_link_a_file_as_directory_or_a_path_outside_root_raises(self):
+        root = os.path.join(self.dir, "a")
+        os.symlink(self.file, os.path.join(self.sub, "file-link"))
+        os.symlink(self.sub, os.path.join(root, "dir-link"))
+        for path, directory in (
+            (os.path.join(self.sub, "file-link"), False),
+            (os.path.join(root, "dir-link", "f"), False),
+            (os.path.join(root, "dir-link"), True),
+            (self.file, True),
+        ):
+            with self.subTest(path=path, directory=directory), self.assertRaises(OSError):
+                os.close(files.open_beneath(root, path, directory=directory))
+        for path in (root, self.dir, f"{root}/../f"):
+            with self.subTest(path=path), self.assertRaises(OSError) as raised:
+                os.close(files.open_beneath(root, path))
+            self.assertEqual(raised.exception.errno, errno.EXDEV)
+
+    def test_no_fd_is_left_open_on_failure(self):
+        before = len(os.listdir("/dev/fd"))
+        for path in (os.path.join(self.sub, "missing"), os.path.join(self.dir, "x", "f")):
+            with self.assertRaises(OSError):
+                files.open_beneath(self.dir, path)
         self.assertEqual(len(os.listdir("/dev/fd")), before)
 
 
