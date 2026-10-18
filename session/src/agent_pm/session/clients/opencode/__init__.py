@@ -3,7 +3,13 @@
 import os
 
 from agent_pm.session.clients.base import Client
-from agent_pm.session.clients.opencode.common import IDENTITY, SELECTORS, VALUED, OpenCodeCommon
+from agent_pm.session.clients.opencode.common import (
+    IDENTITY,
+    SELECTORS,
+    VALUED,
+    OpenCodeCommon,
+    checkout,
+)
 from agent_pm.session.clients.opencode.headless import OpenCodeHeadless
 from agent_pm.session.engine.types import Spec
 
@@ -34,5 +40,6 @@ class OpenCodeClient(Client):
         return self.common.parse_usage(output)
 
     def writable_dirs(self, spec: Spec):
-        dirs = (spec.access.cwd, *spec.access.dirs)
-        return tuple(dict.fromkeys(map(os.path.realpath, dirs)))
+        cwd = os.path.realpath(spec.access.cwd)
+        dirs = (cwd, *map(os.path.realpath, spec.access.dirs))
+        return tuple(dict.fromkeys(filter(None, (*dirs, checkout(cwd)))))

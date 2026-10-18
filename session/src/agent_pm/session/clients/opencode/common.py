@@ -67,6 +67,48 @@ PORT = (
 )
 
 
+CONFIG_FILES = (".opencode/*", "opencode.json", "opencode.jsonc")
+
+
+def _ancestors(path: str) -> list[str]:
+    """`path`'s proper ancestors, nearest first, "/" last."""
+    found = []
+    while (parent := os.path.dirname(path)) != path:
+        found.append(parent)
+        path = parent
+    return found
+
+
+def checkout(cwd: str) -> str | None:
+    """The git checkout holding `cwd`, whose files OpenCode counts as its project's."""
+    for path in (cwd, *_ancestors(cwd)):
+        if os.path.lexists(os.path.join(path, ".git")):
+            return path
+    return None
+
+
+def edit_rules(cwd: str, dirs: list[str], reads: list[str]) -> dict[str, str]:
+    """OpenCode's edit rules: it matches an edit by its path relative to its project's checkout
+    (else "/"), its last matching rule winning, and a deny holds under --auto. No edit outside the
+    checkout but in the cwd and dirs, none in reads (each read dir's path from any ancestor the
+    cwd shares with it), none to OpenCode's own config.
+    """
+    lineage = {cwd, *_ancestors(cwd)}
+    rules = {"../*": "deny"}
+    for read in reads:
+        rules.update(
+            {f"{os.path.relpath(read, p)}/*": "deny" for p in _ancestors(read) if p in lineage}
+        )
+    for path in (cwd, *dirs):
+        for p in _ancestors(path):
+            rules[f"*../{os.path.relpath(path, p)}/*"] = "allow"
+            if p in lineage:
+                rules[f"{os.path.relpath(path, p)}/*"] = "allow"
+    for name in CONFIG_FILES:
+        rules.update({name: "deny", f"*/{name}": "deny"})
+    return rules
+
+
 def refuse(flags: Iterable[str], banned: tuple[str, ...], where: str) -> None:
     for flag in scan(tuple(flags), {word: word for word in VALUED}):
         if flag.word in banned:
@@ -110,7 +152,7 @@ class OpenCodeCommon:
     def inline(self, spec: Spec, host_address: str) -> dict:
         """The launch's OpenCode config: the ollama provider on `host_address`, auto-update off, and
         shell calls asking, which a headless run refuses, but the run's pre-approved commands; dirs
-        outside the cwd are its Access.dirs alone, and OpenCode's own config files stay unedited.
+        outside the cwd its Access dirs and reads, edits as edit_rules says.
         """
         access = spec.access
         models = {
@@ -121,16 +163,19 @@ class OpenCodeCommon:
         commands = dict.fromkeys(access.commands, "allow")
         permission: dict = {
             "bash": {"*": "ask", **commands} if commands else "ask",
-            "edit": {".opencode/*": "deny", "opencode.json": "deny", "opencode.jsonc": "deny"},
         }
         dirs = [os.path.realpath(d) for d in access.dirs]
-        if dirs:
+        reads = [os.path.realpath(d) for d in access.reads]
+        if outside := [*reads, *dirs]:
             permission["external_directory"] = {
-                pattern: "allow" for d in dirs for pattern in (d, f"{d}/*")
+                pattern: "allow" for d in outside for pattern in (d, f"{d}/*")
             }
+        permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
         return {
             "$schema": "https://opencode.ai/config.json",
             "autoupdate": False,
+            # A refused call ends OpenCode's turn otherwise (session/processor.ts).
+            "experimental": {"continue_loop_on_deny": True},
             "provider": {
                 "ollama": {
                     "npm": "@ai-sdk/openai-compatible",

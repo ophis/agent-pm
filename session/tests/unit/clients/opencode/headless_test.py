@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 from dataclasses import replace
 
@@ -29,6 +30,17 @@ from session.tests.unit.clients.opencode.support import SES, packaged_table
 MODEL = "ollama/qwen3.6:35b-mlx"
 
 
+def decide(rules: dict, path: str) -> str | None:
+    """OpenCode's verdict for an edit of `path` (relative to its worktree): its last matching rule,
+    a rule's `*` any text (permission/index.ts evaluate, util/wildcard.ts match at v1.19.3).
+    """
+    found = None
+    for pattern, action in rules.items():
+        if re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), path, re.S):
+            found = action
+    return found
+
+
 def holds(argv, words) -> bool:
     return any(tuple(argv[i : i + len(words)]) == tuple(words) for i in range(len(argv)))
 
@@ -48,6 +60,11 @@ class Base(Case):
         assert run is not None
         run._context = context
         return run.launch(spec)
+
+    def made(self, name: str) -> str:
+        path = os.path.join(self.home, name)
+        os.mkdir(path)
+        return os.path.realpath(path)
 
     def command(self, launch: Launch) -> tuple[str, ...]:
         return launch.argv[launch.argv.index("--") + 1 :]
@@ -139,6 +156,10 @@ class LaunchTest(Base):
     def test_bash_ask(self):
         self.assertEqual(self.inline(self.launch(self.spec()))["permission"]["bash"], "ask")
 
+    def test_a_refused_call_does_not_end_the_turn(self):
+        inline = self.inline(self.launch(self.spec()))
+        self.assertEqual(inline["experimental"], {"continue_loop_on_deny": True})
+
     def test_commands_allowed(self):
         access = Access(cwd=self.cwd, commands=("git status", "make test"))
         permission = self.inline(self.launch(self.spec(access=access)))["permission"]
@@ -146,21 +167,36 @@ class LaunchTest(Base):
             permission["bash"], {"*": "ask", "git status": "allow", "make test": "allow"}
         )
 
-    def test_dirs_are_external_directories_reads_are_not(self):
-        extra, read = os.path.join(self.home, "extra"), os.path.join(self.home, "read")
-        for path in (extra, read):
-            os.mkdir(path)
+    def test_reads_and_dirs_are_external_directories(self):
+        extra, read = self.made("extra"), self.made("read")
         access = Access(cwd=self.cwd, dirs=(extra,), reads=(read,))
         permission = self.inline(self.launch(self.spec(access=access)))["permission"]
-        real = os.path.realpath(extra)
-        self.assertEqual(permission["external_directory"], {real: "allow", f"{real}/*": "allow"})
+        self.assertEqual(
+            permission["external_directory"],
+            {read: "allow", f"{read}/*": "allow", extra: "allow", f"{extra}/*": "allow"},
+        )
         self.assertNotIn("external_directory", self.inline(self.launch(self.spec()))["permission"])
 
-    def test_config_paths_not_editable(self):
-        self.assertEqual(
-            self.inline(self.launch(self.spec()))["permission"]["edit"],
-            {".opencode/*": "deny", "opencode.json": "deny", "opencode.jsonc": "deny"},
-        )
+    def test_edits_stay_in_the_worktree_cwd_and_dirs(self):
+        extra, read = self.made("extra"), self.made("read")
+        access = Access(cwd=self.cwd, dirs=(extra,), reads=(read,))
+        rules = self.inline(self.launch(self.spec(access=access)))["permission"]["edit"]
+        checkout = os.path.join(self.home, "other", "checkout")
+        for worktree in ("/", checkout, os.path.dirname(self.cwd)):
+            with self.subTest(worktree=worktree):
+                for path, action in (
+                    (os.path.join(read, "task.md"), "deny"),
+                    (os.path.join(read, "sub", "task.md"), "deny"),
+                    (os.path.join(self.cwd, "a.py"), "allow"),
+                    (os.path.join(extra, "sub", "b.md"), "allow"),
+                    (os.path.join(self.cwd, ".opencode", "plugins", "x.ts"), "deny"),
+                    (os.path.join(self.cwd, "opencode.json"), "deny"),
+                    (os.path.join(self.cwd, "pkg", "opencode.jsonc"), "deny"),
+                ):
+                    found = decide(rules, os.path.relpath(path, worktree)) or "allow"
+                    self.assertEqual(found, action, path)
+        self.assertEqual(decide(rules, "../elsewhere/x.py"), "deny")
+        self.assertIsNone(decide(rules, "src/inside_the_worktree.py"))
 
     def test_autoupdate_off(self):
         client = OpenCodeClient({**packaged_table(), "env": {"OPENCODE_DISABLE_AUTOUPDATE": "0"}})
