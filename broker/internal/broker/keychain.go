@@ -4,6 +4,7 @@
 package broker
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,9 +25,20 @@ const (
 	maxToken       = 16384
 )
 
-type Keychain interface {
-	Exists() error
+const tokenService, tokenAccount = "agent-pm-claude", "setup-token"
+
+// TokenReader is start's side of the setup-token item: its access (ItemTrust's AppAccess of tokenService and
+// tokenAccount) and Get, a read that fails with ErrNeedsDialog rather than show a keychain dialog.
+type TokenReader interface {
+	AppAccess(service, account string) (AppAccess, error)
 	Get() ([]byte, error)
+}
+
+// Keychain is login claude's side of the setup-token item; GetWithDialog is a read macOS may ask the user to allow.
+type Keychain interface {
+	TokenReader
+	ItemTrust
+	GetWithDialog() ([]byte, error)
 	Put([]byte) error
 }
 
@@ -35,6 +47,8 @@ var (
 	ErrAmbiguous = errors.New("more than one keychain item")
 	// ErrAuthFailed is errSecAuthFailed: a wrong keychain password, or securityd refusing a change.
 	ErrAuthFailed = errors.New("keychain status -25293")
+	// ErrNeedsDialog is errSecInteractionNotAllowed: a no-dialog read that would have asked the user.
+	ErrNeedsDialog = errors.New("keychain status -25308")
 )
 
 // GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
@@ -186,8 +200,11 @@ func erase(b []byte) {
 	}
 }
 
-// Login reads a setup-token with read, checks it and stores it; out never sees the token.
-func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
+// Login reads a setup-token with read, checks it, stores it and makes the item trust only the broker (secureItem,
+// asking password when needed). It then proves start's no-dialog read returns the token. When that read would ask,
+// the one dialog happens here, announced on notice, and a second no-dialog read proves Always Allow was clicked.
+// Neither notice nor out sees the token.
+func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Writer) error {
 	token, err := read()
 	defer erase(token)
 	if err != nil {
@@ -204,8 +221,43 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 	if err := k.Put(token); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, "Claude setup-token saved")
+	if err := secureItem(tokenService, tokenAccount, "rerun agent-pm-broker login claude to finish", k, password); err != nil {
+		return err
+	}
+	failed := func(err error) error {
+		return fmt.Errorf("keychain item %s: reading it failed: %w; rerun agent-pm-broker login claude", tokenService, err)
+	}
+	err = readsBack(token, k.Get)
+	if errors.Is(err, ErrNeedsDialog) {
+		if _, err := fmt.Fprintln(notice, "macOS will ask to let agent-pm-broker use "+tokenService+": enter the login keychain password if asked and click Always Allow"); err != nil {
+			return err
+		}
+		if err := readsBack(token, k.GetWithDialog); err != nil {
+			return failed(err)
+		}
+		err = readsBack(token, k.Get)
+		if errors.Is(err, ErrNeedsDialog) {
+			return fmt.Errorf("keychain item %s still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude", tokenService)
+		}
+	}
+	if err != nil {
+		return failed(err)
+	}
+	_, err = fmt.Fprintln(out, "Claude setup-token saved; keychain trusts only the broker")
 	return err
+}
+
+// readsBack is nil when get returns token; it erases what get returned.
+func readsBack(token []byte, get func() ([]byte, error)) error {
+	saved, err := get()
+	defer erase(saved)
+	switch {
+	case err != nil:
+		return err
+	case !bytes.Equal(saved, token):
+		return errors.New("it holds other bytes")
+	}
+	return nil
 }
 
 // LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker (secureItem), then
@@ -317,25 +369,33 @@ func incomplete(item, account, rerun string, k ItemTrust, before AppAccess, caus
 	return fmt.Errorf("keychain item %s %s: %w; done: %s; not done: %s; %s", item, changed, cause, done, strings.ReplaceAll(todo, "\n", "; "), rerun)
 }
 
-type Credentials struct{ Keychain Keychain }
+type Credentials struct{ Keychain TokenReader }
 
 // keychainError maps a keychain failure to the protocol, without its detail.
 func keychainError(err error) *protocol.Error {
-	if errors.Is(err, ErrNotFound) {
+	switch {
+	case errors.Is(err, ErrNotFound):
 		return protocol.New(protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude.")
+	case errors.Is(err, ErrNeedsDialog):
+		return protocol.New(protocol.LoginRequired, "The Claude setup-token needs keychain approval: run agent-pm-broker login claude.")
 	}
 	return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
 }
 
+// Ready reads only the item's access, so it never prompts: an item trusting another broker build would ask at Inject.
 func (c Credentials) Ready() error {
-	if err := c.Keychain.Exists(); err != nil {
+	access, err := c.Keychain.AppAccess(tokenService, tokenAccount)
+	if err != nil {
 		return keychainError(err)
+	}
+	if onlyBroker(access) != nil {
+		return protocol.New(protocol.LoginRequired, "The Claude setup-token trusts another broker build: run agent-pm-broker login claude.")
 	}
 	return nil
 }
 
 // Inject writes the token into the container's secrets tmpfs through exec's stdin.
-// The token read is the first that can prompt, so a denied or locked keychain fails here.
+// The token read never shows a keychain dialog: one it would need, or a locked keychain, fails here.
 // Errors are keychainError's, wrap docker.ErrUnreachable or are opaque: no Docker stderr, no keychain detail.
 func (c Credentials) Inject(exec func(argv []string, stdin []byte) error) error {
 	token, err := c.Keychain.Get()

@@ -343,9 +343,14 @@ func TestAccountHomeIgnoresHOME(t *testing.T) {
 
 type memKeychain struct{ token []byte }
 
-func (k *memKeychain) Exists() error        { return nil }
+// AppAccess is an item trusting only the broker.
+func (k *memKeychain) AppAccess(string, string) (broker.AppAccess, error) {
+	return broker.AppAccess{Broker: "b", Partition: "p", Entries: []broker.ACLEntry{
+		{Authorizations: []string{"decrypt"}, Apps: []string{"b"}},
+		{Authorizations: []string{"partition_id"}, Partitions: []string{"p"}},
+	}}, nil
+}
 func (k *memKeychain) Get() ([]byte, error) { return append([]byte(nil), k.token...), nil }
-func (k *memKeychain) Put(b []byte) error   { k.token = b; return nil }
 
 type scripted struct {
 	calls [][]string
