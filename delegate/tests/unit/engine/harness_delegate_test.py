@@ -1142,10 +1142,14 @@ class StatusTest(HarnessCase):
         for word in ("done", "working", "blocked"):
             with (
                 self.subTest(word=word),
-                mock.patch.object(agent, "status", return_value=replace(agent.status(), state=word)),
+                mock.patch.object(
+                    agent, "status", return_value=replace(agent.status(), state=word)
+                ),
             ):
                 status = view.status()
-                self.assertEqual((status.alive, status.state, status.outcome), (False, word, "done"))
+                self.assertEqual(
+                    (status.alive, status.state, status.outcome), (False, word, "done")
+                )
                 self.assertFalse(view.alive())
         agent.stop()
         self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
@@ -1159,6 +1163,10 @@ class StatusTest(HarnessCase):
         self.assertIsNone(view.run().outcome)
         status = view.status()
         self.assertEqual((status.alive, status.state, status.outcome), (False, "working", None))
+        agent = HarnessSession.live[self.metadata()["agent_name"]]
+        blocked = replace(agent.status(), state="blocked")
+        with mock.patch.object(agent, "status", return_value=blocked):
+            self.assertEqual(view.status().state, "blocked")
 
 
 class UnansweredTest(HarnessCase):
