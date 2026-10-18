@@ -530,6 +530,7 @@ class StartTest(Base):
                 "generation": GEN,
                 "sid": "s1",
                 "client": "agent",
+                "credential_refresh": False,
                 "display": "lead/below",
                 "record": RECORD.to_line(),
                 "events": os.path.join(self.home, "events"),
@@ -1236,7 +1237,13 @@ class PipeTest(Base):
                 "process_group": 0,
             },
         )
-        record = {"generation": GEN, "sid": "s1", "client": "agent", "mode": "pipe"}
+        record = {
+            "generation": GEN,
+            "sid": "s1",
+            "client": "agent",
+            "mode": "pipe",
+            "credential_refresh": False,
+        }
         self.assertEqual((self.popen_record, self.host_record()), (record, record))
         self.assertTrue(self.lock_held)
         self.assertFalse(_free(os.path.join(self.state, "pipe.lock")))

@@ -67,7 +67,27 @@ class ExpiryTest(Base):
     def setUp(self):
         super().setUp()
         with open(os.path.join(self.state, "host.json"), "w") as f:
-            json.dump({"generation": GEN, "client": "claude"}, f)
+            json.dump({"generation": GEN, "client": "claude", "credential_refresh": False}, f)
+
+    def test_refresh_capability_and_legacy_deadline_recovery(self):
+        record = os.path.join(self.state, "host.json")
+        deadline = os.path.join(self.state, f"{GEN}.credential.json")
+        cases = (
+            ({"client": "agent", "credential_refresh": True}, None, True),
+            ({"client": "agent", "credential_refresh": False}, "invalid", False),
+            ({"client": "agent"}, None, False),
+            ({"client": "agent"}, "2026-10-18T12:00:00Z", True),
+            ({"client": "agent"}, "invalid", True),
+            ({"client": "agent"}, ..., True),
+            ([], ..., False),
+        )
+        for found, expiry, expected in cases:
+            with self.subTest(record=found, expiry=expiry):
+                with open(record, "w") as stream:
+                    json.dump(found, stream)
+                with open(deadline, "w") as stream:
+                    stream.write("{" if expiry is ... else json.dumps(expiry))
+                self.assertEqual(supervisor.refreshes_client(self.state, GEN), expected)
 
     def test_no_credential_and_a_null_deadline_do_not_close(self):
         self.supervisor.broker = mock.Mock()
@@ -507,7 +527,7 @@ class CodexRenewalTest(Base):
         self.credential = os.path.join(self.state, f"{GEN}.credential.json")
         self.github = os.path.join(self.state, f"{GEN}.github.json")
         with open(os.path.join(self.state, "host.json"), "w") as stream:
-            json.dump({"client": "codex", "generation": GEN}, stream)
+            json.dump({"client": "codex", "generation": GEN, "credential_refresh": True}, stream)
         with open(self.github, "w") as stream:
             json.dump([], stream)
         self.supervisor.broker = mock.Mock()

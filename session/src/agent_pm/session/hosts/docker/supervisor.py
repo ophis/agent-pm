@@ -35,7 +35,7 @@ LOG_MAX = 1 << 20
 REFRESH_AHEAD = 600
 REFRESH_RETRY = 60
 LOG = logging.getLogger("session")
-AUTH_EXPIRED = "Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login codex on the host, then resume"
+AUTH_EXPIRED = "Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login {client} on the host, then resume"
 
 
 def _body(payload: str) -> dict | None:
@@ -159,7 +159,7 @@ class Supervisor:
             stopped.wait(POLL)
 
     def refresh(self, stopped) -> None:
-        """refresh_tokens(), a failure written as github_refresh_failed."""
+        """Renew the generation and report classified failures."""
         refresh_tokens(
             self.name,
             self.state,
@@ -177,7 +177,7 @@ class Supervisor:
                 SessionStatusLog(self.events).write(
                     self.name,
                     "client_refresh_failed"
-                    if _recorded_client(self.state) == "codex"
+                    if refreshes_client(self.state, self.generation)
                     else "github_refresh_failed",
                     reason,
                 )
@@ -222,7 +222,7 @@ def expire_client(
     failed: Callable[[str], None],
     clock: Callable[[], float] = time.time,
 ) -> None:
-    if _recorded_client(state) == "codex":
+    if refreshes_client(state, generation):
         return
     data = read_regular(os.path.join(state, f"{generation}.credential.json"))
     if data is None:
@@ -249,6 +249,21 @@ def expire_client(
             return
 
 
+def refreshes_client(state: str, generation: str) -> bool:
+    try:
+        record = json.loads(read_regular(os.path.join(state, "host.json")) or b"")
+        if isinstance(record.get("credential_refresh"), bool):
+            return record["credential_refresh"]
+        if not record.get("client"):
+            return False
+        return (
+            json.loads(read_regular(os.path.join(state, f"{generation}.credential.json")) or b"")
+            is not None
+        )
+    except (ValueError, TypeError, AttributeError, OSError):
+        return _recorded_client(state) is not None
+
+
 def _recorded_client(state: str) -> str | None:
     """host.json's client; None for a missing, unreadable or malformed record."""
     try:
@@ -272,7 +287,7 @@ def refresh_tokens(
     """Until stopped: the broker's refresh at the earliest saved expiry less REFRESH_AHEAD, its
     list saved; a failure goes to `failed` and retries in REFRESH_RETRY s. No list: returns.
     """
-    if _recorded_client(state) == "codex":
+    if refreshes_client(state, generation):
         _renew_client(
             name, state, generation, broker, stopped, failed=failed, expired=expired, clock=clock
         )
@@ -332,9 +347,13 @@ def _renew_client(name, state, generation, broker, stopped, *, failed, expired, 
         remaining = _client_deadline(state, generation) - clock()
         if remaining <= 0:
             if expired is not None:
-                expired(AUTH_EXPIRED)
+                expired(AUTH_EXPIRED.format(client=_recorded_client(state) or "for this client"))
             else:
-                LOG.warning("docker session %s: client_auth_expired %s", name, AUTH_EXPIRED)
+                LOG.warning(
+                    "docker session %s: client_auth_expired %s",
+                    name,
+                    AUTH_EXPIRED.format(client=_recorded_client(state) or "for this client"),
+                )
             while True:
                 try:
                     broker.close(f"agent-pm-{name}-{generation}")

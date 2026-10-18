@@ -888,6 +888,7 @@ class DockerHost(Host):
                     "generation": generation,
                     "sid": sid,
                     "client": metadata.get("client"),
+                    "credential_refresh": created.started.credential_expires_at is not None,
                     "display": display,
                     "record": None if record is None else record.to_line(),
                     "events": events,
@@ -1066,6 +1067,7 @@ class DockerHost(Host):
                     "generation": generation,
                     "sid": metadata.get("sid"),
                     "client": metadata.get("client"),
+                    "credential_refresh": created.started.credential_expires_at is not None,
                     "mode": PIPED,
                 },
             )
@@ -1109,7 +1111,7 @@ class DockerHost(Host):
                     "docker session %s: %s %s",
                     name,
                     "client_refresh_failed"
-                    if metadata.get("client") == "codex"
+                    if created.started.credential_expires_at is not None
                     else "github_refresh_failed",
                     reason,
                 ),
