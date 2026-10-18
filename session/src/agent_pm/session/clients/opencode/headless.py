@@ -7,8 +7,9 @@ import json
 import os
 import sys
 
+from agent_pm.session.clients.common import container
 from agent_pm.session.clients.opencode import launcher
-from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon
+from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon, image_path
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
@@ -30,14 +31,18 @@ class OpenCodeHeadless(Headless):
         self.cwd, self.sid = "", ""
         self.bound, self.failed, self.last = False, False, ""
 
+    def _home(self):
+        return self.common.home()
+
     def launch(self, spec: Spec):
         context, common = self._context, self.common
         selection = common.selection(spec, context)
+        found = container(context)
         cwd, sid = spec.access.cwd, spec.sid or ""
         model, variant = common.model(spec.tier), common.variant(spec.effort)
         env = common.environment(spec, context)
         command = (
-            common.program(env, cwd),
+            common.executable_for(env, cwd, context),
             "run",
             "--format",
             "json",
@@ -52,9 +57,9 @@ class OpenCodeHeadless(Headless):
         self.bound, self.failed, self.last = False, False, ""
         return Launch(
             (
-                os.path.realpath(sys.executable),
+                found.python if found else os.path.realpath(sys.executable),
                 "-I",
-                launcher.__file__,
+                image_path(found, launcher.__file__) if found else launcher.__file__,
                 "--timeout",
                 str(SESSION_TIMEOUT),
                 "--prompt",
@@ -65,6 +70,7 @@ class OpenCodeHeadless(Headless):
             env=env,
             unset=UNSET,
             cwd=cwd,
+            transcript=common.transcript(env, context),
             project=spec.access.project,
         )
 

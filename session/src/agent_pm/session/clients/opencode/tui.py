@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
+from agent_pm.session.clients.common import container
 from agent_pm.session.clients.opencode.common import (
     NATIVE,
     TUI_RESERVED,
     UNSET,
     Bindings,
     OpenCodeCommon,
+    image_path,
     refuse,
 )
 from agent_pm.session.engine.types import (
@@ -62,6 +64,9 @@ class OpenCodeTui(Tui):
         self.cwd, self.sid, self.fresh = "", "", False
         self.opening = None
 
+    def _home(self):
+        return self.common.home()
+
     def launch(self, spec: Spec, hook):
         context, common = self._context, self.common
         selection = common.selection(spec, context, TUI_RESERVED)
@@ -79,12 +84,14 @@ class OpenCodeTui(Tui):
         self.fresh = not spec.resume
         prompt = (f"--prompt={spec.prompt}",) if spec.prompt and not spec.resume else ()
         self.opening = (START, spec.prompt) if spec.prompt and spec.resume else None
-        env = common.environment(spec, context, plugin=Path(PLUGIN).resolve().as_uri())
+        found = container(context)
+        plugin = Path(image_path(found, PLUGIN)) if found else Path(PLUGIN).resolve()
+        env = common.environment(spec, context, plugin=plugin.as_uri())
         env[HOOK_ENV] = json.dumps(list(hook))
         env[SESSION_ENV] = (common.native(self.cwd, self.sid) or "") if spec.resume else ""
         return Launch(
             (
-                common.program(env, spec.access.cwd),
+                common.executable_for(env, spec.access.cwd, context),
                 *selection,
                 *(("--model", model) if model is not None else ()),
                 *common.flags,
@@ -95,6 +102,7 @@ class OpenCodeTui(Tui):
             env=env,
             unset=(*UNSET, PURE),
             cwd=spec.access.cwd,
+            transcript=common.transcript(env, context),
             project=spec.access.project,
         )
 

@@ -397,6 +397,11 @@ class ClientEnvTest(Base):
                     ClientContext("host.docker.internal", permission, **paths),
                 )
 
+    def test_the_pythonpath_starts_at_the_images_session_src(self):
+        # Clients find their packaged files (Container.source) there.
+        pythonpath = self.host._client_context().pythonpath or ""
+        self.assertEqual(pythonpath.split(":")[0], "/opt/agent-pm/session/src")
+
     def test_client_env_points_at_the_home(self):
         self.assertEqual(
             self.host._client_env("w", "agent", HOME, resume=False),
