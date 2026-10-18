@@ -769,6 +769,21 @@ class GhWrapper(GitHubTokens):
         self.origin = ""
         self.assertEqual(self.gh("pr", "view"), "ghs_ophis")
 
+    def test_owner_placeholder_is_the_current_repos(self):
+        self.origin = "https://github.com/other/x.git"
+        for argv in (
+            ("api", "repos/{owner}/{repo}"),
+            ("api", "/repos/{owner}/{repo}/pulls"),
+            ("api", "-X", "PATCH", "repos/{owner}/{repo}/pulls/1"),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.gh(*argv), "ghs_other")
+        self.origin = "https://gitlab.com/other/x.git"
+        self.assertIsNone(self.gh("api", "repos/{owner}/{repo}"))
+        (self.tokens / "other").unlink()
+        self.origin = ""
+        self.assertEqual(self.gh("api", "repos/{owner}/{repo}"), "ghs_ophis")
+
     def test_another_host_or_no_token_adds_none(self):
         self.origin = "https://github.com/ophis/x"
         for argv in (
