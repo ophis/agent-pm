@@ -1,5 +1,5 @@
 {
-  "protocol_version": "13",
+  "protocol_version": "14",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1592,6 +1592,56 @@
       "valid": false,
       "expected": {
         "stage": "schema",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-opencode.json",
+      "definition": "manifest",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-missing-opencode_dir.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-opencode-claude-dir.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-claude-opencode-dir.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "start-output-missing-opencode.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
         "exit_code": null,
         "error_code": null
       }

@@ -79,8 +79,9 @@ type BuildResult struct {
 }
 
 type Clients struct {
-	Claude string `json:"claude"`
-	Codex  string `json:"codex"`
+	Claude   string `json:"claude"`
+	Codex    string `json:"codex"`
+	Opencode string `json:"opencode"`
 }
 
 type StartResult struct {

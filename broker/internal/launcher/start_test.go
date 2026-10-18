@@ -120,6 +120,9 @@ func (w *world) docker() *fakeDocker {
 				if slices.ContainsFunc(args, func(s string) bool { return strings.HasSuffix(s, "/codex") || strings.HasSuffix(s, "/codex.next") }) {
 					v = "codex-cli 0.163.0\n"
 				}
+				if slices.ContainsFunc(args, func(s string) bool { return strings.HasSuffix(s, "/opencode") }) {
+					v = "1.19.3\n"
+				}
 				if probes < len(w.versions) {
 					v = w.versions[probes]
 				}
@@ -344,7 +347,7 @@ func TestStartOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
-		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.163.0"}, GitHub: []protocol.Expiry{}}
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.163.0", Opencode: "1.19.3"}, GitHub: []protocol.Expiry{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}
@@ -365,7 +368,7 @@ func TestStartOrder(t *testing.T) {
 	wantSteps := []string{"image inspect", "container inspect", "volume inspect", "volume create", "volume inspect", "ps --filter", "run --rm", "run --detach",
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
-		"agent claude --version", "agent /opt/agent-pm/clients/bin/codex --version",
+		"agent claude --version", "agent /opt/agent-pm/clients/bin/codex --version", "agent /opt/agent-pm/clients/bin/opencode --version",
 		"--interactive --user inject"}
 	if !slices.Equal(steps, wantSteps) {
 		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
