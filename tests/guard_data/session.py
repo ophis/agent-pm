@@ -68,6 +68,7 @@ STANDALONE = frozenset(
         "clients/codex/common/app_server.py",
         "clients/opencode/launcher.py",
         "clients/opencode/probe.py",
+        "clients/opencode/transcript.py",
     )
 )
 
