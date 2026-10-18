@@ -51,19 +51,6 @@ static CFMutableDictionaryRef item_query(const char *keychain_path, const char *
     CFRelease(list);
     return q;
 }
-static OSStatus item_exists(const char *path, const char *service, const char *account) {
-    SecKeychainRef kc = NULL;
-    OSStatus s;
-    CFMutableDictionaryRef q = item_query(path, service, account, &kc, &s);
-    if (!q) return s;
-    CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
-    CFTypeRef result = NULL;
-    s = SecItemCopyMatching(q, &result);
-    if (result) CFRelease(result);
-    CFRelease(q);
-    CFRelease(kc);
-    return s;
-}
 // Attributes only, so it never prompts; *account is the first item's, malloc'd, empty when it has none.
 static OSStatus item_accounts(const char *path, const char *service, long *count, char **account) {
     SecKeychainRef kc = NULL;
@@ -88,7 +75,8 @@ static OSStatus item_accounts(const char *path, const char *service, long *count
     CFRelease(kc);
     return s;
 }
-// no_ui: fail rather than ask, for a broker-only item a since-reinstalled broker can no longer read.
+// no_ui: fail rather than ask (errSecInteractionNotAllowed), for a broker-only item a since-reinstalled broker can no
+// longer read.
 static OSStatus item_get(const char *path, const char *service, const char *account, int no_ui, void **bytes, long *length) {
     SecKeychainRef kc = NULL;
     OSStatus s;
@@ -511,11 +499,11 @@ func status(s C.OSStatus) error {
 		return ErrNotFound
 	case C.errSecAuthFailed:
 		return ErrAuthFailed
+	case C.errSecInteractionNotAllowed:
+		return ErrNeedsDialog
 	}
 	return fmt.Errorf("keychain status %d", int(s))
 }
-
-const tokenService, tokenAccount = "agent-pm-claude", "setup-token"
 
 // fileKeychain is the keychain file at this path, with no install check.
 type fileKeychain string
@@ -550,13 +538,11 @@ func (k fileKeychain) get(service, account string, noUI bool) ([]byte, error) {
 	return b, nil
 }
 
-func (k fileKeychain) Exists() error {
-	p, free := cStrings(string(k), tokenService, tokenAccount)
-	defer free()
-	return status(C.item_exists(p[0], p[1], p[2]))
-}
+func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount, true) }
 
-func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount, false) }
+func (k fileKeychain) GetWithDialog() ([]byte, error) {
+	return k.get(tokenService, tokenAccount, false)
+}
 
 func (k fileKeychain) Put(token []byte) error {
 	if len(token) == 0 {
@@ -657,18 +643,18 @@ func (k SystemKeychain) login() fileKeychain {
 	return fileKeychain(filepath.Join(k.Home, "Library/Keychains/login.keychain-db"))
 }
 
-func (k SystemKeychain) Exists() error {
-	if err := CheckInstalled(); err != nil {
-		return err
-	}
-	return k.login().Exists()
-}
-
 func (k SystemKeychain) Get() ([]byte, error) {
 	if err := CheckInstalled(); err != nil {
 		return nil, err
 	}
 	return k.login().Get()
+}
+
+func (k SystemKeychain) GetWithDialog() ([]byte, error) {
+	if err := CheckInstalled(); err != nil {
+		return nil, err
+	}
+	return k.login().GetWithDialog()
 }
 
 func (k SystemKeychain) Put(token []byte) error {

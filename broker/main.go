@@ -251,7 +251,11 @@ func system() app {
 				fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
-			}, broker.SystemKeychain{Home: home}, out)
+			}, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to make Claude trust only the broker (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, broker.SystemKeychain{Home: home}, os.Stderr, out)
 		},
 		loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
 			home, err := accountHome()

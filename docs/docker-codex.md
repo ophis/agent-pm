@@ -60,16 +60,20 @@ installation. Install and update accept only stable versions meeting the
 ```mermaid
 flowchart LR
     L[Take account lock] --> R[Reread keychain]
-    R --> H[Private random temporary home]
+    R --> N[Create placeholder item]
+    N --> P[Restrict partition list]
+    P --> A[Restrict read and export entries]
+    A --> T[Verify access]
+    T --> H[Private random temporary home]
     H --> B[Pinned browser login]
     B --> V[Validate subscription auth and expiry]
     V --> D[Delete temporary home]
-    D --> P[Restrict partition list]
-    P --> A[Restrict read and export entries]
-    A --> C[Verify access and save auth]
+    D --> C[Save auth]
     C --> U[Verify saved auth and release lock]
 ```
-Sources: `broker/internal/broker/codex.go:147`, TASK-642's `broker/internal/broker/keychain.go:255`.
+Sources: `broker/internal/broker/codex.go:147`, TASK-642's `broker/internal/broker/keychain.go:325`.
+The placeholder is created only when the item is absent; the partition and entry steps run only
+when not yet in place.
 
 The entire temporary home is 0700 under `/private/tmp`; file credential storage and
 ChatGPT browser login are forced. It is removed on success, child failure and normal
@@ -80,10 +84,14 @@ Other processes running as the same user can still read the temporary data.
 
 A new keychain item starts with a nonsecret placeholder. TASK-642's implementation
 applies the diagram ordering to the access control list (ACL), using a hidden
-keychain password once when needed and the same dialog fallback. Credentials
+keychain password once when needed and the same dialog fallback. Every terminal
+question comes before the browser: once it opens, login needs nothing more from the
+terminal and exits by itself. A failed browser login leaves the placeholder, which
+reads as no login. Credentials
 are written in place only after verification; existing GitHub App items are unchanged.
 If final access/readback verification fails, the broker restores and re-verifies an
-earlier usable login; any restoration failure is reported explicitly.
+earlier usable login, without asking for a password it did not read before the browser;
+any restoration failure is reported explicitly.
 Reinstalling the broker changes its ad hoc code identity: rerun `login codex` to
 authorize the new broker. No `security` subprocess receives credential data.
 
