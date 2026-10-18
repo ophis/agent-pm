@@ -50,6 +50,7 @@ SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
 HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
 MODEL_KEYS = ("model", "effortLevel", "modelSettings")
+MODEL_ENTRY_DROP = frozenset({"autoCompactWindow"})  # host-only keys of a modelSettings entry
 ENV_KEYS = ("CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION",)
 # A container worker runs unattended: no prompt may stop it, none is suggested, it answers
 # concisely, and it renders fullscreen, which stops flicker in tmux.
@@ -142,6 +143,29 @@ def _merge(base: dict, over: Mapping) -> dict:
         else:
             base[key] = value
     return base
+
+
+def _models(settings: dict) -> dict:
+    """`settings`' MODEL_KEYS, each modelSettings entry without MODEL_ENTRY_DROP; an entry left
+    empty is dropped, and modelSettings too when none is left.
+    """
+    found = {k: settings[k] for k in MODEL_KEYS if k in settings}
+    entries = found.get("modelSettings")
+    if isinstance(entries, dict):
+        kept = {}
+        for name, entry in entries.items():
+            left = (
+                {k: v for k, v in entry.items() if k not in MODEL_ENTRY_DROP}
+                if isinstance(entry, dict)
+                else entry
+            )
+            if left != {}:
+                kept[name] = left
+        if kept:
+            found["modelSettings"] = kept
+        else:
+            del found["modelSettings"]
+    return found
 
 
 def _credential(name: str) -> bool:
@@ -305,8 +329,9 @@ class ClaudeCommon:
 
     def home_files(self) -> tuple[tuple[str, str], ...]:
         """A container home's settings.json: UNATTENDED, then only the host settings' MODEL_KEYS
-        and its env's ENV_KEYS, so a worker runs unattended on the host's default model and
-        effort; UNATTENDED alone when the host settings are unreadable or without them.
+        (per `_models`) and its env's ENV_KEYS, so a worker runs unattended on the host's
+        default model and effort; UNATTENDED alone when the host settings are unreadable or
+        without them.
         """
         try:
             settings = json.loads(_read(os.path.join(self.config_dir(), "settings.json")))
@@ -318,7 +343,7 @@ class ClaudeCommon:
         env = {k: env[k] for k in ENV_KEYS if k in env} if isinstance(env, dict) else {}
         found = {
             **UNATTENDED,
-            **{k: settings[k] for k in MODEL_KEYS if k in settings},
+            **_models(settings),
             **({"env": env} if env else {}),
         }
         return (("settings.json", json.dumps(found)),)
