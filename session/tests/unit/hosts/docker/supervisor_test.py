@@ -109,6 +109,30 @@ class ExpiryTest(Base):
             " codex; token refresh is not supported yet\n",
         )
 
+    def test_a_missing_or_bad_host_record_still_reports_and_closes(self):
+        with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
+            json.dump("2000-01-01T00:00:00Z", f)
+        record = os.path.join(self.state, "host.json")
+        for content in (None, b"{", b"[]", b'{"generation": "g"}', b'{"client": ""}'):
+            with self.subTest(content=content):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(record)
+                if content is not None:
+                    with open(record, "wb") as f:
+                        f.write(content)
+                self.supervisor.broker = mock.Mock()
+                stopped = mock.Mock()
+                stopped.wait.return_value = False
+                self.supervisor.expire(stopped)
+                self.supervisor.broker.close.assert_called_once_with(f"agent-pm-worker_1-{GEN}")
+                with open(self.events) as f:
+                    last = f.read().splitlines()[-1]
+                self.assertEqual(
+                    last.split(" ", 1)[1],
+                    "worker_1 client_auth_expired Client authentication expired; run"
+                    " agent-pm-broker login for this client; token refresh is not supported yet",
+                )
+
     def test_recovery_after_expiry_is_immediate_and_stop_cancels_close(self):
         with open(os.path.join(self.state, f"{GEN}.credential.json"), "w") as f:
             json.dump("2026-10-18T12:00:00Z", f)

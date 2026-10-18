@@ -223,10 +223,9 @@ def expire_client(
         delay = 0.0
     if stopped.wait(delay):
         return
-    client = json.loads(read_regular(os.path.join(state, "host.json")) or b"")["client"]
-    failed(
-        f"Client authentication expired; run agent-pm-broker login {client}; token refresh is not supported yet"
-    )
+    client = _recorded_client(state)
+    login = f"agent-pm-broker login {client}" if client else "agent-pm-broker login for this client"
+    failed(f"Client authentication expired; run {login}; token refresh is not supported yet")
     while True:
         try:
             broker.close(f"agent-pm-{name}-{generation}")
@@ -235,6 +234,15 @@ def expire_client(
                 return
         else:
             return
+
+
+def _recorded_client(state: str) -> str | None:
+    """host.json's client; None for a missing, unreadable or malformed record."""
+    try:
+        client = json.loads(read_regular(os.path.join(state, "host.json")) or b"")["client"]
+    except (ValueError, TypeError, KeyError):
+        return None
+    return client if isinstance(client, str) and client else None
 
 
 def refresh_tokens(
