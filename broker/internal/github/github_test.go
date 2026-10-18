@@ -243,3 +243,75 @@ func TestBotUserRejects(t *testing.T) {
 		t.Errorf("status error %v", err)
 	}
 }
+
+// repos serves pages of n repositories in all, per_page each, under selection.
+func repos(t *testing.T, n int, selection string, seen *[]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/installation/repositories" || r.Header.Get("Authorization") != "Bearer ghs_inst" {
+			t.Errorf("%s %s %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		*seen = append(*seen, r.URL.RawQuery)
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		var list []map[string]string
+		for i := (page - 1) * perPage; i < n && i < page*perPage; i++ {
+			list = append(list, map[string]string{"full_name": fmt.Sprintf("ophis/r%03d", n-i)})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": n, "repository_selection": selection, "repositories": list})
+	}
+}
+
+func TestRepositoriesPaginates(t *testing.T) {
+	var seen []string
+	selection, names, err := client(t, repos(t, 150, "selected", &seen)).Repositories(context.Background(), "ghs_inst")
+	if err != nil || selection != "selected" || len(names) != 150 || names[0] != "ophis/r001" || names[149] != "ophis/r150" {
+		t.Fatalf("%v %q %d %v", err, selection, len(names), names[:2])
+	}
+	if strings.Join(seen, " ") != "per_page=100&page=1 per_page=100&page=2" {
+		t.Fatal(seen)
+	}
+
+	seen = nil
+	if _, names, err := client(t, repos(t, 100, "all", &seen)).Repositories(context.Background(), "ghs_inst"); err != nil || len(names) != 100 || len(seen) != 1 {
+		t.Fatalf("a full last page stops at total_count: %v %d %v", err, len(names), seen)
+	}
+	seen = nil
+	if _, names, err := client(t, repos(t, 0, "selected", &seen)).Repositories(context.Background(), "ghs_inst"); err != nil || names == nil || len(names) != 0 {
+		t.Fatalf("no repositories is an empty list: %v %v", err, names)
+	}
+}
+
+func TestRepositoriesRejects(t *testing.T) {
+	answer := func(body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }
+	}
+	for name, h := range map[string]http.HandlerFunc{
+		"selection": answer(`{"total_count":1,"repository_selection":"some","repositories":[{"full_name":"ophis/a"}]}`),
+		"name":      answer(`{"total_count":1,"repository_selection":"all","repositories":[{"full_name":"ophis/a b"}]}`),
+		"no owner":  answer(`{"total_count":1,"repository_selection":"all","repositories":[{"full_name":"a"}]}`),
+		"json":      answer(`not json`),
+		"status":    func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
+		"endless": func(w http.ResponseWriter, r *http.Request) {
+			list := make([]map[string]string, perPage)
+			for i := range list {
+				list[i] = map[string]string{"full_name": "ophis/x" + r.URL.Query().Get("page") + "-" + strconv.Itoa(i)}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 1 << 30, "repository_selection": "all", "repositories": list})
+		},
+	} {
+		_, names, err := client(t, h).Repositories(context.Background(), "ghs_inst")
+		if err == nil || names != nil {
+			t.Errorf("%s: %v %d", name, err, len(names))
+		}
+		if err != nil && strings.Contains(err.Error(), "ghs_inst") {
+			t.Errorf("%s: error carries the token", name)
+		}
+	}
+	var se *StatusError
+	if _, _, err := client(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }).Repositories(context.Background(), "ghs_inst"); !errors.As(err, &se) || se.Status != 403 {
+		t.Fatal(err)
+	}
+	c := Client{Base: "http://127.0.0.1:1", HTTP: &http.Client{Timeout: time.Second}, Now: time.Now}
+	if _, _, err := c.Repositories(context.Background(), "ghs_inst"); !Transport(err) {
+		t.Fatal(err)
+	}
+}
