@@ -1,8 +1,7 @@
 {
   "source": "user_report_of_manager_execution_in_this_session",
-  "handoff_probe_revision": "38675020b3d0e503b0d87ba8254175573314acfd",
   "execution_count": 1,
-  "command": "python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-1",
+  "command": "python3 -I scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-1",
   "probe_exit_code": 1,
   "record": {
     "recorded_at": "2026-10-18T02:22:04.827614+00:00",
@@ -26,5 +25,6 @@
     },
     "error": "redacted_or_incomplete"
   },
-  "scheme_verdict": "pending"
+  "scheme_verdict": "pending",
+  "probe_revision": "38675020b3d0e503b0d87ba8254175573314acfd"
 }

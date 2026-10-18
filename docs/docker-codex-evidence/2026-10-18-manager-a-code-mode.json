@@ -1,6 +1,5 @@
 {
   "source": "user_report_of_manager_execution_in_this_session",
-  "handoff_probe_revision": "4df630c8e285a3bce02ab5a001a9787cdea6d320",
   "execution_count_per_command": 1,
   "inventory_exit_code": 0,
   "inventory": {
@@ -40,5 +39,6 @@
   },
   "code_mode_branch": "not_captured",
   "inventory_live_refresh_count_meaning": "source_only_constant_not_a_live_measurement",
-  "scheme_verdict": "pending"
+  "scheme_verdict": "pending",
+  "probe_revision": "4df630c8e285a3bce02ab5a001a9787cdea6d320"
 }
