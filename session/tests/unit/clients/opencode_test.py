@@ -15,7 +15,6 @@ class OpenCodeClientTest(Case):
         self.assertEqual(client.select_session("ses_a", resume=False), ())
         self.assertEqual(client.select_session("ses_a", resume=True), ("--session", "ses_a"))
         self.assertEqual(client.identity_env, ("OPENCODE", "OPENCODE_PID", "OPENCODE_TERMINAL"))
-        self.assertIsNone(client.tui())
 
     def test_writable_dirs_are_the_cwd_and_access_dirs_never_reads(self):
         cwd, extra, read = (os.path.join(self.home, n) for n in ("cwd", "extra", "read"))

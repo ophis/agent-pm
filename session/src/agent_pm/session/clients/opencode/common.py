@@ -54,6 +54,7 @@ UNSET = (*sorted(LOCAL_ENV_VARS), *IDENTITY, *OVERRIDES)
 SELECTORS = ("-s", "--session", "-c", "--continue", "--fork")
 RESERVED = (*SELECTORS, "--format", "--attach", "--dir")
 PERMISSIONS = ("--auto", "--yolo", "--dangerously-skip-permissions")
+TUI_RESERVED = ("--prompt", "--pure")  # the client's prompt; --pure would skip its plugin
 VALUED = (
     "-m",
     "--model",
