@@ -4,7 +4,7 @@ import io
 import json
 import os
 import re
-import subprocess
+import types
 import unittest
 from unittest import mock
 
@@ -478,7 +478,8 @@ class Docker:
             " ".join(argv[1:3]) if os.path.basename(argv[0]).startswith("agent-pm") else argv[1]
         )
         out = "\n".join(self.listed) if argv[1:2] == ["ps"] else ""
-        return subprocess.CompletedProcess(argv, int(command in self.fail), out, "boom")
+        failed = command in self.fail or argv[-1] in self.fail
+        return types.SimpleNamespace(returncode=int(failed), stdout=out, stderr="boom")
 
     def ran(self, program, *words):
         return [
@@ -514,8 +515,11 @@ class CleanupTest(Case):
             with self.assertRaises(SystemExit):
                 w.close(gate.Start("final", G1, ""), final=True)
             w.cleanup()
-        self.assertEqual(len(fake.ran("agent-pm-crew", "close")), 2)
-        self.assertEqual(len(fake.ran("agent-pm-session", "close", "live")), 1)
+        programs = [os.path.basename(c[0]) + " " + c[1] for c in fake.calls]
+        self.assertEqual(
+            programs,
+            ["agent-pm-crew close"] * 2 + ["agent-pm-session close", "docker ps", "docker rm"],
+        )
         self.assertTrue(fake.ran("docker", "ps", "--filter", "label=agent-pm.session=live"))
         self.assertEqual(fake.ran("docker", "rm"), [["/bin/docker", "rm", "--force", leftover]])
         self.assertIn(f"cleanup: removed {leftover}", err.getvalue())
@@ -527,6 +531,26 @@ class CleanupTest(Case):
         self.assertEqual(len(fake.ran("agent-pm-crew", "close")), 1)
         self.assertEqual(fake.ran("agent-pm-session"), [])
         self.assertEqual(fake.ran("docker", "rm"), [])
+
+    def test_nothing_to_close(self):
+        fake = Docker()
+        w = self.worker()
+        w.open = w.listed = False
+        with mock.patch("subprocess.run", fake):
+            w.cleanup()
+        self.assertEqual([os.path.basename(c[0]) for c in fake.calls], ["docker"])
+
+    def test_one_failed_rm_does_not_stop_the_next(self):
+        first, second = f"agent-pm-live-{G1}", f"agent-pm-live-{G2}"
+        fake = Docker(listed=[first, second], fail={first})
+        with (
+            mock.patch("subprocess.run", fake),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as err,
+        ):
+            self.worker().cleanup()
+        self.assertEqual([c[-1] for c in fake.ran("docker", "rm")], [first, second])
+        self.assertIn(f"cleanup: removed {second}", err.getvalue())
+        self.assertNotIn(f"cleanup: removed {first}", err.getvalue())
 
     def test_failures_are_printed_not_raised(self):
         fake = Docker(fail={"close --manager", "close live", "ps"})
@@ -636,7 +660,7 @@ class RoleRunTest(Case):
         ):
             gate.RoleRun("role", "/bin/docker", broker=broker).refresh("c", "m.json")
         self.assertEqual(broker.calls, [("c", "m.json")] * 3)
-        self.assertEqual([c.args for c in sleep.call_args_list], [(10,), (10,)])
+        self.assertEqual([c.args for c in sleep.call_args_list], [(gate.REFRESH_RETRY,)] * 2)
         self.assertIn("PASS token refresh of c", out.getvalue())
 
     def test_refresh_gives_up_after_the_wait(self):

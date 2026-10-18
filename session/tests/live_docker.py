@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -39,6 +40,7 @@ WAIT = 300
 QUIET = 30
 POLL = 2
 REFRESH_WAIT = 120
+REFRESH_RETRY = 10
 DOCKER_HOST = "agent_pm.session.hosts.docker.host:DockerHost"
 PROMPT = "Reply with the single word ready."
 PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/([0-9]+)")
@@ -503,7 +505,7 @@ class Worker:
         print(f"cleanup: removed {container}", file=sys.stderr)
 
     @staticmethod
-    def _quietly(action) -> None:
+    def _quietly(action: Callable[[], object]) -> None:
         try:
             action()
         except (SystemExit, subprocess.SubprocessError, OSError) as error:
@@ -668,14 +670,14 @@ class RoleRun:
             except SessionError as error:
                 if time.monotonic() > deadline:
                     raise SystemExit(f"FAIL token refresh of {container}: {error}") from None
-                time.sleep(10)
+                time.sleep(REFRESH_RETRY)
         print(f"PASS token refresh of {container}", flush=True)
 
 
 def role(args: Args) -> int:
     docker, _ = docker_host()
-    tracked = RoleRun(args.name, docker)
-    before = tracked.sessions()
+    role_run = RoleRun(args.name, docker)
+    before = role_run.sessions()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     text = ROLE_INPUT.format(repo=args.repo, stamp=stamp)
     workdir = os.path.expanduser(f"~/.agent-pm/work/{args.name}-{stamp}")
@@ -696,10 +698,10 @@ def role(args: Args) -> int:
             text=True,
         )
         try:
-            session, generation = tracked.generation(before, proc)
+            session, generation = role_run.generation(before, proc)
             container = f"agent-pm-{session}-{generation}"
-            tracked.running(container, proc)
-            tracked.refresh(container, os.path.join(state_dir(session), f"{generation}.json"))
+            role_run.running(container, proc)
+            role_run.refresh(container, os.path.join(state_dir(session), f"{generation}.json"))
             try:
                 proc.wait(timeout=args.timeout)
             except subprocess.TimeoutExpired:
