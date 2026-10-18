@@ -71,6 +71,7 @@ type fakeCodexKeychain struct {
 	badReadOnce    bool
 	failRestore    bool
 	createTrusted  bool
+	appliedErr     error // TrustApps' error after it applied the change
 	writeCalls     int
 	events         []string
 }
@@ -107,6 +108,13 @@ func (k *fakeCodexKeychain) Secret(service, account string) ([]byte, error) {
 		return []byte("unverified-readback"), nil
 	}
 	return slices.Clone(k.data), k.getErr
+}
+
+func (k *fakeCodexKeychain) TrustApps(app, account string, password []byte) error {
+	if err := k.fakeApps.TrustApps(app, account, password); err != nil {
+		return err
+	}
+	return k.appliedErr
 }
 
 func (k *fakeCodexKeychain) CreateCodex() error {
@@ -315,6 +323,58 @@ func TestCodexRestoreNeverAsksAfterBrowser(t *testing.T) {
 	err := c.Login(context.Background(), &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "previous login could not be restored") || asked != 0 {
 		t.Fatalf("restore %v, %d password questions", err, asked)
+	}
+}
+
+func TestOnePassword(t *testing.T) {
+	reads := 0
+	p := onePassword{read: func() ([]byte, error) { reads++; return []byte(keychainPass), nil }}
+	first, err := p.get()
+	erase(first)
+	second, _ := p.get()
+	if err != nil || string(second) != keychainPass || reads != 1 {
+		t.Fatalf("%v %q read %d times", err, second, reads)
+	}
+	p.close()
+	if again, err := p.get(); err != nil || string(again) != keychainPass {
+		t.Fatalf("close after a read dropped it: %v", err)
+	}
+	p.erase()
+	if !bytes.Equal(p.value, make([]byte, len(keychainPass))) {
+		t.Fatal("password not erased")
+	}
+	closed := onePassword{read: func() ([]byte, error) { reads++; return []byte(keychainPass), nil }}
+	closed.close()
+	if pw, err := closed.get(); err == nil || pw != nil || reads != 1 {
+		t.Fatalf("closed reader asked: %q %v", pw, err)
+	}
+}
+
+func TestCodexTrustMessages(t *testing.T) {
+	for name, want := range map[string]string{
+		"access unread": "cannot inspect Codex keychain access",
+		"partition":     "Codex keychain trust incomplete; retry " + codexLoginCommand,
+	} {
+		c, n, k := codexFixture(t)
+		k.missing, k.access = false, reinstalled()
+		if name == "access unread" {
+			k.readBackErr = errors.New("keychain status -25300")
+		} else {
+			k.partitionErr = errors.New("keychain status -25293")
+		}
+		if err := c.Login(context.Background(), &bytes.Buffer{}); err == nil || err.Error() != want || n.runs != 0 {
+			t.Fatalf("%s: %v, browser runs %d", name, err, n.runs)
+		}
+	}
+}
+
+// A trust step that errors with its change applied passes on the access read back, as in login github.
+func TestCodexTrustStepErrorButDone(t *testing.T) {
+	c, n, k := codexFixture(t)
+	k.missing, k.access = false, reinstalled()
+	k.appliedErr = errors.New("keychain status -25300")
+	if err := c.Login(context.Background(), &bytes.Buffer{}); err != nil || !bytes.Equal(k.data, n.data) {
+		t.Fatalf("%v", err)
 	}
 }
 

@@ -49,6 +49,8 @@ var (
 	ErrAuthFailed = errors.New("keychain status -25293")
 	// ErrNeedsDialog is errSecInteractionNotAllowed: a no-dialog read that would have asked the user.
 	ErrNeedsDialog = errors.New("keychain status -25308")
+	// errAccessUnread is secureItem's first access read failing, before it changed anything.
+	errAccessUnread = errors.New("reading its access failed")
 )
 
 // GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
@@ -299,7 +301,7 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 func secureItem(item, account, rerun string, k ItemTrust, password func() ([]byte, error)) error {
 	before, err := k.AppAccess(item, account)
 	if err != nil {
-		return fmt.Errorf("keychain item %s unchanged: reading its access failed: %w", item, err)
+		return fmt.Errorf("keychain item %s unchanged: %w: %w", item, errAccessUnread, err)
 	}
 	if onlyBroker(before) != nil {
 		pw, err := password()

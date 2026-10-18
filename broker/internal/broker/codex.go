@@ -181,32 +181,22 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 			return errors.New("cannot create Codex keychain item")
 		}
 	}
-	var password []byte
-	var passwordErr error
-	passwordRead := false
-	defer func() { erase(password) }()
+	password := onePassword{read: c.password}
+	defer password.erase()
 	secure := func() error {
-		access, err := c.keychain.AppAccess(codexService, codexAccount)
-		if err != nil {
+		err := secureItem(codexService, codexAccount, "retry "+codexLoginCommand, c.keychain, password.get)
+		switch {
+		case errors.Is(err, errAccessUnread):
 			return errors.New("cannot inspect Codex keychain access")
+		case err != nil:
+			return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
 		}
-		if onlyBroker(access) != nil {
-			if !passwordRead {
-				passwordRead = true
-				password, passwordErr = c.password()
-			}
-			if passwordErr != nil || trust(codexService, codexAccount, c.keychain, access, password) != nil {
-				return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
-			}
-		}
-		return c.trusted()
+		return nil
 	}
 	if err := secure(); err != nil {
 		return err
 	}
-	if !passwordRead {
-		passwordRead, passwordErr = true, errors.New("no password question after the browser")
-	}
+	password.close()
 	var previous []byte
 	defer func() { erase(previous) }()
 	if !missing {
@@ -271,6 +261,31 @@ func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	_, err = fmt.Fprintln(out, "Codex login saved; keychain trusts only the broker")
 	return err
 }
+
+// onePassword reads the keychain password at most once, and never once closed: login codex closes it before the
+// browser. get returns a copy, since secureItem erases what it gets.
+type onePassword struct {
+	read  func() ([]byte, error)
+	value []byte
+	err   error
+	done  bool
+}
+
+func (p *onePassword) get() ([]byte, error) {
+	if !p.done {
+		p.done = true
+		p.value, p.err = p.read()
+	}
+	return bytes.Clone(p.value), p.err
+}
+
+func (p *onePassword) close() {
+	if !p.done {
+		p.done, p.err = true, errors.New("no password question after the browser")
+	}
+}
+
+func (p *onePassword) erase() { erase(p.value) }
 
 func (c Codex) matches(expected []byte) bool {
 	saved, err := c.keychain.Secret(codexService, codexAccount)
