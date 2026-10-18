@@ -220,7 +220,7 @@ func (c Codex) Login(ctx context.Context, out io.Writer) error {
 	if err := secure(); err != nil {
 		return err
 	}
-	if !missing && len(previous) == 0 {
+	if !missing {
 		old, err := c.keychain.Secret(codexService, codexAccount)
 		if err != nil {
 			erase(old)
