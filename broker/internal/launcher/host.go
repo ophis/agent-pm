@@ -79,7 +79,8 @@ type RefreshResult struct {
 }
 
 type StatusResult struct {
-	Revocations []protocol.Pending `json:"revocations"`
+	Revocations []protocol.Pending    `json:"revocations"`
+	Codex       *protocol.CodexStatus `json:"codex,omitempty"`
 }
 
 type CloseResult struct {

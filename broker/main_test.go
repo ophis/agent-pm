@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -50,7 +51,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"7"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"8"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -185,6 +186,67 @@ func TestLoginGitHubDispatch(t *testing.T) {
 	a := app{loginGitHub: func(string, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+}
+
+func TestCodexCommands(t *testing.T) {
+	for _, command := range []string{"install-codex", "update-codex"} {
+		called := false
+		a := app{installCodex: func(ctx context.Context, version string, update bool) (any, error) {
+			called = true
+			if version != "0.162.1" || update != (command == "update-codex") {
+				t.Fatal("wrong install arguments")
+			}
+			return map[string]string{"version": version}, nil
+		}}
+		code, out, errOut := invoke(a, command, "0.162.1")
+		if code != 0 || !called || out != "{\"version\":\"0.162.1\"}\n" || errOut != "" {
+			t.Fatalf("%d %q %q", code, out, errOut)
+		}
+		for _, args := range [][]string{{command}, {command, "latest"}, {command, "0.162.1", "extra"}, {command, "0.162.1;touch /tmp/no"}} {
+			called = false
+			code, _, _ := invoke(a, args...)
+			if code != 2 || called {
+				t.Fatal("invalid admin command dispatched")
+			}
+		}
+	}
+	called := false
+	a := app{loginCodex: func(ctx context.Context, out io.Writer) error {
+		called = true
+		_, err := io.WriteString(out, "saved\n")
+		return err
+	}}
+	if code, out, errOut := invoke(a, "login", "codex"); code != 0 || !called || out != "saved\n" || errOut != "" {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	a.loginCodex = func(context.Context, io.Writer) error { return errors.New("login failed") }
+	if code, out, errOut := invoke(a, "login", "codex"); code != 1 || out != "" || errOut != "agent-pm-broker: login failed\n" {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	a.installCodex = func(context.Context, string, bool) (any, error) { return nil, errors.New("install failed") }
+	if code, out, errOut := invoke(a, "install-codex", "0.162.1"); code != 1 || out != "" || errOut != "agent-pm-broker: install failed\n" {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+}
+
+func TestCodexStatusFixtures(t *testing.T) {
+	for _, c := range fixtures.Cases(t, "status_output") {
+		if !c.Valid {
+			continue
+		}
+		var result launcher.StatusResult
+		if err := json.Unmarshal(c.Data, &result); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if emit(&out, result) != 0 {
+			t.Fatal("status encoding failed")
+		}
+		var original, encoded any
+		if json.Unmarshal(c.Data, &original) != nil || json.Unmarshal(out.Bytes(), &encoded) != nil || !reflect.DeepEqual(original, encoded) {
+			t.Fatalf("status changed %s", out.String())
+		}
 	}
 }
 

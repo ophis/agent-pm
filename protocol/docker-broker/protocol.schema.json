@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 6",
+  "title": "Docker broker protocol 8",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -220,7 +220,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "7"
+          "const": "8"
         }
       },
       "required": [
@@ -536,6 +536,9 @@
             ],
             "additionalProperties": false
           }
+        },
+        "codex": {
+          "$ref": "#/$defs/codex_status"
         }
       },
       "required": [
@@ -1021,6 +1024,101 @@
     "plugin": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$"
+    },
+    "codex_status": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^((0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*))?$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(/usr/local/libexec/agent-pm/codex/releases/[^/\\x00-\\x20\\x7f]+/codex)?$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "allowed_versions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          }
+        },
+        "logged_in": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "installation_invalid",
+            "login_unavailable",
+            "busy",
+            "expired",
+            "ready"
+          ]
+        },
+        "expires_at": {
+          "$ref": "#/$defs/time"
+        },
+        "repair": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "path",
+        "sha256",
+        "allowed_versions",
+        "logged_in",
+        "state",
+        "repair"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expires_at"
+            ],
+            "properties": {
+              "logged_in": {
+                "const": true
+              },
+              "version": {
+                "minLength": 1
+              },
+              "path": {
+                "minLength": 1
+              },
+              "sha256": {
+                "minLength": 64
+              },
+              "repair": {
+                "const": ""
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "logged_in": {
+                "const": false
+              },
+              "repair": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const Version = "7"
+const Version = "8"
 
 type Code string
 
@@ -62,6 +62,17 @@ type Pending struct {
 	Container string `json:"container"`
 	Account   string `json:"account"`
 	ExpiresAt string `json:"expires_at"`
+}
+
+type CodexStatus struct {
+	Version         string   `json:"version"`
+	Path            string   `json:"path"`
+	SHA256          string   `json:"sha256"`
+	AllowedVersions []string `json:"allowed_versions"`
+	LoggedIn        bool     `json:"logged_in"`
+	State           string   `json:"state"`
+	ExpiresAt       string   `json:"expires_at,omitempty"`
+	Repair          string   `json:"repair"`
 }
 
 type Error struct {
