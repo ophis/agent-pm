@@ -108,6 +108,8 @@ class Repository(unittest.TestCase):
         for paths, event, full in (
             (["README.md", "session/src/agent_pm/session/cli.py"], "pull_request", True),
             (["docs/tests.md", ".github/ci_scope.py"], "pull_request", True),
+            (["docs/credentials.md"], "pull_request", True),
+            (["README.md", "docs/credentials.md"], "pull_request", True),
             (["delegate/skills/act-as/SKILL.md"], "pull_request", True),
             (["manager/skills/manage/SKILL.md"], "pull_request", False),
             (["delegate/src/agent_pm/delegate/team/roles/engineer.md"], "pull_request", True),
