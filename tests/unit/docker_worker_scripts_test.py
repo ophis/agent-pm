@@ -775,6 +775,7 @@ class GhWrapper(GitHubTokens):
             ("api", "repos/{owner}/{repo}"),
             ("api", "/repos/{owner}/{repo}/pulls"),
             ("api", "-X", "PATCH", "repos/{owner}/{repo}/pulls/1"),
+            ("api", "repos/:owner/:repo/pulls"),
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(self.gh(*argv), "ghs_other")

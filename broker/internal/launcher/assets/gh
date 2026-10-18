@@ -1,7 +1,7 @@
 #!/opt/agent-pm/venv/bin/python -I
 """gh with GH_TOKEN, in its process only, the installation token of the owner of the repository it
-acts on: a repo argument, else the cwd's origin, else the only token. An api path's {owner}, which gh
-fills from the current repo, is no repo argument.
+acts on: a repo argument, else the cwd's origin, else the only token. An api path's {owner} or :owner,
+which gh fills from the current repo, is no repo argument.
 """
 
 import os
@@ -55,7 +55,7 @@ def owner(argv, tokens):
         found = _repo(argv[2])
     elif argv[:1] == ["api"]:
         found = next((m[1] for arg in argv[1:] if (m := API.match(arg))), None)
-        if found == "{owner}":
+        if found in ("{owner}", ":owner"):
             found = None
     if found is not None:
         return found
