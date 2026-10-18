@@ -17,22 +17,13 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    max_runs = 1
    ```
 
-2. Set `task_label_group` to the id of the `Tasks` label group (Linear query `issueLabels { nodes { id name isGroup } }`).
-3. Router and promote act in Linear as the harness account `frank.agent.w@gmail.com`; each role writes back as its own `account`. For each role:
-   1. Linear › Settings › Members: invite the `account`, a plus-alias such as `frank.agent.w+pm@gmail.com`.
-   2. Open the invite in a private window and choose **Continue with email**.
-   3. As the role account, create a personal API key.
-   4. `security add-generic-password -s <key> -a <account> -w`, then paste the key.
-4. Store the harness key:
-   ```bash
-   security add-generic-password -a frank.agent.w -s linear-api-key -w   # config.local.toml: [linear_orchestrator] harness_key
-   ```
-5. Dry-run each job:
+2. Create the Linear presets, accounts and Keychain items, and fill their keys: [Linear presets](credentials.md#linear-presets).
+3. Dry-run each job:
    ```bash
    bin/agent-pm-linear router --dry-run
    bin/agent-pm-linear promote --dry-run
    ```
-6. Install the launchd jobs:
+4. Install the launchd jobs:
    ```bash
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
@@ -49,7 +40,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
 | router | :00 and :30, with `--now` (drop it to run only 01:00–06:59) |
 | promote | every 5 min |
 
-The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `linear-orchestrator/launchd/` and rerun step 6. To uninstall a job:
+The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `linear-orchestrator/launchd/` and rerun step 4. To uninstall a job:
 
 ```bash
 launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>

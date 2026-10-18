@@ -42,7 +42,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `work/<ID>/run/` | prune deletes the whole `work/<ID>/` 7 days after Done, Canceled or Duplicate, once `agent/` is gone and the run is not live | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
 | `work/<ID>/writeback.json`, `writeback.lock` | prune, with `work/<ID>/run/` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](board.md#operating)) |
-| `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 6) |
+| `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 4) |
 | `logs/router.lock` | nobody | while no router runs |
 | `sessions/` | saving a client session's state: an entry not saved or resumed for 30 days | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session; the tui sweep; its hook writer: at 1 MiB `hooks.jsonl` becomes `hooks.jsonl.1`, replacing the old `.1` | no: closing the session removes it |

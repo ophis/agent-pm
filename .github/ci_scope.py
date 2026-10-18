@@ -59,8 +59,14 @@ def _owner(path: str) -> str | None:
     return parts[0]
 
 
+# Docs a repository check reads (tests/guard_checks/credentials.py), so they are not docs-only.
+CHECKED_DOCS = ("docs/credentials.md",)
+
+
 def _docs(path: str) -> bool:
-    # Root *.md and docs/**; skills and team text live under projects, so they are not docs.
+    # Root *.md and docs/** but CHECKED_DOCS; skills and team text live under projects, so they are not docs.
+    if path in CHECKED_DOCS:
+        return False
     return _owner(path) == "docs" or (_owner(path) == path and path.endswith(".md"))
 
 
@@ -74,7 +80,7 @@ def classify(root: Path, paths: list[str], event: str) -> dict:
     boundary = list(projects.values()).index("agent_pm.delegate")
     upper = list(projects)[:boundary]
     if all(_docs(path) for path in paths):
-        # Upper unit tests check the docs the skills cite; nothing else reads docs.
+        # Upper unit tests check the docs the skills cite; nothing else reads these docs.
         return {"full": False, "docs": True, "projects": upper, "reason": "Docs-only changes"}
     for path in paths:
         if _owner(path) not in upper:

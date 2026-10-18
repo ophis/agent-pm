@@ -626,7 +626,8 @@ secrets in environments that need it.
 ## Risks
 
 - The token sits in every running container's tmpfs, readable by any process there;
-  `close` deletes the container but does not revoke the token (revoke it at claude.ai).
+  `close` deletes the container but does not revoke the token, and no revocation route is documented
+  ([Credentials](credentials.md#claude-code-login)).
 - So do the GitHub tokens, each valid for an hour; `close` revokes them. One the broker could
   not revoke stays valid until it expires: `"$B" status` lists it, and the next start, close or
   status retries it.
