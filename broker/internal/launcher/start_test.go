@@ -117,7 +117,7 @@ func (w *world) docker() *fakeDocker {
 			}
 			if slices.Contains(args, "--version") {
 				v := "2.1.0 (Claude Code)\n"
-				if slices.Contains(args, "codex") {
+				if slices.ContainsFunc(args, func(s string) bool { return strings.HasSuffix(s, "/codex") || strings.HasSuffix(s, "/codex.next") }) {
 					v = "codex-cli 0.100.0\n"
 				}
 				if probes < len(w.versions) {
@@ -218,9 +218,10 @@ func TestRuntimeFixtures(t *testing.T) {
 					}
 					return nil
 				},
-				Docker: d,
-				Creds:  creds,
-				GitHub: &fakeTokens{},
+				Docker:   d,
+				Creds:    creds,
+				GitHub:   &fakeTokens{},
+				Versions: defaultVersions(),
 			}
 			_, err := h.Start(context.Background(), writeManifest(t, c.Data))
 			e := protoErr(t, err)
@@ -361,7 +362,7 @@ func TestStartOrder(t *testing.T) {
 	wantSteps := []string{"image inspect", "container inspect", "volume inspect", "volume create", "volume inspect", "ps --filter", "run --rm", "run --detach",
 		"agent /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
 		"root /opt/agent-pm/venv/bin/python -I /opt/agent-pm/lib/bootstrap.py",
-		"agent claude --version", "agent codex --version",
+		"agent claude --version", "agent /opt/agent-pm/clients/bin/codex --version",
 		"--interactive --user inject"}
 	if !slices.Equal(steps, wantSteps) {
 		t.Fatalf("steps\n got %q\nwant %q", steps, wantSteps)
@@ -523,7 +524,7 @@ func TestStartPhaseTimes(t *testing.T) {
 	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
 		t.Fatal(err)
 	}
-	line := regexp.MustCompile(`^agent-pm-broker: start ([a-z]+) [0-9]+\.[0-9]{2} s$`)
+	line := regexp.MustCompile(`^agent-pm-broker: start ([a-z_]+) [0-9]+\.[0-9]{2} s$`)
 	var phases []string
 	for _, l := range strings.Split(strings.TrimSuffix(progress.String(), "\n"), "\n") {
 		m := line.FindStringSubmatch(l)

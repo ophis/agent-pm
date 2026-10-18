@@ -30,7 +30,7 @@ until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` in
 it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
 the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [version boundary](docker-codex.md#docker-sessions).
+upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions).
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -38,7 +38,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"9"}` |
+| `"$B" version` | `{"protocol_version":"10"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -94,7 +94,7 @@ same with `"rebuilt":false`. Change the Dockerfile (or upgrade agent-pm)
 and the next build rebuilds with a new key. Neither build log shows a secret.
 
 Every rebuild builds your Dockerfile without Docker's build cache, so it installs npm's
-latest Claude Code; the overlay supplies Codex's version boundary. To rebuild now:
+latest Claude Code; Codex preparation follows [Codex operations](docker-codex.md#container-versions). To rebuild now:
 
 ```sh
 "$B" build --agent-pm "$PKG" --max-age 0
@@ -178,8 +178,8 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest` and the image's `clients`
-versions.
+It prints `container` (`C` below), `endpoint`, `image_digest` and actual `clients`
+versions. Codex starts add the [version audit](docker-broker-protocol.md#success-fields).
 
 | Check | Expect |
 |---|---|
@@ -193,7 +193,7 @@ versions.
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
-| `lsof -nP -a -iTCP -c agent-pm` during a start | nothing: the broker opens no TCP socket |
+| `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
 one `{"account", "expires_at"}` per installation of the App.
@@ -402,6 +402,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | | `create` | `docker run`: the new container |
 | | `bootstrap` | Claude's bootstrap state and the hook stub |
 | | `clients` | both clients' `--version` in the container |
+| | `client_update` | Codex starts only: [version preparation](docker-codex.md#container-versions) before secret injection |
 | | `credentials` | the token injection |
 | | `total` | the broker's whole `start` |
 | `docker timing NAME GENERATION` | `checks` | cwd, sweep, the container check |
@@ -518,7 +519,7 @@ secrets in environments that need it.
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
 - Image builds trust the client vendors' npm packages; Codex's policy is in
-  [Codex operations](docker-codex.md#docker-sessions).
+  [Codex operations](docker-codex.md#container-versions).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation;
   if it cannot read it, the resume fails rather than starting a new conversation.
 - Every restart and resume writes the token into a new container: one copy per running

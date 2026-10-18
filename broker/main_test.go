@@ -51,7 +51,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"9"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"10"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -369,6 +369,9 @@ func (s *scripted) Run(_ context.Context, args []string, stdin []byte) ([]byte, 
 	case strings.HasPrefix(joined, "container inspect"):
 		return nil, &docker.CommandError{Exit: 1, Stderr: "No such container"}
 	case strings.HasSuffix(joined, "--version"):
+		if strings.Contains(joined, "codex --version") {
+			return []byte("codex-cli 0.100.0\n"), nil
+		}
 		return []byte("1.0.0\n"), nil
 	}
 	return nil, nil

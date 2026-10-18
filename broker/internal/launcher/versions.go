@@ -1,0 +1,126 @@
+package launcher
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/ophis/agent-pm/broker/internal/codex"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
+)
+
+const runtimeDir = "/opt/agent-pm/runtime"
+const updateScript = "/opt/agent-pm/lib/codex-update.py"
+
+type CodexVersions interface {
+	Verify() (codex.Installation, error)
+	LatestAllowed(context.Context, []string) (string, error)
+	Latest(context.Context) (string, error)
+	Linux(context.Context, string, string) ([]byte, error)
+}
+
+type ClientUpdate struct {
+	Client          string   `json:"client"`
+	PinnedVersion   string   `json:"pinned_version"`
+	AllowedVersions []string `json:"allowed_versions"`
+	ImageVersion    string   `json:"image_version"`
+	TargetVersion   string   `json:"target_version"`
+	Result          string   `json:"result"`
+}
+
+func (h Host) versionPolicy(ctx context.Context) (codex.Installation, error) {
+	if h.Versions == nil {
+		return codex.Installation{}, protocol.New(protocol.StartFailed, "Codex version policy unavailable; reinstall the broker.")
+	}
+	i, err := h.Versions.Verify()
+	if err != nil {
+		return i, protocol.New(protocol.StartFailed, "Pinned Codex unavailable; run sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex <version> or update-codex <version>.")
+	}
+	if !codex.ValidVersion(i.Version) || len(i.AllowedVersions) == 0 || slices.ContainsFunc(i.AllowedVersions, func(v string) bool { return !codex.ValidVersion(v) }) {
+		return i, protocol.New(protocol.StartFailed, "Codex compatibility rule is empty or invalid; publish verified allowed_versions in the pinned installation (docs/docker-codex.md).")
+	}
+	hintCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if latest, err := h.Versions.Latest(hintCtx); err == nil && codex.Newer(latest, i.Version) && h.Progress != nil {
+		fmt.Fprintf(h.Progress, "agent-pm-broker: newer pinned Codex available; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex %s\n", latest)
+	}
+	return i, nil
+}
+
+func (h Host) updateCommand(ctx context.Context, c, action string, stdin []byte) error {
+	_, err := h.Docker.Run(ctx, []string{"exec", "--interactive", "--user", "root", c, python, "-I", updateScript, action}, stdin)
+	return err
+}
+
+func (h Host) codexProbe(ctx context.Context, c, path, version string) error {
+	out, err := h.Docker.Run(ctx, asAgent(c, path, "--version"), nil)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) != "codex-cli "+version {
+		return errors.New("Codex version mismatch")
+	}
+	return nil
+}
+
+func (h Host) updateCodex(ctx context.Context, c, arch string, clients Clients, i codex.Installation) (Clients, ClientUpdate, error) {
+	image := strings.TrimPrefix(clients.Codex, "codex-cli ")
+	u := ClientUpdate{Client: "codex", PinnedVersion: i.Version, AllowedVersions: slices.Clone(i.AllowedVersions), ImageVersion: image}
+	if clients.Codex != "codex-cli "+image || !slices.Contains(i.AllowedVersions, image) {
+		return clients, u, protocol.New(protocol.StartFailed, "Image Codex version is outside the compatibility rule; rebuild the worker image with an allowed version.")
+	}
+	updateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	target, err := h.Versions.LatestAllowed(updateCtx, i.AllowedVersions)
+	u.TargetVersion = target
+	switch {
+	case err != nil:
+		u.TargetVersion = ""
+		u.Result = "registry_unavailable"
+	case target == "":
+		u.Result = "no_allowed_release"
+	case !slices.Contains(i.AllowedVersions, target):
+		return clients, u, protocol.New(protocol.StartFailed, "Registry selected a Codex version outside the compatibility rule.")
+	case target == image:
+		u.Result = "current"
+	default:
+		u.Result = "update_failed"
+		native, downloadErr := h.Versions.Linux(updateCtx, target, arch)
+		if downloadErr == nil {
+			err = h.updateCommand(updateCtx, c, "stage", native)
+			if err == nil {
+				err = h.codexProbe(updateCtx, c, runtimeDir+"/codex.next", target)
+			}
+			if err == nil {
+				err = h.updateCommand(updateCtx, c, "publish", nil)
+			}
+			if err == nil {
+				err = h.codexProbe(updateCtx, c, "/opt/agent-pm/bin/codex", target)
+			}
+			if err == nil {
+				u.Result = "updated"
+				clients.Codex = "codex-cli " + target
+			}
+		}
+	}
+	if u.Result != "updated" && u.Result != "current" {
+		restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer restoreCancel()
+		if err := h.updateCommand(restoreCtx, c, "reset", nil); err != nil {
+			return clients, u, failure(err, protocol.StartFailed, "Cannot restore image Codex after update failure.")
+		}
+		if err := h.codexProbe(restoreCtx, c, "/opt/agent-pm/bin/codex", image); err != nil {
+			return clients, u, failure(err, protocol.StartFailed, "Cannot verify restored image Codex.")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return clients, u, protocol.New(protocol.StartFailed, "Codex version preparation canceled.")
+	}
+	if h.Progress != nil {
+		fmt.Fprintf(h.Progress, "agent-pm-broker: Codex update %s; image=%s actual=%s\n", u.Result, image, strings.TrimPrefix(clients.Codex, "codex-cli "))
+	}
+	return clients, u, nil
+}

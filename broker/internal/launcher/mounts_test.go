@@ -14,10 +14,11 @@ const home = "/Users/example"
 // mountHost sees every directory as present but those in missing.
 func mountHost(missing ...string) Host {
 	return Host{
-		Home:   home,
-		IsDir:  func(p string) bool { return !slices.Contains(missing, p) },
-		Safe:   func(string) error { return nil },
-		GitHub: &fakeTokens{},
+		Home:     home,
+		IsDir:    func(p string) bool { return !slices.Contains(missing, p) },
+		Safe:     func(string) error { return nil },
+		GitHub:   &fakeTokens{},
+		Versions: defaultVersions(),
 	}
 }
 

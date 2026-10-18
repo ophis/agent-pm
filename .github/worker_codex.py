@@ -69,6 +69,12 @@ for path in (str(home), '/run/agent-pm', '/run/agent-pm/secrets'):
     kind, options = mounts[path]
     assert kind == 'tmpfs'
     assert {'noexec', 'nosuid', 'nodev'} <= options
+kind, options = mounts['/opt/agent-pm/runtime']
+assert kind == 'tmpfs' and 'noexec' not in options
+assert {'nosuid', 'nodev'} <= options
+runtime = Path('/opt/agent-pm/runtime')
+assert runtime.stat().st_uid == 0 and not runtime.stat().st_mode & 0o022
+assert not (runtime / 'codex').exists()
 secret = Path('/run/agent-pm/secrets/codex/auth.json')
 assert stat.S_IMODE(secret.stat().st_mode) == 0o400
 assert secret.stat().st_uid == os.getuid() != 0
@@ -167,6 +173,8 @@ def main(image):
                     f"/run/agent-pm:rw,noexec,nosuid,nodev,size=1048576{owner}",
                     "--tmpfs",
                     f"/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536{owner}",
+                    "--tmpfs",
+                    "/opt/agent-pm/runtime:rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
                     "--mount",
                     f"type=bind,source={sessions},target={sessions}",
                     image,
@@ -180,6 +188,33 @@ def main(image):
                     *inspected["HostConfig"]["Tmpfs"]
                 }
                 docker("exec", name, PYTHON, "-I", BOOTSTRAP, "codex", str(home), "/workspace")
+                stage = """
+import runpy
+from pathlib import Path
+files = list(Path('/opt/agent-pm/clients').glob('**/vendor/*/bin/codex'))
+assert len(files) == 1
+with files[0].open('rb') as source:
+    runpy.run_path('/opt/agent-pm/lib/codex-update.py')['update']('stage', source)
+"""
+                docker("exec", "--user", "root", name, PYTHON, "-I", "-c", stage)
+                assert (
+                    docker("exec", name, "/opt/agent-pm/runtime/codex.next", "--version").strip()
+                    == b"codex-cli 0.162.1"
+                )
+                for action in ("publish", "reset"):
+                    docker(
+                        "exec",
+                        "--user",
+                        "root",
+                        name,
+                        PYTHON,
+                        "-I",
+                        "/opt/agent-pm/lib/codex-update.py",
+                        action,
+                    )
+                    assert (
+                        docker("exec", name, "codex", "--version").strip() == b"codex-cli 0.162.1"
+                    )
                 docker("exec", name, PYTHON, "-I", "-c", SKILLS_PROBE)
                 docker("exec", "-i", name, PYTHON, "-I", BOOTSTRAP, "codex-auth", data=document)
                 assert docker("exec", name, "codex", "--version").strip() == b"codex-cli 0.162.1"
@@ -189,7 +224,7 @@ def main(image):
             finally:
                 docker("rm", "--force", name)
             assert sorted(p.name for p in home.iterdir()) == ["sessions"]
-    print("Codex native plugin skills, synthetic auth, tmpfs and history-only persistence: PASS")
+    print("Codex updates, native skills, synthetic auth, tmpfs and history persistence: PASS")
 
 
 if __name__ == "__main__":

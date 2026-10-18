@@ -3,8 +3,8 @@
 TASK-648 implements M4 step 2 FR-2 and FR-3 from
 [Product Design/2026-10-16-2311-TASK-550-docker-host-m4.md](https://github.com/ophis/private_docs/blob/main/Product%20Design/2026-10-16-2311-TASK-550-docker-host-m4.md).
 TASK-649 adds terminal container authentication and recovery; TASK-651 adds headless
-execution and whitelisted native plugin skills. Current boundaries are under
-[Docker sessions](#docker-sessions).
+execution and whitelisted native plugin skills ([Docker sessions](#docker-sessions)).
+TASK-652 adds FR-9's container version policy. Authentication refresh remains separate work.
 
 ## Commands
 
@@ -123,7 +123,7 @@ fields are defined in [Docker broker protocol](docker-broker-protocol.md).
 
 ```mermaid
 flowchart LR
-    B[Verify broker login] --> V[Check image Codex version]
+    B[Verify broker login] --> V[Prepare compatible Codex]
     V --> I[Inject access credential]
     I --> T[Image terminal or headless]
     T --> E[Initial expiry]
@@ -138,11 +138,8 @@ credential fallback is attempted. Missing login, invalid pinned installation and
 credentials fail preflight with repair instructions.
 Credential refresh and cross-refresh compatibility remain later M4 work.
 
-**Version boundary** is exactly `0.162.1`, installed in the worker overlay under
-`/opt/agent-pm/clients/`, exposed at `/opt/agent-pm/bin/codex`. A different runtime version
-is rejected before any client or GitHub secret is injected. The host install's
-`allowed_versions` stays unchanged; this source-verified boundary does not
-grant the PRD's broader compatibility matrix.
+The authentication implementation's source evidence below does not certify the PRD's
+cross-refresh version matrix. Container admission uses [Container versions](#container-versions).
 
 ### Headless and terminal recovery
 
@@ -167,7 +164,8 @@ the run cancels both tasks. A killed harness leaves cleanup to the next Docker s
 ### Native plugins
 
 The shared [plugin whitelist](docker-host.md#plugins) supplies both clients from the
-same installed payload. No host Codex installation or personal CODEX_HOME is consulted.
+same installed payload. Plugin staging consults neither a host Codex installation
+nor personal CODEX_HOME.
 
 | Artifact | Codex behavior |
 |---|---|
@@ -201,6 +199,50 @@ It also checks the real Codex auth loader, agent identity, nested mounts,
 atomic replacement of the auth link and history-only persistence across two containers.
 It does not test model access, native conversation recovery or macOS file sharing.
 
+## Container versions
+
+**Compatibility rule** is the protected pinned installation's `active.json`
+`allowed_versions` exact set. Only Codex container generations read it; an initial
+empty set refuses Codex starts. Claude needs no pinned Codex and makes no registry
+query or update. An administrator must publish
+only versions backed by the M4 compatibility matrix in that root-owned metadata;
+this task neither certifies versions nor changes the installed rule. Host upgrades
+preserve it; matching major/minor alone grants nothing.
+
+```mermaid
+flowchart TD
+    P[Verify pinned installation and rule] --> I{Image version allowed}
+    I -->|no| X[Reject without secrets]
+    I -->|yes| R[Select newest allowed official release]
+    R --> U{Download and probe succeeds}
+    U -->|yes| A[Publish volatile executable]
+    U -->|no or none| F[Restore and probe image executable]
+    A --> S[Inject secrets]
+    F -->|verified| S
+    F -->|failed| X
+```
+Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share this
+preparation. Attach leaves its running generation alone.
+
+Selection compares stable version components numerically, querying each allowed npm
+release from newest downward. Only official registry metadata/artifacts are used;
+both main and Linux arm64/amd64 platform archives retain the installation integrity
+and extraction checks. No npm scripts, user npm configuration or workspace cache runs.
+
+The immutable image installation stays under `/opt/agent-pm/clients/`; its public
+wrapper selects the updated native file in root-owned executable tmpfs
+`/opt/agent-pm/runtime/`. Programs never enter workspace/history. Failed downloads,
+staging, publication or actual-version verification remove the override and require
+a successful image reprobe. Registry failure or no allowed release follows the same
+fallback. An incompatible image always rejects, even if an update exists.
+
+Each Codex generation's `<generation>.result.json` retains the image digest, actual clients
+and [version audit object](docker-broker-protocol.md#success-fields). Startup stderr
+reports its classified update outcome. Preflight's three-second advisory lookup of
+the official stable `latest` release prints the explicit pinned-upgrade command from
+the command table with its version; lookup failure does not block a compatible start.
+The hint neither upgrades the host nor expands the rule.
+
 ## User-run acceptance, pending
 
 Use an authorized broker test login. Workers do not run these checks or inspect real
@@ -216,5 +258,9 @@ credentials; record versions, time, status and redacted error locations only.
 | Restart the host supervisor, then query/send | Relay resumes, same identity; original access deadline retained |
 | Let the initial access token expire | `client_auth_expired`, container removed, no login prompt or identity change; host login plus resume repairs it |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
+| Start, restart, then close/resume using an evidence-backed rule containing an image and newer registry version | Each generation runs the newest allowed version; audit and progress agree; runtime program is outside workspace/history |
+| Repeat with registry unavailable, then an unavailable/corrupt allowed update | Image version restored and recorded; no secret injection precedes preparation |
+| Use an image outside the rule, and separately an empty rule | Startup refuses before any client/GitHub secret; existing compatible image remains usable if only advisory lookup fails |
+| Close after a successful update, then resume | Executable tmpfs disappears; next generation repeats selection; native history remains |
 | Use a whitelisted skill in both modes | Namespaced skill executes from the image; its scripts/references resolve; empty whitelist loads none |
 | After M4 refresh support lands: two containers and an independently logged-in host across a real refresh | Both modes continue with unchanged identity and personal login; record actual refresh count, versions and timings |
