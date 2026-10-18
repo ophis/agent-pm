@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Effort,
     Launch,
+    Permission,
     Resumable,
     SessionStatus,
     Spec,
@@ -190,6 +191,7 @@ def _load(store: str, cwd: str, sid: str) -> dict:
 
 CHECKS = (
     common.FLAGS,
+    common.MODES,
     ("allow", strings, "a list of strings"),
     *common.CHECKS,
 )
@@ -245,6 +247,7 @@ class ClaudeCommon:
         self.selector = selector
         common.check_config(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
+        self.modes = {p: common.mode_flags(config, p) for p in Permission}
         if any(flag.startswith("--setting-sources") for flag in self.flags):
             raise ConfigError(
                 f"--setting-sources is set by the Claude client: remove it from {TABLE}.flags"
@@ -375,8 +378,9 @@ class ClaudeCommon:
             print(f"claude resume: {error}", file=sys.stderr)
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags, the
-        saved dirs and env over this environment, in CWD; 1 and one stderr line when it cannot.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags and auto
+        mode's, the saved dirs and env over this environment, in CWD; 1 and one stderr line when it
+        cannot.
         """
         try:
             store, cwd, sid = argv
@@ -387,7 +391,7 @@ class ClaudeCommon:
             state = _load(store, cwd, self.uuid(sid))
             added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
-            configured, own = _split(self.flags, state["cwd"])
+            configured, own = _split((*self.flags, *self.modes[Permission.AUTO]), state["cwd"])
             path = self.transcript(state["cwd"], sid, state["env"])
             native, _, _ = next(
                 hop
@@ -422,10 +426,11 @@ class ClaudeCommon:
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
+        permission: Permission,
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants, output arguments and
-        spec.flags before `tail`; env under the config's. Exactly one --settings: the config's,
-        then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
+        """Build a Claude command with configured settings, `permission`'s mode flags, access grants,
+        output arguments and spec.flags before `tail`; env under the config's. Exactly one
+        --settings: the config's and its mode's, then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
         docs leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that
         a --strict-mcp-config in spec.flags would drop.
         """
@@ -435,7 +440,7 @@ class ClaudeCommon:
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd
-        configured, own = _split(self.flags, cwd)
+        configured, own = _split((*self.flags, *self.modes[permission]), cwd)
         supplied, flags = _split(spec.flags, cwd)
         hooked = ({"hooks": dict(hooks)},) if hooks else ()
         mcp = os.path.join(cwd, ".mcp.json")

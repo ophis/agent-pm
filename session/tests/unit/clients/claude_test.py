@@ -20,6 +20,7 @@ from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.unit.clients.claude.support import (
     CONFIG,
+    MODES,
     NOTE,
     PROBE,
     SID,
@@ -37,6 +38,7 @@ class ConfigTest(Base):
     def test_every_key_is_optional_and_each_is_accepted(self):
         self.assertEqual(ClaudeClient({}).config, {})
         self.assertEqual(ClaudeClient(CONFIG).config, CONFIG)
+        self.assertEqual(ClaudeClient({"modes": MODES}).config, {"modes": MODES})
 
     def test_a_refused_config_names_the_key_never_the_value(self):
         sources = (
@@ -65,6 +67,12 @@ class ConfigTest(Base):
             ("env", {"K": 1}),
             ("env", {1: "SECRET"}),
             ("env", ["SECRET"]),
+            ("modes", "SECRET"),
+            ("modes", ["SECRET"]),
+            ("modes", {"turbo": ["SECRET"]}),
+            ("modes", {1: ["SECRET"]}),
+            ("modes", {"auto": "SECRET"}),
+            ("modes", {"yolo": ["--x", 1]}),
         )
         cases = (
             ({"model": "m"}, "unknown key 'model' in ClaudeClient's config"),
@@ -113,7 +121,7 @@ class ClientTest(Base):
     def test_its_parts(self):
         client = ClaudeClient(CONFIG)
         self.assertEqual(
-            ClaudeClient.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"})
+            ClaudeClient.keys, frozenset({"flags", "allow", "tiers", "efforts", "env", "modes"})
         )
         self.assertEqual((ClaudeClient.client_note, ClaudeCommon.NOTE), (NOTE, NOTE))
         self.assertIsInstance(client.common, UnconfiguredCommon)

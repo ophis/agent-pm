@@ -36,7 +36,7 @@ class ClaudeClient(Client):
         "--from-pr",
         "--teleport",
     )
-    keys = frozenset({"flags", "allow", "tiers", "efforts", "env"})
+    keys = frozenset({"flags", "allow", "tiers", "efforts", "env", "modes"})
     client_note = ClaudeCommon.NOTE
     session_env = "CLAUDECODE"
     identity_env = tuple(key for key in ClaudeCommon.UNSET if key not in LOCAL_ENV_VARS)
