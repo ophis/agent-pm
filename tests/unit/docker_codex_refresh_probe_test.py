@@ -503,7 +503,7 @@ class RefreshProbeTest(Case):
             self.module["main"]()
         opened.assert_not_called()
         with (
-            patch("sys.argv", ["probe", "--user-run", "host-refresh"]),
+            patch("sys.argv", ["probe", "--user-run", "--live-root", self.home, "host-refresh"]),
             patch("os.open", side_effect=OSError("fake-secret")),
             patch("builtins.print") as printed,
         ):

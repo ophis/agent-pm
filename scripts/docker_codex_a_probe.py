@@ -16,8 +16,6 @@ from pathlib import Path
 
 VERSION = "0.163.0"
 CONTAINERS = ("task647-codex-a-1", "task647-codex-a-2")
-AUTH = Path("/Users/francis/.agent-pm/work/TASK-647/agent/tmp/codex-live-0.163.0/broker/auth.json")
-LIVE_ROOT = AUTH.parent.parent
 STORE = 'cli_auth_credentials_store="file"'
 ITEM_TYPES = (
     "command_execution",
@@ -89,7 +87,10 @@ def refresh_lock(directory):
 
 
 def make_carrier(auth, variant):
-    if variant not in ("missing-refresh", "empty-refresh") or auth.get("auth_mode") != "chatgpt":
+    if (
+        variant not in ("missing-refresh", "empty-refresh", "external-access")
+        or auth.get("auth_mode") != "chatgpt"
+    ):
         raise ValueError("auth_mode_or_variant")
     tokens = auth["tokens"]
     if any(
@@ -102,13 +103,19 @@ def make_carrier(auth, variant):
     if account is not None and not isinstance(account, str):
         raise ValueError("account_type")
     selected["account_id"] = account
-    if variant == "empty-refresh":
+    if variant in ("empty-refresh", "external-access"):
         selected["refresh_token"] = ""
     result = {"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": selected}
     if "last_refresh" in auth:
         if auth["last_refresh"] is not None and not isinstance(auth["last_refresh"], str):
             raise ValueError("refresh_date_type")
         result["last_refresh"] = auth["last_refresh"]
+    if variant == "external-access":
+        if not account:
+            raise ValueError("external_account")
+        refresh_date(result.get("last_refresh"))
+        selected["id_token"] = tokens["access_token"]
+        result["auth_mode"] = "chatgptAuthTokens"
     values = [*selected.values(), result.get("last_refresh")]
     if any(tokens["refresh_token"] in value for value in values if isinstance(value, str)):
         raise ValueError("refresh_material")
@@ -686,7 +693,7 @@ def validate_native(root, environment):
         raise ValueError("native_version")
 
 
-def host_refresh(root=LIVE_ROOT):
+def host_refresh(root):
     result = {"probe": "host_refresh", "version": VERSION, "status": "incomplete"}
     environment = {
         "HOME": str(root / "home"),
@@ -778,12 +785,15 @@ def resume_turn(container):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="User-only TASK-647 A carrier probe")
+    parser = argparse.ArgumentParser(description="Opt-in Codex A carrier probe")
     parser.add_argument("--user-run", action="store_true", required=True)
+    parser.add_argument("--live-root", type=Path, help="Isolated login root; no default")
     commands = parser.add_subparsers(dest="command", required=True)
     injection = commands.add_parser("inject")
     injection.add_argument("container", choices=CONTAINERS)
-    injection.add_argument("variant", choices=("missing-refresh", "empty-refresh"))
+    injection.add_argument(
+        "variant", choices=("missing-refresh", "empty-refresh", "external-access")
+    )
     status = commands.add_parser("status")
     status.add_argument("container", choices=CONTAINERS)
     resume = commands.add_parser("resume")
@@ -794,14 +804,22 @@ def main():
     commands.add_parser("resume-pair")
     commands.add_parser("host-refresh")
     args = parser.parse_args()
+    if args.command in ("host-refresh", "inject", "expiry") and (
+        args.live_root is None or not args.live_root.is_absolute() or ".." in args.live_root.parts
+    ):
+        parser.error("host operations require an absolute --live-root without parent traversal")
     try:
         if args.command == "host-refresh":
-            result = host_refresh()
+            result = host_refresh(args.live_root)
         elif args.command == "inject":
             version = observed_version(args.container)
             result = {
                 "version": version,
-                **inject(args.container, read_private_auth(AUTH), args.variant),
+                **inject(
+                    args.container,
+                    read_private_auth(args.live_root / "broker/auth.json"),
+                    args.variant,
+                ),
             }
         elif args.command == "status":
             native = docker(
@@ -818,7 +836,9 @@ def main():
         elif args.command == "versions":
             result = {"status": "pass", "versions": [observed_version(c) for c in CONTAINERS]}
         elif args.command == "expiry":
-            result = access_expiry(read_private_auth(AUTH), datetime.now(UTC))
+            result = access_expiry(
+                read_private_auth(args.live_root / "broker/auth.json"), datetime.now(UTC)
+            )
         elif args.command == "resume":
             result = {"probe": "native_resume", **resume_turn(args.container)}
         else:

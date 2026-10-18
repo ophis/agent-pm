@@ -50,6 +50,52 @@ class CodexACarrier(Case):
         with self.assertRaises(ValueError):
             self.probe["make_carrier"](self.auth, "missing-refresh")
 
+    def test_external_access_carrier_keeps_no_original_id_or_refresh_material(self):
+        self.auth["last_refresh"] = "2026-10-18T03:57:02.927362+00:00"
+        before = json.dumps(self.auth)
+        carrier = self.probe["make_carrier"](self.auth, "external-access")
+        self.assertEqual(
+            carrier,
+            {
+                "auth_mode": "chatgptAuthTokens",
+                "OPENAI_API_KEY": None,
+                "tokens": {
+                    "id_token": "synthetic-access",
+                    "access_token": "synthetic-access",
+                    "refresh_token": "",
+                    "account_id": "synthetic-account",
+                },
+                "last_refresh": "2026-10-18T03:57:02.927362+00:00",
+            },
+        )
+        self.assertNotIn("synthetic-id", json.dumps(carrier))
+        self.assertNotIn("refresh-only-canary", json.dumps(carrier))
+        self.assertEqual(json.dumps(self.auth), before)
+
+    def test_external_access_requires_nonempty_account_and_original_refresh_date(self):
+        for field, value in (("account_id", None), ("account_id", "")):
+            self.auth["tokens"][field] = value
+            with self.assertRaises(ValueError):
+                self.probe["make_carrier"](self.auth, "external-access")
+        self.auth["tokens"]["account_id"] = "synthetic-account"
+        for value in (None, "", "not-a-date", "2026-10-18T03:57:02"):
+            self.auth["last_refresh"] = value
+            with self.assertRaises(ValueError):
+                self.probe["make_carrier"](self.auth, "external-access")
+
+    def test_external_access_injection_keeps_values_on_stdin_only(self):
+        self.auth["last_refresh"] = "2026-10-18T03:57:02Z"
+        fake = SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        with mock.patch("subprocess.run", return_value=fake) as run:
+            result = self.probe["inject"]("task647-codex-a-1", self.auth, "external-access")
+        self.assertEqual(result["status"], "injected")
+        self.assertEqual(result["probe"], "external-access")
+        self.assertEqual(result["refresh_value_count"], 0)
+        self.assertNotIn("synthetic", " ".join(run.call_args.args[0]))
+        self.assertNotIn("synthetic-id", run.call_args.kwargs["input"].decode())
+        self.assertNotIn("refresh-only-canary", run.call_args.kwargs["input"].decode())
+        self.assertNotIn("synthetic", json.dumps(result))
+
     def test_escaped_refresh_value_is_also_rejected(self):
         self.auth["tokens"]["refresh_token"] = 'quoted-"-refresh'
         self.auth["tokens"]["access_token"] = 'prefix-quoted-"-refresh-suffix'
@@ -127,7 +173,16 @@ class CodexACarrier(Case):
         fake = SimpleNamespace(returncode=0, stdout=b"codex-cli 0.162.0", stderr=b"")
         with (
             mock.patch(
-                "sys.argv", ["probe", "--user-run", "inject", "task647-codex-a-1", "empty-refresh"]
+                "sys.argv",
+                [
+                    "probe",
+                    "--user-run",
+                    "--live-root",
+                    self.home,
+                    "inject",
+                    "task647-codex-a-1",
+                    "empty-refresh",
+                ],
             ),
             mock.patch("subprocess.run", return_value=fake),
             mock.patch("os.open") as opened,
@@ -136,6 +191,46 @@ class CodexACarrier(Case):
             code = self.probe["main"]()
         self.assertEqual(code, 1)
         opened.assert_not_called()
+
+    def test_host_operations_require_an_explicit_absolute_live_root_before_io(self):
+        for command in (
+            ["host-refresh"],
+            ["expiry"],
+            ["inject", "task647-codex-a-1", "empty-refresh"],
+        ):
+            for arguments in ([], ["--live-root", "relative"], ["--live-root", "/tmp/../other"]):
+                with (
+                    mock.patch("sys.argv", ["probe", "--user-run", *arguments, *command]),
+                    mock.patch("os.open", side_effect=AssertionError("no file access")) as opened,
+                    mock.patch("subprocess.run", side_effect=AssertionError("no process")) as run,
+                    mock.patch("sys.stderr", new_callable=io.StringIO),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    self.probe["main"]()
+                self.assertEqual(raised.exception.code, 2)
+                opened.assert_not_called()
+                run.assert_not_called()
+
+    def test_expiry_reads_only_the_selected_fake_root_without_echoing_it(self):
+        root = Path(self.home, "selected")
+        (root / "broker").mkdir(parents=True, mode=0o700)
+        claims = {"exp": 1800003600, "iat": 1800000000}
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        self.auth["tokens"]["access_token"] = f"header.{payload}.signature"
+        auth = root / "broker/auth.json"
+        auth.write_text(json.dumps(self.auth))
+        auth.chmod(0o600)
+        with (
+            mock.patch("sys.argv", ["probe", "--user-run", "--live-root", str(root), "expiry"]),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as captured,
+            mock.patch("subprocess.run") as run,
+        ):
+            code = self.probe["main"]()
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(captured.getvalue())["status"], "observed")
+        self.assertNotIn(str(root), captured.getvalue())
+        self.assertNotIn("synthetic", captured.getvalue())
+        run.assert_not_called()
 
     def test_pair_needs_actual_time_overlap(self):
         rows = [
