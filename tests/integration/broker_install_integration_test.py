@@ -36,6 +36,7 @@ case "$(basename "$0") $*" in
   "go build"*) while [ "$#" -gt 0 ]; do [ "$1" = -o ] && : > "$2"; shift; done ;;
   "codesign -dv "*) echo "CodeDirectory v=20500 size=1 $FLAGS hashes=1" >&2 ;;
   "codesign -d --entitlements"*) echo "$ENTITLEMENTS" ;;
+  "sudo install -d"*) [ ! -e "$HOME/.agent-pm/docker/worker/Dockerfile" ] || : > "$SEEDED" ;;
   "sudo install -o"*) cp "$8" "$INSTALLED" ;;
   "gh release download"*)
     [ -n "${RELEASED:-}" ] || { echo "release not found" >&2; exit 1; }
@@ -70,6 +71,7 @@ class Install(Case):
             member.size = len(b"released binary")
             archive.addfile(member, io.BytesIO(b"released binary"))
         self.installed = Path(self.home, "installed")
+        self.seeded = Path(self.home, "seeded-before-sudo")
         self.env = {
             "HOME": self.home,
             "PATH": str(self.bin),
@@ -77,6 +79,7 @@ class Install(Case):
             "FLAGS": "flags=0x10002(adhoc,runtime)",
             "ENTITLEMENTS": "Executable=/x",
             "INSTALLED": str(self.installed),
+            "SEEDED": str(self.seeded),
             "PLATFORM": "Darwin arm64",
         }
 
@@ -129,6 +132,14 @@ class Install(Case):
         self.assertEqual(result.returncode, 1)
         self.assertIn("get-task-allow", result.stderr)
 
+    def test_build_script_without_one_output_is_a_usage_error(self):
+        self.fake("go", "codesign")
+        for args in ([], ["a", "b"]):
+            result = self.run_script("build.sh", *args)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertIn("build.sh: usage: sh build.sh <output>", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def assert_installed(self, calls, source):
         self.assertEqual(calls[0], f"sudo install -d -o root -g wheel -m 0755 {TARGET}")
         self.assertEqual(
@@ -159,6 +170,7 @@ class Install(Case):
         self.assertEqual(self.installed.read_bytes(), b"released binary")
         seeded = Path(self.agent_pm, "docker/worker/Dockerfile")
         self.assertEqual(seeded.read_text(), (BROKER / "worker/Dockerfile").read_text())
+        self.assertTrue(self.seeded.exists())
         self.assertFalse(os.path.exists(work))
 
     def test_missing_asset_fails_naming_retry_and_build(self):
@@ -222,6 +234,14 @@ class Install(Case):
         )
         self.assertEqual(self.calls(), [])
 
+    def test_missing_version_is_reported_before_missing_gh(self):
+        self.fake("sudo")
+        self.manifest.write_text(json.dumps({"name": "agent-pm"}, indent=2))
+        result = self.run_script("install.sh", RELEASED=str(self.asset))
+        self.assert_nothing_installed(result)
+        self.assertIn("no version in", result.stderr)
+        self.assertNotIn("gh is required", result.stderr)
+
     def test_other_platforms_stop_before_download_naming_build(self):
         self.fake("gh", "sudo")
         for platform in ("Darwin x86_64", "Linux x86_64"):
@@ -237,6 +257,7 @@ class Install(Case):
         self.assertEqual(result.returncode, 0, result.stderr)
         seeded = Path(self.agent_pm, "docker/worker/Dockerfile")
         self.assertEqual(seeded.read_text(), (BROKER / "worker/Dockerfile").read_text())
+        self.assertTrue(self.seeded.exists())
         calls = self.calls()
         self.assertEqual([c.split()[0] for c in calls], ["go"] + ["codesign"] * 4 + ["sudo"] * 2)
         out = calls[0].split()[4]
