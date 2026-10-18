@@ -48,6 +48,13 @@ class Holder:
             previous = {
                 signum: signal.signal(signum, forward) for signum in (signal.SIGINT, signal.SIGTERM)
             }
+            if foreground is not None:
+                # tmux starts panes with these ignored; then the child's terminal read before the
+                # handoff below fails with EIO instead of stopping until the SIGCONT after it
+                previous |= {
+                    signum: signal.signal(signum, signal.SIG_DFL)
+                    for signum in (signal.SIGTTIN, signal.SIGTTOU)
+                }
             try:
                 child = subprocess.Popen(argv, env=env, close_fds=True, process_group=0)
                 if foreground is not None:
