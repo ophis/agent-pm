@@ -57,7 +57,14 @@ claude setup-token          # copy the token it prints
 
 GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
 generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
-content the base64 key. Change the item's access in place to trust only the broker; content and account stay. When a step is
+content the base64 key. Store it so:
+
+```sh
+security add-generic-password -s agent-pm-bot -a <App ID> -U -w "$(base64 -i <key>.pem)" ~/Library/Keychains/login.keychain-db
+```
+
+Not with a bare `-w` and the interactive prompt: it takes at most 128 characters and truncates
+the key. Then change the item's access in place to trust only the broker; content and account stay. When a step is
 not yet in place, the broker asks once on its terminal, without echo, for the login keychain
 password (a wrong one fails with `keychain status -25293`); it then does only those steps,
 both with that password: the partition list gets only the broker's partition ID, then the
@@ -86,9 +93,10 @@ repository of every installation.
 
 ## Model logins
 
-The Docker Host runs the clients on your subscriptions. Each client logs in once, on the
-host, through the broker, which keeps the login in the login keychain; no run logs in, and a
-container gets only what the table lists, written at its start into its tmpfs.
+The Docker Host runs the clients on your subscriptions. Each client logs in once per broker
+install, on the host, through the broker, which keeps the login in the login keychain; no run
+logs in, and a container gets only what the table lists, written into its tmpfs at start and
+at each refresh.
 What each credential grants, where it lives, who can read it and how to revoke it:
 [Credentials](credentials.md).
 
