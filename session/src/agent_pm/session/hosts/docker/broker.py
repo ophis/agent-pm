@@ -1,5 +1,5 @@
-"""The root-owned broker at the PROTOCOL version (docs/docker-broker-protocol.md): version, build, start, close
-and workspace-rm with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
+"""The root-owned broker at the PROTOCOL version (docs/docker-broker-protocol.md): version, build, start, refresh,
+close and workspace-rm with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
 a valid error response is a BrokerError.
 """
 
@@ -19,7 +19,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "5"
+PROTOCOL = "6"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -33,21 +33,27 @@ IMAGE = re.compile(r"agent-pm-worker:[0-9a-f]{64}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 CONTAINER = re.compile(r"agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}")
 ENDPOINT = re.compile(r"unix:///[^\x00-\x1f\x7f]+/\.docker/run/docker\.sock")
-COMMANDS = frozenset({"version", "build", "start", "close", "workspace-rm", "unknown"})
+LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+COMMANDS = frozenset(
+    {"version", "build", "start", "refresh", "close", "status", "workspace-rm", "unknown"}
+)
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
-    "manifest_rejected": (3, {"start"}),
+    "manifest_rejected": (3, {"start", "refresh"}),
     "mount_rejected": (4, {"start"}),
-    "login_required": (5, {"start"}),
+    "login_required": (5, {"start", "refresh"}),
     "image_rejected": (6, {"start"}),
-    "docker_unreachable": (7, {"build", "start", "close", "workspace-rm"}),
+    "docker_unreachable": (7, {"build", "start", "refresh", "close", "workspace-rm"}),
     "build_failed": (8, {"build"}),
     "start_failed": (9, {"start"}),
     "close_failed": (10, {"close"}),
-    "keychain_failed": (11, {"start"}),
+    "keychain_failed": (11, {"start", "refresh", "close", "status"}),
     "workspace_dirty": (12, {"workspace-rm"}),
     "workspace_rejected": (13, {"workspace-rm"}),
     "workspace_failed": (14, {"workspace-rm"}),
+    "github_failed": (15, {"start", "refresh"}),
+    "refresh_failed": (16, {"refresh"}),
     "internal_error": (70, COMMANDS),
 }
 ERROR_KEYS = frozenset({"command", "code", "message", "cleanup"})
@@ -99,6 +105,16 @@ def _text(value) -> bool:
 
 def _matches(pattern: re.Pattern, value) -> bool:
     return isinstance(value, str) and bool(pattern.fullmatch(value))
+
+
+def _expiries(value) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(e, dict)
+        and e.keys() == {"account", "expires_at"}
+        and _matches(LOGIN, e["account"])
+        and _matches(TIME, e["expires_at"])
+        for e in value
+    )
 
 
 def _error(command: str, returncode: int, data: dict) -> BrokerError:
@@ -247,9 +263,26 @@ class Broker:
             and isinstance(started.clients, dict)
             and started.clients.keys() == clients
             and all(map(_text, started.clients.values()))
+            and _expiries(started.github)
         ):
             raise SessionError("broker: bad response to start: fields")
         return started
+
+    def refresh(self, container: str, manifest: str) -> list[dict]:
+        """`container`'s new GitHub token expiries; `manifest`: the one it was started with."""
+        found = self._parsed(
+            "refresh",
+            lambda d: (
+                d.keys() == {"container", "github"}
+                and d["container"] == container
+                and _expiries(d["github"])
+            ),
+            "--container",
+            container,
+            "--manifest",
+            manifest,
+        )
+        return found["github"]
 
     def close(self, container: str) -> bool:
         """Whether it removed `container`; False: it was already gone."""
@@ -321,8 +354,11 @@ def write_manifest(
     workspace: str,
     home: tuple[str, str],
     hook_path: str,
+    github: str,
 ) -> None:
-    """The start manifest, 0600; home: (its manifest field, the client home's path)."""
+    """The start manifest, 0600; home: (its manifest field, the client home's path); github: the
+    App whose tokens the container gets, "": none.
+    """
     field, home_path = home
     manifest = {
         "name": name,
@@ -332,7 +368,7 @@ def write_manifest(
         "workspace": workspace,
         field: home_path,
         "hook_path": hook_path,
-        "github": None,  # no App tokens yet
+        "github": {"app": github} if github else None,
         "labels": {},
     }
     save(path, json.dumps(manifest), durable=True)

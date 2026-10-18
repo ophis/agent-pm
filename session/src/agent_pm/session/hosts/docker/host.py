@@ -445,8 +445,9 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Only terminal sessions run here,
-    each on its workspace volume.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path, and github.app, the GitHub App
+    whose tokens every session gets ("" or no table: none). Only terminal sessions run here, each
+    on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -461,12 +462,21 @@ class DockerHost(Host):
         broker: Broker | None = None,
     ) -> None:
         super().__init__(name, settings)
-        if extra := sorted(set(self.settings) - {"docker"}):
+        if extra := sorted(set(self.settings) - {"docker", "github"}):
             removed = "; see docs/upgrading.md" if extra[0] == "mount_roots" else ""
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]{removed}")
         self.docker = self.settings.get("docker")
         if not isinstance(self.docker, str) or not os.path.isabs(self.docker):
             raise ConfigError(f"[hosts.{name}] docker: want an absolute path")
+        github = self.settings.get("github", {"app": ""})
+        if not isinstance(github, Mapping):
+            raise ConfigError(f"[hosts.{name}] github: want a table")
+        if extra := sorted(set(github) - {"app"}):
+            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}.github]")
+        app = github.get("app")
+        if not isinstance(app, str):
+            raise ConfigError(f"[hosts.{name}.github] app: want a string")
+        self.github = app
         self.run = run
         self.broker = Broker() if broker is None else broker
         self._warned: set[str] = set()
@@ -797,6 +807,7 @@ class DockerHost(Host):
             workspace=volume,
             home=(field, home),
             hook_path=hook,
+            github=self.github,
         )
         _report_plan(
             name,
@@ -834,6 +845,11 @@ class DockerHost(Host):
                     f"broker: started {started.container} at {started.endpoint},"
                     f" want {container} at {endpoint()}"
                 )
+            save(
+                os.path.join(state_dir(name), f"{generation}.github.json"),
+                json.dumps(list(started.github)),
+                durable=True,
+            )
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -865,7 +881,10 @@ class DockerHost(Host):
                 name,
                 ["with-secrets", *launch.argv],
                 cwd=cwd,
-                env={k: v for k, v in launch.env.items() if k != "PATH"},
+                env={
+                    **{k: v for k, v in launch.env.items() if k != "PATH"},
+                    **({"AGENT_PM_PR_AUTHOR": f"{self.github}[bot]"} if self.github else {}),
+                },
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
             )
