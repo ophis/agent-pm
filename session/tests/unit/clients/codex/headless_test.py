@@ -201,7 +201,12 @@ class ContainerLaunch(Base):
     def setUp(self):
         super().setUp()
         self.runtime = ClientContext(
-            "/image/bin", "/image/python", "/image/source", "/run/agent-pm"
+            "host.docker.internal",
+            Permission.AUTO,
+            bin_dir="/image/bin",
+            python="/image/python",
+            pythonpath="/image/source",
+            state_root="/run/agent-pm",
         )
 
     def test_both_modes_request_the_same_history_only_client_home(self):

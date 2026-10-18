@@ -130,10 +130,12 @@ class TuiTest(Base):
     def test_container_runtime_projects_only_this_identity_without_host_executable(self):
         host = MemoryHost()
         runtime = ClientContext(
-            "/opt/agent-pm/bin",
-            "/opt/agent-pm/venv/bin/python",
-            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            "/run/agent-pm",
+            "host.docker.internal",
+            Permission.AUTO,
+            bin_dir="/opt/agent-pm/bin",
+            python="/opt/agent-pm/venv/bin/python",
+            pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            state_root="/run/agent-pm",
         )
         spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
         with (

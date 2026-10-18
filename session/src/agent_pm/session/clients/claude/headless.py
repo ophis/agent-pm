@@ -33,7 +33,7 @@ class ClaudeHeadless(JsonHeadless):
             output=("--output-format", "stream-json", "--verbose"),
             tail=("--", spec.prompt),
             env=common.ENV,
-            permission=self._permission,
+            permission=self._context.permission,
         )
 
     def _home(self):

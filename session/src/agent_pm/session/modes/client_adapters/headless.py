@@ -7,11 +7,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 
 from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
     ClientBound,
     ClientContext,
     ClientHome,
     Launch,
-    Permission,
     SessionEvent,
     Spec,
     Stderr,
@@ -20,8 +20,7 @@ from agent_pm.utils import json_records
 
 
 class Headless(ABC):
-    _context: ClientContext | None = None
-    _permission: Permission = Permission.AUTO
+    _context: ClientContext = LOCAL_CONTEXT
 
     def _home(self) -> ClientHome | None:
         return None

@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -10,7 +11,7 @@ from agent_pm.session.clients import registry
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.codex.common import SessionStore
 from agent_pm.session.engine.config import read_config
-from agent_pm.session.engine.types import Access, Launch, Permission, Spec
+from agent_pm.session.engine.types import LOCAL_CONTEXT, Access, Launch, Permission, Spec
 
 from session.tests.case import REPO, Case
 
@@ -42,7 +43,7 @@ def committed_headless(
     client: CodexClient, spec: Spec, permission: Permission = Permission.AUTO
 ) -> Launch:
     run = client.headless()
-    run._permission = permission
+    run._context = replace(LOCAL_CONTEXT, permission=permission)
     launch = run.launch(spec)
     run.commit()
     return launch
@@ -52,7 +53,7 @@ def committed_tui(
     client: CodexClient, spec: Spec, hook, permission: Permission = Permission.AUTO
 ) -> Launch:
     run = client.tui()
-    run._permission = permission
+    run._context = replace(LOCAL_CONTEXT, permission=permission)
     launch = run.launch(spec, hook)
     run.commit()
     return launch

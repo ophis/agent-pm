@@ -81,7 +81,7 @@ class HeadlessMode(BaseMode):
         if name is not None:
             spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name))
         spec = cls._noted(spec, client)
-        run._context, run._permission = host._client_context(), cls._permission(host)
+        run._context = host._client_context()
         prepared = cls._launched(spec, run.launch, drop, inherit=host._inherit_env)
         if name is not None:
             prepared = cls._host_resume(prepared, host, name)

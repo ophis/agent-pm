@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.clients.common import select
 from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
     Access,
     ConfigError,
     HookKind,
@@ -142,7 +144,7 @@ class Base(Case):
             }
         )
         run = ClaudeClient(config).headless()
-        run._permission = permission
+        run._context = replace(LOCAL_CONTEXT, permission=permission)
         return run.launch(spec)
 
 
@@ -249,7 +251,7 @@ def tui_launch(
         }
     )
     run = ClaudeClient(config).tui()
-    run._permission = permission
+    run._context = replace(LOCAL_CONTEXT, permission=permission)
     return run.launch(spec, HOOK)
 
 

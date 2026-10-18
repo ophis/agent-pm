@@ -182,10 +182,17 @@ class ClientHome:
 
 @dataclass(frozen=True)
 class ClientContext:
-    bin_dir: str
-    python: str
-    pythonpath: str
-    state_root: str
+    """What a Host hands its client."""
+
+    host_address: str
+    permission: Permission
+    bin_dir: str | None = None
+    python: str | None = None
+    pythonpath: str | None = None
+    state_root: str | None = None
+
+
+LOCAL_CONTEXT = ClientContext("127.0.0.1", Permission.AUTO)
 
 
 @dataclass(frozen=True)
