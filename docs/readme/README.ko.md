@@ -123,6 +123,6 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 | [Linear board](../board.md) | 설정, issue 상태와 task 라벨, router 운영, Agent 라벨(issue별 client) |
 | [Sessions and client policy](../sessions.md) | session 설정, `agent-pm-session`, role run의 client 플래그 |
 | [State root](../state-root.md) | `~/.agent-pm/` 구조, 각 항목을 정리하는 주체, 삭제해도 되는 것 |
-| [Upgrading](../upgrading.md) | 업그레이드 단계, v1에서 전환, 스모크 체크리스트 |
+| [Upgrading](../upgrading.md) | v0.6.20부터의 업그레이드 단계 |
 | [Core architecture](../architecture.md) | 레이어와 패키지(개발자) |
 | [Tests](../tests.md) | lint, 테스트 스위트, 커버리지(개발자) |

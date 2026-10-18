@@ -100,7 +100,7 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 
 ### Codex login
 
-Docker uses the decided path A, centralized refresh ([Plan A validation report](docker-codex.md#plan-a-validation-report)).
+Docker uses the decided path A, centralized refresh ([Plan A conclusion](docker-codex.md#plan-a-validation-report)).
 
 | Field | Local (`tmux`, `pty`) | Docker | Source |
 |---|---|---|---|

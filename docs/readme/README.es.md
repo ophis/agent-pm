@@ -123,6 +123,6 @@ Estas páginas están en inglés.
 | [Linear board](../board.md) | configuración, estados de issue y etiquetas de task, operar el router, etiquetas Agent (client por issue) |
 | [Sessions and client policy](../sessions.md) | ajustes de session, `agent-pm-session`, flags de client de los role runs |
 | [State root](../state-root.md) | estructura de `~/.agent-pm/`, qué limpia cada entrada, qué puedes borrar |
-| [Upgrading](../upgrading.md) | pasos de actualización, migrar desde v1, lista de smoke tests |
+| [Upgrading](../upgrading.md) | pasos de actualización desde v0.6.20 |
 | [Core architecture](../architecture.md) | capas y paquetes (desarrolladores) |
 | [Tests](../tests.md) | lint, suites de tests, cobertura (desarrolladores) |
