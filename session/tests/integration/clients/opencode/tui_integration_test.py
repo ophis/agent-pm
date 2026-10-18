@@ -105,7 +105,12 @@ class TuiSessions(Case):
             self.root / n for n in ("client.jsonl", "scenario.json", "events")
         )
         self.scene()
-        env = self.server.env(XDG_DATA_HOME=str(self.root / "data"))
+        git = {
+            k: os.environ[k]
+            for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")
+            if k in os.environ
+        }
+        env = self.server.env(XDG_DATA_HOME=str(self.root / "data"), **git)
         self.enterContext(mock.patch.dict(os.environ, env, clear=True))
         self.session_cls = configured(
             {
@@ -208,7 +213,15 @@ class TuiSessions(Case):
         stream.quiet()
         self.assertEqual(self.words(1)[-1], "w1 done")
 
-    def test_hooks_bind_the_root_session_once(self):
+    def test_a_recovered_error_still_ends_the_turn(self):
+        error = {"name": "ContextOverflowError", "data": {"message": "compacting"}}
+        self.scene([[{"error": error, "recover": True}, {"tool": "read"}, {"text": "done anyway"}]])
+        _, stream = self.start()
+        found = stream.until(TurnEnd)
+        self.assertIn(TurnFailed("ContextOverflowError", "compacting"), found)
+        self.assertEqual(found[-1], TurnEnd("done anyway"))
+
+    def test_a_fresh_restart_rebinds_the_root_session_once(self):
         self.common.bind(str(self.cwd), "run-1", fake_opencode.NATIVE)
         _, stream = self.start()
         stream.until(TurnEnd)

@@ -86,13 +86,14 @@ function handle(event, client) {
       return;
     }
     case "session.status":
-      if (p.sessionID !== root || p.status?.type !== "busy" || busy) return;
-      busy = true;
+      // Busy comes at every step: a step after an error (compaction, a retry) clears it.
+      if (p.sessionID !== root || p.status?.type !== "busy") return;
       failed = false;
       seen.clear();
-      call("session.busy");
+      if (!busy) call("session.busy");
+      busy = true;
       return;
-    case "session.idle":
+    case "session.idle": {
       if (p.sessionID !== root) return;
       busy = false;
       if (failed) {
@@ -102,6 +103,7 @@ function handle(event, client) {
       const text = reply(client).catch(() => "");
       call("session.idle", text.then((last) => ({ last_assistant_message: last })));
       return;
+    }
     case "session.error":
       if (p.sessionID !== root || root === null) return;
       failed = true;

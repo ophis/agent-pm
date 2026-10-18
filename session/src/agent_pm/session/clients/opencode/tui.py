@@ -81,7 +81,7 @@ class OpenCodeTui(Tui):
         self.opening = (START, spec.prompt) if spec.prompt and spec.resume else None
         env = common.environment(spec, context, plugin=Path(PLUGIN).resolve().as_uri())
         env[HOOK_ENV] = json.dumps(list(hook))
-        env[SESSION_ENV] = selection[-1] if selection else ""
+        env[SESSION_ENV] = (common.native(self.cwd, self.sid) or "") if spec.resume else ""
         return Launch(
             (
                 "opencode",

@@ -39,9 +39,9 @@ auto = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'ap
 
 ## OpenCode sessions
 
-OpenCode runs on local Hosts only (tmux, pty). Its TUI loads `session/src/agent_pm/session/clients/opencode/plugin.js`, which turns OpenCode's events into `agent-pm-session hook` calls: `session.busy` and `tool` → `working`, `permission.asked` → `blocked`, `session.idle` → `done` with the turn's last assistant text, `session.error` → a failed turn. A start's prompt goes in as `--prompt`; a resume (`opencode --session <ses_…>`) types its prompt once the plugin has started. A long message shows as `[Pasted ~N lines]` in the TUI but is sent in full.
+OpenCode sessions run on local Hosts only (tmux, pty); the Docker Host does not start them yet. The TUI loads `session/src/agent_pm/session/clients/opencode/plugin.js`, which turns OpenCode's events into `agent-pm-session hook` calls: `session.busy` and `tool` → `working`, `permission.asked` → `blocked`, `session.idle` → `done` with the turn's last assistant text, `session.error` → a failed turn. A start's prompt goes in as `--prompt`; a resume (`opencode --session <ses_…>`) types its prompt once the plugin has started. A long message shows as `[Pasted ~N lines]` in the TUI but is sent in full.
 
-OpenCode keeps no jsonl transcript: its sessions are in `opencode.db` (tmux and pty: `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`; a Docker Host session: `~/.agent-pm/docker-state/<name>/opencode/opencode/opencode.db`). `session_status` reads it read-only. To see what a session holds, or whether a `send` reached it:
+OpenCode keeps no jsonl transcript: its sessions are in `opencode.db` (tmux and pty: `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`; a Docker Host session's, once it has them: `~/.agent-pm/docker-state/<name>/opencode/opencode/opencode.db`). `session_status` reads it read-only. To see what a session holds, or whether a `send` reached it:
 
 ```bash
 python3 -I session/src/agent_pm/session/clients/opencode/transcript.py <ses_id> [--db <path>] [--limit N]

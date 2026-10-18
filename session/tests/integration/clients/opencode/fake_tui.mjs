@@ -2,7 +2,7 @@
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
 // {text}, {tool}, {bash, child?} (asks unless --auto, then waits for the stdin line "allow"),
-// {error}, {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
+// {error, recover?} (recovered: the turn goes on, as after a compaction), {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -109,7 +109,8 @@ async function step(item) {
     await tool(session, "bash");
   } else if ("error" in item) {
     await emit("session.error", { sessionID: native, error: item.error });
-    return true;
+    if (!item.recover) return true;
+    await emit("session.status", { sessionID: native, status: { type: "busy" } });
   } else if ("foreign" in item) {
     await emit("session.created", { info: { id: FOREIGN } });
     await emit("session.status", { sessionID: FOREIGN, status: { type: "busy" } });
