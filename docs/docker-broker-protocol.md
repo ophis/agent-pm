@@ -44,8 +44,8 @@ manifest. References are internal, so Go and Python can load it without network 
 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
 order. They are test data, not JSON sent to the broker. These commands consume no
-stdin. `login claude` reads a token, and `login github <app>` the login keychain password once when the
-item's access needs a change, interactively without echo; neither has a JSON contract.
+stdin. `login claude` reads a token, and `login claude` and `login github <app>` the login keychain password
+once when the item's access needs a change, interactively without echo; neither has a JSON contract.
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
 `build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
@@ -204,7 +204,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `2` | `usage` | All, or `unknown` | Unknown command/flag, missing/extra argument, malformed argument value |
 | `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than `agent-pm-bot`; refresh: a manifest of another container, or Claude with `github` `null` |
 | `4` | `mount_rejected` | start/refresh | Runtime cwd, `claude_dir`, symlink or hook-placement rejection; a workspace volume with other labels or in use |
-| `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; message gives login command |
+| `5` | `login_required` | start/refresh | Setup-token entry, or the App's private-key item, absent or without an App ID account; the setup-token trusting another broker build or needing keychain approval; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
 | `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` not installed or unusable (message names it; before any Docker call), context hashing or either build stage failed |
