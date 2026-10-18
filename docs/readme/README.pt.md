@@ -87,6 +87,7 @@ Nada disto é verificado. Se faltar algum, o run do agente falha.
 | tmux 3.3+ | tui runs no Host `tmux` |
 | `git`, `gh` autenticado | programar (checkouts, pull requests) e destinos no GitHub. Desnecessário fora isso. |
 | iTerm2 em execução | a divisão padrão do iTerm2 |
+| Docker Desktop em execução; o broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), instalado com `sh <plugin dir>/broker/install.sh` (precisa de `sudo` e `gh` autenticado); um login de cada: `B login claude` (cole um `claude setup-token`), `B login github agent-pm-bot` e, para o Codex, `sudo B install-codex <version>` e depois `B login codex` | só o Docker Host ([Docker host](../docker-host.md)); o host não precisa de Node. O que cada credencial permite, onde fica e como revogá-la: [Credentials](../credentials.md). |
 
 Como as sessions que o agent-pm inicia carregam as suas configurações, e por que alguns comandos se recusam a rodar dentro delas: [Session settings](../sessions.md#session-settings).
 

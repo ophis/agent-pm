@@ -87,6 +87,7 @@ Linear orchestrator は、エージェントがどう働くべきかについて
 | tmux 3.3+ | `tmux` Host 上の tui run |
 | `git`、ログイン済みの `gh` | コーディング（checkout、pull request）と GitHub の出力先。それ以外では不要。 |
 | 起動中の iTerm2 | デフォルトの iTerm2 分割 |
+| 起動中の Docker Desktop。broker `B`（`/usr/local/libexec/agent-pm/agent-pm-broker`）、`sh <plugin dir>/broker/install.sh` でインストール（`sudo` とログイン済みの `gh` が必要）。ログインはそれぞれ 1 回：`B login claude`（`claude setup-token` を貼り付け）、`B login github agent-pm-bot`、Codex は `sudo B install-codex <version>` の後に `B login codex` | Docker Host のみ（[Docker host](../docker-host.md)）。ホストに Node は不要。各認証情報の権限、保存場所、取り消し方法：[Credentials](../credentials.md)。 |
 
 agent-pm が起動する session があなたの設定をどう読み込むか、そしてその中で一部のコマンドが拒否される理由：[Session settings](../sessions.md#session-settings)。
 

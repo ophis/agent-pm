@@ -80,7 +80,14 @@ clicked.
 
 GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
 generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
-content the base64 key. Change the item's access in place to trust only the broker; content and account stay. When a step is
+content the base64 key. Store it so:
+
+```sh
+security add-generic-password -s agent-pm-bot -a <App ID> -U -w "$(base64 -i <key>.pem)" ~/Library/Keychains/login.keychain-db
+```
+
+Not with a bare `-w` and the interactive prompt: it takes at most 128 characters and truncates
+the key. Then change the item's access in place to trust only the broker; content and account stay. When a step is
 not yet in place, the broker asks once on its terminal, without echo, for the login keychain
 password (a wrong one fails with `keychain status -25293`); it then does only those steps,
 both with that password: the partition list gets only the broker's partition ID, then the
@@ -106,6 +113,26 @@ repository of every installation.
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
 | rerun `login github agent-pm-bot` | same output, no password question |
+
+## Model logins
+
+The Docker Host runs the clients on your subscriptions. Each client logs in once per broker
+install, on the host, through the broker, which keeps the login in the login keychain; no run
+logs in, and a container gets only what the table lists, written into its tmpfs at start and
+at each refresh.
+What each credential grants, where it lives, who can read it and how to revoke it:
+[Credentials](credentials.md).
+
+| Client | Log in once | A container gets | Withdrawn |
+|---|---|---|---|
+| Claude Code | `claude setup-token`, then `"$B" login claude` ([Log in](#log-in)) | a copy of the setup-token in its `/run/agent-pm/secrets` tmpfs | the copy goes with the container at close; the token stays valid until it expires or is revoked ([Credentials](credentials.md)) |
+| Codex | `sudo "$B" install-codex <version>`, then `"$B" login codex` ([Codex operations](docker-codex.md#commands)) | an access token with its ID token and account ID, no refresh token; the broker refreshes it on the host ([Refresh and recovery](docker-codex.md#refresh-and-recovery)) | the copy goes with the container at close; the access token stays valid until it expires |
+| GitHub (`agent-pm-bot`) | `"$B" login github agent-pm-bot` ([Log in](#log-in)) | one installation token per App installation, valid for an hour, refreshed before it expires | `close` revokes each; one it could not revoke is retried ([Risks](#risks)) |
+
+The host needs no Node and no personal Codex: the clients run in the image. On
+subscriptions a container holds a model credential: Claude's setup-token, Codex's access
+token. An API key with a model relay on the host, which keeps the key there so that a
+container gets no model credential at all, is not supported.
 
 ## Build
 
