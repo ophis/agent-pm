@@ -327,7 +327,7 @@ func TestStartVolume(t *testing.T) {
 	if _, err := h.Start(context.Background(), validManifest(t)); protoErr(t, err).Code != protocol.StartFailed || hasCall(d, "volume rm") {
 		t.Fatalf("ps on an existing volume: %v %q", err, d.verbs())
 	}
-	h, d = startHost(&world{labels: goodLabels(), unreachable: true}, &fakeCreds{})
+	h, _ = startHost(&world{labels: goodLabels(), unreachable: true}, &fakeCreds{})
 	if _, err := h.Start(context.Background(), validManifest(t)); protoErr(t, err).Code != protocol.DockerUnreachable {
 		t.Fatal(err)
 	}
