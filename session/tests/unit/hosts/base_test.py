@@ -2,6 +2,7 @@
 parser.
 """
 
+import dataclasses
 import inspect
 import operator
 import signal
@@ -17,7 +18,7 @@ from agent_pm.session import (
     Process,
     SessionError,
 )
-from agent_pm.session.engine.types import Hosts, Launch, Liveness
+from agent_pm.session.engine.types import LOCAL_CONTEXT, ClientContext, Hosts, Launch, Liveness
 from agent_pm.session.hosts.base import Interactive, InteractiveProcess, Piped
 from agent_pm.session.hosts.types import CommandView, SessionView
 from agent_pm.utils import STOP_WAIT, Status, StatusState
@@ -78,6 +79,14 @@ class Abstract(Case):
 
 
 class HostDefaults(Case):
+    def test_a_host_hands_its_client_no_container(self):
+        self.assertEqual(
+            [f.name for f in dataclasses.fields(ClientContext)],
+            ["host_address", "permission", "container"],
+        )
+        self.assertIsNone(MinimalHost("m")._client_context().container)
+        self.assertIsNone(LOCAL_CONTEXT.container)
+
     def test_a_host_reclaims_nothing_and_a_process_neither_publishes_nor_has_a_token(self):
         self.assertIsNone(MinimalHost("m").reclaim("/tmp/apm-group-x"))
         process = mock.create_autospec(Process, instance=True)

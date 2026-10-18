@@ -28,6 +28,7 @@ from agent_pm.session.engine.types import (
     ClientContext,
     ClientHome,
     ConfigError,
+    Container,
     HookCallback,
     HookKind,
     Key,
@@ -683,10 +684,7 @@ class StartTest(Base):
         context = ClientContext(
             "host.docker.internal",
             Permission.YOLO,
-            bin_dir="/image/bin",
-            python="/image/python",
-            pythonpath="/image/modules",
-            state_root="/run/state",
+            Container("/image/bin", "/image/python", "/image/modules", "/run/state"),
         )
         projection = {"/run/state/store/record.json": '{"native_id":"kept"}'}
         seen = []

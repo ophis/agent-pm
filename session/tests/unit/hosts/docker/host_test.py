@@ -25,6 +25,7 @@ from agent_pm.session.engine.types import (
     ClientContext,
     ClientHome,
     ConfigError,
+    Container,
     IdleTimeout,
     KeyPress,
     Launch,
@@ -383,19 +384,25 @@ class ClientEnvTest(Base):
         self.assertIsNone(Host._resume_argv(self.host, "w"))
 
     def test_client_context_is_host_docker_internal_with_container_paths(self):
-        paths = {
-            "bin_dir": "/opt/agent-pm/bin",
-            "python": "/opt/agent-pm/venv/bin/python",
-            "pythonpath": "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            "state_root": "/run/agent-pm",
-        }
+        container = Container(
+            "/opt/agent-pm/bin",
+            "/opt/agent-pm/venv/bin/python",
+            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            "/run/agent-pm",
+        )
         for isolated, permission in ((True, Permission.YOLO), (False, Permission.AUTO)):
             with self.subTest(isolated=isolated):
                 host = DockerHost("docker", {"docker": DOCKER, "isolated": isolated})
                 self.assertEqual(
                     host._client_context(),
-                    ClientContext("host.docker.internal", permission, **paths),
+                    ClientContext("host.docker.internal", permission, container),
                 )
+
+    def test_the_pythonpath_starts_at_the_images_session_src(self):
+        # Clients find their packaged files (Container.source) there.
+        container = self.host._client_context().container
+        assert container is not None
+        self.assertEqual(container.source, "/opt/agent-pm/session/src")
 
     def test_client_env_points_at_the_home(self):
         self.assertEqual(

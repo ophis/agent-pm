@@ -42,7 +42,7 @@ class OpenCodeClient(Client):
         return self.common.parse_usage(output)
 
     def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
-        return self.common.session_status(info.cwd, info.sid, env)
+        return self.common.session_status(info.cwd, info.sid, env, transcript=info.transcript)
 
     def writable_dirs(self, spec: Spec):
         dirs = (spec.access.cwd, *spec.access.dirs)

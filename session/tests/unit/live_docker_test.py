@@ -89,6 +89,11 @@ class ReclaimedTest(Case):
         ]
         self.assertEqual(gate.reclaimed(lines, G1, "claude"), [])
 
+    def test_opencode_has_no_client_credential(self):
+        lines = [line("close", G1, token("revoked"))]
+        self.assertEqual(gate.reclaimed(lines, G1, "opencode"), [])
+        self.assertEqual(len(gate.reclaimed([line("close", G1)], G1, "opencode")), 1)
+
     def test_codex_withdrawal(self):
         lines = [line("close", G1, token("revoked"), withdrawn("codex-access-token"))]
         self.assertEqual(gate.reclaimed(lines, G1, "codex"), [])
@@ -186,6 +191,11 @@ class BaselineTest(Case):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("cwd", problems[0])
 
+    def test_no_extra_hosts(self):
+        for hosts in (None, []):
+            with self.subTest(hosts=hosts):
+                self.assertEqual(self.check(inspect(HostConfig__ExtraHosts=hosts)), [])
+
     def test_no_new_privileges_with_value(self):
         self.assertEqual(
             self.check(inspect(HostConfig__SecurityOpt=["no-new-privileges:true"])), []
@@ -200,6 +210,8 @@ class BaselineTest(Case):
             "user": inspect(Config__User="root"),
             "privileged": inspect(HostConfig__Privileged=True),
             "network": inspect(HostConfig__NetworkMode="host"),
+            "network not bridge": inspect(HostConfig__NetworkMode="none"),
+            "extra hosts": inspect(HostConfig__ExtraHosts=["host.docker.internal:host-gateway"]),
             "pid": inspect(HostConfig__PidMode="host"),
             "ipc": inspect(HostConfig__IpcMode="host"),
             "extra volume": inspect(
@@ -475,6 +487,10 @@ class ParseTest(Case):
             gate.Args("worker", "docker-live-codex", client="codex", cwd=CWD),
         )
         self.assertEqual(
+            gate.parse(["worker", "--client", "opencode", CWD]),
+            gate.Args("worker", "docker-live-opencode", client="opencode", cwd=CWD),
+        )
+        self.assertEqual(
             gate.parse(["worker", CWD, "--client", "claude", "w1"]),
             gate.Args("worker", "w1", client="claude", cwd=CWD),
         )
@@ -701,6 +717,57 @@ class RoleRunTest(Case):
         ):
             gate.RoleRun("role", "/bin/docker", broker=Broker(fails=99)).refresh("c", "m.json")
         self.assertEqual(str(raised.exception), "FAIL token refresh of c: not yet")
+
+
+LSOF = (
+    "COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+    "ollama  12345    u    3u  IPv4 0x1234      0t0  TCP {address}:11434 (LISTEN)\n"
+)
+
+
+class LoopbackOnlyTest(Case):
+    def test_only_127_0_0_1_passes(self):
+        self.assertEqual(gate.loopback_only(LSOF.format(address="127.0.0.1"), 11434), [])
+
+    def test_any_other_listener_fails(self):
+        for address in ("*", "0.0.0.0", "192.168.1.2", "[::1]"):
+            with self.subTest(address=address):
+                (problem,) = gate.loopback_only(LSOF.format(address=address), 11434)
+                self.assertIn(f"{address}:11434", problem)
+
+    def test_no_listener_fails(self):
+        (problem,) = gate.loopback_only("", 11434)
+        self.assertIn("no listener on TCP port 11434", problem)
+
+
+def hook(ts, session="ses_one", label="session.idle"):
+    return json.dumps({"ts": ts, "label": label, "payload": {"session_id": session}})
+
+
+class SessionIdsTest(Case):
+    def test_ids_after_the_launch_in_first_seen_order(self):
+        hooks = "\n".join(
+            (
+                hook("2026-10-18T12:00:00.000+00:00", "ses_old"),
+                hook("2026-10-18T12:01:00.000+00:00", "ses_new"),
+                json.dumps({"ts": "2026-10-18T12:01:01.000+00:00", "label": "x", "payload": {}}),
+                hook("2026-10-18T12:01:02.000+00:00", "ses_new"),
+                "not json",
+            )
+        )
+        self.assertEqual(gate.session_ids(hooks, "2026-10-18T12:00:30.000+00:00"), ["ses_new"])
+
+    def test_one_session(self):
+        self.assertEqual(gate.one_session(["ses_a"], None), ("ses_a", []))
+        self.assertEqual(gate.one_session(["ses_a"], "ses_a"), ("ses_a", []))
+        for ids, before, words in (
+            ([], None, "no OpenCode session id in the hook journal"),
+            (["ses_a", "ses_b"], None, "several OpenCode sessions"),
+            (["ses_b"], "ses_a", "OpenCode session ses_b, want ses_a"),
+        ):
+            with self.subTest(ids=ids, before=before):
+                (problem,) = gate.one_session(ids, before)[1]
+                self.assertIn(words, problem)
 
 
 if __name__ == "__main__":

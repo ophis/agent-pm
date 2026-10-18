@@ -11,12 +11,22 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 
-from agent_pm.session.clients.common import CHECKS, FLAGS, MODES, check_config, mode_flags, scan
-from agent_pm.session.clients.opencode import probe, transcript
-from agent_pm.session.clients.opencode.transcript import NATIVE
+from agent_pm.session.clients.common import (
+    CHECKS,
+    FLAGS,
+    MODES,
+    check_config,
+    mode_flags,
+    scan,
+)
+from agent_pm.session.clients.opencode import probe
+from agent_pm.session.clients.opencode.transcript import NATIVE, Refused, database
+from agent_pm.session.clients.opencode.transcript import updated as session_updated
 from agent_pm.session.engine.types import (
     ClientContext,
+    ClientHome,
     ConfigError,
+    Container,
     Effort,
     Launch,
     Permission,
@@ -37,6 +47,9 @@ from agent_pm.utils import (
 )
 
 TABLE = "[clients.opencode]"
+# A container Host's session state dir: OpenCode keeps opencode.db under $XDG_DATA_HOME/opencode.
+HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
 BINDING_MAX = 4096
@@ -173,6 +186,12 @@ def edit_rules(cwd: str, dirs: list[str], reads: list[str]) -> dict[str, str]:
     return rules
 
 
+def image_path(found: Container, local: str) -> str:
+    """`local`, a file of this package, at its path in the container's image."""
+    package = __name__.split(".")[:-1]
+    return os.path.join(found.source, *package, os.path.relpath(os.path.abspath(local), HERE))
+
+
 def refuse(flags: Iterable[str], banned: tuple[str, ...], where: str) -> None:
     for flag in scan(tuple(flags), {word: word for word in VALUED}):
         # yargs also takes an option's camelCase spelling.
@@ -220,8 +239,6 @@ class OpenCodeCommon:
         self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
     ) -> tuple[str, ...]:
         """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
-        if context.bin_dir is not None:
-            raise ConfigError("the opencode client runs on a local Host only")
         refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
         if not spec.resume:
             return ()
@@ -230,6 +247,21 @@ class OpenCodeCommon:
         if native is None:
             raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
         return self.selector(native, resume=True)
+
+    @staticmethod
+    def home() -> ClientHome:
+        return HOME
+
+    def executable_for(self, env: Mapping[str, str], cwd: str, context: ClientContext) -> str:
+        """A container's image opencode (the broker checks its version), else program's."""
+        if (found := context.container) is not None:
+            return os.path.join(found.bin_dir, "opencode")
+        return self.program(env, cwd)
+
+    @staticmethod
+    def transcript(env: Mapping[str, str], context: ClientContext) -> str:
+        """A container launch's opencode.db, which its Host checks before a resume; else ""."""
+        return database(env) if context.container is not None else ""
 
     def program(self, env: Mapping[str, str], cwd: str) -> str:
         """The executable, once its --version, run as the launch would run it, is OpenCode 1.x."""
@@ -345,22 +377,35 @@ class OpenCodeCommon:
     def unbind(self, cwd: str, sid: str) -> None:
         Bindings(self.store).unbind(cwd, sid)
 
-    def session_status(self, cwd: str, sid: str, env: Mapping[str, str]) -> SessionStatus:
-        """From the bound session's row in opencode.db, read as the run's opencode would find it."""
+    def session_status(
+        self, cwd: str, sid: str, env: Mapping[str, str], *, transcript: str = ""
+    ) -> SessionStatus:
+        """From the bound session's row in opencode.db: the run's `transcript`, else the db the
+        run's opencode would find.
+        """
         try:
             native = self.native(cwd, sid)
         except ConfigError:
             return SessionStatus(Resumable.UNKNOWN, None, "")
         if native is None:
             return SessionStatus(Resumable.NO, None, "")
-        db = transcript.database({**os.environ, **self.env, **env})
+        db = transcript or database({**os.environ, **self.env, **env})
         try:
-            updated = transcript.updated(db, native)
-        except transcript.Refused:
+            updated = session_updated(db, native)
+        except Refused:
             return SessionStatus(Resumable.UNKNOWN, None, "")
         if updated is None:
             return SessionStatus(Resumable.NO, None, "")
         return SessionStatus(Resumable.YES, updated, "")
+
+
+class Homed:
+    """The Docker home both OpenCode adapters name."""
+
+    common: OpenCodeCommon
+
+    def _home(self) -> ClientHome:
+        return self.common.home()
 
 
 class Bindings:

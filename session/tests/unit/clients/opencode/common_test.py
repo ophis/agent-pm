@@ -7,7 +7,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.session.clients.opencode import OpenCodeClient, probe
+from agent_pm.session.clients.opencode import OpenCodeClient, probe, transcript
 from agent_pm.session.clients.opencode import common as common_module
 from agent_pm.session.clients.opencode.common import (
     NATIVE,
@@ -18,18 +18,24 @@ from agent_pm.session.clients.opencode.common import (
 from agent_pm.session.engine.types import (
     LOCAL_CONTEXT,
     Access,
-    ClientContext,
+    ClientHome,
     ConfigError,
     Effort,
-    Permission,
     Resumable,
     SessionInfo,
     Spec,
     Usage,
 )
+from agent_pm.session.hosts.docker.host import DockerHost
+from agent_pm.session.modes.base import BaseMode
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, make_db, packaged_table
+from session.tests.unit.clients.opencode.support import (
+    DOCKER_CONTEXT,
+    SES,
+    make_db,
+    packaged_table,
+)
 
 
 def common(**config) -> OpenCodeCommon:
@@ -225,6 +231,17 @@ class SessionStatusTest(Case):
             f.write("not json")
         self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
 
+    def test_the_runs_transcript_is_its_db(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        docker = os.path.join(self.home, "docker", "opencode", "opencode.db")
+        make_db(docker, {SES: 1000})
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+        info = replace(self.info, transcript=docker)
+        self.assertEqual(self.client.session_status(info).resumable, Resumable.YES)
+        make_db(self.db, {SES: 1000})
+        os.unlink(docker)
+        self.assertEqual(self.client.session_status(info).resumable, Resumable.UNKNOWN)
+
     def test_the_db_follows_the_session_env_over_the_caller(self):
         self.client.common.bind(self.cwd, "run-1", SES)
         other = os.path.join(self.home, "other")
@@ -314,12 +331,41 @@ class SelectionTest(Case):
         resumed = self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
         self.assertEqual(resumed, ("--session", SES))
 
-    def test_an_unbound_resume_or_a_container_host_fails(self):
+    def test_an_unbound_resume_fails(self):
         with self.assertRaisesRegex(ConfigError, "no OpenCode session bound to run ID 'run-1'"):
             self.common.selection(replace(self.spec, resume=True), LOCAL_CONTEXT)
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
-        with self.assertRaisesRegex(ConfigError, "runs on a local Host only"):
-            self.common.selection(self.spec, context)
+
+    def test_a_container_context_selects_as_a_local_one(self):
+        self.assertEqual(self.common.selection(self.spec, DOCKER_CONTEXT), ())
+        self.common.bind(self.cwd, "run-1", SES)
+        resumed = self.common.selection(replace(self.spec, resume=True), DOCKER_CONTEXT)
+        self.assertEqual(resumed, ("--session", SES))
+
+    def test_the_home_is_xdg_data_home_with_no_credential(self):
+        self.assertEqual(
+            self.common.home(), ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+        )
+        host = DockerHost("docker", {"docker": "/usr/local/bin/docker", "isolated": True})
+        data = os.path.join(self.home, ".agent-pm", "docker-state", "w", "opencode")
+        self.assertEqual(
+            host._client_env("w", "opencode", self.common.home(), resume=False),
+            {"XDG_DATA_HOME": data},
+        )
+        self.assertEqual(
+            transcript.database({"XDG_DATA_HOME": data}),
+            os.path.join(data, "opencode", "opencode.db"),
+        )
+        spec, metadata = BaseMode._hosted(self.spec, self.common.home(), host, "w")
+        self.assertEqual(spec.env["XDG_DATA_HOME"], data)
+        self.assertEqual(
+            {k: metadata[k] for k in ("home_field", "home_dir", "credential", "resume")},
+            {
+                "home_field": "opencode_dir",
+                "home_dir": "opencode",
+                "credential": "none",
+                "resume": "0",
+            },
+        )
 
     def test_extra_flags_are_refused_with_the_reserved_ones(self):
         for flags in (("-c",), ("--prompt=x",), ("--pure",)):

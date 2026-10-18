@@ -15,6 +15,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ClientContext,
+    ClientHome,
     ConfigError,
     HookCall,
     HookKind,
@@ -26,7 +27,13 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, fake_run, packaged_table
+from session.tests.unit.clients.opencode.support import (
+    DOCKER_CONTEXT,
+    IMAGE_CLIENT,
+    SES,
+    fake_run,
+    packaged_table,
+)
 
 HOOK = ("/bin/agent-pm-session", "hook", "/home/x/.agent-pm/tui/w1")
 OTHER = "ses_otherOtherOtherOther0001"
@@ -114,10 +121,33 @@ class LaunchTest(Base):
         ):
             self.launch(self.spec())
 
-    def test_a_container_host_is_refused(self):
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
-        with self.assertRaisesRegex(ConfigError, "runs on a local Host only"):
-            self.launch(self.spec(), context=context)
+    def test_a_container_launch_runs_the_images_opencode_and_plugin(self):
+        client = OpenCodeClient({**packaged_table(), "executable": "/Users/x/oc1/bin/opencode"})
+        data = "/Users/x/.agent-pm/docker-state/w/opencode"
+        with mock.patch("subprocess.run", side_effect=fake_run) as run:
+            launch = self.launch(
+                self.spec(env={"XDG_DATA_HOME": data}), client, context=DOCKER_CONTEXT
+            )
+        self.assertEqual(launch.argv, ("/opt/agent-pm/bin/opencode", "--auto", "--prompt=Hi there"))
+        self.assertNotIn(["--version"], [call.args[0][1:] for call in run.call_args_list])
+        config = json.loads(launch.env["OPENCODE_CONFIG_CONTENT"])
+        self.assertEqual(config["plugin"], [f"file://{IMAGE_CLIENT}/plugin.js"])
+        self.assertEqual(
+            config["provider"]["ollama"]["options"]["baseURL"],
+            "http://host.docker.internal:11434/v1",
+        )
+        self.assertEqual(launch.transcript, f"{data}/opencode/opencode.db")
+        self.assertEqual(self.launch(self.spec()).transcript, "")
+
+    def test_both_modes_name_the_docker_home(self):
+        home = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none")
+        self.assertEqual(self.run_tui()._home(), home)
+        headless = self.client.headless()
+        assert headless is not None
+        self.assertEqual(headless._home(), home)
+        for adapter in (tui.OpenCodeTui, type(headless)):
+            with self.subTest(adapter=adapter.__name__):
+                self.assertNotIn("_home", vars(adapter))
 
 
 class RefusalTest(Base):

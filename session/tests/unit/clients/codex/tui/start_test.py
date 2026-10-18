@@ -13,7 +13,7 @@ from unittest import mock
 
 from agent_pm.session.clients.codex import tui
 from agent_pm.session.clients.codex.tui import start as tui_start
-from agent_pm.session.engine.types import ClientContext, Permission
+from agent_pm.session.engine.types import ClientContext, Container, Permission
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
@@ -145,10 +145,9 @@ class StartTest(Base):
         runtime = ClientContext(
             "host.docker.internal",
             Permission.AUTO,
-            bin_dir="/opt/agent-pm/bin",
-            python="/image/python",
-            pythonpath="/image/modules",
-            state_root=str(self.root / "volatile"),
+            Container(
+                "/opt/agent-pm/bin", "/image/python", "/image/modules", str(self.root / "volatile")
+            ),
         )
         run = self.client.tui()
         run._context = runtime

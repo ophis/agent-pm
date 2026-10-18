@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     ClientBound,
     ClientContext,
     ConfigError,
+    Container,
     HookCall,
     HookCallback,
     HookKind,
@@ -132,10 +133,12 @@ class TuiTest(Base):
         runtime = ClientContext(
             "host.docker.internal",
             Permission.AUTO,
-            bin_dir="/opt/agent-pm/bin",
-            python="/opt/agent-pm/venv/bin/python",
-            pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            state_root="/run/agent-pm",
+            Container(
+                "/opt/agent-pm/bin",
+                "/opt/agent-pm/venv/bin/python",
+                "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+                "/run/agent-pm",
+            ),
         )
         spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
         with (

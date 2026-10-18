@@ -8,7 +8,13 @@ import os
 import sys
 
 from agent_pm.session.clients.opencode import launcher
-from agent_pm.session.clients.opencode.common import NATIVE, UNSET, OpenCodeCommon
+from agent_pm.session.clients.opencode.common import (
+    NATIVE,
+    UNSET,
+    Homed,
+    OpenCodeCommon,
+    image_path,
+)
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
@@ -24,7 +30,7 @@ from agent_pm.session.modes.client_adapters.headless import Headless
 SESSION_TIMEOUT = 120  # seconds a run may take to print its first sessionID
 
 
-class OpenCodeHeadless(Headless):
+class OpenCodeHeadless(Homed, Headless):
     def __init__(self, common: OpenCodeCommon):
         self.common = common
         self.cwd, self.sid = "", ""
@@ -33,11 +39,12 @@ class OpenCodeHeadless(Headless):
     def launch(self, spec: Spec):
         context, common = self._context, self.common
         selection = common.selection(spec, context)
+        found = context.container
         cwd, sid = spec.access.cwd, spec.sid or ""
         model, variant = common.model(spec.tier), common.variant(spec.effort)
         env = common.environment(spec, context)
         command = (
-            common.program(env, cwd),
+            common.executable_for(env, cwd, context),
             "run",
             "--format",
             "json",
@@ -52,9 +59,9 @@ class OpenCodeHeadless(Headless):
         self.bound, self.failed, self.last = False, False, ""
         return Launch(
             (
-                os.path.realpath(sys.executable),
+                found.python if found else os.path.realpath(sys.executable),
                 "-I",
-                launcher.__file__,
+                image_path(found, launcher.__file__) if found else launcher.__file__,
                 "--timeout",
                 str(SESSION_TIMEOUT),
                 "--prompt",
@@ -65,6 +72,7 @@ class OpenCodeHeadless(Headless):
             env=env,
             unset=UNSET,
             cwd=cwd,
+            transcript=common.transcript(env, context),
             project=spec.access.project,
         )
 

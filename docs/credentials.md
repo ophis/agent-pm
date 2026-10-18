@@ -252,6 +252,7 @@ agent-pm 0.6.28.
   no config error. Deferred until there is a new Linear team (the user, 2026-10-18).
 - [x] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
   board run's PR, each exits 0.
+- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0.
 
 ## Risks
 

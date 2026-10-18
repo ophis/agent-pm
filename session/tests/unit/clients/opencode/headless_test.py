@@ -27,7 +27,13 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, fake_run, packaged_table
+from session.tests.unit.clients.opencode.support import (
+    DOCKER_CONTEXT,
+    IMAGE_CLIENT,
+    SES,
+    fake_run,
+    packaged_table,
+)
 
 MODEL = "ollama/qwen3.6:35b-mlx"
 
@@ -321,10 +327,28 @@ class LaunchTest(Base):
             ("/opt/oc1/bin/opencode", "run"),
         )
 
-    def test_container_host_refused(self):
-        context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")
-        with self.assertRaisesRegex(ConfigError, "runs on a local Host only"):
-            self.launch(self.spec(), context)
+    def test_a_container_launch_runs_the_images_launcher_and_opencode(self):
+        client = OpenCodeClient({**packaged_table(), "executable": "/Users/x/oc1/bin/opencode"})
+        data = "/Users/x/.agent-pm/docker-state/w/opencode"
+        with mock.patch("subprocess.run", side_effect=fake_run) as run:
+            launch = self.launch(
+                self.spec(tier=3, env={"XDG_DATA_HOME": data}), DOCKER_CONTEXT, client
+            )
+        self.assertEqual(
+            launch.argv[:3],
+            ("/opt/agent-pm/venv/bin/python", "-I", f"{IMAGE_CLIENT}/launcher.py"),
+        )
+        command = self.command(launch)
+        self.assertEqual(command[:4], ("/opt/agent-pm/bin/opencode", "run", "--format", "json"))
+        self.assertIn("--auto", command)
+        self.assertTrue(holds(command, ("--model", MODEL)))
+        self.assertNotIn(["--version"], [call.args[0][1:] for call in run.call_args_list])
+        provider = self.inline(launch)["provider"]["ollama"]
+        self.assertEqual(provider["options"]["baseURL"], "http://host.docker.internal:11434/v1")
+        self.assertEqual(launch.transcript, f"{data}/opencode/opencode.db")
+
+    def test_a_local_launch_names_no_transcript(self):
+        self.assertEqual(self.launch(self.spec()).transcript, "")
 
     def test_spec_selector_refused(self):
         for flags in (("--session", SES), ("--format", "default"), ("--dir", "/"), ("--auto",)):

@@ -15,6 +15,7 @@ from agent_pm.session.engine.types import (
     ClientBound,
     ClientContext,
     ConfigError,
+    Container,
     LimitHit,
     Permission,
     Reply,
@@ -203,10 +204,7 @@ class ContainerLaunch(Base):
         self.runtime = ClientContext(
             "host.docker.internal",
             Permission.AUTO,
-            bin_dir="/image/bin",
-            python="/image/python",
-            pythonpath="/image/source",
-            state_root="/run/agent-pm",
+            Container("/image/bin", "/image/python", "/image/source", "/run/agent-pm"),
         )
 
     def test_both_modes_request_the_same_history_only_client_home(self):

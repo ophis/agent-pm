@@ -13,7 +13,9 @@ from agent_pm.session.clients.opencode.common import (
     TUI_RESERVED,
     UNSET,
     Bindings,
+    Homed,
     OpenCodeCommon,
+    image_path,
     refuse,
 )
 from agent_pm.session.engine.types import (
@@ -45,7 +47,7 @@ def _paths(state) -> tuple[str, str] | None:
     return None
 
 
-class OpenCodeTui(Tui):
+class OpenCodeTui(Homed, Tui):
     hooks = MappingProxyType(
         {
             "session.idle": HookKind.TURN_END,
@@ -79,12 +81,14 @@ class OpenCodeTui(Tui):
         self.fresh = not spec.resume
         prompt = (f"--prompt={spec.prompt}",) if spec.prompt and not spec.resume else ()
         self.opening = (START, spec.prompt) if spec.prompt and spec.resume else None
-        env = common.environment(spec, context, plugin=Path(PLUGIN).resolve().as_uri())
+        found = context.container
+        plugin = Path(image_path(found, PLUGIN)) if found else Path(PLUGIN).resolve()
+        env = common.environment(spec, context, plugin=plugin.as_uri())
         env[HOOK_ENV] = json.dumps(list(hook))
         env[SESSION_ENV] = (common.native(self.cwd, self.sid) or "") if spec.resume else ""
         return Launch(
             (
-                common.program(env, spec.access.cwd),
+                common.executable_for(env, spec.access.cwd, context),
                 *selection,
                 *(("--model", model) if model is not None else ()),
                 *common.flags,
@@ -95,6 +99,7 @@ class OpenCodeTui(Tui):
             env=env,
             unset=(*UNSET, PURE),
             cwd=spec.access.cwd,
+            transcript=common.transcript(env, context),
             project=spec.access.project,
         )
 
