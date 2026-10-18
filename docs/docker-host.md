@@ -444,13 +444,14 @@ secrets in environments that need it.
 `session/tests/live_docker.py` checks the critical path on Docker Desktop, run by hand from
 the repo root with `PYTHONPATH` as in [Tests](tests.md). It needs the broker installed and
 logged in ([Install](#install), [Log in](#log-in)), for Codex also `install-codex` and
-`login codex` ([Codex operations](docker-codex.md#commands)), `[session.hosts] default =
+`login codex` ([Codex operations](docker-codex.md#commands)), for OpenCode the host's Ollama on `127.0.0.1` with the
+tier model pulled and `OLLAMA_CONTEXT_LENGTH` ≥ 65536, `[session.hosts] default =
 "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Run workers](#run-workers),
 [Role runs](#role-runs)), and an authorized test repo with `agent-pm-bot` installed.
 
 | Command | Checks |
 |---|---|
-| `python3 session/tests/live_docker.py worker --client claude\|codex CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports |
+| `python3 session/tests/live_docker.py worker --client claude\|codex\|opencode CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags (`--cap-drop ALL`, network `bridge`, no extra hosts) and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports; for OpenCode also: the first turn leaves `~/.agent-pm/docker-state/<NAME>/opencode/opencode/opencode.db`, Ollama listens on `127.0.0.1` only (`lsof`), the container holds only GitHub secrets, and each resume continues the same OpenCode session |
 | `python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]` | a headless engineer run on the test repo gets one forced token refresh, opens a draft PR as `agent-pm-bot[bot]` after it, and its close reclaims its credentials |
 | `python3 session/tests/live_docker.py pr URL` | the PR, such as an unattended board run's, was opened as a draft by `agent-pm-bot[bot]` |
 
