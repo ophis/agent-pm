@@ -105,6 +105,7 @@ from agent_pm.linear_orchestrator.engine.runs import (
     latest,
     note,
     parse_log,
+    started_task,
     trim,
 )
 from agent_pm.linear_orchestrator.engine.types import (
@@ -499,9 +500,11 @@ class Board:
             return
         spec, sid = run[1:]
         if spec.mode == "resume":
-            self.say("plan", spec.issue, mode="resume", sid=sid, live=live)
+            tier = self.cfg.task_tier(started_task(self.cfg.runs_log, spec.issue, sid))
+            self.say("plan", spec.issue, mode="resume", sid=sid, tier=tier, live=live)
             return
-        self.say("plan", spec.issue, mode="new", client=spec.client, live=live)
+        tier = self.cfg.task_tier(spec.task)
+        self.say("plan", spec.issue, mode="new", client=spec.client, tier=tier, live=live)
         self.say(
             "restart",
             spec.issue,
@@ -616,7 +619,13 @@ class Board:
         )
         client, source, client_error = self.select_client(labels, role)
         if self.dry:
-            self.say("preview", ident, client=client or "invalid", client_source=source)
+            self.say(
+                "preview",
+                ident,
+                client=client or "invalid",
+                client_source=source,
+                tier=self.cfg.task_tier(task),
+            )
         if comments := [error for error in (task_error, client_error) if error]:
             if client_error is None:
                 reason = "bad task label"
@@ -654,7 +663,8 @@ def begin(cfg, spec: Spec) -> Spec:
 
 def record(cfg, spec: Spec, *, role, now, target=None) -> str:
     """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
-    uuid, project, target, the role's key), which its write-back reads; returns its Delegate kind.
+    uuid, project, target, the role's key), which its write-back reads, and its task, which picks
+    a resume's tier; returns its Delegate kind.
     """
     if spec.mode == "new":
         kind, claim = (
@@ -664,6 +674,7 @@ def record(cfg, spec: Spec, *, role, now, target=None) -> str:
                 "project": spec.project,
                 "target": target,
                 "key": cfg.roles[role].key,
+                "task": spec.task,
             },
         )
     else:
@@ -800,6 +811,10 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 client=a.client,
                 resume=a.mode == "resume",
                 delegate_kind=kind,
+                # a resume's task is its start row's: the Delegate gets none, the tier stays
+                tier=cfg.task_tier(
+                    a.task if a.mode == "new" else started_task(cfg.runs_log, a.issue, a.sid)
+                ),
                 **(
                     {"mode": "tui", "display": attended.display, "events": attended.events}
                     if attended

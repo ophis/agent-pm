@@ -39,6 +39,7 @@ class Config:
     harness_key: str
     task_label_group: str
     task_labels: Mapping[str, str]
+    task_tiers: Mapping[str, int]
     agent_label_group: str
     agent_labels: Mapping[str, str]
     roles: Mapping[str, Role]
@@ -69,6 +70,10 @@ class Config:
 
     def issue_workdir(self, issue: str) -> str:
         return os.path.join(self.workdirs, issue)
+
+    def task_tier(self, task: str | None) -> int | None:
+        """The [task_tiers] tier of task, else None: the run keeps its Delegate tier."""
+        return None if task is None else self.task_tiers.get(task)
 
 
 class State(StrEnum):

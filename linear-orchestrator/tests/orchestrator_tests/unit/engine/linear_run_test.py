@@ -128,6 +128,26 @@ class Runs(RunCase):
         self.assertEqual(record.ctl, ("agent-pm-linear",))
         self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
 
+    def test_a_tier_overlays_its_role_after_core(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                owner = LinearRun(
+                    "TASK-1",
+                    "Echo input.",
+                    self.cfg.issue_workdir("TASK-1"),
+                    cfg=self.cfg,
+                    role="researcher",
+                    sid=SID,
+                    client="fake",
+                    resume=resume,
+                    tier=3,
+                    delegate_cls=CapturedDelegate,
+                )
+                self.assertEqual(
+                    owner.delegate.accepted[2]["overlays"],
+                    (self.cfg.core, {"roles": {"researcher": {"tier": 3}}}),
+                )
+
     def test_spec_passes_only_the_workdir(self):
         owner, _ = self.start(delegate_cls=CapturedDelegate)
         spec = owner.delegate.accepted[1]

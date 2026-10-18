@@ -1,6 +1,6 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `failed` rows (a new
-run that failed before its LinearRun) as Failures, `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim and its task (`started_task`), live limit rows
+(`limits`), `failed` rows (a new run that failed before its LinearRun) as Failures, `trim` to KEEP.
 """
 
 import json
@@ -134,6 +134,24 @@ def claim(path, issue, sid) -> Claim:
                 d["delegate_kind"],
             )
     raise ValueError(f"{issue}: no start row for session {sid}")
+
+
+def started_task(path, issue, sid) -> str | None:
+    """The (issue, sid) start row's task; None when it has none (no label, or a row written before
+    start rows recorded it) or there is no such row.
+    """
+    for line in _lines(path):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and (d.get("kind"), d.get("issue"), d.get("sid")) == (
+            "start",
+            issue,
+            sid,
+        ):
+            return d["task"] if _text(d.get("task")) else None
+    return None
 
 
 def _limit(line, now):
