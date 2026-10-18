@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from session.tests import live_docker as gate
+from session.tests.case import Case
 
 G1, G2 = "a" * 32, "b" * 32
 FAKE = "ghs_" + "x" * 36
@@ -73,13 +74,13 @@ def view(*, login="app/agent-pm-bot", draft=True, created="2026-10-18T12:10:00Z"
     return {"author": {"login": login}, "isDraft": draft, "createdAt": created, "number": 7}
 
 
-class AuditLinesTest(unittest.TestCase):
+class AuditLinesTest(Case):
     def test_skips_blank_and_malformed_lines(self):
         text = "\n".join([json.dumps(line("start")), "", "{oops", "[1]", json.dumps(line("close"))])
         self.assertEqual([x["event"] for x in gate.audit_lines(text)], ["start", "close"])
 
 
-class ReclaimedTest(unittest.TestCase):
+class ReclaimedTest(Case):
     def test_revoked_and_withdrawn(self):
         lines = [
             line("start", G1, token("issued")),
@@ -146,7 +147,7 @@ class ReclaimedTest(unittest.TestCase):
         self.assertEqual(gate.reclaimed(lines, G2, "claude"), [])
 
 
-class RemovedTokensTest(unittest.TestCase):
+class RemovedTokensTest(Case):
     def test_revoked_later(self):
         lines = [line("start", G1, token("issued")), line("close", G1, token("revoked"))]
         self.assertEqual(gate.removed_tokens(lines, G1), f"removed {G1}: github tokens revoked 1/1")
@@ -159,7 +160,7 @@ class RemovedTokensTest(unittest.TestCase):
         )
 
 
-class BaselineTest(unittest.TestCase):
+class BaselineTest(Case):
     def check(self, found, plan=(CLAUDE_DIR,)):
         return gate.baseline(found, "live", CWD, list(plan))
 
@@ -223,7 +224,7 @@ class BaselineTest(unittest.TestCase):
         self.assertIn("docker.sock", problems[0])
 
 
-class ZeroCountsTest(unittest.TestCase):
+class ZeroCountsTest(Case):
     def test_counts(self):
         self.assertTrue(gate.zero_counts("0\n0\n"))
         self.assertTrue(gate.zero_counts("      0\n\n0\n"))
@@ -231,7 +232,7 @@ class ZeroCountsTest(unittest.TestCase):
         self.assertFalse(gate.zero_counts(""))
 
 
-class TimingTest(unittest.TestCase):
+class TimingTest(Case):
     PHASES = {"checks": 0.1, "image": 0.5, "start": 4.0, "relay": 0.3, "tmux": 0.2, "client": 1.0}
     STDERR = (
         "docker timing live: preflight 2.40 s\n"
@@ -280,7 +281,7 @@ class TimingTest(unittest.TestCase):
         self.assertIn("client_update updated n/a", text)
 
 
-class RefreshedAtTest(unittest.TestCase):
+class RefreshedAtTest(Case):
     def test_first_renewal_of_that_container(self):
         lines = [
             line("refresh", G2, token("renewed"), time="2026-10-18T12:01:00Z"),
@@ -291,7 +292,7 @@ class RefreshedAtTest(unittest.TestCase):
         self.assertIsNone(gate.refreshed_at(lines, "agent-pm-live-" + "c" * 32))
 
 
-class NewGenerationTest(unittest.TestCase):
+class NewGenerationTest(Case):
     def test_one_new(self):
         self.assertEqual(gate.new_generation({G1}, {G1, G2}), G2)
 
@@ -302,7 +303,7 @@ class NewGenerationTest(unittest.TestCase):
             self.assertIn("restart: want one new generation", str(raised.exception))
 
 
-class InstallStepsTest(unittest.TestCase):
+class InstallStepsTest(Case):
     PHASES = {"checks": 0.1, "image": 0.5, "start": 4.0, "relay": 0.3, "tmux": 0.2, "client": 1.0}
     BROKER = "".join(
         f"agent-pm-broker: start {p} 0.10 s\n"
@@ -314,6 +315,7 @@ class InstallStepsTest(unittest.TestCase):
             "bootstrap",
             "clients",
             "credentials",
+            "github",
             "total",
         )
     )
@@ -338,7 +340,7 @@ class InstallStepsTest(unittest.TestCase):
         self.assertIn("install", problem)
 
 
-class OpenedDraftTest(unittest.TestCase):
+class OpenedDraftTest(Case):
     def test_rules(self):
         self.assertTrue(gate.opened_draft([], is_draft=True))
         self.assertTrue(
@@ -348,7 +350,7 @@ class OpenedDraftTest(unittest.TestCase):
         self.assertFalse(gate.opened_draft(["labeled"], is_draft=False))
 
 
-class BotPrTest(unittest.TestCase):
+class BotPrTest(Case):
     REFRESHED = "2026-10-18T12:05:00.123456789Z"
 
     def test_bot_draft_after_refresh(self):
@@ -375,7 +377,7 @@ class BotPrTest(unittest.TestCase):
         self.assertEqual(gate.bot_pr(view(), ["ready_for_review"], None, need_refresh=False), [])
 
 
-class PendingExceptTest(unittest.TestCase):
+class PendingExceptTest(Case):
     def test_rules(self):
         removed = f"agent-pm-live-{G1}"
         entry = {"container": removed, "account": "ophis", "expires_at": "2026-10-18T13:00:00Z"}
@@ -387,7 +389,7 @@ class PendingExceptTest(unittest.TestCase):
         self.assertEqual(len(gate.pending_except({"revocations": [entry]}, None)), 1)
 
 
-class UnreachableDocTest(unittest.TestCase):
+class UnreachableDocTest(Case):
     def test_gate_runs_the_documented_commands(self):
         with open(DOCS, encoding="utf-8") as f:
             text = f.read()
@@ -400,7 +402,7 @@ class UnreachableDocTest(unittest.TestCase):
         self.assertEqual(documented, gate.UNREACHABLE)
 
 
-class NoSecretTest(unittest.TestCase):
+class NoSecretTest(Case):
     def test_outputs_never_echo_values(self):
         secret = token("pending", reason="offline", note=FAKE, token=FAKE)
         lines = [line("close", G1, secret, withdrawn()), {**line("refresh", G1), "error": FAKE}]
@@ -415,7 +417,7 @@ class NoSecretTest(unittest.TestCase):
             self.assertNotIn(FAKE, text)
 
 
-class ParseTest(unittest.TestCase):
+class ParseTest(Case):
     def test_bad_forms(self):
         for argv in (
             [],

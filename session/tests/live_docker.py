@@ -52,7 +52,17 @@ CLIENT_KIND = {"claude": "claude-setup-token", "codex": "codex-access-token"}
 BOT = "app/agent-pm-bot"
 PHASES = ("checks", "image", "start", "relay", "tmux", "client")
 BROKER_PHASES = frozenset(
-    ("preflight", "image", "checks", "create", "bootstrap", "clients", "credentials", "total")
+    (
+        "preflight",
+        "image",
+        "checks",
+        "create",
+        "bootstrap",
+        "clients",
+        "credentials",
+        "github",
+        "total",
+    )
 )
 BROKER_LINE = re.compile(r"^agent-pm-broker: start (\S+) ([0-9.]+) s$", re.MULTILINE)
 # Resource → the command docs/credentials.md › What a container cannot reach runs as `sh -c`.
@@ -371,8 +381,9 @@ def docker_host() -> tuple[str, tuple[str, ...]]:
     return table["docker"], tuple(table.get("plugins", ()))
 
 
-def containers(docker: str) -> set[str]:
-    return set(call([docker, "ps", "--all", "--format", "{{.Names}}"])[0].split())
+def containers(docker: str, *, running: bool = False) -> set[str]:
+    listed = () if running else ("--all",)
+    return set(call([docker, "ps", *listed, "--format", "{{.Names}}"])[0].split())
 
 
 def broker_status() -> dict:
@@ -430,6 +441,7 @@ class Worker:
         self.events: tuple[str, ...] = ()
         self.cursor = ""
         self.open = False
+        self.listed = True  # in the manager's roster until the final close
 
     def container(self, start: Start) -> str:
         return f"agent-pm-{self.name}-{start.generation}"
@@ -440,18 +452,40 @@ class Worker:
         stderr = call(argv, 1920)[1]
         start = Start(step, new_generation(before, generations(self.name), step=step), stderr)
         self.starts.append(start)
-        if self.container(start) not in containers(self.docker):
+        if self.container(start) not in containers(self.docker, running=True):
             raise SystemExit(f"{step}: {self.container(start)} is not running")
         return start
 
+    def event(self, step: str, after: str) -> None:
+        try:
+            self.cursor = run(*self.events, "--after", after).split()[0]
+        except subprocess.TimeoutExpired:
+            raise SystemExit(f"FAIL {step}: no event in {WAIT} s") from None
+
     def answer(self, step: str) -> None:
         run("agent-pm-session", "send", self.name, PROMPT)
-        self.cursor = run(*self.events, "--after", self.cursor).split()[0]
+        self.event(step, self.cursor)
         print(f"PASS {step}: an event after a prompt", flush=True)
 
-    def close(self, start: Start) -> None:
-        run("agent-pm-crew", "close", "--manager", self.manager, self.name)
+    def shut(self, *, final: bool) -> None:
+        """Close the session; the final close also drops it from the manager's roster."""
+        if final:
+            run("agent-pm-crew", "close", "--manager", self.manager, self.name)
+            self.listed = False
+        else:
+            run("agent-pm-session", "close", self.name)
         self.open = False
+
+    def cleanup(self) -> None:
+        """After a failure: close what is left, keeping the failure the one reported."""
+        try:
+            if self.open or self.listed:
+                self.shut(final=self.listed)
+        except (SystemExit, subprocess.SubprocessError, OSError) as error:
+            print(f"cleanup: {error}", file=sys.stderr)
+
+    def close(self, start: Start, *, final: bool = False) -> None:
+        self.shut(final=final)
         if self.container(start) in containers(self.docker):
             raise SystemExit(f"close left {self.container(start)}")
         lines = audit_lines(read_text(AUDIT))
@@ -466,7 +500,8 @@ class Worker:
         mounts = [m["path"] for m in plan["mounts"]]
         passed(baseline(found, self.name, plan["workspace"]["path"], mounts), "security baseline")
         for resource, command in UNREACHABLE.items():
-            counts = call([self.docker, "exec", container, "sh", "-c", command])[0]
+            # grep -c exits 1 when it counts 0, the passing case
+            counts = call([self.docker, "exec", container, "sh", "-c", f"{command}; true"])[0]
             if not zero_counts(counts):
                 raise SystemExit(f"FAIL cannot reach {resource}: {' '.join(counts.split())}")
             print(f"PASS cannot reach {resource}: {' '.join(counts.split())}", flush=True)
@@ -504,7 +539,7 @@ def worker(args: Args) -> int:
             "start",
             [*crew, "--client", w.client, "--cwd", w.cwd, "--display", "none", "--prompt", PROMPT],
         )
-        w.cursor = run(*w.events, "--after", after.group(1)).split()[0]
+        w.event("start", after.group(1))
         print("PASS start: the default Host put the worker in a container; first event", flush=True)
         w.isolation(first)
         run("agent-pm-session", "send", w.name, "Count from 1 to 200, one number per line.")
@@ -514,7 +549,7 @@ def worker(args: Args) -> int:
         run("agent-pm-session", "read", w.name)
         if not supervisor_running(w.name):
             raise SystemExit("read did not restart the supervisor")
-        w.cursor = run(*w.events, "--after", w.cursor).split()[0]
+        w.event("supervisor restart", w.cursor)
         if extra := quiet(w.events, w.cursor):
             raise SystemExit(f"a second event after the restart: {extra!r:.200}")
         print("PASS a supervisor restart delivers the event exactly once", flush=True)
@@ -528,11 +563,10 @@ def worker(args: Args) -> int:
         call([docker, "rm", "--force", removed])
         w.launch("resume after docker rm -f", [session, "resume", w.name])
         w.answer("resume after docker rm -f")
-    finally:
-        if w.open and w.starts:
-            w.close(w.starts[-1])
-        elif w.open:
-            run("agent-pm-crew", "close", "--manager", manager, w.name)
+    except BaseException:
+        w.cleanup()
+        raise
+    w.close(w.starts[-1], final=True)
     passed(pending_except(broker_status(), removed), "no pending revocation but the removed one")
     lines = audit_lines(read_text(AUDIT))
     if removed:
@@ -582,7 +616,15 @@ def role(args: Args) -> int:
     before = sessions() if os.path.isdir(root) else set()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     text = ROLE_INPUT.format(repo=args.repo, stamp=stamp)
-    argv = [os.path.join(BIN, "agent-pm-delegate"), "run", "--role", "engineer"]
+    workdir = os.path.expanduser(f"~/.agent-pm/work/{args.name}-{stamp}")
+    argv = [
+        os.path.join(BIN, "agent-pm-delegate"),
+        "run",
+        "--role",
+        "engineer",
+        "--workdir",
+        workdir,
+    ]
     with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
         proc = subprocess.Popen(
             [*argv, "--name", args.name, "--input", text],
@@ -603,6 +645,10 @@ def role(args: Args) -> int:
             ((session, generation),) = new
             container = f"agent-pm-{session}-{generation}"
             manifest = os.path.join(state_dir(session), f"{generation}.json")
+            while container not in containers(docker, running=True):
+                if proc.poll() is not None:
+                    raise SystemExit(f"the run exited {proc.returncode} before {container} ran")
+                time.sleep(POLL)
             deadline = time.monotonic() + REFRESH_WAIT
             while True:
                 try:
@@ -623,7 +669,7 @@ def role(args: Args) -> int:
                 proc.wait()
         err.seek(0)
         stderr = err.read()
-    outcome = json.loads(run("agent-pm-delegate", "outcome", args.name))
+    outcome = json.loads(run("agent-pm-delegate", "outcome", workdir))
     url = (outcome or {}).get("url", "")
     if not PR_URL.fullmatch(url):
         raise SystemExit(f"FAIL the run's outcome names no PR: {(outcome or {}).get('status')}")
