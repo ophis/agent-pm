@@ -226,38 +226,42 @@ func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Wri
 	if err := secureItem(tokenService, tokenAccount, "rerun agent-pm-broker login claude to finish", k, password); err != nil {
 		return err
 	}
-	failed := func(err error) error {
-		return fmt.Errorf("keychain item %s: reading it failed: %w; rerun agent-pm-broker login claude", tokenService, err)
-	}
 	err = readsBack(token, k.Get)
 	if errors.Is(err, ErrNeedsDialog) {
-		if _, err := fmt.Fprintln(notice, "macOS will ask to let agent-pm-broker use "+tokenService+": enter the login keychain password if asked and click Always Allow"); err != nil {
-			return err
-		}
-		if err := readsBack(token, k.GetWithDialog); err != nil {
-			return failed(err)
-		}
-		err = readsBack(token, k.Get)
-		if errors.Is(err, ErrNeedsDialog) {
-			return fmt.Errorf("keychain item %s still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude", tokenService)
-		}
+		err = approveByDialog(token, k, notice)
 	}
 	if err != nil {
-		return failed(err)
+		return err
 	}
 	_, err = fmt.Fprintln(out, "Claude setup-token saved; keychain trusts only the broker")
 	return err
 }
 
-// readsBack is nil when get returns token; it erases what get returned.
+// approveByDialog moves the one read dialog into login claude: it announces it on notice, reads with it, then
+// proves with a no-dialog read that Always Allow, not Allow, was clicked.
+func approveByDialog(token []byte, k Keychain, notice io.Writer) error {
+	if _, err := fmt.Fprintln(notice, "macOS will ask to let agent-pm-broker use "+tokenService+": enter the login keychain password if asked and click Always Allow"); err != nil {
+		return err
+	}
+	if err := readsBack(token, k.GetWithDialog); err != nil {
+		return err
+	}
+	err := readsBack(token, k.Get)
+	if errors.Is(err, ErrNeedsDialog) {
+		return fmt.Errorf("keychain item %s still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude", tokenService)
+	}
+	return err
+}
+
+// readsBack is nil when get returns token, else why not, wrapping get's error; it erases what get returned.
 func readsBack(token []byte, get func() ([]byte, error)) error {
 	saved, err := get()
 	defer erase(saved)
-	switch {
-	case err != nil:
-		return err
-	case !bytes.Equal(saved, token):
-		return errors.New("it holds other bytes")
+	if err == nil && !bytes.Equal(saved, token) {
+		err = errors.New("it holds other bytes")
+	}
+	if err != nil {
+		return fmt.Errorf("keychain item %s: reading it failed: %w; rerun agent-pm-broker login claude", tokenService, err)
 	}
 	return nil
 }
