@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from typing import NamedTuple
 
@@ -39,8 +40,8 @@ from agent_pm.session.engine.types import (
     MARKS,
     RESUME,
     SESSION_NAME,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     Key,
@@ -114,6 +115,8 @@ RECORD = "host.json"
 PIPE_LOCK = "pipe.lock"  # held by a headless run's harness while its client runs
 PIPED = "pipe"
 READY_WAIT = 10
+IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
+STATE_ROOT = "/run/agent-pm"  # the client context's state_root
 LOCK_WAIT = 30
 KILL_WAIT = 5
 POLL = 0.2
@@ -775,12 +778,14 @@ class DockerHost(Host):
                 os.close(lock)
         return True
 
-    def _client_runtime(self) -> ClientRuntime:
-        return ClientRuntime(
-            "/opt/agent-pm/bin",
-            "/opt/agent-pm/venv/bin/python",
-            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            "/run/agent-pm",
+    def _client_context(self) -> ClientContext:
+        return replace(
+            super()._client_context(),
+            host_address="host.docker.internal",
+            bin_dir="/opt/agent-pm/bin",
+            python=IMAGE_PYTHON,
+            pythonpath="/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            state_root=STATE_ROOT,
         )
 
     def _client_env(
@@ -922,7 +927,6 @@ class DockerHost(Host):
             supervisor = self._spawn_supervisor(
                 name, container, generation=generation, events=events, hook=hook, lock=lock
             )
-            runtime = self._client_runtime()
             process = tmux.launch(
                 name,
                 [
@@ -933,8 +937,8 @@ class DockerHost(Host):
                 ],
                 cwd=cwd,
                 env=self._exec_env(launch, created.started),
-                python=runtime.python,
-                handover_dir=runtime.state_root,
+                python=IMAGE_PYTHON,
+                handover_dir=STATE_ROOT,
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
             )

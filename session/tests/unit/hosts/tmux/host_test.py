@@ -16,7 +16,14 @@ from agent_pm.session.engine import tmux_cli
 from agent_pm.session.engine.tmux_cli import (
     TmuxCli,
 )
-from agent_pm.session.engine.types import Key, KeyPress, PaneStatus, Paste
+from agent_pm.session.engine.types import (
+    ClientContext,
+    Key,
+    KeyPress,
+    PaneStatus,
+    Paste,
+    Permission,
+)
 from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
@@ -45,6 +52,15 @@ class ClassTest(Case):
         self.assertEqual(
             (f"{host.tmux.runner.__module__}.{host.tmux.runner.__name__}", host.tmux.sleep),
             ("subprocess.run", time.sleep),
+        )
+
+    def test_client_context_is_the_loopback_and_the_isolated_permission_mode(self):
+        self.assertEqual(
+            TmuxHost("tmux", {})._client_context(), ClientContext("127.0.0.1", Permission.AUTO)
+        )
+        self.assertEqual(
+            TmuxHost("tmux", {"isolated": True})._client_context(),
+            ClientContext("127.0.0.1", Permission.YOLO),
         )
 
 

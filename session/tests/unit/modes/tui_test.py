@@ -25,8 +25,8 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     ConfigError,
     HookCallback,
     HookKind,
@@ -679,8 +679,15 @@ class StartTest(Base):
                 self.assertNotIn("approval", metadata)
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
 
-    def test_host_runtime_reaches_adapter_and_projection_reaches_terminal(self):
-        runtime = ClientRuntime("/image/bin", "/image/python", "/image/modules", "/run/state")
+    def test_host_context_reaches_adapter_and_projection_reaches_terminal(self):
+        context = ClientContext(
+            "host.docker.internal",
+            Permission.YOLO,
+            bin_dir="/image/bin",
+            python="/image/python",
+            pythonpath="/image/modules",
+            state_root="/run/state",
+        )
         projection = {"/run/state/store/record.json": '{"native_id":"kept"}'}
         seen = []
 
@@ -691,16 +698,17 @@ class StartTest(Base):
                 )
 
             def launch(self, spec, hook):
-                seen.append(self._runtime)
+                seen.append(self._context)
                 self._runtime_files = projection
                 return super().launch(spec, hook)
 
         with (
-            mock.patch.object(self.host, "_client_runtime", return_value=runtime),
+            mock.patch.object(self.host, "_client_context", return_value=context),
             mock.patch.object(self.host, "_client_env", return_value={"FAKE_HOME": "/volatile"}),
         ):
             self.start(run=Projected(self.client))
-        self.assertEqual(seen, [runtime])
+        self.assertEqual(len(seen), 1)
+        self.assertIs(seen[0], context)
         metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
         self.assertEqual(json.loads(metadata["runtime_files"]), projection)
         self.assertEqual(json.loads(metadata["home_persistent"]), ["sessions"])
@@ -710,7 +718,7 @@ class StartTest(Base):
 
         class Seen(ScanTui):
             def launch(self, spec, hook):
-                seen.append(self._permission)
+                seen.append(self._context.permission)
                 return super().launch(spec, hook)
 
         self.start(run=Seen(self.client))

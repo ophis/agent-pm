@@ -13,6 +13,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
+from typing import NamedTuple
 
 import agent_pm.utils
 from agent_pm.session.clients.codex.common import (
@@ -30,6 +31,7 @@ from agent_pm.session.clients.codex.common.types import Snapshot
 from agent_pm.session.clients.common import scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
+    ClientContext,
     ClientHome,
     ConfigError,
     HookCall,
@@ -94,6 +96,22 @@ class LaunchPlan:
     permission: tuple[str, ...]  # its permission mode's flags
 
 
+class _Container(NamedTuple):
+    bin_dir: str
+    python: str
+    pythonpath: str
+    state_root: str
+
+
+def _container(context: ClientContext) -> _Container | None:
+    """A container context's paths (it has a bin_dir), else None."""
+    if context.bin_dir is None:
+        return None
+    if context.python is None or context.pythonpath is None or context.state_root is None:
+        raise ConfigError("client context: bin_dir without python, pythonpath or state_root")
+    return _Container(context.bin_dir, context.python, context.pythonpath, context.state_root)
+
+
 def _hook_identity(value) -> tuple[str, str] | None:
     identifier, path = value.get("session_id"), value.get("cwd")
     if (
@@ -151,7 +169,7 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         store = self.store = common.store.root
-        runtime = self._runtime
+        runtime = _container(self._context)
         if runtime:
             env = {
                 key: value
@@ -176,7 +194,7 @@ class CodexTui(Tui):
             self.state.workdir,
             self.state.sid,
             os.path.join(runtime.state_root, "codex-store") if runtime else store,
-            common.modes[self._permission],
+            common.modes[self._context.permission],
         )
         self._runtime_files = SessionStore.project(self.state, plan.store) if runtime else {}
         pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))

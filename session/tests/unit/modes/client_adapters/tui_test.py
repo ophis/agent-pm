@@ -6,9 +6,11 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ClientContext,
     HookKind,
     Key,
     Paste,
+    Permission,
     TurnEnd,
 )
 from agent_pm.session.modes.client_adapters import tui
@@ -31,6 +33,7 @@ class TuiTest(Case):
     def test_defaults(self):
         run = StubTui()
         self.assertEqual(Tui.hooks, {})
+        self.assertEqual(run._context, ClientContext("127.0.0.1", Permission.AUTO))
         self.assertEqual(
             (run.pending(self.end), run.activity({"doing": "x"}), run.blocked_reason({"why": "y"})),
             (0, "", ""),

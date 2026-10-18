@@ -8,7 +8,7 @@ from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
+from agent_pm.session.engine.types import ClientContext, Effort, NamedKey, SessionRow, Tier
 from agent_pm.session.viewer.types import Split
 from agent_pm.utils import LayerCommand, OutcomeStatus
 
@@ -64,3 +64,5 @@ _ = Session.retire
 # Only tests read it, but the session interface is frozen (tests/guard_checks/exports.py
 # session_interface_snapshot; TASK-396).
 _ = SessionRow.last_lines
+# TASK-695's opencode client builds its Ollama URL from ClientContext.host_address.
+_ = ClientContext.host_address
