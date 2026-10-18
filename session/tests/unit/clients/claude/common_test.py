@@ -156,6 +156,8 @@ class HomeFilesTest(Base):
         "skipWorkflowUsageWarning": True,
         "autoCompactEnabled": True,
         "autoContinueAtUsageLimit": True,
+        "promptSuggestionEnabled": False,
+        "tui": "fullscreen",
     }
     SEARCHES = {"CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "50"}
 

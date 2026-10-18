@@ -196,6 +196,7 @@ versions. Codex starts add the [version audit](docker-broker-protocol.md#success
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
+| `cat ~/.agent-pm/docker-state/worker_1/claude/settings.json` | `skipWorkflowUsageWarning`, `autoCompactEnabled`, `autoContinueAtUsageLimit` `true`, `promptSuggestionEnabled: false`, `tui: "fullscreen"` |
 | `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
@@ -390,6 +391,8 @@ Each new start writes the fresh Claude config dir a `settings.json` holding:
 - `skipWorkflowUsageWarning`, `autoCompactEnabled` and `autoContinueAtUsageLimit`, all
   `true` whatever the host sets, so an unattended run never stops at the Workflow usage
   warning, a full context or a usage limit;
+- `promptSuggestionEnabled` `false` and `tui` `"fullscreen"`, whatever the host sets, so
+  Claude suggests no prompts and renders fullscreen, with no flicker in tmux;
 - `model`, `effortLevel`, `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`
   from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`, else
   `~/.claude/settings.json`), so the worker runs the host's default model and effort.
