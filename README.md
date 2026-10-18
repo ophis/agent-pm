@@ -19,6 +19,22 @@ flowchart LR
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
 
+## Five levels of mastering AI agents
+
+Working with coding agents is a ladder: each level adds an engineering discipline on top of the ones below, and the skill is matching the level to the problem.
+
+![Five levels of mastering AI agents: Drive, Equip, Systematize, Orchestrate, Master, with agent-pm between 4 and 5](docs/images/levels.svg)
+
+| Level | Discipline | What it means |
+|---|---|---|
+| 1. Drive | prompt and context engineering | Conversational prompting, context management, knowing which model fits which job. |
+| 2. Equip | tools, skills, MCP | Give the agent tools to reach and act on the world (files, APIs, a browser, MCP servers), within permissions and a sandbox. |
+| 3. Systematize | state engineering | One workflow run as a state machine: defined stages, retries, idempotent steps, handoffs. |
+| 4. Orchestrate | loop engineering | Many agents: fan-out, planner and verifier, routing, concurrency and quota limits. |
+| 5. Master | environment engineering | Guardrails and an agent-oriented environment: tools, checks and verification built for agents, not humans, so the easiest path is the right path (an idea from Lauren Tan). |
+
+Not at level 3 yet? Check out [autopilot](https://github.com/ophis/claude-autopilot): it gets you there, at least. agent-pm's layers ([Layered architecture](#layered-architecture)) climb further: Session runs the agent's conversation and gives it a host to act in (levels 1–2), Delegate runs one role on one task as a checked workflow (3), and the Linear orchestrator, with the manager on top, coordinates many agents (between 4 and 5). Put you on top, setting the environment, boundaries and gates, and that is Master, though agent-pm's verification is still a bit thin. The goal is level 5 and beyond.
+
 ## Layered architecture
 
 agent-pm is built in layers: each does one job and calls only the one below. Take the bottom two, Session and Delegate, on their own as general building blocks, or swap the top: your own workflow can replace the Linear orchestrator. To extend it, plug a new agent client in at Session, or add roles and tasks at Delegate.
@@ -40,21 +56,13 @@ The Linear orchestrator is my philosophy of how agents should work (research, th
 
 One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
 
-## Five levels of mastering AI agents
+## System structure
 
-Working with coding agents is a ladder: each level adds an engineering discipline on top of the ones below, and the skill is matching the level to the problem.
+Each session runs on a Host you pick: a local one (tmux or a pty), where the client runs on your Mac as you, or the Docker Host, where it runs isolated in its own container. The broker, on the Mac, keeps the logins in the login keychain and hands each container only its own credentials (GitHub tokens that last an hour), taking them back when the container closes.
 
-![Five levels of mastering AI agents: Drive, Equip, Systematize, Orchestrate, Master, with agent-pm between 4 and 5](docs/images/levels.svg)
+![Flexible hosts: each session runs on a Host you pick, locally (tmux or a pty, not isolated) or in its own Docker container (isolated, so the client runs in yolo mode by default). The broker keeps the logins and gives each container only its own credentials: GitHub tokens valid an hour and revoked at close, a Codex access token without its refresh token, a Claude setup-token copy. The container cannot reach the host keychain, Linear keys, gh login or Docker socket, but reaches the host's 127.0.0.1 services (an accepted risk); its work leaves only through GitHub](docs/images/system.svg)
 
-| Level | Discipline | What it means |
-|---|---|---|
-| 1. Drive | prompt and context engineering | Conversational prompting, context management, knowing which model fits which job. |
-| 2. Equip | tools, skills, MCP | Give the agent tools to reach and act on the world (files, APIs, a browser, MCP servers), within permissions and a sandbox. |
-| 3. Systematize | state engineering | One workflow run as a state machine: defined stages, retries, idempotent steps, handoffs. |
-| 4. Orchestrate | loop engineering | Many agents: fan-out, planner and verifier, routing, concurrency and quota limits. |
-| 5. Master | environment engineering | Guardrails and an agent-oriented environment: tools, checks and verification built for agents, not humans, so the easiest path is the right path (an idea from Lauren Tan). |
-
-Not at level 3 yet? Check out [autopilot](https://github.com/ophis/claude-autopilot): it gets you there, at least. agent-pm's layers (the table at the top) climb further: Session runs the agent's conversation and gives it a host to act in (levels 1–2), Delegate runs one role on one task as a checked workflow (3), and the Linear orchestrator, with the manager on top, coordinates many agents (between 4 and 5). Put you on top, setting the environment, boundaries and gates, and that is Master, though agent-pm's verification is still a bit thin. The goal is level 5 and beyond.
+Details: [Docker host](docs/docker-host.md), [Credentials](docs/credentials.md).
 
 ## Demo: one manager, many workers
 
