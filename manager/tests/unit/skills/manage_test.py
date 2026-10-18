@@ -140,6 +140,18 @@ class Manage(Case):
         wait = "once Release `v<version>` has its broker asset and provenance (`AGENTS.md` › Releasing)"
         self.assertLess(update.index(wait), update.index("update the installed plugin"))
 
+    def test_docker_host_workers_start_no_sessions_or_containers(self):
+        [docker] = re.findall(r"^On the Docker Host .*$", body("manage"), re.M)
+        for phrase in (
+            "Crew starts each worker's and role run's container through the broker",
+            "can start no session and no container",
+            "no Docker socket and no broker",
+            "the same launch commands and client flags as on this machine",
+            "permission mode comes from its Host (`docs/sessions.md` › Client policy)",
+        ):
+            self.assertIn(phrase, docker)
+        self.assertIn("so a worker or role run starts no sessions of its own", body("manage"))
+
     def test_releasing_waits_for_asset_and_provenance_before_plugin_update(self):
         with open(os.path.join(REPO, "AGENTS.md"), encoding="utf-8") as f:
             releasing = re.search(r"(?ms)^## Releasing\n(.*?)(?=^## |\Z)", f.read())[1]
