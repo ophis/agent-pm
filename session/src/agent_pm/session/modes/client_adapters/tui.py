@@ -22,14 +22,12 @@ from agent_pm.session.engine.types import (
 
 
 class Tui(ABC):
+    _runtime: ClientRuntime | None = None
     _runtime_files: Mapping[str, str] = MappingProxyType({})
     hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
     dialogs: tuple[str, ...] = ()
     opening: tuple[str, str] | None = None  # (hook label, text)
     client = ""  # last ClientBound's id
-
-    def _set_runtime(self, runtime: ClientRuntime | None) -> None:
-        self._runtime = runtime
 
     @abstractmethod
     def launch(self, spec: Spec, hook: tuple[str, ...]) -> Launch:
