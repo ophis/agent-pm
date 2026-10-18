@@ -227,6 +227,16 @@ class TuiPolicy(Base):
         with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
+    def test_a_named_headless_session_reaches_the_driver_with_its_name(self):
+        for name in (None, "dummy-tester-0f8fad5b"):
+            with self.subTest(name=name):
+                self.fresh()
+                self.faked(turn(START, block(DONE)), Exited(0), mode="headless", session_name=name)
+                session = self.started.call_args.args[0].session
+                self.assertEqual(
+                    (session.mode, session.name, session.events), ("headless", name, None)
+                )
+
     def test_a_tui_handle_without_a_name_reports_a_driver_error(self):
         os.makedirs(self.work)
         handle = FakeHandle([])

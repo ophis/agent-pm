@@ -67,10 +67,12 @@ class Headless:
     def __init__(self, note: Callable[..., None], driver: Driver):
         self.note, self.driver = note, driver
 
-    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
+    def start(self, p: Plan) -> Session:
+        return self._start(p, p.session)
+
+    def _start(self, p: Plan, session) -> Session:
         handle = self.driver.start(
-            replace(p.driver_spec, session=replace(p.session, name=name, events=events)),
-            idle_timeout=p.run.idle_timeout,
+            replace(p.driver_spec, session=session), idle_timeout=p.run.idle_timeout
         )
         if isinstance(handle, Instruction):
             raise ConfigError("session driver returned an Instruction")
@@ -107,7 +109,7 @@ class Tui(Headless):
         self.nudged, self.count = False, 0
 
     def start(self, p: Plan) -> Session:
-        handle = super().start(p, p.spec.name, p.spec.events)
+        handle = self._start(p, replace(p.session, name=p.spec.name, events=p.spec.events))
         name = handle.name
         if name is None:
             raise SessionError("tui session has no name")
