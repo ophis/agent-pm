@@ -326,6 +326,12 @@ Exact task handoffs stay outside this user document.
 | [Second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json), 04:22–04:24 UTC | External-access injection excludes original ID/refresh values. Second genuine rotation retains account and advances expiry. Unchanged and replaced carriers each produce new-process replies | Helper exits0/1/0/1/0/0/1; each resume remains incomplete solely on the known notice. Native host interval 1.222276 s includes process/RPC overhead; no running-process reload inferred |
 | [Live reload and inventory](docker-codex-evidence/2026-10-18-a-live-reload.json), 04:46 UTC | Both helpers exit0. Four cache/connection checks true; both injections exclude original refresh value. Third rotation retains account; native cleanup exits0 with error null. Pipeline 1.467578 s gives observed lead 2 s | Proves the same native app-server cache reload with a managed empty-refresh carrier. Ordinary terminal/headless acceptance is moved; no expiry crossing or latency guarantee inferred |
 
+The dedicated synthetic workflow and its mount/image-only files were retired after
+these observations. The [mount evidence](docker-codex-evidence/2026-10-17-mount-ci.json)
+retains its historical command and result, not a current reproduction command.
+Product-image checks remain in [Worker image CI](../.github/workflows/worker-image.yml),
+which invokes [worker_codex.py](../.github/worker_codex.py).
+
 The inventory's `live_refresh_count=0` is a source-only constant. The observed live
 rotation count is now **3**. An unchanged old carrier remaining usable after rotation
 records acceptance; it does not prove invalidation or recovery from rejection.
