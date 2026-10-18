@@ -67,7 +67,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 | Field | Value | Source |
 |---|---|---|
 | Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1171`, `…/engine/promote.py:366`, `…/engine/prune.py:467`, `…/engine/writeback.py:451` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`); not live-tested | `…/engine/promote.py:90`, `…/engine/prune.py:76`, `…/engine/ops.py:20`; [Linear API keys] |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/promote.py:90`, `…/engine/prune.py:76`, `…/engine/ops.py:20`, `…/engine/run_comments.py:114`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `harness_key` | `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml:17` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
@@ -83,7 +83,7 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 | Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:101`, `…/engine/ops.py:27`, `…/engine/ops.py:30`, `…/engine/router.py:603` |
 | Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/engine/writeback.py:76`, `…/engine/writeback.py:78`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:75`, `…/engine/router.py:666` |
-| Readers | as the harness key | |
+| Readers | as the harness key | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |
 
@@ -94,7 +94,7 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 | Purpose | the user's own Claude Code | worker and role-run Claude Code in a container | [Who logs in](#who-logs-in) |
 | Minimum permission | the user's subscription login | a setup-token: subscription, model requests only | [Claude auth] |
 | Stored at | macOS Keychain (fallback `~/.claude/.credentials.json`) | `agent-pm-claude` / `setup-token`; one copy per running container | `broker/internal/broker/keychain.go:28`, `broker/internal/broker/keychain.go:423` |
-| Readers | Claude Code and any process running as the user that the Keychain lets read it | the item: the broker; the copies: **three-way readers** | intro |
+| Readers | Claude Code and any process running as the user that the Keychain lets read it | the item: the broker; the copies: **three-way readers** | [Claude auth]; intro |
 | Lifetime | refreshed by Claude Code; `/login` renews | one year | [Claude auth] |
 | Revoke | `/logout` | Unknown: no official route. `claude.ai/settings/claude-code`, cited by the community, is unverified. On a leak: run `claude setup-token` again and rerun `<B> login claude` | [Claude auth] |
 
@@ -139,15 +139,23 @@ The broker's services are `KeychainServices` (`broker/internal/broker/keychain.g
 
 Each broker item is read twice: from a `/agent-pm:manage` session's shell tool (manager) and from Terminal (shell);
 both read through `security`, which is how a process reads a generic password, so they cover the manager, a shell and
-`security`. The command never prints the value; `perl … alarm 10` stands for `timeout 10`, which macOS lacks:
+`security`. First check the item exists (attributes only, no value), then read it; neither prints the value, and
+`perl … alarm 10` stands for `timeout 10`, which macOS lacks:
 
 ```sh
+security find-generic-password -s <service> >/dev/null 2>&1; echo "exists=$?"
 bash -c 'perl -e "alarm 10; exec @ARGV" security find-generic-password -s <service> -w 2>/dev/null | wc -c; echo "exit=${PIPESTATUS[0]}"'
 ```
 
-Pass: `exit=` non-zero (142 when the alarm stops it) and a byte count of `0`. Click Deny on any dialog, never Always
+An item must exist to be measured (`exists=0`); `exists=44` means absent: record `absent, not measured` and make it
+first. `agent-pm-claude`, `agent-pm-github-users` and `agent-pm-codex` exist after their `login`; `agent-pm-bot` once
+the user stores the key; `agent-pm-tokens` while a Docker session runs; `agent-pm-revocations` after a `close` with the
+network off, until the next start, close or status online.
+
+Pass: `exists=0`, `exit=` non-zero (142 when the alarm stops it) and a byte count of `0`. Click Deny on any dialog, never Always
 Allow; if Always Allow was clicked, `/usr/bin/security` now reads the item: rerun its `login` command (none for the
-broker-created items: delete them as [Upgrading](upgrading.md) says) and note it here. Record only `exit=<n>, bytes=<n>`.
+broker-created items: delete them as [Upgrading](upgrading.md) says) and note it here. Record only
+`exists=<n>, exit=<n>, bytes=<n>`.
 A read that returns bytes fails this check unless the user accepts it: mark the row `silently readable, accepted <date>`.
 
 | Service | Manager | Shell |
@@ -188,12 +196,13 @@ once for a Claude and once for a Codex worker. Each prints counts only.
 
 | Resource | Command | Pass | Requirements | Claude | Codex |
 |---|---|---|---|---|---|
-| host keychain | `docker exec "$C" sh -c 'find / -xdev -path "*/Library/Keychains*" 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
-| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / -xdev -name config.local.toml 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
-| host `gh` login | `docker exec "$C" sh -c 'find / -xdev -path "*/gh/hosts.yml" 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
+| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
+| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
+| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | pending | pending |
 | Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | pending | pending |
 
-The container's own tmux socket is not Docker's, so the socket search names `docker`.
+Each search covers every mount (the workspace volume, the binds, the tmpfs), skipping only `/proc` and `/sys`. The
+container's own tmux socket is not Docker's, so the socket search names `docker`.
 
 ## Linear presets
 
@@ -211,6 +220,8 @@ Create these in the Linear team, then put each id in `~/.agent-pm/config.local.t
 | the humans subscribed on In Review | `human_members` |
 | the Linear project of each product repo, optional | `project_repos` |
 | — (local clones of target repos, optional) | `local_clones` |
+| the harness account's API key, a Keychain item (below) | `harness_key` |
+| each role account's API key, a Keychain item (below) | `roles.researcher.key`, `roles.pm.key`, `roles.engineer.key` |
 
 Keys, one per account:
 

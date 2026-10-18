@@ -132,6 +132,24 @@ class CredentialsInventory(Sample):
             ],
         )
 
+    def test_a_list_of_only_non_literals_reports_each_entry_and_no_list(self):
+        go = "var KeychainServices = []string{\n\tcodexService,\n}\n"
+        root = self.tree(
+            {
+                "docs/credentials.md": inventory(),
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+                "broker/internal/broker/keychain.go": go,
+            }
+        )
+        self.assertEqual(
+            credentials.credentials_inventory(root),
+            [
+                "broker/internal/broker/keychain.go: KeychainServices entry is not a string"
+                " literal: codexService,",
+                "broker/internal/broker/keychain.go: no KeychainServices list",
+            ],
+        )
+
     def test_missing_files_and_list_are_violations(self):
         files = {
             "docs/credentials.md": inventory(),

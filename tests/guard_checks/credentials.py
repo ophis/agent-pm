@@ -9,23 +9,11 @@ import tomllib
 from tests.guard_data.linear_orchestrator import ORCH_FILES
 
 INVENTORY = "docs/credentials.md"
-
-
 CONFIG = f"{ORCH_FILES}config.toml"
-
-
 SERVICES = "broker/internal/broker/keychain.go"
-
-
 LIST = re.compile(r"var KeychainServices = \[\]string\{(.*?)\}", re.S)
-
-
 ENTRY = re.compile(r'"([^"]+)",\s*(//.*)?')
-
-
 PREFIXES = ("ghs_", "ghp_", "gho_", "ghu_", "ghr_", "github_pat_", "lin_api_", "sk-ant-")
-
-
 PATTERNS = (
     *((re.compile(re.escape(prefix)), prefix) for prefix in PREFIXES),
     (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"), "-----BEGIN … PRIVATE KEY-----"),
@@ -48,7 +36,7 @@ def credentials_inventory(repo: str) -> list[str]:
         return [f"{CONFIG}: {error}"]
     services, found = _services(texts[SERVICES])
     if services is None:
-        return [f"{SERVICES}: no KeychainServices list"]
+        return [*found, f"{SERVICES}: no KeychainServices list"]
     return found + _violations(config, services, texts[INVENTORY])
 
 
