@@ -1,6 +1,6 @@
 """hosts/docker/supervisor.py: each relay request checked against the shared protocol fixtures, its
-generation, dir and seq, run as the host hook, its reply and rejected line, the dead watch and
-main's lifecycle on an inherited lock, with fake processes.
+generation, dir and seq, run as the host hook, its reply and rejected line, the dead watch, the
+GitHub token refresher and main's lifecycle on an inherited lock, with fake processes.
 """
 
 import base64
@@ -10,9 +10,11 @@ import io
 import json
 import os
 import signal
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.session.engine.types import SessionError
 from agent_pm.session.hosts.docker import supervisor
 from agent_pm.session.hosts.docker.supervisor import Supervisor
 
@@ -269,6 +271,101 @@ class WatchTest(Base):
         self.assertEqual(self.events_text(), "")
 
 
+class Waits:
+    """A stop event set after `n` waits; records each timeout."""
+
+    def __init__(self, n):
+        self.n, self.timeouts = n, []
+
+    def wait(self, timeout):
+        self.timeouts.append(timeout)
+        return len(self.timeouts) > self.n
+
+
+class TokenBroker:
+    def __init__(self, *results):
+        self.results, self.calls = list(results), []
+
+    def refresh(self, container, manifest):
+        self.calls.append((container, manifest))
+        found = self.results.pop(0)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+
+NOW = 1_792_238_400.0  # 2026-10-17T12:00:00Z
+
+
+def expiry(seconds, account="ophis"):
+    at = datetime.fromtimestamp(NOW + seconds, UTC)
+    return {"account": account, "expires_at": at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+class RefreshTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.path = os.path.join(self.state, f"{GEN}.github.json")
+        self.supervisor.clock = lambda: NOW
+
+    def refresh(self, saved, *results, waits=1):
+        if saved is not None:
+            with open(self.path, "w") as f:
+                json.dump(saved, f)
+        self.supervisor.broker = fake = TokenBroker(*results)
+        stop = Waits(waits)
+        self.supervisor.refresh(stop)
+        return fake, stop.timeouts
+
+    def saved(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_no_expiry_file_or_an_empty_list_never_refreshes(self):
+        for saved in (None, [], "corrupt"):
+            with self.subTest(saved=saved):
+                fake, timeouts = self.refresh(saved)
+                self.assertEqual((fake.calls, timeouts), ([], []))
+
+    def test_it_refreshes_ten_minutes_before_the_earliest_expiry_and_saves_the_new_list(self):
+        new = [expiry(3600)]
+        fake, timeouts = self.refresh([expiry(3000, "b"), expiry(2400, "a")], new)
+        container = f"agent-pm-worker_1-{GEN}"
+        self.assertEqual(fake.calls, [(container, os.path.join(self.state, f"{GEN}.json"))])
+        self.assertEqual(timeouts, [1800.0, 3000.0])
+        self.assertEqual(self.saved(), new)
+
+    def test_a_past_due_expiry_refreshes_at_once(self):
+        _, timeouts = self.refresh([expiry(60)], [expiry(3600)])
+        self.assertEqual(timeouts[0], 0.0)
+
+    def test_a_failure_writes_the_event_and_retries_every_minute(self):
+        new = [expiry(3600)]
+        error = SessionError("broker: GitHub request failed: GitHub answered HTTP 500.")
+        fake, timeouts = self.refresh([expiry(600)], error, error, new, waits=3)
+        self.assertEqual(len(fake.calls), 3)
+        self.assertEqual(timeouts, [0.0, 60.0, 60.0, 3000.0])
+        with open(self.events) as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertRegex(
+                line,
+                r"^\d\d:\d\d:\d\d worker_1 github_refresh_failed broker: GitHub request failed:",
+            )
+        self.assertEqual(self.saved(), new)
+
+    def test_without_an_events_file_a_failure_still_retries(self):
+        self.supervisor.events = ""
+        fake, timeouts = self.refresh([expiry(600)], SessionError("x"), [], waits=2)
+        self.assertEqual((len(fake.calls), timeouts), (2, [0.0, 60.0]))
+        self.assertEqual(self.saved(), [])
+
+    def test_a_stop_before_the_due_time_never_refreshes(self):
+        fake, timeouts = self.refresh([expiry(3600)], waits=0)
+        self.assertEqual((fake.calls, timeouts), ([], [3000.0]))
+
+
 class MainTest(Base):
     def main(self, relay, fd, *args):
         argv = ["w", self.state, TUI, "", HOOK, GEN, str(fd), '["relay"]', '["wait"]', '["check"]']
@@ -276,6 +373,7 @@ class MainTest(Base):
             mock.patch("subprocess.Popen", return_value=relay) as popen,
             mock.patch("subprocess.run", return_value=SimpleNamespace(returncode=1)),
             mock.patch("signal.signal") as handler,
+            mock.patch("threading.Thread") as self.threads,
         ):
             code = supervisor.main(list(args) or argv)
         return code, popen, handler
@@ -299,6 +397,11 @@ class MainTest(Base):
         self.assertEqual(signum, signal.SIGTERM)
         stop(signal.SIGTERM, None)
         self.assertTrue(relay.stdin.closed)
+        threads = {
+            c.kwargs["target"].__name__: c.kwargs["args"] for c in self.threads.call_args_list
+        }
+        self.assertEqual(threads.keys(), {"watch", "refresh"})
+        self.assertTrue(threads["refresh"][0].is_set())
 
     def test_an_unheld_lock_fd_or_bad_args_exit_nonzero(self):
         self.assertEqual(supervisor.main(["too", "few"]), 2)
