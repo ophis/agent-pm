@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
@@ -130,6 +131,15 @@ func volumeMount(volume, target string, readonly bool) string {
 		fields = append(fields, "readonly")
 	}
 	return mountSpec(append(fields, "volume-nocopy")...)
+}
+
+// workspaceMount is volumeMount's value with its audit record, both from the same readonly.
+func workspaceMount(volume, target string, readonly bool) (string, audit.Mount) {
+	mode := "rw"
+	if readonly {
+		mode = "ro"
+	}
+	return volumeMount(volume, target, readonly), audit.Mount{Type: "volume", Source: volume, Target: target, Mode: mode}
 }
 
 // volumeLabels reads a volume's labels; an absent volume is an error docker.Absent recognizes.

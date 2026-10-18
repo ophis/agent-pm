@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/broker"
 	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
@@ -184,48 +185,59 @@ func fail(stderr io.Writer, command string, e *protocol.Error) int {
 	return protocol.Exit(e.Code)
 }
 
-// withHost runs f on the launcher wired to the fixed Docker Desktop CLI; docker build's stderr and the launcher's notes go to progress.
-func withHost(progress io.Writer, f func(launcher.Host) (any, error)) (any, error) {
+// recorder is command's audit recorder, writing to the account's log; container "": not known yet.
+func recorder(home, command, container string) *audit.Recorder {
+	return &audit.Recorder{Command: command, Container: container, Now: time.Now, Log: audit.Log{Path: audit.Path(home)}}
+}
+
+// withHost runs f on the launcher wired to the fixed Docker Desktop CLI, then writes command's audit lines; docker
+// build's stderr and the launcher's notes go to progress.
+func withHost(command, container string, progress io.Writer, f func(launcher.Host) (any, error)) (result any, err error) {
 	home, err := accountHome()
 	if err != nil {
 		return nil, err
 	}
+	rec := recorder(home, command, container)
+	defer func() { rec.Flush(err) }()
 	d, clean, err := docker.New(home)
 	if err != nil {
 		return nil, err
 	}
 	defer clean()
 	d.Progress = progress
-	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home))
+	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home, rec), rec)
 	h.Codex = broker.NewCodex(home, nil)
 	h.Progress = progress
 	h.Lock = broker.FileLock(filepath.Join(home, ".agent-pm/docker/images.lock"))
 	return f(h)
 }
 
-// tokens is the broker's GitHub App token store in the account's login keychain.
-func tokens(home string) broker.GitHub {
+// tokens is the broker's GitHub App token store in the account's login keychain, reporting to rec (nil: none).
+func tokens(home string, rec *audit.Recorder) broker.GitHub {
 	k := broker.SystemKeychain{Home: home}
-	return broker.GitHub{Keychain: k, Apps: k, API: github.New(), Lock: broker.FileLock(filepath.Join(home, ".agent-pm/docker/tokens.lock"))}
+	return broker.GitHub{Keychain: k, Apps: k, API: github.New(), Lock: broker.FileLock(filepath.Join(home, ".agent-pm/docker/tokens.lock")),
+		Audit: rec}
 }
 
 func system() app {
 	return app{
 		build: func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error) {
-			return withHost(progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, plugins, maxAge) })
+			return withHost("build", "", progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, plugins, maxAge) })
 		},
 		start: func(ctx context.Context, manifest string, progress io.Writer) (any, error) {
-			return withHost(progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
+			return withHost("start", "", progress, func(h launcher.Host) (any, error) { return h.Start(ctx, manifest) })
 		},
 		refresh: func(ctx context.Context, container, manifest string) (any, error) {
-			return withHost(nil, func(h launcher.Host) (any, error) { return h.Refresh(ctx, container, manifest) })
+			return withHost("refresh", container, nil, func(h launcher.Host) (any, error) { return h.Refresh(ctx, container, manifest) })
 		},
-		status: func(ctx context.Context) (any, error) {
+		status: func(ctx context.Context) (_ any, err error) {
 			home, err := accountHome()
 			if err != nil {
 				return nil, err
 			}
-			status, err := launcher.Host{GitHub: tokens(home)}.Status(ctx)
+			rec := recorder(home, "status", "")
+			defer func() { rec.Flush(err) }()
+			status, err := launcher.Host{GitHub: tokens(home, rec)}.Status(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -234,10 +246,10 @@ func system() app {
 			return status, nil
 		},
 		close: func(ctx context.Context, container string, _ io.Writer) (any, error) {
-			return withHost(nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
+			return withHost("close", container, nil, func(h launcher.Host) (any, error) { return h.Close(ctx, container) })
 		},
 		workspaceRm: func(ctx context.Context, volume string, force bool) (any, error) {
-			return withHost(nil, func(h launcher.Host) (any, error) { return h.WorkspaceRm(ctx, volume, force) })
+			return withHost("workspace-rm", "", nil, func(h launcher.Host) (any, error) { return h.WorkspaceRm(ctx, volume, force) })
 		},
 		login: func(out io.Writer) error {
 			home, err := accountHome()
@@ -272,7 +284,7 @@ func system() app {
 			}, out); err != nil {
 				return err
 			}
-			return tokens(home).SaveUser(ctx, app, out)
+			return tokens(home, nil).SaveUser(ctx, app, out)
 		},
 		installCodex: func(ctx context.Context, version string, update bool) (any, error) {
 			if err := broker.CheckInstalled(); err != nil {

@@ -295,6 +295,44 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 
 `docker ps -a --filter name="$C"` lists nothing.
 
+## Audit log
+
+Every `start`, `refresh` and `close` appends one JSON line to `~/Library/Logs/agent-pm/broker.jsonl`
+(directory 0700, file 0600, written as you), recording each credential it issued, renewed,
+withdrew or revoked; no line holds a token or key. A backlog retry (each `start`, `close` and `status`, and a `refresh` that queues a token) that
+revokes or drops another container's token adds one line for that container. Source: `broker/internal/audit/`.
+
+```sh
+jq 'select(.session=="NAME")' ~/Library/Logs/agent-pm/broker.jsonl
+```
+
+| Field | Value |
+|---|---|
+| `time` | RFC 3339, UTC |
+| `command` | the broker command that wrote the line |
+| `event` | `start`, `refresh`, `close`, or `revocation-retry` (another container's backlog tokens) |
+| `session`, `generation`, `container` | from `agent-pm-<session>-<generation>`; null when start could not read its manifest |
+| `image`, `image_digest`, `mounts` | start lines only: the manifest's tag, the image ID, and each `--mount` and `--tmpfs` as `{type, source, target, mode}`; null for a step not reached |
+| `credentials` | one entry per credential, below |
+| `error` | the command's error `code` ([Docker broker protocol](docker-broker-protocol.md)), null on success |
+
+| Entry field | Value |
+|---|---|
+| `kind` | `claude-setup-token`, `codex-access-token` or `github-installation-token` |
+| `result` | `issued`, `renewed`, `withdrawn` (deleted with its container), `revoked`, `pending` (in the revocation backlog) or `expired-unrevoked` (dropped from the backlog at expiry) |
+| `reason` | `pending` only: why it is not revoked yet |
+| `expires_at` | RFC 3339; null when the broker does not know it (the setup-token, a withdrawn Codex token) |
+| `account`, `installation` | GitHub: the installation's account and ID (no ID on retry lines) |
+| `repository_selection`, `repositories` | GitHub `issued` and `renewed`: `all` or `selected`, and the full names the token reaches, from every page of `GET /installation/repositories`; both null, with `repositories_error`, when that listing failed (the token is still issued) |
+
+A token `close` could not revoke shows as `pending` on its close line; the next retry that
+revokes it adds a `revocation-retry` line with `revoked`, or `expired-unrevoked` if it
+expired first.
+
+Past 10 MiB the log moves to `broker.jsonl.1`, replacing the previous one. Writing it is
+best effort: a line the broker cannot write is dropped and the command's result is
+unchanged. No container mounts the directory.
+
 ## Run workers
 
 To run tui workers in containers, make the Docker Host the default in
@@ -591,6 +629,8 @@ secrets in environments that need it.
 - So do the GitHub tokens, each valid for an hour; `close` revokes them. One the broker could
   not revoke stays valid until it expires: `"$B" status` lists it, and the next start, close or
   status retries it.
+- The [audit log](#audit-log) is yours: any process running as you can change or delete it,
+  so it records what the broker did, not proof that nothing else happened.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.
