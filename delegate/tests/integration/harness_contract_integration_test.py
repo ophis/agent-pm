@@ -163,7 +163,7 @@ class Ownership(HarnessCase):
         harness = RecordingHost.processes["harness", self.metadata()["harness_name"]]
         harness.close()
         self.assertFalse(view.alive())
-        self.assertEqual(view.status().state, "gone")
+        self.assertEqual(view.status().state, "working")
         self.assertEqual(view.attach_command(), agent.attach_command())
         self.assertEqual(record.sid, SID)
 

@@ -303,7 +303,7 @@ class HarnessDelegate(Delegate):
     def _replacing(self, payload: bytes) -> int:
         """The attempt replacing the run `payload` records (its session's next, else 1; a corrupt
         record's readable attempt + 1), refused while that run is live; the agent session it left
-        open (a tui run's, after its outcome or its process's death) is closed.
+        open (a tui run's, once it ended) is closed.
         """
         if self._live(payload):
             raise ConfigError(f"{self.workdir}: delegate is still alive")
@@ -691,8 +691,12 @@ class HarnessDelegate(Delegate):
         )
         if unanswered or found is not None and found.state == StatusState.UNKNOWN:
             word = StatusState.UNKNOWN
+        elif alive:
+            word = StatusState.WORKING
+        elif state.plan.spec.mode == Mode.TUI and found is not None:
+            word = found.state
         else:
-            word = StatusState.WORKING if alive else StatusState.GONE
+            word = StatusState.GONE
         views, _ = self._views(state)
         outcome = None if state.result is None else state.result.outcome
         return Status(
