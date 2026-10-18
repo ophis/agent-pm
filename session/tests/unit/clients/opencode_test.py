@@ -29,14 +29,3 @@ class OpenCodeClientTest(Case):
             OpenCodeClient(packaged_table()).writable_dirs(spec),
             (os.path.realpath(cwd), os.path.realpath(extra)),
         )
-
-    def test_writable_dirs_hold_the_git_checkout_of_the_cwd(self):
-        repo = os.path.join(self.home, "repo")
-        cwd = os.path.join(repo, "sub")
-        os.makedirs(os.path.join(repo, ".git"))
-        os.mkdir(cwd)
-        spec = Spec(workdir=self.home, access=Access(cwd=cwd))
-        self.assertEqual(
-            OpenCodeClient(packaged_table()).writable_dirs(spec),
-            (os.path.realpath(cwd), os.path.realpath(repo)),
-        )

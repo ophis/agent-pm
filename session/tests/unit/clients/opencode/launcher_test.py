@@ -1,0 +1,171 @@
+"""The opencode launcher in process over a fake child: arguments, output, exit codes, the watch."""
+
+import io
+import json
+import os
+import signal
+from unittest import mock
+
+from agent_pm.session.clients.opencode import launcher
+
+from session.tests.case import Case
+
+BOUND = json.dumps({"type": "step_start", "sessionID": "ses_a"}).encode() + b"\n"
+TEXT = b'{"type": "text"}\n'
+
+
+class Sink(io.BytesIO):
+    def close(self):
+        self.written = self.getvalue()
+        super().close()
+
+
+class Child:
+    def __init__(self, lines=(), code=0, err=b""):
+        self.stdin, self.stdout, self.code, self.killed = Sink(), lines, code, False
+        read, write = os.pipe()
+        os.write(write, err)
+        os.close(write)
+        self.stderr = os.fdopen(read, "rb")
+
+    def wait(self):
+        return self.code
+
+    def kill(self):
+        self.killed = True
+
+
+class Timer:
+    def __init__(self, seconds, function):
+        self.seconds, self.function, self.cancelled = seconds, function, False
+        self.daemon = False
+
+    def start(self):
+        Timers.made.append(self)
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class Timers:
+    made: list[Timer] = []
+
+
+class LauncherTest(Case):
+    def setUp(self):
+        Timers.made = []
+        self.out, self.err = io.TextIOWrapper(io.BytesIO()), io.TextIOWrapper(io.BytesIO())
+        for target, value in (
+            ("sys.stdout", self.out),
+            ("sys.stderr", self.err),
+            ("agent_pm.session.clients.opencode.launcher.threading.Timer", Timer),
+        ):
+            self.enterContext(mock.patch(target, value))
+
+    def run_with(self, child, *, prompt="Hi there") -> int:
+        argv = ["--timeout", "120", "--prompt", prompt, "--", "opencode", "run"]
+        with mock.patch.object(launcher.subprocess, "Popen", return_value=child) as popen:
+            code = launcher.main(argv)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["opencode", "run"])
+        return code
+
+    def written(self) -> tuple[bytes, str]:
+        self.out.flush()
+        self.err.flush()
+        return self.out.buffer.getvalue(), self.err.buffer.getvalue().decode()
+
+    def test_output_prompt_and_exit_code_pass_through(self):
+        child = Child([BOUND, TEXT], code=3, err=b"oops\n")
+        self.assertEqual(self.run_with(child), 3)
+        self.assertEqual(self.written(), (BOUND + TEXT, "oops\n"))
+        self.assertEqual(child.stdin.written, b"Hi there")
+        (timer,) = Timers.made
+        self.assertEqual(timer.seconds, 120.0)
+        self.assertTrue(timer.cancelled)
+
+    def test_a_signal_is_128_plus_its_number(self):
+        self.assertEqual(self.run_with(Child([BOUND], code=-signal.SIGKILL)), 128 + signal.SIGKILL)
+
+    def test_the_watch_kills_a_run_without_a_session(self):
+        child = Child()
+
+        def lines():
+            yield TEXT
+            Timers.made[0].function()
+            yield BOUND
+
+        child.stdout = lines()
+        with mock.patch("os._exit", side_effect=SystemExit) as end, self.assertRaises(SystemExit):
+            self.run_with(child)
+        end.assert_called_once_with(124)
+        self.assertTrue(child.killed)
+        self.assertEqual(self.written(), (TEXT, "opencode: no session after 120 s; stopped\n"))
+
+    def test_the_watch_spares_a_bound_run(self):
+        child = Child()
+
+        def lines():
+            yield BOUND
+            Timers.made[0].function()
+            yield TEXT
+
+        child.stdout = lines()
+        self.assertEqual(self.run_with(child), 0)
+        self.assertFalse(child.killed)
+        self.assertEqual(self.written()[0], BOUND + TEXT)
+
+    def test_the_watch_spares_a_run_that_ended(self):
+        child = Child([TEXT], code=1)
+        self.assertEqual(self.run_with(child), 1)
+        Timers.made[0].function()
+        self.assertFalse(child.killed)
+
+    def test_a_closed_stdout_kills_the_child(self):
+        def lines():
+            yield BOUND
+            raise OSError("broken pipe")
+
+        child = Child(code=-signal.SIGKILL)
+        child.stdout = lines()
+        self.assertEqual(self.run_with(child), 128 + signal.SIGKILL)
+        self.assertTrue(child.killed)
+
+    def test_a_command_it_cannot_start(self):
+        argv = ["--timeout", "1", "--prompt", "", "--", "opencode"]
+        for error, message in (
+            (FileNotFoundError(2, "No such file"), "opencode: command not found: opencode\n"),
+            (
+                PermissionError(13, "Permission denied"),
+                "opencode: cannot run opencode: Permission denied\n",
+            ),
+        ):
+            with self.subTest(error=error):
+                self.err.buffer.seek(0)
+                self.err.buffer.truncate()
+                with mock.patch.object(launcher.subprocess, "Popen", side_effect=error):
+                    self.assertEqual(launcher.main(argv), 127)
+                self.assertEqual(self.written()[1], message)
+
+    def test_bad_arguments(self):
+        for argv in (
+            [],
+            ["--timeout", "x", "--prompt", "", "--", "a"],
+            ["--timeout", "0", "--prompt", "", "--", "a"],
+            ["--timeout", "inf", "--prompt", "", "--", "a"],
+            ["--time", "1", "--prompt", "", "--", "a"],
+            ["--timeout", "1", "--prompt", ""],
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(launcher.main(argv), 2)
+        self.assertTrue(self.written()[1].startswith("usage: "))
+
+    def test_bound_needs_a_json_object_with_a_string_session(self):
+        for line, bound in (
+            (BOUND, True),
+            (b'{"sessionID": 1}', False),
+            (b"[]", False),
+            (b"not json", False),
+        ):
+            with self.subTest(line=line):
+                self.assertIs(launcher._bound(line), bound)

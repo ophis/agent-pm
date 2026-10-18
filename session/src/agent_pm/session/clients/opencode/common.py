@@ -67,7 +67,7 @@ PORT = (
 )
 
 
-CONFIG_FILES = (".opencode/*", "opencode.json", "opencode.jsonc")
+PROTECTED = (".git", ".opencode", "opencode.json", "opencode.jsonc")  # names no run edits
 
 
 def _ancestors(path: str) -> list[str]:
@@ -80,7 +80,7 @@ def _ancestors(path: str) -> list[str]:
 
 
 def checkout(cwd: str) -> str | None:
-    """The git checkout holding `cwd`, whose files OpenCode counts as its project's."""
+    """The git checkout holding `cwd`: the nearest dir with a .git, OpenCode's worktree."""
     for path in (cwd, *_ancestors(cwd)):
         if os.path.lexists(os.path.join(path, ".git")):
             return path
@@ -88,30 +88,43 @@ def checkout(cwd: str) -> str | None:
 
 
 def edit_rules(cwd: str, dirs: list[str], reads: list[str]) -> dict[str, str]:
-    """OpenCode's edit rules: it matches an edit by its path relative to its project's checkout
-    (else "/"), its last matching rule winning, and a deny holds under --auto. No edit outside the
-    checkout but in the cwd and dirs, none in reads (each read dir's path from any ancestor the
-    cwd shares with it), none to OpenCode's own config.
+    """OpenCode's edit rules, in order, its last matching rule winning (a deny holds under --auto):
+    it matches an edit by its path relative to its worktree, `cwd`'s checkout, else "/". The cwd
+    and dirs editable, reads not, each path by its deepest grant; nothing else, nor PROTECTED
+    names. A path `j` levels above the worktree ("../" j times) gets the grant on that ancestor or
+    above, one rule per level, as "*" also matches "../".
     """
-    lineage = {cwd, *_ancestors(cwd)}
-    rules = {"../*": "deny"}
-    for read in reads:
-        rules.update(
-            {f"{os.path.relpath(read, p)}/*": "deny" for p in _ancestors(read) if p in lineage}
+    for path in (cwd, *dirs, *reads):
+        if "*" in path or "?" in path:
+            raise ConfigError(f"{path!r}: a wildcard in a path the opencode client grants")
+    worktree = checkout(cwd) or "/"
+    grants = dict(
+        sorted(
+            [*((path, "allow") for path in (cwd, *dirs)), *((path, "deny") for path in reads)],
+            key=lambda grant: len(_ancestors(grant[0])),
         )
-    for path in (cwd, *dirs):
-        for p in _ancestors(path):
-            rules[f"*../{os.path.relpath(path, p)}/*"] = "allow"
-            if p in lineage:
-                rules[f"{os.path.relpath(path, p)}/*"] = "allow"
-    for name in CONFIG_FILES:
-        rules.update({name: "deny", f"*/{name}": "deny"})
+    )
+    lineage = _ancestors(worktree)
+
+    def above(level: int) -> str:
+        return next((grants[p] for p in lineage[level - 1 :] if p in grants), "deny")
+
+    rules = {"*": grants.get(worktree) or above(1)}
+    levels = range(1, len(lineage) + 1) if any(p in grants for p in lineage) else (1,)
+    rules.update({"../" * level + "*": above(level) for level in levels})
+    for path, action in grants.items():
+        if path != worktree and path not in lineage:
+            rules[f"{os.path.relpath(path, worktree)}/*"] = action
+    for name in PROTECTED:
+        rules.update(dict.fromkeys((name, f"{name}/*", f"*/{name}", f"*/{name}/*"), "deny"))
     return rules
 
 
 def refuse(flags: Iterable[str], banned: tuple[str, ...], where: str) -> None:
     for flag in scan(tuple(flags), {word: word for word in VALUED}):
-        if flag.word in banned:
+        # yargs also takes an option's camelCase spelling.
+        kebab = re.sub(r"[A-Z]", lambda m: f"-{m.group().lower()}", flag.word)
+        if flag.word in banned or kebab in banned:
             raise ConfigError(f"{flag.arg}: set by the opencode client, not {where}")
 
 
@@ -135,19 +148,19 @@ class OpenCodeCommon:
         self.env = dict(config.get("env", {}))
         refuse_env(self.env, f"{TABLE}.env")
 
-    def model(self, tier: int | None) -> str | None:
-        if tier is None:
+    def _mapped(self, table: Mapping[str, str], key: str | None, missing: str) -> str | None:
+        if key is None:
             return None
-        if (model := self.tiers.get(str(tier))) is None:
-            raise ConfigError(f"no model for tier {tier} in {TABLE}.tiers")
-        return model
+        if (found := table.get(key)) is None:
+            raise ConfigError(f"{missing} in {TABLE}")
+        return found
+
+    def model(self, tier: int | None) -> str | None:
+        tier_key = None if tier is None else str(tier)
+        return self._mapped(self.tiers, tier_key, f"no model for tier {tier}")
 
     def variant(self, effort: Effort | None) -> str | None:
-        if effort is None:
-            return None
-        if (value := self.efforts.get(effort)) is None:
-            raise ConfigError(f"no variant for effort {str(effort)!r} in {TABLE}.efforts")
-        return value
+        return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
 
     def inline(self, spec: Spec, host_address: str) -> dict:
         """The launch's OpenCode config: the ollama provider on `host_address`, auto-update off, and

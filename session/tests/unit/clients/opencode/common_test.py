@@ -65,6 +65,8 @@ class ConfigTest(Case):
             ["--auto"],
             ["--yolo"],
             ["--dangerously-skip-permissions"],
+            ["--dangerouslySkipPermissions"],
+            ["--continue"],
         ):
             with self.subTest(flags=flags), self.assertRaises(ConfigError):
                 common(flags=flags)

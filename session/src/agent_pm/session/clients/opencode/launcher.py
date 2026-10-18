@@ -31,9 +31,14 @@ def _bound(line: bytes) -> bool:
     return isinstance(record, dict) and isinstance(record.get("sessionID"), str)
 
 
-def _write(fd: int, data: bytes) -> None:
-    while data:
-        data = data[os.write(fd, data) :]
+def _out(data: bytes) -> None:
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+
+def _err(data: bytes) -> None:
+    sys.stderr.buffer.write(data)
+    sys.stderr.buffer.flush()
 
 
 def _feed(stream, text: str) -> None:
@@ -44,12 +49,41 @@ def _feed(stream, text: str) -> None:
         pass
 
 
-def _copy(fd: int) -> None:
+def _copy(stream) -> None:
     try:
-        while chunk := os.read(fd, 65536):
-            _write(sys.stderr.fileno(), chunk)
-    except OSError:
+        while chunk := stream.read1(65536):
+            _err(chunk)
+    except (OSError, ValueError):
         pass
+
+
+class Watch:
+    """COMMAND's stdout copied line by line, noting the first that binds a session; expired with
+    none, it kills COMMAND and ends the launcher, whatever still holds COMMAND's pipes. One lock
+    orders the two, so no line passes once the watch fired.
+    """
+
+    def __init__(self, child, seconds: str):
+        self.child, self.seconds = child, seconds
+        self.lock = threading.Lock()
+        self.session = self.ended = False
+
+    def line(self, line: bytes) -> None:
+        with self.lock:
+            self.session = self.session or _bound(line)
+            _out(line)
+
+    def end(self) -> None:
+        with self.lock:
+            self.ended = True
+
+    def expire(self) -> None:
+        with self.lock:
+            if self.session or self.ended:
+                return
+            self.child.kill()
+            _err(f"opencode: no session after {self.seconds} s; stopped\n".encode())
+            os._exit(124)
 
 
 def main(argv: list[str]) -> int:
@@ -68,20 +102,11 @@ def main(argv: list[str]) -> int:
     except OSError as error:
         print(f"opencode: cannot run {command[0]}: {error.strerror}", file=sys.stderr)
         return 127
-    assert child.stdin is not None and child.stdout is not None and child.stderr is not None
-    session = threading.Event()
-
-    def expire() -> None:
-        if not session.is_set() and child.poll() is None:
-            child.kill()
-            _write(
-                sys.stderr.fileno(), f"opencode: no session after {argv[1]} s; stopped\n".encode()
-            )
-            os._exit(124)
-
-    timer = threading.Timer(seconds, expire)
+    assert child.stdout is not None
+    watch = Watch(child, argv[1])
+    timer = threading.Timer(seconds, watch.expire)
     timer.daemon = True
-    copier = threading.Thread(target=_copy, args=(child.stderr.fileno(),), daemon=True)
+    copier = threading.Thread(target=_copy, args=(child.stderr,), daemon=True)
     for thread in (
         threading.Thread(target=_feed, args=(child.stdin, text), daemon=True),
         copier,
@@ -90,11 +115,10 @@ def main(argv: list[str]) -> int:
         thread.start()
     try:
         for line in child.stdout:
-            if not session.is_set() and _bound(line):
-                session.set()
-            _write(sys.stdout.fileno(), line)
+            watch.line(line)
     except OSError:
         child.kill()
+    watch.end()
     code = child.wait()
     timer.cancel()
     copier.join(STDERR_WAIT)

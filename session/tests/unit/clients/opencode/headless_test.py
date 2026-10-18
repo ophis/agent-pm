@@ -177,26 +177,94 @@ class LaunchTest(Base):
         )
         self.assertNotIn("external_directory", self.inline(self.launch(self.spec()))["permission"])
 
-    def test_edits_stay_in_the_worktree_cwd_and_dirs(self):
+    def rules_for(self, access: Access) -> dict:
+        return self.inline(self.launch(self.spec(access=access)))["permission"]["edit"]
+
+    def assert_edits(self, rules: dict, worktree: str, expected: dict) -> None:
+        for path, action in expected.items():
+            found = decide(rules, os.path.relpath(path, worktree)) or "allow"
+            self.assertEqual(found, action, path)
+
+    def test_edits_outside_a_checkout_are_the_cwd_and_dirs_alone(self):
         extra, read = self.made("extra"), self.made("read")
-        access = Access(cwd=self.cwd, dirs=(extra,), reads=(read,))
-        rules = self.inline(self.launch(self.spec(access=access)))["permission"]["edit"]
-        checkout = os.path.join(self.home, "other", "checkout")
-        for worktree in ("/", checkout, os.path.dirname(self.cwd)):
-            with self.subTest(worktree=worktree):
-                for path, action in (
-                    (os.path.join(read, "task.md"), "deny"),
-                    (os.path.join(read, "sub", "task.md"), "deny"),
-                    (os.path.join(self.cwd, "a.py"), "allow"),
-                    (os.path.join(extra, "sub", "b.md"), "allow"),
-                    (os.path.join(self.cwd, ".opencode", "plugins", "x.ts"), "deny"),
-                    (os.path.join(self.cwd, "opencode.json"), "deny"),
-                    (os.path.join(self.cwd, "pkg", "opencode.jsonc"), "deny"),
-                ):
-                    found = decide(rules, os.path.relpath(path, worktree)) or "allow"
-                    self.assertEqual(found, action, path)
-        self.assertEqual(decide(rules, "../elsewhere/x.py"), "deny")
-        self.assertIsNone(decide(rules, "src/inside_the_worktree.py"))
+        rules = self.rules_for(Access(cwd=self.cwd, dirs=(extra,), reads=(read,)))
+        skills = os.path.join(self.home, ".claude", "skills", "x", "SKILL.md")
+        self.assert_edits(
+            rules,
+            "/",
+            {
+                os.path.join(self.cwd, "a.py"): "allow",
+                os.path.join(extra, "sub", "b.md"): "allow",
+                os.path.join(read, "task.md"): "deny",
+                skills: "deny",
+                os.path.join(self.home, "elsewhere.py"): "deny",
+                os.path.join(self.cwd, ".opencode", "plugins", "x.ts"): "deny",
+                os.path.join(self.cwd, "pkg", "opencode.jsonc"): "deny",
+            },
+        )
+
+    def test_edits_in_a_checkout_are_relative_to_its_top(self):
+        agent = self.made("agent")
+        repo = os.path.join(agent, "src", "repo")
+        os.makedirs(os.path.join(repo, ".git"))
+        cwd = os.path.join(repo, "sub")
+        os.mkdir(cwd)
+        team = os.path.join(agent, "team")
+        os.mkdir(team)
+        other = self.made("other")
+        rules = self.rules_for(Access(cwd=cwd, dirs=(agent, other), reads=(team,)))
+        self.assert_edits(
+            rules,
+            os.path.realpath(repo),
+            {
+                os.path.join(other, "o.md"): "allow",
+                os.path.join(self.home, "unrelated", "u.md"): "deny",
+                os.path.join(cwd, "a.py"): "allow",
+                os.path.join(repo, "top.py"): "allow",
+                os.path.join(agent, "tmp", "x.md"): "allow",
+                os.path.join(team, "task.md"): "deny",
+                os.path.join(self.home, "repo", "x"): "deny",
+                os.path.join(cwd, ".git", "hooks", "pre-commit"): "deny",
+                os.path.join(repo, ".git", "config"): "deny",
+                os.path.join(cwd, "opencode.json"): "deny",
+            },
+        )
+
+    def test_a_cwd_inside_a_checkout_edits_only_itself_there(self):
+        repo = self.made("repo")
+        os.mkdir(os.path.join(repo, ".git"))
+        cwd = os.path.join(repo, "sub")
+        os.mkdir(cwd)
+        rules = self.rules_for(Access(cwd=cwd))
+        self.assert_edits(
+            rules,
+            repo,
+            {
+                os.path.join(cwd, "a.py"): "allow",
+                os.path.join(repo, "top.py"): "deny",
+                os.path.join(self.home, "x.py"): "deny",
+            },
+        )
+
+    def test_a_cwd_at_the_checkout_top_edits_all_of_it(self):
+        repo = self.made("repo")
+        os.mkdir(os.path.join(repo, ".git"))
+        rules = self.rules_for(Access(cwd=repo))
+        self.assert_edits(
+            rules,
+            repo,
+            {os.path.join(repo, "src", "a.py"): "allow", os.path.join(repo, ".git", "x"): "deny"},
+        )
+
+    def test_a_wildcard_in_a_granted_path_is_refused(self):
+        odd = self.made("a*b")
+        for access in (
+            Access(cwd=self.cwd, dirs=(odd,)),
+            Access(cwd=self.cwd, reads=(odd,)),
+            Access(cwd=odd),
+        ):
+            with self.subTest(access=access), self.assertRaisesRegex(ConfigError, "wildcard"):
+                self.launch(self.spec(access=access))
 
     def test_autoupdate_off(self):
         client = OpenCodeClient({**packaged_table(), "env": {"OPENCODE_DISABLE_AUTOUPDATE": "0"}})

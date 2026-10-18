@@ -8,6 +8,7 @@ import unittest
 
 from agent_pm.session.clients.opencode import launcher
 
+from session.tests.case import Case
 from session.tests.integration.clients.opencode import launcher_child
 
 LAUNCHER = (sys.executable, "-I", launcher.__file__)
@@ -29,7 +30,7 @@ def run(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
     )
 
 
-class LauncherTest(unittest.TestCase):
+class LauncherTest(Case):
     def test_the_prompt_reaches_stdin_and_output_and_exit_code_pass_through(self):
         result = run("--timeout", "30", "--prompt", "Hi there\n- a list", "--", *child("echo"))
         self.assertEqual(result.returncode, 3)
