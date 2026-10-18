@@ -1,10 +1,11 @@
 """HarnessDelegate names its harness session in a Host's close failure; its harness environment
 holds no launcher variable; a run's state lives only in its run dir, which counts attempts, and a
-refused start creates nothing; preview and instruct write no state; owner overlays shape its run;
-resume continues a run in the mode it records or in the one it is given, and a run whose process
-died, its tui agent session left open, at once; replace, resume and detach first kill the callback
-group a dead harness left; checkouts lists its agent dir's real checkouts and clean deletes that
-dir, refusing a live run or a dir out of place.
+refused start creates nothing; a fresh workdir passes the Docker Host's preflight; preview and
+instruct write no state; owner overlays shape its run; resume continues a run in the mode it
+records or in the one it is given, and a run whose process died, its tui agent session left open,
+at once; replace, resume and detach first kill the callback group a dead harness left; checkouts
+lists its agent dir's real checkouts and clean deletes that dir, refusing a live run or a dir out of
+place.
 """
 
 import fcntl
@@ -14,6 +15,7 @@ import os
 import shutil
 import signal
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome, Spec
@@ -139,6 +141,67 @@ class DockerHeadlessTest(HarnessCase):
         view._complete(Result(0, Outcome("needs_input", "Q", "A", questions=["Which?"])))
         view.resume(input="The answer.")
         self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
+
+
+class DockerBroker:
+    """The broker's preflight calls; `failing`: the build's error."""
+
+    def __init__(self):
+        self.calls, self.failing = [], None
+
+    def version(self):
+        self.calls.append("version")
+
+    def build(self, package, *, max_age=None):
+        self.calls.append("build")
+        if self.failing is not None:
+            raise self.failing
+        return "agent-pm-worker:" + "a" * 64, "sha256:" + "c" * 64
+
+
+class DockerPreflightTest(HarnessCase):
+    """The real Session's Docker Host, its broker faked and no daemon socket in its account home,
+    preflights a fresh workdir's run.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.settings(client="claude")
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(
+                "[session.hosts.box]\n"
+                'implementation = "agent_pm.session.hosts.docker.host:DockerHost"\n'
+                'docker = "/usr/local/bin/docker"\n'
+            )
+        self.broker = DockerBroker()
+        for patcher in (
+            mock.patch("agent_pm.session.hosts.docker.host.Broker", return_value=self.broker),
+            mock.patch("pwd.getpwuid", return_value=SimpleNamespace(pw_dir=self.home)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def create(self, mode):
+        spec = Spec("input", self.work, task="echo", mode=mode, sid=SID)
+        return self.make(spec=spec, session_cls=Session, host="box", harness_host="harness")
+
+    def test_a_fresh_workdir_passes_the_docker_preflight(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                self.assertFalse(os.path.exists(self.work))
+                self.create(mode)
+                self.assertEqual(self.broker.calls, ["version", "build"])
+                self.assertTrue(os.path.isdir(Layout(self.work).agent))
+                self.assertTrue(self.metadata()["plan"]["docker"])
+                shutil.rmtree(self.work)
+                self.broker.calls.clear()
+
+    def test_a_refused_docker_preflight_leaves_no_workdir(self):
+        self.broker.failing = SessionConfigError("broker: no image")
+        with self.assertRaisesRegex(ConfigError, "broker: no image"):
+            self.create("headless")
+        self.assertEqual(self.broker.calls, ["version", "build"])
+        self.assertFalse(os.path.exists(self.work))
 
 
 class CloseTest(HarnessCase):

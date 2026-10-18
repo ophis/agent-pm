@@ -729,17 +729,19 @@ class DockerHost(Host):
         return (*RESUME, name)
 
     def validate(self, name: str, launch: Launch) -> None:
-        """The preflight, before any container: the cwd, the broker handshake and the build."""
+        """The preflight, before any container: the cwd, which may not exist yet (its caller makes
+        it before the start, which needs it), the broker handshake and the build.
+        """
         laps = _Laps()
-        self._check_cwd(name, launch)
+        self._check_cwd(name, launch, missing_ok=True)
         self._image(name)
         laps("preflight")
         laps.report(f"docker timing {name}")
 
-    def _check_cwd(self, name: str, launch: Launch) -> None:
+    def _check_cwd(self, name: str, launch: Launch, *, missing_ok: bool = False) -> None:
         super().validate(name, launch)
         cwd = os.path.realpath(launch.cwd)
-        if not os.path.isdir(cwd):
+        if not os.path.isdir(cwd) and not (missing_ok and not os.path.lexists(cwd)):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
 
     def _image(
