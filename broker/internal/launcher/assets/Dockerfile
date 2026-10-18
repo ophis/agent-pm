@@ -9,6 +9,7 @@ COPY session/src /opt/agent-pm/session/src
 COPY utils/src /opt/agent-pm/utils/src
 COPY delegate/src /opt/agent-pm/delegate/src
 COPY plugins /opt/agent-pm/plugins
+COPY codex-plugins /opt/agent-pm/codex-plugins
 COPY .claude-plugin/plugin.json /opt/agent-pm/version.json
 COPY bootstrap.py codex-update.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
@@ -27,6 +28,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && ln -s /opt/agent-pm/lib/git-credential-agent-pm /opt/agent-pm/bin/git-credential-agent-pm \
     && printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig \
     && chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/bin/python3 /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \
+    && chmod -R a+rX /opt/agent-pm/codex-plugins \
     && chmod -R a+rX /opt/agent-pm/plugins \
     && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm \
     && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue

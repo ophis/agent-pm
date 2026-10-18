@@ -32,6 +32,7 @@ from agent_pm.session.clients.codex.common.types import (
 from agent_pm.session.clients.common import CHECKS, FLAGS, check_config, scan, split_flags
 from agent_pm.session.engine.types import (
     COMMAND,
+    ClientHome,
     ConfigError,
     Launch,
     Resumable,
@@ -842,6 +843,11 @@ class CodexCommon:
         check_config(config, TABLE, (FLAGS, *CHECKS))
         self.flags = tuple(config.get("flags", ()))
         refuse(self.flags)
+
+    def home(self) -> ClientHome:
+        return ClientHome(
+            "codex_dir", "codex", "CODEX_HOME", "codex-access-token", persistent=("sessions",)
+        )
 
     @cached_property
     def store(self) -> SessionStore:

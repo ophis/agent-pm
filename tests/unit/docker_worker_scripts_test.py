@@ -67,17 +67,40 @@ class CodexBootstrap(Case):
         self.target.mkdir()
         self.secrets = Path(self.home, "secrets")
         self.secrets.mkdir()
+        self.plugins = Path(self.home, "image-plugins")
+        (self.plugins / "inline").mkdir(parents=True)
 
     def test_codex_home_has_file_auth_trusted_project_and_only_a_secret_link(self):
         import tomllib
 
-        self.code["bootstrap_codex"](self.target, '/work/"project', self.secrets)
+        self.code["bootstrap_codex"](self.target, '/work/"project', self.secrets, self.plugins)
         config = tomllib.loads((self.target / "config.toml").read_text())
         self.assertEqual(config["cli_auth_credentials_store"], "file")
         self.assertEqual(config["forced_login_method"], "chatgpt")
         self.assertEqual(config["projects"]['/work/"project']["trust_level"], "trusted")
         self.assertTrue((self.target / "auth.json").is_symlink())
         self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+        self.assertNotIn("plugins", config)
+
+    def test_codex_plugins_use_the_image_cache_and_enable_the_native_ids(self):
+        import tomllib
+
+        for name in ("beta", "autopilot"):
+            (self.plugins / "inline" / name / "local").mkdir(parents=True)
+        self.code["bootstrap_codex"](self.target, "/work/project", self.secrets, self.plugins)
+        config = tomllib.loads((self.target / "config.toml").read_text())
+        self.assertEqual(
+            config["plugins"],
+            {
+                "autopilot@inline": {"enabled": True},
+                "beta@inline": {"enabled": True},
+            },
+        )
+        cache = self.target / "plugins/cache"
+        self.assertTrue(cache.is_symlink())
+        self.assertEqual(cache.readlink(), self.plugins)
+        self.assertFalse((cache / "inline/autopilot/local").is_symlink())
+        self.assertFalse((self.target / "sessions").exists())
 
     def test_access_document_is_owner_read_only_and_atomically_replaced(self):
         inject = self.code["inject_codex"]

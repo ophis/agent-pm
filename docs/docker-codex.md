@@ -2,8 +2,9 @@
 
 TASK-648 implements M4 step 2 FR-2 and FR-3 from
 [Product Design/2026-10-16-2311-TASK-550-docker-host-m4.md](https://github.com/ophis/private_docs/blob/main/Product%20Design/2026-10-16-2311-TASK-550-docker-host-m4.md).
-TASK-649 adds terminal container authentication and recovery. TASK-652 adds FR-9's
-container version policy. Authentication refresh remains separate work.
+TASK-649 adds terminal container authentication and recovery; TASK-651 adds headless
+execution and whitelisted native plugin skills ([Docker sessions](#docker-sessions)).
+TASK-652 adds FR-9's container version policy. Authentication refresh remains separate work.
 
 ## Commands
 
@@ -100,12 +101,11 @@ Docker and integration verification run only in GitHub CI. The pull request list
 the separate user-run macOS installation, browser-login, cancellation, trust-denial
 and personal-login-isolation checks. No live result is claimed here.
 
-## Docker terminals
+## Docker sessions
 
 After installation/login and the [Docker Host setup](docker-host.md#crew-workers),
-`agent-pm-crew worker w --client codex` and a Codex `agent-pm-crew role` use the same
-terminal authentication. The host needs the broker, not a personal Codex executable.
-Headless Codex remains rejected; use a terminal worker for this milestone.
+`agent-pm-crew worker w --client codex`, Codex role runs and unattended board runs use
+the same container authentication. The host needs the broker, not a personal Codex executable.
 
 **Access-only authentication** uses the broker login's access token and account ID
 (identifier). The external-token document has no refresh credential or original ID
@@ -118,27 +118,71 @@ fields are defined in [Docker broker protocol](docker-broker-protocol.md).
 | `~/.agent-pm/docker-state/<name>/codex/sessions/` | Only host-bound client state; native history survives restart and close/resume |
 | Container `CODEX_HOME`, at the corresponding host path | Entirely tmpfs; image-created configuration and credential-link replacements disappear on close |
 | `/run/agent-pm/secrets/codex/auth.json` | Agent-owned 0400 tmpfs file, injected over Docker standard input |
-| `/run/agent-pm/codex-store/` | Volatile projection of only the current `(workdir, sid)` recovery record; host events own identity |
+| `/run/agent-pm/codex-store/` | Terminal launcher's volatile projection of only the current `(workdir, sid)` recovery record |
 | `<generation>.credential.json` | Host control record containing only initial expiry; GitHub renewal does not extend it |
 
 ```mermaid
 flowchart LR
     B[Verify broker login] --> V[Prepare compatible Codex]
     V --> I[Inject access credential]
-    I --> T[Image terminal and hooks]
+    I --> T[Image terminal or headless]
     T --> E[Initial expiry]
     E --> C[Report and close container]
 ```
-This milestone does not refresh credentials or establish cross-refresh compatibility.
+Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:204`.
 
-**Expiry** produces `client_auth_expired` in the session event log and closes that
-generation. Log in again with `agent-pm-broker login codex`, then resume the worker.
+**Expiry** produces `client_auth_expired` in the terminal session event log or headless
+harness log and closes that generation. Log in again with `agent-pm-broker login codex`, then resume the worker.
 A recovered supervisor reads the same saved initial deadline. No run login or personal
 credential fallback is attempted. Missing login, invalid pinned installation and expired
 credentials fail preflight with repair instructions.
+Credential refresh and cross-refresh compatibility remain later M4 work.
 
 The authentication implementation's source evidence below does not certify the PRD's
 cross-refresh version matrix. Container admission uses [Container versions](#container-versions).
+
+### Headless and terminal recovery
+
+```mermaid
+flowchart LR
+    R[Named role or headless run] --> H[Host home and runtime]
+    H --> P[Host.pipe]
+    P --> E[Image codex exec]
+    E --> B[Host native binding]
+    B --> T[Terminal or headless resume]
+```
+Native binding comes from `thread.started`; only host-received client events update recovery state.
+
+Headless uses `/opt/agent-pm/bin/codex exec` with the existing JSON event parser, so
+replies and completion events reach Delegate reporting. The host prepares its native
+resume selector directly; only the terminal's Python launcher needs a projected store.
+Both modes retain the original snapshot, native ID and CODEX_HOME when resuming on the
+same Host. Missing or mismatched history and symlinked history paths fail before launch.
+The harness supervises headless GitHub refresh and client expiry concurrently; ending
+the run cancels both tasks. A killed harness leaves cleanup to the next Docker sweep.
+
+### Native plugins
+
+The shared [plugin whitelist](docker-host.md#plugins) supplies both clients from the
+same installed payload. No host Codex installation or personal CODEX_HOME is consulted.
+
+| Artifact | Codex behavior |
+|---|---|
+| Explicit `.codex-plugin/plugin.json` | Preserved; name must match, declared skill directories must stay inside the plugin |
+| Claude-only payload | Generate a native skills manifest from name, optional description/version, default `skills/` and declared extra skill directories |
+| Default Claude hook/server files | Excluded from the generated adapter: `hooks/hooks.json`, `.mcp.json`, `.app.json`; commands are not migrated |
+| `/opt/agent-pm/codex-plugins/inline/<name>/local/` | Image-owned, read-only native cache; skill-relative scripts and references retained |
+| `CODEX_HOME/plugins/cache` | Volatile link to that image cache; generated config enables `<name>@inline` |
+
+An explicit native manifest retains its Codex behavior, including its hook/server
+configuration. Skill names are namespaced, for example
+`autopilot:build`. Invalid native names/skill paths and escaping or dangling links fail
+the build before Docker. The broker checks resolved links before reading metadata.
+
+The pinned format is grounded in Codex `rust-v0.162.1`:
+[cache lookup](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core-plugin-common/src/installed.rs#L47),
+[native skill discovery](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core-plugins/src/loader.rs#L1045),
+and [namespaced inventory](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/app-server/tests/suite/v2/skills_list.rs#L650).
 
 | Source evidence, rust-v0.162.1 | Established behavior |
 |---|---|
@@ -148,7 +192,9 @@ cross-refresh version matrix. Container admission uses [Container versions](#con
 | [auth/manager.rs:2999-3022](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/login/src/auth/manager.rs#L2999) | Automatic managed refresh applies to `Chatgpt` |
 
 GitHub CI's [worker_codex.py](../.github/worker_codex.py) uses synthetic credentials with
-network disabled. It checks the real Codex auth loader, agent identity, nested mounts,
+network disabled. It queries app-server `skills/list` for the native probe skill,
+its enabled state, plugin ID and path, and verifies cache ownership/non-writability.
+It also checks the real Codex auth loader, agent identity, nested mounts,
 atomic replacement of the auth link and history-only persistence across two containers.
 It does not test model access, native conversation recovery or macOS file sharing.
 
@@ -203,10 +249,11 @@ credentials; record versions, time, status and redacted error locations only.
 
 | Check | Expected observation |
 |---|---|
-| Start two Codex crew workers and one terminal role run | No login/onboarding prompt; responses reach `crew report` and completion events; no role-specific Docker manifest |
-| Hide personal host Codex from PATH for these commands | Terminal and container hook trust still start using image files |
+| Start two Codex crew workers, a terminal role run and an unattended Codex board role run | No login/onboarding prompt; responses reach `crew report` and completion events; no role-specific Docker manifest |
+| Hide personal host Codex from PATH for these commands | Both modes and container hook trust still start using image files |
 | Inspect mounts/security without dumping environment or secret files | One workspace volume; only client history bind; volatile home/secrets; user agent, CapDrop ALL, no-new-privileges; no Docker socket or privileged/host namespaces |
 | Restart, then close and resume a worker | Same native identity and history; no duplicate completed event; missing history produces failure |
+| Complete a headless run, reopen it as a terminal, then close and resume headless on the same Host | Same native ID, CODEX_HOME, history and workspace; replies and outcomes appear once |
 | Restart the host supervisor, then query/send | Relay resumes, same identity; original access deadline retained |
 | Let the initial access token expire | `client_auth_expired`, container removed, no login prompt or identity change; host login plus resume repairs it |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
@@ -214,3 +261,5 @@ credentials; record versions, time, status and redacted error locations only.
 | Repeat with registry unavailable, then an unavailable/corrupt allowed update | Image version restored and recorded; no secret injection precedes preparation |
 | Use an image outside the rule, and separately an empty rule | Startup refuses before any client/GitHub secret; existing compatible image remains usable if only advisory lookup fails |
 | Close after a successful update, then resume | Executable tmpfs disappears; next generation repeats selection; native history remains |
+| Use a whitelisted skill in both modes | Namespaced skill executes from the image; its scripts/references resolve; empty whitelist loads none |
+| After M4 refresh support lands: two containers and an independently logged-in host across a real refresh | Both modes continue with unchanged identity and personal login; record actual refresh count, versions and timings |

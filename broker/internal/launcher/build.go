@@ -203,6 +203,9 @@ func (h Host) stage(pkg string, plugins []string, tmp string) (string, []string,
 	if err != nil {
 		return "", nil, err
 	}
+	if err := stageCodexPlugins(staged, filepath.Join(packageDir, "plugins"), filepath.Join(packageDir, "codex-plugins")); err != nil {
+		return "", nil, err
+	}
 	return meta.Version, staged, nil
 }
 

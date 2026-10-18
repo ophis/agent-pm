@@ -1,6 +1,6 @@
 """DockerPiped, a headless client's `docker exec -i` (DockerHost.pipe): its lines capped, as the
-container's output is untrusted; its GitHub tokens are refreshed until close(), which removes its
-container once.
+container's output is untrusted; GitHub refresh and client expiry are supervised until close(),
+which removes its container once.
 """
 
 import os
@@ -34,8 +34,8 @@ class _Capped:
 
 
 class DockerPiped(LocalPiped):
-    """lock: the pipe lock's fd, held while it runs; close: what frees its container; refresh: run
-    on a thread until the Event close() sets.
+    """lock: the pipe lock's fd, held while it runs; close: what frees its container; refresh and
+    expire: concurrent tasks sharing the Event close() sets.
     """
 
     def __init__(
@@ -46,12 +46,14 @@ class DockerPiped(LocalPiped):
         close: Callable[[], None],
         lock: int,
         refresh: Callable[[threading.Event], None],
+        expire: Callable[[threading.Event], None],
     ) -> None:
         super().__init__(proc)
         self.stdout, self.stderr = _Capped(name, self.stdout), _Capped(name, self.stderr)
         self._close, self._lock = close, lock
         self._once, self._closed, self._stopped = threading.Lock(), False, threading.Event()
-        threading.Thread(target=refresh, args=(self._stopped,), daemon=True).start()
+        for task in (refresh, expire):
+            threading.Thread(target=task, args=(self._stopped,), daemon=True).start()
 
     def close(self) -> None:
         with self._once:

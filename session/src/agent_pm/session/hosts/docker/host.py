@@ -1111,6 +1111,16 @@ class DockerHost(Host):
                     "docker session %s: github_refresh_failed %s", name, reason
                 ),
             ),
+            expire=lambda stopped: run_supervisor.expire_client(
+                name,
+                state_dir(name),
+                generation,
+                self.broker,
+                stopped,
+                failed=lambda reason: LOG.warning(
+                    "docker session %s: client_auth_expired %s", name, reason
+                ),
+            ),
         )
 
     def _stage_files(self, container: str, metadata: Mapping[str, str]) -> None:

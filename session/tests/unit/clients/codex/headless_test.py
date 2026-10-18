@@ -3,14 +3,17 @@
 import dataclasses
 import io
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm.session.clients.codex import CodexClient
+from agent_pm.session.clients.codex.tui import decode
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
+    ClientRuntime,
     ConfigError,
     LimitHit,
     Reply,
@@ -186,6 +189,108 @@ class HeadlessTest(Base):
         run = self.client.headless()
         message = "network error mentioning a usage limit"
         self.assertEqual(list(run.parse({"type": "error", "message": message})), [Stderr(message)])
+
+
+class ContainerLaunch(Base):
+    def setUp(self):
+        super().setUp()
+        self.runtime = ClientRuntime(
+            "/image/bin", "/image/python", "/image/source", "/run/agent-pm"
+        )
+
+    def test_both_modes_request_the_same_history_only_client_home(self):
+        home = self.client.tui()._home()
+        self.assertEqual(self.client.headless()._home(), home)
+        self.assertEqual(
+            (home.field, home.dir, home.env, home.credential, home.persistent),
+            ("codex_dir", "codex", "CODEX_HOME", "codex-access-token", ("sessions",)),
+        )
+
+    def test_headless_mode_passes_the_image_runtime_and_home_to_its_host_pipe(self):
+        host = MemoryHost()
+        host._inherit_env = False
+        piped = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
+        spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
+        with (
+            mock.patch.object(host, "_client_runtime", return_value=self.runtime),
+            mock.patch.object(
+                host, "_client_env", return_value={"CODEX_HOME": str(self.codex_home)}
+            ),
+            mock.patch.object(host, "pipe", return_value=piped) as pipe,
+            mock.patch("shutil.which", return_value=None) as which,
+            mock.patch.dict(os.environ, {"PERSONAL_CODEX_ENV": "private"}),
+        ):
+            mode = HeadlessMode.start(
+                spec,
+                self.client,
+                registry=self.session_cls._config().registry,
+                record=lambda _: None,
+                host=host,
+            )
+        name, launch = pipe.call_args.args
+        metadata = pipe.call_args.kwargs["metadata"]
+        self.assertEqual((name, launch.argv[:2]), ("w", ("/image/bin/codex", "exec")))
+        self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
+        self.assertNotIn("PERSONAL_CODEX_ENV", launch.env)
+        self.assertEqual(metadata["home_field"], "codex_dir")
+        self.assertNotIn("codex", [call.args[0] for call in which.call_args_list])
+        self.assertEqual(json.loads(metadata["home_persistent"]), ["sessions"])
+        self.assertTrue(all(done.wait(5) for done in mode.done))
+
+    def test_headless_native_events_resume_in_a_terminal_and_back(self):
+        run = self.client.headless()
+        run._set_runtime(self.runtime)
+        first = run.launch(dataclasses.replace(self.spec, prompt="one"))
+        run.commit()
+        self.assertEqual(first.argv[:2], ("/image/bin/codex", "exec"))
+        self.assertEqual(
+            list(run.parse({"type": "thread.started", "thread_id": NATIVE})), [ClientBound(NATIVE)]
+        )
+        self.rollout()
+        terminal = self.client.tui()
+        terminal._set_runtime(self.runtime)
+        launch = terminal.launch(dataclasses.replace(self.spec, resume=True, prompt="two"), HOOK)
+        plan = decode(json.loads(launch.argv[-1]))
+        self.assertEqual(plan.selection, ("resume", NATIVE))
+        self.assertEqual(plan.executable, "/image/bin/codex")
+        resumed = self.client.headless()
+        resumed._set_runtime(self.runtime)
+        command = resumed.launch(dataclasses.replace(self.spec, resume=True, prompt="three"))
+        self.assertEqual(command.argv[command.argv.index("resume") + 1], NATIVE)
+        self.assertEqual(command.env["CODEX_HOME"], first.env["CODEX_HOME"])
+        events = list(
+            resumed.events(
+                map(
+                    json.dumps,
+                    [
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "agent_message", "text": "three"},
+                        },
+                        {"type": "turn.completed"},
+                    ],
+                )
+            )
+        )
+        self.assertEqual(events, [Reply("three"), TurnEnd("three")])
+
+    def test_container_resume_rejects_missing_mismatched_and_linked_history(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        run = self.client.headless()
+        run._set_runtime(self.runtime)
+        spec = dataclasses.replace(self.spec, resume=True)
+        with self.assertRaisesRegex(ConfigError, "missing Codex session file"):
+            run.launch(spec)
+        path = self.rollout(cwd=str(self.extra))
+        with self.assertRaisesRegex(ConfigError, "mismatched Codex session"):
+            run.launch(spec)
+        path = self.rollout()
+        outside = self.extra / path.name
+        path.rename(outside)
+        path.symlink_to(outside)
+        with self.assertRaises(ConfigError):
+            run.launch(spec)
 
 
 class LaunchPolicy(Base):
