@@ -192,7 +192,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
 	}
 	args = append(args,
-		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation)
+		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation, "--label", clientLabel+"="+m.Client)
 	keys := make([]string, 0, len(m.Labels))
 	for k := range m.Labels {
 		keys = append(keys, k)

@@ -19,18 +19,24 @@ func (h Host) remove(ctx context.Context, c string) (bool, error) {
 	return err == nil && strings.TrimSpace(string(out)) == c, err
 }
 
-// heldKind is the audit kind of the client credential c's secrets tmpfs holds, from its env's client home ("":
-// unknown). Only for the audit: nothing else of the env is kept.
+// heldKind is the audit kind of the client credential c's secrets tmpfs holds ("": none or unknown), from its client
+// label, else (a container an older broker started) its env's client home. Only for the audit: nothing else is kept.
 func (h Host) heldKind(ctx context.Context, c string) string {
 	if h.Audit == nil {
 		return ""
 	}
-	out, err := h.Docker.Run(ctx, []string{"container", "inspect", "--format", "{{json .Config.Env}}", c}, nil)
-	var env []string
-	if err != nil || json.Unmarshal(out, &env) != nil {
+	out, err := h.Docker.Run(ctx, []string{"container", "inspect", "--format", `{"env":{{json .Config.Env}},"labels":{{json .Config.Labels}}}`, c}, nil)
+	var config struct {
+		Env    []string          `json:"env"`
+		Labels map[string]string `json:"labels"`
+	}
+	if err != nil || json.Unmarshal(out, &config) != nil {
 		return ""
 	}
-	for _, kv := range env {
+	if client, ok := config.Labels[clientLabel]; ok {
+		return clientKind(client)
+	}
+	for _, kv := range config.Env {
 		switch {
 		case strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR="):
 			return audit.ClaudeSetupToken

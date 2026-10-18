@@ -257,7 +257,7 @@ func TestRunArguments(t *testing.T) {
 	want := []string{"run", "--detach", "--name", container, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", cwd, "--env", "CLAUDE_CONFIG_DIR=" + claude,
 		"--env", "npm_config_cache=" + cwd + "/.agent-pm-cache", "--env", "UV_CACHE_DIR=" + cwd + "/.agent-pm-cache", "--env", "PIP_CACHE_DIR=" + cwd + "/.agent-pm-cache",
-		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "team=crew",
+		"--label", "agent-pm.session=worker_1", "--label", "agent-pm.generation=0123456789abcdef0123456789abcdef", "--label", "agent-pm.client=claude", "--label", "team=crew",
 		"--mount", "type=volume,source=" + volume + ",target=" + cwd + ",volume-nocopy", "--mount", "type=bind,source=" + claude + ",target=" + claude,
 		"--tmpfs", "/run/agent-pm/secrets:rw,noexec,nosuid,nodev,size=65536,mode=0700,uid=1001,gid=1002",
 		"--entrypoint", "/usr/bin/tini", digest, "--", "sleep", "infinity"}

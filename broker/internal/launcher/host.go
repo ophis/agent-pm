@@ -115,12 +115,18 @@ type WorkspaceResult struct {
 	Removed bool   `json:"removed"`
 }
 
-// clientKind is the audit kind of the credential client's container holds.
+// clientLabel names the client a container was started for; manifest labels cannot use the agent-pm. prefix.
+const clientLabel = "agent-pm.client"
+
+// clientKind is the audit kind of the credential client's container holds; "" for none.
 func clientKind(client string) string {
-	if client == "codex" {
+	switch client {
+	case "claude":
+		return audit.ClaudeSetupToken
+	case "codex":
 		return audit.CodexAccessToken
 	}
-	return audit.ClaudeSetupToken
+	return ""
 }
 
 // failure classifies a Docker error: unreachable daemon, else code.
