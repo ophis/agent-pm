@@ -483,5 +483,9 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
   before reading them.
 - A harness killed with `kill -9` leaves its headless client running, with its token, until the next Docker start or
   close.
-- Containers reach the host through `host.docker.internal`: a host service listening on all interfaces or Docker's
-  gateway is reachable from workers.
+- Every container, Claude and Codex workers included, reaches through `host.docker.internal` the Mac's services that
+  listen only on `127.0.0.1`: on 2026-10-18 a worker-like container (bridge, `--cap-drop ALL`, no mounts or
+  credentials) got Ollama's `/api/version` while Ollama listened only on `127.0.0.1:11434`. The host side of such a
+  connection belongs to `com.docker.backend`, running as you, so pf cannot tell container traffic apart
+  ([Docker networking](https://docs.docker.com/desktop/features/networking/)); the Mac has no Docker gateway address
+  to listen on instead. The user accepted this risk (TASK-695 FR-24): no forwarder, firewall or Docker Business.
