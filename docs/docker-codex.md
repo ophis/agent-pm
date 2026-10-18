@@ -243,10 +243,14 @@ the official stable `latest` release prints the explicit pinned-upgrade command 
 the command table with its version; lookup failure does not block a compatible start.
 The hint neither upgrades the host nor expands the rule.
 
-## User-run acceptance, pending
+## Post-release acceptance, moved out of TASK-647
 
-Use an authorized broker test login. Workers do not run these checks or inspect real
-credentials; record versions, time, status and redacted error locations only.
+The following product checks belong to the live checklists of [PR #408](https://github.com/ophis/agent-pm/pull/408),
+[PR #409](https://github.com/ophis/agent-pm/pull/409) and [PR #411](https://github.com/ophis/agent-pm/pull/411)
+after the M4 release. Independent-host/two-container concurrent refresh belongs to
+[TASK-650](https://linear.app/ophis-workgroup/issue/TASK-650). They are moved,
+not pending TASK-647 gates. Use an authorized isolated login and redacted records;
+workers run none of these checks. Real expiry is outside TASK-647.
 
 | Check | Expected observation |
 |---|---|
@@ -275,38 +279,38 @@ baseline. Neither grants the other's compatibility. Sources:
 
 Plan B was dropped by the user on 2026-10-18; no model-request relay is in scope.
 
-The user's 2026-10-17 revision removes waiting for or crossing real access-token
-expiry from this verdict. Every other evidence item remains required. Missing tests,
-network failures and unavailable identities stay incomplete; they cannot select C.
-The product expiry acceptance check above remains a separate milestone check.
+**Retained gates**, per the user's 2026-10-18 decision: a running Codex process
+loads a replaced access token without restart; version matrix, compatibility rule
+and measured refresh lead. No real-expiry check. Missing observations and network
+failures stay incomplete; C requires reproducible A failure.
 
 ### Verification matrix
 
-All live observations below are user/manager reports, not worker reruns. Versions,
-execution times and redacted counts are in the linked evidence. Whole-row status
-stays incomplete when a subcheck succeeds.
+All live results are user/manager observations, not worker reruns. A new exec process
+reading a replacement is distinct from a running process changing its cached value.
 
-| Item | A evidence and status | Remaining evidence |
+| Retained item | Status and evidence | Next observation |
 |---|---|---|
-| Authentication carrier | Incomplete: missing refresh field fails loading; empty string loads and produces headless replies ([carrier](docker-codex-evidence/2026-10-18-user-a-carrier.json)) | Minimum identity fields; terminal and headless; no refresh credential in containers |
-| Multiple turns and reload | Incomplete: new-process native resume retains identity and replies OK ([resume](docker-codex-evidence/2026-10-18-user-a-resume.json), [refresh](docker-codex-evidence/2026-10-18-user-a-refresh.json)) | Same live terminal process obtains new access value; headless consecutive turns/resume; record old-value rejection/recovery if rejected |
-| Refresh and concurrency | Incomplete: one real host rotation; two unchanged containers reply afterward; reinjected a-2 also replies ([refresh](docker-codex-evidence/2026-10-18-user-a-refresh.json)) | Second real refresh; two containers plus independent host before/after; account-lock contention; old-value acceptance/rejection and unchanged personal login |
-| Version compatibility | Incomplete: host and two experimental containers report `0.163.0` ([carrier](docker-codex-evidence/2026-10-18-user-a-carrier.json)) | Every distinct candidate: terminal/headless, refresh, restart, close/resume; image digest and unchanged native identity |
-| Volatile state | Incomplete: Linux and macOS synthetic nested-mount/restart checks pass ([CI](docker-codex-evidence/2026-10-17-mount-ci.json), [host](docker-codex-evidence/2026-10-18-user-host.json)) | Real Codex writes, history-only persistence, credential-residue scan, restart/close/resume and volatile-state removal |
-| Refresh trigger and lead | Incomplete: fixed Codex `account/read` with `refreshToken: true` causes one observed rotation ([refresh](docker-codex-evidence/2026-10-18-user-a-refresh.json)) | Second rotation, refreshed-credential model use, measured refresh/write/reload durations and clock difference; no direct refresh-endpoint calls |
+| Running-process token replacement | Incomplete: refreshed carriers produce new-process replies; no same-process cache comparison yet ([second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json)) | One persistent native app-server connection: old cache, file replacement, native guarded reload, new cache; no restart |
+| Version matrix and rule | Incomplete: fixed candidate and experimental containers are `0.163.0`; same-minor/latest coincide. Product image baseline `0.162.1` is not certified by these observations | Record experimental image content ID; admit only exact versions passing retained gates |
+| Refresh trigger and measured lead | Incomplete: two genuine own-Codex rotations observed. Second native interval is 1.222276 s, including initialization/RPC/cleanup | Measure complete host-refresh, injection and verified live-cache reload interval; source's 300 s window is not measured lead |
 
-The existing probe actions are `status`, `pair`, `resume`, `resume-pair`, `versions`,
-`inject`, `expiry` and `host-refresh` in [docker_codex_a_probe.py](../scripts/docker_codex_a_probe.py).
-They are one-off evidence helpers, not product commands. From the repository root,
-`python3 -I scripts/docker_codex_a_probe.py --user-run resume-pair` uses the existing
-injected containers. Host credential operations require an explicit absolute root,
-for example `python3 -I scripts/docker_codex_a_probe.py --user-run --live-root <isolated-root> host-refresh`.
-Only the user reads/injects/refreshes host credentials; the manager may use credentials
-already in place without printing or copying them. Workers do neither.
-`expiry` reads claims only; there is no real-expiry experiment scheduled. Source inventory is reproducible with
-`python3 -I scripts/docker_codex_probe.py inventory`; the synthetic mount check is
-`bash scripts/docker-codex-mount-probe.sh`, run on Linux only by GitHub CI and on
-macOS by the authorized host operator.
+| Moved item | Destination |
+|---|---|
+| Concurrent refresh with independent host Codex and two containers | TASK-650 |
+| Restart/close/resume and credential-residue checks | PR #408/#409/#411 live checklists after M4 release |
+| Host.pipe, manifest and hook acceptance, including terminal/headless integration | PR #408/#409/#411 live checklists after M4 release |
+
+The one-off [docker_codex_a_probe.py](../scripts/docker_codex_a_probe.py) actions
+include `live-reload`, `inject`, `host-refresh`, `versions` and historical observation
+helpers. From the repository root:
+`python3 -I scripts/docker_codex_a_probe.py --user-run --live-root <isolated-root> live-reload task647-codex-a-1`.
+The live root is required and absolute; personal login directories have no default.
+The manager runs these nonprivileged commands, including credential injection and
+host refresh. Only sudo/password steps go to the user; none is needed in this group.
+Workers never run live probes or inspect real credentials. No browser/login flow.
+Source inventory: `python3 -I scripts/docker_codex_probe.py inventory`.
+Exact task handoffs stay outside this user document.
 
 ### Observed results
 
@@ -318,9 +322,10 @@ macOS by the authorized host operator.
 | [Notice](docker-codex-evidence/2026-10-18-manager-a-notice.json), 02:22 UTC | Same native identity, exit0, final OK; one `unknown` error item | Raw message discarded; earlier categories cannot be reconstructed |
 | [Categorized notice](docker-codex-evidence/2026-10-18-manager-a-code-mode.json), 03:27 UTC | Same native identity, exit0, final OK; one `code_mode_unavailable` item | Category is diagnostic only; helper exit1 and incomplete remain |
 | [Real refresh](docker-codex-evidence/2026-10-18-user-a-refresh.json), 03:49–03:58 UTC | One proactive host request rotates access and refresh values, retains account, advances `last_refresh` and `exp` to 2026-10-28T03:57:02Z. Unchanged containers resume before/after; a-2 resumes again after reinjection. Each native run exits0, retains identity, completes one turn and ends OK | Helper exits are 1/0/1/0/1 in execution order. Every resume has only `code_mode_unavailable`, so strict status stays incomplete. No live-process reload, old-value invalidation or refresh duration was measured |
+| [Second refresh](docker-codex-evidence/2026-10-18-a-second-refresh.json), 04:22–04:24 UTC | External-access injection excludes original ID/refresh values. Second genuine rotation retains account and advances expiry. Unchanged and replaced carriers each produce new-process replies | Helper exits0/1/0/1/0/0/1; each resume remains incomplete solely on the known notice. Native host interval1.222276 s includes process/RPC overhead; no running-process reload inferred |
 
 The inventory's `live_refresh_count=0` is a source-only constant. The observed live
-rotation count is now **1**. An unchanged old carrier remaining usable after rotation
+rotation count is now **2**. An unchanged old carrier remaining usable after rotation
 records acceptance; it does not prove invalidation or recovery from rejection.
 
 ### Pinned source evidence
@@ -333,12 +338,13 @@ Source behavior does not replace live observations.
 | Source | Established behavior |
 |---|---|
 | [token_data.rs:11](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/token_data.rs#L11), [storage.rs:192](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/storage.rs#L192) | File loading deserializes required ID/access/refresh strings; account ID is optional. Missing refresh and empty refresh are distinct carriers |
-| [manager.rs:328](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L328), [manager.rs:1733](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1733), [auth.rs:14](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/protocol/src/auth.rs#L14) | File loading accepts `chatgptAuthTokens`; the external-access constructor uses access-token claims, empty refresh and account ID. The probe's `external-access` carrier excludes the original ID token; its live terminal/headless behavior is pending |
+| [manager.rs:328](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L328), [manager.rs:1733](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1733), [auth.rs:14](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/protocol/src/auth.rs#L14) | File loading accepts `chatgptAuthTokens`; the external-access constructor uses access-token claims, empty refresh and account ID. The probe's `external-access` carrier excludes the original ID token; new-process headless replies are observed; terminal integration is moved |
 | [manager.rs:2180](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2180), [manager.rs:2391](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2391), [manager.rs:2735](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2735) | Loading that file mode does not install an external-auth provider. The provider-triggered reload branch therefore cannot establish file-based live reload |
 | [storage.rs:214](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/storage.rs#L214) | Native save truncates/writes/flushes the file; synthetic atomic rename does not exercise this save path |
 | [manager.rs:1850](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1850), [manager.rs:2040](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2040) | Authentication is cached; external file changes require explicit reload. Unauthorized recovery reloads matching-account state before trying managed refresh |
 | [manager.rs:3001](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L3001) | Proactive refresh uses access `exp` with a 300 s window, falling back to the 8-day `last_refresh` threshold |
 | [account_processor.rs:1103](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1103), [manager.rs:2845](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L2845), [manager.rs:3089](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L3089) | Requested managed refresh locks and rereads state, then refreshes/persists/reloads when unchanged. Successful account-read response alone does not prove rotation |
+| [account_processor.rs:1118](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1118), [protocol/common.rs:1493](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server-protocol/src/protocol/common.rs#L1493) | Deprecated `getAuthStatus` can return the cached token for in-memory comparison. A managed carrier's requested refresh reloads changed same-account disk state before contacting the authority; external file mode skips that refresh request |
 | [JSON event processor:409](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L409) | Warning/config-warning notifications become `ErrorItem` while execution remains running |
 | [tools/mod.rs:63](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/mod.rs#L63), [code_mode/mod.rs:110](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/code_mode/mod.rs#L110), [turn_context.rs:1409](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/session/turn_context.rs#L1409) | Unavailable requested Code Mode emits a warning; effective mode determines direct-tool fallback versus fail-closed behavior |
 
@@ -347,43 +353,51 @@ Tool-free OK replies do not establish tool availability. It is not automatically
 benign release warning; classification never changes a strict result to pass. Only
 fixed category IDs/counts leave classifier memory; unknown stays unknown.
 
-### Compatibility and remaining work
+### Compatibility and shortest remaining path
 
-The [inventory](docker-codex-evidence/2026-10-18-manager-a-code-mode.json) captured on
-2026-10-18 identifies fixed candidate, same-minor latest and latest stable as `0.163.0`,
-published 2026-10-15T21:37:11.083Z. They are one distinct artifact, not three tests.
-The experimental image digest was not captured. No candidate has completed the
-terminal/headless/refresh/recovery matrix, so the machine-readable rule is:
+| Version role | Version | Retained-gate result |
+|---|---|---|
+| Fixed host candidate | `0.163.0` | Two real rotations; live cache reload/complete lead not yet observed |
+| Experimental container | `0.163.0` | Headless replies observed; live cache reload incomplete; image content ID not captured |
+| Latest same minor | `0.163.0` | Same artifact as candidate, not a separate test |
+| Latest stable | `0.163.0` | Same artifact, registry observed 2026-10-18, published 2026-10-15T21:37:11.083Z |
+| Product image baseline | `0.162.1` | Untested for retained gates; excluded from this validation's rule |
+
+Source inventory is in the [categorized notice evidence](docker-codex-evidence/2026-10-18-manager-a-code-mode.json).
+Untested same-minor versions gain no admission; an unproved range narrows to an exact
+passing set. The current product image needs its own passing record or an image
+upgrade before an eventual `0.163.0`-only rule can enable its starts.
 
 ```json
 {
-  "verdict_gate_revision": "user-2026-10-18-a-only-no-real-expiry",
+  "verdict_gate_revision": "user-2026-10-18-live-reload-version-lead-only",
   "real_access_expiry_crossing_required": false,
   "fixed_codex_version": "0.163.0",
   "container_version_rule": {"kind": "exact", "versions": []},
-  "observed_live_refresh_count": 1,
+  "observed_live_refresh_count": 2,
   "measured_refresh_lead_seconds": null,
   "scheduler_floor_seconds": 600,
   "selected_scheme": null
 }
 ```
 
-The source's 300 s window is not a measured refresh lead. The eventual scheduler uses
-the greater of the measured lead and the 600 s M3 floor. Same-minor releases are
-candidates only; an unproved range narrows to exact passing versions. A failing latest
-version does not disqualify a separately passing version.
+The next single-process probe uses the managed empty-refresh carrier. Its original
+ID/access/account fields remain in memory or volatile container state; no original
+refresh value enters the container. It verifies old cache, performs native host
+refresh and replacement, checks that the old cache remains, then requests guarded
+reload and compares the new cache, all through one native app-server connection.
+Only booleans, version/image metadata, fixed errors, counts and times leave memory.
+This establishes that backend process's cache, not terminal/headless product acceptance.
 
 ```mermaid
 flowchart TD
-    P[Remaining A evidence] --> D{A result}
-    D -->|All retained gates pass| A[Select A]
-    D -->|Reproducible failure| C[Select C]
-    D -->|Incomplete| W[Keep verdict pending]
+    I[Confirm version inventory] --> P[Single-process cache probe]
+    P --> M[Record measured pipeline lead]
+    M --> D{Retained gates}
+    D -->|Pass| A[Select A and exact versions]
+    D -->|Reproducible A failure| C[Select C]
+    D -->|Incomplete| W[Keep verdict incomplete]
 ```
-Remaining evidence follows the matrix; none waits for the October 28 expiry.
-
-TASK-643 `Host.pipe` and TASK-651 headless integration are now in the merged baseline,
-as described above. Their final live acceptance remains pending, rather than blocked
-on an unmerged implementation. Final M3 manifest and hook-protocol behavior still needs explicit
-verification against TASK-549; no protocol result is inferred from the plain
-`docker exec ... codex exec` experiments.
+The measured lead is the rounded-up observed monotonic refresh/write/reload interval,
+not a guaranteed worst-case bound; the scheduler uses max(measured lead, 600 s).
+No calendar wait or moved acceptance check stands between this probe and the verdict.
