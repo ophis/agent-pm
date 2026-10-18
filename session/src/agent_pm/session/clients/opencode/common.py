@@ -12,13 +12,16 @@ import sys
 from collections.abc import Iterable, Mapping
 
 from agent_pm.session.clients.common import CHECKS, FLAGS, MODES, check_config, mode_flags, scan
-from agent_pm.session.clients.opencode import probe
+from agent_pm.session.clients.opencode import probe, transcript
+from agent_pm.session.clients.opencode.transcript import NATIVE
 from agent_pm.session.engine.types import (
     ClientContext,
     ConfigError,
     Effort,
     Launch,
     Permission,
+    Resumable,
+    SessionStatus,
     Spec,
     Usage,
 )
@@ -35,7 +38,6 @@ from agent_pm.utils import (
 
 TABLE = "[clients.opencode]"
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
-NATIVE = re.compile(r"ses_[0-9A-Za-z]{1,128}")
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
 BINDING_MAX = 4096
 OLLAMA_PORT = 11434
@@ -275,6 +277,39 @@ class OpenCodeCommon:
     def store(self) -> str:
         return os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
 
+    def bind(self, cwd: str, sid: str, native: str) -> None:
+        Bindings(self.store).bind(cwd, sid, native)
+
+    def native(self, cwd: str, sid: str) -> str | None:
+        return Bindings(self.store).native(cwd, sid)
+
+    def unbind(self, cwd: str, sid: str) -> None:
+        Bindings(self.store).unbind(cwd, sid)
+
+    def session_status(self, cwd: str, sid: str, env: Mapping[str, str]) -> SessionStatus:
+        """From the bound session's row in opencode.db, read as the run's opencode would find it."""
+        try:
+            native = self.native(cwd, sid)
+        except ConfigError:
+            return SessionStatus(Resumable.UNKNOWN, None, "")
+        if native is None:
+            return SessionStatus(Resumable.NO, None, "")
+        db = transcript.database({**os.environ, **self.env, **env})
+        try:
+            updated = transcript.updated(db, native)
+        except transcript.Refused:
+            return SessionStatus(Resumable.UNKNOWN, None, "")
+        if updated is None:
+            return SessionStatus(Resumable.NO, None, "")
+        return SessionStatus(Resumable.YES, updated, "")
+
+
+class Bindings:
+    """Each run's (cwd, sid) bound to its OpenCode session, one file each under `store`."""
+
+    def __init__(self, store: str):
+        self.store = store
+
     def _binding(self, cwd: str, sid: str) -> str:
         key = hashlib.sha256(f"{os.path.realpath(cwd)}\0{sid}".encode()).hexdigest()
         return os.path.join(self.store, f"{key}.json")
@@ -290,6 +325,14 @@ class OpenCodeCommon:
             raise ConfigError(f"opencode session binding: {error}") from None
         for error in drop_stale(self.store):
             print(f"opencode session binding: {error}", file=sys.stderr)
+
+    def unbind(self, cwd: str, sid: str) -> None:
+        try:
+            os.unlink(self._binding(cwd, sid))
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise ConfigError(f"opencode session binding: {error}") from None
 
     def native(self, cwd: str, sid: str) -> str | None:
         """The session bound to (cwd, sid); None when none is (a symlink counts as none)."""

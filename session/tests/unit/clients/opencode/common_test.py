@@ -7,11 +7,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.session.clients.opencode import OpenCodeClient, probe
-from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon, worktree
-from agent_pm.session.engine.types import ConfigError, Effort, Usage
+from agent_pm.session.clients.opencode.common import NATIVE, Bindings, OpenCodeCommon, worktree
+from agent_pm.session.engine.types import ConfigError, Effort, Resumable, SessionInfo, Usage
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, packaged_table
+from session.tests.unit.clients.opencode.support import SES, make_db, packaged_table
 
 
 def common(**config) -> OpenCodeCommon:
@@ -142,6 +142,79 @@ class StoreTest(Case):
     def test_native_pattern(self):
         self.assertTrue(NATIVE.fullmatch(SES))
         self.assertFalse(NATIVE.fullmatch("ses_-x"))
+
+    def test_unbind_removes_the_binding_and_a_missing_one_is_fine(self):
+        self.common.bind(self.cwd, "run-1", SES)
+        self.common.unbind(self.cwd, "run-1")
+        self.assertIsNone(self.common.native(self.cwd, "run-1"))
+        self.common.unbind(self.cwd, "run-1")
+
+    def test_unbind_fails_on_any_other_error(self):
+        with (
+            mock.patch("os.unlink", side_effect=PermissionError(13, "denied")),
+            self.assertRaisesRegex(ConfigError, "opencode session binding"),
+        ):
+            self.common.unbind(self.cwd, "run-1")
+
+    def test_bindings_by_store_share_the_records(self):
+        bindings = Bindings(self.common.store)
+        bindings.bind(self.cwd, "run-1", SES)
+        self.assertEqual(self.common.native(self.cwd, "run-1"), SES)
+        self.assertEqual(bindings.native(self.cwd, "run-1"), SES)
+
+
+class SessionStatusTest(Case):
+    def setUp(self):
+        self.cwd = os.path.realpath(self.home)
+        self.data = os.path.join(self.home, "data")
+        self.db = os.path.join(self.data, "opencode", "opencode.db")
+        self.enterContext(mock.patch.dict(os.environ, {"XDG_DATA_HOME": self.data}))
+        self.client = OpenCodeClient(packaged_table())
+        self.info = SessionInfo("run-1", self.cwd, project=False, transcript="", resume="")
+
+    def status(self, **env):
+        return self.client.session_status(self.info, env=env)
+
+    def test_a_bound_session_in_the_db_is_resumable(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        make_db(self.db, {SES: 1_760_000_000_250})
+        found = self.status()
+        self.assertEqual(found.resumable, Resumable.YES)
+        self.assertEqual(found.last_active, 1_760_000_000.25)
+        self.assertEqual(found.resume_command, "")
+
+    def test_no_binding_or_no_row_is_not_resumable(self):
+        make_db(self.db, {SES: 1})
+        self.assertEqual(self.status().resumable, Resumable.NO)
+        self.client.common.bind(self.cwd, "run-1", "ses_notInTheDb")
+        self.assertEqual(self.status().resumable, Resumable.NO)
+
+    def test_session_status_unknown_without_a_db(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_session_status_unknown_on_a_query_error(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        os.makedirs(os.path.dirname(self.db))
+        with open(self.db, "w", encoding="utf-8") as f:
+            f.write("not sqlite " * 200)
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_session_status_unknown_on_a_corrupt_binding(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        (name,) = os.listdir(self.client.common.store)
+        with open(os.path.join(self.client.common.store, name), "w", encoding="utf-8") as f:
+            f.write("not json")
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+
+    def test_the_db_follows_the_session_env_over_the_caller(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        other = os.path.join(self.home, "other")
+        make_db(os.path.join(other, "opencode", "opencode.db"), {SES: 1000})
+        self.assertEqual(self.status().resumable, Resumable.UNKNOWN)
+        self.assertEqual(self.status(XDG_DATA_HOME=other).resumable, Resumable.YES)
+        configured = OpenCodeClient({**packaged_table(), "env": {"XDG_DATA_HOME": other}})
+        self.assertEqual(configured.session_status(self.info).resumable, Resumable.YES)
 
 
 class WorktreeTest(Case):

@@ -1,11 +1,13 @@
 """OpenCode's Client, client `opencode`, headless only; the rest is OpenCodeCommon's."""
 
 import os
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.opencode.common import IDENTITY, SELECTORS, VALUED, OpenCodeCommon
 from agent_pm.session.clients.opencode.headless import OpenCodeHeadless
-from agent_pm.session.engine.types import Spec
+from agent_pm.session.engine.types import SessionInfo, Spec
 
 
 class OpenCodeClient(Client):
@@ -32,6 +34,9 @@ class OpenCodeClient(Client):
 
     def usage(self, output):
         return self.common.parse_usage(output)
+
+    def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
+        return self.common.session_status(info.cwd, info.sid, env)
 
     def writable_dirs(self, spec: Spec):
         dirs = (spec.access.cwd, *spec.access.dirs)
