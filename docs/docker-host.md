@@ -275,9 +275,9 @@ Refused before any container exists, as not supported on the Docker Host yet: a 
 other than Claude, detached sessions, and a start while a container of that name still
 exists. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd is a directory or not
-yet made (a role run makes its agent dir after it; the start then needs it), the broker
-answers `version` with the expected protocol (else it points to [Install](#install)), and
+Every start first runs a preflight: the client is Claude, the cwd exists (`Session.preflight`
+also accepts one not yet made: a role run makes its agent dir after it), the broker answers
+`version` with the expected protocol (else it points to [Install](#install)), and
 `build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker

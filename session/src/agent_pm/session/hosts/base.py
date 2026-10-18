@@ -327,6 +327,10 @@ class Host(ABC):
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()
 
+    def _preflight(self, name: str, launch: Launch) -> None:
+        """validate, before its caller makes the cwd."""
+        self.validate(name, launch)
+
     def validate(self, name: str, launch: Launch) -> None:
         if not launch.argv:
             raise ConfigError("no command")

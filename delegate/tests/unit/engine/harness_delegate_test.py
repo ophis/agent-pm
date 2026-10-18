@@ -40,6 +40,8 @@ from delegate.tests.fakes.harness_session import (
 from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.engine.orphans import Clock, Orphan
+from session.tests.case import PLUGIN_BIN
+from session.tests.unit.hosts.docker import support
 
 ORPHAN = 4242
 
@@ -143,25 +145,9 @@ class DockerHeadlessTest(HarnessCase):
         self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
 
 
-class DockerBroker:
-    """The broker's preflight calls; `failing`: the build's error."""
-
-    def __init__(self):
-        self.calls, self.failing = [], None
-
-    def version(self):
-        self.calls.append("version")
-
-    def build(self, package, *, max_age=None):
-        self.calls.append("build")
-        if self.failing is not None:
-            raise self.failing
-        return "agent-pm-worker:" + "a" * 64, "sha256:" + "c" * 64
-
-
 class DockerPreflightTest(HarnessCase):
-    """The real Session's Docker Host, its broker faked and no daemon socket in its account home,
-    preflights a fresh workdir's run.
+    """The real Session's Docker Host, its broker process faked, no daemon socket in its account
+    home and its hook command on PATH, preflights a fresh workdir's run.
     """
 
     def setUp(self):
@@ -173,13 +159,24 @@ class DockerPreflightTest(HarnessCase):
                 'implementation = "agent_pm.session.hosts.docker.host:DockerHost"\n'
                 'docker = "/usr/local/bin/docker"\n'
             )
-        self.broker = DockerBroker()
+        self.calls, self.failing = [], False
+        path = os.pathsep.join((PLUGIN_BIN, os.environ.get("PATH", os.defpath)))
         for patcher in (
-            mock.patch("agent_pm.session.hosts.docker.host.Broker", return_value=self.broker),
+            mock.patch("subprocess.Popen", side_effect=self.broker),
             mock.patch("pwd.getpwuid", return_value=SimpleNamespace(pw_dir=self.home)),
+            mock.patch.dict(os.environ, {"PATH": path}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def broker(self, argv, **_):
+        command = argv[1]
+        self.calls.append(command)
+        if self.failing and command == "build":
+            return support.FakeProc(
+                argv, err=support.text("error-build_failed.json").encode(), code=8
+            )
+        return support.FakeProc(argv, out=support.text(f"{command}-output.json").encode())
 
     def create(self, mode):
         spec = Spec("input", self.work, task="echo", mode=mode, sid=SID)
@@ -190,17 +187,17 @@ class DockerPreflightTest(HarnessCase):
             with self.subTest(mode=mode):
                 self.assertFalse(os.path.exists(self.work))
                 self.create(mode)
-                self.assertEqual(self.broker.calls, ["version", "build"])
+                self.assertEqual(self.calls, ["version", "build"])
                 self.assertTrue(os.path.isdir(Layout(self.work).agent))
                 self.assertTrue(self.metadata()["plan"]["docker"])
                 shutil.rmtree(self.work)
-                self.broker.calls.clear()
+                self.calls.clear()
 
     def test_a_refused_docker_preflight_leaves_no_workdir(self):
-        self.broker.failing = SessionConfigError("broker: no image")
-        with self.assertRaisesRegex(ConfigError, "broker: no image"):
+        self.failing = True
+        with self.assertRaisesRegex(ConfigError, "Example build_failed"):
             self.create("headless")
-        self.assertEqual(self.broker.calls, ["version", "build"])
+        self.assertEqual(self.calls, ["version", "build"])
         self.assertFalse(os.path.exists(self.work))
 
 

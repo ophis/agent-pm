@@ -728,12 +728,15 @@ class DockerHost(Host):
     def _resume_argv(self, name: str) -> tuple[str, ...]:
         return (*RESUME, name)
 
-    def validate(self, name: str, launch: Launch) -> None:
-        """The preflight, before any container: the cwd, which may not exist yet (its caller makes
-        it before the start, which needs it), the broker handshake and the build.
+    def _preflight(self, name: str, launch: Launch) -> None:
+        self.validate(name, launch, missing_ok=True)
+
+    def validate(self, name: str, launch: Launch, *, missing_ok: bool = False) -> None:
+        """The preflight, before any container: the cwd (`missing_ok`: or none yet), the broker
+        handshake and the build.
         """
         laps = _Laps()
-        self._check_cwd(name, launch, missing_ok=True)
+        self._check_cwd(name, launch, missing_ok=missing_ok)
         self._image(name)
         laps("preflight")
         laps.report(f"docker timing {name}")

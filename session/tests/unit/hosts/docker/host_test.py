@@ -1204,27 +1204,27 @@ class PreflightTest(Base):
         self.assertEqual(self.order, ["version", ("build", REPO)])
         self.assertFalse(os.path.exists(self.state))
 
-    def test_a_cwd_its_caller_makes_before_the_start_passes(self):
-        self.cwd = os.path.join(self.account, "src", "later")
-        self.validate()
-        self.assertEqual(self.order, ["version", ("build", REPO)])
-        self.assertFalse(os.path.exists(self.cwd))
-
-    def test_a_cwd_that_is_no_directory_is_refused_before_the_broker(self):
-        self.cwd = os.path.join(self.account, "src", "file")
-        open(self.cwd, "w").close()
-        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.cwd}: no such directory"):
-            self.validate()
-        self.assertEqual(self.order, [])
-
-    def test_a_start_refuses_a_missing_cwd_before_the_broker(self):
+    def test_a_missing_cwd_is_refused_before_the_broker(self):
         launch = Launch(("agent",), cwd=os.path.join(self.account, "src", "gone"), env={})
-        for start in (self.host.terminal, self.host.pipe):
+        for check in (self.host.validate, self.host.terminal, self.host.pipe):
             with (
-                self.subTest(start=start.__name__),
+                self.subTest(check=check.__name__),
                 self.assertRaisesRegex(ConfigError, f"Docker cwd {launch.cwd}: no such directory"),
             ):
-                start("w", launch)
+                check("w", launch)
+        self.assertEqual(self.order, [])
+
+    def test_a_session_preflight_accepts_a_cwd_not_yet_made(self):
+        cwd = os.path.join(self.account, "src", "later")
+        self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(cwd))
+
+    def test_a_session_preflight_refuses_a_cwd_that_is_no_directory(self):
+        cwd = os.path.join(self.account, "src", "file")
+        open(cwd, "w").close()
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: no such directory"):
+            self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
         self.assertEqual(self.order, [])
 
 
