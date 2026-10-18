@@ -172,8 +172,8 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest` and the image's `clients`
-versions.
+It prints `container` (`C` below), `endpoint`, `image_digest`, prepared actual `clients`
+versions and the [version audit](docker-broker-protocol.md#success-fields).
 
 | Check | Expect |
 |---|---|
@@ -187,7 +187,7 @@ versions.
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
-| `lsof -nP -a -iTCP -c agent-pm` during a start | nothing: the broker opens no TCP socket |
+| `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; version preparation may open outbound HTTPS connections to the official registry |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
 one `{"account", "expires_at"}` per installation of the App.

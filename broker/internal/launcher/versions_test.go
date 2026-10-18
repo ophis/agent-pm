@@ -37,7 +37,7 @@ func defaultVersions() *fakeVersions {
 }
 
 func TestCodexVersionLifecycle(t *testing.T) {
-	for _, mode := range []string{"updated", "current", "registry_unavailable", "no_allowed_release", "download_failed", "stage_failed", "publish_failed", "probe_failed", "reset_failed", "restore_failed", "forbidden", "empty", "invalid_install"} {
+	for _, mode := range []string{"updated", "current", "registry_unavailable", "no_allowed_release", "download_failed", "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed", "forbidden", "empty", "invalid_install"} {
 		t.Run(mode, func(t *testing.T) {
 			v := &fakeVersions{allowed: []string{"0.162.1", "0.162.10"}, target: "0.162.10", latest: "0.163.0"}
 			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.10"}}
@@ -55,9 +55,12 @@ func TestCodexVersionLifecycle(t *testing.T) {
 				v.binaryErr = errors.New("bad integrity")
 				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1"}
 				want = "update_failed"
-			case "stage_failed", "publish_failed", "probe_failed", "reset_failed", "restore_failed":
+			case "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed":
 				want = "update_failed"
 				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+				if mode == "publish_failed" || mode == "wrapper_failed" {
+					w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+				}
 				w.execErr = func(args []string) error {
 					if slices.Contains(args, strings.TrimSuffix(mode, "_failed")) || (mode == "reset_failed" && slices.Contains(args, "stage")) || (mode == "restore_failed" && slices.Contains(args, "stage")) {
 						return errors.New("failed")
@@ -94,6 +97,34 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			}
 			if blocked {
 				return
+			}
+			index := func(arg string) int {
+				return slices.IndexFunc(d.calls, func(call []string) bool { return slices.Contains(call, arg) })
+			}
+			stage, stagedProbe, publish, reset, firstPublic, inject := index("stage"), index(runtimeDir+"/codex.next"), index("publish"), index("reset"), index("/opt/agent-pm/bin/codex"), index("inject")
+			lastPublic, publicCount := -1, 0
+			for n, call := range d.calls {
+				if slices.Contains(call, "/opt/agent-pm/bin/codex") {
+					lastPublic = n
+					publicCount++
+				}
+			}
+			if want == "update_failed" && !(reset >= 0 && reset < lastPublic && lastPublic < inject) {
+				t.Fatalf("fallback order: %v", d.calls)
+			}
+			switch mode {
+			case "publish_failed":
+				if !(stage >= 0 && stage < stagedProbe && stagedProbe < publish && publish < reset && publicCount == 1) {
+					t.Fatalf("publish failure not reached: %v", d.calls)
+				}
+			case "wrapper_failed":
+				if !(stage >= 0 && stage < stagedProbe && stagedProbe < publish && publish < firstPublic && firstPublic < reset && publicCount == 2) {
+					t.Fatalf("published probe failure not reached: %v", d.calls)
+				}
+			case "probe_failed":
+				if !(stage >= 0 && stage < stagedProbe && stagedProbe < reset && publish == -1) {
+					t.Fatalf("staged probe failure not reached: %v", d.calls)
+				}
 			}
 			if got.ClientUpdate.Result != want || got.ClientUpdate.PinnedVersion != "0.162.1" || got.ClientUpdate.ImageVersion != "0.162.1" {
 				t.Fatalf("%+v", got.ClientUpdate)
