@@ -247,6 +247,8 @@ For the manager and the user, on macOS with Docker Desktop; write each result in
 - [ ] [What a container cannot reach](#what-a-container-cannot-reach): four commands, a Claude and a Codex worker.
 - [ ] [Linear presets](#linear-presets): in a new Linear team, only this section and the config; both dry-runs report
   no config error.
+- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
+  board run's PR, each exits 0.
 
 ## Risks
 
