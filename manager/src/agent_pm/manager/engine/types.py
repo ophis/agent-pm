@@ -52,6 +52,10 @@ class Stale(RosterError):
     pass
 
 
+class StaleHolder(Stale):
+    """The caller's holder pair names a holder that ended or was replaced."""
+
+
 class Held(RosterError):
     pass
 

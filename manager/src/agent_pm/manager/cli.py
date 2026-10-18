@@ -11,8 +11,11 @@ from pathlib import Path
 
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
-from agent_pm.manager.engine.types import Lease, StatusError
+from agent_pm.manager.engine.types import Lease, StaleHolder, StatusError
 from agent_pm.utils import STATE, LayerCommand, nested_start, printable
+
+LEASE_FREE = ("env", "-u", "AGENT_PM_HOLDER_ID", "-u", "AGENT_PM_HOLDER_GENERATION")
+ENDED = "this environment's AGENT_PM_HOLDER_ID/AGENT_PM_HOLDER_GENERATION name an ended holder"
 
 
 def _number(value: str) -> int:
@@ -45,6 +48,69 @@ def _roster(args) -> Roster:
         raise ValueError("give --manager NAME or set AGENT_PM_MANAGER to a manager name")
     directory = Path(os.path.expanduser(STATE)) / "managers" / manager
     return Roster(str(directory))
+
+
+def _named(manager: str, option: str = "--manager") -> tuple[str, ...]:
+    return (f"{option}={manager}",) if manager.startswith("-") else (option, manager)
+
+
+def _restart(manager: str, *force: str) -> str:
+    hold = ("agent-pm-crew", "hold", *force, *_named(manager), *_named(manager, "--session"), "--")
+    return f"{shlex.join(hold)} <client resume command> (agent-pm-crew hold --help)"
+
+
+def _lease_free(*words: str) -> str:
+    return shlex.join((*LEASE_FREE, "agent-pm-crew", *words))
+
+
+def _lease_free_recovery(
+    manager: str, cursor: int, generation: int, reader: tuple[int, int] | None
+) -> list[str]:
+    named = _named(manager)
+    if reader is not None and reader[0] > cursor and reader[1] == generation:
+        ack = _lease_free("ack", *named, "--through", str(reader[0]), "--gen", str(generation))
+        ack = f"handled through {reader[0]}? first: {ack}, then attach"
+    else:
+        ack = f"{_lease_free('ack', *named, '--through')} <line> --gen {generation}"
+        ack = f"handled events after N={cursor}? first: {ack}, then attach; unacknowledged events replay"
+    monitor = ("--after", str(cursor), "--gen", str(generation), "--content", "--follow")
+    return [
+        "lasting fix: restart the commander's client under a new holder, then attach and arm its"
+        f" monitor: command: {_restart(manager)}",
+        ack,
+        "until then, attach without a lease, keeping the prefix on the commands it prints:"
+        f" {_lease_free('attach', *named)}",
+        "and monitor with its monitor: line; with no ack first, this is that line:"
+        f" {_lease_free('next-event', *named, *monitor)}",
+    ]
+
+
+def _stale_holder_notes(args, reader: tuple[int, int] | None = None) -> list[str]:
+    """Recovery for a pair whose holder ended; reader: the failed next-event's line and GEN."""
+    roster = _roster(args)
+    cursor, generation, holder = roster.lease_state()
+    manager = os.path.basename(roster.directory)
+    state = f"handled N={cursor} GEN={generation}"
+    if holder is not None:
+        return [
+            f"{ENDED}; {holder} holds manager {manager} now; {state}",
+            f"use {holder}'s commander; take over only on purpose: {_restart(manager, '--force')}",
+        ]
+    return [
+        f"{ENDED}; no holder is active; {state}",
+        *_lease_free_recovery(manager, cursor, generation, reader),
+    ]
+
+
+def _add_recovery(error: StaleHolder, args, reader: tuple[int, int] | None = None) -> None:
+    if any(note.startswith(ENDED) for note in getattr(error, "__notes__", ())):
+        return
+    try:
+        notes = _stale_holder_notes(args, reader)
+    except (OSError, RosterError, ValueError):
+        return
+    for note in notes:
+        error.add_note(note)
 
 
 def _crew(args) -> Crew:
@@ -89,8 +155,7 @@ def _attach(args) -> int:
     lines = crew.attach().splitlines()
     trailer = lines.pop()
     cursor, generation = (field.partition("=")[2] for field in trailer.split())
-    manager = os.path.basename(crew.roster.directory)
-    named = (f"--manager={manager}",) if manager.startswith("-") else ("--manager", manager)
+    named = _named(os.path.basename(crew.roster.directory))
     print("\n".join(lines))
     for name, entry in crew.roster.entries().items():
         if entry.state == State.GONE:
@@ -143,6 +208,8 @@ def _resume(args) -> int:
             record = crew.resume(name, input=args.input)
             if record is not None:
                 print(record.to_line())
+        except StaleHolder:
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             _report_error(error)
             failed = max(failed, 2 if isinstance(error, ValueError) else 1)
@@ -185,15 +252,19 @@ def _release(args) -> int:
 def _next_event(args) -> int:
     crew = _crew(args)
     after = args.after
-    while True:
-        after, event = crew.next_event(after=after, gen=args.gen)
-        block = f"{after} {event}\n"
-        if args.content:
-            block += crew.event_content(event)
-        # One write per event: Monitor groups lines written within 200 ms into one notification.
-        print(block, end="", flush=True)
-        if not args.follow:
-            return 0
+    try:
+        while True:
+            after, event = crew.next_event(after=after, gen=args.gen)
+            block = f"{after} {event}\n"
+            if args.content:
+                block += crew.event_content(event)
+            # One write per event: Monitor groups lines written within 200 ms into one notification.
+            print(block, end="", flush=True)
+            if not args.follow:
+                return 0
+    except StaleHolder as error:
+        _add_recovery(error, args, None if after is None else (after, args.gen))
+        raise
 
 
 def _pending(args) -> int:
@@ -278,6 +349,9 @@ Examples:
   agent-pm-crew hold --manager demo --session commander -- codex
   Inside that commander's environment, reconcile its roster:
   agent-pm-crew attach --manager demo
+  Restart a commander whose holder ended, resuming its conversation
+  (Codex: codex resume --last):
+  agent-pm-crew hold --manager demo --session demo -- claude --continue
 
 Recovery and next help:
   Conflict: use the existing commander, or --force for deliberate takeover.
@@ -720,6 +794,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         _report_error(error)
         return 2
+    except StaleHolder as error:
+        _add_recovery(error, args)
+        _report_error(error)
+        return 1
     except (OSError, RosterError, RuntimeError) as error:
         _report_error(error)
         return 1

@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import signal
 import stat
 import sys
@@ -481,6 +480,11 @@ class AttachTest(Base):
                 self.process.calls.activity.return_value = state
                 self.assertIs(mode.marked_blocked(), blocked)
         self.assertEqual(self.process.calls.activity.call_count, 3)
+
+    def test_a_terminal_that_cannot_tell_is_not_marked_blocked(self):
+        mode = self.attach()
+        self.process.calls.activity.side_effect = SessionError("tmux: docker exec in c: timed out")
+        self.assertFalse(mode.marked_blocked())
 
     def test_another_sid_absent_or_unknown_is_no_tui_session(self):
         for sid in ("other", None):
@@ -1500,12 +1504,12 @@ class CloseStopTest(Base):
 
     def test_close_kills_and_removes_under_the_names_lock(self):
         mode = self.started()
-        held, remove = [], shutil.rmtree
+        held, remove = [], tempfile.TemporaryDirectory.cleanup
         mode._terminal.calls.close.side_effect = lambda: held.append(self.locked())
         with mock.patch.object(
-            shutil,
-            "rmtree",
-            lambda path, **kwargs: (held.append(self.locked()), remove(path, **kwargs)),
+            tempfile.TemporaryDirectory,
+            "cleanup",
+            lambda retired: (held.append(self.locked()), remove(retired)),
         ):
             tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual((held, self.locked()), ([True, True], False))

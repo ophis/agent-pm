@@ -156,6 +156,8 @@ class HomeFilesTest(Base):
         "skipWorkflowUsageWarning": True,
         "autoCompactEnabled": True,
         "autoContinueAtUsageLimit": True,
+        "promptSuggestionEnabled": False,
+        "tui": "fullscreen",
     }
     SEARCHES = {"CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "50"}
 
@@ -183,7 +185,12 @@ class HomeFilesTest(Base):
         self.assertEqual(dataclasses.replace(ClaudeClient(CONFIG).tui()._home(), files=()), HOME)
 
     def test_the_unattended_keys_are_fixed_whatever_the_host_sets(self):
-        self.settings(json.dumps(dict.fromkeys(self.UNATTENDED, False)))
+        host = {
+            **dict.fromkeys(self.UNATTENDED, False),
+            "promptSuggestionEnabled": True,
+            "tui": "default",
+        }
+        self.settings(json.dumps(host))
         self.assertEqual(self.container_settings(), self.UNATTENDED)
 
     def test_no_env_without_the_hosts_search_cap(self):

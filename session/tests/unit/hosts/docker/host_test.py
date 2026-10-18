@@ -1614,14 +1614,24 @@ class TerminalTest(Base):
         for reply in (
             (1, "", f"Error response from daemon: No such container: {CONTAINER}\n"),
             (1, "", f"Error response from daemon: container {CONTAINER} is not running\n"),
-            TimeoutExpired("docker", 10),
-            Overflow("output over 8388608 bytes"),
         ):
             with self.subTest(reply=reply):
                 self.docker.replies = {(): reply}
                 self.assertEqual(process.state(), Liveness.ABSENT)
                 self.assertFalse(process.alive())
+                self.assertEqual(process.returncode(), -signal.SIGHUP)
                 self.assertEqual(process.status().state, StatusState.DEAD)
+
+    def test_a_probe_that_times_out_or_overflows_is_unknown_not_exited(self):
+        process = self.terminal()
+        for reply in (TimeoutExpired("docker", 10), Overflow("output over 8388608 bytes")):
+            with self.subTest(reply=reply):
+                self.docker.replies = {(): reply}
+                self.assertEqual(process.state(), Liveness.UNKNOWN)
+                self.assertIsNone(process.returncode())
+                self.assertEqual(process.status().state, StatusState.UNKNOWN)
+                with self.assertRaisesRegex(SessionError, f"docker exec in {CONTAINER}: "):
+                    process.alive()
 
     def test_terminal_never_reads_container_control(self):
         self.terminal()
@@ -2260,6 +2270,22 @@ class ListTest(Base):
                 self.assertEqual((row.name, row.state), ("w", StatusState.DEAD))
         self.docker.replies = {(): (1, "", "Error response from daemon: No such container: x")}
         self.assertEqual(self.host.rows()[0].state, StatusState.DEAD)
+
+    def test_rows_of_an_unanswered_listing_are_unknown(self):
+        self.listed("w")
+        self.record()
+        for reply in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over 8388608 bytes"),
+            (1, "", "server exited unexpectedly"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {("tmux", "-u", "list-sessions"): reply}
+                (row,) = self.host.rows()
+                self.assertEqual(
+                    (row.state, row.last_lines, row.sid, row.client, row.display),
+                    (StatusState.UNKNOWN, None, "s1", "agent", "lead/below"),
+                )
 
     def test_a_dead_rows_last_lines_have_no_control_characters(self):
         self.listed("w")

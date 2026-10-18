@@ -31,7 +31,9 @@ until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` in
 it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
 the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions).
+upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions);
+the image's `gh` is the version agent-pm pins (`broker/internal/launcher/assets/Dockerfile`),
+whatever your Dockerfile installs, and upgrades with the broker.
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -44,16 +46,37 @@ A start rebuilds an image built 7 or more days ago, and
 
 ## Log in
 
+After installing or reinstalling the broker, run all three logins: `login claude`,
+`login github agent-pm-bot` and `login codex` ([Codex operations](docker-codex.md#commands)).
+A reinstalled broker is another application to the keychain, so an item logged in by the old
+one would ask at the next start. Each login asks its terminal questions first, without echo:
+
+| Login | Terminal | macOS dialog, at most | Click |
+|---|---|---|---|
+| `login claude` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
+| `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
+| `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
+| `start` | none | none: a token it cannot read without one fails with `login_required` naming unlocking the login keychain or `login claude` | |
+
 ```sh
 claude setup-token          # copy the token it prints
 "$B" login claude           # paste it; nothing echoes
 ```
 
+It saves the token in a new item trusting only the broker, then makes its access trust only the
+broker as `login github` does below, with the prompt
+`Login keychain password, to make Claude trust only the broker (hidden):`.
+Then it reads the token back without a dialog. If macOS would still ask, it first prints
+`macOS will ask to let agent-pm-broker use agent-pm-claude: enter the login keychain password if asked and click Always Allow`.
+It then reads once with the dialog and once more without, to prove Always Allow (not Allow) was
+clicked.
+
 | Check | Expect |
 |---|---|
-| output of `login claude` | `Claude setup-token saved`, no token |
+| output of `login claude` | `Claude setup-token saved; keychain trusts only the broker`, no token |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, account `setup-token`; the only trusted application is `$B` |
 | shell history | no token |
+| first Claude [start](#start) after `login claude` | no keychain dialog |
 
 GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
 generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
@@ -109,11 +132,19 @@ keeps the image, printing `agent-pm-broker: kept <image>: refreshing it failed: 
 `--max-age 0` fails instead.
 
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
-images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
+images of other keys no build leased in the last hour, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
 stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
 each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
 line; a kept image goes at a later rebuild once no container uses it. A reused image
 removes nothing.
+
+Every `build` leases its key: it sets the time of `~/.agent-pm/docker/images/<key>` when it
+starts, reused image or not, and again before the second stage and at the end of a rebuild. So two
+packages building at once (two worktrees' plugin directories, or a worker's check beside a
+board run) keep each other's images, through a rebuild and until the start after it creates
+its container. `~/.agent-pm/docker/images.lock` keeps each removal pass apart from a build's
+lease and image check: a build that cannot take it fails with `build_failed`; a removal pass
+that cannot take it removes nothing, printing `agent-pm-broker: kept older images: cannot take the image lock: <reason>`.
 
 | Check (`I` = the printed image) | Expect |
 |---|---|
@@ -121,7 +152,9 @@ removes nothing.
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (the image's interpreter, which imports agent-pm's Delegate), then `repo.py`'s usage: role runs read the team and run its tools from `/opt/agent-pm/team`, the plugin's own version |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
-| `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
+| `docker image ls --filter reference='agent-pm-*'` after that rebuild | the new key's pair and the older one, which a build leased within the hour |
+| `rm ~/.agent-pm/docker/images/<older key>`, then `"$B" build --agent-pm "$PKG" --max-age 0` and `docker image ls --filter reference='agent-pm-*'` | only the new key's pair, plus the older worker image of any container still on it |
+| `"$B" build --agent-pm "$PKG" --max-age 0 & "$B" build --agent-pm "$PKG2" --max-age 0; wait`, `PKG2` another worktree's plugin directory with other content | both print `"rebuilt":true`; `docker image ls` lists both pairs |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
 
 ### Plugins
@@ -160,7 +193,7 @@ Whitelisting a plugin trusts its code beside the container's client and GitHub c
 Claude loads its hooks, MCP servers and scripts; [Codex's adaptation](docker-codex.md#native-plugins)
 defines which components it loads. Host-side upgrades reach containers at their next build.
 One whitelist per account: a build with another whitelist
-gives another key, and its rebuild removes the other's images.
+gives another key, and its rebuild removes the other's images once no build has leased them for an hour.
 
 | Check | Expect |
 |---|---|
@@ -196,6 +229,7 @@ versions. Codex starts add the [version audit](docker-broker-protocol.md#success
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
+| `cat ~/.agent-pm/docker-state/worker_1/claude/settings.json` | `skipWorkflowUsageWarning`, `autoCompactEnabled`, `autoContinueAtUsageLimit` `true`, `promptSuggestionEnabled: false`, `tui: "fullscreen"` |
 | `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
@@ -206,6 +240,7 @@ one `{"account", "expires_at"}` per installation of the App, and `github_user_id
 |---|---|
 | `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
 | `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work, with no login |
+| `docker exec -w <clone of a private repo> "$C" gh api 'repos/{owner}/{repo}' --jq .full_name` | works, with no login: `{owner}` is the clone's `origin` owner |
 | `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
 | `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
 
@@ -245,6 +280,8 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 | `claude_dir` any other path | 4 |
 | `hook_path` inside `cwd` | 4 |
 | `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
+| reinstall the broker (`install.sh --build`), then start a Claude manifest without `login claude` | 5 `login_required`, "trusts another broker build"; no keychain dialog; log in again after |
+| `security lock-keychain ~/Library/Keychains/login.keychain-db`, then start a Claude manifest | 5 `login_required`, "unlock the login keychain, or run agent-pm-broker login claude"; no keychain dialog; `security unlock-keychain ~/Library/Keychains/login.keychain-db` after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container is untouched |
 | while `C` runs, the same manifest with a new `generation` | 4 `mount_rejected`: its volume is in use |
 | `docker volume create agent-pm-ws-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: the volume has no workspace labels; `docker volume rm agent-pm-ws-worker_3` after |
@@ -257,6 +294,44 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 ```
 
 `docker ps -a --filter name="$C"` lists nothing.
+
+## Audit log
+
+Every `start`, `refresh` and `close` appends one JSON line to `~/Library/Logs/agent-pm/broker.jsonl`
+(directory 0700, file 0600, written as you), recording each credential it issued, renewed,
+withdrew or revoked; no line holds a token or key. A backlog retry (each `start`, `close` and `status`, and a `refresh` that queues a token) that
+revokes or drops another container's token adds one line for that container. Source: `broker/internal/audit/`.
+
+```sh
+jq 'select(.session=="NAME")' ~/Library/Logs/agent-pm/broker.jsonl
+```
+
+| Field | Value |
+|---|---|
+| `time` | RFC 3339, UTC |
+| `command` | the broker command that wrote the line |
+| `event` | `start`, `refresh`, `close`, or `revocation-retry` (another container's backlog tokens) |
+| `session`, `generation`, `container` | from `agent-pm-<session>-<generation>`; null when start could not read its manifest |
+| `image`, `image_digest`, `mounts` | start lines only: the manifest's tag, the image ID, and each `--mount` and `--tmpfs` as `{type, source, target, mode}`; null for a step not reached |
+| `credentials` | one entry per credential, below |
+| `error` | the command's error `code` ([Docker broker protocol](docker-broker-protocol.md)), null on success |
+
+| Entry field | Value |
+|---|---|
+| `kind` | `claude-setup-token`, `codex-access-token` or `github-installation-token` |
+| `result` | `issued`, `renewed`, `withdrawn` (deleted with its container), `revoked`, `pending` (in the revocation backlog) or `expired-unrevoked` (dropped from the backlog at expiry) |
+| `reason` | `pending` only: why it is not revoked yet |
+| `expires_at` | RFC 3339; null when the broker does not know it (the setup-token, a withdrawn Codex token) |
+| `account`, `installation` | GitHub: the installation's account and ID (no ID on retry lines) |
+| `repository_selection`, `repositories` | GitHub `issued` and `renewed`: `all` or `selected`, and the full names the token reaches, from every page of `GET /installation/repositories`; both null, with `repositories_error`, when that listing failed (the token is still issued) |
+
+A token `close` could not revoke shows as `pending` on its close line; the next retry that
+revokes it adds a `revocation-retry` line with `revoked`, or `expired-unrevoked` if it
+expired first.
+
+Past 10 MiB the log moves to `broker.jsonl.1`, replacing the previous one. Writing it is
+best effort: a line the broker cannot write is dropped and the command's result is
+unchanged. No container mounts the directory.
 
 ## Run workers
 
@@ -405,6 +480,8 @@ Each new start writes the fresh Claude config dir a `settings.json` holding:
 - `skipWorkflowUsageWarning`, `autoCompactEnabled` and `autoContinueAtUsageLimit`, all
   `true` whatever the host sets, so an unattended run never stops at the Workflow usage
   warning, a full context or a usage limit;
+- `promptSuggestionEnabled` `false` and `tui` `"fullscreen"`, whatever the host sets, so
+  Claude suggests no prompts and renders fullscreen, with no flicker in tmux;
 - `model`, `effortLevel`, `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`
   from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`, else
   `~/.claude/settings.json`), so the worker runs the host's default model and effort.
@@ -552,6 +629,8 @@ secrets in environments that need it.
 - So do the GitHub tokens, each valid for an hour; `close` revokes them. One the broker could
   not revoke stays valid until it expires: `"$B" status` lists it, and the next start, close or
   status retries it.
+- The [audit log](#audit-log) is yours: any process running as you can change or delete it,
+  so it records what the broker did, not proof that nothing else happened.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.

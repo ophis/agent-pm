@@ -51,12 +51,15 @@ TAIL = 4 << 20
 HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
 MODEL_KEYS = ("model", "effortLevel", "modelSettings")
 ENV_KEYS = ("CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION",)
-# A container worker runs unattended: no prompt may stop it.
+# A container worker runs unattended: no prompt may stop it, none is suggested, and it renders
+# fullscreen, which stops flicker in tmux.
 UNATTENDED = MappingProxyType(
     {
         "skipWorkflowUsageWarning": True,
         "autoCompactEnabled": True,
         "autoContinueAtUsageLimit": True,
+        "promptSuggestionEnabled": False,
+        "tui": "fullscreen",
     }
 )
 HOME_READ_MAX = 64 << 20

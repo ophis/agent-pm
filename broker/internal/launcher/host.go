@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/ophis/agent-pm/broker/internal/audit"
 	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -50,16 +51,20 @@ type Host struct {
 	Codex    CodexCredentials
 	GitHub   Tokens
 	Versions CodexVersions
-	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
+	Progress io.Writer                         // nil: none; build's notes on older images, after Docker's progress; start's phase times
+	Lock     func() (unlock func(), err error) // the image lock: build's lease and inspect, and prune
+	Audit    *audit.Recorder                   // nil: none; start, refresh and close name their container and add the client credential
 }
 
-// NewHost wires the real filesystem; tests build Host with fakes.
-func NewHost(home, endpoint string, d docker.Runner, creds Credentials, tokens Tokens) Host {
+// NewHost wires the real filesystem; tests build Host with fakes. rec is the command's audit recorder, the one tokens
+// also reports to.
+func NewHost(home, endpoint string, d docker.Runner, creds Credentials, tokens Tokens, rec *audit.Recorder) Host {
 	return Host{
 		Home:     home,
 		Endpoint: endpoint,
 		Creds:    creds,
 		GitHub:   tokens,
+		Audit:    rec,
 		IsDir:    isDir,
 		Safe:     realSafe,
 		Docker:   d,
@@ -108,6 +113,14 @@ type CloseResult struct {
 type WorkspaceResult struct {
 	Volume  string `json:"volume"`
 	Removed bool   `json:"removed"`
+}
+
+// clientKind is the audit kind of the credential client's container holds.
+func clientKind(client string) string {
+	if client == "codex" {
+		return audit.CodexAccessToken
+	}
+	return audit.ClaudeSetupToken
 }
 
 // failure classifies a Docker error: unreachable daemon, else code.

@@ -14,7 +14,15 @@ from unittest import mock
 from uuid import uuid4
 
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Held, Lease, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import (
+    Held,
+    Lease,
+    RosterError,
+    Spec,
+    Stale,
+    StaleHolder,
+    State,
+)
 from agent_pm.utils import append_line
 
 from manager.tests.case import with_ctl
@@ -399,6 +407,39 @@ class RosterTest(RosterCase):
             with Roster(self.directory).hold("b") as second:
                 self.assertGreater(second.generation, first.generation)
         self.assertIsNone(self.content()["holder"])
+
+    def test_stale_pair_raises_stale_holder(self):
+        with self.roster.hold("a") as ended:
+            pass
+        self.roster.bind(ended)
+        with self.assertRaises(StaleHolder) as caught:
+            self.roster.check_lease()
+        self.assertEqual(
+            str(caught.exception),
+            f"{self.directory}: stale holder generation; start a new manager holder",
+        )
+        data = self.content()
+        data["holder"] = {"id": ended.id, "session": "a"}
+        Path(self.roster.path).write_text(json.dumps(data))
+        with self.assertRaises(StaleHolder) as caught:
+            self.roster.check_lease()
+        self.assertEqual(str(caught.exception), f"{self.directory}: holder no longer alive")
+        self.roster.bind(None)
+        with Roster(self.directory).hold("b"):
+            with self.assertRaises(Held) as caught:
+                self.roster.check_lease()
+            self.assertNotIsInstance(caught.exception, StaleHolder)
+
+    def test_lease_state_needs_no_lease(self):
+        self.roster.bind(Lease(str(uuid4()), 1))
+        self.assertEqual(self.roster.lease_state(), (0, 0, None))
+        self.assertFalse(Path(self.directory).exists())
+        other = Roster(self.directory)
+        with other.hold("owner"):
+            Path(other.events).write_text("12:00:00 a done\n12:00:01 a done\n")
+            other.advance(1, 0)
+            self.assertEqual(self.roster.lease_state(), (1, 0, "owner"))
+        self.assertEqual(self.roster.lease_state(), (1, 0, None))
 
     def test_no_owner_retains_unleased_operations_only_when_holder_lock_free(self):
         self.live()

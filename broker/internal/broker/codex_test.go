@@ -70,6 +70,8 @@ type fakeCodexKeychain struct {
 	mismatchWrite  bool
 	badReadOnce    bool
 	failRestore    bool
+	createTrusted  bool
+	appliedErr     error // TrustApps' error after it applied the change
 	writeCalls     int
 	events         []string
 }
@@ -108,12 +110,23 @@ func (k *fakeCodexKeychain) Secret(service, account string) ([]byte, error) {
 	return slices.Clone(k.data), k.getErr
 }
 
+func (k *fakeCodexKeychain) TrustApps(app, account string, password []byte) error {
+	if err := k.fakeApps.TrustApps(app, account, password); err != nil {
+		return err
+	}
+	return k.appliedErr
+}
+
 func (k *fakeCodexKeychain) CreateCodex() error {
 	k.events = append(k.events, "create")
 	if !k.missing {
 		return errors.New("already exists")
 	}
 	k.missing, k.access = false, added()
+	if k.createTrusted {
+		a := brokerOnly()
+		k.access = &a
+	}
 	return nil
 }
 
@@ -247,6 +260,124 @@ func TestCodexLoginIsolation(t *testing.T) {
 	}
 }
 
+// Every terminal question comes before the browser: the password only when the item needs it, never after the run.
+func TestCodexLoginAsksBeforeBrowser(t *testing.T) {
+	for _, kind := range []string{"fresh", "reinstalled", "fresh trusted", "trusted"} {
+		t.Run(kind, func(t *testing.T) {
+			c, n, k := codexFixture(t)
+			c.password = func() ([]byte, error) {
+				k.events = append(k.events, "password")
+				return []byte(keychainPass), nil
+			}
+			switch kind {
+			case "reinstalled":
+				k.missing, k.data, k.access = false, codexAuth(codexNow.Add(2*time.Hour).Unix()), reinstalled()
+			case "fresh trusted":
+				k.createTrusted = true
+			case "trusted":
+				a := brokerOnly()
+				k.missing, k.data, k.access = false, codexAuth(codexNow.Add(2*time.Hour).Unix()), &a
+			}
+			var stepsAtRun []string
+			n.onRun = func(string) {
+				k.events = append(k.events, "run")
+				stepsAtRun = slices.Clone(k.steps)
+			}
+			if err := c.Login(context.Background(), &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			run, asked := slices.Index(k.events, "run"), 0
+			for _, e := range k.events {
+				if e == "password" {
+					asked++
+				}
+			}
+			if slices.Contains(k.events[run:], "password") {
+				t.Fatalf("password asked after the browser: %v", k.events)
+			}
+			wantAsk := kind == "fresh" || kind == "reinstalled"
+			if wantAsk && asked != 1 || !wantAsk && asked != 0 {
+				t.Fatalf("password questions %v", k.events)
+			}
+			if wantAsk && !slices.Equal(stepsAtRun, []string{"partition agent-pm-codex auth", "apps agent-pm-codex auth"}) {
+				t.Fatalf("trust at browser start %v", stepsAtRun)
+			}
+			if !wantAsk && len(k.steps) != 0 {
+				t.Fatalf("trusted item changed %v", k.steps)
+			}
+			if !bytes.Equal(k.data, n.data) {
+				t.Fatal("login not saved")
+			}
+		})
+	}
+}
+
+// After the browser nothing asks: a restore that needs a password not read before it fails instead.
+func TestCodexRestoreNeverAsksAfterBrowser(t *testing.T) {
+	c, _, k := codexFixture(t)
+	a := brokerOnly()
+	k.missing, k.access, k.data = false, &a, codexAuth(codexNow.Add(2*time.Hour).Unix())
+	k.writeBreaksACL = true
+	asked := 0
+	c.password = func() ([]byte, error) { asked++; return []byte(keychainPass), nil }
+	err := c.Login(context.Background(), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "previous login could not be restored") || asked != 0 {
+		t.Fatalf("restore %v, %d password questions", err, asked)
+	}
+}
+
+func TestOnePassword(t *testing.T) {
+	reads := 0
+	p := onePassword{read: func() ([]byte, error) { reads++; return []byte(keychainPass), nil }}
+	first, err := p.get()
+	erase(first)
+	second, _ := p.get()
+	if err != nil || string(second) != keychainPass || reads != 1 {
+		t.Fatalf("%v %q read %d times", err, second, reads)
+	}
+	p.close()
+	if again, err := p.get(); err != nil || string(again) != keychainPass {
+		t.Fatalf("close after a read dropped it: %v", err)
+	}
+	p.erase()
+	if !bytes.Equal(p.value, make([]byte, len(keychainPass))) {
+		t.Fatal("password not erased")
+	}
+	closed := onePassword{read: func() ([]byte, error) { reads++; return []byte(keychainPass), nil }}
+	closed.close()
+	if pw, err := closed.get(); err == nil || pw != nil || reads != 1 {
+		t.Fatalf("closed reader asked: %q %v", pw, err)
+	}
+}
+
+func TestCodexTrustMessages(t *testing.T) {
+	for name, want := range map[string]string{
+		"access unread": "cannot inspect Codex keychain access",
+		"partition":     "Codex keychain trust incomplete; retry " + codexLoginCommand,
+	} {
+		c, n, k := codexFixture(t)
+		k.missing, k.access = false, reinstalled()
+		if name == "access unread" {
+			k.readBackErr = errors.New("keychain status -25300")
+		} else {
+			k.partitionErr = errors.New("keychain status -25293")
+		}
+		if err := c.Login(context.Background(), &bytes.Buffer{}); err == nil || err.Error() != want || n.runs != 0 {
+			t.Fatalf("%s: %v, browser runs %d", name, err, n.runs)
+		}
+	}
+}
+
+// A trust step that errors with its change applied passes on the access read back, as in login github.
+func TestCodexTrustStepErrorButDone(t *testing.T) {
+	c, n, k := codexFixture(t)
+	k.missing, k.access = false, reinstalled()
+	k.appliedErr = errors.New("keychain status -25300")
+	if err := c.Login(context.Background(), &bytes.Buffer{}); err != nil || !bytes.Equal(k.data, n.data) {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestCodexLoginFailureCleanup(t *testing.T) {
 	for _, runErr := range []error{errors.New("child fake-refresh-secret"), context.Canceled} {
 		c, n, k := codexFixture(t)
@@ -259,7 +390,7 @@ func TestCodexLoginFailureCleanup(t *testing.T) {
 		if _, err := os.Stat(n.home); !os.IsNotExist(err) {
 			t.Fatal("temporary home survived")
 		}
-		if !k.missing || n.locked {
+		if k.data != nil || n.locked {
 			t.Fatal("failure persisted login or lock")
 		}
 	}
@@ -299,7 +430,7 @@ func TestCodexAuthValidation(t *testing.T) {
 			if err == nil || strings.Contains(err.Error(), "fake-") {
 				t.Fatalf("unsafe auth result %v", err)
 			}
-			if !k.missing {
+			if k.data != nil {
 				t.Fatal("invalid auth saved")
 			}
 		})
@@ -307,7 +438,7 @@ func TestCodexAuthValidation(t *testing.T) {
 }
 
 func TestCodexReloginAndTrustFailure(t *testing.T) {
-	for _, kind := range []string{"relogin", "partition", "readback", "write", "postwrite", "postread"} {
+	for _, kind := range []string{"relogin", "partition", "readback", "password", "write", "postwrite", "postread"} {
 		t.Run(kind, func(t *testing.T) {
 			c, n, k := codexFixture(t)
 			old := codexAuth(codexNow.Add(2 * time.Hour).Unix())
@@ -317,6 +448,8 @@ func TestCodexReloginAndTrustFailure(t *testing.T) {
 				k.partitionErr = errors.New("fake-refresh-secret")
 			case "readback":
 				k.frozen = true
+			case "password":
+				c.password = func() ([]byte, error) { return nil, errors.New("needs an interactive terminal") }
 			case "write":
 				k.writeErr = errors.New("fake-refresh-secret")
 			case "postwrite":
@@ -336,6 +469,9 @@ func TestCodexReloginAndTrustFailure(t *testing.T) {
 			}
 			if !bytes.Equal(k.data, old) {
 				t.Fatal("old login overwritten")
+			}
+			if (kind == "partition" || kind == "readback" || kind == "password") && n.runs != 0 {
+				t.Fatal("browser opened before the keychain trusted only the broker")
 			}
 			if (kind == "postwrite" || kind == "postread") && !c.Status(context.Background()).LoggedIn {
 				t.Fatal("previous login no longer usable")
@@ -456,7 +592,7 @@ func TestCodexRejectsCredentialSymlink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if c.Login(context.Background(), &bytes.Buffer{}) == nil || !k.missing {
+	if c.Login(context.Background(), &bytes.Buffer{}) == nil || k.data != nil {
 		t.Fatal("accepted credential symlink")
 	}
 }
