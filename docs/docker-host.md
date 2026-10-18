@@ -31,7 +31,9 @@ until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` in
 it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
 the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code
-upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions).
+upgrades with the image; Codex follows its [container version policy](docker-codex.md#container-versions);
+the image's `gh` is the version agent-pm pins (`broker/internal/launcher/assets/Dockerfile`),
+whatever your Dockerfile installs, and upgrades with the broker.
 A start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
 
@@ -227,6 +229,7 @@ versions. Codex starts add the [version audit](docker-broker-protocol.md#success
 | `docker exec "$C" ls -l /run/agent-pm/secrets` | one file `claude`, `-r--------`, owned by `agent` |
 | `docker inspect "$C" \| grep -c sk-ant`; `docker logs "$C" \| grep -c sk-ant`; `grep -c sk-ant /tmp/worker_1.json`; `docker exec "$C" env \| grep -c sk-ant` | `0` each |
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
+| `cat ~/.agent-pm/docker-state/worker_1/claude/settings.json` | `skipWorkflowUsageWarning`, `autoCompactEnabled`, `autoContinueAtUsageLimit` `true`, `promptSuggestionEnabled: false`, `tui: "fullscreen"` |
 | `lsof -nP -a -iTCP -sTCP:LISTEN -c agent-pm` during a start | no listening TCP socket; Codex version preparation and GitHub token operations may open outbound HTTPS connections |
 
 **GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
@@ -237,6 +240,7 @@ one `{"account", "expires_at"}` per installation of the App, and `github_user_id
 |---|---|
 | `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
 | `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work, with no login |
+| `docker exec -w <clone of a private repo> "$C" gh api 'repos/{owner}/{repo}' --jq .full_name` | works, with no login: `{owner}` is the clone's `origin` owner |
 | `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
 | `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
 
@@ -438,6 +442,8 @@ Each new start writes the fresh Claude config dir a `settings.json` holding:
 - `skipWorkflowUsageWarning`, `autoCompactEnabled` and `autoContinueAtUsageLimit`, all
   `true` whatever the host sets, so an unattended run never stops at the Workflow usage
   warning, a full context or a usage limit;
+- `promptSuggestionEnabled` `false` and `tui` `"fullscreen"`, whatever the host sets, so
+  Claude suggests no prompts and renders fullscreen, with no flicker in tmux;
 - `model`, `effortLevel`, `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`
   from the host Claude's (`$CLAUDE_CONFIG_DIR/settings.json`, else
   `~/.claude/settings.json`), so the worker runs the host's default model and effort.
