@@ -35,8 +35,9 @@ class OpenCodeHeadless(Headless):
         selection = common.selection(spec, context)
         cwd, sid = spec.access.cwd, spec.sid or ""
         model, variant = common.model(spec.tier), common.variant(spec.effort)
+        env = common.environment(spec, context)
         command = (
-            "opencode",
+            common.program(env, cwd),
             "run",
             "--format",
             "json",
@@ -61,7 +62,7 @@ class OpenCodeHeadless(Headless):
                 "--",
                 *command,
             ),
-            env=common.environment(spec, context),
+            env=env,
             unset=UNSET,
             cwd=cwd,
             project=spec.access.project,

@@ -27,7 +27,7 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, fake_git, packaged_table
+from session.tests.unit.clients.opencode.support import SES, fake_run, packaged_table
 
 MODEL = "ollama/qwen3.6:35b-mlx"
 
@@ -52,7 +52,7 @@ class Base(Case):
         self.cwd = os.path.realpath(os.path.join(self.home, "project"))
         os.mkdir(self.cwd)
         self.client = OpenCodeClient(packaged_table())
-        self.enterContext(mock.patch("subprocess.run", side_effect=fake_git))
+        self.enterContext(mock.patch("subprocess.run", side_effect=fake_run))
 
     def spec(self, **fields) -> Spec:
         access = fields.pop("access", Access(cwd=self.cwd))
@@ -272,7 +272,11 @@ class LaunchTest(Base):
         os.mkdir(os.path.join(repo, ".git"))
         read = self.made("read")
         failed = SimpleNamespace(returncode=128, stdout="", stderr="fatal: dubious ownership")
-        with mock.patch("subprocess.run", return_value=failed):
+
+        def run(argv, *_, **__):
+            return fake_run(argv) if argv[1:] == ["--version"] else failed
+
+        with mock.patch("subprocess.run", side_effect=run):
             rules = self.rules_for(Access(cwd=repo, reads=(read,)))
         self.assert_edits(
             rules,
@@ -309,6 +313,13 @@ class LaunchTest(Base):
         self.assertEqual(self.launch(self.spec()).env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
         project = self.launch(self.spec(access=Access(cwd=self.cwd, project=True)))
         self.assertNotIn("OPENCODE_DISABLE_PROJECT_CONFIG", project.env)
+
+    def test_the_executable_is_argv0(self):
+        client = OpenCodeClient({**packaged_table(), "executable": "/opt/oc1/bin/opencode"})
+        self.assertEqual(
+            self.command(self.launch(self.spec(), client=client))[:2],
+            ("/opt/oc1/bin/opencode", "run"),
+        )
 
     def test_container_host_refused(self):
         context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")

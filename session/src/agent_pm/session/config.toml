@@ -92,6 +92,8 @@ max = "max"
 #                    TUI asks and the session is blocked
 #   flags            opencode flags added to every launch; never a session selector, --format, --attach, --dir or a
 #                    permission flag (modes'), nor for the TUI --prompt or --pure; empty → none
+#   executable       the OpenCode 1.x command both modes run (a name PATH finds, or an absolute path); empty → the
+#                    client's own name on PATH; a launch whose `<executable> --version` is not 1.x is refused
 #   ollama_port      the host's Ollama port
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
 #                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
@@ -101,6 +103,7 @@ max = "max"
 [clients.opencode]
 implementation = "agent_pm.session.clients.opencode:OpenCodeClient"
 flags = []
+executable = ""
 ollama_port = 11434
 
 [clients.opencode.modes]

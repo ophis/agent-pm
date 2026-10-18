@@ -3,6 +3,7 @@ config and env) to FAKE_LOG and plays FAKE_SCENARIO's steps ("resume" for a --se
 JSON lines carrying its session id. A step: {"text"}, {"tool"}, {"bash": command} (refused, as
 `run` refuses an "ask", unless --auto or an allow rule for it), {"error": {...}}, {"err": line},
 {"sleep": seconds}, {"exit": code}. Scenario "session": another id; "unbound": lines without one.
+`--version` prints FAKE_OPENCODE_VERSION (default 1.19.3).
 """
 
 import argparse
@@ -45,6 +46,9 @@ def allowed(config: dict, command: str, *, auto: bool) -> bool:
 
 def main():
     args = sys.argv[1:]
+    if args == ["--version"]:
+        print(os.environ.get("FAKE_OPENCODE_VERSION", "1.19.3"))
+        return 0
     options = parse(args)
     prompt = sys.stdin.read()
     config = json.loads(os.environ.get("OPENCODE_CONFIG_CONTENT", "{}"))

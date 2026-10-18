@@ -84,7 +84,7 @@ class OpenCodeTui(Tui):
         env[SESSION_ENV] = (common.native(self.cwd, self.sid) or "") if spec.resume else ""
         return Launch(
             (
-                "opencode",
+                common.program(env, spec.access.cwd),
                 *selection,
                 *(("--model", model) if model is not None else ()),
                 *common.flags,

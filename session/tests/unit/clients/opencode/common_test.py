@@ -237,6 +237,62 @@ class SessionStatusTest(Case):
 EXTRA = ("--prompt", "--pure")
 
 
+class ProgramTest(Case):
+    def program(self, result=None, *, error=None, config=None):
+        common = OpenCodeCommon({**packaged_table(), **(config or {})}, selector=lambda *_: ())
+        with mock.patch("subprocess.run", side_effect=error, return_value=result) as run:
+            found = common.program({"PATH": "/opt/oc1/bin", "A": "b"}, self.home)
+        return found, run
+
+    def done(self, stdout, code=0):
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr="")
+
+    def test_executable_is_checked_and_defaults(self):
+        self.assertEqual(
+            OpenCodeCommon(packaged_table(), selector=lambda *_: ()).executable, "opencode"
+        )
+        empty = OpenCodeCommon({**packaged_table(), "executable": ""}, selector=lambda *_: ())
+        self.assertEqual(empty.executable, "opencode")
+        for value in (" ", 3, "a\nb"):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "executable"):
+                OpenCodeCommon({**packaged_table(), "executable": value}, selector=lambda *_: ())
+
+    def test_a_1x_version_launches(self):
+        found, run = self.program(self.done("1.19.3\n"), config={"executable": "/opt/oc1/opencode"})
+        self.assertEqual(found, "/opt/oc1/opencode")
+        ((args, kwargs),) = run.call_args_list
+        self.assertEqual(args[0], ["/opt/oc1/opencode", "--version"])
+        self.assertEqual(kwargs["cwd"], self.home)
+        self.assertEqual((kwargs["env"]["PATH"], kwargs["env"]["A"]), ("/opt/oc1/bin", "b"))
+        self.assertEqual(kwargs["timeout"], 10)
+
+    def test_a_2x_version_is_refused_naming_it_and_the_key(self):
+        with self.assertRaises(ConfigError) as raised:
+            self.program(self.done("2.0.32\n"))
+        message = str(raised.exception)
+        self.assertIn("2.0.32", message)
+        self.assertIn("is not 1.x", message)
+        self.assertIn("[clients.opencode] executable", message)
+
+    def test_a_missing_failing_or_silent_executable_is_refused(self):
+        import subprocess
+
+        for case, kwargs, words in (
+            (
+                "missing",
+                {"error": FileNotFoundError(2, "No such file or directory")},
+                "No such file",
+            ),
+            ("timeout", {"error": subprocess.TimeoutExpired(["opencode"], 10)}, "timed out"),
+            ("failed", {"result": self.done("1.19.3", code=1)}, "no version"),
+            ("silent", {"result": self.done("opencode\n")}, "no version"),
+        ):
+            with self.subTest(case=case), self.assertRaises(ConfigError) as raised:
+                self.program(**kwargs)
+            self.assertIn(words, str(raised.exception))
+            self.assertIn("[clients.opencode] executable", str(raised.exception))
+
+
 class SelectionTest(Case):
     def setUp(self):
         self.common = common()

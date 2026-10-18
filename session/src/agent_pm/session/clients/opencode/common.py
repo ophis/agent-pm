@@ -75,6 +75,14 @@ VALUED = (
     "-s",
     "--session",
 )
+EXECUTABLE = (
+    "executable",
+    lambda v: isinstance(v, str) and (v == "" or v.strip() != "") and v.isprintable(),
+    "a printable command, or empty for opencode on PATH",
+)
+VERSION = re.compile(r"(\d+)\.\d+\.\d+")
+VERSION_WAIT = 10  # seconds
+MAJOR = 1  # the OpenCode release the client supports (TASK-695)
 PORT = (
     "ollama_port",
     lambda v: type(v) is int and 0 < v < 65536,
@@ -181,7 +189,8 @@ def refuse_env(env: Mapping[str, str], where: str) -> None:
 class OpenCodeCommon:
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        check_config(config, TABLE, (FLAGS, MODES, PORT, *CHECKS))
+        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, *CHECKS))
+        self.executable = config.get("executable") or "opencode"
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
         refuse(self.flags, (*RESERVED, *PERMISSIONS), f"{TABLE}.flags")
@@ -221,6 +230,33 @@ class OpenCodeCommon:
         if native is None:
             raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
         return self.selector(native, resume=True)
+
+    def program(self, env: Mapping[str, str], cwd: str) -> str:
+        """The executable, once its --version, run as the launch would run it, is OpenCode 1.x."""
+        exe, fix = self.executable, f"set {TABLE} executable to an OpenCode {MAJOR}.x"
+        run = {k: v for k, v in {**os.environ, **env}.items() if k not in LOCAL_ENV_VARS}
+        try:
+            done = subprocess.run(
+                [exe, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=VERSION_WAIT,
+                stdin=subprocess.DEVNULL,
+                env=run,
+                cwd=cwd,
+            )
+        except OSError as error:
+            raise ConfigError(
+                f"opencode executable {exe!r}: {error.strerror or error}: {fix}"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise ConfigError(f"opencode executable {exe!r}: --version timed out: {fix}") from None
+        found = VERSION.search(done.stdout or "") if done.returncode == 0 else None
+        if found is None:
+            raise ConfigError(f"opencode executable {exe!r}: --version printed no version: {fix}")
+        if int(found[1]) != MAJOR:
+            raise ConfigError(f"opencode {found[0]} ({exe}) is not {MAJOR}.x: {fix}")
+        return exe
 
     def inline(self, spec: Spec, host_address: str, plugin: str | None = None) -> dict:
         """The launch's OpenCode config: ollama on `host_address`, no auto-update, shell calls asking

@@ -14,6 +14,7 @@ from agent_pm.session import Session
 from agent_pm.session.engine.types import (
     Access,
     Activity,
+    ConfigError,
     Exited,
     Mode,
     Reply,
@@ -115,6 +116,27 @@ class HeadlessSessions(Case):
         first, second = self.calls()
         self.assertEqual((first["session"], second["session"]), (None, NATIVE))
         self.assertEqual(second["prompt"], "Fix it.")
+
+    def test_a_2x_opencode_is_refused(self):
+        self.session_cls = configured(
+            {
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "tiers": {"1": "ollama/qwen3.6:35b-mlx"},
+                    "env": {
+                        "FAKE_LOG": str(self.log),
+                        "FAKE_SCENARIO": str(self.scenario),
+                        "FAKE_OPENCODE_VERSION": "2.0.32",
+                    },
+                }
+            }
+        )
+        with self.assertRaisesRegex(
+            ConfigError,
+            r"opencode 2\.0\.32 \(opencode\) is not 1\.x: set \[clients\.opencode\] executable",
+        ):
+            self.session_cls.start(dataclasses.replace(self.spec, prompt="Hi."))
+        self.assertFalse(self.log.exists())
 
     def test_an_error_fails_the_turn(self):
         error = {"name": "UnknownError", "data": {"message": "Model not found: ollama/x."}}

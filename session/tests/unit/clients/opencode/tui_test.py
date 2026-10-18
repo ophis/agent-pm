@@ -26,7 +26,7 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import Case
-from session.tests.unit.clients.opencode.support import SES, fake_git, packaged_table
+from session.tests.unit.clients.opencode.support import SES, fake_run, packaged_table
 
 HOOK = ("/bin/agent-pm-session", "hook", "/home/x/.agent-pm/tui/w1")
 OTHER = "ses_otherOtherOtherOther0001"
@@ -37,7 +37,7 @@ class Base(Case):
         self.cwd = os.path.realpath(os.path.join(self.home, "project"))
         os.mkdir(self.cwd)
         self.client = OpenCodeClient(packaged_table())
-        self.enterContext(mock.patch("subprocess.run", side_effect=fake_git))
+        self.enterContext(mock.patch("subprocess.run", side_effect=fake_run))
 
     def spec(self, **fields) -> Spec:
         fields.setdefault("prompt", "Hi there")
@@ -101,6 +101,18 @@ class LaunchTest(Base):
             launch.argv,
             ("opencode", "--agent", "build", "--auto", "--log-level", "INFO", "--prompt=Hi there"),
         )
+
+    def test_the_executable_is_argv0(self):
+        client = OpenCodeClient({**packaged_table(), "executable": "/opt/oc1/bin/opencode"})
+        launch = self.launch(self.spec(prompt=""), client)
+        self.assertEqual(launch.argv, ("/opt/oc1/bin/opencode",))
+
+    def test_a_2x_opencode_is_refused(self):
+        with (
+            mock.patch("session.tests.unit.clients.opencode.support.VERSION", "2.0.32"),
+            self.assertRaisesRegex(ConfigError, r"opencode 2\.0\.32 \(opencode\) is not 1\.x"),
+        ):
+            self.launch(self.spec())
 
     def test_a_container_host_is_refused(self):
         context = ClientContext("host.docker.internal", Permission.YOLO, bin_dir="/opt/bin")

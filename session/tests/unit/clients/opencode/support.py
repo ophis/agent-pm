@@ -20,8 +20,15 @@ def packaged_table() -> dict:
     return table
 
 
-def fake_git(argv: list[str], *_: object, **__: object) -> SimpleNamespace:
-    """subprocess.run of git rev-parse in a dir holding a .git dir: its own toplevel."""
+VERSION = "1.19.3"
+
+
+def fake_run(argv: list[str], *_: object, **__: object) -> SimpleNamespace:
+    """subprocess.run of `<opencode> --version` (VERSION), or of git rev-parse in a dir holding a
+    .git dir: its own toplevel.
+    """
+    if argv[1:] == ["--version"]:
+        return SimpleNamespace(returncode=0, stdout=VERSION + "\n", stderr="")
     top = argv[argv.index("-C") + 1]
     ok = os.path.isdir(os.path.join(top, ".git"))
     out = top + "\n" if "--show-toplevel" in argv else ".git\n.git\n"

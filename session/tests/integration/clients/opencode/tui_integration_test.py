@@ -96,8 +96,8 @@ class TuiSessions(Case):
         shim = Path(self.server.bin) / "opencode"
         shim.write_text(
             "#!/bin/sh\n"
-            f'[ "$1" = run ] && exec {shlex.quote(sys.executable)} '
-            f'{shlex.quote(fake_opencode.__file__)} "$@"\n'
+            f'case "$1" in run|--version) exec {shlex.quote(sys.executable)} '
+            f'{shlex.quote(fake_opencode.__file__)} "$@";; esac\n'
             f'exec {shlex.quote(str(NODE))} {shlex.quote(FAKE_TUI)} "$@"\n'
         )
         shim.chmod(0o755)
