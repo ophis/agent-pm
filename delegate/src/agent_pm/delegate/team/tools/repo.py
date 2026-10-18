@@ -16,8 +16,8 @@ before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan d
 
 AGENT_PM_USERS, a JSON array of strings, replaces `users`. AGENT_PM_PR_AUTHOR (a Docker session's
 App bot, e.g. agent-pm-bot[bot]) replaces the gh login as B's PR author; `user` then holds only
-`users` other than it and any [bot], never the gh login; and every repo it reads counts as
-pushable, permissions unread (an App token gets them all false).
+`users` other than it and any [bot], never the gh login; and `push` is whether a dry-run push of B
+reaches origin with git's credentials, permissions unread (an App token gets them all false).
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
@@ -64,6 +64,9 @@ from agent_pm.utils import run_git as git
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
+DENIED = re.compile(
+    r"\b403\b|denied|could not read Username|Authentication failed|terminal prompts disabled"
+)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 
 
@@ -81,7 +84,7 @@ def gh_json(run: Runner, argv: list[str]):
         raise RepoCommandError(f"gh {' '.join(argv)[:100]}: {e}") from None
 
 
-def info(repo: Repo, *, run: Runner, app: bool = False) -> tuple[bool, str]:
+def info(repo: Repo, *, run: Runner, app: bool = False) -> tuple[bool | None, str]:
     res = run(["gh", "api", "--hostname", repo.host, f"repos/{repo.owner}/{repo.name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
@@ -90,11 +93,11 @@ def info(repo: Repo, *, run: Runner, app: bool = False) -> tuple[bool, str]:
         raise RepoCommandError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
-        push = True if app else data["permissions"]["push"]
+        push = None if app else data["permissions"]["push"]
         default = data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
         raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
-    if not isinstance(push, bool) or not isinstance(default, str):
+    if not (app or isinstance(push, bool)) or not isinstance(default, str):
         raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: invalid repository fields")
     return push, default
 
@@ -149,6 +152,21 @@ def clone_repo(repo: Repo, wt: str, *, run: Runner) -> None:
 def check_branch(branch: str) -> None:
     if not BRANCH.fullmatch(branch):
         raise Invalid(f"unsafe branch name {branch[:80]!r}")
+
+
+def app_push(wt: str, branch: str, *, run: Runner) -> bool:
+    """Whether a dry-run push connects; GitHub refuses it without the App installed."""
+    refspec = f"HEAD:refs/heads/{branch}"
+    res = run(
+        ["git", "-C", wt, "push", "--dry-run", "--no-verify", "--porcelain", "origin", refspec],
+        SHORT,
+    )
+    connected = any(s.startswith("To ") for s in (res.stdout or "").splitlines())
+    if res.returncode == 0 or connected:
+        return True
+    if DENIED.search(res.stderr or ""):
+        return False
+    raise RepoCommandError(f"git push --dry-run: {err_text(res)}")
 
 
 def registered(run: Runner, at: str) -> dict[str, str | None]:
@@ -262,6 +280,8 @@ def worktree(
     commit = git(wt, "rev-parse", "HEAD", run=run).strip()
     if not SHA.fullmatch(commit):
         raise RepoCommandError(f"git rev-parse HEAD: {commit[:80]!r}")
+    if push is None:
+        push = app_push(wt, branch, run=run)
     return {
         "repo": f"{repo.owner}/{repo.name}",
         "host": repo.host,

@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 import unittest.mock
@@ -27,6 +28,10 @@ from delegate.tests.repo import (
     pr_list,
     repo,
 )
+
+
+def dry_push(argv):
+    return argv[3:5] == ["push", "--dry-run"]
 
 
 class CommandFailures(Base):
@@ -702,7 +707,11 @@ class Worktree(Base):
                 self.assertEqual((code, out), (1, ""))
                 self.assertIn("gh api repos/o/n", err)
 
-    def test_the_app_can_push_whatever_the_repo_permissions_say(self):
+    def app_worktree(self, *answers):
+        with unittest.mock.patch.dict(os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}):
+            return self.worktree(*answers)
+
+    def test_the_app_pushes_when_a_dry_run_push_reaches_the_repo(self):
         """An App installation token gets every permission false, `pull` included."""
         none = dict.fromkeys(("admin", "maintain", "pull", "push", "triage"), False)
         for data in (
@@ -711,12 +720,74 @@ class Worktree(Base):
             {"permissions": none, "default_branch": "main"},
         ):
             with self.subTest(data=data):
-                with unittest.mock.patch.dict(
-                    os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}
-                ):
-                    (code, out, err), run = self.worktree(([*REPO_API], ok(json.dumps(data))))
+                (code, out, err), run = self.app_worktree(([*REPO_API], ok(json.dumps(data))))
                 self.assertEqual((code, json.loads(out)["push"]), (0, True), err)
                 self.assertTrue(run.ran("gh", "repo", "clone"))
+                self.assertIn(
+                    [
+                        "git",
+                        "-C",
+                        self.wt,
+                        "push",
+                        "--dry-run",
+                        "--no-verify",
+                        "--porcelain",
+                        "origin",
+                        "HEAD:refs/heads/TASK-1-x",
+                    ],
+                    run.calls,
+                )
+                self.assertEqual(run.timeout("git", "-C", self.wt, "push"), repo.SHORT)
+                shutil.rmtree(self.wt)
+
+    def test_a_rejected_ref_still_shows_the_app_can_push(self):
+        rejected = subprocess.CompletedProcess(
+            [],
+            1,
+            "To https://github.com/o/n.git\n!\tHEAD:refs/heads/TASK-1-x\t[rejected] "
+            "(non-fast-forward)\nDone\n",
+            "error: failed to push some refs\n",
+        )
+        (code, out, err), _ = self.app_worktree(info(push=False), (dry_push, rejected))
+        self.assertEqual((code, json.loads(out)["push"]), (0, True), err)
+
+    def test_the_app_cannot_push_where_github_or_git_denies_it(self):
+        """The App not installed on a public repo: GitHub answers 403; no token for the owner: git
+        finds no credentials."""
+        for stderr in (
+            "remote: Permission to o/n.git denied to agent-pm-bot[bot].\nfatal: unable to access "
+            "'https://github.com/o/n.git/': The requested URL returned error: 403\n",
+            "fatal: could not read Username for 'https://github.com': No such device or address\n",
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
+            "fatal: Authentication failed for 'https://github.com/o/n.git/'\n",
+        ):
+            with self.subTest(stderr=stderr):
+                denied = subprocess.CompletedProcess([], 128, "", stderr)
+                (code, out, err), run = self.app_worktree(info(), (dry_push, denied))
+                self.assertEqual((code, json.loads(out)["push"]), (0, False), err)
+                self.assertTrue(run.ran("gh", "repo", "clone"))
+                shutil.rmtree(self.wt)
+
+    def test_another_dry_run_push_failure_is_a_command_error(self):
+        failed = subprocess.CompletedProcess(
+            [],
+            128,
+            "",
+            "fatal: unable to access 'https://x:secret@github.com/o/n.git/': "
+            "Could not resolve host: github.com\n",
+        )
+        (code, out, err), _ = self.app_worktree(info(), (dry_push, failed))
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("git push --dry-run", err)
+        self.assertIn("Could not resolve host", err)
+        self.assertNotIn("secret", err)
+
+    def test_a_user_token_never_runs_a_dry_run_push(self):
+        for push in (True, False):
+            with self.subTest(push=push):
+                (code, out, err), run = self.worktree(info(push=push))
+                self.assertEqual((code, json.loads(out)["push"]), (0, push), err)
+                self.assertFalse(run.ran("git", "-C", self.wt, "push"))
                 shutil.rmtree(self.wt)
 
     def test_reuse_fetches_and_switches_to_the_local_branch(self):
