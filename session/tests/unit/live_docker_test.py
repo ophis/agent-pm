@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import unittest
 from unittest import mock
 
@@ -463,6 +464,78 @@ class ParseTest(Case):
         with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
             self.assertEqual(gate.main([]), 2)
         self.assertIn("live_docker.py worker", err.getvalue())
+
+
+class Docker:
+    """A fake subprocess.run: records each argv; `fail` names commands that exit 1."""
+
+    def __init__(self, listed=(), fail=()):
+        self.calls, self.listed, self.fail = [], list(listed), set(fail)
+
+    def __call__(self, argv, **_):
+        self.calls.append(list(argv))
+        command = (
+            " ".join(argv[1:3]) if os.path.basename(argv[0]).startswith("agent-pm") else argv[1]
+        )
+        out = "\n".join(self.listed) if argv[1:2] == ["ps"] else ""
+        return subprocess.CompletedProcess(argv, int(command in self.fail), out, "boom")
+
+    def ran(self, program, *words):
+        return [
+            c
+            for c in self.calls
+            if os.path.basename(c[0]) == program and all(w in c for w in words)
+        ]
+
+
+class OwnContainersTest(Case):
+    def test_literal_name(self):
+        own, other = f"agent-pm-live-{G1}", f"agent-pm-live-x-{G2}"
+        names = {own, other, f"agent-pm-other-{G1}", "agent-pm-live-123", f"agent-pm-aXb-{G1}"}
+        self.assertEqual(gate.own_containers(names, "live"), [own])
+        self.assertEqual(gate.own_containers(names, "a.b"), [])
+        self.assertEqual(gate.own_containers(names, ".+"), [])
+
+
+class CleanupTest(Case):
+    def worker(self):
+        w = gate.Worker(gate.Args("worker", "live", client="claude", cwd=CWD), "mgr", "/bin/docker")
+        w.open = True
+        return w
+
+    def test_failed_final_close_then_cleanup(self):
+        leftover = f"agent-pm-live-{G1}"
+        fake = Docker(listed=[leftover, f"agent-pm-live-x-{G2}"], fail={"close --manager"})
+        w = self.worker()
+        with (
+            mock.patch("subprocess.run", fake),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as err,
+        ):
+            with self.assertRaises(SystemExit):
+                w.close(gate.Start("final", G1, ""), final=True)
+            w.cleanup()
+        self.assertEqual(len(fake.ran("agent-pm-crew", "close")), 2)
+        self.assertEqual(len(fake.ran("agent-pm-session", "close", "live")), 1)
+        self.assertTrue(fake.ran("docker", "ps", "--filter", "label=agent-pm.session=live"))
+        self.assertEqual(fake.ran("docker", "rm"), [["/bin/docker", "rm", "--force", leftover]])
+        self.assertIn(f"cleanup: removed {leftover}", err.getvalue())
+
+    def test_crew_close_succeeds(self):
+        fake = Docker()
+        with mock.patch("subprocess.run", fake):
+            self.worker().cleanup()
+        self.assertEqual(len(fake.ran("agent-pm-crew", "close")), 1)
+        self.assertEqual(fake.ran("agent-pm-session"), [])
+        self.assertEqual(fake.ran("docker", "rm"), [])
+
+    def test_failures_are_printed_not_raised(self):
+        fake = Docker(fail={"close --manager", "close live", "ps"})
+        with (
+            mock.patch("subprocess.run", fake),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as err,
+        ):
+            self.worker().cleanup()
+        self.assertEqual(err.getvalue().count("cleanup: "), 3)
 
 
 if __name__ == "__main__":

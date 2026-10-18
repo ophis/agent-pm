@@ -30,6 +30,7 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import SessionError
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import BROKER, REFRESH, Broker, plugin_root
+from agent_pm.session.hosts.docker.host import LABEL
 from agent_pm.session.hosts.docker.mounts import state_dir
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -268,6 +269,13 @@ def bot_pr(
     return problems
 
 
+def own_containers(names: set[str], name: str) -> list[str]:
+    prefix = f"agent-pm-{name}-"
+    return sorted(
+        n for n in names if n.startswith(prefix) and re.fullmatch(r"[0-9a-f]{32}", n[len(prefix) :])
+    )
+
+
 def pending_except(status: dict, removed: str | None) -> list[str]:
     return [
         f"pending revocation for {e.get('container')} ({e.get('account')})"
@@ -381,9 +389,10 @@ def docker_host() -> tuple[str, tuple[str, ...]]:
     return table["docker"], tuple(table.get("plugins", ()))
 
 
-def containers(docker: str, *, running: bool = False) -> set[str]:
+def containers(docker: str, *, running: bool = False, label: str = "") -> set[str]:
     listed = () if running else ("--all",)
-    return set(call([docker, "ps", *listed, "--format", "{{.Names}}"])[0].split())
+    labelled = ("--filter", f"label={LABEL}={label}") if label else ()
+    return set(call([docker, "ps", *listed, *labelled, "--format", "{{.Names}}"])[0].split())
 
 
 def broker_status() -> dict:
@@ -477,10 +486,26 @@ class Worker:
         self.open = False
 
     def cleanup(self) -> None:
-        """After a failure: close what is left, keeping the failure the one reported."""
+        """After a failure: the crew close, else the session close, then removes any container
+        left, keeping the failure the one reported.
+        """
+        for final in (True, False):
+            if self.listed if final else self.open:
+                self._quietly(lambda final=final: self.shut(final=final))
+        self._quietly(self._remove_leftovers)
+
+    def _remove_leftovers(self) -> None:
+        for container in own_containers(containers(self.docker, label=self.name), self.name):
+            self._quietly(lambda c=container: self._remove(c))
+
+    def _remove(self, container: str) -> None:
+        call([self.docker, "rm", "--force", container])
+        print(f"cleanup: removed {container}", file=sys.stderr)
+
+    @staticmethod
+    def _quietly(action) -> None:
         try:
-            if self.open or self.listed:
-                self.shut(final=self.listed)
+            action()
         except (SystemExit, subprocess.SubprocessError, OSError) as error:
             print(f"cleanup: {error}", file=sys.stderr)
 
@@ -563,10 +588,10 @@ def worker(args: Args) -> int:
         call([docker, "rm", "--force", removed])
         w.launch("resume after docker rm -f", [session, "resume", w.name])
         w.answer("resume after docker rm -f")
+        w.close(w.starts[-1], final=True)
     except BaseException:
         w.cleanup()
         raise
-    w.close(w.starts[-1], final=True)
     passed(pending_except(broker_status(), removed), "no pending revocation but the removed one")
     lines = audit_lines(read_text(AUDIT))
     if removed:
