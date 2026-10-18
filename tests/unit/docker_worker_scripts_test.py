@@ -641,7 +641,8 @@ class WithSecrets(Case):
                 self.main(argv, secret=self.secret)
             execvpe.assert_not_called()
             self.assertEqual(
-                raised.exception.code, "usage: with-secrets --client claude|codex COMMAND [ARG...]"
+                raised.exception.code,
+                "usage: with-secrets --client claude|codex|opencode COMMAND [ARG...]",
             )
 
     def test_codex_uses_its_file_auth_without_reading_claude(self):
@@ -652,6 +653,19 @@ class WithSecrets(Case):
             self.main(["--client", "codex", "codex", "--version"], secret=self.secret)
         self.assertEqual(execvpe.call_args.args[:2], ("codex", ["codex", "--version"]))
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", execvpe.call_args.args[2])
+
+    def test_opencode_execs_with_unchanged_env_and_reads_no_secret(self):
+        self.secret.write_text("tok-123")
+        with (
+            mock.patch.dict(os.environ, {"XDG_DATA_HOME": "/state"}, clear=True),
+            mock.patch("pathlib.Path.read_text") as read,
+            mock.patch("os.execvpe") as execvpe,
+        ):
+            self.main(["--client", "opencode", "opencode", "--version"], secret=self.secret)
+            path, argv, env = execvpe.call_args.args
+            self.assertEqual(dict(env), {"XDG_DATA_HOME": "/state"})
+        read.assert_not_called()
+        self.assertEqual((path, argv), ("opencode", ["opencode", "--version"]))
 
     def test_claude_inherited_codex_home_still_requires_its_own_token(self):
         with mock.patch.dict(os.environ, {"CODEX_HOME": "/unrelated"}):
