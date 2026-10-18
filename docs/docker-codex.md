@@ -169,4 +169,3 @@ credentials; record versions, time, status and redacted error locations only.
 | Restart the host supervisor, then query/send | Relay resumes, same identity; original access deadline retained |
 | Let the initial access token expire | `client_auth_expired`, container removed, no login prompt or identity change; host login plus resume repairs it |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
-

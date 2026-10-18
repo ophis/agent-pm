@@ -206,12 +206,32 @@ class WithSecrets(Case):
 
     def test_codex_uses_its_file_auth_without_reading_claude(self):
         with (
-            mock.patch.dict(os.environ, {"CODEX_HOME": "/volatile"}),
+            mock.patch.dict(os.environ, {}, clear=True),
             mock.patch("os.execvpe") as execvpe,
         ):
-            self.main(["codex", "--version"], secret=self.secret)
+            self.main(["--client", "codex", "codex", "--version"], secret=self.secret)
         self.assertEqual(execvpe.call_args.args[:2], ("codex", ["codex", "--version"]))
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", execvpe.call_args.args[2])
+
+    def test_claude_inherited_codex_home_still_requires_its_own_token(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "/unrelated"}):
+            with mock.patch("os.execvpe") as execute, self.assertRaises(SystemExit):
+                self.main(["--client", "claude", "claude"], secret=self.secret)
+            execute.assert_not_called()
+            self.secret.write_text("claude-synthetic")
+            with mock.patch("os.execvpe") as execute:
+                self.main(["--client", "claude", "claude"], secret=self.secret)
+            self.assertEqual(execute.call_args.args[:2], ("claude", ["claude"]))
+            self.assertEqual(
+                execute.call_args.args[2]["CLAUDE_CODE_OAUTH_TOKEN"], "claude-synthetic"
+            )
+
+    def test_invalid_client_or_missing_command_is_rejected(self):
+        for argv in (["--client"], ["--client", "codex"], ["--client", "other", "cmd"]):
+            with self.subTest(argv=argv), mock.patch("os.execvpe") as execute:
+                with self.assertRaises(SystemExit):
+                    self.main(argv, secret=self.secret)
+                execute.assert_not_called()
 
 
 class GitHubTokens(Case):

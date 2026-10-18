@@ -33,7 +33,7 @@ A start rebuilds an image built 7 or more days ago, and
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"8"}` |
+| `"$B" version` | `{"protocol_version":"9"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -165,7 +165,7 @@ gives another key, and its rebuild removes the other's images.
 ```sh
 mkdir -p ~/src/demo ~/.agent-pm/docker-state/worker_1/claude
 cat > /tmp/worker_1.json <<EOF
-{"name": "worker_1", "generation": "$(openssl rand -hex 16)", "image": "$I",
+{"name": "worker_1", "client": "claude", "generation": "$(openssl rand -hex 16)", "image": "$I",
  "cwd": "$HOME/src/demo", "workspace": "agent-pm-ws-worker_1",
  "claude_dir": "$HOME/.agent-pm/docker-state/worker_1/claude", "github": null, "labels": {}}
 EOF
@@ -312,25 +312,24 @@ revision rounds push to the same branch. Then [review before pulling](#review-be
 Each start, restart or resume runs a new generation in a new container, built from the
 current image. `restart` closes the running container and starts the next one; `resume`
 (after `close`, or once the container is gone) starts one in the same cwd. Both keep the
-Claude config dir and the [workspace volume](#workspace-volumes) and continue its
+client history and the [workspace volume](#workspace-volumes) and continue its
 conversation; only a new start clears them. A resume
 whose conversation file is missing, or is a symlink, fails before any container exists
 with `no native history to resume`. The worker's resume command is
-`agent-pm-session resume <name>`, never `client-resume`, which would start Claude on the
+`agent-pm-session resume <name>`, never `client-resume`, which would start the client on the
 host.
 
-Refused before any container exists, as not supported on the Docker Host yet: a client
-other than Claude, detached sessions, and a start while a container of that name still
-exists. The broker's Refusals above apply too.
+Docker supports Claude terminals and headless runs, plus [Codex terminals](docker-codex.md).
+Unsupported clients, Codex headless runs, detached sessions, and a start while a container
+of that name still exists fail before container creation. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client is Claude, the cwd exists, the broker
+Every start first runs a preflight: the client and mode are supported, the cwd exists, the broker
 answers `version` with the expected protocol (else it points to [Install](#install)), and
 `build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
-closed and `resume` continues it once fixed. A missing setup-token surfaces at the
-broker's `start`, still before any container: the start fails with the broker's own
-`agent-pm-broker login claude` message and is not retried.
+closed and `resume` continues it once fixed. Missing client credentials fail at the broker's `start`, before container creation, with
+its matching host `agent-pm-broker login <client>` repair command; the start is not retried.
 
 `agent-pm-crew` waits up to 1920 s for a start or resume, as the build alone may take
 1800 s (the first start after an upgrade, or once the image is 7 days old, rebuilds it), then sends SIGTERM and,

@@ -585,7 +585,7 @@ class StartTest(Base):
         self.assertEqual(SOCKET, "/run/agent-pm/relay.sock")
         new = self.docker.execs()[2]
         tail = new[new.index("--") :]
-        self.assertEqual(tail[:4], ["--", "with-secrets", "agent", "--flag"])
+        self.assertEqual(tail[:6], ["--", "with-secrets", "--client", "agent", "agent", "--flag"])
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
         self.assertIn(f"AGENT_HOME={self.home_dir}", new)
         self.assertIn("K=v", new)
@@ -1121,7 +1121,7 @@ class PipeTest(Base):
             [
                 *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
                 *("--env", "AGENT_HOME", "--env", "K"),
-                *(CONTAINER, "with-secrets", "agent", "-p"),
+                *(CONTAINER, "with-secrets", "--client", "agent", "agent", "-p"),
             ],
         )
         self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))

@@ -16,6 +16,15 @@ PROBE = """
 import json, os, stat, tempfile
 from pathlib import Path
 home = Path(os.environ['CODEX_HOME'])
+mounts = {}
+for line in Path('/proc/self/mountinfo').read_text().splitlines():
+    before, after = line.split(' - ', 1)
+    fields = before.split()
+    mounts[fields[4]] = (after.split()[0], set(fields[5].split(',')))
+for path in (str(home), '/run/agent-pm', '/run/agent-pm/secrets'):
+    kind, options = mounts[path]
+    assert kind == 'tmpfs'
+    assert {'noexec', 'nosuid', 'nodev'} <= options
 secret = Path('/run/agent-pm/secrets/codex/auth.json')
 assert stat.S_IMODE(secret.stat().st_mode) == 0o400
 assert secret.stat().st_uid == os.getuid() != 0
@@ -118,12 +127,13 @@ def main(image):
                     f"type=bind,source={sessions},target={sessions}",
                     image,
                 )
-                mounts = json.loads(docker("inspect", name))[0]["Mounts"]
+                inspected = json.loads(docker("inspect", name))[0]
+                mounts = inspected["Mounts"]
                 assert [(m["Source"], m["Destination"]) for m in mounts if m["Type"] == "bind"] == [
                     (str(sessions), str(sessions))
                 ]
                 assert {str(home), "/run/agent-pm", "/run/agent-pm/secrets"} <= {
-                    m["Destination"] for m in mounts if m["Type"] == "tmpfs"
+                    *inspected["HostConfig"]["Tmpfs"]
                 }
                 docker("exec", name, PYTHON, "-I", BOOTSTRAP, "codex", str(home), "/workspace")
                 docker("exec", "-i", name, PYTHON, "-I", BOOTSTRAP, "codex-auth", data=document)

@@ -877,7 +877,12 @@ class DockerHost(Host):
             )
             process = tmux.launch(
                 name,
-                ["with-secrets", *launch.argv],
+                [
+                    "with-secrets",
+                    "--client",
+                    metadata["home_field"].removesuffix("_dir"),
+                    *launch.argv,
+                ],
                 cwd=cwd,
                 env=self._exec_env(launch),
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
@@ -1056,7 +1061,13 @@ class DockerHost(Host):
                 self.docker,
                 *("exec", "-i", "--workdir", cwd),
                 *(arg for key in env for arg in ("--env", key)),
-                *(container, "with-secrets", *launch.argv),
+                *(
+                    container,
+                    "with-secrets",
+                    "--client",
+                    metadata["home_field"].removesuffix("_dir"),
+                    *launch.argv,
+                ),
             )
             proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
