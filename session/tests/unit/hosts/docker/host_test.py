@@ -180,6 +180,7 @@ class Base(Case):
             "sha256:" + "b" * 64,
             {},
             [],
+            credential_expires_at=None,
         )
         self.broker = FakeBroker(self.order, started)
         self.host = DockerHost(
@@ -785,6 +786,7 @@ class StartTest(Base):
             "sha256:" + "b" * 64,
             {"claude": "2.1.0"},
             [],
+            credential_expires_at=None,
         )
         result = os.path.join(self.state, f"{GEN}.result.json")
         for resume in ("0", "1"):
