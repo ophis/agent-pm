@@ -1,17 +1,23 @@
 import argparse
 import base64
+import fcntl
 import json
 import os
 import re
+import selectors
+import signal
 import stat
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
 VERSION = "0.163.0"
 CONTAINERS = ("task647-codex-a-1", "task647-codex-a-2")
 AUTH = Path("/Users/francis/.agent-pm/work/TASK-647/agent/tmp/codex-live-0.163.0/broker/auth.json")
+LIVE_ROOT = AUTH.parent.parent
 STORE = 'cli_auth_credentials_store="file"'
 ITEM_TYPES = (
     "command_execution",
@@ -24,35 +30,62 @@ ITEM_TYPES = (
 )
 
 
-def read_private_auth(path):
+@contextmanager
+def private_directory(path):
     if not path.is_absolute() or ".." in path.parts:
         raise ValueError("auth_path")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     parent = os.open("/", flags)
     try:
-        for part in path.parts[1:-1]:
+        for part in path.parts[1:]:
             child = os.open(part, flags, dir_fd=parent)
             os.close(parent)
             parent = child
         info = os.fstat(parent)
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise ValueError("private_directory")
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-        with os.fdopen(fd, "rb") as file:
-            info = os.fstat(file.fileno())
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-                or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) & 0o077
-            ):
-                raise ValueError("private_file")
-            data = file.read(1024 * 1024 + 1)
+        yield parent
     finally:
         os.close(parent)
+
+
+def private_regular(fd):
+    info = os.fstat(fd)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ValueError("private_file")
+
+
+def read_private_auth(path):
+    with private_directory(path.parent) as parent:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(fd, "rb") as file:
+            private_regular(file.fileno())
+            data = file.read(1024 * 1024 + 1)
     if len(data) > 1024 * 1024:
         raise ValueError("auth_size")
     return json.loads(data)
+
+
+@contextmanager
+def refresh_lock(directory):
+    with private_directory(directory) as parent:
+        fd = os.open(
+            "task647-refresh.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+            dir_fd=parent,
+        )
+        try:
+            private_regular(fd)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+        finally:
+            os.close(fd)
 
 
 def make_carrier(auth, variant):
@@ -405,6 +438,289 @@ def access_expiry(auth, observed_at):
     }
 
 
+def refresh_date(value):
+    if not isinstance(value, str):
+        raise ValueError("refresh_date")
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise ValueError("refresh_timezone")
+    return stamp.astimezone(UTC)
+
+
+def summarize_refresh(before, after, observed_at):
+    result = {"status": "incomplete", "signature_status": "not_verified"}
+    try:
+        for auth in (before, after):
+            if auth.get("auth_mode") != "chatgpt":
+                raise ValueError("managed_auth")
+            tokens = auth["tokens"]
+            if any(
+                not isinstance(tokens.get(key), str) or not tokens[key]
+                for key in ("id_token", "access_token", "refresh_token", "account_id")
+            ):
+                raise ValueError("managed_tokens")
+        old_expiry = refresh_date(access_expiry(before, observed_at)["access_expires_at"])
+        expiry = refresh_date(access_expiry(after, observed_at)["access_expires_at"])
+        old_refresh = refresh_date(before["last_refresh"])
+        refreshed = refresh_date(after["last_refresh"])
+        result.update(
+            access_changed=before["tokens"]["access_token"] != after["tokens"]["access_token"],
+            refresh_changed=before["tokens"]["refresh_token"] != after["tokens"]["refresh_token"],
+            same_account=before["tokens"]["account_id"] == after["tokens"]["account_id"],
+            expiry_advanced=expiry > old_expiry,
+            expiry_future=expiry > observed_at,
+            last_refresh_advanced=refreshed > old_refresh,
+            before_access_expires_at=old_expiry.isoformat(),
+            access_expires_at=expiry.isoformat(),
+            before_last_refresh_at=old_refresh.isoformat(),
+            last_refresh_at=refreshed.isoformat(),
+        )
+        if all(
+            result[key]
+            for key in (
+                "access_changed",
+                "same_account",
+                "expiry_advanced",
+                "expiry_future",
+                "last_refresh_advanced",
+            )
+        ):
+            result["status"] = "rotation_observed"
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError):
+        pass
+    return result
+
+
+class BoundedLines:
+    def __init__(self, line_limit=1024 * 1024, total_limit=4 * 1024 * 1024):
+        self.line_limit = line_limit
+        self.total_limit = total_limit
+        self.total = 0
+        self.pending = b""
+
+    def feed(self, data):
+        self.total += len(data)
+        if self.total > self.total_limit:
+            raise ValueError("output_limit")
+        self.pending += data
+        lines = self.pending.split(b"\n")
+        self.pending = lines.pop()
+        if any(len(line) > self.line_limit for line in (*lines, self.pending)):
+            raise ValueError("line_limit")
+        return [json.loads(line) for line in lines if line.strip()]
+
+    def finish(self):
+        if self.pending.strip():
+            raise ValueError("truncated_output")
+
+
+class RefreshExchange:
+    def __init__(self):
+        self.stage = 1
+        self.complete = False
+        self.notification_count = 0
+        self.request_count = 0
+
+    def start(self):
+        return (
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {"name": "task647-probe", "title": None, "version": VERSION},
+                        "capabilities": {
+                            "experimentalApi": False,
+                            "requestAttestation": False,
+                            "explicitGatewayOauth": True,
+                        },
+                    },
+                }
+            ).encode()
+            + b"\n"
+        )
+
+    def accept(self, message):
+        if not isinstance(message, dict):
+            raise ValueError("protocol_shape")
+        if "method" in message:
+            if "id" in message or not isinstance(message["method"], str):
+                raise ValueError("unexpected_request")
+            self.notification_count += 1
+            return []
+        if (
+            "error" in message
+            or type(message.get("id")) is not int
+            or message["id"] != self.stage
+            or self.complete
+        ):
+            raise ValueError("rpc_failure")
+        result = message.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("rpc_result")
+        if self.stage == 1:
+            self.stage = 2
+            self.request_count = 1
+            return [
+                b'{"method":"initialized"}\n',
+                b'{"id":2,"method":"account/read","params":{"refreshToken":true}}\n',
+            ]
+        account = result.get("account")
+        if (
+            not isinstance(account, dict)
+            or account.get("type") != "chatgpt"
+            or result.get("requiresOpenaiAuth") is not True
+        ):
+            raise ValueError("managed_account_required")
+        self.complete = True
+        return []
+
+    def summary(self):
+        return {
+            "proactive_request_count": self.request_count,
+            "notification_count": self.notification_count,
+            "account_read_completed": self.complete,
+        }
+
+
+def stop_native(process):
+    if process.returncode is not None:
+        return
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    with suppress(KeyboardInterrupt):
+        time.sleep(0.25)
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait(timeout=5)
+
+
+def run_native(argv, environment, exchange=None):
+    process = None
+    result = {"exit_code": None, "cleanup_status": "not_started", "error": "native_failure"}
+    output = bytearray()
+    try:
+        process = subprocess.Popen(
+            argv,
+            env=environment,
+            cwd=environment["HOME"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        started = time.monotonic()
+        deadline = started + (120 if exchange else 10)
+        decoder = BoundedLines() if exchange else None
+        stderr_size = 0
+        with selectors.DefaultSelector() as selector:
+            for stream, kind in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, kind)
+            if exchange:
+                process.stdin.write(exchange.start())
+                process.stdin.flush()
+            else:
+                process.stdin.close()
+            while selector.get_map():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("native_timeout")
+                for key, _events in selector.select(timeout=min(0.2, deadline - time.monotonic())):
+                    data = os.read(key.fileobj.fileno(), 65536)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        if key.data == "stdout" and decoder:
+                            decoder.finish()
+                        continue
+                    if key.data == "stderr":
+                        stderr_size += len(data)
+                        if stderr_size > 1024 * 1024:
+                            raise ValueError("stderr_limit")
+                    elif decoder:
+                        for message in decoder.feed(data):
+                            for request in exchange.accept(message):
+                                process.stdin.write(request)
+                                process.stdin.flush()
+                            if exchange.complete and not process.stdin.closed:
+                                process.stdin.close()
+                                deadline = time.monotonic() + 50
+                    else:
+                        output.extend(data)
+                        if len(output) > 4096:
+                            raise ValueError("version_limit")
+            code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+            result.update(exit_code=code, cleanup_status="exited")
+            if code != 0 or exchange and not exchange.complete:
+                raise ValueError("native_exit")
+            result["error"] = None
+    except (OSError, ValueError, TypeError, TimeoutError, subprocess.SubprocessError):
+        pass
+    except KeyboardInterrupt:
+        result["error"] = "cancelled"
+    finally:
+        if process:
+            if result["error"] or process.poll() is None:
+                try:
+                    stop_native(process)
+                    result["cleanup_status"] = "terminated"
+                except (OSError, subprocess.SubprocessError, KeyboardInterrupt):
+                    result.update(cleanup_status="cleanup_failed", error="cleanup_failure")
+            result["exit_code"] = process.returncode
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream:
+                    stream.close()
+    return result, bytes(output)
+
+
+def validate_native(root, environment):
+    with private_directory(root) as parent:
+        fd = os.open("codex", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            private_regular(fd)
+            if not os.fstat(fd).st_mode & stat.S_IXUSR:
+                raise ValueError("native_mode")
+        finally:
+            os.close(fd)
+    result, output = run_native([str(root / "codex"), "-c", STORE, "--version"], environment)
+    if result["error"] or not re.fullmatch(rb"codex(?:-cli)? 0\.163\.0\s*", output):
+        raise ValueError("native_version")
+
+
+def host_refresh(root=LIVE_ROOT):
+    result = {"probe": "host_refresh", "version": VERSION, "status": "incomplete"}
+    environment = {
+        "HOME": str(root / "home"),
+        "CODEX_HOME": str(root / "broker"),
+        "PATH": "/usr/bin:/bin",
+    }
+    try:
+        validate_native(root, environment)
+        with private_directory(root / "home"):
+            pass
+        with refresh_lock(root / "broker"):
+            before = read_private_auth(root / "broker/auth.json")
+            if summarize_refresh(before, before, datetime.now(UTC)).get("same_account") is not True:
+                raise ValueError("managed_auth")
+            exchange = RefreshExchange()
+            result["started_at"] = now()
+            native, _output = run_native(
+                [str(root / "codex"), "-c", STORE, "app-server", "--listen", "stdio://"],
+                environment,
+                exchange,
+            )
+            result.update(native, **exchange.summary(), ended_at=now())
+            after = read_private_auth(root / "broker/auth.json")
+            observation = summarize_refresh(before, after, datetime.now(UTC))
+            if native["error"]:
+                observation["status"] = "incomplete"
+            result.update(observation)
+    except KeyboardInterrupt:
+        result.update(status="incomplete", error="cancelled")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        result.update(status="incomplete", error="redacted_refresh_failure")
+    return result
+
+
 def existing_session(container):
     result = docker(
         [
@@ -476,9 +792,12 @@ def main():
     commands.add_parser("versions")
     commands.add_parser("expiry")
     commands.add_parser("resume-pair")
+    commands.add_parser("host-refresh")
     args = parser.parse_args()
     try:
-        if args.command == "inject":
+        if args.command == "host-refresh":
+            result = host_refresh()
+        elif args.command == "inject":
             version = observed_version(args.container)
             result = {
                 "version": version,
@@ -514,7 +833,11 @@ def main():
     except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
         result = {"status": "incomplete", "error": "redacted_probe_failure"}
     print(json.dumps({"recorded_at": now(), **result}, indent=2))
-    return 0 if result["status"] in ("pass", "loaded", "injected", "observed") else 1
+    return (
+        0
+        if result["status"] in ("pass", "loaded", "injected", "observed", "rotation_observed")
+        else 1
+    )
 
 
 if __name__ == "__main__":
