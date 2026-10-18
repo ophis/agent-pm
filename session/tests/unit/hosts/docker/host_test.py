@@ -11,6 +11,7 @@ import re
 import shlex
 import signal
 import stat
+import subprocess
 import threading
 import time
 import tomllib
@@ -928,6 +929,178 @@ class StartTest(Base):
     def test_detach_is_refused(self):
         with self.assertRaisesRegex(SessionError, "only terminal sessions"):
             self.host.detach("w", self.launch)
+
+
+class PipeTest(Base):
+    METADATA = StartTest.METADATA
+
+    def setUp(self):
+        super().setUp()
+        os.unlink(os.path.join(self.home, ".agent-pm", "tui", "w", "session.json"))
+        self.home_dir = os.path.join(self.state, "agent")
+        self.exec = mock.Mock(pid=4321, returncode=None)
+        self.exec.stdout, self.exec.stderr = io.StringIO("out\n"), io.StringIO()
+        self.exec.wait.return_value = 0
+        self.spawn_mock.side_effect = self.popen
+        self.launch = Launch(
+            ("agent", "-p"),
+            cwd=self.cwd,
+            env={"PATH": "/host/bin", "AGENT_HOME": self.home_dir, "K": "secret"},
+        )
+
+    def popen(self, argv, **kw):
+        self.order.append("exec")
+        self.popened = (argv, kw)
+        self.lock_held = not _free(os.path.join(self.state, "pipe.lock"))
+        self.popen_record = self.host_record()
+        return self.exec
+
+    def pipe(self, name="w", **metadata):
+        return self.host.pipe(
+            name,
+            self.launch,
+            metadata={k: v for k, v in {**self.METADATA, **metadata}.items() if v is not None},
+        )
+
+    def test_no_name_or_a_docker_env_key_is_refused_before_docker(self):
+        with self.assertRaisesRegex(
+            ConfigError, "^a headless session on the Docker Host needs a name$"
+        ):
+            self.pipe(None)
+        for key in (*CLEARED, "DOCKER_CERT_PATH"):
+            self.launch = replace(self.launch, env={**self.launch.env, key: "x"})
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(
+                    ConfigError, f"^docker session w: env {key} would reconfigure the docker CLI$"
+                ),
+            ):
+                self.pipe()
+            self.launch = replace(self.launch, env={"K": "v"})
+        self.assertEqual(self.order, [])
+
+    def test_pipe_starts_the_container_then_docker_exec_without_tmux(self):
+        piped = self.pipe()
+        manifest = os.path.join(self.state, f"{GEN}.json")
+        self.assertEqual(
+            [step if isinstance(step, str | tuple) else step[:5] for step in self.order],
+            [
+                ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
+                ["ps", "-a", "--filter", "label=agent-pm.session", "--format"],
+                "version",
+                ("build", REPO),
+                ["volume", "ls", "--filter", "label=agent-pm.kind", "--format"],
+                ("start", manifest, client_keys(REPO)),
+                "exec",
+            ],
+        )
+        argv, kw = self.popened
+        self.assertEqual(
+            argv,
+            [
+                *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
+                *("--env", "AGENT_HOME", "--env", "K"),
+                *(CONTAINER, "with-secrets", "agent", "-p"),
+            ],
+        )
+        self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))
+        self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
+        self.assertFalse(set(CLEARED) & kw["env"].keys())
+        self.assertEqual(
+            {k: kw[k] for k in ("stdin", "stdout", "stderr", "text", "errors", "process_group")},
+            {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "errors": "replace",
+                "process_group": 0,
+            },
+        )
+        record = {"generation": GEN, "sid": "s1", "client": "agent", "mode": "pipe"}
+        self.assertEqual((self.popen_record, self.host_record()), (record, record))
+        self.assertTrue(self.lock_held)
+        self.assertFalse(_free(os.path.join(self.state, "pipe.lock")))
+        self.assertTrue(os.path.exists(os.path.join(self.state, f"{GEN}.result.json")))
+        self.assertFalse(os.path.lexists(os.path.join(self.home, ".agent-pm", "tui", "w.lock")))
+        with piped.stdout as out:
+            self.assertEqual(list(out), ["out\n"])
+        self.assertEqual((piped.wait(0), self.broker.closed), (0, []))
+        piped.close()
+        piped.close()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_stop_kills_the_exec_then_closes_and_a_close_failure_only_warns(self):
+        piped = self.pipe()
+        self.broker.close = mock.Mock(side_effect=SessionError("broker: boom"))
+        with mock.patch("os.killpg") as killpg, self.assertLogs("session", "WARNING") as logs:
+            piped.stop(ended=False)
+        killpg.assert_called_once_with(4321, signal.SIGKILL)
+        self.broker.close.assert_called_once_with(CONTAINER)
+        self.assertIn("docker session w: broker: boom", logs.output[0])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_a_busy_name_or_a_failed_exec_rolls_back(self):
+        os.makedirs(os.path.join(self.home, ".agent-pm", "tui"), exist_ok=True)
+        busy = os.open(
+            os.path.join(self.home, ".agent-pm", "tui", "w.lock"), os.O_RDWR | os.O_CREAT
+        )
+        fcntl.flock(busy, fcntl.LOCK_EX)
+        with self.assertRaisesRegex(SessionError, "^docker session w: busy$"):
+            self.pipe()
+        os.close(busy)
+        self.assertEqual(self.order, [])
+        self.spawn_mock.side_effect = OSError("no docker")
+        with self.assertRaisesRegex(SessionError, "^docker session w: no docker$"):
+            self.pipe()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+        self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
+
+    def test_resume_keeps_home_and_checks_history(self):
+        with self.assertRaisesRegex(ConfigError, "no native history to resume"):
+            self.pipe(resume="1")
+        transcript = os.path.join(self.home_dir, "projects", "p", "s1.jsonl")
+        os.makedirs(os.path.dirname(transcript))
+        with open(transcript, "w") as f:
+            f.write("{}\n")
+        self.launch = replace(self.launch, transcript=transcript)
+        self.pipe(resume="1").close()
+        self.assertTrue(os.path.exists(transcript))
+
+    def piped_row(self, held):
+        """w's container, a headless generation, its pipe lock held or not."""
+        self.listed("w")
+        self.record(mode="pipe")
+        if held:
+            fd = os.open(os.path.join(self.state, "pipe.lock"), os.O_RDWR | os.O_CREAT)
+            self.addCleanup(_close, fd)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return fd
+        return None
+
+    def test_a_live_piped_container_is_kept_unlisted_and_an_orphan_closed(self):
+        fd = self.piped_row(held=True)
+        self.host.sweep("x")
+        self.host.sweep("w")
+        self.assertEqual(self.broker.closed, [])
+        self.assertEqual((self.host.list(), self.host.rows()), ([], []))
+        for call in (self.host.attach, self.host.attach_target):
+            with (
+                self.subTest(call=call),
+                self.assertRaisesRegex(SessionError, "^no docker session w$"),
+            ):
+                call("w")
+        self.tui_session("w")
+        with self.assertRaisesRegex(
+            SessionError,
+            "^docker session w: a headless run holds it; wait for it to end or stop its run$",
+        ):
+            StartTest.start(self)
+        self.assertEqual(self.broker.closed, [])
+        _close(fd)
+        self.host.sweep("x")
+        self.assertEqual(self.broker.closed, [CONTAINER])
 
 
 class PreflightTest(Base):

@@ -174,7 +174,7 @@ class Piped(ABC):
         return None
 
 
-class _LocalPiped(Piped):
+class LocalPiped(Piped):
     stop_wait = STOP_WAIT
 
     def __init__(self, proc: subprocess.Popen) -> None:
@@ -275,7 +275,7 @@ class Host(ABC):
         self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
     ) -> Piped:
         """A headless client on pipes, run here."""
-        return _LocalPiped(
+        return LocalPiped(
             subprocess.Popen(
                 launch.argv,
                 cwd=launch.cwd,

@@ -1,7 +1,8 @@
-"""DockerHost runs each tui session in its own broker-made container (docs/docker-host.md): the
-container's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a host run supervisor for
-its hooks; the Viewer shows a session through `docker exec` (a CommandView). What the host knows of
-a session is its Host record (RECORD in its state dir), never the container's tmux options.
+"""DockerHost runs each tui or headless session in its own broker-made container
+(docs/docker-host.md): a tui one's tmux through `docker exec` (a TmuxCli over daemon.exec_runner), a
+host run supervisor for its hooks; a headless one's client through `docker exec -i` (pipe). The
+Viewer shows a session through `docker exec` (a CommandView). What the host knows of a session is
+its Host record (RECORD in its state dir), never the container's tmux options.
 """
 
 from __future__ import annotations
@@ -84,7 +85,9 @@ from agent_pm.session.hosts.docker.mounts import (
     state_dir,
     workspace_volume,
 )
+from agent_pm.session.hosts.docker.pipe import DockerPiped
 from agent_pm.session.hosts.docker.relay import GEN, SOCKET
+from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
     DOCKER_STATE,
@@ -93,6 +96,7 @@ from agent_pm.utils import (
     command_path,
     docker_home,
     inode_lock,
+    kill_group,
     module_roots,
     read_beneath,
     read_regular,
@@ -104,6 +108,8 @@ from agent_pm.utils import (
 KIND = "docker"
 DEAD_SIGNAL = "agent-pm-dead"
 RECORD = "host.json"
+PIPE_LOCK = "pipe.lock"  # held by a headless run's harness while its client runs
+PIPED = "pipe"
 READY_WAIT = 10
 LOCK_WAIT = 30
 KILL_WAIT = 5
@@ -148,6 +154,11 @@ def _record(name: str) -> dict:
     except (OSError, ValueError):
         return {}
     return found if isinstance(found, dict) else {}
+
+
+def _piped(name: str, generation: str) -> bool:
+    found = _record(name)
+    return found.get("generation") == generation and found.get("mode") == PIPED
 
 
 def _save_record(name: str, data: Mapping) -> None:
@@ -259,6 +270,17 @@ class _Stops:
             raise SessionError(f"{prefix}stopped by {signal.Signals(self.received[0]).name}")
 
 
+class _Container(NamedTuple):
+    container: str
+    generation: str
+    hook: str
+    image: str
+    cwd: str
+    started: Started
+    began: str
+    ended: str
+
+
 class _Laps:
     """Seconds per phase, since the previous one ended (docs/docker-host.md › Start timing)."""
 
@@ -283,6 +305,14 @@ def _wait(ready, timeout: float, poll: float = POLL) -> bool:
             return False
         time.sleep(poll)
     return True
+
+
+def _check_started(started: Started, container: str) -> None:
+    if (started.endpoint, started.container) != (endpoint(), container):
+        raise SessionError(
+            f"broker: started {started.container} at {started.endpoint},"
+            f" want {container} at {endpoint()}"
+        )
 
 
 class DockerTerminal(InteractiveProcess):
@@ -445,8 +475,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Only terminal sessions run here,
-    each on its workspace volume.
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path. Terminal and piped sessions run
+    here, each on its workspace volume.
     """
 
     _inherit_env = False  # the container gets only the launch's own env (D10)
@@ -508,6 +538,8 @@ class DockerHost(Host):
         """Name → its row; of several, the one of host.json's generation."""
         found: dict[str, Row] = {}
         for row in self._rows():
+            if _piped(row.name, row.generation):
+                continue
             if row.name not in found or row.generation == _record(row.name).get("generation"):
                 found[row.name] = row
         return found
@@ -586,6 +618,10 @@ class DockerHost(Host):
                     os.unlink(marker)
 
     def _sweep_row(self, row: Row) -> None:
+        if _piped(row.name, row.generation):
+            if _lock_free(os.path.join(state_dir(row.name), PIPE_LOCK)):
+                self.broker.close(row.container)
+            return
         path = _state_file(row.name)
         if os.path.lexists(path):
             try:
@@ -760,80 +796,13 @@ class DockerHost(Host):
         self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
-        generation, field, home_dir, credential = (
-            metadata.get(key) for key in ("generation", "home_field", "home_dir", "credential")
+        container, generation, hook, image, cwd, started, began, ended = self._container(
+            name, launch, stops, laps, metadata
         )
-        if not (generation and field and home_dir and credential):
-            raise SessionError(f"docker session {name}: no client home to mount")
-        resume = metadata.get("resume")
-        if resume not in ("0", "1"):
-            raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
-        self.sweep(name)
-        if any(row[1:2] == [name] for row in self._ps()):
-            raise SessionError(
-                f"docker session {name}: a container for it exists; close {name} first"
-            )
-        home = docker_home(name, home_dir)
-        if resume == "1" and read_beneath(home, launch.transcript, limit=0) is None:
-            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
-        laps("checks")
-        hook, root, (image, digest) = self._image(name)
-        volume = workspace_volume(name)
-        cwd = os.path.realpath(launch.cwd)
-        if resume == "0":
-            self._move_workspace(name, volume, cwd)
-            shutil.rmtree(home, ignore_errors=True)
-            os.makedirs(home, mode=0o700)
-            for file, text in json.loads(metadata.get("home_files") or "{}").items():
-                save(os.path.join(home, file), text)
-        clients = client_keys(root)
-        manifest = os.path.join(state_dir(name), f"{generation}.json")
-        write_manifest(
-            manifest,
-            name=name,
-            generation=generation,
-            image=image,
-            cwd=cwd,
-            workspace=volume,
-            home=(field, home),
-            hook_path=hook,
-        )
-        _report_plan(
-            name,
-            {
-                "name": name,
-                "generation": generation,
-                "image": image,
-                "image_digest": digest,
-                "workspace": {"volume": volume, "path": cwd},
-                "mounts": [{"path": home, "rw": True}],
-                "credential": credential,
-            },
-        )
-        laps("image")
-        container = container_name(name, generation)
-        stops.check(f"docker session {name}: ")
-        began = timestamp()
-        try:
-            started = self.broker.start(manifest, clients=clients)
-        except BrokerError as error:
-            if error.cleanup == "failed" and error.container:
-                with contextlib.suppress(SessionError):
-                    self.broker.close(error.container)
-            raise
-        except SessionError as error:  # a timeout or bad response: the container may exist
-            cleanup = self._roll_back(None, container)
-            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
-        ended = timestamp()
-        laps("start")
         supervisor = lock = None
         try:
             stops.check()
-            if (started.endpoint, started.container) != (endpoint(), container):
-                raise SessionError(
-                    f"broker: started {started.container} at {started.endpoint},"
-                    f" want {container} at {endpoint()}"
-                )
+            _check_started(started, container)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -901,6 +870,183 @@ class DockerHost(Host):
         return DockerTerminal(
             name, process, tmux=tmux, host=self, container=container, generation=generation
         )
+
+    def _container(
+        self, name: str, launch: Launch, stops: _Stops, laps: _Laps, metadata: Mapping[str, str]
+    ) -> _Container:
+        """The checks, image, workspace, home and plan, then the broker's start, rolled back on a
+        transport failure: what terminal and pipe share.
+        """
+        generation, field, home_dir, credential = (
+            metadata.get(key) for key in ("generation", "home_field", "home_dir", "credential")
+        )
+        if not (generation and field and home_dir and credential):
+            raise SessionError(f"docker session {name}: no client home to mount")
+        resume = metadata.get("resume")
+        if resume not in ("0", "1"):
+            raise SessionError(f"docker session {name}: bad resume flag {resume!r:.20}")
+        self.sweep(name)
+        for row in self._ps():
+            if row[1:2] == [name]:
+                if len(row) == len(Row._fields) and _piped(name, row[2]):
+                    raise SessionError(
+                        f"docker session {name}: a headless run holds it;"
+                        " wait for it to end or stop its run"
+                    )
+                raise SessionError(
+                    f"docker session {name}: a container for it exists; close {name} first"
+                )
+        home = docker_home(name, home_dir)
+        if resume == "1" and read_beneath(home, launch.transcript, limit=0) is None:
+            raise ConfigError(f"docker session {name}: no native history to resume in {home}")
+        laps("checks")
+        hook, root, (image, digest) = self._image(name)
+        volume = workspace_volume(name)
+        cwd = os.path.realpath(launch.cwd)
+        if resume == "0":
+            self._move_workspace(name, volume, cwd)
+            shutil.rmtree(home, ignore_errors=True)
+            os.makedirs(home, mode=0o700)
+            for file, text in json.loads(metadata.get("home_files") or "{}").items():
+                save(os.path.join(home, file), text)
+        clients = client_keys(root)
+        manifest = os.path.join(state_dir(name), f"{generation}.json")
+        write_manifest(
+            manifest,
+            name=name,
+            generation=generation,
+            image=image,
+            cwd=cwd,
+            workspace=volume,
+            home=(field, home),
+            hook_path=hook,
+        )
+        _report_plan(
+            name,
+            {
+                "name": name,
+                "generation": generation,
+                "image": image,
+                "image_digest": digest,
+                "workspace": {"volume": volume, "path": cwd},
+                "mounts": [{"path": home, "rw": True}],
+                "credential": credential,
+            },
+        )
+        laps("image")
+        container = container_name(name, generation)
+        stops.check(f"docker session {name}: ")
+        began = timestamp()
+        try:
+            started = self.broker.start(manifest, clients=clients)
+        except BrokerError as error:
+            if error.cleanup == "failed" and error.container:
+                with contextlib.suppress(SessionError):
+                    self.broker.close(error.container)
+            raise
+        except SessionError as error:  # a timeout or bad response: the container may exist
+            cleanup = self._roll_back(None, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
+        ended = timestamp()
+        laps("start")
+        return _Container(container, generation, hook, image, cwd, started, began, ended)
+
+    def pipe(
+        self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
+    ) -> DockerPiped:
+        """`docker exec -i` of the client in its own container, no tmux, relay or supervisor; it
+        holds the tui lock while it starts, then its pipe lock while the client runs.
+        """
+        if name is None:
+            raise ConfigError("a headless session on the Docker Host needs a name")
+        for key in launch.env:
+            if key in CLEARED or key.startswith("DOCKER_"):
+                raise ConfigError(
+                    f"docker session {name}: env {key} would reconfigure the docker CLI"
+                )
+        lock = tui_lock(name)
+        os.makedirs(os.path.dirname(lock), mode=0o700, exist_ok=True)
+        with _Stops() as stops, inode_lock(lock, wait=False) as held:
+            if not held:
+                raise SessionError(f"docker session {name}: busy")
+            try:
+                return self._pipe(name, launch, stops, metadata or {})
+            finally:
+                if not os.path.lexists(_state_file(name)):
+                    os.unlink(lock)
+
+    def _pipe(
+        self, name: str, launch: Launch, stops: _Stops, metadata: Mapping[str, str]
+    ) -> DockerPiped:
+        laps = _Laps()
+        self._check_cwd(name, launch)
+        container, generation, _, image, cwd, started, began, ended = self._container(
+            name, launch, stops, laps, metadata
+        )
+        lock = proc = None
+        try:
+            stops.check()
+            _check_started(started, container)
+            lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _save_record(
+                name,
+                {
+                    "generation": generation,
+                    "sid": metadata.get("sid"),
+                    "client": metadata.get("client"),
+                    "mode": PIPED,
+                },
+            )
+            env = {k: v for k, v in launch.env.items() if k != "PATH"}
+            argv, docker_env = docker_call(
+                self.docker,
+                *("exec", "-i", "--workdir", cwd),
+                *(arg for key in env for arg in ("--env", key)),
+                *(container, "with-secrets", *launch.argv),
+            )
+            proc = subprocess.Popen(
+                argv,
+                env={**docker_env, **env},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+                process_group=0,
+            )
+            laps("client")
+            result = {
+                "container": started.container,
+                "image": image,
+                "image_digest": started.image_digest,
+                "client_versions": dict(started.clients),
+                "started_at": began,
+                "ended_at": ended,
+                "phases": laps.phases,
+            }
+            save(
+                os.path.join(state_dir(name), f"{generation}.result.json"),
+                json.dumps(result),
+                durable=True,
+            )
+            stops.check()
+        except (SessionError, OSError, ValueError) as error:
+            if proc is not None:
+                kill_group(proc)
+            if lock is not None:
+                os.close(lock)
+            cleanup = self._roll_back(None, container)
+            raise SessionError(f"docker session {name}: {error}{cleanup}") from error
+        laps.report(f"docker timing {name} {generation}")
+        return DockerPiped(name, proc, close=lambda: self._close_piped(name, container), lock=lock)
+
+    def _close_piped(self, name: str, container: str) -> None:
+        try:
+            self.broker.close(container)
+        except SessionError as error:
+            LOG.warning("docker session %s: %s", name, error)
+        self.reclaim()
 
     def _serve_relay(self, container: str, generation: str) -> None:
         argv, env = docker_call(self.docker, "exec", "-d", container, RELAY, "serve", generation)
