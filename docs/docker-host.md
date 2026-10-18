@@ -83,11 +83,10 @@ security add-generic-password -s agent-pm-bot -a <App ID> -U -w "$(base64 -i <ke
 "$B" login github agent-pm-bot
 ```
 
-The login changes the item's access in place, content and account kept: for the steps not yet in place it asks once
-for the keychain password (wrong: `keychain status -25293`), sets the partition list to only the broker's partition
-ID, then the read/export entries to only the broker (if macOS refuses that with the password, a dialog asks: allow
-it). It reads the access back and checks the key is not empty before printing success; else it exits non-zero
-saying what is done and what is not: rerun it. Then it looks up `agent-pm-bot[bot]` on GitHub's public user API (no
+The login restricts the item's access in place (content and account kept): partition list to only the broker's
+partition ID, then read/export entries to only the broker (a wrong password: `keychain status -25293`). It reads the
+access back and checks the key is not empty before printing success; else it exits non-zero saying what is done
+and what is not: rerun it. Then it looks up `agent-pm-bot[bot]` on GitHub's public user API (no
 credential; needs network) and keeps its ID in the broker-only item `agent-pm-github-users`, for the containers' git
 identity. The App must be private (installable only on your account): every session gets a token for every repo of
 every installation.
@@ -513,8 +512,7 @@ secrets in environments that need it.
 - Container credentials are readable by every process in the container and by any process running as you
   ([Credentials](credentials.md)); each restart and resume writes them into a new container.
 - A broker reinstall needs all three logins again ([Log in](#log-in)); until then starts fail with `login_required`.
-- A GitHub token the broker could not revoke stays valid until it expires (an hour); `"$B" status` lists it and the
-  next start, close or status retries.
+- A GitHub token the broker could not revoke stays valid until it expires (an hour); `"$B" status` lists it.
 - Every Docker session can push to any unprotected branch of every repo the App is installed on, `private_docs`'s
   `main` included.
 - The [audit log](#audit-log) is yours to change: it records what the broker did, not that nothing else happened.
@@ -524,8 +522,8 @@ secrets in environments that need it.
   [Claude check](#start) catches it.
 - Docker Desktop file sharing must include `~/.agent-pm/docker-state` (Settings > Resources > File sharing), or start
   fails with `start_failed`.
-- `workspace-rm --force` drops unpushed work; a kept dirty volume takes disk until you act (reclaim runs only on a
-  Docker close). Volumes are plain files in the Docker Desktop VM: anyone with Docker access reads them.
+- A kept dirty volume takes disk until you act. Volumes are plain files in the Docker Desktop VM: anyone with Docker
+  access reads them.
 - `claude_dir` is a read-write bind: a worker can leave settings, hooks, `CLAUDE.md`, symlinks or large files there for
   its later generations; host readers must not follow symlinks.
 - A headless run's output comes from its container, where client and tools share uid `agent`: a forged rate-limit line
