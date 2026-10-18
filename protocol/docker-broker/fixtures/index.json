@@ -1,5 +1,5 @@
 {
-  "protocol_version": "5",
+  "protocol_version": "6",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1164,6 +1164,146 @@
         "stage": "schema",
         "exit_code": 3,
         "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "start-output-missing-github.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "start-output-github-token.json",
+      "definition": "start_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-input.json",
+      "definition": "refresh_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-input-missing-manifest.json",
+      "definition": "refresh_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "refresh-output.json",
+      "definition": "refresh_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "refresh-output-bad-expiry.json",
+      "definition": "refresh_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-input.json",
+      "definition": "status_input",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-input-extra.json",
+      "definition": "status_input",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 2,
+        "error_code": "usage"
+      }
+    },
+    {
+      "file": "status-output.json",
+      "definition": "status_output",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "status-output-token.json",
+      "definition": "status_output",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
+      }
+    },
+    {
+      "file": "error-github_failed.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 15,
+        "error_code": "github_failed"
+      }
+    },
+    {
+      "file": "error-refresh_failed.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 16,
+        "error_code": "refresh_failed"
+      }
+    },
+    {
+      "file": "error-close-keychain_failed.json",
+      "definition": "error",
+      "valid": true,
+      "expected": {
+        "stage": "response",
+        "exit_code": 11,
+        "error_code": "keychain_failed"
+      }
+    },
+    {
+      "file": "error-refresh-cleanup.json",
+      "definition": "error",
+      "valid": false,
+      "expected": {
+        "stage": "response",
+        "exit_code": null,
+        "error_code": null
       }
     }
   ]

@@ -1,8 +1,9 @@
 // Package launcher builds worker images and starts and closes their containers.
-// It never touches the keychain or the token: injection goes through Credentials.
+// It never touches the keychain or a token: injection goes through Credentials and Tokens.
 package launcher
 
 import (
+	"context"
 	"errors"
 	"io"
 
@@ -19,6 +20,16 @@ type Credentials interface {
 	Inject(exec func(argv []string, stdin []byte) error) error
 }
 
+// Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
+// Errors are *protocol.Error, wrap docker.ErrUnreachable, or are opaque, carrying no Docker stderr.
+type Tokens interface {
+	Ready(app string) error // manifest_rejected for another App; login_required or keychain_failed for its key
+	Issue(ctx context.Context, app, container string, exec func(argv []string, stdin []byte) error) ([]protocol.Expiry, error)
+	Refresh(ctx context.Context, app, container string, exec func(argv []string, stdin []byte) error) ([]protocol.Expiry, error)
+	Revoke(ctx context.Context, container string) error
+	Retry(ctx context.Context) ([]protocol.Pending, error) // the backlog still unrevoked
+}
+
 type Host struct {
 	Home     string
 	Endpoint string
@@ -26,15 +37,17 @@ type Host struct {
 	Safe     func(string) error
 	Docker   docker.Runner
 	Creds    Credentials
+	GitHub   Tokens
 	Progress io.Writer // nil: none; build's notes on older images, after Docker's progress; start's phase times
 }
 
 // NewHost wires the real filesystem; tests build Host with fakes.
-func NewHost(home, endpoint string, d docker.Runner, creds Credentials) Host {
+func NewHost(home, endpoint string, d docker.Runner, creds Credentials, tokens Tokens) Host {
 	return Host{
 		Home:     home,
 		Endpoint: endpoint,
 		Creds:    creds,
+		GitHub:   tokens,
 		IsDir:    isDir,
 		Safe:     realSafe,
 		Docker:   d,
@@ -53,10 +66,20 @@ type Clients struct {
 }
 
 type StartResult struct {
-	Container   string  `json:"container"`
-	Endpoint    string  `json:"endpoint"`
-	ImageDigest string  `json:"image_digest"`
-	Clients     Clients `json:"clients"`
+	Container   string            `json:"container"`
+	Endpoint    string            `json:"endpoint"`
+	ImageDigest string            `json:"image_digest"`
+	Clients     Clients           `json:"clients"`
+	GitHub      []protocol.Expiry `json:"github"`
+}
+
+type RefreshResult struct {
+	Container string            `json:"container"`
+	GitHub    []protocol.Expiry `json:"github"`
+}
+
+type StatusResult struct {
+	Revocations []protocol.Pending `json:"revocations"`
 }
 
 type CloseResult struct {

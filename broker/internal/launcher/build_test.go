@@ -304,7 +304,7 @@ func TestImageProvenance(t *testing.T) {
 	}
 }
 
-func TestWorkerImageHasTheRelayAndWorkspaceCheck(t *testing.T) {
+func TestWorkerImageHasItsScripts(t *testing.T) {
 	data, err := assets.ReadFile("assets/Dockerfile")
 	if err != nil {
 		t.Fatal(err)
@@ -313,8 +313,12 @@ func TestWorkerImageHasTheRelayAndWorkspaceCheck(t *testing.T) {
 		`'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay`,
 		"chmod 755 /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay ",
 		"install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue",
-		"COPY bootstrap.py hook-stub with-secrets workspace-check /opt/agent-pm/lib/",
-		" /opt/agent-pm/lib/workspace-check \\\n",
+		"COPY bootstrap.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/",
+		"ln -s /opt/agent-pm/lib/gh /opt/agent-pm/bin/gh",
+		"ln -s /opt/agent-pm/lib/git-credential-agent-pm /opt/agent-pm/bin/git-credential-agent-pm",
+		" /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \\\n",
+		`printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig`,
+		"ENV PATH=/opt/agent-pm/bin:",
 		"COPY delegate/src /opt/agent-pm/delegate/src\n",
 		"python3 -m venv --system-site-packages /opt/agent-pm/venv",
 		`printf '%s\n' /opt/agent-pm/delegate/src /opt/agent-pm/session/src /opt/agent-pm/utils/src > "$(/opt/agent-pm/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-pm.pth"`,

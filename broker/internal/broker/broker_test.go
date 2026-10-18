@@ -227,17 +227,17 @@ func TestLoginGitHub(t *testing.T) {
 		k := &fakeApps{account: "5352992", key: appKey, access: tc.access}
 		ask := &askOnce{}
 		var out bytes.Buffer
-		if err := LoginGitHub("agent-pm-engineer", k, ask.read, &out); err != nil {
+		if err := LoginGitHub("agent-pm-bot", k, ask.read, &out); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		var steps []string
 		for _, s := range k.steps {
-			steps = append(steps, strings.TrimSuffix(s, " agent-pm-engineer 5352992"))
+			steps = append(steps, strings.TrimSuffix(s, " agent-pm-bot 5352992"))
 		}
 		if !slices.Equal(steps, tc.steps) || ask.calls != tc.asks {
 			t.Fatalf("%s: steps %q, asked %d times", name, k.steps, ask.calls)
 		}
-		if out.String() != "GitHub App agent-pm-engineer private key (App ID 5352992) now trusts only the broker\n" {
+		if out.String() != "GitHub App agent-pm-bot private key (App ID 5352992) now trusts only the broker\n" {
 			t.Fatalf("%s: %q", name, out.String())
 		}
 		if !bytes.Equal(k.got, make([]byte, len(appKey))) {
@@ -253,7 +253,7 @@ func TestLoginGitHub(t *testing.T) {
 			t.Fatalf("%s: left %#v", name, *k.access)
 		}
 		var again bytes.Buffer
-		if err := LoginGitHub("agent-pm-engineer", k, ask.read, &again); err != nil || ask.calls != tc.asks || again.String() != out.String() {
+		if err := LoginGitHub("agent-pm-bot", k, ask.read, &again); err != nil || ask.calls != tc.asks || again.String() != out.String() {
 			t.Fatalf("%s: rerun %v, asked %d times, %q", name, err, ask.calls, again.String())
 		}
 	}
@@ -267,7 +267,7 @@ func TestLoginGitHub(t *testing.T) {
 	} {
 		ask := &askOnce{}
 		var out bytes.Buffer
-		err := LoginGitHub("agent-pm-docs", k, ask.read, &out)
+		err := LoginGitHub("agent-pm-bot", k, ask.read, &out)
 		if err == nil || k.steps != nil || ask.calls != 0 || out.Len() != 0 || strings.Contains(err.Error(), appKey) {
 			t.Fatalf("%s: %v steps %q out %q", name, err, k.steps, out.String())
 		}
@@ -282,18 +282,18 @@ func TestLoginGitHubKeyAfterAccess(t *testing.T) {
 	}{
 		"read failed": {
 			k:    &fakeApps{key: appKey, getErr: errors.New("keychain status -128")},
-			want: "keychain item agent-pm-docs trusts only the broker, but reading it failed: keychain status -128",
+			want: "keychain item agent-pm-bot trusts only the broker, but reading it failed: keychain status -128",
 		},
-		"empty": {k: &fakeApps{}, want: "keychain item agent-pm-docs trusts only the broker, but it is empty"},
+		"empty": {k: &fakeApps{}, want: "keychain item agent-pm-bot trusts only the broker, but it is empty"},
 	} {
 		tc.k.account, tc.k.access = "5352992", added()
 		ask := &askOnce{}
 		var out bytes.Buffer
-		err := LoginGitHub("agent-pm-docs", tc.k, ask.read, &out)
+		err := LoginGitHub("agent-pm-bot", tc.k, ask.read, &out)
 		if err == nil || err.Error() != tc.want || ask.calls != 1 || out.Len() != 0 {
 			t.Fatalf("%s: %v asked %d times out %q", name, err, ask.calls, out.String())
 		}
-		if !slices.Equal(tc.k.steps, []string{"partition agent-pm-docs 5352992", "apps agent-pm-docs 5352992", "key agent-pm-docs 5352992"}) {
+		if !slices.Equal(tc.k.steps, []string{"partition agent-pm-bot 5352992", "apps agent-pm-bot 5352992", "key agent-pm-bot 5352992"}) {
 			t.Fatalf("%s: steps %q", name, tc.k.steps)
 		}
 		if !bytes.Equal(tc.k.got, make([]byte, len(tc.k.got))) {
@@ -307,7 +307,7 @@ func TestLoginGitHubStepFails(t *testing.T) {
 		apps      = "done: its read and export entries trust only the broker"
 		partition = `its partition list is ["apple-tool:"], not ["cdhash:0a1b2c"]`
 		security  = `entry trusts ["/usr/bin/security"]`
-		rerun     = "rerun agent-pm-broker login github agent-pm-docs"
+		rerun     = "rerun agent-pm-broker login github agent-pm-bot"
 	)
 	denied := errors.New("keychain status -25300")
 	for name, tc := range map[string]struct {
@@ -319,33 +319,33 @@ func TestLoginGitHubStepFails(t *testing.T) {
 		"partition first": {
 			k:     &fakeApps{access: added(), partitionErr: ErrAuthFailed},
 			asks:  1,
-			wants: []string{"agent-pm-docs unchanged: changing its partition list failed: keychain status -25293", "done: nothing", security, partition, rerun},
+			wants: []string{"agent-pm-bot unchanged: changing its partition list failed: keychain status -25293", "done: nothing", security, partition, rerun},
 		},
 		"partition on half done": {
 			k:     &fakeApps{access: halfDone(), partitionErr: denied},
 			asks:  1,
-			wants: []string{"agent-pm-docs unchanged: changing its partition list failed", apps, "not done: " + partition, rerun},
+			wants: []string{"agent-pm-bot unchanged: changing its partition list failed", apps, "not done: " + partition, rerun},
 		},
 		"apps after partition": {
 			k:     &fakeApps{access: added(), appsErr: denied},
 			asks:  1,
-			wants: []string{"agent-pm-docs partly changed: changing its read and export entries failed: keychain status -25300", "done: its partition list holds only the broker's partition ID", security, rerun},
+			wants: []string{"agent-pm-bot partly changed: changing its read and export entries failed: keychain status -25300", "done: its partition list holds only the broker's partition ID", security, rerun},
 		},
 		"apps by dialog after refusal": {
 			k:     &fakeApps{access: added(), appsErr: ErrAuthFailed, dialogErr: errors.New("keychain status -128")},
 			asks:  1,
-			wants: []string{"agent-pm-docs partly changed: changing its read and export entries failed: keychain status -25293; through the keychain dialog: keychain status -128", "done: its partition list", security, rerun},
+			wants: []string{"agent-pm-bot partly changed: changing its read and export entries failed: keychain status -25293; through the keychain dialog: keychain status -128", "done: its partition list", security, rerun},
 		},
 		"password read": {
 			k:     &fakeApps{access: added()},
 			ask:   &askOnce{err: errors.New("needs an interactive terminal")},
 			asks:  1,
-			wants: []string{"agent-pm-docs unchanged: reading the login keychain password failed: needs an interactive terminal", "done: nothing", security, partition, rerun},
+			wants: []string{"agent-pm-bot unchanged: reading the login keychain password failed: needs an interactive terminal", "done: nothing", security, partition, rerun},
 		},
 		"read back": {
 			k:     &fakeApps{access: added(), partitionErr: denied, readBackErr: errors.New("keychain status -25308")},
 			asks:  1,
-			wants: []string{"agent-pm-docs: changing its partition list failed: keychain status -25300", "reading its access back failed: keychain status -25308", "unknown", rerun},
+			wants: []string{"agent-pm-bot: changing its partition list failed: keychain status -25300", "reading its access back failed: keychain status -25308", "unknown", rerun},
 		},
 	} {
 		tc.k.account, tc.k.key = "5352992", appKey
@@ -353,7 +353,7 @@ func TestLoginGitHubStepFails(t *testing.T) {
 			tc.ask = &askOnce{}
 		}
 		var out bytes.Buffer
-		err := LoginGitHub("agent-pm-docs", tc.k, tc.ask.read, &out)
+		err := LoginGitHub("agent-pm-bot", tc.k, tc.ask.read, &out)
 		if err == nil || out.Len() != 0 || tc.ask.calls != tc.asks || slices.ContainsFunc(tc.k.steps, func(s string) bool { return strings.HasPrefix(s, "key ") }) {
 			t.Fatalf("%s: %v out %q asked %d times, steps %q", name, err, out.String(), tc.ask.calls, tc.k.steps)
 		}
@@ -378,10 +378,10 @@ func TestLoginGitHubAppsDialogFallback(t *testing.T) {
 		k := &fakeApps{account: "5352992", key: appKey, access: added(), appsErr: appsErr}
 		ask := &askOnce{}
 		var out bytes.Buffer
-		err := LoginGitHub("agent-pm-docs", k, ask.read, &out)
-		want := []string{"partition agent-pm-docs 5352992", "apps agent-pm-docs 5352992"}
+		err := LoginGitHub("agent-pm-bot", k, ask.read, &out)
+		want := []string{"partition agent-pm-bot 5352992", "apps agent-pm-bot 5352992"}
 		if name == "refused" {
-			want = append(want, "apps by dialog agent-pm-docs 5352992", "key agent-pm-docs 5352992")
+			want = append(want, "apps by dialog agent-pm-bot 5352992", "key agent-pm-bot 5352992")
 		}
 		if (err == nil) != (name == "refused") || !slices.Equal(k.steps, want) || ask.calls != 1 {
 			t.Fatalf("%s: %v steps %q asked %d times", name, err, k.steps, ask.calls)
@@ -393,8 +393,8 @@ func TestLoginGitHubAppsDialogFallback(t *testing.T) {
 func TestLoginGitHubStepErrorButDone(t *testing.T) {
 	k := &fakeApps{account: "5352992", key: appKey, access: added()}
 	var out bytes.Buffer
-	err := LoginGitHub("agent-pm-docs", &appliedThenFailed{k}, (&askOnce{}).read, &out)
-	if err != nil || out.String() != "GitHub App agent-pm-docs private key (App ID 5352992) now trusts only the broker\n" {
+	err := LoginGitHub("agent-pm-bot", &appliedThenFailed{k}, (&askOnce{}).read, &out)
+	if err != nil || out.String() != "GitHub App agent-pm-bot private key (App ID 5352992) now trusts only the broker\n" {
 		t.Fatalf("%v %q", err, out.String())
 	}
 }
@@ -452,11 +452,11 @@ func TestLoginGitHubVerifiesAccess(t *testing.T) {
 	} {
 		k := &fakeApps{account: "5352992", key: appKey, access: tc.access, frozen: true}
 		var out bytes.Buffer
-		err := LoginGitHub("agent-pm-docs", k, (&askOnce{}).read, &out)
+		err := LoginGitHub("agent-pm-bot", k, (&askOnce{}).read, &out)
 		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), appKey) {
 			t.Fatalf("%s: %v out %q", name, err, out.String())
 		}
-		for _, want := range []string{"keychain item agent-pm-docs unchanged", tc.want, "rerun agent-pm-broker login github agent-pm-docs"} {
+		for _, want := range []string{"keychain item agent-pm-bot unchanged", tc.want, "rerun agent-pm-broker login github agent-pm-bot"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("%s: %v lacks %q", name, err, want)
 			}

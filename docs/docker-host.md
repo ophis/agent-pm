@@ -2,7 +2,7 @@
 
 `agent-pm-broker` builds the worker image and starts and closes worker containers on
 macOS (Apple silicon) with Docker Desktop. It keeps the Claude setup-token in the login
-keychain and writes it only into a container's tmpfs. Its JSON interface:
+keychain and writes it, and the GitHub App's installation tokens, only into a container's tmpfs. Its JSON interface:
 [Docker broker protocol](docker-broker-protocol.md). Session's Docker Host calls it to run
 workers ([Run workers](#run-workers)); the sections up to Close install the broker and
 check it by hand.
@@ -30,7 +30,7 @@ Codex upgrade with the image: a start rebuilds an image built 7 or more days ago
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"5"}` |
+| `"$B" version` | `{"protocol_version":"6"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Log in
@@ -46,9 +46,9 @@ claude setup-token          # copy the token it prints
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, account `setup-token`; the only trusted application is `$B` |
 | shell history | no token |
 
-GitHub: each App's private key must already be a generic-password item in the login
-keychain, service the App name, account its App ID, content the base64 key. Change each
-item's access in place to trust only the broker; content and account stay. When a step is
+GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
+generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
+content the base64 key. Change the item's access in place to trust only the broker; content and account stay. When a step is
 not yet in place, the broker asks once on its terminal, without echo, for the login keychain
 password (a wrong one fails with `keychain status -25293`); it then does only those steps,
 both with that password: the partition list gets only the broker's partition ID, then the
@@ -57,20 +57,21 @@ change with the password, the keychain dialog asks instead (allow it). It reads 
 the key once to check it is not empty, and only then prints its success line; otherwise it
 exits non-zero saying whether it changed the item, what is done and what is not: rerun the
 same command to finish. The broker is trusted by its code requirement (an ad hoc
-signature's is its cdhash), not its path: after reinstalling it, rerun both `login github` commands.
+signature's is its cdhash), not its path: after reinstalling it, rerun `login github agent-pm-bot`.
+The App must be private (installable only on your account): every session gets a token for every
+repository of every installation.
 
 ```sh
-"$B" login github agent-pm-engineer
-"$B" login github agent-pm-docs
+"$B" login github agent-pm-bot
 ```
 
 | Check | Expect |
 |---|---|
 | first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal; no macOS dialog, or one only after the password |
-| output | `GitHub App agent-pm-engineer private key (App ID <App ID>) now trusts only the broker`, no key |
-| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-engineer"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
-| `security find-generic-password -s agent-pm-engineer -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
-| rerun `login github agent-pm-engineer` | same output, no password question |
+| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, no key |
+| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
+| `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
+| rerun `login github agent-pm-bot` | same output, no password question |
 
 ## Build
 
@@ -141,6 +142,16 @@ versions.
 | `cat ~/.agent-pm/docker-state/worker_1/claude/.claude.json` | `hasCompletedOnboarding: true`, and `projects["$HOME/src/demo"].hasTrustDialogAccepted: true` |
 | `lsof -nP -a -iTCP -c agent-pm` during a start | nothing: the broker opens no TCP socket |
 
+**GitHub:** with `"github": {"app": "agent-pm-bot"}` in the manifest, start's `github` lists
+one `{"account", "expires_at"}` per installation of the App.
+
+| Check | Expect |
+|---|---|
+| `docker exec "$C" ls -l /run/agent-pm/secrets/github` | one file per installation account, `-r--------`, owned by `agent` |
+| `docker exec "$C" git ls-remote https://github.com/<account>/<private repo>`; `docker exec "$C" gh api repos/<account>/<private repo> --jq .full_name` | both work, with no login |
+| `"$B" refresh --container "$C" --manifest /tmp/worker_1.json` | a new `github` list, each `expires_at` later |
+| `"$B" close --container "$C"`, then `"$B" status` | `{"revocations":[]}`: every token was revoked |
+
 **Claude:** `docker exec -it "$C" with-secrets claude` opens with no login, theme or
 trust prompt and answers one sentence.
 
@@ -188,6 +199,11 @@ default = "docker"
 | `[session.hosts.docker]` key | Default | Meaning |
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
+| `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
+
+Each session's host run supervisor refreshes its GitHub tokens 10 minutes before the first one
+expires; a failed refresh writes `github_refresh_failed <reason>` to its events and retries every
+minute.
 
 Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container, and
 `send`, `read`, `attach`, `status`, `report`, `next-event`, `pending` and `close` work as
@@ -400,6 +416,9 @@ unpushed work, or a directory it cannot list, keeps the volume and fails with ex
 
 - The token sits in every running container's tmpfs, readable by any process there;
   `close` deletes the container but does not revoke the token (revoke it at claude.ai).
+- So do the GitHub tokens, each valid for an hour; `close` revokes them. One the broker could
+  not revoke stays valid until it expires: `"$B" status` lists it, and the next start, close or
+  status retries it.
 - Each reinstall changes the broker's ad-hoc code identity: the keychain asks once to let
   it read the Claude setup-token again, and each `login github` asks for the keychain
   password once to trust it.

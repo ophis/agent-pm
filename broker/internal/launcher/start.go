@@ -68,14 +68,19 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 	if err != nil {
 		return StartResult{}, err
 	}
-	if m.GitHubApp != "" {
-		return StartResult{}, protocol.New(protocol.ManifestRejected, "Manifest rejected: this broker issues no GitHub tokens; github must be null.")
-	}
 	if err := h.checkMounts(m); err != nil {
 		return StartResult{}, err
 	}
 	if err := h.Creds.Ready(); err != nil {
 		return StartResult{}, err
+	}
+	if m.GitHubApp != "" {
+		if err := h.GitHub.Ready(m.GitHubApp); err != nil {
+			return StartResult{}, err
+		}
+	}
+	if _, err := h.GitHub.Retry(ctx); err != nil {
+		times.WriteString("agent-pm-broker: start revocations skipped\n")
 	}
 	lap("preflight")
 	info, err := h.checkImage(ctx, m.Image)
@@ -159,22 +164,39 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
-	exec := func(argv []string, stdin []byte) error {
+	exec := h.agentExec(ctx, c)
+	if err := h.Creds.Inject(exec); err != nil {
+		return StartResult{}, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
+	}
+	lap("credentials")
+	expiries := []protocol.Expiry{}
+	if m.GitHubApp != "" {
+		if expiries, err = h.GitHub.Issue(ctx, m.GitHubApp, c, exec); err != nil {
+			return StartResult{}, injected(err, protocol.StartFailed, "Injecting the GitHub tokens failed.")
+		}
+		lap("github")
+	}
+	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients, GitHub: expiries}, nil
+}
+
+// injected classifies a Credentials or Tokens error: its protocol error, an unreachable daemon, else code.
+func injected(err error, code protocol.Code, message string) *protocol.Error {
+	var e *protocol.Error
+	if errors.As(err, &e) {
+		return e
+	}
+	if errors.Is(err, docker.ErrUnreachable) {
+		return failure(err, code, "")
+	}
+	return protocol.New(code, message)
+}
+
+// agentExec runs argv as agent in container c with stdin, for secret injection.
+func (h Host) agentExec(ctx context.Context, c string) func(argv []string, stdin []byte) error {
+	return func(argv []string, stdin []byte) error {
 		_, err := h.Docker.Run(ctx, append([]string{"exec", "--interactive", "--user", "agent", c}, argv...), stdin)
 		return err
 	}
-	if err := h.Creds.Inject(exec); err != nil {
-		var e *protocol.Error
-		if errors.As(err, &e) {
-			return StartResult{}, e
-		}
-		if errors.Is(err, docker.ErrUnreachable) {
-			return StartResult{}, failure(err, protocol.StartFailed, "")
-		}
-		return StartResult{}, protocol.New(protocol.StartFailed, "Injecting the Claude token failed.")
-	}
-	lap("credentials")
-	return StartResult{Container: c, Endpoint: h.Endpoint, ImageDigest: info.ID, Clients: clients}, nil
 }
 
 // rollback deletes c on a fresh context so a signal or cancelled caller still cleans up.
