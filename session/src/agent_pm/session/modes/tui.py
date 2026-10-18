@@ -635,7 +635,11 @@ class TuiMode(BaseMode):
         return None if self._opening is None or self._gone else self._opening[1]
 
     def marked_blocked(self) -> bool:
-        return self._terminal.activity() == StatusState.BLOCKED
+        """False, too, when its terminal cannot tell."""
+        try:
+            return self._terminal.activity() == StatusState.BLOCKED
+        except SessionError:
+            return False
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
         found = self._read()

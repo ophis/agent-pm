@@ -82,8 +82,8 @@ def _drain(proc, deadline: float, timeout: float) -> tuple[bytes, bytes]:
 def exec_runner(docker: str, container: str, run=capped):
     """A subprocess.run-shaped runner of argv inside `container` (`docker exec -i`), within
     RUN_TIMEOUT; a container gone or stopped reads as `no server running on <container>: <why>`
-    (absent to a TmuxCli), a timeout or an over-long output as a failed call, `docker exec in
-    <container>: <why>` (tmux failing: no proof the client exited).
+    (the server absent), a timeout or an over-long output as a failed call, `docker exec in
+    <container>: <why>`: no proof the client exited.
     """
 
     def runner(argv, *, input=None, timeout=RUN_TIMEOUT, **_):
