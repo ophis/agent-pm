@@ -1,0 +1,53 @@
+"""OpenCode usage through the probe script against a local HTTP server standing in for Ollama."""
+
+import http.server
+import json
+import socket
+import threading
+
+from agent_pm.session.engine.types import Usage
+
+from session.tests.case import Case
+
+TAGS = {"models": [{"name": "qwen3.6:35b-mlx"}]}
+
+
+class Tags(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(TAGS).encode() if self.path == "/api/tags" else b"{}"
+        self.send_response(200 if self.path == "/api/tags" else 404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args) -> None:
+        return
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class UsageIntegrationTest(Case):
+    def usage(self, port: int) -> Usage | None:
+        self.configure_session(
+            {
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "ollama_port": port,
+                }
+            }
+        )
+        return self.session_cls.usage("opencode")
+
+    def test_a_running_ollama_allows_runs(self):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Tags)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.assertEqual(self.usage(server.server_address[1]), Usage(None, None))
+
+    def test_a_stopped_ollama_is_unknown_usage(self):
+        self.assertIsNone(self.usage(free_port()))

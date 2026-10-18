@@ -10,7 +10,16 @@ import sys
 from collections.abc import Iterable, Mapping
 
 from agent_pm.session.clients.common import CHECKS, FLAGS, MODES, check_config, mode_flags, scan
-from agent_pm.session.engine.types import ClientContext, ConfigError, Effort, Permission, Spec
+from agent_pm.session.clients.opencode import probe
+from agent_pm.session.engine.types import (
+    ClientContext,
+    ConfigError,
+    Effort,
+    Launch,
+    Permission,
+    Spec,
+    Usage,
+)
 from agent_pm.utils import LOCAL_ENV_VARS, STATE, drop_stale, read_beneath, save
 
 TABLE = "[clients.opencode]"
@@ -144,6 +153,25 @@ class OpenCodeCommon:
         if not access.project:
             env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
         return env
+
+    def probe(self) -> Launch:
+        """On this machine, so the loopback, never the Host's address."""
+        return Launch(
+            (os.path.realpath(sys.executable), "-I", probe.__file__, str(self.port)),
+            env={k: v for k, v in self.env.items() if k not in LOCAL_ENV_VARS},
+            unset=UNSET,
+        )
+
+    @staticmethod
+    def parse_usage(output: str) -> Usage | None:
+        """A model listing: Ollama is up, and a local model has no limits; anything else unknown."""
+        try:
+            found = json.loads(output)
+        except (ValueError, RecursionError):
+            return None
+        if isinstance(found, dict) and isinstance(found.get("models"), list):
+            return Usage(None, None)
+        return None
 
     @property
     def store(self) -> str:

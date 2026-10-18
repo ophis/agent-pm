@@ -2,10 +2,11 @@
 
 import json
 import os
+import sys
 
-from agent_pm.session.clients.opencode import OpenCodeClient
+from agent_pm.session.clients.opencode import OpenCodeClient, probe
 from agent_pm.session.clients.opencode.common import NATIVE, OpenCodeCommon
-from agent_pm.session.engine.types import ConfigError, Effort
+from agent_pm.session.engine.types import ConfigError, Effort, Usage
 
 from session.tests.case import Case
 from session.tests.unit.clients.opencode.support import SES, packaged_table
@@ -137,3 +138,24 @@ class StoreTest(Case):
     def test_native_pattern(self):
         self.assertTrue(NATIVE.fullmatch(SES))
         self.assertFalse(NATIVE.fullmatch("ses_-x"))
+
+
+class UsageTest(Case):
+    def test_the_probe_asks_the_hosts_ollama_on_its_port(self):
+        client = OpenCodeClient({**packaged_table(), "ollama_port": 11500, "env": {"A": "b"}})
+        launch = client.usage_probe()
+        assert launch is not None
+        self.assertEqual(
+            launch.argv, (os.path.realpath(sys.executable), "-I", probe.__file__, "11500")
+        )
+        self.assertEqual(launch.env, {"A": "b"})
+
+    def test_a_listing_is_unlimited_usage_anything_else_unknown(self):
+        client = OpenCodeClient(packaged_table())
+        self.assertEqual(client.usage('{"models": []}'), Usage(None, None))
+        self.assertEqual(
+            client.usage('{"models": [{"name": "qwen3.6:35b-mlx"}]}'), Usage(None, None)
+        )
+        for output in ("null", "", "nope", "[]", '{"models": {}}', '{"error": "x"}'):
+            with self.subTest(output=output):
+                self.assertIsNone(client.usage(output))

@@ -27,6 +27,12 @@ class OpenCodeClient(Client):
     def headless(self):
         return OpenCodeHeadless(self.common)
 
+    def usage_probe(self):
+        return self.common.probe()
+
+    def usage(self, output):
+        return self.common.parse_usage(output)
+
     def writable_dirs(self, spec: Spec):
         dirs = (spec.access.cwd, *spec.access.dirs)
         return tuple(dict.fromkeys(map(os.path.realpath, dirs)))
