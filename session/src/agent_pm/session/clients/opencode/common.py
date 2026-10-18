@@ -238,7 +238,16 @@ class OpenCodeCommon:
     def selection(
         self, spec: Spec, context: ClientContext, extra: tuple[str, ...] = ()
     ) -> tuple[str, ...]:
-        """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session."""
+        """A launch's checks and its session selection: on resume, (cwd, sid)'s bound session.
+        OpenCode 1.x runs any cwd's .opencode plugins and opencode.json, so a cwd outside a
+        container starts only when trusted; an isolated Host's context alone is yolo.
+        """
+        if context.permission is not Permission.YOLO and not spec.access.project:
+            raise ConfigError(
+                f"cwd {spec.access.cwd} is untrusted on a non-isolated Host, and OpenCode runs a"
+                " cwd's .opencode plugins and opencode.json: run it on an isolated Host (Docker)"
+                " or in a trusted cwd"
+            )
         refuse(spec.flags, (*RESERVED, *PERMISSIONS, *extra), "a run's flags")
         if not spec.resume:
             return ()

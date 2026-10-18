@@ -29,7 +29,7 @@ class OpenCode(OpenCodeIntegration):
         self.assertEqual(self.read(self.out), "Hello.\n")
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE])
         (call,) = self.calls()
-        self.assertEqual(call["cwd"], Layout(self.work).agent)
+        self.assertEqual(call["cwd"], self.proj)
         self.assertEqual(call["argv"][:3], ["run", "--format", "json"])
         self.assertIsNone(call["session"])
         self.assertIn("# Input\n\nHello.", call["prompt"])
@@ -52,6 +52,12 @@ class OpenCode(OpenCodeIntegration):
         self.assertNotEqual(res.returncode, 0, res.stderr)
         self.assertNotIn("client_session", self.kinds())
         self.assertIn("no_session", json.dumps(self.records()))
+
+    def test_an_untrusted_cwd_is_refused_before_opencode_starts(self):
+        res = self.drive(said(block(DONE)), trusted=False)
+        self.assertNotEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"cwd {Layout(self.work).agent} is untrusted", res.stderr)
+        self.assertEqual(self.calls(), [])
 
 
 if __name__ == "__main__":

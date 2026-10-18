@@ -58,7 +58,7 @@ class HeadlessSessions(Case):
         )
         self.spec = Spec(
             workdir=str(self.root),
-            access=Access(cwd=str(self.cwd)),
+            access=Access(cwd=str(self.cwd), project=True),
             sid="run-1",
             tier=1,
             client="opencode",

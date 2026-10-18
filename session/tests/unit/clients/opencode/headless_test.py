@@ -61,7 +61,7 @@ class Base(Case):
         self.enterContext(mock.patch("subprocess.run", side_effect=fake_run))
 
     def spec(self, **fields) -> Spec:
-        access = fields.pop("access", Access(cwd=self.cwd))
+        access = fields.pop("access", Access(project=True, cwd=self.cwd))
         return Spec(workdir=self.home, access=access, sid="run-1", prompt="Hi there", **fields)
 
     def launch(self, spec: Spec, context: ClientContext = LOCAL_CONTEXT, client=None) -> Launch:
@@ -100,7 +100,7 @@ class LaunchTest(Base):
         )
         self.assertEqual(self.command(launch)[:4], ("opencode", "run", "--format", "json"))
         self.assertNotIn("Hi there", self.command(launch))
-        self.assertEqual((launch.cwd, launch.project, launch.resume), (self.cwd, False, ""))
+        self.assertEqual((launch.cwd, launch.project, launch.resume), (self.cwd, True, ""))
         self.assertIn("OPENCODE_PERMISSION", launch.unset)
         self.assertIn("OPENCODE_PID", launch.unset)
 
@@ -170,7 +170,7 @@ class LaunchTest(Base):
         self.assertEqual(inline["experimental"], {"continue_loop_on_deny": True})
 
     def test_commands_allowed(self):
-        access = Access(cwd=self.cwd, commands=("git status", "make test"))
+        access = Access(project=True, cwd=self.cwd, commands=("git status", "make test"))
         permission = self.inline(self.launch(self.spec(access=access)))["permission"]
         self.assertEqual(
             permission["bash"], {"*": "ask", "git status": "allow", "make test": "allow"}
@@ -178,7 +178,7 @@ class LaunchTest(Base):
 
     def test_reads_and_dirs_are_external_directories(self):
         extra, read = self.made("extra"), self.made("read")
-        access = Access(cwd=self.cwd, dirs=(extra,), reads=(read,))
+        access = Access(project=True, cwd=self.cwd, dirs=(extra,), reads=(read,))
         permission = self.inline(self.launch(self.spec(access=access)))["permission"]
         self.assertEqual(
             permission["external_directory"],
@@ -196,7 +196,7 @@ class LaunchTest(Base):
 
     def test_edits_outside_a_checkout_are_the_cwd_and_dirs_alone(self):
         extra, read = self.made("extra"), self.made("read")
-        rules = self.rules_for(Access(cwd=self.cwd, dirs=(extra,), reads=(read,)))
+        rules = self.rules_for(Access(project=True, cwd=self.cwd, dirs=(extra,), reads=(read,)))
         skills = os.path.join(self.home, ".claude", "skills", "x", "SKILL.md")
         self.assert_edits(
             rules,
@@ -221,7 +221,7 @@ class LaunchTest(Base):
         team = os.path.join(agent, "team")
         os.mkdir(team)
         other = self.made("other")
-        rules = self.rules_for(Access(cwd=cwd, dirs=(agent, other), reads=(team,)))
+        rules = self.rules_for(Access(project=True, cwd=cwd, dirs=(agent, other), reads=(team,)))
         self.assert_edits(
             rules,
             os.path.realpath(repo),
@@ -244,7 +244,7 @@ class LaunchTest(Base):
         os.mkdir(os.path.join(repo, ".git"))
         cwd = os.path.join(repo, "sub")
         os.mkdir(cwd)
-        rules = self.rules_for(Access(cwd=cwd))
+        rules = self.rules_for(Access(project=True, cwd=cwd))
         self.assert_edits(
             rules,
             repo,
@@ -258,7 +258,7 @@ class LaunchTest(Base):
     def test_a_cwd_at_the_checkout_top_edits_all_of_it(self):
         repo = self.made("repo")
         os.mkdir(os.path.join(repo, ".git"))
-        rules = self.rules_for(Access(cwd=repo))
+        rules = self.rules_for(Access(project=True, cwd=repo))
         self.assert_edits(
             rules,
             repo,
@@ -268,7 +268,7 @@ class LaunchTest(Base):
     def test_git_in_any_case_is_never_edited(self):
         repo = self.made("repo")
         os.mkdir(os.path.join(repo, ".git"))
-        rules = self.rules_for(Access(cwd=repo))
+        rules = self.rules_for(Access(project=True, cwd=repo))
         for path in (".GIT/hooks/pre-commit", ".Git/config", "sub/.gIt/x", ".git"):
             with self.subTest(path=path):
                 self.assertEqual(decide(rules, path), "deny")
@@ -283,7 +283,7 @@ class LaunchTest(Base):
             return fake_run(argv) if argv[1:] == ["--version"] else failed
 
         with mock.patch("subprocess.run", side_effect=run):
-            rules = self.rules_for(Access(cwd=repo, reads=(read,)))
+            rules = self.rules_for(Access(project=True, cwd=repo, reads=(read,)))
         self.assert_edits(
             rules,
             "/",
@@ -293,9 +293,9 @@ class LaunchTest(Base):
     def test_a_wildcard_in_a_granted_path_is_refused(self):
         odd = self.made("a*b")
         for access in (
-            Access(cwd=self.cwd, dirs=(odd,)),
-            Access(cwd=self.cwd, reads=(odd,)),
-            Access(cwd=odd),
+            Access(project=True, cwd=self.cwd, dirs=(odd,)),
+            Access(project=True, cwd=self.cwd, reads=(odd,)),
+            Access(project=True, cwd=odd),
         ):
             with self.subTest(access=access), self.assertRaisesRegex(ConfigError, "wildcard"):
                 self.launch(self.spec(access=access))
@@ -309,7 +309,7 @@ class LaunchTest(Base):
 
     def test_env_layers(self):
         client = OpenCodeClient({**packaged_table(), "env": {"A": "config", "B": "config"}})
-        access = Access(cwd=self.cwd, env={"B": "access", "C": "access"})
+        access = Access(project=True, cwd=self.cwd, env={"B": "access", "C": "access"})
         launch = self.launch(self.spec(access=access, env={"C": "spec"}), client=client)
         self.assertEqual(
             {k: launch.env[k] for k in "ABC"}, {"A": "config", "B": "access", "C": "spec"}
@@ -353,7 +353,7 @@ class LaunchTest(Base):
     def test_spec_env_overriding_the_config_is_refused(self):
         for spec in (
             self.spec(env={"OPENCODE_PERMISSION": "{}"}),
-            self.spec(access=Access(cwd=self.cwd, env={"OPENCODE_CONFIG": "/x"})),
+            self.spec(access=Access(project=True, cwd=self.cwd, env={"OPENCODE_CONFIG": "/x"})),
         ):
             with self.subTest(spec=spec), self.assertRaises(ConfigError):
                 self.launch(spec)
@@ -378,6 +378,16 @@ class ResumeTest(Base):
     def test_unbound_resume_fails(self):
         with self.assertRaisesRegex(ConfigError, "no OpenCode session bound to run ID 'run-1'"):
             self.launch(self.spec(resume=True))
+
+    def test_an_untrusted_cwd_on_a_non_isolated_host_is_refused(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        for resume in (False, True):
+            spec = self.spec(access=Access(cwd=self.cwd), resume=resume)
+            with self.subTest(resume=resume), self.assertRaisesRegex(ConfigError, "trusted cwd"):
+                self.launch(spec)
+        self.assertFalse(
+            self.launch(self.spec(access=Access(cwd=self.cwd)), DOCKER_CONTEXT).project
+        )
 
     def test_tampered_binding_refused(self):
         self.client.common.bind(self.cwd, "run-1", SES)

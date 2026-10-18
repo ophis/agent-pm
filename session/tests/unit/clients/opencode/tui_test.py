@@ -48,7 +48,7 @@ class Base(Case):
 
     def spec(self, **fields) -> Spec:
         fields.setdefault("prompt", "Hi there")
-        fields.setdefault("access", Access(cwd=self.cwd))
+        fields.setdefault("access", Access(project=True, cwd=self.cwd))
         return Spec(workdir=self.home, sid="run-1", **fields)
 
     def run_tui(self, client=None, context: ClientContext = LOCAL_CONTEXT) -> tui.OpenCodeTui:
@@ -68,7 +68,7 @@ class LaunchTest(Base):
             launch.argv,
             ("opencode", "--model", "ollama/qwen3.6:35b-mlx", "--prompt=Hi there"),
         )
-        self.assertEqual((launch.cwd, launch.project), (self.cwd, False))
+        self.assertEqual((launch.cwd, launch.project), (self.cwd, True))
 
     def test_no_prompt_no_flag_and_no_variant(self):
         launch = self.launch(self.spec(prompt="", effort="high"))
@@ -88,6 +88,16 @@ class LaunchTest(Base):
     def test_resume_without_a_binding_fails(self):
         with self.assertRaisesRegex(ConfigError, "no OpenCode session bound to run ID 'run-1'"):
             self.launch(self.spec(resume=True))
+
+    def test_an_untrusted_cwd_on_a_non_isolated_host_is_refused(self):
+        self.client.common.bind(self.cwd, "run-1", SES)
+        for resume in (False, True):
+            spec = self.spec(access=Access(cwd=self.cwd), resume=resume)
+            with self.subTest(resume=resume), self.assertRaisesRegex(ConfigError, "trusted cwd"):
+                self.launch(spec)
+        self.assertFalse(
+            self.launch(self.spec(access=Access(cwd=self.cwd)), context=DOCKER_CONTEXT).project
+        )
 
     def test_the_env_carries_the_plugin_and_the_hook(self):
         launch = self.launch(self.spec())
@@ -181,7 +191,7 @@ class RefusalTest(Base):
                 self.launch(self.spec(), client)
         for spec in (
             self.spec(env={"OPENCODE_PURE": "1"}),
-            self.spec(access=Access(cwd=self.cwd, env={"OPENCODE_PURE": "1"})),
+            self.spec(access=Access(project=True, cwd=self.cwd, env={"OPENCODE_PURE": "1"})),
         ):
             with self.subTest(env=spec.env), self.assertRaisesRegex(ConfigError, "OPENCODE_PURE"):
                 self.launch(spec)
