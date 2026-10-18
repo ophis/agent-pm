@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -16,8 +18,9 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-// The broker-only items: a token record per container, and one revocation backlog.
+// The broker-only items: a token record per container, one revocation backlog, and each App's bot user ID.
 const (
+	usersService       = "agent-pm-github-users"
 	tokensService      = "agent-pm-tokens"
 	revocationsService = "agent-pm-revocations"
 	revocationsAccount = "pending"
@@ -255,6 +258,20 @@ func (g GitHub) untrack(container string, entries []tokenEntry) {
 		rec.Tokens = slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return in(e.Token) })
 		_ = g.writeRecord(container, rec)
 	}
+}
+
+// SaveUser looks up app's bot user (`<app>[bot]`) and keeps its ID, for start to report; out gets its one line.
+func (g GitHub) SaveUser(ctx context.Context, app string, out io.Writer) error {
+	login := app + "[bot]"
+	id, err := g.API.BotUser(ctx, login)
+	if err != nil {
+		return fmt.Errorf("looking up GitHub user %s failed: %w; rerun agent-pm-broker login github %s", login, err, app)
+	}
+	if err := g.Keychain.PutSecret(usersService, app, []byte(strconv.FormatInt(id, 10))); err != nil {
+		return fmt.Errorf("saving the bot user ID of %s failed: %w", app, err)
+	}
+	_, err = fmt.Fprintf(out, "GitHub App %s bot user %s has ID %d\n", app, login, id)
+	return err
 }
 
 // Ready checks, without reading the key, that app is the broker's App and its key item is in place.

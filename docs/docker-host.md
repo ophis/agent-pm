@@ -65,7 +65,9 @@ entries that read or export the item get only the broker. If macOS refuses that 
 change with the password, the keychain dialog asks instead (allow it). It reads the access back, then
 the key once to check it is not empty, and only then prints its success line; otherwise it
 exits non-zero saying whether it changed the item, what is done and what is not: rerun the
-same command to finish. The broker is trusted by its code requirement (an ad hoc
+same command to finish. Then it looks up the App's bot user, `agent-pm-bot[bot]`, on GitHub's
+public user API (no credential sent; needs network) and keeps its ID in the broker-only keychain
+item `agent-pm-github-users`, for the containers' git identity. The broker is trusted by its code requirement (an ad hoc
 signature's is its cdhash), not its path: after reinstalling it, rerun `login github agent-pm-bot`.
 The App must be private (installable only on your account): every session gets a token for every
 repository of every installation.
@@ -77,7 +79,7 @@ repository of every installation.
 | Check | Expect |
 |---|---|
 | first run after installing or reinstalling the broker | one hidden `Login keychain password` question on the terminal; no macOS dialog, or one only after the password |
-| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, no key |
+| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, then `GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID <ID>` (`gh api 'users/agent-pm-bot[bot]' --jq .id`), no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
 | rerun `login github agent-pm-bot` | same output, no password question |

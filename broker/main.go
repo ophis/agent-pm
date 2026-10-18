@@ -42,7 +42,7 @@ type app struct {
 	status       func(ctx context.Context) (any, error)
 	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
 	login        func(out io.Writer) error
-	loginGitHub  func(app string, out io.Writer) error
+	loginGitHub  func(ctx context.Context, app string, out io.Writer) error
 	loginCodex   func(context.Context, io.Writer) error
 	installCodex func(context.Context, string, bool) (any, error)
 }
@@ -89,7 +89,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 			case len(args) == 2 && args[1] == "claude":
 				login = func() error { return a.login(stdout) }
 			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
-				login = func() error { return a.loginGitHub(args[2], stdout) }
+				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
 			}
 			if login != nil {
 				if err := login(); err != nil {
@@ -252,7 +252,7 @@ func system() app {
 				return broker.ReadHidden()
 			}, broker.SystemKeychain{Home: home}, out)
 		},
-		loginGitHub: func(app string, out io.Writer) error {
+		loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -260,11 +260,14 @@ func system() app {
 			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			return broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
+			if err := broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
 				fmt.Fprint(os.Stderr, "Login keychain password, to make "+app+" trust only the broker (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
-			}, out)
+			}, out); err != nil {
+				return err
+			}
+			return tokens(home).SaveUser(ctx, app, out)
 		},
 		installCodex: func(ctx context.Context, version string, update bool) (any, error) {
 			if err := broker.CheckInstalled(); err != nil {

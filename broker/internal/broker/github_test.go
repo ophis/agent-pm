@@ -107,6 +107,8 @@ type api struct {
 	revoked   []string
 	issueFail map[int]int // nth issue (1-based) → status
 	revokeErr func(token string) int
+	user      string // the bot user answer; "": 404
+	userAuth  []string
 }
 
 func (a *api) handler(t *testing.T) http.HandlerFunc {
@@ -139,6 +141,13 @@ func (a *api) handler(t *testing.T) http.HandlerFunc {
 			}
 			a.revoked = append(a.revoked, token)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/users/agent-pm-bot%5Bbot%5D":
+			a.userAuth = append(a.userAuth, r.Header.Get("Authorization"))
+			if a.user == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(a.user))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL)
 		}
@@ -215,6 +224,55 @@ func TestReadyGitHub(t *testing.T) {
 	}
 	r.g.Apps = keys{account: "not-an-id", key: testAppKey(t)}
 	wantCode(t, r.g.Ready("agent-pm-bot"), protocol.LoginRequired)
+}
+
+const botUser = `{"login":"agent-pm-bot[bot]","id":343764394,"type":"Bot"}`
+
+func TestSaveUserSavesTheBotUserID(t *testing.T) {
+	r := newRig(t)
+	r.api.user = botUser
+	var out strings.Builder
+	if err := r.g.SaveUser(context.Background(), "agent-pm-bot", &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(r.keys.items[usersService+"/agent-pm-bot"]); got != "343764394" {
+		t.Fatalf("saved %q", got)
+	}
+	if out.String() != "GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID 343764394\n" {
+		t.Fatalf("output %q", out.String())
+	}
+	if !slices.Equal(r.api.userAuth, []string{""}) {
+		t.Fatalf("lookup sent Authorization %q", r.api.userAuth)
+	}
+}
+
+func TestSaveUserRejects(t *testing.T) {
+	lookup := "looking up GitHub user agent-pm-bot[bot] failed: "
+	rerun := "; rerun agent-pm-broker login github agent-pm-bot"
+	for name, c := range map[string]struct {
+		user, want string
+		putErr     error
+		down       bool
+	}{
+		"absent":      {"", lookup + "GitHub answered HTTP 404" + rerun, nil, false},
+		"unreachable": {botUser, lookup + "GitHub unreachable: GET /users/agent-pm-bot%5Bbot%5D" + rerun, nil, true},
+		"not a bot":   {`{"login":"agent-pm-bot[bot]","id":1,"type":"User"}`, lookup + "GitHub answered no bot user with that login and a valid id" + rerun, nil, false},
+		"save fails":  {botUser, "saving the bot user ID of agent-pm-bot failed: " + errLeaky.Error(), errLeaky, false},
+	} {
+		r := newRig(t)
+		r.api.user, r.keys.putErr = c.user, c.putErr
+		if c.down {
+			r.srv.Close()
+		}
+		var out strings.Builder
+		err := r.g.SaveUser(context.Background(), "agent-pm-bot", &out)
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, ok := r.keys.items[usersService+"/agent-pm-bot"]; ok || out.Len() != 0 {
+			t.Errorf("%s: saved or printed %q", name, out.String())
+		}
+	}
 }
 
 func TestIssueWritesFiles(t *testing.T) {

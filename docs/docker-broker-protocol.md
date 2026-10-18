@@ -45,7 +45,8 @@ manifest. References are internal, so Go and Python can load it without network 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
 order. They are test data, not JSON sent to the broker. These commands consume no
 stdin. `login claude` reads a token, and `login github <app>` the login keychain password once when the
-item's access needs a change, interactively without echo; neither has a JSON contract.
+item's access needs a change, interactively without echo; neither has a JSON contract. `login github <app>` then
+looks up `<app>[bot]` (`GET /users/<app>[bot]`, no credential) and saves its user ID ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
 `build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
@@ -246,6 +247,7 @@ manifest or log.
 |---|---|---|
 | `agent-pm-tokens` | container name | `{"app", "tokens": [{"account", "installation", "token", "expires_at"}]}` |
 | `agent-pm-revocations` | `pending` | `[{"container", "account", "token", "expires_at"}]` |
+| `agent-pm-github-users` | App | its bot user's ID, decimal, saved by `login github` |
 
 - Every token is recorded before it is written in, and revoked (`DELETE /installation/token`) only with the
   recorded value, never one read back from the container. A 401 or 404 answer counts as revoked.
