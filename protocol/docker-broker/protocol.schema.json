@@ -220,7 +220,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "6"
+          "const": "7"
         }
       },
       "required": [
@@ -232,6 +232,7 @@
       "type": "object",
       "properties": {
         "argv": {
+          "$comment": "Then any --plugin NAME pairs, then an optional --max-age SECONDS; JSON Schema cannot pair repeated tokens, so the broker checks the order (usage).",
           "type": "array",
           "prefixItems": [
             {
@@ -242,16 +243,21 @@
             },
             {
               "$ref": "#/$defs/path"
-            },
-            {
-              "const": "--max-age"
-            },
-            {
-              "type": "string",
-              "pattern": "^[0-9]{1,9}$"
             }
           ],
-          "items": false,
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "--plugin",
+                  "--max-age"
+                ]
+              },
+              {
+                "$ref": "#/$defs/plugin"
+              }
+            ]
+          },
           "minItems": 3,
           "anyOf": [
             {
@@ -1011,6 +1017,10 @@
         ],
         "additionalProperties": false
       }
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$"
     }
   }
 }

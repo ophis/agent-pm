@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,20 +37,21 @@ type imageInfo struct {
 	}
 }
 
-func snapshotTree(src, dst string) error {
+// snapshotTree copies src to dst, less Python caches and the src-relative paths in skip.
+func snapshotTree(src, dst string, skip ...string) error {
 	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.Name() == "__pycache__" {
-			return filepath.SkipDir
-		}
-		if strings.HasSuffix(entry.Name(), ".pyc") {
-			return nil
-		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		if entry.Name() == "__pycache__" || (entry.IsDir() && slices.Contains(skip, rel)) {
+			return filepath.SkipDir
+		}
+		if strings.HasSuffix(entry.Name(), ".pyc") || slices.Contains(skip, rel) {
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		info, err := entry.Info()
@@ -160,19 +162,20 @@ func (h Host) checkImage(ctx context.Context, image string) (imageInfo, error) {
 	return info, nil
 }
 
-// stage snapshots the worker image definition, the package and the embedded assets into tmp; it returns the package version.
-func (h Host) stage(pkg, tmp string) (string, error) {
+// stage snapshots the worker image definition, the package, the named plugins and the embedded assets into tmp;
+// it returns the package version and the staged plugins' names.
+func (h Host) stage(pkg string, plugins []string, tmp string) (string, []string, error) {
 	userDir, packageDir := filepath.Join(tmp, "user"), filepath.Join(tmp, "package")
 	definition := filepath.Join(h.Home, ".agent-pm/docker/worker")
 	if info, err := os.Stat(definition); err != nil || !info.IsDir() {
-		return "", protocol.New(protocol.BuildFailed, "No worker image definition at "+definition+"; run sh <agent-pm plugin directory>/broker/install.sh.")
+		return "", nil, protocol.New(protocol.BuildFailed, "No worker image definition at "+definition+"; run sh <agent-pm plugin directory>/broker/install.sh.")
 	}
 	if err := snapshotTree(definition, userDir); err != nil {
-		return "", protocol.New(protocol.BuildFailed, "Cannot read the worker image definition.")
+		return "", nil, protocol.New(protocol.BuildFailed, "Cannot read the worker image definition.")
 	}
 	for _, rel := range []string{"session/src", "utils/src", "delegate/src", ".claude-plugin/plugin.json"} {
 		if err := snapshotTree(filepath.Join(pkg, rel), filepath.Join(packageDir, rel)); err != nil {
-			return "", protocol.New(protocol.BuildFailed, "Invalid agent-pm package directory: "+rel+" unreadable.")
+			return "", nil, protocol.New(protocol.BuildFailed, "Invalid agent-pm package directory: "+rel+" unreadable.")
 		}
 	}
 	var meta struct {
@@ -180,11 +183,11 @@ func (h Host) stage(pkg, tmp string) (string, error) {
 	}
 	data, err := os.ReadFile(filepath.Join(packageDir, ".claude-plugin/plugin.json"))
 	if err != nil || json.Unmarshal(data, &meta) != nil || !versionPattern.MatchString(meta.Version) {
-		return "", protocol.New(protocol.BuildFailed, "Invalid agent-pm package version in .claude-plugin/plugin.json.")
+		return "", nil, protocol.New(protocol.BuildFailed, "Invalid agent-pm package version in .claude-plugin/plugin.json.")
 	}
 	entries, err := assets.ReadDir("assets")
 	if err != nil {
-		return "", protocol.New(protocol.BuildFailed, "Embedded image assets unreadable.")
+		return "", nil, protocol.New(protocol.BuildFailed, "Embedded image assets unreadable.")
 	}
 	for _, entry := range entries {
 		data, err := assets.ReadFile("assets/" + entry.Name())
@@ -192,21 +195,26 @@ func (h Host) stage(pkg, tmp string) (string, error) {
 			err = os.WriteFile(filepath.Join(packageDir, entry.Name()), data, 0o644)
 		}
 		if err != nil {
-			return "", protocol.New(protocol.BuildFailed, "Cannot stage image assets.")
+			return "", nil, protocol.New(protocol.BuildFailed, "Cannot stage image assets.")
 		}
 	}
-	return meta.Version, nil
+	staged, err := h.stagePlugins(plugins, filepath.Join(packageDir, "plugins"))
+	if err != nil {
+		return "", nil, err
+	}
+	return meta.Version, staged, nil
 }
 
 // Build produces agent-pm-worker:<key> in two stages; an image with this key and version built less than maxAge ago
 // is reused (maxAge < 0: of any age; 0: never). A rebuild builds the user stage without cache, so it installs the latest clients.
-func (h Host) Build(ctx context.Context, pkg string, maxAge time.Duration) (BuildResult, error) {
+// plugins name the account's installed Claude Code plugins the image holds; they are part of the key.
+func (h Host) Build(ctx context.Context, pkg string, plugins []string, maxAge time.Duration) (BuildResult, error) {
 	tmp, err := docker.TempDir(h.Home, "agent-pm-build-")
 	if err != nil {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Cannot create a build directory.")
 	}
 	defer os.RemoveAll(tmp)
-	version, err := h.stage(pkg, tmp)
+	version, staged, err := h.stage(pkg, plugins, tmp)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -223,7 +231,7 @@ func (h Host) Build(ctx context.Context, pkg string, maxAge time.Duration) (Buil
 	if current && (maxAge < 0 || (maxAge > 0 && time.Since(info.Created) < maxAge)) {
 		return BuildResult{Image: image, Digest: info.ID}, nil
 	}
-	result, err := h.rebuild(ctx, tmp, key, version)
+	result, err := h.rebuild(ctx, tmp, key, version, pluginDirs(staged))
 	var e *protocol.Error
 	if current && maxAge > 0 && errors.As(err, &e) && e.Code == protocol.BuildFailed {
 		// An age-only refresh that fails (e.g. offline) keeps the usable image.
@@ -238,7 +246,7 @@ func (h Host) Build(ctx context.Context, pkg string, maxAge time.Duration) (Buil
 }
 
 // rebuild builds both stages of key's images from the context in tmp.
-func (h Host) rebuild(ctx context.Context, tmp, key, version string) (BuildResult, error) {
+func (h Host) rebuild(ctx context.Context, tmp, key, version, plugins string) (BuildResult, error) {
 	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
 	if _, err := h.Docker.Run(ctx, []string{"build", "--progress=plain", "--no-cache", "--label", "agent-pm.key=" + key, "--tag", userImage, filepath.Join(tmp, "user")}, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the worker image definition failed.")
@@ -254,7 +262,7 @@ func (h Host) rebuild(ctx context.Context, tmp, key, version string) (BuildResul
 	}
 	uid, gid := ids[0], ids[1]
 	args := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=" + userImage, "--build-arg", "AGENT_PM_VERSION=" + version,
-		"--build-arg", "AGENT_UID=" + uid, "--build-arg", "AGENT_GID=" + gid, "--label", "agent-pm.key=" + key, "--tag", image, filepath.Join(tmp, "package")}
+		"--build-arg", "AGENT_UID=" + uid, "--build-arg", "AGENT_GID=" + gid, "--build-arg", "AGENT_PM_PLUGIN_DIRS=" + plugins, "--label", "agent-pm.key=" + key, "--tag", image, filepath.Join(tmp, "package")}
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
 		return BuildResult{}, diagnosed(err, protocol.BuildFailed, "Building the agent-pm image stage failed.")
 	}

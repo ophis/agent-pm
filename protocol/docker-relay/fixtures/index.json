@@ -1,5 +1,5 @@
 {
-  "broker_protocol_version": "6",
+  "broker_protocol_version": "7",
   "cases": [
     {
       "file": "stub-request.json",
