@@ -2,6 +2,7 @@ import argparse
 import base64
 import fcntl
 import json
+import math
 import os
 import re
 import selectors
@@ -590,6 +591,110 @@ class RefreshExchange:
         }
 
 
+class ReloadExchange(RefreshExchange):
+    rpc_timeout = 300
+
+    def __init__(self, before, rotate):
+        super().__init__()
+        self.before = before
+        self.after = None
+        self.rotate = rotate
+        self.refresh = {"status": "not_started"}
+        self.initial_cache_matched = False
+        self.old_cache_retained_after_replace = False
+        self.replacement_loaded = False
+        self.started = None
+        self.elapsed = None
+
+    def auth_request(self):
+        return (
+            json.dumps(
+                {
+                    "id": self.stage,
+                    "method": "getAuthStatus",
+                    "params": {"includeToken": True, "refreshToken": False},
+                }
+            ).encode()
+            + b"\n"
+        )
+
+    def accept(self, message):
+        if not isinstance(message, dict):
+            raise ValueError("protocol_shape")
+        if "method" in message:
+            if "id" in message or not isinstance(message["method"], str):
+                raise ValueError("unexpected_request")
+            self.notification_count += 1
+            return []
+        if (
+            "error" in message
+            or type(message.get("id")) is not int
+            or message["id"] != self.stage
+            or self.complete
+            or not isinstance(message.get("result"), dict)
+        ):
+            raise ValueError("rpc_failure")
+        result = message["result"]
+        if self.stage == 1:
+            self.stage = 2
+            return [b'{"method":"initialized"}\n', self.auth_request()]
+        if self.stage == 4:
+            if (
+                not isinstance(result.get("account"), dict)
+                or result["account"].get("type") != "chatgpt"
+                or result.get("requiresOpenaiAuth") is not True
+            ):
+                raise ValueError("managed_account_required")
+            self.stage = 5
+            return [self.auth_request()]
+        expected = self.after if self.stage == 5 else self.before
+        if (
+            result.get("authMethod") != "chatgpt"
+            or result.get("requiresOpenaiAuth") is not True
+            or not isinstance(result.get("authToken"), str)
+            or not result["authToken"]
+            or result["authToken"] != expected["tokens"]["access_token"]
+        ):
+            raise ValueError("cached_token_mismatch")
+        if self.stage == 2:
+            self.initial_cache_matched = True
+            self.started = time.monotonic()
+            self.refresh, self.after = self.rotate()
+            if (
+                self.refresh.get("status") != "rotation_observed"
+                or self.after.get("auth_mode") != "chatgpt"
+                or self.after["tokens"]["account_id"] != self.before["tokens"]["account_id"]
+                or self.after["tokens"]["access_token"] == self.before["tokens"]["access_token"]
+            ):
+                raise ValueError("replacement_rotation_required")
+            self.stage = 3
+            return [self.auth_request()]
+        if self.stage == 3:
+            self.old_cache_retained_after_replace = True
+            self.request_count = 1
+            self.stage = 4
+            return [b'{"id":4,"method":"account/read","params":{"refreshToken":true}}\n']
+        self.replacement_loaded = True
+        self.elapsed = time.monotonic() - self.started
+        if not math.isfinite(self.elapsed) or self.elapsed <= 0:
+            raise ValueError("measurement_clock")
+        self.complete = True
+        return []
+
+    def summary(self):
+        return {
+            "initial_cache_matched": self.initial_cache_matched,
+            "old_cache_retained_after_replace": self.old_cache_retained_after_replace,
+            "replacement_loaded": self.replacement_loaded,
+            "next_rpc_id": None if self.complete else self.stage,
+            "reload_request_count": self.request_count,
+            "notification_count": self.notification_count,
+            "refresh_reload_elapsed_seconds": round(self.elapsed, 6) if self.complete else None,
+            "observed_refresh_lead_seconds": math.ceil(self.elapsed) if self.complete else None,
+            "host_refresh": self.refresh,
+        }
+
+
 def stop_native(process):
     if process.returncode is not None:
         return
@@ -602,7 +707,7 @@ def stop_native(process):
     process.wait(timeout=5)
 
 
-def run_native(argv, environment, exchange=None):
+def run_native(argv, environment, exchange=None, *, remote=False):
     process = None
     result = {"exit_code": None, "cleanup_status": "not_started", "error": "native_failure"}
     output = bytearray()
@@ -617,7 +722,7 @@ def run_native(argv, environment, exchange=None):
             start_new_session=True,
         )
         started = time.monotonic()
-        deadline = started + (120 if exchange else 10)
+        deadline = started + (getattr(exchange, "rpc_timeout", 120) if exchange else 10)
         decoder = BoundedLines() if exchange else None
         stderr_size = 0
         with selectors.DefaultSelector() as selector:
@@ -666,10 +771,18 @@ def run_native(argv, environment, exchange=None):
         result["error"] = "cancelled"
     finally:
         if process:
+            if remote and process.returncode is None:
+                try:
+                    process.stdin.close()
+                    process.wait(timeout=50)
+                    result["cleanup_status"] = "exited_after_eof"
+                except (OSError, subprocess.SubprocessError, KeyboardInterrupt):
+                    result.update(cleanup_status="remote_exit_unconfirmed", error="cleanup_failure")
             if process.returncode is None:
                 try:
                     stop_native(process)
-                    result["cleanup_status"] = "terminated"
+                    if not remote:
+                        result["cleanup_status"] = "terminated"
                 except (OSError, subprocess.SubprocessError, KeyboardInterrupt):
                     result.update(cleanup_status="cleanup_failed", error="cleanup_failure")
             result["exit_code"] = process.returncode
@@ -725,6 +838,73 @@ def host_refresh(root):
         result.update(status="incomplete", error="cancelled")
     except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
         result.update(status="incomplete", error="redacted_refresh_failure")
+    return result
+
+
+def live_reload(root, container):
+    result = {"probe": "live_reload", "version": VERSION, "status": "incomplete"}
+    environment = {
+        "HOME": str(root / "home"),
+        "CODEX_HOME": str(root / "broker"),
+        "PATH": "/usr/bin:/bin",
+    }
+    try:
+        validate_native(root, environment)
+        observed_version(container)
+        image = docker(
+            ["docker", "inspect", "--format", "{{.Image}}", checked_container(container)]
+        )
+        image_id = image.stdout.decode("ascii").strip()
+        if image.returncode != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise ValueError("container_image")
+        result["container_image_id"] = image_id
+        before = read_private_auth(root / "broker/auth.json")
+        result["initial_injection"] = inject(container, before, "empty-refresh")
+        if result["initial_injection"]["status"] != "injected":
+            raise ValueError("initial_injection")
+
+        def rotate():
+            observation = host_refresh(root)
+            if observation["status"] != "rotation_observed":
+                return observation, {}
+            after = read_private_auth(root / "broker/auth.json")
+            if (
+                after["tokens"]["account_id"] != before["tokens"]["account_id"]
+                or after["tokens"]["access_token"] == before["tokens"]["access_token"]
+            ):
+                raise ValueError("replacement_injection")
+            result["replacement_injection"] = inject(container, after, "empty-refresh")
+            if result["replacement_injection"]["status"] != "injected":
+                raise ValueError("replacement_injection")
+            return observation, after
+
+        exchange = ReloadExchange(before, rotate)
+        result["started_at"] = now()
+        native, _output = run_native(
+            [
+                "docker",
+                "exec",
+                "-i",
+                checked_container(container),
+                "codex",
+                "-c",
+                STORE,
+                "app-server",
+                "--listen",
+                "stdio://",
+            ],
+            dict(os.environ),
+            exchange,
+            remote=True,
+        )
+        result.update(native, **exchange.summary(), ended_at=now())
+        result["same_process_connection"] = exchange.complete
+        if exchange.complete and native["error"] is None:
+            result["status"] = "live_reload_observed"
+    except KeyboardInterrupt:
+        result.update(error="cancelled")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        result.update(error="redacted_reload_failure")
     return result
 
 
@@ -803,14 +983,18 @@ def main():
     commands.add_parser("expiry")
     commands.add_parser("resume-pair")
     commands.add_parser("host-refresh")
+    reload_command = commands.add_parser("live-reload")
+    reload_command.add_argument("container", choices=CONTAINERS)
     args = parser.parse_args()
-    if args.command in ("host-refresh", "inject", "expiry") and (
+    if args.command in ("host-refresh", "inject", "expiry", "live-reload") and (
         args.live_root is None or not args.live_root.is_absolute() or ".." in args.live_root.parts
     ):
         parser.error("host operations require an absolute --live-root without parent traversal")
     try:
         if args.command == "host-refresh":
             result = host_refresh(args.live_root)
+        elif args.command == "live-reload":
+            result = live_reload(args.live_root, args.container)
         elif args.command == "inject":
             version = observed_version(args.container)
             result = {
@@ -855,7 +1039,8 @@ def main():
     print(json.dumps({"recorded_at": now(), **result}, indent=2))
     return (
         0
-        if result["status"] in ("pass", "loaded", "injected", "observed", "rotation_observed")
+        if result["status"]
+        in ("pass", "loaded", "injected", "observed", "rotation_observed", "live_reload_observed")
         else 1
     )
 

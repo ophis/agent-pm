@@ -510,3 +510,310 @@ class RefreshProbeTest(Case):
         result = json.loads(printed.call_args.args[0])
         self.assertEqual(result["status"], "incomplete")
         self.assertNotIn("secret", json.dumps(result))
+
+    def reload_exchange(self, *, after=None, refresh_status="rotation_observed"):
+        calls = []
+
+        def rotate():
+            calls.append("rotate")
+            return {"status": refresh_status}, after or auth(2100000200, "after")
+
+        return self.module["ReloadExchange"](auth(), rotate), calls
+
+    def auth_response(self, token, **changes):
+        return {
+            "authMethod": "chatgpt",
+            "authToken": token,
+            "requiresOpenaiAuth": True,
+            **changes,
+        }
+
+    def test_live_reload_compares_cached_tokens_in_one_exchange(self):
+        exchange, calls = self.reload_exchange()
+        old, new = (
+            auth()["tokens"]["access_token"],
+            auth(2100000200, "after")["tokens"]["access_token"],
+        )
+        self.assertEqual(json.loads(exchange.start())["method"], "initialize")
+        messages = exchange.accept({"id": 1, "result": {}})
+        self.assertEqual(
+            [json.loads(row)["method"] for row in messages], ["initialized", "getAuthStatus"]
+        )
+        self.assertEqual(calls, [])
+        with patch("time.monotonic", side_effect=[1.0, 2.25]):
+            exchange.accept({"id": 2, "result": self.auth_response(old)})
+            self.assertEqual(calls, ["rotate"])
+            messages = exchange.accept({"id": 3, "result": self.auth_response(old)})
+            self.assertEqual(json.loads(messages[0])["params"], {"refreshToken": True})
+            exchange.accept(
+                {"id": 4, "result": {"account": {"type": "chatgpt"}, "requiresOpenaiAuth": True}}
+            )
+            exchange.accept({"id": 5, "result": self.auth_response(new)})
+        self.assertTrue(exchange.complete)
+        summary = exchange.summary()
+        self.assertTrue(summary["old_cache_retained_after_replace"])
+        self.assertTrue(summary["replacement_loaded"])
+        self.assertEqual(summary["refresh_reload_elapsed_seconds"], 1.25)
+        self.assertEqual(summary["observed_refresh_lead_seconds"], 2)
+        self.assertNotIn("private", json.dumps(summary))
+        self.assertNotIn(old, json.dumps(summary))
+        self.assertNotIn(new, json.dumps(summary))
+
+    def test_live_reload_rejects_rotation_failure_and_identity_or_token_changes(self):
+        after_cases = [auth(), auth(2100000200, "after")]
+        after_cases[1]["tokens"]["account_id"] = "other-private-account"
+        for after, status in [(item, "rotation_observed") for item in after_cases] + [
+            (auth(2100000200, "after"), "incomplete")
+        ]:
+            exchange, _calls = self.reload_exchange(after=after, refresh_status=status)
+            exchange.accept({"id": 1, "result": {}})
+            with self.assertRaises(ValueError):
+                exchange.accept(
+                    {"id": 2, "result": self.auth_response(auth()["tokens"]["access_token"])}
+                )
+            self.assertFalse(exchange.complete)
+            self.assertNotIn("private", json.dumps(exchange.summary()))
+
+    def test_live_reload_rejects_wrong_cache_new_value_and_rpc_order(self):
+        for stage in (2, 3, 5):
+            exchange, _calls = self.reload_exchange()
+            exchange.accept({"id": 1, "result": {}})
+            old = auth()["tokens"]["access_token"]
+            for current in range(2, stage):
+                response = (
+                    {"account": {"type": "chatgpt"}, "requiresOpenaiAuth": True}
+                    if current == 4
+                    else self.auth_response(old)
+                )
+                exchange.accept({"id": current, "result": response})
+            with self.assertRaises(ValueError):
+                exchange.accept({"id": stage, "result": self.auth_response("private-wrong-token")})
+            self.assertFalse(exchange.complete)
+        for response in (
+            {"id": 99, "result": {}},
+            {"id": 1, "error": {"message": "private"}},
+            {"id": True, "result": {}},
+        ):
+            exchange, _calls = self.reload_exchange()
+            with self.assertRaises(ValueError):
+                exchange.accept(response)
+
+    def test_live_reload_cli_requires_flag_root_and_safe_failure_record(self):
+        for argv in (
+            ["probe", "live-reload", "task647-codex-a-1"],
+            ["probe", "--user-run", "live-reload", "task647-codex-a-1"],
+        ):
+            with (
+                patch("sys.argv", argv),
+                patch("subprocess.Popen") as spawned,
+                self.assertRaises(SystemExit),
+            ):
+                self.module["main"]()
+            spawned.assert_not_called()
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "probe",
+                    "--user-run",
+                    "--live-root",
+                    self.home,
+                    "live-reload",
+                    "task647-codex-a-1",
+                ],
+            ),
+            patch("os.open", side_effect=OSError("private-secret")),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(self.module["main"](), 1)
+        record = json.loads(printed.call_args.args[0])
+        self.assertEqual(record["status"], "incomplete")
+        self.assertNotIn("private", json.dumps(record))
+
+    @contextmanager
+    def fake_live(self, root, *, container_version="0.163.0", bad_image=False):
+        blocks, processes, commands = {}, [], []
+        carrier = {}
+
+        def docker_run(argv, **kwargs):
+            commands.append(argv)
+            if "inspect" in argv:
+                output = "private-invalid-image" if bad_image else "sha256:" + "a" * 64
+            elif argv[-1] == "--version":
+                output = "codex-cli " + container_version
+            else:
+                carrier.clear()
+                carrier.update(json.loads(kwargs["input"]))
+                output = ""
+            return SimpleNamespace(returncode=0, stdout=output.encode(), stderr=b"private-stderr")
+
+        def spawn(argv, **_kwargs):
+            process = FakeProcess()
+            processes.append((argv, process))
+            base = 20 + len(processes) * 3
+            process.stdin, process.stdout, process.stderr = [FakeStream(base + i) for i in range(3)]
+            out, err = process.stdout.number, process.stderr.number
+            blocks[out], blocks[err] = [], [b"private-stderr", b""]
+            cached = {"token": carrier.get("tokens", {}).get("access_token")}
+            if argv[-1] == "--version":
+                blocks[out].extend([b"codex-cli 0.163.0\n", b""])
+
+            def write(data):
+                request = json.loads(data)
+                method = request["method"]
+                if method == "initialized":
+                    return
+                if method == "initialize":
+                    result = {}
+                elif method == "getAuthStatus":
+                    result = self.auth_response(cached["token"])
+                else:
+                    self.assertEqual(method, "account/read")
+                    if argv[0] == "docker":
+                        cached["token"] = carrier["tokens"]["access_token"]
+                    else:
+                        (root / "broker/auth.json").write_text(
+                            json.dumps(auth(2100000200, "after", "2033-05-18T03:01:00Z"))
+                        )
+                    result = {
+                        "account": {"type": "chatgpt", "email": "private-email"},
+                        "requiresOpenaiAuth": True,
+                    }
+                blocks[out].append(
+                    json.dumps({"id": request["id"], "result": result}).encode() + b"\n"
+                )
+
+            process.stdin.on_write = write
+            return process
+
+        def read(number, _size):
+            return blocks[number].pop(0) if blocks[number] else b""
+
+        with (
+            self.temp_lock_open(root / "broker"),
+            patch("subprocess.run", side_effect=docker_run),
+            patch("subprocess.Popen", side_effect=spawn),
+            patch("selectors.DefaultSelector", FakeSelector),
+            patch("os.set_blocking"),
+            patch("os.read", side_effect=read),
+            patch("os.killpg"),
+            patch("time.sleep"),
+        ):
+            yield processes, commands, carrier
+
+    def test_live_reload_orchestrates_one_remote_process_and_redacts_all_material(self):
+        root = self.fake_root()
+        with self.fake_live(root) as (processes, commands, carrier):
+            result = self.module["live_reload"](root, "task647-codex-a-1")
+        self.assertEqual(result["status"], "live_reload_observed")
+        self.assertTrue(result["same_process_connection"])
+        for key in ("initial_injection", "replacement_injection"):
+            self.assertEqual(result[key]["refresh_value_count"], 0)
+            self.assertEqual(result[key]["status"], "injected")
+        self.assertEqual(result["container_image_id"], "sha256:" + "a" * 64)
+        self.assertEqual(result["host_refresh"]["status"], "rotation_observed")
+        self.assertEqual(len([argv for argv, _process in processes if argv[0] == "docker"]), 1)
+        self.assertEqual(len([argv for argv in commands if "sh" in argv]), 2)
+        self.assertEqual(carrier["tokens"]["refresh_token"], "")
+        self.assertNotIn("private", json.dumps(result))
+        self.assertNotIn("header.", json.dumps(result))
+        self.assertTrue(all(process.returncode == 0 for _argv, process in processes))
+
+    def test_live_reload_container_version_and_image_failure_precede_auth_reads(self):
+        root = self.fake_root()
+        for kwargs in ({"container_version": "0.164.0"}, {"bad_image": True}):
+            with self.fake_live(root, **kwargs) as (processes, commands, _carrier):
+                result = self.module["live_reload"](root, "task647-codex-a-1")
+            self.assertEqual(result["status"], "incomplete")
+            self.assertEqual(len(processes), 1)
+            self.assertFalse(any("sh" in argv for argv in commands))
+            self.assertNotIn("private", json.dumps(result))
+
+    def test_remote_failure_waits_for_eof_before_any_local_signal(self):
+        process = FakeProcess()
+        with (
+            patch("subprocess.Popen", return_value=process),
+            patch("selectors.DefaultSelector", FakeSelector),
+            patch("os.set_blocking"),
+            patch("os.read", return_value=b"malformed\n"),
+            patch("os.killpg") as killed,
+        ):
+            result, output = self.module["run_native"](
+                ["docker", "exec"],
+                {"HOME": self.home},
+                self.module["RefreshExchange"](),
+                remote=True,
+            )
+        self.assertEqual(result["cleanup_status"], "exited_after_eof")
+        self.assertEqual(result["error"], "native_failure")
+        self.assertEqual(output, b"")
+        self.assertTrue(process.stdin.closed)
+        killed.assert_not_called()
+
+    def test_unconfirmed_remote_cleanup_never_claims_termination(self):
+        process = FakeProcess()
+        with (
+            patch("subprocess.Popen", return_value=process),
+            patch("selectors.DefaultSelector", FakeSelector),
+            patch("os.set_blocking"),
+            patch("os.read", return_value=b"malformed\n"),
+            patch.object(process, "wait", side_effect=OSError("private")),
+            patch("os.killpg"),
+            patch("time.sleep"),
+        ):
+            result, _output = self.module["run_native"](
+                ["docker", "exec"],
+                {"HOME": self.home},
+                self.module["RefreshExchange"](),
+                remote=True,
+            )
+        self.assertEqual(result["error"], "cleanup_failure")
+        self.assertEqual(result["cleanup_status"], "cleanup_failed")
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_live_reload_rejects_nonchatgpt_status_and_unverified_account_reload(self):
+        for changes in (
+            {"authMethod": "chatgptAuthTokens"},
+            {"requiresOpenaiAuth": False},
+            {"authToken": None},
+        ):
+            exchange, _calls = self.reload_exchange()
+            exchange.accept({"id": 1, "result": {}})
+            with self.assertRaises(ValueError):
+                exchange.accept(
+                    {
+                        "id": 2,
+                        "result": self.auth_response(auth()["tokens"]["access_token"], **changes),
+                    }
+                )
+            self.assertFalse(exchange.complete)
+        exchange, _calls = self.reload_exchange()
+        exchange.accept({"id": 1, "result": {}})
+        for stage in (2, 3):
+            exchange.accept(
+                {"id": stage, "result": self.auth_response(auth()["tokens"]["access_token"])}
+            )
+        with self.assertRaises(ValueError):
+            exchange.accept(
+                {"id": 4, "result": {"account": {"type": "apiKey"}, "requiresOpenaiAuth": True}}
+            )
+        self.assertFalse(exchange.complete)
+
+    def test_live_reload_notifications_never_export_payload_or_complete_exchange(self):
+        exchange, _calls = self.reload_exchange()
+        self.assertEqual(
+            exchange.accept({"method": "private-warning", "params": {"token": "private-token"}}), []
+        )
+        self.assertEqual(exchange.summary()["notification_count"], 1)
+        self.assertFalse(exchange.complete)
+        self.assertNotIn("private", json.dumps(exchange.summary()))
+
+    def test_live_reload_cli_success_has_single_redacted_record(self):
+        root = self.fake_root()
+        argv = ["probe", "--user-run", "--live-root", str(root), "live-reload", "task647-codex-a-1"]
+        with self.fake_live(root), patch("sys.argv", argv), patch("builtins.print") as printed:
+            self.assertEqual(self.module["main"](), 0)
+        printed.assert_called_once()
+        record = json.loads(printed.call_args.args[0])
+        self.assertEqual(record["status"], "live_reload_observed")
+        self.assertNotIn("private", json.dumps(record))
