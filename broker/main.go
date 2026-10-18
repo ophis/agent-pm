@@ -208,6 +208,7 @@ func withHost(command, container string, progress io.Writer, f func(launcher.Hos
 	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home, rec), rec)
 	h.Codex = broker.NewCodex(home, nil)
 	h.Progress = progress
+	h.Lock = broker.FileLock(filepath.Join(home, ".agent-pm/docker/images.lock"))
 	return f(h)
 }
 
@@ -262,7 +263,11 @@ func system() app {
 				fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
-			}, broker.SystemKeychain{Home: home}, out)
+			}, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to make Claude trust only the broker (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, broker.SystemKeychain{Home: home}, os.Stderr, out)
 		},
 		loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
 			home, err := accountHome()

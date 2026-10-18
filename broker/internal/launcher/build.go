@@ -29,6 +29,10 @@ var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$`)
 var builtPattern = regexp.MustCompile(`^agent-pm-(?:user|worker):[0-9a-f]{64}$`)
 
+// imageLease is how long prune keeps a key's images after a build last leased the key:
+// through a rebuild in progress and the start that follows a build.
+const imageLease = time.Hour
+
 type imageInfo struct {
 	ID           string `json:"Id"`
 	Created      time.Time
@@ -227,9 +231,9 @@ func (h Host) Build(ctx context.Context, pkg string, plugins []string, maxAge ti
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Cannot hash the build context.")
 	}
 	image := "agent-pm-worker:" + key
-	info, found, err := h.inspectImage(ctx, image)
+	info, found, err := h.leaseImage(ctx, key)
 	if err != nil {
-		return BuildResult{}, failure(err, protocol.BuildFailed, "Cannot inspect the worker image.")
+		return BuildResult{}, err
 	}
 	current := found && info.Config.Labels["agent-pm.key"] == key && info.Config.Labels["agent-pm.version"] == version
 	if current && (maxAge < 0 || (maxAge > 0 && time.Since(info.Created) < maxAge)) {
@@ -249,6 +253,55 @@ func (h Host) Build(ctx context.Context, pkg string, plugins []string, maxAge ti
 	return result, err
 }
 
+// leaseImage leases key, then inspects its worker image, both under the image lock:
+// a concurrent prune either finished before the lease or keeps the image.
+func (h Host) leaseImage(ctx context.Context, key string) (imageInfo, bool, error) {
+	unlock, err := h.Lock()
+	if err != nil {
+		return imageInfo{}, false, protocol.New(protocol.BuildFailed, "Taking the image lock ~/.agent-pm/docker/images.lock failed.")
+	}
+	defer unlock()
+	if err := h.lease(key); err != nil {
+		return imageInfo{}, false, leaseFailed()
+	}
+	info, found, err := h.inspectImage(ctx, "agent-pm-worker:"+key)
+	if err != nil {
+		return imageInfo{}, false, failure(err, protocol.BuildFailed, "Cannot inspect the worker image.")
+	}
+	return info, found, nil
+}
+
+func leaseFailed() *protocol.Error {
+	return protocol.New(protocol.BuildFailed, "Cannot write the image lease in ~/.agent-pm/docker/images.")
+}
+
+func (h Host) leasePath(key string) string {
+	return filepath.Join(h.Home, ".agent-pm/docker/images", key)
+}
+
+// lease marks key's images as in use by a build from now on.
+func (h Host) lease(key string) error {
+	path := h.leasePath(key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	now := time.Now()
+	return os.Chtimes(path, now, now)
+}
+
+// leased reports whether a build leased key less than imageLease ago.
+func (h Host) leased(key string) bool {
+	info, err := os.Stat(h.leasePath(key))
+	return err == nil && time.Since(info.ModTime()) < imageLease
+}
+
 // rebuild builds both stages of key's images from the context in tmp.
 func (h Host) rebuild(ctx context.Context, tmp, key, version, plugins string) (BuildResult, error) {
 	image, userImage := "agent-pm-worker:"+key, "agent-pm-user:"+key
@@ -265,6 +318,9 @@ func (h Host) rebuild(ctx context.Context, tmp, key, version, plugins string) (B
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "The worker image's user agent must be a non-root user.")
 	}
 	uid, gid := ids[0], ids[1]
+	if err := h.lease(key); err != nil {
+		return BuildResult{}, leaseFailed()
+	}
 	args := []string{"build", "--progress=plain", "--build-arg", "USER_IMAGE=" + userImage, "--build-arg", "AGENT_PM_VERSION=" + version,
 		"--build-arg", "AGENT_UID=" + uid, "--build-arg", "AGENT_GID=" + gid, "--build-arg", "AGENT_PM_PLUGIN_DIRS=" + plugins, "--label", "agent-pm.key=" + key, "--tag", image, filepath.Join(tmp, "package")}
 	if _, err := h.Docker.Run(ctx, args, nil); err != nil {
@@ -278,13 +334,24 @@ func (h Host) rebuild(ctx context.Context, tmp, key, version, plugins string) (B
 	if !found || labels["agent-pm.key"] != key || labels["agent-pm.version"] != version || labels["agent-pm.agent-uid"] != uid || labels["agent-pm.agent-gid"] != gid {
 		return BuildResult{}, protocol.New(protocol.BuildFailed, "Built image labels do not match the package.")
 	}
+	if err := h.lease(key); err != nil {
+		return BuildResult{}, leaseFailed()
+	}
 	h.prune(ctx, key)
 	return BuildResult{Image: image, Digest: info.ID, Rebuilt: true}, nil
 }
 
-// prune removes the user and worker images of keys other than key, and the untagged ones a same-key rebuild left,
-// that no container, running or stopped, uses, noting each to Progress; whatever fails is kept and never fails the build.
+// prune removes the user and worker images of keys other than key that no build leased within imageLease, and the
+// untagged ones a same-key rebuild left, that no container, running or stopped, uses, noting each to Progress;
+// whatever fails is kept and never fails the build. It holds the image lock, so a build's lease and inspect come
+// wholly before or after it.
 func (h Host) prune(ctx context.Context, key string) {
+	unlock, err := h.Lock()
+	if err != nil {
+		h.note("kept older images: cannot take the image lock: " + err.Error())
+		return
+	}
+	defer unlock()
 	used, err := h.usedImages(ctx)
 	if err != nil {
 		h.note("kept older images: cannot list containers: " + docker.Diagnostic(err))
@@ -297,7 +364,8 @@ func (h Host) prune(ctx context.Context, key string) {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		ref, id, _ := strings.Cut(line, " ")
-		if !builtPattern.MatchString(ref) || strings.HasSuffix(ref, ":"+key) || used[id] {
+		_, refKey, _ := strings.Cut(ref, ":")
+		if !builtPattern.MatchString(ref) || refKey == key || used[id] || h.leased(refKey) {
 			continue
 		}
 		// No --force: Docker also refuses an image a container uses.
@@ -305,6 +373,8 @@ func (h Host) prune(ctx context.Context, key string) {
 			h.note("kept " + ref + ": " + docker.Diagnostic(err))
 		} else {
 			h.note("removed " + ref)
+			// A stale lease and none are alike: the lease goes with the first of its key's images.
+			_ = os.Remove(h.leasePath(refKey))
 		}
 	}
 	out, err = h.Docker.Run(ctx, []string{"image", "ls", "--quiet", "--no-trunc", "--filter", "dangling=true", "--filter", "label=agent-pm.key"}, nil)

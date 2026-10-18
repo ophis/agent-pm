@@ -51,8 +51,9 @@ type Host struct {
 	Codex    CodexCredentials
 	GitHub   Tokens
 	Versions CodexVersions
-	Progress io.Writer       // nil: none; build's notes on older images, after Docker's progress; start's phase times
-	Audit    *audit.Recorder // nil: none; start, refresh and close name their container and add the client credential
+	Progress io.Writer                         // nil: none; build's notes on older images, after Docker's progress; start's phase times
+	Lock     func() (unlock func(), err error) // the image lock: build's lease and inspect, and prune
+	Audit    *audit.Recorder                   // nil: none; start, refresh and close name their container and add the client credential
 }
 
 // NewHost wires the real filesystem; tests build Host with fakes. rec is the command's audit recorder, the one tokens

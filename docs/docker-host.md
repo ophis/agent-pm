@@ -44,16 +44,37 @@ A start rebuilds an image built 7 or more days ago, and
 
 ## Log in
 
+After installing or reinstalling the broker, run all three logins: `login claude`,
+`login github agent-pm-bot` and `login codex` ([Codex operations](docker-codex.md#commands)).
+A reinstalled broker is another application to the keychain, so an item logged in by the old
+one would ask at the next start. Each login asks its terminal questions first, without echo:
+
+| Login | Terminal | macOS dialog, at most | Click |
+|---|---|---|---|
+| `login claude` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
+| `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
+| `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
+| `start` | none | none: a token it cannot read without one fails with `login_required` naming unlocking the login keychain or `login claude` | |
+
 ```sh
 claude setup-token          # copy the token it prints
 "$B" login claude           # paste it; nothing echoes
 ```
 
+It saves the token in a new item trusting only the broker, then makes its access trust only the
+broker as `login github` does below, with the prompt
+`Login keychain password, to make Claude trust only the broker (hidden):`.
+Then it reads the token back without a dialog. If macOS would still ask, it first prints
+`macOS will ask to let agent-pm-broker use agent-pm-claude: enter the login keychain password if asked and click Always Allow`.
+It then reads once with the dialog and once more without, to prove Always Allow (not Allow) was
+clicked.
+
 | Check | Expect |
 |---|---|
-| output of `login claude` | `Claude setup-token saved`, no token |
+| output of `login claude` | `Claude setup-token saved; keychain trusts only the broker`, no token |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, account `setup-token`; the only trusted application is `$B` |
 | shell history | no token |
+| first Claude [start](#start) after `login claude` | no keychain dialog |
 
 GitHub: the private key of the one GitHub App, `agent-pm-bot`, must already be a
 generic-password item in the login keychain, service `agent-pm-bot`, account its App ID,
@@ -109,11 +130,19 @@ keeps the image, printing `agent-pm-broker: kept <image>: refreshing it failed: 
 `--max-age 0` fails instead.
 
 After a rebuild, `build` removes the `agent-pm-user:<key>` and `agent-pm-worker:<key>`
-images of older keys, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
+images of other keys no build leased in the last hour, and the untagged ones a same-key rebuild left, keeping the new pair and any image a container (running or
 stopped) was created from, and prints `agent-pm-broker: removed <image>` to stderr for
 each. An image it cannot remove stays, with an `agent-pm-broker: kept <image>: <reason>`
 line; a kept image goes at a later rebuild once no container uses it. A reused image
 removes nothing.
+
+Every `build` leases its key: it sets the time of `~/.agent-pm/docker/images/<key>` when it
+starts, reused image or not, and again before the second stage and at the end of a rebuild. So two
+packages building at once (two worktrees' plugin directories, or a worker's check beside a
+board run) keep each other's images, through a rebuild and until the start after it creates
+its container. `~/.agent-pm/docker/images.lock` keeps each removal pass apart from a build's
+lease and image check: a build that cannot take it fails with `build_failed`; a removal pass
+that cannot take it removes nothing, printing `agent-pm-broker: kept older images: cannot take the image lock: <reason>`.
 
 | Check (`I` = the printed image) | Expect |
 |---|---|
@@ -121,7 +150,9 @@ removes nothing.
 | `docker history --no-trunc "$I" \| grep -c sk-ant` | `0` |
 | `docker run --rm "$I" sh -c 'command -v python3; python3 -P /opt/agent-pm/team/tools/repo.py --help'` | `/opt/agent-pm/bin/python3` (the image's interpreter, which imports agent-pm's Delegate), then `repo.py`'s usage: role runs read the team and run its tools from `/opt/agent-pm/team`, the plugin's own version |
 | delete a line (e.g. `WORKDIR`) from your Dockerfile and rebuild | the new image still has the labels and `/opt/agent-pm/bin/with-secrets`; restore the line after |
-| `docker image ls --filter reference='agent-pm-*'` after that rebuild | only the new key's pair, plus the older worker image of any container still on it |
+| `docker image ls --filter reference='agent-pm-*'` after that rebuild | the new key's pair and the older one, which a build leased within the hour |
+| `rm ~/.agent-pm/docker/images/<older key>`, then `"$B" build --agent-pm "$PKG" --max-age 0` and `docker image ls --filter reference='agent-pm-*'` | only the new key's pair, plus the older worker image of any container still on it |
+| `"$B" build --agent-pm "$PKG" --max-age 0 & "$B" build --agent-pm "$PKG2" --max-age 0; wait`, `PKG2` another worktree's plugin directory with other content | both print `"rebuilt":true`; `docker image ls` lists both pairs |
 | `"$B" build --agent-pm "$PKG" --max-age 0` | `"rebuilt":true`, the same `image`, a new `digest`; the log shows `npm install` running, not `CACHED` |
 
 ### Plugins
@@ -160,7 +191,7 @@ Whitelisting a plugin trusts its code beside the container's client and GitHub c
 Claude loads its hooks, MCP servers and scripts; [Codex's adaptation](docker-codex.md#native-plugins)
 defines which components it loads. Host-side upgrades reach containers at their next build.
 One whitelist per account: a build with another whitelist
-gives another key, and its rebuild removes the other's images.
+gives another key, and its rebuild removes the other's images once no build has leased them for an hour.
 
 | Check | Expect |
 |---|---|
@@ -245,6 +276,8 @@ Each fails before any container exists (`docker ps -a` unchanged), with the exit
 | `claude_dir` any other path | 4 |
 | `hook_path` inside `cwd` | 4 |
 | `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
+| reinstall the broker (`install.sh --build`), then start a Claude manifest without `login claude` | 5 `login_required`, "trusts another broker build"; no keychain dialog; log in again after |
+| `security lock-keychain ~/Library/Keychains/login.keychain-db`, then start a Claude manifest | 5 `login_required`, "unlock the login keychain, or run agent-pm-broker login claude"; no keychain dialog; `security unlock-keychain ~/Library/Keychains/login.keychain-db` after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container is untouched |
 | while `C` runs, the same manifest with a new `generation` | 4 `mount_rejected`: its volume is in use |
 | `docker volume create agent-pm-ws-worker_3`, then a `worker_3` manifest | 4 `mount_rejected`: the volume has no workspace labels; `docker volume rm agent-pm-ws-worker_3` after |

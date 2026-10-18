@@ -56,15 +56,15 @@ event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
 CLOSE = "import sys; from agent_pm.session import Host, Session; Session.configure(clients={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); Session.retire(sys.argv[1])"
-SLOW_CLOSE = """import sys, time, shutil
+SLOW_CLOSE = """import sys, time, tempfile
 from unittest import mock
 from agent_pm.session import Host, Session
-remove = shutil.rmtree
-def slow(*args, **kwargs):
+remove = tempfile.TemporaryDirectory.cleanup
+def slow(retired):
     open(sys.argv[2], "w").close()
     time.sleep(1)
-    remove(*args, **kwargs)
-with mock.patch("shutil.rmtree", slow):
+    remove(retired)
+with mock.patch.object(tempfile.TemporaryDirectory, "cleanup", slow):
     Session.configure(
         clients={},
         hosts=Host.parse_hosts(
