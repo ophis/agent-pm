@@ -285,6 +285,7 @@ class ConfigTest(Base):
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
                 "plugins": ["autopilot"],
+                "isolated": True,
                 "github": {"app": "agent-pm-bot"},
             },
         )
@@ -292,8 +293,8 @@ class ConfigTest(Base):
         settings = {k: v for k, v in table["docker"].items() if k != "implementation"}
         host = DockerHost("docker", settings)
         self.assertEqual(
-            (host.docker, host.github, host.plugins),
-            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",)),
+            (host.docker, host.github, host.plugins, host._isolated),
+            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",), True),
         )
         bare = DockerHost("docker", {"docker": DOCKER})
         self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))

@@ -1,6 +1,6 @@
-"""Case, every session test's base; session settings (HOSTS, configured); child helpers
-(PY, child_env); this tree's import roots (REPO, SRC, ROOTS), PLUGIN_BIN (first on PATH); SPAWNS, the
-calls that start a process.
+"""Case, every session test's base; session settings (HOSTS, configured, packaged_hosts); child
+helpers (PY, child_env); this tree's import roots (REPO, SRC, ROOTS), PLUGIN_BIN (first on PATH);
+SPAWNS, the calls that start a process.
 """
 
 import os
@@ -11,9 +11,13 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.session import Host
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
+from agent_pm.session.engine.types import Permission
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.modes.base import BaseMode
 from agent_pm.session.viewer.viewer import Viewer
+from agent_pm.utils import load_class
 
 from utils.tests.sandbox import clean_env, project_roots
 
@@ -30,6 +34,18 @@ PLUGIN_BIN = os.path.join(REPO, "bin")
 PY = (sys.executable, "-P", "-S")
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
+
+
+def packaged_hosts() -> dict[str, Permission]:
+    hosts = Host.parse_hosts(read_config(local=os.devnull)["hosts"])
+    return {
+        name: BaseMode._permission(
+            load_class(table["implementation"], Host)(
+                name, {k: v for k, v in table.items() if k != "implementation"}
+            )
+        )
+        for name, table in hosts.tables.items()
+    }
 
 
 def configured(clients, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:

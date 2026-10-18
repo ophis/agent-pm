@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.modes.headless import HeadlessMode
 
+from session.tests.case import packaged_hosts
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.unit.clients.codex.support import (
     AUTO,
@@ -476,6 +477,22 @@ class ConfiguredFlags(Base):
         argv = committed_headless(client, spec, Permission.YOLO).argv
         self.assertIn(BYPASS, argv)
         self.assertNotIn("-s", argv)
+
+    def test_the_packaged_config_gives_docker_codex_only_yolo_flags_every_other_host_only_auto(
+        self,
+    ):
+        hosts = packaged_hosts()
+        self.assertEqual(
+            hosts, {"tmux": Permission.AUTO, "pty": Permission.AUTO, "docker": Permission.YOLO}
+        )
+        words = {Permission.AUTO: ("-s", *AUTO[1::2]), Permission.YOLO: (BYPASS,)}
+        for name, permission in hosts.items():
+            with self.subTest(host=name):
+                spec = dataclasses.replace(self.spec, sid=f"run-{name}", prompt="hi")
+                argv = committed_headless(packaged(), spec, permission).argv
+                other = Permission.YOLO if permission == Permission.AUTO else Permission.AUTO
+                self.assertTrue(all(argv.count(w) == 1 for w in words[permission]), argv)
+                self.assertFalse([w for w in words[other] if w in argv], argv)
 
     def test_bad_modes_are_refused(self):
         for modes, message in (

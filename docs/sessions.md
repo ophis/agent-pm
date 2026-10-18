@@ -18,11 +18,18 @@ Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its o
 
 ## Client policy
 
-Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`, after the session's `[clients.<client>] flags`. A local list replaces the default whole.
+Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`, after the session's `[clients.<client>] flags` and permission mode. A local list replaces the default whole.
 
-Codex's sandbox and approval flags live only in `[clients.codex] flags` in `session/src/agent_pm/session/config.toml`, so every Codex session gets them, crew workers and role runs, on every Host: `-s danger-full-access -c approval_policy="on-request" -c approvals_reviewer="auto_review"`; `[policy.codex] flags` is empty. `danger-full-access` ignores writable roots and team dirs; a Docker container cannot run Codex's sandbox ([Docker sessions](docker-codex.md#docker-sessions)). For `workspace-write` outside the Docker Host:
+Every session, crew workers and role runs, gets one permission mode from the Host it runs on: an `isolated` Host (`[hosts.docker] isolated = true`) `yolo`, every other Host `auto`. Each mode's flags are the client's, in `[clients.<client>.modes]` in `session/src/agent_pm/session/config.toml`, the only home of permission flags; a start, restart and resume each get the mode of the Host they run on, and `client-resume` (this machine) `auto`:
+
+| Client | `auto` | `yolo` |
+|---|---|---|
+| Claude | `--permission-mode auto` | `--dangerously-skip-permissions --settings '{"skipDangerousModePermissionPrompt": true}'` (no first-start dialog) |
+| Codex | `-s danger-full-access -c approval_policy="on-request" -c approvals_reviewer="auto_review"` | `--dangerously-bypass-approvals-and-sandbox` |
+
+`yolo` asks for nothing: no permission prompt, approval or sandbox; the container is the boundary ([Docker host](docker-host.md#permissions)). Claude refuses it as root; the container's clients run as `agent`. `danger-full-access` ignores writable roots and team dirs; a Docker container cannot run Codex's sandbox ([Docker sessions](docker-codex.md#docker-sessions)). For `workspace-write` outside the Docker Host:
 
 ```toml
-[session.clients.codex]
-flags = ["-c", "plugins.agent-pm@agent-pm.enabled=false", "-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
+[session.clients.codex.modes]
+auto = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
 ```

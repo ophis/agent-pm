@@ -16,6 +16,7 @@ from unittest import mock
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.claude.common import HOME
 from agent_pm.session.clients.claude.usage import NO_PANEL
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -26,7 +27,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.utils import LOCAL_ENV_VARS, docker_home
 
-from session.tests.case import SPAWNS, Case
+from session.tests.case import SPAWNS, Case, packaged_hosts
 from session.tests.unit.clients.claude.support import (
     CEILING,
     CONFIG,
@@ -79,6 +80,29 @@ class PermissionTest(Base):
                     merged = json.loads(argv[argv.index("--settings") + 1])
                     merged.pop("hooks", None)
                     self.assertEqual(merged, settings)
+
+    def test_the_packaged_config_gives_docker_claude_only_yolo_flags_every_other_host_only_auto(
+        self,
+    ):
+        table = dict(read_config(local=os.devnull)["clients"]["claude"])
+        table.pop("implementation")
+        words = {
+            Permission.AUTO: "--permission-mode",
+            Permission.YOLO: "--dangerously-skip-permissions",
+        }
+        for name, permission in packaged_hosts().items():
+            for mode, launch in (
+                ("headless", self.launch),
+                ("tui", partial(tui_launch, self.work)),
+            ):
+                with self.subTest(host=name, mode=mode):
+                    argv = launch(config=table, permission=permission).argv
+                    self.assertEqual([w for w in argv if w in words.values()], [words[permission]])
+                    settings = json.loads(argv[argv.index("--settings") + 1])
+                    self.assertEqual(
+                        settings.get("skipDangerousModePermissionPrompt"),
+                        True if permission == Permission.YOLO else None,
+                    )
 
     def test_without_modes_neither_permission_adds_a_flag(self):
         for permission in Permission:

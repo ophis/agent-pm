@@ -86,15 +86,15 @@ class NewRun(Integration):
         )
         self.assertIsNone(option(call, "--resume"))
 
-    def test_the_default_policy_reaches_the_argv_as_before_its_move(self):
+    def test_the_default_policy_and_auto_mode_reach_the_argv_once_each(self):
         res = self.drive([block(DONE)])
         self.assertEqual(res.returncode, 0, res.stderr)
         (call,) = self.calls()
         argv = call["argv"]
-        start = argv.index("--permission-mode")
-        self.assertEqual(
-            argv[start : start + 4], ["--permission-mode", "auto", "--strict-mcp-config", "--"]
-        )
+        mode = argv.index("--permission-mode")
+        self.assertEqual(argv[mode : mode + 2], ["--permission-mode", "auto"])
+        policy = argv.index("--strict-mcp-config")
+        self.assertEqual(argv[policy : policy + 2], ["--strict-mcp-config", "--"])
         self.assertEqual(
             argv[argv.index("--settings") + 1], '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
         )
