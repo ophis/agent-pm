@@ -6,7 +6,7 @@ Container authentication, refresh and compatibility selection remain later work.
 
 ## Commands
 
-Install or rebuild the hardened broker first with `sh <agent-pm plugin directory>/broker/install.sh`.
+Install or upgrade the hardened broker first with `sh <agent-pm plugin directory>/broker/install.sh`.
 Replace `<version>` with an exact stable npm version, such as `0.162.1`:
 
 | Action | Command |

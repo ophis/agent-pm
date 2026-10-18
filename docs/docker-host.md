@@ -15,15 +15,20 @@ directory.
 
 ## Install
 
-Needs Docker Desktop (running), Go (`brew install go`) and the Xcode command line tools.
+Needs Docker Desktop (running) and `gh` (logged in).
 
 ```sh
 sh "$PKG/broker/install.sh"
 ```
 
-It seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
-freely) only if `~/.agent-pm/docker/worker` does not exist, builds the broker, signs it
-ad hoc with the hardened runtime and installs it root-owned (`sudo` asks once).
+It downloads the broker release asset of the plugin's version, installs it only after
+`gh attestation verify` proves the agent-pm release workflow built it from that version's
+tag, seeds `~/.agent-pm/docker/worker/Dockerfile` (your worker image definition, edit it
+freely) only if `~/.agent-pm/docker/worker` does not exist, and installs the broker
+root-owned (`sudo` asks once). The asset appears a few minutes after a Release is published:
+until then it exits non-zero, so retry. `sh "$PKG/broker/install.sh" --build` instead builds
+it and signs it ad hoc with the hardened runtime locally (needs Go, `brew install go`, and
+the Xcode command line tools).
 To upgrade, rerun the same command; your Dockerfile is never overwritten. Claude Code and
 Codex upgrade with the image: a start rebuilds an image built 7 or more days ago, and
 [Build](#build) rebuilds it now.
