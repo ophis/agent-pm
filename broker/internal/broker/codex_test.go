@@ -39,6 +39,10 @@ func (n *fakeCodexNative) Lock(ctx context.Context) (func(), error) {
 	return func() { n.locked = false }, nil
 }
 
+func (n *fakeCodexNative) Refresh(context.Context, string) error {
+	return errors.New("refresh unavailable in login fake")
+}
+
 func (n *fakeCodexNative) Run(ctx context.Context, home string, args ...string) error {
 	n.home, n.runs = home, n.runs+1
 	if !n.locked {
@@ -173,10 +177,10 @@ func TestCodexContainerCredential(t *testing.T) {
 		t.Fatalf("expiry %s: %v", expiry, err)
 	}
 	var auth codexAuthDocument
-	if json.Unmarshal(payload, &auth) != nil || auth.Mode != "chatgptAuthTokens" || auth.Tokens.Refresh != "" || auth.Tokens.ID != auth.Tokens.Access || auth.Tokens.Account != "fake-account-secret" {
+	if json.Unmarshal(payload, &auth) != nil || auth.Mode != "chatgpt" || auth.Tokens.Refresh != "" || auth.Tokens.ID != "fake-id-secret" || auth.Tokens.Account != "fake-account-secret" {
 		t.Fatal("wrong access-only document")
 	}
-	if bytes.Contains(payload, []byte("fake-refresh-secret")) || bytes.Contains(payload, []byte("fake-id-secret")) || !bytes.Equal(original, k.data) || n.runs != 1 || n.locked {
+	if bytes.Contains(payload, []byte("fake-refresh-secret")) || !bytes.Equal(original, k.data) || n.runs != 1 || n.locked {
 		t.Fatal("credential isolation failed")
 	}
 }

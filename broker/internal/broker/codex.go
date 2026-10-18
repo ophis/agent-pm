@@ -24,7 +24,7 @@ const (
 	codexService        = "agent-pm-codex"
 	codexAccount        = "auth"
 	maxCodexAuth        = 64 * 1024
-	codexLoginCommand   = "agent-pm-broker login codex"
+	codexLoginCommand   = InstalledPath + " login codex"
 	codexInstallCommand = "sudo " + InstalledPath + " install-codex <version>"
 	codexUpdateCommand  = "sudo " + InstalledPath + " update-codex <version>"
 )
@@ -39,6 +39,7 @@ func codexRepair(err error) string {
 type codexNative interface {
 	Verify() (codex.Installation, error)
 	Run(context.Context, string, ...string) error
+	Refresh(context.Context, string) error
 	Lock(context.Context) (func(), error)
 }
 
@@ -50,16 +51,17 @@ type codexKeychain interface {
 }
 
 type Codex struct {
-	native   codexNative
-	keychain codexKeychain
-	password func() ([]byte, error)
-	tempRoot string
-	now      func() time.Time
-	uid      func() int
+	native      codexNative
+	keychain    codexKeychain
+	password    func() ([]byte, error)
+	revisionDir string
+	tempRoot    string
+	now         func() time.Time
+	uid         func() int
 }
 
 func NewCodex(home string, password func() ([]byte, error)) Codex {
-	return Codex{native: codex.New(), keychain: SystemKeychain{Home: home}, password: password, tempRoot: "/private/tmp", now: time.Now, uid: os.Geteuid}
+	return Codex{native: codex.New(), keychain: SystemKeychain{Home: home}, password: password, revisionDir: filepath.Join(home, ".agent-pm/docker/codex-refresh"), tempRoot: "/private/tmp", now: time.Now, uid: os.Geteuid}
 }
 
 type codexAuthTokens struct {
@@ -142,7 +144,7 @@ func readCodexAuth(home string) ([]byte, error) {
 	return data, nil
 }
 
-func (c Codex) Login(ctx context.Context, out io.Writer) error {
+func (c Codex) Login(ctx context.Context, out io.Writer) (result error) {
 	if c.uid() == 0 {
 		return errors.New("run " + codexLoginCommand + " as your ordinary user, without sudo")
 	}
@@ -154,6 +156,19 @@ func (c Codex) Login(ctx context.Context, out io.Writer) error {
 		return errors.New("cannot lock Codex login; install pinned Codex or retry")
 	}
 	defer unlock()
+	revision, err := c.beginRevision()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		revision.State = "failed"
+		if result == nil {
+			revision.State = "complete"
+		}
+		if err := c.writeRevision(revision); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
 	_, err = c.keychain.AppAccess(codexService, codexAccount)
 	missing := errors.Is(err, ErrNotFound)
 	if err != nil && !missing {
@@ -266,30 +281,83 @@ func (c Codex) trusted() error {
 	return nil
 }
 
-func (c Codex) containerAuth(ctx context.Context, use func(codexAuthDocument, time.Time) error) error {
+func (c Codex) containerAuth(ctx context.Context, use func(codexAuthDocument, time.Time) error) (result error) {
 	if _, err := c.native.Verify(); err != nil {
 		return protocol.New(protocol.LoginRequired, "Pinned Codex unavailable; run "+codexRepair(err))
+	}
+	before, err := c.readRevision()
+	if err != nil {
+		return c.refreshError(err)
 	}
 	unlock, err := c.native.Lock(ctx)
 	if err != nil {
 		return protocol.New(protocol.LoginRequired, "Cannot lock Codex login; retry "+codexLoginCommand)
 	}
 	defer unlock()
-	if err := c.trusted(); err != nil {
+	revision, err := c.readRevision()
+	if err != nil {
+		return c.refreshError(err)
+	}
+	if c.trusted() != nil {
 		return protocol.New(protocol.LoginRequired, "Codex login unavailable; run "+codexLoginCommand)
 	}
 	data, err := c.keychain.Secret(codexService, codexAccount)
-	defer erase(data)
+	defer func() { erase(data) }()
 	if err != nil {
 		return protocol.New(protocol.LoginRequired, "Codex login unavailable; run "+codexLoginCommand)
 	}
 	expires, err := parseCodexAuth(data)
-	if err != nil || !c.now().Before(expires) {
-		return protocol.New(protocol.LoginRequired, "Codex authentication expired or invalid; run "+codexLoginCommand+"; token refresh is not supported yet")
+	if err != nil {
+		return protocol.New(protocol.LoginRequired, "Invalid Codex login; run "+codexLoginCommand)
 	}
 	var auth codexAuthDocument
-	if err := json.Unmarshal(data, &auth); err != nil {
+	if json.Unmarshal(data, &auth) != nil {
 		return protocol.New(protocol.LoginRequired, "Invalid Codex login; run "+codexLoginCommand)
+	}
+	stamp, _ := time.Parse(time.RFC3339, auth.LastRefresh)
+	if stamp.After(c.now()) {
+		return protocol.New(protocol.LoginRequired, "Invalid Codex login timestamp; run "+codexLoginCommand)
+	}
+	reused := revision.completedSince(before)
+	if reused && (revision.State == "failed" || !c.now().Before(expires)) {
+		return c.refreshError(errors.New("Concurrent Codex authentication renewal failed; retry or run " + codexLoginCommand))
+	}
+	repair := (revision.State == "active" || revision.State == "failed") && c.now().Before(expires) && c.now().Sub(stamp) < time.Minute
+	if !reused && !repair && !expires.After(c.now().Add(codexRefreshAhead)) {
+		revision, err = c.beginRevision()
+		if err != nil {
+			return c.refreshError(err)
+		}
+		defer func() {
+			revision.State = "failed"
+			if result == nil {
+				revision.State = "complete"
+			}
+			if err := c.writeRevision(revision); err != nil {
+				result = errors.Join(result, c.refreshError(err))
+			}
+		}()
+		next, err := c.renew(ctx, data, auth, expires)
+		if err != nil {
+			return c.refreshError(err)
+		}
+		erase(data)
+		data = next
+		expires, _ = parseCodexAuth(data)
+		_ = json.Unmarshal(data, &auth)
+	} else if repair {
+		defer func() {
+			revision.State = "failed"
+			if result == nil {
+				revision.State = "complete"
+			}
+			if err := c.writeRevision(revision); err != nil {
+				result = errors.Join(result, c.refreshError(err))
+			}
+		}()
+	}
+	if !c.now().Before(expires) {
+		return protocol.New(protocol.LoginRequired, "Codex authentication expired; run "+codexLoginCommand)
 	}
 	return use(auth, expires)
 }
@@ -299,10 +367,14 @@ func (c Codex) Ready(ctx context.Context) error {
 }
 
 func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (string, error) {
+	return c.inject(ctx, exec, nil)
+}
+
+func (c Codex) inject(ctx context.Context, exec func([]string, []byte) error, publish func(string) error) (string, error) {
 	var expiry string
 	err := c.containerAuth(ctx, func(auth codexAuthDocument, expires time.Time) error {
-		auth.Mode = "chatgptAuthTokens"
-		auth.Tokens.ID, auth.Tokens.Refresh = auth.Tokens.Access, ""
+		auth.Mode = "chatgpt"
+		auth.Tokens.Refresh = ""
 		data, err := json.Marshal(auth)
 		if err != nil {
 			return protocol.New(protocol.StartFailed, "Cannot encode Codex container credentials")
@@ -316,6 +388,9 @@ func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (s
 			return protocol.New(protocol.StartFailed, "Writing Codex credentials into the container failed")
 		}
 		expiry = expires.Format(time.RFC3339)
+		if publish != nil {
+			return publish(expiry)
+		}
 		return nil
 	})
 	return expiry, err
