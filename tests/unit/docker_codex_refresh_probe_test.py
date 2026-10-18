@@ -3,7 +3,6 @@ import copy
 import json
 import os
 import runpy
-import subprocess
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -442,9 +441,7 @@ class RefreshProbeTest(Case):
         self.assertGreaterEqual(killed.call_count, 1)
 
     def test_cleanup_failure_remains_redacted_and_closes_streams(self):
-        with patch.object(
-            FakeProcess, "wait", side_effect=subprocess.TimeoutExpired("fake-secret", 5)
-        ):
+        with patch.object(FakeProcess, "wait", side_effect=OSError("fake-secret")):
             result, _output, _process, killed = self.run_transport([b"malformed\n"])
         self.assertEqual(result["error"], "cleanup_failure")
         self.assertEqual(result["cleanup_status"], "cleanup_failed")
