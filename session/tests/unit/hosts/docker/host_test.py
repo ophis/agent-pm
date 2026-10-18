@@ -2271,6 +2271,22 @@ class ListTest(Base):
         self.docker.replies = {(): (1, "", "Error response from daemon: No such container: x")}
         self.assertEqual(self.host.rows()[0].state, StatusState.DEAD)
 
+    def test_rows_of_an_unanswered_listing_are_unknown(self):
+        self.listed("w")
+        self.record()
+        for reply in (
+            TimeoutExpired("docker", 10),
+            Overflow("output over 8388608 bytes"),
+            (1, "", "server exited unexpectedly"),
+        ):
+            with self.subTest(reply=reply):
+                self.docker.replies = {("tmux", "-u", "list-sessions"): reply}
+                (row,) = self.host.rows()
+                self.assertEqual(
+                    (row.state, row.last_lines, row.sid, row.client, row.display),
+                    (StatusState.UNKNOWN, None, "s1", "agent", "lead/below"),
+                )
+
     def test_a_dead_rows_last_lines_have_no_control_characters(self):
         self.listed("w")
         self.record()

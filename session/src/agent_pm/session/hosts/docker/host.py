@@ -1292,18 +1292,20 @@ class DockerHost(Host):
         ]
 
     def _row(self, name: str, container: str, generation: str) -> SessionRow:
+        """unknown when the container's tmux did not answer: no proof its client exited."""
         record = _record(name)
         record = record if record.get("generation") == generation else {}
-        found = [
-            row for row in self.container_tmux(container).listing() or [] if row["name"] == name
-        ]
+        listing = self.container_tmux(container).listing()
+        found = [row for row in listing or [] if row["name"] == name]
         row = found[0] if len(found) == 1 else {"dead": True, "state": None, "last_lines": None}
         state = row["state"] if row["state"] in (StatusState.DONE, StatusState.BLOCKED) else None
         return SessionRow(
             name=name,
             sid=record.get("sid"),
             client=record.get("client"),
-            state=StatusState.DEAD
+            state=StatusState.UNKNOWN
+            if listing is None
+            else StatusState.DEAD
             if row["dead"] is not False
             else StatusState(state or StatusState.WORKING),
             display=record.get("display"),
