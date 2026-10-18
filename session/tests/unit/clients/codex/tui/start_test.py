@@ -13,12 +13,13 @@ from unittest import mock
 
 from agent_pm.session.clients.codex import tui
 from agent_pm.session.clients.codex.tui import start as tui_start
+from agent_pm.session.engine.types import ClientRuntime
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
 from session.tests.codex_tui import HOOK, ROOTS_JSON, LaunchCase
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.clients.codex.support import Base, committed_tui
+from session.tests.unit.clients.codex.support import NATIVE, Base, committed_tui
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
 
@@ -133,6 +134,43 @@ class StartTest(Base):
         self.assertEqual(
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
+
+    def test_projected_resume_reader_preserves_native_identity_and_host_record(self):
+        self.prepare()
+        self.rollout()
+        assert self.spec.sid is not None
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        record = self.record()
+        before = record.read_bytes()
+        runtime = ClientRuntime(
+            "/opt/agent-pm/bin", "/image/python", "/image/modules", str(self.root / "volatile")
+        )
+        run = self.client.tui()
+        run._set_runtime(runtime)
+        with mock.patch("shutil.which", side_effect=AssertionError("host lookup")):
+            launch = run.launch(dataclasses.replace(self.spec, resume=True), HOOK)
+        run.commit()
+        self.assertEqual(len(run._runtime_files), 1)
+        for path, content in run._runtime_files.items():
+            projected = pathlib.Path(path)
+            projected.parent.mkdir(parents=True, mode=0o700)
+            projected.write_text(content)
+            self.assertEqual(json.loads(content)["native_id"], NATIVE)
+        trust = mock.Mock(return_value="hooks.state={exact}")
+        with (
+            mock.patch.dict(os.environ, launch.env),
+            mock.patch("os.chdir"),
+            mock.patch("os.execve") as execute,
+        ):
+            tui_start.launch(json.loads(launch.argv[-1]), trust=trust)
+        exe, argv, env = execute.call_args.args
+        self.assertEqual((exe, argv[:3]), ("/opt/agent-pm/bin/codex", [exe, "resume", NATIVE]))
+        self.assertEqual(env["CODEX_HOME"], str(self.codex_home))
+        self.assertEqual(trust.call_args.kwargs["root"], str(self.root / "volatile/codex-store"))
+        self.assertEqual(record.read_bytes(), before)
+        state = self.common.load(str(self.work), self.spec.sid)
+        assert state is not None
+        self.assertEqual(state.native_id, NATIVE)
 
     def test_start_passes_session_env_and_clears_git_local_environment(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})

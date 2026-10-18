@@ -40,6 +40,7 @@ from agent_pm.session.engine.types import (
     RESUME,
     SESSION_NAME,
     ClientHome,
+    ClientRuntime,
     ConfigError,
     HookCallback,
     Key,
@@ -316,6 +317,11 @@ def _accept_started(name: str, generation: str, started: Started, container: str
             f"broker: started {started.container} at {started.endpoint},"
             f" want {container} at {endpoint()}"
         )
+    save(
+        os.path.join(state_dir(name), f"{generation}.credential.json"),
+        json.dumps(started.credential_expires_at),
+        durable=True,
+    )
     save(
         os.path.join(state_dir(name), f"{generation}.github.json"),
         json.dumps(list(started.github)),
@@ -726,6 +732,14 @@ class DockerHost(Host):
                 os.close(lock)
         return True
 
+    def _client_runtime(self) -> ClientRuntime:
+        return ClientRuntime(
+            "/opt/agent-pm/bin",
+            "/opt/agent-pm/venv/bin/python",
+            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+            "/run/agent-pm",
+        )
+
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
     ) -> Mapping[str, str]:
@@ -733,7 +747,10 @@ class DockerHost(Host):
             raise ConfigError(
                 f"client {client or '(unnamed)'}: not supported on the Docker Host yet"
             )
-        return {home.env: docker_home(name, home.dir)}
+        path = docker_home(name, home.dir)
+        if os.path.realpath(path) != path:
+            raise ConfigError(f"client home {path}: symlink component")
+        return {home.env: path}
 
     def _resume_argv(self, name: str) -> tuple[str, ...]:
         return (*RESUME, name)
@@ -835,6 +852,7 @@ class DockerHost(Host):
         try:
             stops.check()
             _accept_started(name, generation, started, container)
+            self._stage_files(container, metadata)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -864,7 +882,12 @@ class DockerHost(Host):
             )
             process = tmux.launch(
                 name,
-                ["with-secrets", *launch.argv],
+                [
+                    "with-secrets",
+                    "--client",
+                    metadata["home_field"].removesuffix("_dir"),
+                    *launch.argv,
+                ],
                 cwd=cwd,
                 env=self._exec_env(launch),
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
@@ -941,6 +964,8 @@ class DockerHost(Host):
             os.makedirs(home, mode=0o700)
             for file, text in json.loads(metadata.get("home_files") or "{}").items():
                 save(os.path.join(home, file), text)
+            for directory in json.loads(metadata.get("home_persistent") or "null") or ():
+                os.makedirs(os.path.join(home, directory), mode=0o700, exist_ok=True)
         clients = client_keys(root)
         manifest = os.path.join(state_dir(name), f"{generation}.json")
         write_manifest(
@@ -962,7 +987,12 @@ class DockerHost(Host):
                 "image": image,
                 "image_digest": digest,
                 "workspace": {"volume": volume, "path": cwd},
-                "mounts": [{"path": home, "rw": True}],
+                "mounts": [
+                    {"path": os.path.join(home, directory), "rw": True}
+                    for directory in json.loads(metadata.get("home_persistent") or "null")
+                ]
+                if json.loads(metadata.get("home_persistent") or "null") is not None
+                else [{"path": home, "rw": True}],
                 "credential": credential,
             },
         )
@@ -1036,7 +1066,13 @@ class DockerHost(Host):
                 self.docker,
                 *("exec", "-i", "--workdir", cwd),
                 *(arg for key in env for arg in ("--env", key)),
-                *(container, "with-secrets", *launch.argv),
+                *(
+                    container,
+                    "with-secrets",
+                    "--client",
+                    metadata["home_field"].removesuffix("_dir"),
+                    *launch.argv,
+                ),
             )
             proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
@@ -1079,6 +1115,29 @@ class DockerHost(Host):
                 ),
             ),
         )
+
+    def _stage_files(self, container: str, metadata: Mapping[str, str]) -> None:
+        files = metadata.get("runtime_files")
+        if not files or files == "{}":
+            return
+        argv, env = docker_call(
+            self.docker,
+            "exec",
+            "-i",
+            "--user",
+            "agent",
+            container,
+            "/opt/agent-pm/venv/bin/python",
+            "-I",
+            "/opt/agent-pm/lib/bootstrap.py",
+            "runtime-files",
+        )
+        try:
+            result = self.run(argv, env, input=files, timeout=RUN_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SessionError(f"staging client runtime: {error}") from None
+        if result.returncode:
+            raise SessionError("staging client runtime failed")
 
     def _exec_env(self, launch: Launch) -> dict[str, str]:
         return {

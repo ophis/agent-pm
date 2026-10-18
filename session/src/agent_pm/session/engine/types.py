@@ -170,6 +170,15 @@ class ClientHome:
     env: str
     credential: str
     files: tuple[tuple[str, str], ...] = ()
+    persistent: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ClientRuntime:
+    bin_dir: str
+    python: str
+    pythonpath: str
+    state_root: str
 
 
 @dataclass(frozen=True)

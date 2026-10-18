@@ -360,6 +360,53 @@ class ClientEnvTest(Base):
 
 
 class StartTest(Base):
+    def test_runtime_staging_errors_are_reported_without_container_output(self):
+        files = json.dumps({"/run/agent-pm/agent-store/" + "a" * 64 + ".json": "{}"})
+        for result in (
+            done(1, "private", "private"),
+            OSError("unavailable"),
+            TimeoutExpired("exec", 1),
+        ):
+            with self.subTest(result=type(result).__name__):
+                with (
+                    mock.patch.object(
+                        self.host,
+                        "run",
+                        **(
+                            {"side_effect": result}
+                            if isinstance(result, Exception)
+                            else {"return_value": result}
+                        ),
+                    ),
+                    self.assertRaises(SessionError) as raised,
+                ):
+                    self.host._stage_files(CONTAINER, {"runtime_files": files})
+                self.assertNotIn("private", str(raised.exception))
+
+    def test_runtime_projection_and_initial_expiry_are_staged_before_client(self):
+        expiry = "2026-10-18T12:00:00Z"
+        self.broker.started = replace(self.broker.started, credential_expires_at=expiry)
+        files = json.dumps({"/run/agent-pm/agent-store/" + "a" * 64 + ".json": "{}"})
+        self.start(runtime_files=files, home_persistent='["sessions"]')
+        self.assertTrue(os.path.isdir(os.path.join(self.home_dir, "sessions")))
+        self.assertIn(files, self.docker.inputs)
+        with open(os.path.join(self.state, f"{GEN}.credential.json")) as f:
+            self.assertEqual(json.load(f), expiry)
+        with open(os.path.join(self.state, f"{GEN}.plan.json")) as f:
+            self.assertEqual(
+                json.load(f)["mounts"], [{"path": self.home_dir + "/sessions", "rw": True}]
+            )
+
+    def test_staging_failure_rolls_back_the_container(self):
+        with (
+            mock.patch.object(
+                self.host, "_stage_files", side_effect=SessionError("projection failed")
+            ),
+            self.assertRaisesRegex(SessionError, "projection failed"),
+        ):
+            self.start()
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
     METADATA = {
         "sid": "s1",
         "client": "agent",
@@ -461,6 +508,7 @@ class StartTest(Base):
                     "image": IMAGE,
                     "cwd": self.cwd,
                     "workspace": "agent-pm-ws-w",
+                    "client": "agent",
                     "agent_dir": self.home_dir,
                     "hook_path": os.path.join(REPO, "bin", "agent-pm-session"),
                     "github": None,
@@ -537,7 +585,7 @@ class StartTest(Base):
         self.assertEqual(SOCKET, "/run/agent-pm/relay.sock")
         new = self.docker.execs()[2]
         tail = new[new.index("--") :]
-        self.assertEqual(tail[:4], ["--", "with-secrets", "agent", "--flag"])
+        self.assertEqual(tail[:6], ["--", "with-secrets", "--client", "agent", "agent", "--flag"])
         self.assertEqual(new[new.index("-c") + 1], self.cwd)
         self.assertIn(f"AGENT_HOME={self.home_dir}", new)
         self.assertIn("K=v", new)
@@ -1073,7 +1121,7 @@ class PipeTest(Base):
             [
                 *(DOCKER, "--host", self.ep, "exec", "-i", "--workdir", self.cwd),
                 *("--env", "AGENT_HOME", "--env", "K"),
-                *(CONTAINER, "with-secrets", "agent", "-p"),
+                *(CONTAINER, "with-secrets", "--client", "agent", "agent", "-p"),
             ],
         )
         self.assertEqual((kw["env"]["K"], kw["env"]["AGENT_HOME"]), ("secret", self.home_dir))

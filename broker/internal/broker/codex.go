@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ophis/agent-pm/broker/internal/codex"
+	"github.com/ophis/agent-pm/broker/internal/docker"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -262,6 +263,61 @@ func (c Codex) trusted() error {
 		return errors.New("Codex keychain trust incomplete; retry " + codexLoginCommand)
 	}
 	return nil
+}
+
+func (c Codex) containerAuth(ctx context.Context, use func(codexAuthDocument, time.Time) error) error {
+	if _, err := c.native.Verify(); err != nil {
+		return protocol.New(protocol.LoginRequired, "Pinned Codex unavailable; run "+codexRepair(err))
+	}
+	unlock, err := c.native.Lock(ctx)
+	if err != nil {
+		return protocol.New(protocol.LoginRequired, "Cannot lock Codex login; retry "+codexLoginCommand)
+	}
+	defer unlock()
+	if err := c.trusted(); err != nil {
+		return protocol.New(protocol.LoginRequired, "Codex login unavailable; run "+codexLoginCommand)
+	}
+	data, err := c.keychain.Secret(codexService, codexAccount)
+	defer erase(data)
+	if err != nil {
+		return protocol.New(protocol.LoginRequired, "Codex login unavailable; run "+codexLoginCommand)
+	}
+	expires, err := parseCodexAuth(data)
+	if err != nil || !c.now().Before(expires) {
+		return protocol.New(protocol.LoginRequired, "Codex authentication expired or invalid; run "+codexLoginCommand+"; token refresh is not supported yet")
+	}
+	var auth codexAuthDocument
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return protocol.New(protocol.LoginRequired, "Invalid Codex login; run "+codexLoginCommand)
+	}
+	return use(auth, expires)
+}
+
+func (c Codex) Ready(ctx context.Context) error {
+	return c.containerAuth(ctx, func(codexAuthDocument, time.Time) error { return nil })
+}
+
+func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (string, error) {
+	var expiry string
+	err := c.containerAuth(ctx, func(auth codexAuthDocument, expires time.Time) error {
+		auth.Mode = "chatgptAuthTokens"
+		auth.Tokens.ID, auth.Tokens.Refresh = auth.Tokens.Access, ""
+		data, err := json.Marshal(auth)
+		if err != nil {
+			return protocol.New(protocol.StartFailed, "Cannot encode Codex container credentials")
+		}
+		defer erase(data)
+		err = exec([]string{"/opt/agent-pm/venv/bin/python", "-I", "/opt/agent-pm/lib/bootstrap.py", "codex-auth"}, data)
+		if errors.Is(err, docker.ErrUnreachable) {
+			return docker.ErrUnreachable
+		}
+		if err != nil {
+			return protocol.New(protocol.StartFailed, "Writing Codex credentials into the container failed")
+		}
+		expiry = expires.Format(time.RFC3339)
+		return nil
+	})
+	return expiry, err
 }
 
 func (c Codex) Status(ctx context.Context) protocol.CodexStatus {

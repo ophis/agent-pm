@@ -182,9 +182,27 @@ def inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
 
 
+def _history_open(path: str, *, directory: bool = False) -> int:
+    parts = os.path.abspath(path).split(os.sep)[1:]
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for index, part in enumerate(parts):
+            flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+            if directory or index < len(parts) - 1:
+                flags |= os.O_DIRECTORY
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        result, fd = fd, -1
+        return result
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def read_metadata(path: str) -> SessionFile:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = _history_open(path)
     except FileNotFoundError:
         raise
     except OSError as exc:
@@ -239,24 +257,33 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
     for length in (4, 2, 2):
         children = []
         for directory in directories:
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if (
-                        len(entry.name) == length
-                        and entry.name.isascii()
-                        and entry.name.isdigit()
-                        and entry.is_dir()
-                    ):
-                        children.append(entry.path)
+            fd = _history_open(directory, directory=True)
+            try:
+                entries = os.scandir(fd)
+                with entries:
+                    for entry in entries:
+                        if (
+                            len(entry.name) == length
+                            and entry.name.isascii()
+                            and entry.name.isdigit()
+                            and entry.is_dir(follow_symlinks=False)
+                        ):
+                            children.append(os.path.join(directory, entry.name))
+            finally:
+                os.close(fd)
         directories = children
     matches = []
     for directory in directories:
-        with os.scandir(directory) as entries:
-            matches.extend(
-                entry.path
-                for entry in entries
-                if fnmatch.fnmatchcase(entry.name, f"rollout-*-{identifier}.jsonl")
-            )
+        fd = _history_open(directory, directory=True)
+        try:
+            with os.scandir(fd) as entries:
+                matches.extend(
+                    os.path.join(directory, entry.name)
+                    for entry in entries
+                    if fnmatch.fnmatchcase(entry.name, f"rollout-*-{identifier}.jsonl")
+                )
+        finally:
+            os.close(fd)
     return matches
 
 
@@ -564,6 +591,11 @@ class SessionStore:
         for error in drop_stale(operation.root):
             print(f"codex recovery: {error}", file=sys.stderr)
         return state
+
+    @staticmethod
+    def project(state: SessionState, root: str) -> dict[str, str]:
+        operation = _StoreOperation(root)
+        return {operation._path(state.workdir, state.sid): operation.encoded(state).decode()}
 
     def load(self, workdir: str, sid: object) -> SessionState | None:
         operation = _StoreOperation(self.root)
