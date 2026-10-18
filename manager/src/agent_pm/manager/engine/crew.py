@@ -100,8 +100,8 @@ def _reconciled(entry: Entry, status: Status) -> State:
     return State.GONE
 
 
-def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str]:
-    """An issue run's role, client, session id and cwd from its run record,
+def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str]:
+    """An issue run's role, client, session id, cwd, agent name and Host from its run record,
     `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
     agent can append to.
     """
@@ -115,13 +115,16 @@ def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str]:
         role, session = state["role"], state["plan"]["session"]
         client, sid, workdir = session["client"], session["sid"], session["workdir"]
         cwd = session["access"]["cwd"]
+        name, host = state["agent_name"], state["host"]
+        if not all(isinstance(value, str) and value for value in (name, host)):
+            raise TypeError("no agent name or host")
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise RuntimeError(f"{issue}: no run record at {path}: {error!r}") from None
     if not all(isinstance(value, str) and value for value in (role, client, sid, workdir, cwd)):
         raise RuntimeError(f"{issue}: {path}: no role, client, session id or cwd")
     if os.path.realpath(workdir) != os.path.realpath(run):
         raise RuntimeError(f"{issue}: {path} records another run, {workdir}")
-    return role, client, sid, cwd
+    return role, client, sid, cwd, name, host
 
 
 class Crew:
@@ -240,17 +243,21 @@ class Crew:
             # Session's argparse takes unique abbreviations, so --cw is --cwd.
             words = {w for w in (o.split("=")[0] for o in options) if w.startswith("--") and w[2:]}
             if fixed := {
-                f for f in ("--client", "--cwd", "--resume") for w in words if f.startswith(w)
+                f
+                for f in ("--client", "--cwd", "--host", "--resume")
+                for w in words
+                if f.startswith(w)
             }:
                 raise ValueError(f"reopen sets {', '.join(sorted(fixed))} from the run record")
-            role, client, sid, cwd = _closed_run(work_dir, key)
-            name = f"{role}-{key}"
+            _, client, sid, cwd, name, host = _closed_run(work_dir, key)
             if live := self._live({key, name}, sid):
                 raise ValueError(f"{key}: still live ({', '.join(live)}); close it before reopen")
             command = (
                 "agent-pm-session",
                 "start",
                 name,
+                "--host",
+                host,
                 "--client",
                 client,
                 "--cwd",

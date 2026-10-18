@@ -347,14 +347,15 @@ Examples:
             "Resume a closed issue run's conversation as a worker and track its Record",
             f"{LayerCommand.SESSION} start",
             """ISSUE is a board issue identifier with a recorded run.
-Crew reads the run's role, client, session id and cwd from its run record,
-WORK_DIR/work/ISSUE/run/delegate.json, then starts worker ROLE-ISSUE:
-agent-pm-session start ROLE-ISSUE --client CLIENT --cwd CWD --resume SID,
-under that session identity. No record or session id: exit 1. SESSION_OPTIONS
-naming --client, --cwd or --resume, abbreviated or not: exit 2. A run still
-alive (roster entry ISSUE or ROLE-ISSUE, or a session listed here or below with
-its session id): exit 2, so its conversation gets no second client. The worker
-is tracked like any other; the board is not touched.
+Crew reads the run's client, session id, cwd, agent name and Host from its run
+record, WORK_DIR/work/ISSUE/run/delegate.json, then starts worker AGENT, the
+agent name: agent-pm-session start AGENT --host HOST --client CLIENT --cwd CWD
+--resume SID, under that session identity, so a Docker run comes back on the
+Docker Host. No record or session id: exit 1. SESSION_OPTIONS naming --client,
+--cwd, --host or --resume, abbreviated or not: exit 2. A run still alive
+(roster entry ISSUE or AGENT, or a session listed here or below with its
+session id): exit 2, so its conversation gets no second client. The worker is
+tracked like any other; the board is not touched.
 
 Examples:
   With TASK-123's run closed:

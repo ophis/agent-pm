@@ -175,6 +175,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         "--client", required=True, help="required [session.clients.NAME] configuration name"
     )
     p.add_argument("--cwd", help="its directory (default: this one)")
+    p.add_argument("--host", metavar="NAME", help="its Host (default: [session.hosts].default)")
     p.add_argument(
         "--resume", metavar="SID", help=f"resume conversation SID; else ${SID_ENV}, else new id"
     )
@@ -665,17 +666,20 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     cwd = os.path.abspath(args.cwd or os.getcwd())
     if not os.path.isdir(cwd):
         raise UsageError(f"--cwd {cwd}: not a directory")
+    host = args.host or hosts.default
+    if host not in hosts.tables:
+        raise UsageError(f"--host {host}: want one of {', '.join(sorted(hosts.tables))}")
     events = os.environ.get(EVENTS_ENV) or None
     worker = Worker.new(
         name=args.name,
         sid=args.resume or start_sid or str(uuid.uuid4()),
         client=args.client,
         cwd=cwd,
-        host=hosts.default,
+        host=host,
         flags=tuple(flags),
         env=dict(args.env),
         events=None if events is None else os.path.abspath(events),
-        display=Session.display(args.display, host=hosts.default),
+        display=Session.display(args.display, host=host),
     )
     worker.check(prompt=args.prompt, resume=args.resume is not None)
     with worker.locked():

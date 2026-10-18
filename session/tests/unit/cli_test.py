@@ -11,7 +11,7 @@ from unittest import mock
 from agent_pm.session import cli
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.tmux_cli import attach_command
-from agent_pm.session.engine.types import Hosts
+from agent_pm.session.engine.types import ConfigError, Hosts
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.viewer import display as displays
 from agent_pm.utils import Record
@@ -27,6 +27,11 @@ class CliHost(ScreenHost):
 
     def __init__(self, name, settings):
         self.__dict__ = self.current.__dict__
+
+
+class OtherHost(CliHost):
+    def validate(self, name, launch):
+        raise ConfigError("refused on the other Host")
 
 
 class ReservedName(Case):
@@ -95,6 +100,21 @@ class RecordControl(HostedTuiBase):
                     self.assertIn(SID, err)
                     self.assertIn("replacement", err)
         replacement.calls.close.assert_not_called()
+
+    def test_start_runs_the_worker_on_its_host_option_and_refuses_an_unknown_one(self):
+        with open(Path(self.agent_pm, "config.local.toml"), "a") as f:
+            f.write(
+                '[session.hosts.other]\nimplementation = "session.tests.unit.cli_test:OtherHost"\n'
+            )
+        code, out, err = self.invoke("start", "w2", "--client", "fake", "--host", "nowhere")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("--host nowhere: want one of docker, other, pty, tmux", err)
+        code, out, err = self.invoke(
+            "start", "w2", "--client", "fake", "--host", "other", "--display", "none"
+        )
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("refused on the other Host", err)
+        self.assertEqual(self.host.processes, {})
 
     def test_status_refuses_a_record_with_one_replaced_session(self):
         self.host.create("w1", sid=SID)
