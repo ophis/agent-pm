@@ -43,6 +43,10 @@ def _note(note: str | None) -> None:
         raise RosterError(f"note: want null or printable text of at most {NOTE_MAX} characters")
 
 
+def _label(holder: dict | None) -> str:
+    return holder["session"] or holder["id"] if holder is not None else "another holder"
+
+
 def _uuid4(value) -> bool:
     if not isinstance(value, str):
         return False
@@ -257,10 +261,7 @@ class Roster:
         holder, lease = data["holder"], self._lease_token
         if lease is None:
             if self._active_holder():
-                label = (
-                    holder["session"] or holder["id"] if holder is not None else "another holder"
-                )
-                raise Held(f"{self.directory}: held by {label}")
+                raise Held(f"{self.directory}: held by {_label(holder)}")
             return
         if holder is None or holder["id"] != lease.id or data["lease_gen"] != lease.generation:
             raise Stale(f"{self.directory}: stale holder generation; start a new manager holder")
@@ -291,13 +292,7 @@ class Roster:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     if not force:
-                        holder = data["holder"]
-                        label = (
-                            holder["session"] or holder["id"]
-                            if holder is not None
-                            else "another holder"
-                        )
-                        raise Held(f"{self.directory}: held by {label}") from None
+                        raise Held(f"{self.directory}: held by {_label(data['holder'])}") from None
                     os.close(fd)
                     fd = None
                     fd = self._replace_holder()

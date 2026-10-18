@@ -47,6 +47,10 @@ def _roster(args) -> Roster:
     return Roster(str(directory))
 
 
+def _named(manager: str) -> tuple[str, ...]:
+    return (f"--manager={manager}",) if manager.startswith("-") else ("--manager", manager)
+
+
 def _crew(args) -> Crew:
     holder = os.environ.get("AGENT_PM_HOLDER_ID")
     generation = os.environ.get("AGENT_PM_HOLDER_GENERATION")
@@ -89,8 +93,7 @@ def _attach(args) -> int:
     lines = crew.attach().splitlines()
     trailer = lines.pop()
     cursor, generation = (field.partition("=")[2] for field in trailer.split())
-    manager = os.path.basename(crew.roster.directory)
-    named = (f"--manager={manager}",) if manager.startswith("-") else ("--manager", manager)
+    named = _named(os.path.basename(crew.roster.directory))
     print("\n".join(lines))
     for name, entry in crew.roster.entries().items():
         if entry.state == State.GONE:
