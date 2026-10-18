@@ -1,6 +1,6 @@
 # Docker broker protocol
 
-**Protocol 11** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+**Protocol 12** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
 (Session's Docker Host, Python). `version` writes `{"protocol_version":"12"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
@@ -18,6 +18,7 @@ codes `github_failed` and `refresh_failed`. Protocol 7 adds the optional adminis
 manifest directories and start's `credential_expires_at`; relay messages and GitHub fields
 remain unchanged. Protocol 10 adds start's `client_update` audit object. Protocol 11 adds
 refresh's required nullable `credential_expires_at` and permits Codex refresh without GitHub.
+Protocol 12 replaces the exact-list audit with `min_version` and drops the status rule field.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 

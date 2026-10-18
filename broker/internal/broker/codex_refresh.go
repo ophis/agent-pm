@@ -26,7 +26,7 @@ func (c Codex) renew(ctx context.Context, previous []byte, old codexAuthDocument
 	}
 	if err := c.native.Refresh(ctx, home); err != nil {
 		if errors.Is(err, codex.ErrRefreshVersion) {
-			return nil, errors.New(codex.ErrRefreshVersion.Error() + "; run " + strings.Replace(codexUpdateCommand, "<version>", codex.RefreshVersion, 1))
+			return nil, errors.New(codex.ErrRefreshVersion.Error() + "; run " + strings.Replace(codexUpdateCommand, "<version>", codex.MinVersion, 1))
 		}
 		return nil, errors.New("native Codex refresh failed; retry or run " + codexLoginCommand)
 	}

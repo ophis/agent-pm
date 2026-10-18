@@ -10,7 +10,7 @@ refresh and supervisor renewal ([Refresh and recovery](#refresh-and-recovery)).
 ## Commands
 
 Install or upgrade the hardened broker first with `sh <agent-pm plugin directory>/broker/install.sh`.
-Replace `<version>` with an exact stable npm version, such as `0.163.0` (required for refresh):
+Replace `<version>` with an exact stable npm version meeting the [minimum version](#container-versions):
 
 | Action | Command |
 |---|---|
@@ -208,8 +208,9 @@ Sources: `broker/internal/broker/codex.go`, `codex_revision.go`, `codex_refresh.
 `broker/internal/launcher/refresh.go:15`. Login uses the same lock. The revision record
 contains no account or credential value.
 
-The fixed native `0.163.0` app-server performs the managed account refresh in a
-private temporary home, with bounded output and a 120-second deadline. The broker
+The pinned native app-server follows the [minimum version](#container-versions) and
+performs managed account refresh in a private temporary home, with bounded output
+and a 120-second deadline. The broker
 requires unchanged account, changed access value, later expiry and verified keychain
 readback. Temporary state is removed on normal completion, failure and cancellation;
 uncatchable termination retains the limitation described under [Login trust](#login-trust).
@@ -242,7 +243,7 @@ Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:273`.
 ### TASK-650 user-run acceptance, pending
 
 Run on authorized macOS Apple silicon with Docker Desktop after release. Workers
-run none of these checks. Use the supported, evidence-backed compatibility rule and
+run none of these checks. Use versions meeting the minimum rule and
 record only versions, times, statuses, counts and redacted errors. Do not dump auth,
 keychain, environment or token values; do not change credential dates or test real expiry.
 
@@ -316,8 +317,11 @@ sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex 0.163.0
 
 If the backup name exists, choose another; confirm `active.json` moved before installing.
 This leaves releases and account locks intact and does not modify keychain entries.
-Rebuild worker images containing an older Codex using `agent-pm-broker build`; use the
-new image on subsequent starts. Later host upgrades use
+Rebuild worker images containing an older Codex with
+`/usr/local/libexec/agent-pm/agent-pm-broker build --agent-pm <plugin-dir> --max-age 0`,
+where `<plugin-dir>` is the installed plugin root; include the existing `--plugin`
+options for whitelisted skills. See [image rebuild](docker-host.md#build).
+Use the new image on subsequent starts. Later host upgrades use
 `sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex <version>` with a stable
 version at least the minimum. No version-list publication step is needed.
 
@@ -339,14 +343,16 @@ workers run none of these checks. Real expiry is outside TASK-647.
 | Complete a headless run, reopen it as a terminal, then close and resume headless on the same Host | Same native ID, CODEX_HOME, history and workspace; replies and outcomes appear once |
 | Restart the host supervisor, then query/send | Hook relay resumes, same identity; current published access deadline retained |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
-| Start, restart, then close/resume using an evidence-backed rule containing an image and newer registry version | Each generation runs the newest allowed version; audit and progress agree; runtime program is outside workspace/history |
-| Repeat with registry unavailable, then an unavailable/corrupt allowed update | Image version restored and recorded; no secret injection precedes preparation |
-| Use an image outside the rule, and separately an empty rule | Startup refuses before any client/GitHub secret; existing compatible image remains usable if only advisory lookup fails |
+| Start, restart, then close/resume with supported pinned/image versions and a newer registry stable release | Each generation runs registry latest; audit and progress agree; runtime program is outside workspace/history |
+| Repeat with registry unavailable, then an unavailable/corrupt supported update | Image version restored and recorded; no secret injection precedes preparation |
+| Use a below-minimum image, then a below-minimum pinned host; also try equal and higher versions | Low versions refuse before any client/GitHub secret, with rebuild/upgrade instructions; equal and higher versions pass admission; advisory lookup failure permits supported startup |
 | Close after a successful update, then resume | Executable tmpfs disappears; next generation repeats selection; native history remains |
 | Use a whitelisted skill in both modes | Namespaced skill executes from the image; its scripts/references resolve; empty whitelist loads none |
 | Concurrent real refresh and failure recovery | [TASK-650 pending checklist](#task-650-user-run-acceptance-pending) |
 
 ## Plan A validation report
+
+Historical observations; current admission follows [Container versions](#container-versions).
 
 **Verdict: A, for the narrowed 2026-10-18 scope.** The running native app-server
 loaded the replaced access token without restart. TASK-647 certifies `0.163.0`;
