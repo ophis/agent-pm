@@ -91,6 +91,7 @@ flowchart LR
 ```bash
 bin/agent-pm-linear router --issue <ID>         # run one issue now, skipping the hours, max_runs and usage gates
 bin/agent-pm-linear router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
+bin/agent-pm-linear status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
 bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
 bin/agent-pm-linear close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
 bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
@@ -98,6 +99,8 @@ tmux ls                                         # running agent runs
 ```
 
 Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+
+A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
