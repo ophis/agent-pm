@@ -109,7 +109,11 @@ async function step(item) {
     await tool(session, "bash");
   } else if ("error" in item) {
     await emit("session.error", { sessionID: native, error: item.error });
-    if (!item.recover) return true;
+    if (!item.recover) {
+      // halt's idle; turn() then sends the run's own (processor.ts halt, runner.ts finishRun)
+      await emit("session.idle", { sessionID: native });
+      return true;
+    }
     await emit("session.status", { sessionID: native, status: { type: "busy" } });
   } else if ("foreign" in item) {
     await emit("session.created", { info: { id: FOREIGN } });

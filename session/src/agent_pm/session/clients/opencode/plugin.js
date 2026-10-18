@@ -96,10 +96,8 @@ function handle(event, client) {
     case "session.idle": {
       if (p.sessionID !== root) return;
       busy = false;
-      if (failed) {
-        failed = false;
-        return;
-      }
+      // A fatal error's turn idles twice (its halt, then its run's end); only a busy clears it.
+      if (failed) return;
       const text = reply(client).catch(() => "");
       call("session.idle", text.then((last) => ({ last_assistant_message: last })));
       return;

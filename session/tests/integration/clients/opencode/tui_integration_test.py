@@ -207,10 +207,12 @@ class TuiSessions(Case):
 
     def test_an_error_fails_the_turn_without_a_turn_end(self):
         error = {"name": "APIError", "data": {"message": "connection refused"}}
-        self.scene([[{"error": error}]])
-        _, stream = self.start()
+        self.scene([[{"error": error}], [{"text": "ok now"}]])
+        handle, stream = self.start()
         self.assertEqual(stream.until(TurnFailed)[-1], TurnFailed("APIError", "connection refused"))
         stream.quiet()
+        handle.send("again")
+        self.assertEqual(stream.until(TurnEnd), [Activity(""), TurnEnd("ok now")])
         self.assertEqual(self.words(1)[-1], "w1 done")
 
     def test_a_recovered_error_still_ends_the_turn(self):
