@@ -659,7 +659,7 @@ def run_native(argv, environment, exchange=None):
         result["error"] = "cancelled"
     finally:
         if process:
-            if result["error"] or process.poll() is None:
+            if process.returncode is None:
                 try:
                     stop_native(process)
                     result["cleanup_status"] = "terminated"

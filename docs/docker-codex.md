@@ -247,7 +247,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run pair
 ```
 
-[`summarize_pair`](../scripts/docker_codex_a_probe.py#L372) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
+[`summarize_pair`](../scripts/docker_codex_a_probe.py#L405) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
 
 ```sh
 docker exec task647-codex-a-1 codex -c 'cli_auth_credentials_store="file"' exec --skip-git-repo-check --sandbox read-only --json 'Reply exactly OK. Do not use tools.'
@@ -278,7 +278,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
 ```
 
-[`resume_turn`](../scripts/docker_codex_a_probe.py#L435) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
+[`resume_turn`](../scripts/docker_codex_a_probe.py#L751) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
 
 | 新增脱敏字段 | 观察含义 |
 |---|---|
@@ -287,7 +287,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 | `rejected_item_type_counts` | 白名单外 item 的事件次数，含 started／updated／completed；仅回传固定源码中的类型，其他归为 `other`；不等于工具调用次数 |
 | `same_native_session` | 本次 `thread.started` 身份是否恰好一次且匹配既有身份 |
 
-字段实现见 [summarize_turn](../scripts/docker_codex_a_probe.py#L285)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
+字段实现见 [summarize_turn](../scripts/docker_codex_a_probe.py#L318)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
 
 第三组结果已记录；以下只补缺失的通知类别，不重复到期命令或双容器基线。
 
@@ -303,7 +303,7 @@ The original six-category classifier returned `unknown` in Group 4. Its historic
 
 ### Group 5: expanded source-template classification
 
-**Catalog**: [`ERROR_ITEM_TEMPLATES`](../scripts/docker_codex_a_probe.py#L136) contains 19 fixed category IDs with source locations under pinned Codex commit `83086188ae0614bd882818ff1aa23f3194962012`. It covers config/requirements and credential-masking warnings, unapplied rules, Code Mode availability, transcript-save failures, compaction, resumed-model changes and service-tier notices in addition to the original families. Full-message patterns discard all substitutions; unmatched, ambiguous, non-string or over-64-KiB messages remain `unknown`. The catalog is finite, not an exhaustive decoder of notification origins.
+**Catalog**: [`ERROR_ITEM_TEMPLATES`](../scripts/docker_codex_a_probe.py#L169) contains 19 fixed category IDs with source locations under pinned Codex commit `83086188ae0614bd882818ff1aa23f3194962012`. It covers config/requirements and credential-masking warnings, unapplied rules, Code Mode availability, transcript-save failures, compaction, resumed-model changes and service-tier notices in addition to the original families. Full-message patterns discard all substitutions; unmatched, ambiguous, non-string or over-64-KiB messages remain `unknown`. The catalog is finite, not an exhaustive decoder of notification origins.
 
 ```mermaid
 flowchart LR
@@ -367,7 +367,7 @@ This is the before-refresh observation, not another classification-only rerun. K
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run host-refresh
 ```
 
-`rotation_observed` describes changed access, advanced normalized expiry/last-refresh metadata and stable account in the isolated file; it is not an A/B pass or proof that the replacement is usable. The helper uses bounded private stdio, discards raw responses/stderr and calls no OAuth endpoint itself. Codex alone rewrites its login. A returned account/read result is insufficient because its handler discards refresh errors: [account_processor.rs:1103](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1103). An unchanged refresh token is allowed by [persist_tokens:1600](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1600); record its changed boolean, not its value. The RPC request count is not a measured upstream-request count. Nonzero, cancellation, timeout, account change or no observed rotation: return the redacted record and stop, with no automatic retry.
+`rotation_observed` describes changed access, advanced normalized expiry/last-refresh metadata and stable account in the isolated file; it is not an A/B pass or proof that the replacement is usable. The [host-refresh helper](../scripts/docker_codex_a_probe.py#L689) uses bounded private stdio, discards raw responses/stderr and calls no OAuth endpoint itself. Codex alone rewrites its login. A returned account/read result is insufficient because its handler discards refresh errors: [account_processor.rs:1103](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/request_processors/account_processor.rs#L1103). An unchanged refresh token is allowed by [persist_tokens:1600](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/login/src/auth/manager.rs#L1600); record its changed boolean, not its value. The RPC request count is not a measured upstream-request count. Nonzero, cancellation, timeout, account change or no observed rotation: return the redacted record and stop, with no automatic retry.
 
 **Step 3, manager:**
 

@@ -392,6 +392,21 @@ class RefreshProbeTest(Case):
         self.assertEqual(result["error"], "native_failure")
         self.assertGreaterEqual(killed.call_count, 1)
 
+    def test_nonzero_native_exit_is_not_reported_as_forced_termination(self):
+        def failed_wait(process, timeout):
+            self.assertGreater(timeout, 0)
+            process.returncode = 7
+            return 7
+
+        with patch.object(FakeProcess, "wait", failed_wait):
+            result, _output, _process, killed = self.run_transport(
+                [b"codex-cli 0.163.0\n", b""], exchange=False
+            )
+        self.assertEqual(result["error"], "native_failure")
+        self.assertEqual(result["exit_code"], 7)
+        self.assertEqual(result["cleanup_status"], "exited")
+        killed.assert_not_called()
+
     def test_fake_version_output_is_bounded(self):
         result, output, _process, killed = self.run_transport(
             [b"codex-cli 0.163.0\n", b""], exchange=False
