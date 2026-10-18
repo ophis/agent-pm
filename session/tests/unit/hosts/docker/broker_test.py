@@ -92,11 +92,11 @@ class ResponseTest(Case):
     def test_client_update_outcomes_and_invalid_shapes(self):
         response = data("start-output-codex.json")
         for result, target, actual in (
-            ("current", "0.100.0", "0.100.0"),
-            ("updated", "0.162.1", "0.162.1"),
-            ("update_failed", "0.162.1", "0.100.0"),
-            ("registry_unavailable", "", "0.100.0"),
-            ("no_allowed_release", "", "0.100.0"),
+            ("current", "0.163.0", "0.163.0"),
+            ("updated", "0.164.0", "0.164.0"),
+            ("update_failed", "0.164.0", "0.163.0"),
+            ("registry_unavailable", "", "0.163.0"),
+            ("no_supported_release", "", "0.163.0"),
         ):
             policy = {**response["client_update"], "result": result, "target_version": target}
             found = {
@@ -127,16 +127,16 @@ class ResponseTest(Case):
         good = data("start-output-codex.json")
         policy = {
             "client": "codex",
-            "pinned_version": "0.162.1",
-            "allowed_versions": ["0.100.0", "0.162.1"],
-            "image_version": "0.100.0",
-            "target_version": "0.100.0",
+            "pinned_version": "0.164.0",
+            "min_version": "0.163.0",
+            "image_version": "0.163.0",
+            "target_version": "0.163.0",
             "result": "current",
         }
         response = {
             **good,
             "client_update": policy,
-            "clients": {**good["clients"], "codex": "codex-cli 0.100.0"},
+            "clients": {**good["clients"], "codex": "codex-cli 0.163.0"},
         }
         self.assertEqual(
             Broker(FakeBroker((0, json.dumps(response), "")))
@@ -146,9 +146,13 @@ class ResponseTest(Case):
         )
         for changes in (
             {"result": "unknown"},
-            {"allowed_versions": []},
+            {"min_version": []},
             {"image_version": "1.0.0"},
-            {"target_version": "0.162.1"},
+            {"image_version": "0.162.999"},
+            {"pinned_version": "0.162.999"},
+            {"min_version": "0.165.0"},
+            {"min_version": "latest"},
+            {"target_version": "0.164.0"},
             {"pinned_version": "latest"},
             {"extra": "x"},
         ):

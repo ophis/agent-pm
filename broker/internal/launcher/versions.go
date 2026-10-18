@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,18 +16,17 @@ const updateScript = "/opt/agent-pm/lib/codex-update.py"
 
 type CodexVersions interface {
 	Verify() (codex.Installation, error)
-	LatestAllowed(context.Context, []string) (string, error)
 	Latest(context.Context) (string, error)
 	Linux(context.Context, string, string) ([]byte, error)
 }
 
 type ClientUpdate struct {
-	Client          string   `json:"client"`
-	PinnedVersion   string   `json:"pinned_version"`
-	AllowedVersions []string `json:"allowed_versions"`
-	ImageVersion    string   `json:"image_version"`
-	TargetVersion   string   `json:"target_version"`
-	Result          string   `json:"result"`
+	Client        string `json:"client"`
+	PinnedVersion string `json:"pinned_version"`
+	MinVersion    string `json:"min_version"`
+	ImageVersion  string `json:"image_version"`
+	TargetVersion string `json:"target_version"`
+	Result        string `json:"result"`
 }
 
 func (h Host) versionPolicy(ctx context.Context) (codex.Installation, error) {
@@ -39,12 +37,12 @@ func (h Host) versionPolicy(ctx context.Context) (codex.Installation, error) {
 	if err != nil {
 		return i, protocol.New(protocol.StartFailed, "Pinned Codex unavailable; run sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex <version> or update-codex <version>.")
 	}
-	if !codex.ValidVersion(i.Version) || len(i.AllowedVersions) == 0 || slices.ContainsFunc(i.AllowedVersions, func(v string) bool { return !codex.ValidVersion(v) }) {
-		return i, protocol.New(protocol.StartFailed, "Codex compatibility rule is empty or invalid; publish verified allowed_versions in the pinned installation (docs/docker-codex.md).")
+	if !codex.SupportedVersion(i.Version) {
+		return i, protocol.Newf(protocol.StartFailed, "Pinned Codex requires version %s or newer; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex %s.", codex.MinVersion, codex.MinVersion)
 	}
 	hintCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if latest, err := h.Versions.Latest(hintCtx); err == nil && codex.Newer(latest, i.Version) && h.Progress != nil {
+	if latest, err := h.Versions.Latest(hintCtx); err == nil && codex.SupportedVersion(latest) && codex.Newer(latest, i.Version) && h.Progress != nil {
 		fmt.Fprintf(h.Progress, "agent-pm-broker: newer pinned Codex available; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex %s\n", latest)
 	}
 	return i, nil
@@ -68,22 +66,21 @@ func (h Host) codexProbe(ctx context.Context, c, path, version string) error {
 
 func (h Host) updateCodex(ctx context.Context, c, arch string, clients Clients, i codex.Installation) (Clients, ClientUpdate, error) {
 	image := strings.TrimPrefix(clients.Codex, "codex-cli ")
-	u := ClientUpdate{Client: "codex", PinnedVersion: i.Version, AllowedVersions: slices.Clone(i.AllowedVersions), ImageVersion: image}
-	if clients.Codex != "codex-cli "+image || !slices.Contains(i.AllowedVersions, image) {
-		return clients, u, protocol.New(protocol.StartFailed, "Image Codex version is outside the compatibility rule; rebuild the worker image with an allowed version.")
+	u := ClientUpdate{Client: "codex", PinnedVersion: i.Version, MinVersion: codex.MinVersion, ImageVersion: image}
+	if clients.Codex != "codex-cli "+image || !codex.SupportedVersion(image) {
+		return clients, u, protocol.New(protocol.StartFailed, "Image Codex version is invalid or below the minimum; rebuild the worker image with Codex "+codex.MinVersion+" or newer.")
 	}
 	updateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	target, err := h.Versions.LatestAllowed(updateCtx, i.AllowedVersions)
+	target, err := h.Versions.Latest(updateCtx)
 	u.TargetVersion = target
 	switch {
 	case err != nil:
 		u.TargetVersion = ""
 		u.Result = "registry_unavailable"
-	case target == "":
-		u.Result = "no_allowed_release"
-	case !slices.Contains(i.AllowedVersions, target):
-		return clients, u, protocol.New(protocol.StartFailed, "Registry selected a Codex version outside the compatibility rule.")
+	case !codex.SupportedVersion(target):
+		u.TargetVersion = ""
+		u.Result = "no_supported_release"
 	case target == image:
 		u.Result = "current"
 	default:

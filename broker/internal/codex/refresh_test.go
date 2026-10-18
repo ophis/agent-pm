@@ -119,7 +119,7 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(content)
-	metadata, _ := json.Marshal(Installation{Version: "0.163.0", Path: "releases/fixed/codex", SHA256: hex.EncodeToString(hash[:]), AllowedVersions: []string{}})
+	metadata, _ := json.Marshal(Installation{Version: "0.163.0", Path: "releases/fixed/codex", SHA256: hex.EncodeToString(hash[:])})
 	if err := os.WriteFile(filepath.Join(root, "active.json"), metadata, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -435,4 +435,31 @@ func TestRefreshRejectsUnterminatedResponse(t *testing.T) {
 		t.Fatal("unterminated response accepted")
 	}
 	f.checkCleanup()
+}
+
+func TestRefreshMinimumVersion(t *testing.T) {
+	for _, version := range []string{"0.162.999", "0.163.0", "0.164.0"} {
+		t.Run(version, func(t *testing.T) {
+			f := newRefreshFixture(t)
+			active := filepath.Join(f.runtime.root, "active.json")
+			data, err := os.ReadFile(active)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(active, bytes.ReplaceAll(data, []byte("0.163.0"), []byte(version)), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err = f.refresh()
+			if version == "0.162.999" {
+				if !errors.Is(err, ErrRefreshVersion) || f.starts != 0 {
+					t.Fatalf("unsupported refresh: starts=%d error=%v", f.starts, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.checkCleanup()
+		})
+	}
 }

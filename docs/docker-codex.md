@@ -10,7 +10,7 @@ refresh and supervisor renewal ([Refresh and recovery](#refresh-and-recovery)).
 ## Commands
 
 Install or upgrade the hardened broker first with `sh <agent-pm plugin directory>/broker/install.sh`.
-Replace `<version>` with an exact stable npm version, such as `0.163.0` (required for refresh):
+Replace `<version>` with an exact stable npm version meeting the [minimum version](#container-versions):
 
 | Action | Command |
 |---|---|
@@ -52,8 +52,8 @@ metadata. Native commands use an absolute path, private working directory and a 
 environment containing only private `HOME`/`CODEX_HOME`, system `PATH` and `LANG`.
 Personal npm configuration, `NODE_OPTIONS`, `npm_config_*` and Codex environment
 overrides are not inherited. Failed validation/publication preserves the active
-installation. Updates preserve `allowed_versions`; no untested container version is
-granted by installing a host binary.
+installation. Install and update accept only stable versions meeting the
+[minimum version](#container-versions).
 
 ## Login trust
 
@@ -208,8 +208,9 @@ Sources: `broker/internal/broker/codex.go`, `codex_revision.go`, `codex_refresh.
 `broker/internal/launcher/refresh.go:15`. Login uses the same lock. The revision record
 contains no account or credential value.
 
-The fixed native `0.163.0` app-server performs the managed account refresh in a
-private temporary home, with bounded output and a 120-second deadline. The broker
+The pinned native app-server follows the [minimum version](#container-versions) and
+performs managed account refresh in a private temporary home, with bounded output
+and a 120-second deadline. The broker
 requires unchanged account, changed access value, later expiry and verified keychain
 readback. Temporary state is removed on normal completion, failure and cancellation;
 uncatchable termination retains the limitation described under [Login trust](#login-trust).
@@ -242,7 +243,7 @@ Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:273`.
 ### TASK-650 user-run acceptance, pending
 
 Run on authorized macOS Apple silicon with Docker Desktop after release. Workers
-run none of these checks. Use the supported, evidence-backed compatibility rule and
+run none of these checks. Use versions meeting the minimum rule and
 record only versions, times, statuses, counts and redacted errors. Do not dump auth,
 keychain, environment or token values; do not change credential dates or test real expiry.
 
@@ -261,47 +262,68 @@ headless live check. No TASK-650 concurrent live result is recorded yet.
 
 ## Container versions
 
-**Compatibility rule** is the protected pinned installation's `active.json`
-`allowed_versions` exact set. Only Codex container generations read it; an initial
-empty set refuses Codex starts. Claude needs no pinned Codex and makes no registry
-query or update. An administrator must publish
-only versions backed by the M4 compatibility matrix in that root-owned metadata;
-TASK-652's admission implementation neither certifies versions nor changes the installed rule. Host upgrades
-preserve it; matching major/minor alone grants nothing.
+**Minimum version** is compiled into the broker as `codex.MinVersion`, currently
+`0.163.0`. Both the pinned host installation and the image must meet it. A lower host
+version refuses startup with `update-codex 0.163.0`; a lower image version requires
+rebuilding the worker image. Claude needs no pinned Codex and makes no registry query
+or update. No administrator-maintained version list remains.
 
 ```mermaid
 flowchart TD
-    P[Verify pinned installation and rule] --> I{Image version allowed}
-    I -->|no| X[Reject without secrets]
-    I -->|yes| R[Select newest allowed official release]
-    R --> U{Download and probe succeeds}
+    P{Pinned and image meet minimum} -->|no| X[Reject without secrets]
+    P -->|yes| R[Query official latest stable release]
+    R --> U{Supported target installs and probes}
     U -->|yes| A[Publish volatile executable]
-    U -->|no or none| F[Restore and probe image executable]
+    U -->|no| F[Restore and probe image executable]
     A --> S[Inject secrets]
     F -->|verified| S
     F -->|failed| X
 ```
-Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share this
-preparation. Attach leaves its running generation alone.
+Source: `broker/internal/launcher/versions.go`; Codex start, restart and resume share
+this preparation. Attach leaves its running generation alone.
 
-Selection compares stable version components numerically, querying each allowed npm
-release from newest downward. Only official registry metadata/artifacts are used;
-both main and Linux arm64/amd64 platform archives retain the installation integrity
-and extraction checks. No npm scripts, user npm configuration or workspace cache runs.
+Versions compare canonical stable components numerically. The registry's `latest`
+release is the update target when it meets the minimum. `no_supported_release`
+replaces the old no-match outcome when that target is below the minimum; its audit
+target is empty. Invalid registry responses or lookup failures report
+`registry_unavailable`. Only official metadata/artifacts are used; both main and Linux
+arm64/amd64 archives retain installation integrity and extraction checks. No npm
+scripts, user npm configuration or workspace cache runs.
 
 The immutable image installation stays under `/opt/agent-pm/clients/`; its public
 wrapper selects the updated native file in root-owned executable tmpfs
-`/opt/agent-pm/runtime/`. Programs never enter workspace/history. Failed downloads,
-staging, publication or actual-version verification remove the override and require
-a successful image reprobe. Registry failure or no allowed release follows the same
-fallback. An incompatible image always rejects, even if an update exists.
+`/opt/agent-pm/runtime/`. Programs never enter workspace/history. Download, staging,
+publication, probe and registry failures restore and reverify the supported image.
+A below-minimum image rejects even if an update exists.
 
-Each Codex generation's `<generation>.result.json` retains the image digest, actual clients
-and [version audit object](docker-broker-protocol.md#success-fields). Startup stderr
-reports its classified update outcome. Preflight's three-second advisory lookup of
-the official stable `latest` release prints the explicit pinned-upgrade command from
-the command table with its version; lookup failure does not block a compatible start.
-The hint neither upgrades the host nor expands the rule.
+Each Codex generation's `<generation>.result.json` retains the image digest, actual
+clients and [version audit object](docker-broker-protocol.md#success-fields), including
+`min_version`. Startup stderr reports the classified outcome. Preflight's three-second
+advisory `latest` lookup prints a pinned-upgrade command when newer; lookup failure
+does not block a supported start. The hint never upgrades the host.
+
+### Upgrade existing installations
+
+Protocol 12 requires upgrading the plugin and broker together; close Docker sessions
+first, following [broker reinstall precautions](upgrading.md#upgrading-steps).
+Old exact-list `active.json` metadata fails the existing strict decoder. Neither
+`update-codex` nor `install-codex` overwrites that existing metadata. After upgrading
+the broker, preserve it under a new backup name, then install again:
+
+```bash
+sudo mv -i /usr/local/libexec/agent-pm/codex/active.json /usr/local/libexec/agent-pm/codex/active.json.before-minimum
+sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex 0.163.0
+```
+
+If the backup name exists, choose another; confirm `active.json` moved before installing.
+This leaves releases and account locks intact and does not modify keychain entries.
+Rebuild worker images containing an older Codex with
+`/usr/local/libexec/agent-pm/agent-pm-broker build --agent-pm <plugin-dir> --max-age 0`,
+where `<plugin-dir>` is the installed plugin root; include the existing `--plugin`
+options for whitelisted skills. See [image rebuild](docker-host.md#build).
+Use the new image on subsequent starts. Later host upgrades use
+`sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex <version>` with a stable
+version at least the minimum. No version-list publication step is needed.
 
 ## Post-release acceptance, moved out of TASK-647
 
@@ -321,14 +343,16 @@ workers run none of these checks. Real expiry is outside TASK-647.
 | Complete a headless run, reopen it as a terminal, then close and resume headless on the same Host | Same native ID, CODEX_HOME, history and workspace; replies and outcomes appear once |
 | Restart the host supervisor, then query/send | Hook relay resumes, same identity; current published access deadline retained |
 | Check state after native credential replacement and close | Host client directory contains only allowed history; no auth/token file or credential value in host state/workspace; personal login unchanged |
-| Start, restart, then close/resume using an evidence-backed rule containing an image and newer registry version | Each generation runs the newest allowed version; audit and progress agree; runtime program is outside workspace/history |
-| Repeat with registry unavailable, then an unavailable/corrupt allowed update | Image version restored and recorded; no secret injection precedes preparation |
-| Use an image outside the rule, and separately an empty rule | Startup refuses before any client/GitHub secret; existing compatible image remains usable if only advisory lookup fails |
+| Start, restart, then close/resume with supported pinned/image versions and a newer registry stable release | Each generation runs registry latest; audit and progress agree; runtime program is outside workspace/history |
+| Repeat with registry unavailable, then an unavailable/corrupt supported update | Image version restored and recorded; no secret injection precedes preparation |
+| Use a below-minimum image, then a below-minimum pinned host; also try equal and higher versions | Low versions refuse before any client/GitHub secret, with rebuild/upgrade instructions; equal and higher versions pass admission; advisory lookup failure permits supported startup |
 | Close after a successful update, then resume | Executable tmpfs disappears; next generation repeats selection; native history remains |
 | Use a whitelisted skill in both modes | Namespaced skill executes from the image; its scripts/references resolve; empty whitelist loads none |
 | Concurrent real refresh and failure recovery | [TASK-650 pending checklist](#task-650-user-run-acceptance-pending) |
 
 ## Plan A validation report
+
+Historical observations; current admission follows [Container versions](#container-versions).
 
 **Verdict: A, for the narrowed 2026-10-18 scope.** The running native app-server
 loaded the replaced access token without restart. TASK-647 certifies `0.163.0`;

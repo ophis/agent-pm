@@ -118,7 +118,7 @@ func (w *world) docker() *fakeDocker {
 			if slices.Contains(args, "--version") {
 				v := "2.1.0 (Claude Code)\n"
 				if slices.ContainsFunc(args, func(s string) bool { return strings.HasSuffix(s, "/codex") || strings.HasSuffix(s, "/codex.next") }) {
-					v = "codex-cli 0.100.0\n"
+					v = "codex-cli 0.163.0\n"
 				}
 				if probes < len(w.versions) {
 					v = w.versions[probes]
@@ -341,7 +341,7 @@ func TestStartOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := StartResult{Container: container, Endpoint: "unix://" + home + "/.docker/run/docker.sock", ImageDigest: digest,
-		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.100.0"}, GitHub: []protocol.Expiry{}}
+		Clients: Clients{Claude: "2.1.0 (Claude Code)", Codex: "codex-cli 0.163.0"}, GitHub: []protocol.Expiry{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}

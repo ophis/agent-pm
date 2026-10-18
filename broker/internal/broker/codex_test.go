@@ -28,7 +28,7 @@ type fakeCodexNative struct {
 }
 
 func (n *fakeCodexNative) Verify() (codex.Installation, error) {
-	return codex.Installation{Version: "0.162.1", Path: "/fixed/codex", SHA256: strings.Repeat("a", 64), AllowedVersions: []string{}}, n.verifyErr
+	return codex.Installation{Version: "0.162.1", Path: "/fixed/codex", SHA256: strings.Repeat("a", 64)}, n.verifyErr
 }
 
 func (n *fakeCodexNative) Lock(ctx context.Context) (func(), error) {

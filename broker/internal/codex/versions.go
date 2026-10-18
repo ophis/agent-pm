@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 )
+
+const MinVersion = "0.163.0"
+
+func SupportedVersion(version string) bool {
+	return ValidVersion(version) && !Newer(MinVersion, version)
+}
 
 var errReleaseMissing = errors.New("Codex registry release missing")
 
@@ -24,35 +29,6 @@ func Newer(a, b string) bool {
 		}
 	}
 	return false
-}
-
-func (r Runtime) LatestAllowed(ctx context.Context, allowed []string) (string, error) {
-	versions := slices.Clone(allowed)
-	for _, v := range versions {
-		if !ValidVersion(v) {
-			return "", errors.New("invalid Codex compatibility rule")
-		}
-	}
-	slices.SortFunc(versions, func(a, b string) int {
-		if Newer(a, b) {
-			return -1
-		}
-		if Newer(b, a) {
-			return 1
-		}
-		return 0
-	})
-	for _, v := range slices.Compact(versions) {
-		_, err := r.metadata(ctx, "@openai/codex", v)
-		if errors.Is(err, errReleaseMissing) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		return v, nil
-	}
-	return "", nil
 }
 
 func (r Runtime) Latest(ctx context.Context) (string, error) {

@@ -55,10 +55,10 @@ func codexManifest(t *testing.T) string {
 }
 
 func TestCodexStartIsolation(t *testing.T) {
-	h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1"}}, &fakeCreds{ready: errors.New("Claude must not be read")})
+	h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0"}}, &fakeCreds{ready: errors.New("Claude must not be read")})
 	creds := &fakeCodexCreds{}
 	h.Codex = creds
-	h.Versions = &fakeVersions{allowed: []string{"0.162.1"}, target: "0.162.1"}
+	h.Versions = &fakeVersions{target: "0.163.0"}
 	result, err := h.Start(context.Background(), codexManifest(t))
 	if err != nil || result.CredentialExpiresAt == nil || *result.CredentialExpiresAt != "2026-10-18T12:00:00Z" || creds.ready != 1 || creds.injected != 1 {
 		t.Fatalf("%+v %v", result, err)
@@ -82,13 +82,13 @@ func TestCodexStartIsolation(t *testing.T) {
 
 func TestCodexStartPreflightAndVersion(t *testing.T) {
 	for _, preflight := range []bool{true, false} {
-		h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
+		h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.999"}}, &fakeCreds{})
 		creds := &fakeCodexCreds{}
 		if preflight {
 			creds.err = protocol.New(protocol.LoginRequired, "login codex")
 		}
 		h.Codex = creds
-		h.Versions = &fakeVersions{allowed: []string{"0.162.1"}, target: "0.162.1"}
+		h.Versions = &fakeVersions{target: "0.163.0"}
 		_, err := h.Start(context.Background(), codexManifest(t))
 		if err == nil || creds.injected != 0 {
 			t.Fatal("accepted missing login or unsupported client")

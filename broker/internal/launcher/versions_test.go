@@ -15,23 +15,23 @@ import (
 
 type fakeVersions struct {
 	calls                             []string
-	allowed                           []string
-	target, latest                    string
+	pinned                            string
+	target                            string
 	verifyErr, registryErr, binaryErr error
 	arch                              string
 }
 
 func (v *fakeVersions) Verify() (codex.Installation, error) {
 	v.calls = append(v.calls, "verify")
-	return codex.Installation{Version: "0.162.1", AllowedVersions: v.allowed}, v.verifyErr
-}
-func (v *fakeVersions) LatestAllowed(context.Context, []string) (string, error) {
-	v.calls = append(v.calls, "allowed")
-	return v.target, v.registryErr
+	pinned := v.pinned
+	if pinned == "" {
+		pinned = "0.163.0"
+	}
+	return codex.Installation{Version: pinned}, v.verifyErr
 }
 func (v *fakeVersions) Latest(context.Context) (string, error) {
 	v.calls = append(v.calls, "latest")
-	return v.latest, v.registryErr
+	return v.target, v.registryErr
 }
 func (v *fakeVersions) Linux(_ context.Context, _ string, arch string) ([]byte, error) {
 	v.calls = append(v.calls, "linux")
@@ -40,19 +40,19 @@ func (v *fakeVersions) Linux(_ context.Context, _ string, arch string) ([]byte, 
 }
 
 func defaultVersions() *fakeVersions {
-	return &fakeVersions{allowed: []string{"0.100.0", "0.162.1"}, target: "0.100.0"}
+	return &fakeVersions{target: "0.163.0"}
 }
 
 func TestClaudeStartsWithoutCodexVersionPreparation(t *testing.T) {
-	for _, mode := range []string{"no_provider", "not_installed", "empty_rule", "registry_unavailable"} {
+	for _, mode := range []string{"no_provider", "not_installed", "old_pinned", "registry_unavailable"} {
 		t.Run(mode, func(t *testing.T) {
 			h, d := startHost(&world{labels: goodLabels()}, &fakeCreds{})
 			v := defaultVersions()
 			switch mode {
 			case "not_installed":
 				v.verifyErr = codex.ErrNotInstalled
-			case "empty_rule":
-				v.allowed = []string{}
+			case "old_pinned":
+				v.pinned = "0.162.999"
 			case "registry_unavailable":
 				v.registryErr = errors.New("offline")
 				v.binaryErr = errors.New("offline")
@@ -102,29 +102,29 @@ func TestClaudeStartsWithoutCodexVersionPreparation(t *testing.T) {
 }
 
 func TestCodexVersionLifecycle(t *testing.T) {
-	for _, mode := range []string{"updated", "current", "registry_unavailable", "no_allowed_release", "download_failed", "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed", "forbidden", "empty", "invalid_install"} {
+	for _, mode := range []string{"updated", "current", "registry_unavailable", "no_supported_release", "download_failed", "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed", "invalid_install"} {
 		t.Run(mode, func(t *testing.T) {
-			v := &fakeVersions{allowed: []string{"0.162.1", "0.162.10"}, target: "0.162.10", latest: "0.163.0"}
-			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.10"}}
+			v := &fakeVersions{target: "0.164.0"}
+			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.164.0"}}
 			want := mode
 			switch mode {
 			case "current":
-				v.target = "0.162.1"
+				v.target = "0.163.0"
 			case "registry_unavailable":
 				v.registryErr = errors.New("offline")
-				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1"}
-			case "no_allowed_release":
-				v.target = ""
-				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+			case "no_supported_release":
+				v.target = "0.162.999"
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 			case "download_failed":
 				v.binaryErr = errors.New("bad integrity")
-				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				want = "update_failed"
 			case "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed":
 				want = "update_failed"
-				w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				if mode == "publish_failed" || mode == "wrapper_failed" {
-					w.versions = []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.1", "codex-cli 0.162.1"}
+					w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				}
 				w.execErr = func(args []string) error {
 					if slices.Contains(args, strings.TrimSuffix(mode, "_failed")) || (mode == "reset_failed" && slices.Contains(args, "stage")) || (mode == "restore_failed" && slices.Contains(args, "stage")) {
@@ -135,10 +135,6 @@ func TestCodexVersionLifecycle(t *testing.T) {
 					}
 					return nil
 				}
-			case "forbidden":
-				v.allowed = []string{"0.162.10"}
-			case "empty":
-				v.allowed = []string{}
 			case "invalid_install":
 				v.verifyErr = errors.New("untrusted")
 			}
@@ -148,7 +144,7 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			h.Progress = &progress
 			h.Codex = &fakeCodexCreds{}
 			got, err := h.Start(context.Background(), codexManifest(t))
-			blocked := slices.Contains([]string{"reset_failed", "restore_failed", "forbidden", "empty", "invalid_install"}, mode)
+			blocked := slices.Contains([]string{"reset_failed", "restore_failed", "invalid_install"}, mode)
 			if (err != nil) != blocked {
 				t.Fatalf("%+v %v", got, err)
 			}
@@ -192,12 +188,12 @@ func TestCodexVersionLifecycle(t *testing.T) {
 					t.Fatalf("staged probe failure not reached: %v", d.calls)
 				}
 			}
-			if got.ClientUpdate.Result != want || got.ClientUpdate.PinnedVersion != "0.162.1" || got.ClientUpdate.ImageVersion != "0.162.1" {
+			if got.ClientUpdate.Result != want || got.ClientUpdate.PinnedVersion != "0.163.0" || got.ClientUpdate.ImageVersion != "0.163.0" || got.ClientUpdate.MinVersion != "0.163.0" {
 				t.Fatalf("%+v", got.ClientUpdate)
 			}
-			expected := "codex-cli 0.162.1"
+			expected := "codex-cli 0.163.0"
 			if mode == "updated" {
-				expected = "codex-cli 0.162.10"
+				expected = "codex-cli 0.164.0"
 				if v.arch != "arm64" {
 					t.Fatal(v.arch)
 				}
@@ -208,7 +204,7 @@ func TestCodexVersionLifecycle(t *testing.T) {
 			if !strings.Contains(progress.String(), "Codex update "+want) {
 				t.Fatal(progress.String())
 			}
-			if mode != "registry_unavailable" && !strings.Contains(progress.String(), "sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex 0.163.0") {
+			if v.target == "0.164.0" && mode != "registry_unavailable" && !strings.Contains(progress.String(), "sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex 0.164.0") {
 				t.Fatal("missing upgrade hint")
 			}
 			var run []string
@@ -227,11 +223,11 @@ func TestCodexVersionLifecycle(t *testing.T) {
 func TestCodexUpdateBeforeAllSecrets(t *testing.T) {
 	for _, blocked := range []bool{false, true} {
 		t.Run("codex"+map[bool]string{true: "-rejected"}[blocked], func(t *testing.T) {
-			v := &fakeVersions{allowed: []string{"0.162.1", "0.162.10"}, target: "0.162.10"}
+			v := &fakeVersions{target: "0.164.0"}
 			if blocked {
-				v.allowed = []string{"0.162.10"}
+				v.pinned = "0.162.999"
 			}
-			h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.162.1", "codex-cli 0.162.10", "codex-cli 0.162.10"}}, &fakeCreds{})
+			h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.164.0"}}, &fakeCreds{})
 			h.Versions = v
 			h.Codex = &fakeCodexCreds{}
 			b, _ := os.ReadFile(codexManifest(t))
@@ -266,6 +262,48 @@ func TestCodexUpdateBeforeAllSecrets(t *testing.T) {
 			}
 			if (!blocked && secrets != 2) || (blocked && secrets != 0) {
 				t.Fatal(secrets)
+			}
+		})
+	}
+}
+
+func TestPinnedMinimumVersion(t *testing.T) {
+	for _, version := range []string{"0.162.999", "0.163.0", "0.164.0", "invalid"} {
+		t.Run(version, func(t *testing.T) {
+			v := defaultVersions()
+			v.pinned = version
+			h := Host{Versions: v}
+			_, err := h.versionPolicy(context.Background())
+			blocked := version == "0.162.999" || version == "invalid"
+			if (err != nil) != blocked {
+				t.Fatalf("version=%s error=%v", version, err)
+			}
+			if blocked && !strings.Contains(err.Error(), "update-codex 0.163.0") {
+				t.Fatal(err)
+			}
+			if blocked && slices.Contains(v.calls, "latest") {
+				t.Fatal("registry queried before pinned validation")
+			}
+		})
+	}
+}
+
+func TestImageMinimumVersion(t *testing.T) {
+	for _, version := range []string{"0.162.999", "0.163.0", "0.164.0", "invalid"} {
+		t.Run(version, func(t *testing.T) {
+			v := defaultVersions()
+			v.target = version
+			h := Host{Versions: v}
+			_, _, err := h.updateCodex(context.Background(), "container", "arm64", Clients{Codex: "codex-cli " + version}, codex.Installation{Version: "0.163.0"})
+			blocked := version == "0.162.999" || version == "invalid"
+			if (err != nil) != blocked {
+				t.Fatalf("version=%s error=%v", version, err)
+			}
+			if blocked && !strings.Contains(err.Error(), "rebuild") {
+				t.Fatal(err)
+			}
+			if blocked && len(v.calls) != 0 {
+				t.Fatal("registry queried before image validation")
 			}
 		})
 	}

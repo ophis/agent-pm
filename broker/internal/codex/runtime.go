@@ -30,10 +30,9 @@ var stableVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1
 func ValidVersion(version string) bool { return stableVersion.MatchString(version) }
 
 type Installation struct {
-	Version         string   `json:"version"`
-	Path            string   `json:"path"`
-	SHA256          string   `json:"sha256"`
-	AllowedVersions []string `json:"allowed_versions"`
+	Version string `json:"version"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
 }
 
 type command struct {
@@ -161,16 +160,11 @@ func (r Runtime) metadataRecord() (Installation, error) {
 		return Installation{}, errors.New("invalid Codex metadata")
 	}
 	var extra any
-	if dec.Decode(&extra) != io.EOF || !stableVersion.MatchString(i.Version) || len(i.SHA256) != 64 || i.AllowedVersions == nil {
+	if dec.Decode(&extra) != io.EOF || !stableVersion.MatchString(i.Version) || len(i.SHA256) != 64 {
 		return Installation{}, errors.New("invalid Codex metadata")
 	}
 	if _, err := hex.DecodeString(i.SHA256); err != nil {
 		return Installation{}, errors.New("invalid Codex hash")
-	}
-	for _, v := range i.AllowedVersions {
-		if !stableVersion.MatchString(v) {
-			return Installation{}, errors.New("invalid Codex compatibility metadata")
-		}
 	}
 	parts := strings.Split(filepath.ToSlash(i.Path), "/")
 	if len(parts) != 3 || parts[0] != "releases" || parts[1] == "" || parts[1] == "." || parts[1] == ".." || parts[2] != "codex" || filepath.Clean(i.Path) != i.Path {
