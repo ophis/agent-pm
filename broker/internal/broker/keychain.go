@@ -47,14 +47,19 @@ type SecretKeychain interface {
 	DeleteSecret(service, account string) error // an absent item is success
 }
 
+// ItemTrust reads and changes the access of the generic-password item service and account name.
+type ItemTrust interface {
+	TrustApps(service, account string, password []byte) error
+	TrustAppsByDialog(service, account string) error
+	TrustPartition(service, account string, password []byte) error
+	AppAccess(service, account string) (AppAccess, error)
+}
+
 // AppKeychain holds GitHub App private keys as generic-password items: service the App, account its App ID.
 type AppKeychain interface {
+	ItemTrust
 	AppAccount(app string) (string, error)
 	AppKey(app, account string) ([]byte, error)
-	TrustApps(app, account string, password []byte) error
-	TrustAppsByDialog(app, account string) error
-	TrustPartition(app, account string, password []byte) error
-	AppAccess(app, account string) (AppAccess, error)
 }
 
 // ACLEntry is one entry of a keychain item's access. Apps are the identities of the applications it trusts
@@ -203,12 +208,10 @@ func Login(read func() ([]byte, error), k Keychain, out io.Writer) error {
 	return err
 }
 
-// LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker, then reads the key
-// once to confirm it is usable; the item is never deleted and its content never changes. Each step runs only when
-// its part is not yet in place: the partition list first, then the read and export entries, both with the login
-// keychain password read once with password, so no keychain dialog shows unless securityd refuses the second
-// step with the password (trust). The key is read only once the item trusts only the broker, so that read needs
-// no dialog either. out never sees the key or the password.
+// LoginGitHub changes app's existing private-key item's ACL in place to trust only the broker (secureItem), then
+// reads the key once to confirm it is usable; the item is never deleted and its content never changes. The key is
+// read only once the item trusts only the broker, so that read needs no dialog. out never sees the key or the
+// password.
 func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out io.Writer) error {
 	account, err := k.AppAccount(app)
 	switch {
@@ -221,25 +224,7 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 	case !appID.MatchString(account):
 		return fmt.Errorf("keychain item %s: account %q is not an App ID", app, account)
 	}
-	before, err := k.AppAccess(app, account)
-	if err != nil {
-		return fmt.Errorf("keychain item %s unchanged: reading its access failed: %w", app, err)
-	}
-	if onlyBroker(before) != nil {
-		pw, err := password()
-		if err == nil {
-			err = trust(app, account, k, before, pw)
-		} else {
-			err = fmt.Errorf("reading the login keychain password failed: %w", err)
-		}
-		erase(pw)
-		if err != nil {
-			if err := incomplete(app, account, k, before, err); err != nil {
-				return err
-			}
-		}
-	}
-	if err := incomplete(app, account, k, before, errors.New("checking its access afterwards")); err != nil {
+	if err := secureItem(app, account, "rerun agent-pm-broker login github "+app+" to finish", k, password); err != nil {
 		return err
 	}
 	key, err := k.AppKey(app, account)
@@ -255,20 +240,46 @@ func LoginGitHub(app string, k AppKeychain, password func() ([]byte, error), out
 	return err
 }
 
+// secureItem changes the item's ACL in place to trust only the broker. Each step runs only when its part is not yet
+// in place: the partition list first, then the read and export entries, both with the login keychain password read
+// once with password, so no keychain dialog shows unless securityd refuses the second step with the password
+// (trust). Its error says what is done and not done, and ends with rerun.
+func secureItem(item, account, rerun string, k ItemTrust, password func() ([]byte, error)) error {
+	before, err := k.AppAccess(item, account)
+	if err != nil {
+		return fmt.Errorf("keychain item %s unchanged: reading its access failed: %w", item, err)
+	}
+	if onlyBroker(before) != nil {
+		pw, err := password()
+		if err == nil {
+			err = trust(item, account, k, before, pw)
+		} else {
+			err = fmt.Errorf("reading the login keychain password failed: %w", err)
+		}
+		erase(pw)
+		if err != nil {
+			if err := incomplete(item, account, rerun, k, before, err); err != nil {
+				return err
+			}
+		}
+	}
+	return incomplete(item, account, rerun, k, before, errors.New("checking its access afterwards"))
+}
+
 // trust runs each step not in place before with the keychain password, stopping at the first that fails. The
 // partition step goes first: securityd takes it with the password, and it checks the password before the read
 // and export entries change. securityd has refused that second change with the password (ErrAuthFailed), so
 // then it goes through the keychain's dialog instead.
-func trust(app, account string, k AppKeychain, before AppAccess, password []byte) error {
+func trust(item, account string, k ItemTrust, before AppAccess, password []byte) error {
 	if partitionOnlyBroker(before) != nil {
-		if err := k.TrustPartition(app, account, password); err != nil {
+		if err := k.TrustPartition(item, account, password); err != nil {
 			return fmt.Errorf("changing its partition list failed: %w", err)
 		}
 	}
 	if appsOnlyBroker(before) != nil {
-		err := k.TrustApps(app, account, password)
+		err := k.TrustApps(item, account, password)
 		if errors.Is(err, ErrAuthFailed) {
-			if dialogErr := k.TrustAppsByDialog(app, account); dialogErr != nil {
+			if dialogErr := k.TrustAppsByDialog(item, account); dialogErr != nil {
 				err = fmt.Errorf("%w; through the keychain dialog: %w", err, dialogErr)
 			} else {
 				err = nil
@@ -282,12 +293,11 @@ func trust(app, account string, k AppKeychain, before AppAccess, password []byte
 }
 
 // incomplete reads the item's access back: nil when it trusts only the broker, whatever cause says; else why the
-// run stopped, whether it changed the access from before, what is in place, what is not and how to finish.
-func incomplete(app, account string, k AppKeychain, before AppAccess, cause error) error {
-	rerun := "rerun agent-pm-broker login github " + app + " to finish"
-	after, err := k.AppAccess(app, account)
+// run stopped, whether it changed the access from before, what is in place, what is not and rerun, how to finish.
+func incomplete(item, account, rerun string, k ItemTrust, before AppAccess, cause error) error {
+	after, err := k.AppAccess(item, account)
 	if err != nil {
-		return fmt.Errorf("keychain item %s: %w; reading its access back failed: %w, so what changed is unknown; %s", app, cause, err, rerun)
+		return fmt.Errorf("keychain item %s: %w; reading its access back failed: %w, so what changed is unknown; %s", item, cause, err, rerun)
 	}
 	appsErr, partitionErr := appsOnlyBroker(after), partitionOnlyBroker(after)
 	if appsErr == nil && partitionErr == nil {
@@ -304,7 +314,7 @@ func incomplete(app, account string, k AppKeychain, before AppAccess, cause erro
 	case partitionErr == nil:
 		done = "its partition list holds only the broker's partition ID"
 	}
-	return fmt.Errorf("keychain item %s %s: %w; done: %s; not done: %s; %s", app, changed, cause, done, strings.ReplaceAll(todo, "\n", "; "), rerun)
+	return fmt.Errorf("keychain item %s %s: %w; done: %s; not done: %s; %s", item, changed, cause, done, strings.ReplaceAll(todo, "\n", "; "), rerun)
 }
 
 type Credentials struct{ Keychain Keychain }
