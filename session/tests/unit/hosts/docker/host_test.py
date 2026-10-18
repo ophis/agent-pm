@@ -1235,9 +1235,26 @@ class PreflightTest(Base):
         self.assertFalse(os.path.exists(self.state))
 
     def test_a_missing_cwd_is_refused_before_the_broker(self):
-        self.cwd = os.path.join(self.account, "src", "gone")
-        with self.assertRaisesRegex(ConfigError, f"Docker cwd {self.cwd}: no such directory"):
-            self.validate()
+        launch = Launch(("agent",), cwd=os.path.join(self.account, "src", "gone"), env={})
+        for check in (self.host.validate, self.host.terminal, self.host.pipe):
+            with (
+                self.subTest(check=check.__name__),
+                self.assertRaisesRegex(ConfigError, f"Docker cwd {launch.cwd}: no such directory"),
+            ):
+                check("w", launch)
+        self.assertEqual(self.order, [])
+
+    def test_a_session_preflight_accepts_a_cwd_not_yet_made(self):
+        cwd = os.path.join(self.account, "src", "later")
+        self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertFalse(os.path.exists(cwd))
+
+    def test_a_session_preflight_refuses_a_cwd_that_is_no_directory(self):
+        cwd = os.path.join(self.account, "src", "file")
+        open(cwd, "w").close()
+        with self.assertRaisesRegex(ConfigError, f"Docker cwd {cwd}: no such directory"):
+            self.host._preflight("w", Launch(("agent",), cwd=cwd, env={}))
         self.assertEqual(self.order, [])
 
 

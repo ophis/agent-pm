@@ -428,6 +428,9 @@ class _Start:
     def validate(self) -> None:
         self.store.host.validate(self.store.name, self.launch)
 
+    def preflight(self) -> None:
+        self.store.host._preflight(self.store.name, self.launch)
+
     @property
     def launch(self) -> Launch:
         info = self.prepared.info
@@ -481,7 +484,7 @@ class TuiMode(BaseMode):
     ) -> Prepared:
         pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         try:
-            pending.validate()
+            pending.preflight()
             _stale(pending.store)
         except SessionError as error:
             raise ConfigError(str(error)) from error
