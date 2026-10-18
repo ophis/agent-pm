@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import shutil
 import stat
 import sys
 import time
@@ -71,6 +70,7 @@ from agent_pm.utils import (
     Status,
     StatusState,
     load_class,
+    remove_tree,
     source_path,
     thaw,
     under,
@@ -888,7 +888,7 @@ class HarnessDelegate(Delegate):
                     if entry.name == os.path.basename(out):
                         continue
                     if entry.is_dir(follow_symlinks=False):
-                        shutil.rmtree(entry.name, dir_fd=fd)
+                        remove_tree(entry.name, dir_fd=fd)
                     else:
                         os.unlink(entry.name, dir_fd=fd)
             finally:
@@ -1105,15 +1105,15 @@ class HarnessDelegate(Delegate):
 
 
 def _remove(path: str) -> None:
-    """`path`, never followed: a directory's tree (shutil.rmtree resists a symlink swap), else
-    the entry itself.
+    """`path`, never followed: a directory's tree (remove_tree resists a symlink swap), else the
+    entry itself.
     """
     try:
         found = os.lstat(path)
     except FileNotFoundError:
         return
     if stat.S_ISDIR(found.st_mode):
-        shutil.rmtree(path)
+        remove_tree(path)
     else:
         os.unlink(path)
 

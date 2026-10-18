@@ -648,6 +648,17 @@ class WorkdirRetention(PruneScenario):
         )
         self.assertEqual(os.listdir(self.work), [])
 
+    def test_a_bare_workdir_with_a_read_only_go_module_cache_is_removed(self):
+        module = os.path.join(self.bare("TASK-7"), "gopath", "mod", "x@v1.0.12")
+        os.makedirs(module)
+        write(os.path.join(module, "go.mod"), "module x\n")
+        os.chmod(os.path.join(module, "go.mod"), 0o444)
+        for path in (module, os.path.dirname(module)):
+            os.chmod(path, 0o555)
+        gql = gql_for({"TASK-7": ("Done", [(8 * 24, "Done")])})
+        self.assertEqual(self.prune(gql), (0, "prune-removed TASK-7 what=workdir"))
+        self.assertEqual(os.listdir(self.work), [])
+
     def test_a_bare_workdir_finished_3_days_is_kept(self):
         workdir = self.bare("TASK-7")
         files = tree(workdir)
@@ -690,10 +701,10 @@ class WorkdirRetention(PruneScenario):
             if workdir.endswith("TASK-7"):
                 raise SessionError("host gone")
 
-        def rmtree(path):
+        def rmtree(path, **kwargs):
             if path.endswith("TASK-8"):
                 raise PermissionError("denied")
-            real(path)
+            real(path, **kwargs)
 
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8", "TASK-9"), ("Done", [(8 * 24, "Done")])))
         with (
