@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	python    = "/opt/agent-pm/venv/bin/python"
-	bootstrap = "/opt/agent-pm/lib/bootstrap.py"
+	Python    = "/opt/agent-pm/venv/bin/python"
+	Bootstrap = "/opt/agent-pm/lib/bootstrap.py"
 	checker   = "/opt/agent-pm/lib/workspace-check"
 	sharing   = "Docker Desktop file sharing must include ~/.agent-pm/docker-state (Settings > Resources > File sharing)."
 	cache     = ".agent-pm-cache"
@@ -161,7 +161,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		owner := ",mode=0700,uid=" + labels["agent-pm.agent-uid"] + ",gid=" + labels["agent-pm.agent-gid"]
 		args = append(args, "--tmpfs", runtimeDir+":rw,exec,nosuid,nodev,size=536870912,mode=0755,uid=0,gid=0",
 			"--tmpfs", m.CodexDir+":rw,noexec,nosuid,nodev,size=67108864"+owner,
-			"--tmpfs", "/run/agent-pm:rw,noexec,nosuid,nodev,size=1048576"+owner,
+			"--tmpfs", docker.RunDir+":rw,noexec,nosuid,nodev,size=1048576"+owner,
 			"--mount", bindMount(filepath.Join(m.CodexDir, "sessions"), filepath.Join(m.CodexDir, "sessions")))
 	} else {
 		args = append(args, "--mount", bindMount(m.ClaudeDir, m.ClaudeDir))
@@ -180,11 +180,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, e
 	}
 	lap("create")
-	if _, err := h.Docker.Run(ctx, asAgent(c, python, "-I", bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
+	if _, err := h.Docker.Run(ctx, asAgent(c, Python, "-I", Bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
 		return StartResult{}, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
 	}
 	if m.HasHook {
-		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, python, "-I", bootstrap, "hook", m.HookPath}, nil); err != nil {
+		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, Python, "-I", Bootstrap, "hook", m.HookPath}, nil); err != nil {
 			return StartResult{}, failure(err, protocol.StartFailed, "Installing the hook stub failed.")
 		}
 	}

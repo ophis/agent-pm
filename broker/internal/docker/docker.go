@@ -17,7 +17,8 @@ import (
 const (
 	Path       = "/Applications/Docker.app/Contents/Resources/bin/docker"
 	pluginDir  = "/Applications/Docker.app/Contents/Resources/cli-plugins"
-	SecretsDir = "/run/agent-pm/secrets"
+	RunDir     = "/run/agent-pm"
+	SecretsDir = RunDir + "/secrets"
 	capture    = 65536
 )
 

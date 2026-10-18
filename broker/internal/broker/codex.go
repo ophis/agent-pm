@@ -16,6 +16,7 @@ import (
 
 	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -307,7 +308,7 @@ func (c Codex) Inject(ctx context.Context, exec func([]string, []byte) error) (s
 			return protocol.New(protocol.StartFailed, "Cannot encode Codex container credentials")
 		}
 		defer erase(data)
-		err = exec([]string{"/opt/agent-pm/venv/bin/python", "-I", "/opt/agent-pm/lib/bootstrap.py", "codex-auth"}, data)
+		err = exec([]string{launcher.Python, "-I", launcher.Bootstrap, "codex-auth"}, data)
 		if errors.Is(err, docker.ErrUnreachable) {
 			return docker.ErrUnreachable
 		}
