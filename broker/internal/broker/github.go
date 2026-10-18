@@ -234,7 +234,7 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 			if len(left) > 0 && g.editBacklog(func(list []pending) []pending { return append(list, left...) }) != nil {
 				return unrevoked(container) // the record keeps them tracked
 			}
-			g.untrack(container, entries, whole)
+			g.untrack(container, entries)
 		} else if len(left) > 0 {
 			return unrevoked(container)
 		}
@@ -249,11 +249,7 @@ func (g GitHub) discard(ctx context.Context, container string, entries []tokenEn
 
 // untrack takes entries, revoked or queued, out of container's record without the lock: best effort, as the lock
 // is what failed.
-func (g GitHub) untrack(container string, entries []tokenEntry, whole bool) {
-	if whole {
-		_ = g.Keychain.DeleteSecret(tokensService, container)
-		return
-	}
+func (g GitHub) untrack(container string, entries []tokenEntry) {
 	if rec, found, err := g.readRecord(container); err == nil && found {
 		in := tokenIn(entries)
 		rec.Tokens = slices.DeleteFunc(rec.Tokens, func(e tokenEntry) bool { return in(e.Token) })

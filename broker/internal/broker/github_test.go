@@ -381,6 +381,26 @@ func TestRevokeLockFails(t *testing.T) {
 	}
 }
 
+func TestRevokeLockFailsKeepsATokenRecordedMeanwhile(t *testing.T) {
+	r := newRig(t, "ophis")
+	issued(t, r)
+	r.lockFails(0)
+	r.api.revokeErr = func(string) int { // a refresh records its new token while close revokes without the lock
+		rec, _ := r.record(t)
+		if !slices.ContainsFunc(rec.Tokens, func(e tokenEntry) bool { return e.Token == "ghs_late" }) {
+			rec.Tokens = append(rec.Tokens, tokenEntry{"ophis", 1, "ghs_late", "2026-10-17T13:00:00Z"})
+			data, _ := json.Marshal(rec)
+			r.keys.items[tokensService+"/"+ctr] = data
+		}
+		return 0
+	}
+	_ = r.g.Revoke(context.Background(), ctr)
+	rec, ok := r.record(t)
+	if !ok || len(rec.Tokens) != 1 || rec.Tokens[0].Token != "ghs_late" {
+		t.Fatalf("record %v %v", ok, rec.Tokens)
+	}
+}
+
 func TestIssueLockFailureLeavesNoRecord(t *testing.T) {
 	r := newRig(t, "ophis", "other")
 	r.lockFails(1)

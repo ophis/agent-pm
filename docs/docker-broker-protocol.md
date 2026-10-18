@@ -195,8 +195,9 @@ manifest or log.
   without stderr; close then revokes a readable record directly.
 - `~/.agent-pm/docker/tokens.lock` serializes each read-modify-write of these items, never a GitHub request.
   If taking it fails, the tokens being discarded are revoked at once, any revoke that fails puts its token in
-  the backlog without the lock, and the record drops them; the command fails with `keychain_failed` naming the
-  lock, or, when that backlog write fails too, saying the tokens could not be revoked (the record keeps them).
+  the backlog without the lock, and the record drops those tokens only. start and refresh fail with
+  `keychain_failed` naming the lock; close does too, or, when that backlog write fails as well, says its tokens
+  could not be revoked.
 - Nothing falls back to another credential.
 
 ## Shared fixtures
