@@ -216,7 +216,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run pair
 ```
 
-[`pair`:217](../scripts/docker_codex_a_probe.py#L217) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
+[`pair`:259](../scripts/docker_codex_a_probe.py#L259) 并发执行下面两个普通命令，捕获并丢弃原始标准输出／错误；成功条件见严格判定，另要求两次执行时间重叠。事件形状依据固定源码 [exec_events.rs:10](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L10)。下面仅展示完整子命令，不要绕过脚本直接运行，以免回传原始输出：
 
 ```sh
 docker exec task647-codex-a-1 codex -c 'cli_auth_credentials_store="file"' exec --skip-git-repo-check --sandbox read-only --json 'Reply exactly OK. Do not use tools.'
@@ -247,7 +247,7 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume-pair
 ```
 
-[`resume_turn`:280](../scripts/docker_codex_a_probe.py#L280) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
+[`resume_turn`:322](../scripts/docker_codex_a_probe.py#L322) 在每个容器查找唯一既有 rollout 文件，从文件名取得原生身份，再通过普通 `docker exec codex exec … resume <原生身份>` 各发一轮。文件名结构依据 [recorder.rs:99](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L99)、[recorder.rs:1739](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/rollout/src/recorder.rs#L1739)。身份只在内存和本地进程参数中使用，不回传。缺历史、多份历史或路径不符即停；不用可能新开会话的 `--last`，其无匹配回退分支见 [lib.rs:1030](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1030)。保留原 read-only 沙箱和严格判定，另要求输出身份与既有身份相同。
 
 | 新增脱敏字段 | 观察含义 |
 |---|---|
@@ -256,7 +256,31 @@ python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-
 | `rejected_item_type_counts` | 白名单外 item 的事件次数，含 started／updated／completed；仅回传固定源码中的类型，其他归为 `other`；不等于工具调用次数 |
 | `same_native_session` | 本次 `thread.started` 身份是否恰好一次且匹配既有身份 |
 
-字段实现见 [summarize_turn:136](../scripts/docker_codex_a_probe.py#L136)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
+字段实现见 [summarize_turn:172](../scripts/docker_codex_a_probe.py#L172)。回传两条命令的全部脱敏记录及非零状态；非零后停止，不反复尝试。即使本次通过，也只证明保留容器内的 headless 原生恢复，不补记第二组为通过，不代表同一活进程、多轮跨到期、restart 或 close 后恢复。保留容器，等待下一组；超时清理沿用第二组的固定命令。
+
+第三组结果已记录；以下只补缺失的通知类别，不重复到期命令或双容器基线。
+
+### 第四组：单容器通知分类
+
+第三组仅回传了类型计数，旧消息已丢弃；源码又说明类型不能唯一确定来源。因此需用户在现有 a-1 原生会话上新增一轮捕获分类，a-2 不重复。沿用第三组的到期执行条件，不重建、不重登录、不重新注入，不刷新宿主登录。
+
+```sh
+python3 -I /Users/francis/.agent-pm/work/TASK-647/agent/src/ophis/agent-pm-TASK-647/scripts/docker_codex_a_probe.py --user-run resume task647-codex-a-1
+```
+
+[`error_item_category`:136](../scripts/docker_codex_a_probe.py#L136) 在内存中按固定版本消息模板分类，只增加 `error_item_category_counts`。除固定标签和次数外，不输出消息、动态替换值、片段或哈希，不保存原始事件。标签描述消息形状，不恢复丢失的原始通知类型，也不代表获准放行：
+
+| 标签 | 模板含义 | 固定源码 |
+|---|---|---|
+| `diagnostic_log_write` | 两条精确固定消息之一：本地诊断数据库写入失败 | [log_write_warning.rs:14](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/log_write_warning.rs#L14) |
+| `under_development_features` | 显式启用开发中特性；不是仅因默认特性开启 | [features/lib.rs:2095](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/features/src/lib.rs#L2095) |
+| `model_metadata_fallback` | 模型元数据缺失，使用回退数据 | [turn_context.rs:1395](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/session/turn_context.rs#L1395) |
+| `transport_fallback` | WebSocket 改走 HTTPS；需补录 B 的实际传输 | [responses_retry.rs:120](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/responses_retry.rs#L120) |
+| `event_stream_lag` | 事件流丢失，不可用计数证明完整性 | [exec/lib.rs:1668](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1668) |
+| `model_rerouted` | 本次请求发生模型改路由 | [输出器:494](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L494) |
+| `unknown` | 其余消息或缺失／非字符串消息 | 不猜测、不回显 |
+
+只执行一次，回传完整脱敏记录和退出码后停止。即使已识别通知，原 `ErrorItem` 门槛仍保留，可能继续返回 `incomplete` 和退出 1；这是分类结果，不要求反复重试。后续是否放行按上文放行建议另行评估；本组不验证刷新或到期，也不能把新类别补写为第三组历史消息的已知类别。
 
 ### 后续验证
 
@@ -279,7 +303,7 @@ flowchart TD
 
 | 待补用户命令组 | 必须记录的观察 |
 |---|---|
-| A 剩余载体与多轮 | 第二组已有部分观察，第三组准备到期时间与原生恢复；仍补最少身份字段、provider command、终端及 headless 的多轮观察。 |
+| A 剩余载体与多轮 | 前三组已有部分观察，第四组只补通知分类；仍补最少身份字段、provider command、终端及 headless 的完整多轮观察。 |
 | B 独立传输探针 | 根据实际镜像版本准备限定 origin 的一次性流式探针；token 只留宿主，容器无登录，禁止宿主监听 TCP（传输控制协议）；覆盖上节独立边界。正式 exec 帧协议仍 pending。 |
 | 真实刷新与到期 | 不更改时间；等待实际到期窗口，运行 S6 的固定 Codex 路径。留旧 access token 的隔离拒绝探针，证明旧值失效后的续用；第二次刷新重复。 |
 | 终端与恢复 | 同一终端活进程多轮；headless 原生 resume 另计。restart、close 后 resume 保持会话身份。每个不同候选版本重复，记录是否继续／报错／退出／等登录。 |

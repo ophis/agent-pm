@@ -133,6 +133,42 @@ def exec_command(container):
     ]
 
 
+def error_item_category(message):
+    if not isinstance(message, str):
+        return "unknown"
+    if message in (
+        "Codex couldn't save diagnostic logs to its local database. "
+        "Run `codex doctor` for diagnostics.",
+        "Codex couldn't save diagnostic logs to its local database. "
+        "Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.",
+    ):
+        return "diagnostic_log_write"
+    if (
+        message.startswith("Under-development features enabled: ")
+        and ". Under-development features are incomplete and may behave unpredictably. "
+        "To suppress this warning, set `suppress_unstable_features_warning = true` in "
+        in message
+        and message.endswith(".")
+    ):
+        return "under_development_features"
+    if message.startswith("Model metadata for `") and message.endswith(
+        "` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+    ):
+        return "model_metadata_fallback"
+    if message.startswith("Falling back from WebSockets to HTTPS transport. "):
+        return "transport_fallback"
+    if re.fullmatch(r"in-process app-server event stream lagged; dropped [0-9]+ events", message):
+        return "event_stream_lag"
+    if (
+        message.startswith("model rerouted: ")
+        and " -> " in message
+        and " (" in message
+        and message.endswith(")")
+    ):
+        return "model_rerouted"
+    return "unknown"
+
+
 def summarize_turn(output, code):
     result = {
         "status": "incomplete",
@@ -142,6 +178,7 @@ def summarize_turn(output, code):
         "last_reply_ok": None,
         "error_event_count": None,
         "rejected_item_type_counts": None,
+        "error_item_category_counts": None,
         "error": "redacted_or_incomplete",
     }
     if len(output) > 4 * 1024 * 1024:
@@ -161,11 +198,15 @@ def summarize_turn(output, code):
             for event in events
         )
         rejected = {}
+        categories = {}
         for event in events:
             kind = event.get("item", {}).get("type")
             if kind not in (None, "agent_message", "reasoning"):
                 label = kind if isinstance(kind, str) and kind in ITEM_TYPES else "other"
                 rejected[label] = rejected.get(label, 0) + 1
+            if kind == "error":
+                category = error_item_category(event["item"].get("message"))
+                categories[category] = categories.get(category, 0) + 1
         result.update(
             completed_turn_count=completed,
             ok_reply_count=sum(text.strip() == "OK" for text in replies),
@@ -174,6 +215,7 @@ def summarize_turn(output, code):
                 event.get("type") in ("error", "turn.failed") for event in events
             ),
             rejected_item_type_counts=rejected,
+            error_item_category_counts=categories,
         )
         if (
             code == 0
@@ -315,6 +357,8 @@ def main():
     injection.add_argument("variant", choices=("missing-refresh", "empty-refresh"))
     status = commands.add_parser("status")
     status.add_argument("container", choices=CONTAINERS)
+    resume = commands.add_parser("resume")
+    resume.add_argument("container", choices=CONTAINERS)
     commands.add_parser("pair")
     commands.add_parser("versions")
     commands.add_parser("expiry")
@@ -343,6 +387,8 @@ def main():
             result = {"status": "pass", "versions": [observed_version(c) for c in CONTAINERS]}
         elif args.command == "expiry":
             result = access_expiry(read_private_auth(AUTH), datetime.now(UTC))
+        elif args.command == "resume":
+            result = {"probe": "native_resume", **resume_turn(args.container)}
         else:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 operation = resume_turn if args.command == "resume-pair" else turn

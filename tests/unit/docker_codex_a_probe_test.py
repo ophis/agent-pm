@@ -227,3 +227,89 @@ class CodexACarrier(Case):
         self.auth["tokens"]["access_token"] = "opaque"
         with self.assertRaises(ValueError):
             self.probe["access_expiry"](self.auth, datetime.now(UTC))
+
+    def test_error_item_categories_match_pinned_templates_without_echoing_substitutions(self):
+        examples = [
+            (
+                "Codex couldn't save diagnostic logs to its local database. Run `codex doctor` for diagnostics.",
+                "diagnostic_log_write",
+            ),
+            (
+                "Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.",
+                "diagnostic_log_write",
+            ),
+            (
+                "Under-development features enabled: private-canary. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /private-canary/config.toml.",
+                "under_development_features",
+            ),
+            (
+                "Model metadata for `private-canary` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.",
+                "model_metadata_fallback",
+            ),
+            (
+                "Falling back from WebSockets to HTTPS transport. private-canary\nprivate-detail",
+                "transport_fallback",
+            ),
+            ("in-process app-server event stream lagged; dropped 17 events", "event_stream_lag"),
+            ("model rerouted: private-canary -> private-target (private-reason)", "model_rerouted"),
+        ]
+        for message, category in examples:
+            self.assertEqual(self.probe["error_item_category"](message), category)
+        for unknown in (
+            None,
+            {"secret": "private-canary"},
+            "warning private-canary",
+            examples[0][0] + " private-canary",
+        ):
+            self.assertEqual(self.probe["error_item_category"](unknown), "unknown")
+
+    def test_known_notice_category_does_not_relax_strict_turn_gate(self):
+        for message, category in [
+            (
+                "Codex couldn't save diagnostic logs to its local database. Run `codex doctor` for diagnostics.",
+                "diagnostic_log_write",
+            ),
+            ("private-canary", "unknown"),
+            ("Credential masking is inactive because sandboxing is disabled.", "unknown"),
+        ]:
+            events = [
+                {"type": "item.completed", "item": {"type": "error", "message": message}},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}},
+                {"type": "turn.completed"},
+            ]
+            result = self.probe["summarize_turn"]("\n".join(map(json.dumps, events)).encode(), 0)
+            self.assertEqual(result["error_item_category_counts"], {category: 1})
+            self.assertEqual(result["status"], "incomplete")
+            self.assertTrue(result["last_reply_ok"])
+            self.assertEqual(result["error_event_count"], 0)
+            self.assertEqual(result["rejected_item_type_counts"], {"error": 1})
+            self.assertNotIn("private-canary", json.dumps(result))
+            self.assertNotIn("Credential masking", json.dumps(result))
+
+    def test_single_resume_keeps_nonzero_strict_result_and_redacts_notice_body(self):
+        sid = "11111111-2222-4333-8444-555555555555"
+        path = f"/codex/sessions/2026/10/18/rollout-2026-10-18T01-49-05-{sid}.jsonl\n"
+        events = [
+            {"type": "thread.started", "thread_id": sid},
+            {"type": "item.completed", "item": {"type": "error", "message": "private-canary"}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}},
+            {"type": "turn.completed"},
+        ]
+        outputs = [b"codex-cli 0.163.0", path.encode(), "\n".join(map(json.dumps, events)).encode()]
+        responses = [
+            SimpleNamespace(returncode=0, stdout=data, stderr=b"private-stderr") for data in outputs
+        ]
+        with (
+            mock.patch("sys.argv", ["probe", "--user-run", "resume", "task647-codex-a-1"]),
+            mock.patch("subprocess.run", side_effect=responses) as run,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as captured,
+        ):
+            code = self.probe["main"]()
+        self.assertEqual(code, 1)
+        result = json.loads(captured.getvalue())
+        self.assertTrue(result["same_native_session"])
+        self.assertEqual(result["error_item_category_counts"], {"unknown": 1})
+        self.assertNotIn("private-", captured.getvalue())
+        self.assertNotIn(sid, captured.getvalue())
+        self.assertEqual(run.call_count, 3)
+        self.assertIn("read-only", run.call_args.args[0])
