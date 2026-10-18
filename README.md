@@ -40,6 +40,14 @@ The Linear orchestrator is my philosophy of how agents should work (research, th
 
 One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
 
+## System structure
+
+Each session runs on a Host you pick: a local one (tmux or a pty), where the client runs on your Mac as you, or the Docker Host, where it runs isolated in its own container. The broker, on the Mac, keeps the logins in the login keychain and hands each container only its own credentials (GitHub tokens that last an hour), taking them back when the container closes.
+
+![agent-pm system structure: on your Mac you talk to the manager, which starts each session on a Host: tmux or a pty (not isolated) or Docker (isolated). The broker reads the logins from the login keychain and writes each worker container's own credentials to its tmpfs at start: GitHub installation tokens (1 hour, renewed), a Codex access token without its refresh token, a Claude setup-token copy. At close it revokes the GitHub tokens and the client credential goes with the container. The container's work reaches the Mac only through GitHub.](docs/images/system.svg)
+
+Details: [Docker host](docs/docker-host.md), [Credentials](docs/credentials.md).
+
 ## Five levels of mastering AI agents
 
 Working with coding agents is a ladder: each level adds an engineering discipline on top of the ones below, and the skill is matching the level to the problem.
