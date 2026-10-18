@@ -33,7 +33,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:146`, `manager/src/agent_pm/manager/engine/crew.py:541` |
+| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:151`, `manager/src/agent_pm/manager/engine/crew.py:541` |
 | Minimum permission | an account that can push to and open pull requests on every target repo; `gh auth login`'s scopes (a classic token needs at least `repo`, `read:org`, `gist`) | [gh auth login] |
 | Stored at | the system credential store, else a plain-text file; `gh auth status` says which | [gh auth login] |
 | Readers | any process running as the user (`gh auth token`); never mounted into a container | [gh auth login]; [What a container cannot reach](#what-a-container-cannot-reach) |
@@ -175,20 +175,21 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | Claude setup-token copy | `/run/agent-pm/secrets/claude`, through `docker exec` stdin; the client's environment only | until its container goes; the token itself a year | deleted with the container; not revoked | TASK-545 FR-8, FR-13; TASK-548 FR-12 |
 | GitHub installation tokens | `/run/agent-pm/secrets/github/<owner>`, one per installation | 1 hour, renewed 10 minutes ahead | revoked at `close`; backlog retried | TASK-549 FR-7 to FR-12 |
 | Codex access token, no refresh token | `/run/agent-pm/secrets/codex/auth.json`; `CODEX_HOME/auth.json` links to it | renewed 10 minutes ahead | deleted with the container; not revoked | TASK-550 FR-3 to FR-7, FR-12 |
+| nothing for OpenCode: it uses the host's Ollama | — | — | — | TASK-695 NFR-2 |
 | Bot user ID (not a secret) | the session's git author and committer identity | — | — | TASK-549 FR-14, FR-26 |
 
 ## What a container reaches
 
 | Resource | Requirements |
 |---|---|
-| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:166`) | TASK-549 FR-4, FR-17 |
-| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind (`broker/internal/launcher/start.go:169`) | TASK-549 FR-4; TASK-550 NFR-4 |
-| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:177`) | TASK-545 FR-13; TASK-549 FR-8 |
+| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:165`) | TASK-549 FR-4, FR-17 |
+| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind; OpenCode: its `opencode_dir` bind (`broker/internal/launcher/start.go:168`) | TASK-549 FR-4; TASK-550 NFR-4; TASK-695 FR-18 |
+| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:176`) | TASK-545 FR-13; TASK-549 FR-8 |
 | the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`
-(`broker/internal/launcher/start.go:146`): TASK-545 FR-10.
+(`broker/internal/launcher/start.go:185`): TASK-545 FR-10.
 
 ## What a container cannot reach
 

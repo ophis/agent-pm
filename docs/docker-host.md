@@ -30,7 +30,9 @@ command line tools).
 
 To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-in) again. Claude Code upgrades with
 the image, Codex by its [version policy](docker-codex.md#container-versions); the image's `gh` is the version agent-pm
-pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs.
+pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs. So is its OpenCode:
+`assets/opencode-install.py` installs it from npm tarballs checked against recorded sha512 hashes, and an OpenCode
+start refuses an image below the broker's `opencodeMinVersion` (`broker/internal/launcher/versions.go`): rebuild.
 
 Checks: [Docker checks › Install](docker-checks.md#install).
 
@@ -159,14 +161,14 @@ Each row's source holds the exact values.
 
 | What | Source | Summary |
 |---|---|---|
-| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session` and `agent-pm.generation` labels |
-| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
-| Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
+| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session`, `agent-pm.generation` and `agent-pm.client` labels |
+| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or OpenCode's `XDG_DATA_HOME` with its self-update and LSP downloads off); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
+| Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude and OpenCode: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
 | Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
 | Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
 | Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
 | Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
-| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
+| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Refusals
 
@@ -348,9 +350,9 @@ docker timing NAME GENERATION: checks 0.12 s
 | `docker timing NAME` | `preflight` | cwd checks, broker `version` and `build` (a rebuild lands here) |
 | `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token present |
 | | `image`, `checks` | the image check; the container-name check and workspace volume (created for `agent` on first use) |
-| | `create`, `bootstrap`, `clients` | `docker run`; Claude's bootstrap state and the hook stub; both clients' `--version` |
+| | `create`, `bootstrap`, `clients` | `docker run`; the client's bootstrap state (none for OpenCode) and the hook stub; every client's `--version` |
 | | `client_update` | Codex only: [version preparation](docker-codex.md#container-versions) |
-| | `credentials`, `total` | the token injection; the whole `start` |
+| | `credentials`, `total` | the token injection (none for OpenCode); the whole `start` |
 | `docker timing NAME GENERATION` | `checks`, `image` | cwd, sweep, the container check; `version` and `build` again (cached), a new start's workspace reset and client home, manifest and plan |
 | | `start` | the broker's `start` |
 | | `relay`, `tmux`, `client` | supervisor lock and hook relay; the supervisor and the container's tmux session; until the client's pane runs |

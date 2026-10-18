@@ -105,26 +105,26 @@ func TestCodexVersionLifecycle(t *testing.T) {
 	for _, mode := range []string{"updated", "current", "registry_unavailable", "no_supported_release", "download_failed", "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed", "invalid_install"} {
 		t.Run(mode, func(t *testing.T) {
 			v := &fakeVersions{target: "0.164.0"}
-			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.164.0"}}
+			w := &world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.164.0"}}
 			want := mode
 			switch mode {
 			case "current":
 				v.target = "0.163.0"
 			case "registry_unavailable":
 				v.registryErr = errors.New("offline")
-				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0"}
 			case "no_supported_release":
 				v.target = "0.162.999"
-				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0"}
 			case "download_failed":
 				v.binaryErr = errors.New("bad integrity")
-				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0"}
 				want = "update_failed"
 			case "stage_failed", "publish_failed", "probe_failed", "wrapper_failed", "reset_failed", "restore_failed":
 				want = "update_failed"
-				w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+				w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				if mode == "publish_failed" || mode == "wrapper_failed" {
-					w.versions = []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
+					w.versions = []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.163.0", "codex-cli 0.163.0"}
 				}
 				w.execErr = func(args []string) error {
 					if slices.Contains(args, strings.TrimSuffix(mode, "_failed")) || (mode == "reset_failed" && slices.Contains(args, "stage")) || (mode == "restore_failed" && slices.Contains(args, "stage")) {
@@ -227,7 +227,7 @@ func TestCodexUpdateBeforeAllSecrets(t *testing.T) {
 			if blocked {
 				v.pinned = "0.162.999"
 			}
-			h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.164.0"}}, &fakeCreds{})
+			h, d := startHost(&world{labels: goodLabels(), versions: []string{"claude 2", "codex-cli 0.163.0", "1.19.3", "codex-cli 0.164.0", "codex-cli 0.164.0"}}, &fakeCreds{})
 			h.Versions = v
 			h.Codex = &fakeCodexCreds{}
 			b, _ := os.ReadFile(codexManifest(t))

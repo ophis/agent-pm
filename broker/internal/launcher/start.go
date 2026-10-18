@@ -32,11 +32,11 @@ func asAgent(container string, argv ...string) []string {
 	return append([]string{"exec", "--user", "agent", container}, argv...)
 }
 
-// probe reads both clients' versions; the image installed them.
+// probe reads every client's version; the image installed them.
 func (h Host) probe(ctx context.Context, container string) (Clients, error) {
-	var versions [2]string
+	var versions [3]string
 	var errs []error
-	for i, client := range []string{"claude", "/opt/agent-pm/clients/bin/codex"} {
+	for i, client := range []string{"claude", "/opt/agent-pm/clients/bin/codex", "/opt/agent-pm/clients/bin/opencode"} {
 		out, err := h.Docker.Run(ctx, asAgent(container, client, "--version"), nil)
 		line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 		versions[i] = strings.TrimSpace(line)
@@ -45,7 +45,7 @@ func (h Host) probe(ctx context.Context, container string) (Clients, error) {
 		}
 		errs = append(errs, err)
 	}
-	return Clients{Claude: versions[0], Codex: versions[1]}, errors.Join(errs...)
+	return Clients{Claude: versions[0], Codex: versions[1], Opencode: versions[2]}, errors.Join(errs...)
 }
 
 func taken(c string) *protocol.Error {
@@ -81,7 +81,8 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		return StartResult{}, err
 	}
 	var policy codex.Installation
-	if m.Client == "codex" {
+	switch m.Client {
+	case "codex":
 		policy, err = h.versionPolicy(ctx)
 		if err != nil {
 			return StartResult{}, err
@@ -89,7 +90,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		if err := h.Codex.Ready(ctx); err != nil {
 			return StartResult{}, err
 		}
-	} else {
+	case "claude":
 		if err := h.Creds.Ready(); err != nil {
 			return StartResult{}, err
 		}
@@ -135,8 +136,8 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 			e = protocol.New(protocol.StartFailed, "Start failed.")
 		}
 		h.rollback(ctx, c, e)
-		if held && e.Cleanup == protocol.Removed {
-			h.Audit.Add(c, audit.Credential{Kind: clientKind(m.Client), Result: audit.Withdrawn}, "")
+		if kind := clientKind(m.Client); held && kind != "" && e.Cleanup == protocol.Removed {
+			h.Audit.Add(c, audit.Credential{Kind: kind, Result: audit.Withdrawn}, "")
 		}
 		return StartResult{}, e
 	}
@@ -170,7 +171,7 @@ func mounts(m Manifest, labels map[string]string) ([]string, []audit.Mount) {
 		tmpfs(docker.RunDir, "rw,noexec,nosuid,nodev,size=1048576"+owner)
 		bind(filepath.Join(m.CodexDir, "sessions"))
 	} else {
-		bind(m.ClaudeDir)
+		bind(m.StateDir())
 	}
 	tmpfs(docker.SecretsDir, "rw,noexec,nosuid,nodev,size=65536"+owner)
 	return flags, list
@@ -183,16 +184,20 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	labels := info.Config.Labels
 	args := []string{"run", "--detach", "--name", c, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "agent",
 		"--network", "bridge", "--workdir", m.CWD}
-	if m.Client == "codex" {
+	switch m.Client {
+	case "codex":
 		args = append(args, "--env", "CODEX_HOME="+m.CodexDir)
-	} else {
+	case "opencode":
+		// Self-update and LSP-server downloads would fetch unverified executables.
+		args = append(args, "--env", "XDG_DATA_HOME="+m.OpencodeDir, "--env", "OPENCODE_DISABLE_AUTOUPDATE=1", "--env", "OPENCODE_DISABLE_LSP_DOWNLOAD=1")
+	default:
 		args = append(args, "--env", "CLAUDE_CONFIG_DIR="+m.ClaudeDir)
 	}
 	for _, key := range []string{"npm_config_cache", "UV_CACHE_DIR", "PIP_CACHE_DIR"} {
 		args = append(args, "--env", key+"="+filepath.Join(m.CWD, cache))
 	}
 	args = append(args,
-		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation)
+		"--label", "agent-pm.session="+m.Name, "--label", "agent-pm.generation="+m.Generation, "--label", clientLabel+"="+m.Client)
 	keys := make([]string, 0, len(m.Labels))
 	for k := range m.Labels {
 		keys = append(keys, k)
@@ -215,8 +220,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, false, e
 	}
 	lap("create")
-	if _, err := h.Docker.Run(ctx, asAgent(c, Python, "-I", Bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
-		return StartResult{}, false, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
+	// OpenCode has no state to seed.
+	if m.Client != "opencode" {
+		if _, err := h.Docker.Run(ctx, asAgent(c, Python, "-I", Bootstrap, m.Client, m.StateDir(), m.CWD), nil); err != nil {
+			return StartResult{}, false, failure(err, protocol.StartFailed, "Writing client bootstrap state failed.")
+		}
 	}
 	if m.HasHook {
 		if _, err := h.Docker.Run(ctx, []string{"exec", "--user", "root", c, Python, "-I", Bootstrap, "hook", m.HookPath}, nil); err != nil {
@@ -229,6 +237,11 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		return StartResult{}, false, failure(err, protocol.StartFailed, "Cannot run the image's clients.")
 	}
 	lap("clients")
+	if m.Client == "opencode" {
+		if err := checkOpencode(clients.Opencode); err != nil {
+			return StartResult{}, false, err
+		}
+	}
 	var update *ClientUpdate
 	if m.Client == "codex" {
 		var prepared ClientUpdate
@@ -241,19 +254,22 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	}
 	exec := h.agentExec(ctx, c)
 	var codexExpiry *string
-	if m.Client == "codex" {
+	switch m.Client {
+	case "codex":
 		expiry, err := h.Codex.Inject(ctx, exec)
 		if err != nil {
 			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting Codex credentials failed.")
 		}
 		codexExpiry = &expiry
-	} else {
+	case "claude":
 		if err := h.Creds.Inject(exec); err != nil {
 			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
 		}
 	}
-	held = true
-	h.Audit.Add(c, audit.Credential{Kind: clientKind(m.Client), Result: audit.Issued, ExpiresAt: codexExpiry}, "")
+	if kind := clientKind(m.Client); kind != "" {
+		held = true
+		h.Audit.Add(c, audit.Credential{Kind: kind, Result: audit.Issued, ExpiresAt: codexExpiry}, "")
+	}
 	lap("credentials")
 	expiries := []protocol.Expiry{}
 	if m.GitHubApp != "" {

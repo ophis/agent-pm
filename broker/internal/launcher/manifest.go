@@ -13,10 +13,10 @@ import (
 )
 
 type Manifest struct {
-	Name, Generation, Image, CWD, Workspace, Client, ClaudeDir, CodexDir, HookPath string
-	HasHook                                                                        bool
-	Labels                                                                         map[string]string
-	GitHubApp                                                                      string // the App whose tokens the session gets; "": github null
+	Name, Generation, Image, CWD, Workspace, Client, ClaudeDir, CodexDir, OpencodeDir, HookPath string
+	HasHook                                                                                     bool
+	Labels                                                                                      map[string]string
+	GitHubApp                                                                                   string // the App whose tokens the session gets; "": github null
 }
 
 // A workspace volume's labels: its kind (always kind) and its mount point.
@@ -108,7 +108,8 @@ func ParseManifest(data []byte) (Manifest, error) {
 	}
 	var m Manifest
 	targets := map[string]*string{"name": &m.Name, "generation": &m.Generation, "image": &m.Image,
-		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir, "hook_path": &m.HookPath}
+		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir,
+		"opencode_dir": &m.OpencodeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
 		if key == "labels" || key == "github" {
 			continue
@@ -127,9 +128,15 @@ func ParseManifest(data []byte) (Manifest, error) {
 		}
 	}
 	_, m.HasHook = fields["hook_path"]
-	_, claude := fields["claude_dir"]
-	_, codex := fields["codex_dir"]
-	if !((m.Client == "claude" && claude && !codex) || (m.Client == "codex" && codex && !claude)) {
+	own := false
+	for _, client := range []string{"claude", "codex", "opencode"} {
+		_, present := fields[client+"_dir"]
+		if present != (m.Client == client) {
+			return reject("client requires exactly its own state directory")
+		}
+		own = own || present
+	}
+	if !own {
 		return reject("client requires exactly its own state directory")
 	}
 	switch {
@@ -173,8 +180,11 @@ func ParseManifest(data []byte) (Manifest, error) {
 }
 
 func (m Manifest) StateDir() string {
-	if m.Client == "codex" {
+	switch m.Client {
+	case "codex":
 		return m.CodexDir
+	case "opencode":
+		return m.OpencodeDir
 	}
 	return m.ClaudeDir
 }
