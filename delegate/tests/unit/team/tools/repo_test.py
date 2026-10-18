@@ -695,12 +695,22 @@ class Worktree(Base):
         self.assertEqual((code, json.loads(out)["push"]), (0, False))
         self.assertTrue(run.ran("gh", "repo", "clone"))
 
-    def test_the_app_can_push_where_the_repo_names_no_push_permission(self):
+    def test_a_repo_naming_no_push_permission_is_malformed_for_a_user(self):
         for data in ({"default_branch": "main"}, {"permissions": {}, "default_branch": "main"}):
             with self.subTest(data=data):
                 (code, out, err), _ = self.worktree(([*REPO_API], ok(json.dumps(data))))
                 self.assertEqual((code, out), (1, ""))
                 self.assertIn("gh api repos/o/n", err)
+
+    def test_the_app_can_push_whatever_the_repo_permissions_say(self):
+        """An App installation token gets every permission false, `pull` included."""
+        none = dict.fromkeys(("admin", "maintain", "pull", "push", "triage"), False)
+        for data in (
+            {"default_branch": "main"},
+            {"permissions": {}, "default_branch": "main"},
+            {"permissions": none, "default_branch": "main"},
+        ):
+            with self.subTest(data=data):
                 with unittest.mock.patch.dict(
                     os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}
                 ):
@@ -708,9 +718,6 @@ class Worktree(Base):
                 self.assertEqual((code, json.loads(out)["push"]), (0, True), err)
                 self.assertTrue(run.ran("gh", "repo", "clone"))
                 shutil.rmtree(self.wt)
-        with unittest.mock.patch.dict(os.environ, {"AGENT_PM_PR_AUTHOR": "agent-pm-bot[bot]"}):
-            (code, out, _), _ = self.worktree(info(push=False))
-        self.assertEqual((code, json.loads(out)["push"]), (0, False))
 
     def test_reuse_fetches_and_switches_to_the_local_branch(self):
         (code, _, _), run = self.worktree(
