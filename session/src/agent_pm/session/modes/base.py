@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     Launch,
     Liveness,
     Mode,
+    Permission,
     Prepared,
     SessionError,
     SessionEvent,
@@ -199,6 +200,10 @@ class BaseMode(ABC):
         if resume := host_resume(host, name, prepared.info.cwd):
             prepared = replace(prepared, info=replace(prepared.info, resume=resume))
         return prepared
+
+    @staticmethod
+    def _permission(host: Host) -> Permission:
+        return Permission.YOLO if host._isolated else Permission.AUTO
 
     @staticmethod
     def _selected(spec: Spec, client: Client) -> None:

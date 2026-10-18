@@ -296,7 +296,8 @@ class ConfigTest(Base):
             ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",)),
         )
         bare = DockerHost("docker", {"docker": DOCKER})
-        self.assertEqual((bare.github, bare.plugins), ("", ()))
+        self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))
+        self.assertTrue(DockerHost("docker", {"docker": DOCKER, "isolated": True})._isolated)
         named = DockerHost("docker", {"docker": DOCKER, "plugins": ["a", "b.c@market_1-x"]})
         self.assertEqual(named.plugins, ("a", "b.c@market_1-x"))
 

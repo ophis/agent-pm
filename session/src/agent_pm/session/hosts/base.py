@@ -212,7 +212,7 @@ def check_sid(name: str, process: Process | None, sid: str | None) -> None:
 
 
 class Host(ABC):
-    """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
+    """settings: [hosts.<name>] minus implementation and isolated. Launch.env is passed verbatim;
     on exit, events gets `exited <rc>` / `dead`.
     attach: a Process, unknown → SessionError. list: its sessions' names, sorted. A display is kept
     as given; the Viewer reads it.
@@ -223,6 +223,9 @@ class Host(ABC):
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name
         self.settings = thaw(settings or {})
+        self._isolated = self.settings.pop("isolated", False)
+        if not isinstance(self._isolated, bool):
+            raise ConfigError(f"[hosts.{name}] isolated: want true or false")
 
     @classmethod
     def parse_hosts(cls, table) -> Hosts:
