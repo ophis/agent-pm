@@ -123,7 +123,9 @@ class CodexBootstrap(Case):
         inject(io.BytesIO(self.carrier()), self.secrets, self.target)
         path = self.target / "auth.json"
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
-        self.assertFalse(path.is_symlink())
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(path.readlink(), self.secrets / "codex/auth.json")
+        self.assertEqual((self.secrets / "codex/auth.json").read_bytes(), self.carrier())
         self.assertEqual(path.stat().st_uid, os.getuid())
         path.unlink()
         path.write_bytes(self.carrier("native"))

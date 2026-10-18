@@ -110,6 +110,7 @@ def inject_codex(stream, secrets=Path("/run/agent-pm/secrets"), directory=None):
             if expected.parent.is_symlink():
                 reject()
             current_path = expected
+        initial = destination.is_symlink() and not os.path.lexists(current_path)
         if os.path.lexists(current_path):
             if not stat.S_ISREG(current_path.lstat().st_mode):
                 reject()
@@ -119,6 +120,9 @@ def inject_codex(stream, secrets=Path("/run/agent-pm/secrets"), directory=None):
                 reject()
     except (ValueError, TypeError, KeyError, OSError, RecursionError):
         reject()
+    if initial:
+        destination = current_path
+        destination.parent.mkdir(mode=0o700, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".auth-", dir=destination.parent)
     temporary = Path(name)
     try:

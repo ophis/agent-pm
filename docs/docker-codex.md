@@ -69,7 +69,7 @@ flowchart LR
     A --> C[Verify access and save auth]
     C --> U[Verify saved auth and release lock]
 ```
-Sources: `broker/internal/broker/codex.go:141`, TASK-642's `broker/internal/broker/keychain.go:255`.
+Sources: `broker/internal/broker/codex.go:147`, TASK-642's `broker/internal/broker/keychain.go:255`.
 
 The entire temporary home is 0700 under `/private/tmp`; file credential storage and
 ChatGPT browser login are forced. It is removed on success, child failure and normal
@@ -237,7 +237,7 @@ The generation closes, with one-minute close retries. Follow the message on the 
 then explicitly resume the worker; preserved native history remains authoritative.
 Missing login or invalid pinned files fail preflight with repair instructions.
 No run login, personal cache or different identity is selected.
-Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:312`.
+Source: `session/src/agent_pm/session/hosts/docker/supervisor.py:327`.
 
 ### TASK-650 user-run acceptance, pending
 

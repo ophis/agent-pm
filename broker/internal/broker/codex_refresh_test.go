@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ophis/agent-pm/broker/internal/codex"
 )
 
 type refreshingNative struct {
@@ -245,5 +247,20 @@ func TestCodexRevisionRejectsUnsafeMetadata(t *testing.T) {
 				t.Fatal("accepted unsafe coordination")
 			}
 		})
+	}
+}
+
+func TestCodexRefreshUnsupportedPinNamesUpgrade(t *testing.T) {
+	c, n, _ := renewalFixture(t)
+	n.refresh = func(string) error { return codex.ErrRefreshVersion }
+	err := c.Ready(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex 0.163.0") {
+		t.Fatalf("missing pinned upgrade repair: %v", err)
+	}
+	if strings.Contains(err.Error(), "login codex") {
+		t.Fatal("unsupported pin suggested login")
+	}
+	if _, err := os.Stat(n.home); !os.IsNotExist(err) {
+		t.Fatal("refresh home remains")
 	}
 }

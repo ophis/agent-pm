@@ -601,6 +601,18 @@ class CodexRenewalTest(Base):
         self.assertEqual(self.waits, [0, 60])
         self.supervisor.broker.close.assert_not_called()
 
+    def test_lost_reply_with_long_publication_retries_after_one_minute(self):
+        self.deadline(30)
+
+        def partial(*_args):
+            self.deadline(3600)
+            raise SessionError("response lost")
+
+        self.supervisor.broker.refresh.side_effect = partial
+        self.supervisor.refresh(self.stop(1))
+        self.assertEqual(self.waits, [0, 60])
+        self.supervisor.broker.close.assert_not_called()
+
     def test_successful_short_lifetime_has_no_busy_loop(self):
         self.deadline(30)
         self.supervisor.broker.refresh.side_effect = lambda *_args: self.renewed(120)

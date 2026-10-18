@@ -18,6 +18,8 @@ const refreshVersion = "0.163.0"
 const refreshOutputLimit = 1024 * 1024
 const refreshLineLimit = 64 * 1024
 
+var ErrRefreshVersion = errors.New("Codex refresh requires pinned 0.163.0; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex 0.163.0")
+
 var errRefreshExchange = errors.New("pinned Codex refresh exchange failed")
 
 type refreshProcess interface {
@@ -115,7 +117,7 @@ func (r Runtime) Refresh(ctx context.Context, home string) error {
 		return err
 	}
 	if installation.Version != refreshVersion {
-		return errors.New("Codex refresh requires pinned 0.163.0; run sudo agent-pm-broker update-codex 0.163.0")
+		return ErrRefreshVersion
 	}
 	if err := privateHome(home); err != nil {
 		return err

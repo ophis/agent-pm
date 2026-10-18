@@ -337,12 +337,14 @@ def _renew_client(name, state, generation, broker, stopped, *, failed, expired, 
 
     wait = delay()
     while not stopped.wait(wait):
+        retry = False
         try:
             found = broker.refresh(
                 f"agent-pm-{name}-{generation}", os.path.join(state, f"{generation}.json")
             )
             save(path, json.dumps(found.github), durable=True)
         except (SessionError, OSError) as error:
+            retry = True
             failed(str(error))
         remaining = _client_deadline(state, generation) - clock()
         if remaining <= 0:
@@ -362,7 +364,7 @@ def _renew_client(name, state, generation, broker, stopped, *, failed, expired, 
                         return
                 else:
                     return
-        wait = min(remaining, max(REFRESH_RETRY, delay()))
+        wait = min(remaining, REFRESH_RETRY if retry else max(REFRESH_RETRY, delay()))
 
 
 def _delay(expiries: list, now: float) -> float | None:

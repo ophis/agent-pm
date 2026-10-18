@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ophis/agent-pm/broker/internal/codex"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -23,6 +24,9 @@ func (c Codex) renew(ctx context.Context, previous []byte, old codexAuthDocument
 		return nil, errors.New("cannot stage private Codex login")
 	}
 	if err := c.native.Refresh(ctx, home); err != nil {
+		if errors.Is(err, codex.ErrRefreshVersion) {
+			return nil, codex.ErrRefreshVersion
+		}
 		return nil, errors.New("native Codex refresh failed; retry or run " + codexLoginCommand)
 	}
 	data, err := readCodexAuth(home)
