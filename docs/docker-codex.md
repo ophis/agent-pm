@@ -120,6 +120,32 @@ Linux 合成检查通过：Docker 28.0.4，2026-10-18 01:03:40 UTC（协调世�
 
 **严格判定**还要求：最后一条回复为 OK、没有 `error`／`turn.failed`、没有 `agent_message`／`reasoning` 之外的非空 item 类型。[原探针:145](https://github.com/ophis/agent-pm/blob/3fa9774d5300e631d49539a24c4e7e727bc98b7a/scripts/docker_codex_a_probe.py#L145) 没有回传这三项的原因；OK 计数不证明最后一条也是 OK，白名单外 item 也不必是工具调用。现有记录只能确定至少一项未通过，无法唯一定位，原始输出已丢弃。保留这次未完成结果；后续增加脱敏计数，判定条件不变，不重跑初次基线。
 
+### 第三组观察
+
+[完整脱敏记录](docker-codex-evidence/2026-10-18-user-a-resume.json) 来自用户，探针版本为 `93c25337`；没有 worker 复跑。
+
+| 项目 | 观察 | 尚未证明 |
+|---|---|---|
+| 到期声明 | 2026-10-18T02:06:30.590905Z 读取；`exp` 对应 2026-10-28T01:27:14Z，剩余 861644 秒，声明寿命 864000 秒（10 天），签名未验证 | 实际上游到期、旧值失效时间、刷新提前量；不能将声明寿命当成实测有效期 |
+| a-1 原生恢复 | 02:06:46.515968–02:06:51.371292Z，0.163.0；同一原生身份，退出 0，完成 1 轮，末条 OK，顶层错误 0，`error` item 1 | 严格状态 `incomplete`，通知具体类别未采集 |
+| a-2 原生恢复 | 02:06:46.515564–02:06:51.776535Z，其余观察与 a-1 相同；两次执行重叠 | 同上；不把后续 a-1 分类套到此轮或 a-2 |
+
+本轮唯一未通过的是白名单外的 `error` item；原生身份与回复子项已观察到成功，整组不补记通过。第二组原始事件已丢弃，不能据第三组推断第二组拒绝原因。真实刷新与 A/B 定案仍未完成。
+
+### ErrorItem 的含义与判据
+
+官方 [非交互说明](https://learn.chatgpt.com/docs/non-interactive-mode) 定义 JSON 事件流，但未区分下面的通知映射；固定源码补齐此项。`ErrorItem` 只有 `message`，没有原始通知类型或严重性字段，见 [exec_events.rs:310](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/exec_events.rs#L310)。
+
+| 进入 JSON 输出器的来源 | 输出／运行状态 | 固定源码 |
+|---|---|---|
+| `Warning` 与本地 `process_warning` | `item.completed` + `ErrorItem`；继续运行 | [输出器:409](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L409)、[输出器:442](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L442)、[输出器:623](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L623) |
+| `ConfigWarning` | 同上；消息为摘要及可选详情 | [输出器:427](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L427) |
+| `DeprecationNotice` | 同上；弃用通知 | [输出器:459](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L459) |
+| `ModelRerouted` | 同上；记录模型改路由 | [输出器:494](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L494) |
+| 服务端 `Error`／回合 `Failed` | 顶层 `error`／`turn.failed`，与 `ErrorItem` 分开 | [输出器:447](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L447)、[输出器:538](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L538) |
+
+**放行建议**：不能仅因类型名为 `error` 判认证失败；已确认无害的具体通知可另记警告。但不能一概放行：同一通道包含[事件丢失](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/exec/src/lib.rs#L1668)、[凭据遮蔽失效](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/config/mod.rs#L4876)与[自定义规则未应用](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/in_process.rs#L381)。这些会影响完整性或安全边界；模型、传输降级也影响兼容与 B 的协议证据。先取得具体类别，再决定是否提出窄范围豁免；本次只增加分类，不放宽严格判定，不关闭警告或改沙箱。
+
 ## 用户实测交接
 
 **身份边界**：以下命令仅用户在 macOS Apple silicon 宿主执行。worker 不运行 Docker、不读取真实 `auth.json`、不调用 keychain（钥匙串）或 Security API。所有测试登录在新建 0700 目录；不复制或挂载个人 `~/.codex`，不写用户配置。登录输出只在用户终端显示，不记录或粘贴授权码。回传仅版本、时间、状态、次数及脱敏错误。
@@ -263,9 +289,9 @@ flowchart TD
 
 ## M3 待补项
 
-| pending 项 | 等待 issue | 合并后补验 |
+| pending 项 | 依赖 issue | 待补验证 |
 |---|---|---|
-| 正式 headless 容器启动 | [TASK-643](https://linear.app/ophis-workgroup/issue/TASK-643) | 经 `Host.pipe` 的 Codex exec 与正式 run 事件、恢复；初步普通 exec 不代替此项。 |
+| 正式 headless 容器启动 | [TASK-643](https://linear.app/ophis-workgroup/issue/TASK-643) | [PR #402](https://github.com/ophis/agent-pm/pull/402) 已于 2026-10-18T01:57:15Z 合并；经 `Host.pipe` 的 Codex exec、正式 run 事件与恢复仍待补验，普通 exec 不代替此项。 |
 | 清单与最终 broker 协议 | [TASK-549](https://linear.app/ophis-workgroup/issue/TASK-549) | 最终版本、单一工作区卷、统一 App、换发循环与监管恢复；当前不递增协议。 |
 | B session／generation 与进程通道 | TASK-549、TASK-643 | 跨 session／旧 generation 拒绝，模型流不阻塞 hook／close／刷新，取消与 close 结束请求。 |
 
