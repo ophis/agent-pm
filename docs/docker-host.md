@@ -323,8 +323,10 @@ Docker supports Claude terminals and headless runs, plus [Codex terminals](docke
 Unsupported clients, Codex headless runs, detached sessions, and a start while a container
 of that name still exists fail before container creation. The broker's Refusals above apply too.
 
-Every start first runs a preflight: the client and mode are supported, the cwd exists, the broker
-answers `version` with the expected protocol (else it points to [Install](#install)), and
+Every start first runs a preflight: the client and mode are supported, the cwd exists
+(`Session.preflight` also accepts one not yet made: a role run makes its agent dir after
+it), the broker answers `version` with the expected protocol (else it points to
+[Install](#install)), and
 `build` succeeds, rebuilding an image built 7 or more days ago
 (its Docker progress streams to the starting command's stderr). `resume` runs it before it touches anything;
 `restart` closes the running container first, so a failed preflight leaves the worker
