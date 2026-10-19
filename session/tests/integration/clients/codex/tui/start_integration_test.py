@@ -185,6 +185,7 @@ class StartTest(Base):
             ("UserPromptSubmit", "userPromptSubmit", "activity"),
             ("PostToolUse", "postToolUse", "activity"),
             ("PermissionRequest", "permissionRequest", "blocked"),
+            ("PreToolUse", "preToolUse", "blocked"),
             ("Stop", "stop", "turn_end"),
             ("Interrupt", "interrupt", "turn_end"),
         )

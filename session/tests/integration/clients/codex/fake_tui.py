@@ -31,6 +31,7 @@ EVENTS = (
     "UserPromptSubmit",
     "PostToolUse",
     "PermissionRequest",
+    "PreToolUse",
     "Stop",
     "Interrupt",
 )
@@ -125,6 +126,7 @@ def catalog(config, user=None):
                     {
                         "source": "sessionFlags",
                         "eventName": event[0].lower() + event[1:],
+                        "matcher": group.get("matcher"),
                         "handlerType": "command",
                         "command": command,
                         "key": key,
@@ -281,6 +283,8 @@ class InteractiveSession:
         for row in self.rows:
             if row["eventName"] != label[0].lower() + label[1:] or not row["enabled"]:
                 continue
+            if row.get("matcher") and not re.search(row["matcher"], payload.get("tool_name", "")):
+                continue
             result = subprocess.run(
                 ["/bin/sh", "-c", row["command"]],
                 input=json.dumps(payload),
@@ -314,6 +318,10 @@ class InteractiveSession:
                     "tool_input": {"command": "true"},
                 },
             )
+        elif step["kind"] == "question":
+            asked = {"questions": [{"id": "q1", "header": "Scope", "question": "Which?"}]}
+            for tool in ("Bash", "request_user_input"):
+                self.fire("PreToolUse", {"turn_id": ident, "tool_name": tool, "tool_input": asked})
         elif step["kind"] == "tool":
             self.fire("PostToolUse", {"turn_id": ident, "tool_name": step.get("tool_name", "Bash")})
         elif step["kind"] == "hook":

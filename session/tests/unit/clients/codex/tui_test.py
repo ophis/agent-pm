@@ -219,6 +219,7 @@ class TuiTest(Base):
                 "UserPromptSubmit": HookKind.ACTIVITY,
                 "PostToolUse": HookKind.ACTIVITY,
                 "PermissionRequest": HookKind.BLOCKED,
+                "PreToolUse": HookKind.BLOCKED,
                 "Stop": HookKind.TURN_END,
                 "Interrupt": HookKind.TURN_END,
             },
@@ -459,6 +460,23 @@ class TuiTest(Base):
         self.assertEqual(
             run.hook_events("PermissionRequest", self.payload(tool_name="Bash")), [Blocked("Bash")]
         )
+        questions = [{"header": "Scope", "question": "Which?"}, {"question": "And?"}, "x"]
+        self.assertEqual(
+            run.hook_events(
+                "PreToolUse",
+                self.payload(tool_name="request_user_input", tool_input={"questions": questions}),
+            ),
+            [Blocked("question: Scope; And?")],
+        )
+        for tool_input in (None, {"questions": None}):
+            with self.subTest(tool_input=tool_input):
+                self.assertEqual(
+                    run.hook_events(
+                        "PreToolUse",
+                        self.payload(tool_name="request_user_input", tool_input=tool_input),
+                    ),
+                    [Blocked("question")],
+                )
         self.assertEqual(
             run.hook_events("Stop", self.payload(last_assistant_message=None)), [TurnEnd()]
         )
@@ -1109,7 +1127,7 @@ class LaunchPolicy(Base):
                         for word in argv[:boundary]
                         if word != "hooks.state={trusted}"
                     ),
-                    6,
+                    len(tui.HOOKS),
                 )
             self.assertEqual(
                 self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(supplied)
@@ -1199,6 +1217,11 @@ class PlanTest(PlanCase):
         for value in (None, 1, "a\0b"):
             with self.subTest(prompt=value), self.assertRaisesRegex(ValueError, "invalid prompt"):
                 tui.decode(data | {"prompt": value})
+
+    def test_only_the_question_tool_runs_the_pre_tool_use_hook(self):
+        matched = [flag for flag in tui.hook_flags(self.plan.hook) if "matcher=" in flag]
+        self.assertEqual(len(matched), 1)
+        self.assertTrue(matched[0].startswith('hooks.PreToolUse=[{matcher="^request_user_input$",'))
 
     def test_execution_and_trust_use_the_same_pre_separator_flags(self):
         hooks = tui.hook_flags(self.plan.hook)
