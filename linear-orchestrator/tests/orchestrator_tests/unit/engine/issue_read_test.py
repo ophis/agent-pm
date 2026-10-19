@@ -176,3 +176,55 @@ class Compact(Case):
         node = issue_node(children=conn([rel(f"TASK-{n}") for n in range(10, 21)], more=True))
         view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
         self.assertEqual(view["truncated"], ["children"])
+
+
+class Full(Case):
+    def node_and_pages(self):
+        node = issue_node(
+            "TASK-2",
+            description="述" * 700,
+            comments=conn([comment(n, body="评" * 400) for n in (9, 8)], more=True, cursor="c-1"),
+            labels=conn([{"id": "l1", "name": "Bug"}], more=True, cursor="l-1"),
+            relations=conn(
+                [relation("related", "relatedIssue", "TASK-7")], more=True, cursor="r-1"
+            ),
+            inverseRelations=conn([], more=True, cursor="i-1"),
+            children=conn([rel("TASK-10")], more=True, cursor="k-1"),
+        )
+        pages = {
+            "comments": [conn([comment(1)])],
+            "labels": [conn([{"id": "l2", "name": "Ops"}])],
+            "relations": [conn([relation("blocks", "relatedIssue", "TASK-3")])],
+            "inverseRelations": [
+                conn([relation("blocks", "issue", "TASK-1")], more=True, cursor="i-2"),
+                conn([relation("blocks", "issue", "TASK-4")]),
+            ],
+            "children": [conn([rel("TASK-11")])],
+        }
+        return node, pages
+
+    def test_every_page_of_every_connection(self):
+        node, pages = self.node_and_pages()
+        gql = Gql(node, pages)
+        view = issue_read.view(gql, "TASK-2", full=True)
+        self.assertEqual([c["id"] for c in view["comments"]], ["c9", "c8", "c1"])
+        self.assertEqual(len(view["comments"][0]["body"]), 400)
+        self.assertEqual(len(view["description"]), 700)
+        self.assertEqual([lb["id"] for lb in view["labels"]], ["l1", "l2"])
+        self.assertEqual([r["identifier"] for r in view["blocks"]], ["TASK-3"])
+        self.assertEqual([r["identifier"] for r in view["blocked_by"]], ["TASK-1", "TASK-4"])
+        self.assertEqual([r["identifier"] for r in view["children"]], ["TASK-10", "TASK-11"])
+        self.assertEqual((view["truncated"], view["continue"]), ([], None))
+        first, *later = gql.calls
+        self.assertIn("comments(first: 250, orderBy: createdAt)", first[0])
+        self.assertEqual(first[1], {"i": "TASK-2"})
+        self.assertEqual(
+            sorted(v["c"] for _, v in later), ["c-1", "i-1", "i-2", "k-1", "l-1", "r-1"]
+        )
+        self.assertEqual({v["i"] for _, v in later}, {"id-TASK-2"})
+
+    def test_a_failed_later_page_fails_the_read(self):
+        node, pages = self.node_and_pages()
+        pages["children"] = [LinearError("linear api error: boom")]
+        with self.assertRaises(LinearError):
+            issue_read.view(Gql(node, pages), "TASK-2", full=True)

@@ -48,15 +48,23 @@ def issue_node(ident="TASK-2", **fields):
 
 
 class Gql:
-    """Answers the read query with `node` and records every (query, variables) call; an exception
+    """Answers the read query with `node`, each later page of a connection from `pages[name]` (in
+    order; an exception there is raised), and records every (query, variables) call; an exception
     in `fail` is raised instead.
     """
 
-    def __init__(self, node, fail=None):
+    def __init__(self, node, pages=None, fail=None):
         self.node, self.fail, self.calls = node, fail, []
+        self.pages = {name: list(found) for name, found in (pages or {}).items()}
 
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
         if self.fail is not None:
             raise self.fail
+        for name, more in issue_read.MORE.items():
+            if query == more:
+                page = self.pages[name].pop(0)
+                if isinstance(page, BaseException):
+                    raise page
+                return {"issue": {name: page}}
         return {"issue": self.node}

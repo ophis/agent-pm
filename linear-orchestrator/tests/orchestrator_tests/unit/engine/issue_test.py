@@ -187,3 +187,75 @@ class Failures(IssueCase):
         self.assertEqual(code, 1)
         self.assertIn("HTTP 401", err)
         self.assertNotIn(KEY, out.decode() + err)
+
+
+class Full(IssueCase):
+    def gql(self):
+        node = issue_node(
+            "TASK-2",
+            comments=conn([comment(9, body="评" * 400)], more=True, cursor="c-1"),
+            children=conn([rel("TASK-10")], more=True, cursor="k-1"),
+        )
+        return Gql(node, {"comments": [conn([comment(1)])], "children": [conn([rel("TASK-11")])]})
+
+    def test_writes_every_page_to_the_file_and_prints_its_path(self):
+        path = os.path.join(self.root, "TASK-2.json")
+        code, out, err = self.run_main(["read", "TASK-2", "--full", "--output", path], self.gql())
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"identifier": "TASK-2", "output": path})
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        view = json.loads(text)
+        self.assertEqual(
+            text, json.dumps(view, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        self.assertEqual([c["id"] for c in view["comments"]], ["c9", "c1"])
+        self.assertEqual(len(view["comments"][0]["body"]), 400)
+        self.assertEqual([c["identifier"] for c in view["children"]], ["TASK-10", "TASK-11"])
+
+    def test_a_relative_output_prints_its_absolute_path(self):
+        with mock.patch("os.getcwd", return_value=self.root):
+            code, out, _ = self.run_main(
+                ["read", "TASK-2", "--output", "out.json", "--full"], self.gql()
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["output"], os.path.join(self.root, "out.json"))
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "out.json")))
+
+    def test_full_and_output_go_together(self):
+        for argv in (["read", "TASK-2", "--full"], ["read", "TASK-2", "--output", "x.json"]):
+            gql = self.gql()
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(argv, gql)
+                self.assertEqual((code, out, gql.calls), (2, b"", []))
+                self.assertIn("--full --output FILE", err)
+
+    def test_an_unwritable_output_exits_two(self):
+        path = os.path.join(self.root, "missing", "TASK-2.json")
+        code, out, err = self.run_main(["read", "TASK-2", "--full", "--output", path], self.gql())
+        self.assertEqual((code, out), (2, b""))
+        self.assertIn("--output", err)
+
+    def test_a_failed_page_writes_no_file(self):
+        gql = self.gql()
+        gql.pages["children"] = [Unavailable("issue", reason="timed out")]
+        path = os.path.join(self.root, "TASK-2.json")
+        code, out, err = self.run_main(["read", "TASK-2", "--full", "--output", path], gql)
+        self.assertEqual((code, out), (1, b""))
+        self.assertIn("timed out", err)
+        self.assertFalse(os.path.exists(path))
+
+    def test_an_auth_failure_writes_no_file_and_shows_no_credential(self):
+        found = CompletedProcess([], 0, stdout=KEY + "\n", stderr="")
+        refused = urllib.error.HTTPError(client.URL, 401, "Unauthorized", {}, io.BytesIO(b"{}"))
+        path = os.path.join(self.root, "TASK-2.json")
+        with (
+            mock.patch("subprocess.run", return_value=found),
+            mock.patch("urllib.request.urlopen", side_effect=refused),
+        ):
+            code, out, err = self.run_main(
+                ["read", "TASK-2", "--full", "--output", path], client.linear_gql
+            )
+        self.assertEqual(code, 1)
+        self.assertNotIn(KEY, out.decode() + err)
+        self.assertFalse(os.path.exists(path))

@@ -1,5 +1,5 @@
 """agent-pm-linear issue read: one issue's fields, newest comments and relations as a view (view),
-cut to the default limits by compact.
+cut to the default limits by compact, or with every page for --full.
 """
 
 import re
@@ -7,6 +7,7 @@ import re
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, IssueError, LinearError
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
+PAGE = 250
 _REL = "id identifier title state { name }"
 CONNECTIONS = {
     "comments": "id body createdAt parentId quotedText user { id name } onBehalfOf { id name }",
@@ -32,34 +33,52 @@ _CUTS = {
 }
 
 
-def _connection(name, first):
+def _connection(name, first, after=""):
     order = ", orderBy: createdAt" if name == "comments" else ""
     nodes = CONNECTIONS[name]
-    return f"{name}(first: {first}{order}) {{ nodes {{ {nodes} }} pageInfo {{ hasNextPage endCursor }} }}"
+    page = "pageInfo { hasNextPage endCursor }"
+    return f"{name}(first: {first}{after}{order}) {{ nodes {{ {nodes} }} {page} }}"
 
 
-Q_READ = (
-    "query($i: String!) { issue(id: $i) { id identifier title url description "
-    "state { id name type } project { id name } projectMilestone { id name } "
-    f"assignee {{ id name email }} parent {{ {_REL} }} "
-    + " ".join(_connection(name, first) for name, first in _FIRST.items())
-    + " } }"
-)
+def _query(first):
+    return (
+        "query($i: String!) { issue(id: $i) { id identifier title url description "
+        "state { id name type } project { id name } projectMilestone { id name } "
+        f"assignee {{ id name email }} parent {{ {_REL} }} "
+        + " ".join(_connection(name, first.get(name, PAGE)) for name in CONNECTIONS)
+        + " } }"
+    )
 
 
-def view(gql, ident):
+Q_READ, Q_FULL = _query(_FIRST), _query({})
+MORE = {
+    name: f"query($i: String!, $c: String) {{ issue(id: $i) {{ {_connection(name, PAGE, ', after: $c')} }} }}"
+    for name in CONNECTIONS
+}
+
+
+def view(gql, ident, *, full=False):
+    """The issue's view: with full, every page of every connection and nothing truncated."""
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
         raise IssueError(f"{ident!r}: want an issue identifier such as TASK-1 or an issue id")
     try:
-        node = gql(Q_READ, i=ident)["issue"]
+        node = gql(Q_FULL if full else Q_READ, i=ident)["issue"]
     except LinearError as error:
         if "Entity not found" not in str(error):
             raise
         node = None
     if node is None:
         raise IssueError(f"{ident}: no such issue")
-    nodes = {name: node[name]["nodes"] for name in CONNECTIONS}
-    more = [_CUTS[name] for name in CONNECTIONS if node[name]["pageInfo"]["hasNextPage"]]
+    nodes, more = {}, []
+    for name in CONNECTIONS:
+        page = node[name]
+        nodes[name] = list(page["nodes"])
+        while full and page["pageInfo"]["hasNextPage"]:
+            after = page["pageInfo"]["endCursor"]
+            page = gql(MORE[name], i=node["id"], c=after)["issue"][name]
+            nodes[name] += page["nodes"]
+        if page["pageInfo"]["hasNextPage"]:
+            more.append(_CUTS[name])
     return _shape(node, nodes, more)
 
 

@@ -6,6 +6,7 @@ failed) or USAGE (usage, configuration or an unresolved reference).
 import argparse
 import functools
 import json
+import os
 import subprocess
 import sys
 
@@ -45,9 +46,13 @@ _READ_HELP = (
     "  (issues blocking it), parent, children; empty: null or [].\n"
     "  Defaults: 5 comments of at most 300 characters, a 600-character\n"
     "  description, 10 issues per relation column. truncated lists every field\n"
-    f"  cut or with more pages; continue then gives the read with {FULL}.\n\n"
+    f"  cut or with more pages; continue then gives the read with {FULL}.\n"
+    f"  {FULL}: read every page, keep every body, write the view as indented\n"
+    "  JSON to FILE and print only {identifier, output: FILE's absolute path};\n"
+    "  either option alone is a usage error. A failed read writes no file.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue read TASK-1\n\n"
+    "  agent-pm-linear issue read TASK-1\n"
+    "  agent-pm-linear issue read TASK-1 --full --output TASK-1.json\n\n"
     "Recovery and next help:\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
@@ -80,6 +85,14 @@ def fit(payload, lists, follow):
             payload["truncated"].append(field)
 
 
+def write_full(path, payload):
+    """payload as normalized JSON in path; its absolute path."""
+    path = os.path.abspath(path)
+    with open(path, "w", encoding="utf-8", errors="backslashreplace") as f:
+        f.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def diagnose(err, message):
     data = f"{PROG}: {message}".encode("utf-8", "backslashreplace")
     if len(data) > LIMIT - 1:
@@ -104,6 +117,8 @@ def _parser():
         epilog=_READ_HELP,
     )
     read.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    read.add_argument("--full", action="store_true", help="every page and body; needs --output")
+    read.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
     return parser
 
 
@@ -111,6 +126,9 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
     err = sys.stderr if err is None else err
+    if args.full != (args.output is not None):
+        diagnose(err, f"--full and --output go together: read {args.id} {FULL}")
+        return USAGE
     try:
         cfg = config.load(path=config_path)
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
@@ -118,12 +136,13 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
         return USAGE
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
-        view = issue_read.view(gql, args.id)
-        data = fit(
-            issue_read.compact(view),
-            ("comments", "labels", "blocks", "blocked_by", "children"),
-            f"agent-pm-linear issue read {view['identifier']} {FULL}",
-        )
+        view = issue_read.view(gql, args.id, full=args.full)
+        if not args.full:
+            data = fit(
+                issue_read.compact(view),
+                ("comments", "labels", "blocks", "blocked_by", "children"),
+                f"agent-pm-linear issue read {view['identifier']} {FULL}",
+            )
     except IssueError as error:
         diagnose(err, error)
         return USAGE
@@ -133,5 +152,12 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
     except (LinearError, Unavailable, OverflowError) as error:
         diagnose(err, error)
         return FAILED
+    if args.full:
+        try:
+            path = write_full(args.output, view)
+        except OSError as error:
+            diagnose(err, f"--output {args.output}: {error.strerror or error}")
+            return USAGE
+        data = encode({"identifier": view["identifier"], "output": path})
     out.write(data)
     return OK
