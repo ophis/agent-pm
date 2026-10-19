@@ -78,6 +78,17 @@ class Config:
         return None if task is None else self.task_tiers.get(task)
 
 
+@dataclass(frozen=True)
+class Context:
+    """What the run launches with so far; tier or effort None: the role's configured one."""
+
+    role: str
+    task: str | None
+    client: str
+    tier: int | None = None
+    effort: str | None = None
+
+
 class SelectionStep(StrEnum):
     """A [selection] switch: translate, then the Resolver chain's steps in their order."""
 
