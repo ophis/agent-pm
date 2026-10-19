@@ -923,7 +923,7 @@ class TuiRecoveryIntegrationTest(Live):
             [self.record()],
         )
 
-    def test_interrupt_completes_without_stop_and_replays_previous_reply_on_attach(self):
+    def test_interrupt_completes_without_stop_or_the_previous_reply(self):
         self.scene(
             [["kept"], ["partial", {"kind": "interrupt"}], [{"kind": "interrupt"}], ["after"]]
         )
@@ -931,14 +931,14 @@ class TuiRecoveryIntegrationTest(Live):
         stream = Stream(self, handle)
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("kept"))
         handle.send("interrupt")
-        self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
+        self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
         self.assertEqual(self.lines(2), ["w1 done", "w1 done"])
         self.assertEqual(
             self.attach("interrupt again"),
-            [[self.sid, True, "kept"], ["kept", 0], "kept"],
+            [[self.sid, True, ""], ["", 0], ""],
         )
-        self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
-        self.assertEqual(self.attach(), [self.sid, True, "kept"])
+        self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
+        self.assertEqual(self.attach(), [self.sid, True, ""])
         handle.send("recover")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("after")])
         live_tmux.wait(lambda: len(self.hooks()) == 9, WAIT, what="all hook results logged")
