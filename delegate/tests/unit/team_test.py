@@ -619,6 +619,31 @@ class Real(RealConfig):
             standards,
         )
 
+    def test_a_failed_runs_summary_is_one_line(self):
+        for role, line in (
+            (
+                "researcher",
+                "Every repo failed → local: `failed`, `summary` one line naming each failed repo "
+                "with its error's first line, within 300 characters, the errors verbatim in the "
+                "deliverable; mixed: drop the local part.",
+            ),
+            (
+                "engineer",
+                "- Exit 1 → `failed`, `summary` one line, the error's first line within 300 "
+                "characters; stop.",
+            ),
+        ):
+            with self.subTest(role=role):
+                self.assertIn(line, composed(role)[0])
+        for path, text in team_texts().items():
+            for stale in (
+                "`summary` quotes the errors",
+                "`summary` the error;",
+                "the error verbatim in the deliverable",
+            ):
+                with self.subTest(path=path, stale=stale):
+                    self.assertNotIn(stale, text)
+
     def test_only_the_deep_research_task_names_ultracode(self):
         # Claude Code answers a bare ultracode with a Workflow reminder, so no prompt says it.
         for task in (None, *catalog()["researcher"]):

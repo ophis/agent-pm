@@ -97,6 +97,28 @@ class EventLine(Case):
             with self.subTest(data=data), self.assertRaises(DelegateEventError):
                 DelegateEvent.parse(line(v=1, kind="finished", returncode=0, outcome=data, **RUN))
 
+    def test_a_finished_summary_over_300_characters_is_refused(self):
+        # A run begun before the limit fell from 4000 may still send one: docs/upgrading.md.
+        outcome = {
+            "status": "done",
+            "title": "T",
+            "summary": "S" * 300,
+            "questions": [],
+            "url": "",
+            "files": [],
+            "deliverable": "",
+        }
+        parsed = DelegateEvent.parse(
+            line(v=1, kind="finished", returncode=0, outcome=outcome, **RUN)
+        )
+        self.assertEqual(parsed.outcome.summary, "S" * 300)
+        self.refused(
+            line(
+                v=1, kind="finished", returncode=0, outcome={**outcome, "summary": "S" * 301}, **RUN
+            ),
+            "summary is longer than 300 characters",
+        )
+
     def refused(self, text, message):
         with self.assertRaises(DelegateEventError) as caught:
             DelegateEvent.parse(text)
