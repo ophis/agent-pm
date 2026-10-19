@@ -2,7 +2,8 @@
 # compatible server works too.
 #   key      Keychain service of the Jev API key (docs/credentials.md); config holds only its name, never the key
 #   url      the System One endpoint: https, or http on a loopback IP
-#   model    the model each question names
+#   model    the model each question names: one with a documented window (https://docs.typesafe.ai/models.md), a key of
+#            WINDOWS in selector/src/agent_pm/selector/backends/jev.py (jev-1.13.0, jev-1.14.0, jev-latest, jev-preview)
 #   timeout  seconds for the key lookup and for the request, each
 [jev]
 key = "typesafe-jev"

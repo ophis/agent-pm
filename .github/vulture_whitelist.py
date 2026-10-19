@@ -73,7 +73,5 @@ _ = milestone
 
 # Kev's Selector comes later (dropped from TASK-744).
 _ = Backend.KEV
-# TASK-511's resolvers name Selector.select's parameter; delete this entry as they land.
-_ = _.choices
 # urllib's HTTPRedirectHandler calls it on each redirect, which JevSelector refuses.
 _ = _.redirect_request

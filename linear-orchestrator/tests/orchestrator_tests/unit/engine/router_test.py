@@ -5267,14 +5267,14 @@ class ResolverChain(OuterBase):
     def test_new_run_launches_and_records_the_selected_tier_and_effort(self):
         self.write_config(OUTER + SELECTION_ON)
         pick, tier = claude_pick()
-        selector = FakeSelector({STATE: pick})
+        selector = FakeSelector([pick])
         self.assertEqual(self.outer(client="claude", selector=selector), 0)
         self.assertEqual(self.detached(tier=tier, effort="low"), self.expected(client="claude"))
         (translated,) = self.api.translations
         self.assertEqual(
             (translated.input, translated.workdir, translated.task), (ID, self.rd, "translate")
         )
-        self.assertEqual([state for state, _ in selector.calls], [STATE])
+        self.assertEqual([dict(state.fields) for state, _ in selector.calls], [{"text": STATE}])
         row = self.start_row()
         self.assertEqual(
             (row["kind"], row["client"], row["tier"], row["effort"]),

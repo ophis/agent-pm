@@ -22,6 +22,7 @@ from agent_pm.linear_orchestrator.engine.selection import (
     translate,
 )
 from agent_pm.selector import Failure, SelectorError
+from agent_pm.selector import State as SelectorState
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
     STATE,
@@ -199,14 +200,16 @@ class TierOptions(Case):
         models = [tiers[t] for t in sorted(tiers, key=int)]
         selector = FakeSelector()
         TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE)
-        ((state, options),) = selector.calls
-        self.assertEqual(state, STATE)
-        self.assertEqual(options, tuple(f"{m} / {e}" for m in models for e in efforts))
+        ((state, question),) = selector.calls
+        self.assertEqual(state, SelectorState({"text": STATE}))
+        self.assertEqual(question.instructions, "Choose the option that best fits the state.")
+        options = [f"{m} / {e}" for m in models for e in efforts]
+        self.assertEqual(list(question.options.items()), [(o, o) for o in options])
 
     def test_the_pick_maps_back_to_its_models_lowest_tier(self):
         tiers = session_clients()["claude"]["tiers"]
         tier = sorted(tiers, key=int)[2]
-        selector = FakeSelector({STATE: f"{tiers[tier]} / low"})
+        selector = FakeSelector([f"{tiers[tier]} / low"])
         self.assertEqual(
             TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE),
             TierChoice(int(tier), "low"),
@@ -214,12 +217,12 @@ class TierOptions(Case):
 
     def test_tiers_naming_one_model_offer_it_once_under_its_lowest_tier(self):
         model = session_clients()["opencode"]["tiers"]["1"]
-        selector = FakeSelector({STATE: f"{model} / high"})
+        selector = FakeSelector([f"{model} / high"])
         self.assertEqual(
             TierResolver(selector, task_tiers={}).choose(STATE, OPENCODE), TierChoice(1, "high")
         )
-        ((_, options),) = selector.calls
-        self.assertEqual({o.split(" / ")[0] for o in options}, {model})
+        ((_, question),) = selector.calls
+        self.assertEqual({o.split(" / ")[0] for o in question.options}, {model})
 
 
 class LocalConfig(Case):
@@ -234,12 +237,12 @@ class LocalOverride(LocalConfig):
         self.write_local(
             '[session.clients.opencode.tiers]\n1 = "big:1"\n2 = "big:1"\n3 = "small:1"\n4 = "small:1"\n'
         )
-        selector = FakeSelector({STATE: "small:1 / low"})
+        selector = FakeSelector(["small:1 / low"])
         self.assertEqual(
             TierResolver(selector, task_tiers={}).choose(STATE, OPENCODE), TierChoice(3, "low")
         )
-        ((_, options),) = selector.calls
-        self.assertEqual({o.split(" / ")[0] for o in options}, {"big:1", "small:1"})
+        ((_, question),) = selector.calls
+        self.assertEqual({o.split(" / ")[0] for o in question.options}, {"big:1", "small:1"})
         self.assertEqual(session_clients()["opencode"]["tiers"]["3"], "small:1")
 
 
@@ -288,7 +291,7 @@ class TierFailures(LocalConfig):
 
     def test_a_pick_outside_the_options_is_invalid(self):
         class Stray(FakeSelector):
-            def select(self, state, choices):
+            def select(self, state, question):
                 return "not an option"
 
         with self.assertRaises(SelectionError) as caught:

@@ -14,7 +14,8 @@ from typing import Generic, TypeVar
 import agent_pm.utils as utils
 from agent_pm.delegate import Delegate, Spec
 from agent_pm.linear_orchestrator.engine.types import Context
-from agent_pm.selector import Failure, Selector, SelectorError
+from agent_pm.selector import Failure, Question, Selector, SelectorError
+from agent_pm.selector import State as SelectorState
 from agent_pm.utils import OutcomeStatus
 
 # Session's own config, read by name (no import of session) and merged with the local one.
@@ -91,7 +92,10 @@ class TierResolver(Resolver[TierChoice]):
             raise ValueError("state: want a non-blank state")
         options = _tier_options(context.client)
         try:
-            pick = self.selector.select(state, tuple(options))
+            pick = self.selector.select(
+                SelectorState({"text": state}),
+                Question("Choose the option that best fits the state.", {o: o for o in options}),
+            )
         except SelectorError as error:
             raise SelectionError(SelectionFailure.SELECT, error.reason) from None
         if pick not in options:

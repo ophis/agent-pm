@@ -2,27 +2,39 @@
 Selector). Each case uses only the Selector ABC and that hook.
 """
 
-from agent_pm.selector import Selector
+from agent_pm.selector import Question, Selector, State
 
-STATE = "Write the release notes for a small docs change."
-CHOICES = ("low", "medium", "high")
+STATE = State(
+    {"title": "Release notes", "description": "Write the release notes for a small docs change."},
+    (
+        "comments",
+        (
+            {"author": "A", "created_at": "2026-10-19T09:00:00Z", "body": "Keep them short."},
+            {"author": "B", "created_at": "2026-10-19T10:00:00Z", "body": "Link the docs PR."},
+        ),
+    ),
+)
+QUESTION = Question(
+    "Choose the effort.",
+    {
+        "low": "the least reasoning",
+        "medium": "more reasoning than low",
+        "high": "the most reasoning",
+    },
+)
 
 
 class SelectorContract:
     def make(self) -> Selector:
         raise NotImplementedError
 
-    def test_the_pick_is_one_of_the_choices(self):
-        self.assertIn(self.make().select(STATE, CHOICES), CHOICES)
+    def test_the_pick_is_one_of_the_options(self):
+        self.assertIn(self.make().select(STATE, QUESTION), QUESTION.options)
 
-    def test_a_single_choice_is_picked(self):
-        self.assertEqual(self.make().select(STATE, ("high",)), "high")
+    def test_a_single_option_is_picked(self):
+        only = Question(QUESTION.instructions, {"high": "the most reasoning"})
+        self.assertEqual(self.make().select(STATE, only), "high")
 
     def test_the_same_input_gives_the_same_pick(self):
         selector = self.make()
-        self.assertEqual(selector.select(STATE, CHOICES), selector.select(STATE, CHOICES))
-
-    def test_empty_blank_or_repeated_choices_are_refused(self):
-        for choices in ((), ("low", " "), ("low", "low")):
-            with self.subTest(choices=choices), self.assertRaises(ValueError):
-                self.make().select(STATE, choices)
+        self.assertEqual(selector.select(STATE, QUESTION), selector.select(STATE, QUESTION))

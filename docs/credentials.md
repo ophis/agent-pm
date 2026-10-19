@@ -273,9 +273,10 @@ agent-pm 0.6.28.
 - [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0, with a configured provider
   logged in (`login opencode <name>`).
 - [ ] [Measured readers](#measured-readers): `agent-pm-opencode`.
-- [ ] Jev: with the `[selector.jev] key` service (default `typesafe-jev`) in the Keychain, `JevSelector().select(<state>, (<a>, <b>))` returns `<a>` or `<b>`. It also
-  confirms two unverified wire assumptions (TASK-744): the state sent as `{"text": …}` and each criterion's text
-  being its option name.
+- [ ] Jev: with the `[selector.jev] key` service (default `typesafe-jev`) in the Keychain,
+  `JevSelector().select(State({"title": <title>}), Question(<instructions>, {<a>: <description a>, <b>: <description b>}))`
+  returns `<a>` or `<b>`. It also confirms two unverified wire assumptions (TASK-744): the state sent as a JSON object
+  of its fields and each criterion's text being its option's description.
 
 ## Risks
 

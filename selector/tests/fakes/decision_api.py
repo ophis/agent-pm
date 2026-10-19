@@ -1,9 +1,11 @@
 """DecisionApi, a loopback System One endpoint: it records each request and answers with its
-scripted reply, by default the first criteria key; /elsewhere counts hits, a redirect's target.
+scripted reply, by default the first of picks in the request's criteria, else its first criteria
+key; /elsewhere counts hits, a redirect's target.
 """
 
 import json
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -28,8 +30,9 @@ class Reply:
 
 
 class DecisionApi:
-    def __init__(self):
+    def __init__(self, picks: Sequence[str] = ()):
         self.reply = Reply()
+        self.picks = list(picks)
         self.requests: list[Request] = []
         self.elsewhere = 0
         self._server = _Server(("127.0.0.1", 0), _Handler)
@@ -60,7 +63,7 @@ class DecisionApi:
             return self.reply
         questions = request.body.get("questions") if isinstance(request.body, dict) else None
         criteria = questions["choice"]["criteria"] if isinstance(questions, dict) else {}
-        pick = next(iter(criteria), None)
+        pick = next((p for p in self.picks if p in criteria), next(iter(criteria), None))
         body = json.dumps({"answers": {"choice": {"type": "choice", "choice": pick}}}).encode()
         return Reply(self.reply.status, body, self.reply.headers)
 
