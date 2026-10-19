@@ -293,6 +293,33 @@ class Full(IssueCase):
         self.assertIn("timed out", err)
         self.assertFalse(os.path.exists(path))
 
+    def test_a_failed_write_keeps_the_earlier_copy_and_leaves_no_temp_file(self):
+        path = os.path.join(self.root, "TASK-2.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"earlier": true}\n')
+        argv = ["read", "TASK-2", "--full", "--output", path]
+        for target in ("os.fsync", "os.replace"):
+            with (
+                self.subTest(target=target),
+                mock.patch(target, side_effect=OSError(28, "No space")),
+            ):
+                code, out, err = self.run_main(argv, self.gql())
+            self.assertEqual((code, out), (2, b""))
+            self.assertIn("No space", err)
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), '{"earlier": true}\n')
+            self.assertEqual(sorted(os.listdir(self.root)), ["TASK-2.json", "config.toml"])
+
+    def test_a_write_replaces_the_earlier_copy_whole(self):
+        path = os.path.join(self.root, "TASK-2.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("x" * 100000)
+        code, _, _ = self.run_main(["read", "TASK-2", "--full", "--output", path], self.gql())
+        self.assertEqual(code, 0)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["identifier"], "TASK-2")
+        self.assertEqual(sorted(os.listdir(self.root)), ["TASK-2.json", "config.toml"])
+
     def test_a_vanished_page_fails_with_a_capped_diagnostic_and_no_file(self):
         gql = self.gql()
         gql.pages["children"] = [None]

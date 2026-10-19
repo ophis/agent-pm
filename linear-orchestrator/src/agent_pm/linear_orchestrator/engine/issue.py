@@ -4,12 +4,14 @@ failed) or USAGE (usage, configuration or an unresolved reference).
 """
 
 import argparse
+import contextlib
 import copy
 import functools
 import json
 import os
 import subprocess
 import sys
+import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import config, issue_read
@@ -124,10 +126,19 @@ def _text(payload, path):
 
 
 def write_full(path, payload):
-    """payload as normalized JSON in path; its absolute path."""
+    """payload as normalized JSON in path, through a temp file renamed over it; its absolute path."""
     path = os.path.abspath(path)
-    with open(path, "w", encoding="utf-8", errors="backslashreplace") as f:
-        f.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".issue-", suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp)
+        raise
     return path
 
 
