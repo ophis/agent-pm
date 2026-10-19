@@ -462,10 +462,10 @@ class ClaudeCommon:
             print(f"claude resume: {error}", file=sys.stderr)
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID as launch() would, in auto mode
-        with this config's flags and allow, the saved launch and env over this environment, in
-        CWD; 1 and one stderr line when it cannot. It runs the TUI without hooks: the hook callback
-        is the agent-pm session's, which this resume is not.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID as launch() would, the saved
+        launch and env over this environment, in CWD; 1 and one stderr line when it cannot. It runs
+        on this machine, not the launch's Host, so in auto mode with this config's flags and allow,
+        as they are now; and as the TUI without hooks, whose callback serves only an agent-pm session.
         """
         try:
             store, cwd, sid = argv
@@ -518,8 +518,6 @@ class ClaudeCommon:
         permission: Permission,
     ) -> Launch:
         """Build a Claude command (_argv) for `spec`; env under the config's."""
-        if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
-            raise ConfigError("--setting-sources is set by the Claude client: use Access.project")
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -589,6 +587,8 @@ class ClaudeCommon:
         leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that a
         --strict-mcp-config in `flags` would drop.
         """
+        if any(flag.word == "--setting-sources" for flag in scan(flags)):
+            raise ConfigError("--setting-sources is set by the Claude client: use Access.project")
         configured, own = _split((*self.flags, *self.modes[permission]), cwd)
         supplied, rest = _split(flags, cwd)
         hooked = ({"hooks": dict(hooks)},) if hooks else ()

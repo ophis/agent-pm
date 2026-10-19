@@ -749,7 +749,8 @@ class ResumeTest(Base):
                     {**json.loads(PLUGIN), "model": "x"},
                 )
 
-    def test_a_version_1_state_resumes_as_before(self):
+    def test_a_version_1_state_resumes_with_the_configs_flags_allow_and_dirs(self):
+        self.client = ClaudeClient({**self.client.config, "allow": ["Read"]})
         self.committed(flags=("--strict-mcp-config",))
         (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
         with open(path, encoding="utf-8") as f:
@@ -763,8 +764,25 @@ class ResumeTest(Base):
             execute[0].args[1],
             [
                 *("claude", "--resume", SID, "--setting-sources", "user,project,local"),
-                *("--add-dir", "/o x", "--add-dir", "/p"),
+                *("--add-dir", "/o x", "--add-dir", "/p", "--allowedTools", "Read"),
             ],
+        )
+
+    def test_a_hand_edited_state_cannot_set_setting_sources(self):
+        self.committed()
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({**state, "flags": ["--setting-sources=user,project,local"]}, f)
+        code, err, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual(
+            (code, err, execute),
+            (
+                1,
+                "claude resume: --setting-sources is set by the Claude client: use Access.project\n",
+                [],
+            ),
         )
 
     def test_a_state_over_the_limit_is_a_config_error(self):
