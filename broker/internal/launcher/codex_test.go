@@ -70,7 +70,7 @@ func TestCodexStartIsolation(t *testing.T) {
 		}
 	}
 	joined := strings.Join(run, " ")
-	for _, want := range []string{"CODEX_HOME=", "/codex:rw,", "/codex/sessions", "--tmpfs /run/agent-pm:"} {
+	for _, want := range []string{"CODEX_HOME=", "--label agent-pm.client=codex", "/codex:rw,", "/codex/sessions", "--tmpfs /run/agent-pm:"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %s", want)
 		}

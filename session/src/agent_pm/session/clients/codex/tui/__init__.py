@@ -151,7 +151,7 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         store = self.store = common.store.root
-        runtime = self._runtime
+        runtime = self._context.container
         if runtime:
             env = {
                 key: value
@@ -176,7 +176,7 @@ class CodexTui(Tui):
             self.state.workdir,
             self.state.sid,
             os.path.join(runtime.state_root, "codex-store") if runtime else store,
-            common.modes[self._permission],
+            common.modes[self._context.permission],
         )
         self._runtime_files = SessionStore.project(self.state, plan.store) if runtime else {}
         pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))

@@ -15,7 +15,6 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Permission
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.session.modes.base import BaseMode
 from agent_pm.session.viewer.viewer import Viewer
 from agent_pm.utils import load_class
 
@@ -39,11 +38,11 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 def packaged_hosts() -> dict[str, Permission]:
     hosts = Host.parse_hosts(read_config(local=os.devnull)["hosts"])
     return {
-        name: BaseMode._permission(
-            load_class(table["implementation"], Host)(
-                name, {k: v for k, v in table.items() if k != "implementation"}
-            )
+        name: load_class(table["implementation"], Host)(
+            name, {k: v for k, v in table.items() if k != "implementation"}
         )
+        ._client_context()
+        .permission
         for name, table in hosts.tables.items()
     }
 

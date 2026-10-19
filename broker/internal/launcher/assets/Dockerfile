@@ -5,8 +5,9 @@ ARG AGENT_UID
 ARG AGENT_GID
 RUN test "$(id -u agent):$(id -g agent)" = "${AGENT_UID}:${AGENT_GID}"
 ARG GH_VERSION=2.102.0
+# ripgrep: OpenCode downloads an unchecked rg when none is on PATH.
 # /usr/local/bin precedes /usr/bin on PATH: the gh wrapper runs this gh, not a gh the user image installs.
-RUN apt-get update && apt-get install -y --no-install-recommends tini python3 python3-venv curl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends tini python3 python3-venv curl ca-certificates ripgrep \
     && rm -rf /var/lib/apt/lists/* \
     && case "$(dpkg --print-architecture)" in \
          amd64) arch=amd64 sum=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 ;; \
@@ -25,9 +26,10 @@ COPY delegate/src /opt/agent-pm/delegate/src
 COPY plugins /opt/agent-pm/plugins
 COPY codex-plugins /opt/agent-pm/codex-plugins
 COPY .claude-plugin/plugin.json /opt/agent-pm/version.json
-COPY bootstrap.py codex-update.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
+COPY bootstrap.py codex-update.py opencode-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
 RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.163.0 \
+    && python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)" /opt/agent-pm/clients \
     && mkdir -p /opt/agent-pm/bin /opt/agent-pm/runtime
 COPY codex /opt/agent-pm/bin/codex
 # python3 on the agent's PATH is this venv's, importing agent-pm; system site keeps pip --user working.
@@ -38,6 +40,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && printf '%s\n' '#!/bin/sh' 'export PYTHONPATH=/opt/agent-pm/session/src:/opt/agent-pm/utils/src' 'exec /opt/agent-pm/venv/bin/python -P -m agent_pm.session.cli "$@"' > /opt/agent-pm/bin/agent-pm-session \
     && printf '%s\n' '#!/bin/sh' 'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay \
     && ln -s /opt/agent-pm/lib/with-secrets /opt/agent-pm/bin/with-secrets \
+    && ln -s /opt/agent-pm/clients/bin/opencode /opt/agent-pm/bin/opencode \
     && ln -s /opt/agent-pm/lib/gh /opt/agent-pm/bin/gh \
     && ln -s /opt/agent-pm/lib/git-credential-agent-pm /opt/agent-pm/bin/git-credential-agent-pm \
     && printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig \

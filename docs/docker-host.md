@@ -30,7 +30,9 @@ command line tools).
 
 To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-in) again. Claude Code upgrades with
 the image, Codex by its [version policy](docker-codex.md#container-versions); the image's `gh` is the version agent-pm
-pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs.
+pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs. So is its OpenCode:
+`assets/opencode-install.py` installs it from npm tarballs checked against recorded sha512 hashes, and an OpenCode
+start refuses an image below the broker's `opencodeMinVersion` (`broker/internal/launcher/versions.go`): rebuild.
 
 Checks: [Docker checks › Install](docker-checks.md#install).
 
@@ -110,7 +112,7 @@ Checks: [Docker checks › Build](docker-checks.md#build).
 
 ### Plugins
 
-A container's clients load the plugins its image holds: `[session.hosts.docker] plugins`, default `["autopilot"]`
+A container's Claude Code and Codex load the plugins its image holds (OpenCode loads none): `[session.hosts.docker] plugins`, default `["autopilot"]`
 (the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review`); `[]`: none. Never agent-pm's own:
 every session runs with it disabled, and the image holds the team at `/opt/agent-pm/team`.
 
@@ -159,14 +161,14 @@ Each row's source holds the exact values.
 
 | What | Source | Summary |
 |---|---|---|
-| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session` and `agent-pm.generation` labels |
-| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
-| Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
+| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session`, `agent-pm.generation` and `agent-pm.client` labels |
+| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or OpenCode's `XDG_DATA_HOME` with its self-update and LSP downloads off); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
+| Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude and OpenCode: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
 | Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
 | Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
 | Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
 | Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
-| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
+| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Refusals
 
@@ -280,6 +282,28 @@ In the container `repo.py worktree` makes a fresh blobless clone at `<Workdir>/s
 marks it ready, you approve with your own account, and revision rounds push to the same branch. Then
 [review before pulling](#review-before-pulling).
 
+### OpenCode
+
+OpenCode sessions run the host's Ollama models ([OpenCode sessions](sessions.md#opencode-sessions)); no login, and
+the container gets no model credential ([Credentials](credentials.md#who-logs-in)). Once, on the Mac:
+
+1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through
+   `host.docker.internal` ([Risks](#risks)).
+2. Set its context length to at least 65536, or tool calls fail: for the Ollama app,
+   `launchctl setenv OLLAMA_CONTEXT_LENGTH 65536`, then quit and reopen it; for `ollama serve`, start it with
+   `OLLAMA_CONTEXT_LENGTH=65536`.
+3. Pull every tier's model, `ollama pull qwen3.6:35b-mlx` by default (`[session.clients.opencode.tiers]`;
+   `ollama_port`, default 11434, is its port).
+
+The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and the Client gives its config
+(`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, no auto-update):
+none of the Mac's OpenCode install, config or plugins goes into the container (the cwd's own `opencode.json` and
+`.opencode/` still load: OpenCode has no project trust). An existing
+`~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
+image. Its session state is `~/.agent-pm/docker-state/<name>/opencode/` (`opencode_dir`). Then
+`agent-pm-crew worker NAME --client opencode` starts a worker in a container; an OpenCode board run:
+[Linear board › OpenCode](board.md#opencode).
+
 ### Lifecycle
 
 Each start, restart or resume runs a new generation in a new container from the current image. `restart` closes the
@@ -287,7 +311,7 @@ running container first; `resume` (after `close`, or once the container is gone)
 keep the client history and [workspace volume](#workspace-volumes) and continue the conversation; only a new start
 clears them. A resume whose conversation file is missing or a symlink fails before any container with
 `no native history to resume`. Resume with `agent-pm-session resume <name>`, never `client-resume`, which runs the
-client on the host. Claude and [Codex](docker-codex.md#docker-sessions) terminals and headless runs are supported;
+client on the host. Claude, [Codex](docker-codex.md#docker-sessions) and [OpenCode](#opencode) terminals and headless runs are supported;
 other clients, detached sessions and a start while a container of that name exists fail before creation.
 
 **Preflight**, before every start: client and mode supported; the cwd exists (`Session.preflight` also accepts one
@@ -348,9 +372,9 @@ docker timing NAME GENERATION: checks 0.12 s
 | `docker timing NAME` | `preflight` | cwd checks, broker `version` and `build` (a rebuild lands here) |
 | `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token present |
 | | `image`, `checks` | the image check; the container-name check and workspace volume (created for `agent` on first use) |
-| | `create`, `bootstrap`, `clients` | `docker run`; Claude's bootstrap state and the hook stub; both clients' `--version` |
+| | `create`, `bootstrap`, `clients` | `docker run`; the client's bootstrap state (none for OpenCode) and the hook stub; every client's `--version` |
 | | `client_update` | Codex only: [version preparation](docker-codex.md#container-versions) |
-| | `credentials`, `total` | the token injection; the whole `start` |
+| | `credentials`, `total` | the token injection (none for OpenCode); the whole `start` |
 | `docker timing NAME GENERATION` | `checks`, `image` | cwd, sweep, the container check; `version` and `build` again (cached), a new start's workspace reset and client home, manifest and plan |
 | | `start` | the broker's `start` |
 | | `relay`, `tmux`, `client` | supervisor lock and hook relay; the supervisor and the container's tmux session; until the client's pane runs |
@@ -442,13 +466,14 @@ secrets in environments that need it.
 `session/tests/live_docker.py` checks the critical path on Docker Desktop, run by hand from
 the repo root with `PYTHONPATH` as in [Tests](tests.md). It needs the broker installed and
 logged in ([Install](#install), [Log in](#log-in)), for Codex also `install-codex` and
-`login codex` ([Codex operations](docker-codex.md#commands)), `[session.hosts] default =
+`login codex` ([Codex operations](docker-codex.md#commands)), for OpenCode the host's Ollama on `127.0.0.1` with the
+tier model pulled and `OLLAMA_CONTEXT_LENGTH` ≥ 65536, `[session.hosts] default =
 "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Run workers](#run-workers),
 [Role runs](#role-runs)), and an authorized test repo with `agent-pm-bot` installed.
 
 | Command | Checks |
 |---|---|
-| `python3 session/tests/live_docker.py worker --client claude\|codex CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports |
+| `python3 session/tests/live_docker.py worker --client claude\|codex\|opencode CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags (`--cap-drop ALL`, network `bridge`, no extra hosts) and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports; for OpenCode also: the first turn leaves `~/.agent-pm/docker-state/<NAME>/opencode/opencode/opencode.db`, Ollama listens on `127.0.0.1` only (`lsof`), the container holds only GitHub secrets, and each resume continues the same OpenCode session |
 | `python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]` | a headless engineer run on the test repo gets one forced token refresh, opens a draft PR as `agent-pm-bot[bot]` after it, and its close reclaims its credentials |
 | `python3 session/tests/live_docker.py pr URL` | the PR, such as an unattended board run's, was opened as a draft by `agent-pm-bot[bot]` |
 
@@ -483,7 +508,7 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
   before reading them.
 - A harness killed with `kill -9` leaves its headless client running, with its token, until the next Docker start or
   close.
-- Every container, Claude and Codex workers included, reaches through `host.docker.internal` the Mac's services that
+- Every container, Claude, Codex and OpenCode workers included, reaches through `host.docker.internal` the Mac's services that
   listen only on `127.0.0.1`: on 2026-10-18 a worker-like container (bridge, `--cap-drop ALL`, no mounts or
   credentials) got Ollama's `/api/version` while Ollama listened only on `127.0.0.1:11434`. The host side of such a
   connection belongs to `com.docker.backend`, running as you, so pf cannot tell container traffic apart

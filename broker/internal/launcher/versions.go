@@ -14,6 +14,9 @@ import (
 const runtimeDir = "/opt/agent-pm/runtime"
 const updateScript = "/opt/agent-pm/lib/codex-update.py"
 
+// opencodeMinVersion is the lowest image OpenCode an opencode start accepts; the image pins it (assets/opencode-install.py).
+const opencodeMinVersion = "1.19.3"
+
 type CodexVersions interface {
 	Verify() (codex.Installation, error)
 	Latest(context.Context) (string, error)
@@ -46,6 +49,14 @@ func (h Host) versionPolicy(ctx context.Context) (codex.Installation, error) {
 		fmt.Fprintf(h.Progress, "agent-pm-broker: newer pinned Codex available; run sudo /usr/local/libexec/agent-pm/agent-pm-broker update-codex %s\n", latest)
 	}
 	return i, nil
+}
+
+// checkOpencode requires the image's opencode --version output to be a stable version of at least opencodeMinVersion.
+func checkOpencode(version string) error {
+	if !codex.ValidVersion(version) || codex.Newer(opencodeMinVersion, version) {
+		return protocol.New(protocol.StartFailed, "Image OpenCode version is invalid or below the minimum; rebuild the worker image with OpenCode "+opencodeMinVersion+" or newer.")
+	}
+	return nil
 }
 
 func (h Host) updateCommand(ctx context.Context, c, action string, stdin []byte) error {

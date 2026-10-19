@@ -1,4 +1,4 @@
-"""What the Claude and Codex clients share."""
+"""What the Claude, Codex and OpenCode clients share."""
 
 import re
 from collections.abc import Iterator, Mapping, Sequence

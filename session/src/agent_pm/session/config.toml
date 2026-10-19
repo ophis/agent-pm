@@ -85,6 +85,48 @@ max = "max"
 # Launch/probe variables, including CODEX_HOME; empty → none; resume keeps the saved CODEX_HOME.
 [clients.codex.env]
 
+# [clients.opencode]  OpenCode 1.x, headless and TUI (session/src/agent_pm/session/clients/opencode/); its models run
+#                    on the host's Ollama, which stays on 127.0.0.1. Each launch's OpenCode config (OPENCODE_CONFIG_CONTENT)
+#                    holds the ollama provider at http://<the Host's address>:<ollama_port>/v1, autoupdate off and
+#                    permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
+#                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
+#                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
+#                    not trusted (Access.project) is refused before it starts (docs/sessions.md › OpenCode sessions)
+#   flags            opencode flags added to every launch; never a session selector, --format, --attach, --dir or a
+#                    permission flag (modes'), nor for the TUI --prompt or --pure; empty → none
+#   executable       the OpenCode 1.x command both modes run (a name PATH finds, or an absolute path); empty → the
+#                    client's own name on PATH; a launch whose `<executable> --version` is not 1.x is refused
+#   ollama_port      the host's Ollama port
+#   env              variables added to every launch; never one that overrides the launch's OpenCode config
+#                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
+# [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted
+# [clients.opencode.tiers]    tier "1".."4" → its --model, provider/model; ollama/<model> is listed under the provider
+# [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
+[clients.opencode]
+implementation = "agent_pm.session.clients.opencode:OpenCodeClient"
+flags = []
+executable = ""
+ollama_port = 11434
+
+[clients.opencode.modes]
+auto = []
+yolo = ["--auto"]
+
+[clients.opencode.env]
+
+[clients.opencode.tiers]
+1 = "ollama/qwen3.6:35b-mlx"
+2 = "ollama/qwen3.6:35b-mlx"
+3 = "ollama/qwen3.6:35b-mlx"
+4 = "ollama/qwen3.6:35b-mlx"
+
+[clients.opencode.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
 # ── Hosts ───────────────────────────────────────────────
 # [hosts]             default: the [hosts.<name>] sessions run on
 # [hosts.<name>]      one table per Host, parsed only by Host.parse_hosts (session/src/agent_pm/session/hosts/base.py)

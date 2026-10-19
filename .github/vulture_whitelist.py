@@ -7,6 +7,7 @@ from agent_pm.delegate.event.types import AutopilotStatus
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
+from agent_pm.session.clients.opencode import OpenCodeClient
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
 from agent_pm.session.viewer.types import Split
@@ -56,7 +57,7 @@ _ = (
 _ = Split.RIGHT, Split.BELOW
 
 # session/config.toml loads each Client by its `implementation` path.
-_ = ClaudeClient, CodexClient
+_ = ClaudeClient, CodexClient, OpenCodeClient
 # TASK-403's harness sets its PYTHONPATH from Session.class_roots (D16).
 _ = Session.class_roots
 # TASK-506 routes sid-checked CLI closes through Session.retire; delete this entry then.

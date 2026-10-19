@@ -13,8 +13,9 @@ from agent_pm.session.clients.codex.tui import decode
 from agent_pm.session.engine.types import (
     Activity,
     ClientBound,
-    ClientRuntime,
+    ClientContext,
     ConfigError,
+    Container,
     LimitHit,
     Permission,
     Reply,
@@ -200,8 +201,10 @@ class HeadlessTest(Base):
 class ContainerLaunch(Base):
     def setUp(self):
         super().setUp()
-        self.runtime = ClientRuntime(
-            "/image/bin", "/image/python", "/image/source", "/run/agent-pm"
+        self.runtime = ClientContext(
+            "host.docker.internal",
+            Permission.AUTO,
+            Container("/image/bin", "/image/python", "/image/source", "/run/agent-pm"),
         )
 
     def test_both_modes_request_the_same_history_only_client_home(self):
@@ -218,7 +221,7 @@ class ContainerLaunch(Base):
         piped = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
         spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
         with (
-            mock.patch.object(host, "_client_runtime", return_value=self.runtime),
+            mock.patch.object(host, "_client_context", return_value=self.runtime),
             mock.patch.object(
                 host, "_client_env", return_value={"CODEX_HOME": str(self.codex_home)}
             ),
@@ -245,7 +248,7 @@ class ContainerLaunch(Base):
 
     def test_headless_native_events_resume_in_a_terminal_and_back(self):
         run = self.client.headless()
-        run._runtime = self.runtime
+        run._context = self.runtime
         first = run.launch(dataclasses.replace(self.spec, prompt="one"))
         run.commit()
         self.assertEqual(first.argv[:2], ("/image/bin/codex", "exec"))
@@ -254,13 +257,13 @@ class ContainerLaunch(Base):
         )
         self.rollout()
         terminal = self.client.tui()
-        terminal._runtime = self.runtime
+        terminal._context = self.runtime
         launch = terminal.launch(dataclasses.replace(self.spec, resume=True, prompt="two"), HOOK)
         plan = decode(json.loads(launch.argv[-1]))
         self.assertEqual(plan.selection, ("resume", NATIVE))
         self.assertEqual(plan.executable, "/image/bin/codex")
         resumed = self.client.headless()
-        resumed._runtime = self.runtime
+        resumed._context = self.runtime
         command = resumed.launch(dataclasses.replace(self.spec, resume=True, prompt="three"))
         self.assertEqual(command.argv[command.argv.index("resume") + 1], NATIVE)
         self.assertEqual(command.env["CODEX_HOME"], first.env["CODEX_HOME"])
@@ -284,7 +287,7 @@ class ContainerLaunch(Base):
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         run = self.client.headless()
-        run._runtime = self.runtime
+        run._context = self.runtime
         spec = dataclasses.replace(self.spec, resume=True)
         with self.assertRaisesRegex(ConfigError, "missing Codex session file"):
             run.launch(spec)

@@ -18,7 +18,7 @@ Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its o
 
 ## Client policy
 
-Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`, after the session's `[clients.<client>] flags` and permission mode. A local list replaces the default whole.
+Role runs' client flags are `[policy.<client>]` in `delegate/src/agent_pm/delegate/config.toml` (`[policy.claude]`, `[policy.codex]`; none packaged for OpenCode, so none unless a local `[delegate.policy.opencode]` sets them), after the session's `[clients.<client>] flags` and permission mode. A local list replaces the default whole.
 
 Every session, crew workers and role runs, gets one permission mode from the Host it runs on: an `isolated` Host (`[hosts.docker] isolated = true`) `yolo`, every other Host `auto`. Each mode's flags are the client's, in `[clients.<client>.modes]` in `session/src/agent_pm/session/config.toml`, the only home of permission flags; a start, restart and resume each get the mode of the Host they run on, and `client-resume` (this machine) `auto`:
 
@@ -26,6 +26,9 @@ Every session, crew workers and role runs, gets one permission mode from the Hos
 |---|---|---|
 | Claude | `--permission-mode auto` | `--dangerously-skip-permissions --settings '{"skipDangerousModePermissionPrompt": true}'` (no first-start dialog) |
 | Codex | `-s danger-full-access -c approval_policy="on-request" -c approvals_reviewer="auto_review"` | `--dangerously-bypass-approvals-and-sandbox` |
+| OpenCode | none: its config's `permission.bash = "ask"` asks for every shell call but the run's pre-approved commands; headless refuses the call, the TUI shows the ask and the session is `blocked` | `--auto` |
+
+OpenCode's pre-approved commands match a command's text without its redirections, so an allowed `git status` also allows `git status > <file>`. An OpenCode run edits only its cwd and Access dirs, never `.git` or OpenCode's own config, and reads its Access reads without editing them; a refused call does not end its turn. OpenCode matches these paths case-sensitively: on a case-insensitive disk (macOS's default) only `.git` is denied in every spelling, so `OPENCODE.JSON` or a read dir spelled in another case stays editable, and its `apply_patch` tool (models named `gpt-…`) checks only a moved file's source.
 
 `yolo` asks for nothing: no permission prompt, approval or sandbox; the container is the boundary ([Docker host](docker-host.md#permissions)). Claude refuses it as root; the container's clients run as `agent`. `danger-full-access` ignores writable roots and team dirs; a Docker container cannot run Codex's sandbox ([Docker sessions](docker-codex.md#docker-sessions)). For `workspace-write` outside the Docker Host:
 
@@ -33,3 +36,30 @@ Every session, crew workers and role runs, gets one permission mode from the Hos
 [session.clients.codex.modes]
 auto = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
 ```
+
+## OpenCode sessions
+
+OpenCode sessions run on every Host, but outside an `isolated` Host (tmux, pty, or `[hosts.docker] isolated = false`) only in a trusted cwd (`Access.project`; a role run's: under `trusted_dirs`, so given by `--cwd`, as its default cwd, the workdir's `agent/`, never is): OpenCode 1.x has no project trust, so in any cwd it runs `.opencode/plugins/*.js` and installs the npm plugins `opencode.json` lists, and `OPENCODE_DISABLE_PROJECT_CONFIG` does not stop it. A start, TUI or headless, and a resume in an untrusted cwd there fail before OpenCode starts: run it on the Docker Host or in a trusted cwd. On the tmux and pty Hosts both modes run `[clients.opencode] executable` (default `opencode`) and refuse to start when its `--version` is not 1.x: where PATH finds a 2.x (Homebrew's `opencode` is 2.x), set it to a 1.x install's absolute path in `~/.agent-pm/config.local.toml`'s `[session.clients.opencode]`. On the Docker Host they run the image's `/opt/agent-pm/bin/opencode` instead (`executable` is ignored; the broker checks its version), in yolo mode, with Ollama at `host.docker.internal`. The TUI loads `session/src/agent_pm/session/clients/opencode/plugin.js` (on the Docker Host, the image's copy), which turns OpenCode's events into `agent-pm-session hook` calls: `session.busy` and `tool` → `working`, `permission.asked` → `blocked`, `session.idle` → `done` with the turn's last assistant text, `session.error` → a failed turn. A start's prompt goes in as `--prompt`; a resume (`opencode --session <ses_…>`) types its prompt once the plugin has started. A long message shows as `[Pasted ~N lines]` in the TUI but is sent in full.
+
+A crew worker's cwd is always trusted (you pick it), so `agent-pm-crew worker NAME --client opencode --cwd DIR` starts on tmux in any `DIR`; a role run only under `trusted_dirs`; a board run never (its cwd is the workdir's `agent/`): run OpenCode board runs on the Docker Host ([Linear board › OpenCode](board.md#opencode)).
+
+On the tmux and pty Hosts OpenCode needs the host's Ollama ([Docker host › OpenCode](docker-host.md#opencode) steps 1–3) and an OpenCode 1.x. With none on PATH, `npm install -g opencode-ai@1.19.3`; ignore npm's warning that its postinstall did not run. Beside a 2.x, install 1.x under its own prefix, leaving the 2.x as it is, and point `executable` at it:
+
+```bash
+npm install -g --prefix ~/.local/opencode-1 opencode-ai@1.19.3
+~/.local/opencode-1/bin/opencode --version   # 1.19.3
+```
+
+```toml
+# ~/.agent-pm/config.local.toml
+[session.clients.opencode]
+executable = "/Users/<you>/.local/opencode-1/bin/opencode"   # absolute: ~ is not expanded
+```
+
+OpenCode keeps no jsonl transcript: its sessions are in `opencode.db` (tmux and pty: `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`; a Docker Host session's: `~/.agent-pm/docker-state/<name>/opencode/opencode/opencode.db`, which a resume needs). `session_status` reads it read-only. To see what a session holds, or whether a `send` reached it:
+
+```bash
+python3 -I session/src/agent_pm/session/clients/opencode/transcript.py <ses_id> [--db <path>] [--limit N]
+```
+
+It prints the session's newest `N` (default 100) user and assistant texts, oldest first, one JSON line each: `{"time": "2026-10-18T12:00:00.123Z", "role": "user", "text": "…"}`. A missing db or unknown session: exit 1 and one `opencode transcript: …` line on stderr. The `ses_…` id is the last `client_session` line's `client_id` in the run's `<workdir>/run/run.jsonl`.

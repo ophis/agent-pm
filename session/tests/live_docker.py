@@ -2,11 +2,13 @@
 (docs/docker-host.md › Live acceptance). Each command prints a PASS line per check and a timing
 line per generation, and exits 1 at the first failed check:
 
-  python3 session/tests/live_docker.py worker --client claude|codex CWD [NAME]
+  python3 session/tests/live_docker.py worker --client claude|codex|opencode CWD [NAME]
       from a manager session: build once, then start a worker on the default Host, check its
       container's security baseline and isolation, kill its hook supervisor mid-turn (the event
       comes exactly once), restart, close and resume, `docker rm -f` and resume, each new
-      generation answering a prompt; every close reclaims the generation's credentials
+      generation answering a prompt; every close reclaims the generation's credentials; for
+      opencode also its opencode.db in the Docker home, Ollama on 127.0.0.1 only, only GitHub
+      secrets in the container, and each resume continuing the same OpenCode session
   python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]
       a headless engineer run on OWNER/NAME, an authorized test repo: one forced token refresh,
       then a draft PR by agent-pm-bot[bot], opened after it; the run's credentials reclaimed
@@ -33,6 +35,7 @@ from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import BROKER, REFRESH, Broker, plugin_root
 from agent_pm.session.hosts.docker.host import LABEL
 from agent_pm.session.hosts.docker.mounts import state_dir
+from agent_pm.utils import docker_home
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(REPO, "bin")
@@ -51,7 +54,10 @@ ROLE_INPUT = (
 )
 AUDIT = os.path.expanduser("~/Library/Logs/agent-pm/broker.jsonl")
 GITHUB = "github-installation-token"
-CLIENT_KIND = {"claude": "claude-setup-token", "codex": "codex-access-token"}
+CLIENT_KIND = {"claude": "claude-setup-token", "codex": "codex-access-token", "opencode": "none"}
+NO_CREDENTIAL = "none"
+OLLAMA_PORT = 11434  # [session.clients.opencode] ollama_port's default
+LISTENER = re.compile(r"\s(\S+):(\d+) \(LISTEN\)$")
 BOT = "app/agent-pm-bot"
 PHASES = ("checks", "image", "start", "relay", "tmux", "client")
 BROKER_PHASES = frozenset(
@@ -126,7 +132,7 @@ def reclaimed(lines: list[dict], generation: str, client: str) -> list[str]:
             reason = f" ({entry.get('reason')})" if entry.get("result") == "pending" else ""
             problems.append(f"{generation}: {GITHUB} of {account} {entry.get('result')}{reason}")
     kind = CLIENT_KIND[client]
-    if not any(
+    if kind != NO_CREDENTIAL and not any(
         c.get("kind") == kind and c.get("result") == "withdrawn"
         for c in _credentials(after, "close")
     ):
@@ -168,11 +174,11 @@ def baseline(inspect: dict, name: str, cwd: str, plan_mounts: list[str]) -> list
         problems.append("Config.User is not agent")
     if host.get("Privileged"):
         problems.append("HostConfig.Privileged is true")
-    problems += [
-        f"HostConfig.{k} is host"
-        for k in ("NetworkMode", "PidMode", "IpcMode")
-        if host.get(k) == "host"
-    ]
+    if host.get("NetworkMode") != "bridge":  # the broker's --network bridge
+        problems.append(f"HostConfig.NetworkMode is {host.get('NetworkMode')}, want bridge")
+    if host.get("ExtraHosts"):
+        problems.append(f"HostConfig.ExtraHosts is set: {host['ExtraHosts']}")
+    problems += [f"HostConfig.{k} is host" for k in ("PidMode", "IpcMode") if host.get(k) == "host"]
     mounts = inspect.get("Mounts") or []
     volumes = [m for m in mounts if m.get("Type") == "volume"]
     if [(v.get("Name"), v.get("Destination")) for v in volumes] != [(f"agent-pm-ws-{name}", cwd)]:
@@ -188,6 +194,38 @@ def baseline(inspect: dict, name: str, cwd: str, plan_mounts: list[str]) -> list
     if not risky and sorted(_host_path(m.get("Source", "")) for m in binds) != sorted(plan_mounts):
         problems.append("bind mounts differ from the plan's mounts")
     return problems + risky
+
+
+def loopback_only(lsof: str, port: int) -> list[str]:
+    """Problems with `lsof -nP -iTCP:<port> -sTCP:LISTEN`'s listeners: any but 127.0.0.1, or none."""
+    found = [
+        m[1] for line in lsof.splitlines() if (m := LISTENER.search(line)) and m[2] == str(port)
+    ]
+    if not found:
+        return [f"no listener on TCP port {port}"]
+    return [f"listens on {address}:{port}" for address in found if address != "127.0.0.1"]
+
+
+def session_ids(hooks: str, since: str) -> list[str]:
+    """The OpenCode session ids of hook payloads journaled after `since`, first seen first."""
+    after, found = datetime.fromisoformat(since), {}
+    for record in audit_lines(hooks):
+        ts, payload = record.get("ts"), record.get("payload")
+        native = payload.get("session_id") if isinstance(payload, dict) else None
+        if isinstance(ts, str) and isinstance(native, str) and datetime.fromisoformat(ts) > after:
+            found[native] = None
+    return list(found)
+
+
+def one_session(ids: list[str], before: str | None) -> tuple[str, list[str]]:
+    """The generation's one session id and its problems; `before`: the id it must continue."""
+    if not ids:
+        return "", ["no OpenCode session id in the hook journal"]
+    if len(ids) > 1:
+        return ids[0], [f"several OpenCode sessions: {', '.join(ids)}"]
+    if before is not None and ids[0] != before:
+        return ids[0], [f"OpenCode session {ids[0]}, want {before}"]
+    return ids[0], []
 
 
 def zero_counts(output: str) -> bool:
@@ -549,6 +587,61 @@ class Worker:
             print(f"PASS cannot reach {resource}: {' '.join(counts.split())}", flush=True)
 
 
+class Checks:
+    """A client's extra worker checks: none."""
+
+    def __init__(self, worker: Worker) -> None:
+        self.worker = worker
+
+    def after_start(self, start: Start) -> None:
+        """Once, after the first generation's first event."""
+
+    def after_answer(self, start: Start) -> None:
+        """After each generation's answer, the first included."""
+
+
+class OpenCodeChecks(Checks):
+    def __init__(self, worker: Worker) -> None:
+        super().__init__(worker)
+        self.session: str | None = None
+
+    def after_start(self, start: Start) -> None:
+        w = self.worker
+        db = os.path.join(docker_home(w.name, "opencode"), "opencode", "opencode.db")
+        if not os.path.isfile(db):
+            raise SystemExit(f"FAIL no opencode.db at {db}")
+        print(f"PASS opencode.db at {db}", flush=True)
+        argv = ["lsof", "-nP", f"-iTCP:{OLLAMA_PORT}", "-sTCP:LISTEN"]
+        try:
+            listeners = subprocess.run(
+                argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=QUIET
+            ).stdout
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SystemExit(f"FAIL Ollama listener: {error}") from None
+        passed(loopback_only(listeners, OLLAMA_PORT), "Ollama listens on 127.0.0.1 only")
+        secrets = call([w.docker, "exec", w.container(start), "ls", "/run/agent-pm/secrets"])[0]
+        if secrets.split() != ["github"]:
+            raise SystemExit(f"FAIL container secrets: {' '.join(secrets.split()) or 'none'}")
+        print("PASS the container holds only GitHub secrets", flush=True)
+
+    def after_answer(self, start: Start) -> None:
+        w = self.worker
+        launched = load(os.path.join(state_dir(w.name), f"{start.generation}.result.json"))
+        hooks = read_text(os.path.expanduser(f"~/.agent-pm/tui/{w.name}/hooks.jsonl"))
+        resumed = start.step.startswith("resume")
+        native, problems = one_session(
+            session_ids(hooks, launched["launched_at"]), self.session if resumed else None
+        )
+        if problems:
+            raise SystemExit(f"FAIL {start.step}: {problems[0]}")
+        if resumed:
+            print(f"PASS {start.step}: same OpenCode session {native}", flush=True)
+        self.session = native
+
+
+EXTRA_CHECKS: dict[str, type[Checks]] = {"opencode": OpenCodeChecks}
+
+
 def worker(args: Args) -> int:
     manager = os.environ.get("AGENT_PM_MANAGER")
     if not manager:
@@ -584,6 +677,9 @@ def worker(args: Args) -> int:
         )
         w.event("start", start_after)
         print("PASS start: the default Host put the worker in a container; first event", flush=True)
+        checks = EXTRA_CHECKS.get(w.client, Checks)(w)
+        checks.after_start(first)
+        checks.after_answer(first)
         w.isolation(first)
         run("agent-pm-session", "send", w.name, "Count from 1 to 200, one number per line.")
         kill_supervisor(w.name)
@@ -599,13 +695,16 @@ def worker(args: Args) -> int:
         session = os.path.join(BIN, "agent-pm-session")
         w.launch("restart", [session, "restart", w.name])
         w.answer("restart")
+        checks.after_answer(w.starts[-1])
         w.close(w.starts[-1])
         w.launch("resume after close", [session, "resume", w.name])
         w.answer("resume after close")
+        checks.after_answer(w.starts[-1])
         removed = w.container(w.starts[-1])
         call([docker, "rm", "--force", removed])
         w.launch("resume after docker rm -f", [session, "resume", w.name])
         w.answer("resume after docker rm -f")
+        checks.after_answer(w.starts[-1])
         w.close(w.starts[-1], final=True)
     except BaseException:
         w.cleanup()

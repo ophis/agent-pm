@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Self
+from typing import NamedTuple, Self
 
 from agent_pm.utils import (
     StatusState,
@@ -180,12 +180,27 @@ class ClientHome:
     persistent: tuple[str, ...] | None = None
 
 
-@dataclass(frozen=True)
-class ClientRuntime:
+class Container(NamedTuple):
     bin_dir: str
     python: str
-    pythonpath: str
+    pythonpath: str  # first: the image's session/src
     state_root: str
+
+    @property
+    def source(self) -> str:
+        return self.pythonpath.split(":")[0]
+
+
+@dataclass(frozen=True)
+class ClientContext:
+    """What a Host hands its client."""
+
+    host_address: str
+    permission: Permission
+    container: Container | None = None
+
+
+LOCAL_CONTEXT = ClientContext("127.0.0.1", Permission.AUTO)
 
 
 @dataclass(frozen=True)

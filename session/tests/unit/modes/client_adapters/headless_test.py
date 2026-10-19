@@ -1,6 +1,6 @@
 """Headless and JsonHeadless contract tests."""
 
-from agent_pm.session.engine.types import Launch, Reply, Spec
+from agent_pm.session.engine.types import ClientContext, Launch, Permission, Reply, Spec
 from agent_pm.session.modes.client_adapters.headless import Headless, JsonHeadless
 
 from session.tests.case import Case
@@ -25,6 +25,9 @@ class HeadlessTest(Case):
             launch_only = type("LaunchOnly", (interface,), {"launch": StubHeadless.launch})
             with self.subTest(missing=method), self.assertRaisesRegex(TypeError, method):
                 launch_only()
+
+    def test_a_run_given_no_context_is_on_the_loopback_in_auto_mode(self):
+        self.assertEqual(StreamHeadless()._context, ClientContext("127.0.0.1", Permission.AUTO))
 
     def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
         lines = [

@@ -5,7 +5,8 @@
   "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "clients": {
     "claude": "2.1.0",
-    "codex": "codex-cli 0.100.0"
+    "codex": "codex-cli 0.100.0",
+    "opencode": "1.19.3"
   },
   "github": [
     {

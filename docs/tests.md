@@ -35,7 +35,7 @@ typos --config pyproject.toml
 Run tests only through these supervised, sandboxed entries; they retain diagnostics and cleanup.
 
 Single-test and file selection need the same repository-root `PYTHONPATH` above and the
-selected test's dependencies (tmux for live tmux tests). Copy the complete ID from the
+selected test's dependencies (tmux for live tmux tests; `node` for the OpenCode TUI tests, which run its plugin and skip without it). Copy the complete ID from the
 failure annotation or summary; no shard number is needed. Files must be repository test
 files named `*_test.py`; invalid, missing, empty or ambiguous selections fail without
 running a broader suite.
@@ -144,3 +144,18 @@ scheduling, setup and cleanup. Report observed times and flakes; no hard timing 
 |---|---|---|
 | Tests | pure logic, with fakes and recorded output | real tools in `utils/tests/sandbox.py` |
 | Limits | no processes, no sockets, writes only in the runner's temp dir | tmux only on `session/tests/live_tmux.py` servers |
+
+## Live tests
+
+Live tests run a real client by hand, outside CI: [Docker host › Live acceptance](docker-host.md#live-acceptance), [Credentials › Live checks](credentials.md#live-checks). OpenCode on the host's Ollama ([Docker host › OpenCode](docker-host.md#opencode)) runs them without spending quota. A local model's result gates only a test that needs just a running agent; for one that depends on the reply protocol it is reported, not a gate: a weak model may drop a mark (TASK-314: haiku lost one in 9 runs).
+
+| Live test | Needs only a running agent | Depends on the reply protocol |
+|---|---|---|
+| Docker Host lifecycle: `session/tests/live_docker.py worker --client opencode` (start, send, read, status, restart, close, resume, `rm -f`, isolation baseline, killed supervisor) | ✅ a turn-end event after each prompt is enough | |
+| hook relay and supervisor recovery | ✅ | |
+| crew: `worker`, `send`, `read`, `next-event`, `close`; the Viewer | ✅ | |
+| board recovery (`session_status`), usage gate | ✅ | |
+| delegate harness: a missing outcome takes "no outcome" | ✅, though whether a weak model omits it is not controllable | |
+| delegate harness: `[agent-pm-progress:…]` marks, `agent-pm-outcome` parsing, one fix-up resume | | ✅ |
+| `live_docker.py role --repo` (a headless engineer's PR URL) | | ✅, and needs coding ability |
+| orchestrator write-back (outcome → Linear comments, state, `limit` row), `live_docker.py pr` | | ✅ |

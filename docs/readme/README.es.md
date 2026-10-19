@@ -10,7 +10,7 @@
 
 *Esto es una traducción; la versión de referencia es el README en inglés.*
 
-Ejecuta agentes de programación (Claude Code, Codex y más en el futuro) sin supervisión desde un tablero de Linear. Cada project de Linear es un producto, y el assignee de un issue (una cuenta de role) es su etapa. Cada role trabaja hasta en `max_runs` issues a la vez y te devuelve su resultado para que lo revises. Cuando lo apruebas, lo toma el siguiente role.
+Ejecuta agentes de programación (Claude Code, Codex y OpenCode con los modelos de Ollama del host) sin supervisión desde un tablero de Linear. Cada project de Linear es un producto, y el assignee de un issue (una cuenta de role) es su etapa. Cada role trabaja hasta en `max_runs` issues a la vez y te devuelve su resultado para que lo revises. Cuando lo apruebas, lo toma el siguiente role.
 
 Desarrolladores: [`AGENTS.md`](../../AGENTS.md).
 
@@ -32,7 +32,7 @@ agent-pm está construido en capas: cada una hace un solo trabajo y solo llama a
 | Manager | Un conductor para las capas de abajo: un agente con el que hablas, que lanza workers, role runs y runs del tablero, los vigila e informa. | [Demo](#demo-un-manager-muchos-workers) |
 | Linear orchestrator | Ejecuta los roles desde un tablero de Linear: mi propio flujo de trabajo. | [Tablero de Linear](../board.md) |
 | Delegate (núcleo) | Ejecuta un role sobre una task a través de una session y devuelve un resultado verificado. Un plugin de Claude Code y Codex que puedes usar por separado. | [Instalación](#instalación) |
-| Session | Inicia, vigila y reanuda un agente de programación (Claude Code, Codex) en tmux o en un pty, igual para todos los clients. | [Sessions](../sessions.md) |
+| Session | Inicia, vigila y reanuda un agente de programación (Claude Code, Codex, OpenCode) en tmux o en un pty, igual para todos los clients. | [Sessions](../sessions.md) |
 
 El Linear orchestrator es mi filosofía de cómo deberían trabajar los agentes (investigación, luego un PRD, luego un build, con revisión humana entre cada etapa). Los roles y las tasks también son tuyos para editar ([Personalizar roles y tasks](../customizing-roles-and-tasks.md)).
 
@@ -85,9 +85,10 @@ Nada de esto se comprueba. Si falta algo, el run del agente falla.
 | CLI `claude`, Python 3.11+ | cada run de agente |
 | el plugin [`autopilot`](https://github.com/ophis/claude-autopilot), en cada client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, luego `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, luego `codex plugin add autopilot@claude-autopilot` | las build tasks del engineer (`/autopilot:build`, `/autopilot:light-build`) y la revisión del PRD del PM (`/autopilot:review`). No hace falta en otro caso. |
 | tmux 3.3+ | tui runs en el Host `tmux` |
+| [Ollama](https://ollama.com) solo en `127.0.0.1`, con contexto de al menos 65536 y el modelo del tier descargado; en `tmux` y `pty` también OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | solo OpenCode ([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, `gh` con sesión iniciada | programar (checkouts, pull requests) y destinos de GitHub. No hace falta en otro caso. |
 | iTerm2 en ejecución | la división de iTerm2 por defecto |
-| Docker Desktop en ejecución; el broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), instalado con `sh <plugin dir>/broker/install.sh` (necesita `sudo` y `gh` con sesión iniciada); un login de cada uno: `B login claude` (pega un `claude setup-token`), `B login github agent-pm-bot` y, para Codex, `sudo B install-codex <version>` y luego `B login codex` | solo el Docker Host ([Docker host](../docker-host.md)); el host no necesita Node. Qué permite cada credencial, dónde se guarda y cómo revocarla: [Credentials](../credentials.md). |
+| Docker Desktop en ejecución; el broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), instalado con `sh <plugin dir>/broker/install.sh` (necesita `sudo` y `gh` con sesión iniciada); un login de cada uno: `B login claude` (pega un `claude setup-token`), `B login github agent-pm-bot` y, para Codex, `sudo B install-codex <version>` y luego `B login codex`; OpenCode no necesita ninguno | solo el Docker Host ([Docker host](../docker-host.md)); el host no necesita Node. Qué permite cada credencial, dónde se guarda y cómo revocarla: [Credentials](../credentials.md). |
 
 Cómo cargan tu configuración las sessions que inicia agent-pm, y por qué algunos comandos se niegan dentro de ellas: [Session settings](../sessions.md#session-settings).
 
@@ -121,8 +122,8 @@ Estas páginas están en inglés.
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | ajustes de run, directorios de team, archivos de role y task, comprobaciones |
 | [Linear board](../board.md) | configuración, estados de issue y etiquetas de task, operar el router, etiquetas Agent (client por issue) |
-| [Sessions and client policy](../sessions.md) | ajustes de session, `agent-pm-session`, flags de client de los role runs |
+| [Sessions and client policy](../sessions.md) | ajustes de session, `agent-pm-session`, flags de client de los role runs, sessions de OpenCode |
 | [State root](../state-root.md) | estructura de `~/.agent-pm/`, qué limpia cada entrada, qué puedes borrar |
 | [Upgrading](../upgrading.md) | pasos de actualización desde v0.6.20 |
 | [Core architecture](../architecture.md) | capas y paquetes (desarrolladores) |
-| [Tests](../tests.md) | lint, suites de tests, cobertura (desarrolladores) |
+| [Tests](../tests.md) | lint, suites de tests, cobertura, tests en vivo que un modelo local puede validar (desarrolladores) |

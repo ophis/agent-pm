@@ -18,8 +18,10 @@ from agent_pm.session import SESSION_NAME_RULE
 from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import (
     Access,
+    ClientContext,
     ClientHome,
     ConfigError,
+    Container,
     Launch,
     Liveness,
     Permission,
@@ -393,7 +395,7 @@ class ThroughItsHost(Base):
 
         class Seen(StubRun):
             def launch(self, spec):
-                seen.append(self._permission)
+                seen.append(self._context.permission)
                 return super().launch(spec)
 
         for isolated in (False, True):
@@ -401,6 +403,25 @@ class ThroughItsHost(Base):
             host._isolated = isolated
             self.start_on(host, client_class=Seen)
         self.assertEqual(seen, [Permission.AUTO, Permission.YOLO])
+
+    def test_the_run_gets_the_hosts_context_object(self):
+        context = ClientContext(
+            "host.docker.internal",
+            Permission.YOLO,
+            Container("/image/bin", "/image/python", "/image/modules", "/run/state"),
+        )
+        seen = []
+
+        class Seen(StubRun):
+            def launch(self, spec):
+                seen.append(self._context)
+                return super().launch(spec)
+
+        host = PipingHost(FakePiped())
+        with mock.patch.object(host, "_client_context", return_value=context):
+            self.start_on(host, client_class=Seen)
+        self.assertEqual(len(seen), 1)
+        self.assertIs(seen[0], context)
 
     def test_a_nameless_spec_gets_no_host_env_metadata_or_resume(self):
         host = HomeHost(FakePiped())

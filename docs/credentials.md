@@ -23,6 +23,8 @@ with the broker. The user accepted this on 2026-10-18; the broker is unchanged (
 | `tmux`, `pty` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install: `claude setup-token`, pasted into `<B> login claude` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / `setup-token` | `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:423`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
+| `tmux`, `pty` | OpenCode | no one: it uses the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)) | — | no container | — |
+| Docker | OpenCode | no one: it uses the host's Ollama through `host.docker.internal` | — | no model credential, only the GitHub tokens (`with-secrets --client opencode`) | — |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
 ([Log in](docker-host.md#log-in)). Local Hosts use the host `gh` login below.
@@ -175,32 +177,33 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | Claude setup-token copy | `/run/agent-pm/secrets/claude`, through `docker exec` stdin; the client's environment only | until its container goes; the token itself a year | deleted with the container; not revoked | TASK-545 FR-8, FR-13; TASK-548 FR-12 |
 | GitHub installation tokens | `/run/agent-pm/secrets/github/<owner>`, one per installation | 1 hour, renewed 10 minutes ahead | revoked at `close`; backlog retried | TASK-549 FR-7 to FR-12 |
 | Codex access token, no refresh token | `/run/agent-pm/secrets/codex/auth.json`; `CODEX_HOME/auth.json` links to it | renewed 10 minutes ahead | deleted with the container; not revoked | TASK-550 FR-3 to FR-7, FR-12 |
+| nothing for OpenCode: it uses the host's Ollama | — | — | — | TASK-695 NFR-2 |
 | Bot user ID (not a secret) | the session's git author and committer identity | — | — | TASK-549 FR-14, FR-26 |
 
 ## What a container reaches
 
 | Resource | Requirements |
 |---|---|
-| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:166`) | TASK-549 FR-4, FR-17 |
-| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind (`broker/internal/launcher/start.go:169`) | TASK-549 FR-4; TASK-550 NFR-4 |
-| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:177`) | TASK-545 FR-13; TASK-549 FR-8 |
+| its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:165`) | TASK-549 FR-4, FR-17 |
+| Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind; OpenCode: its `opencode_dir` bind (`broker/internal/launcher/start.go:168`) | TASK-549 FR-4; TASK-550 NFR-4; TASK-695 FR-18 |
+| `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:176`) | TASK-545 FR-13; TASK-549 FR-8 |
 | the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`
-(`broker/internal/launcher/start.go:146`): TASK-545 FR-10.
+(`broker/internal/launcher/start.go:185`): TASK-545 FR-10.
 
 ## What a container cannot reach
 
 Run each with `C` a running worker container (`docker ps --filter label=agent-pm.session --format '{{.Names}}'`),
-once for a Claude and once for a Codex worker. Each prints counts only.
+once for each client's worker: Claude, Codex, OpenCode. Each prints counts only.
 
-| Resource | Command | Pass | Requirements | Claude | Codex |
-|---|---|---|---|---|---|
-| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` |
+| Resource | Command | Pass | Requirements | Claude | Codex | OpenCode |
+|---|---|---|---|---|---|---|
+| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` | pending |
 
 Each search covers every mount (the workspace volume, the binds, the tmpfs), skipping only `/proc` and `/sys`. The
 container's own tmux socket is not Docker's, so the socket search names `docker`.
@@ -251,6 +254,7 @@ agent-pm 0.6.28.
   no config error. Deferred until there is a new Linear team (the user, 2026-10-18).
 - [x] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
   board run's PR, each exits 0.
+- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0.
 
 ## Risks
 

@@ -21,8 +21,9 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
-    ClientRuntime,
+    ClientContext,
     ConfigError,
+    Container,
     HookCall,
     HookCallback,
     HookKind,
@@ -129,15 +130,19 @@ DIALOG_SCREENS = {
 class TuiTest(Base):
     def test_container_runtime_projects_only_this_identity_without_host_executable(self):
         host = MemoryHost()
-        runtime = ClientRuntime(
-            "/opt/agent-pm/bin",
-            "/opt/agent-pm/venv/bin/python",
-            "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
-            "/run/agent-pm",
+        runtime = ClientContext(
+            "host.docker.internal",
+            Permission.AUTO,
+            Container(
+                "/opt/agent-pm/bin",
+                "/opt/agent-pm/venv/bin/python",
+                "/opt/agent-pm/session/src:/opt/agent-pm/utils/src",
+                "/run/agent-pm",
+            ),
         )
         spec = dataclasses.replace(self.spec, name="w", client="codex", prompt="hello")
         with (
-            mock.patch.object(host, "_client_runtime", return_value=runtime),
+            mock.patch.object(host, "_client_context", return_value=runtime),
             mock.patch.object(
                 host, "_client_env", return_value={"CODEX_HOME": str(self.codex_home)}
             ),

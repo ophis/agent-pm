@@ -3,18 +3,18 @@ from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
     Activity,
     Blocked,
     ClientBound,
+    ClientContext,
     ClientHome,
-    ClientRuntime,
     HookCallback,
     HookKind,
     Key,
     Launch,
     LimitHit,
     Paste,
-    Permission,
     SessionEvent,
     Spec,
     TurnEnd,
@@ -23,8 +23,7 @@ from agent_pm.session.engine.types import (
 
 
 class Tui(ABC):
-    _runtime: ClientRuntime | None = None
-    _permission: Permission = Permission.AUTO
+    _context: ClientContext = LOCAL_CONTEXT
     _runtime_files: Mapping[str, str] = MappingProxyType({})
     hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
     dialogs: tuple[str, ...] = ()

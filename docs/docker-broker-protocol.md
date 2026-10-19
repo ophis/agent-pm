@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 13** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"13"}`.
+**Protocol 14** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"14"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -19,7 +19,8 @@ manifest directories and start's `credential_expires_at`; relay messages and Git
 remain unchanged. Protocol 10 adds start's `client_update` audit object. Protocol 11 adds
 refresh's required nullable `credential_expires_at` and permits Codex refresh without GitHub.
 Protocol 12 replaces the exact-list audit with `min_version` and drops the status rule field.
-Protocol 13 adds start's required `github_user_id`.
+Protocol 13 adds start's required `github_user_id`. Protocol 14 adds the `opencode` client with
+`opencode_dir`, start's required `clients.opencode` and the `agent-pm.client` container label.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -79,9 +80,10 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `image` | `agent-pm-worker:<key>`; key is 64 lowercase hexadecimal characters computed by broker from both image-definition and agent-pm package contents |
 | `cwd` | Absolute existing host directory: the container path the workspace volume is mounted at and the working directory; never a bind source |
 | `workspace` | The workspace volume: `agent-pm-ws-<name>` |
-| `client` | Required: `claude` or `codex` |
-| `claude_dir` | Required only for Claude, forbidden for Codex; mounted read/write at the same container path |
-| `codex_dir` | Required only for Codex, forbidden for Claude; volatile container home with only its `sessions/` host-bound |
+| `client` | Required: `claude`, `codex` or `opencode` |
+| `claude_dir` | Required only for Claude, forbidden for the others; mounted read/write at the same container path |
+| `codex_dir` | Required only for Codex, forbidden for the others; volatile container home with only its `sessions/` host-bound |
+| `opencode_dir` | Required only for OpenCode, forbidden for the others; mounted read/write at the same container path as the container's `XDG_DATA_HOME`. OpenCode gets no client credential |
 | `github` | Required: `null` (no GitHub token), or `{"app": "agent-pm-bot"}`, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
@@ -89,7 +91,7 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 Session name and generation match
 [engine/types.py](../session/src/agent_pm/session/engine/types.py#L193) and
 [modes/tui.py](../session/src/agent_pm/session/modes/tui.py#L524).
-Broker adds `agent-pm.session=<name>` and `agent-pm.generation=<generation>`.
+Broker adds `agent-pm.session=<name>`, `agent-pm.generation=<generation>` and `agent-pm.client=<client>`.
 Container name is `agent-pm-<name>-<generation>`; close accepts that complete name.
 Paths are literal absolute paths: no `~` or environment expansion. Control characters
 are invalid in paths, names, labels and output strings.
@@ -125,15 +127,15 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `13` |
+| `version` | `protocol_version`: exact string `14` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
-| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude` and `clients.codex`: actual runnable version strings after preparation; `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `github_user_id`: the App's bot user ID as `login github` saved it, `null` with `github` `null` (no saved ID: `login_required`, nothing created); `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude |
-| `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude |
+| `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude`, `clients.codex` and `clients.opencode`: actual runnable version strings after preparation, every start reporting all three (an OpenCode start below the broker's minimum OpenCode is `start_failed`, asking for an image rebuild); `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `github_user_id`: the App's bot user ID as `login github` saved it, `null` with `github` `null` (no saved ID: `login_required`, nothing created); `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude and OpenCode |
+| `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude and OpenCode |
 | `close` | `container`: requested canonical name; `removed`: true if deleted, false if already absent; both succeed. Its GitHub tokens are revoked first |
 | `status` | `revocations`: each token still to revoke, `{"container", "account", "expires_at"}`; optional `codex`: the object below |
 | `workspace-rm` | `volume`: requested name; `removed`: true if deleted, false if already absent. Without `--force`, the newest broker-built worker image's `/opt/agent-pm/lib/workspace-check` first runs on the volume mounted read-only at its `agent-pm.workspace` path, with no network, the worker's security flags and the label `agent-pm.check=1`; any repo up to three levels down with uncommitted, stashed or unpushed work (package caches aside), or a directory it cannot list, keeps the volume |
 
-`client_update` is required for Codex starts and absent for Claude starts; null is
+`client_update` is required for Codex starts and absent for Claude and OpenCode starts; null is
 rejected. Schema and Python use non-null `credential_expires_at` as the existing
 Codex response discriminator. The object has no secrets; all its fields are required,
 extra fields rejected:
