@@ -5,18 +5,11 @@ cut to the default limits by compact, or with every page for --full.
 import re
 from typing import TypeGuard
 
-from agent_pm.linear_orchestrator.engine.client import messages
-from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
-    UUID_RE,
-    GraphQLErrors,
-    IssueError,
-    LinearError,
-)
+from agent_pm.linear_orchestrator.engine import issue_refs
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, IssueError, LinearError
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250
-NOT_FOUND = "Entity not found"
 _REL = "id identifier title state { name }"
 CONNECTIONS = {
     "comments": "id body createdAt parentId quotedText user { id name } onBehalfOf { id name }",
@@ -72,16 +65,7 @@ def lookup(gql, query, ident):
     """
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
         raise IssueError(f"{ident!r}: want an issue identifier such as TASK-1 or an issue id")
-    try:
-        data = gql(query, i=ident)
-    except LinearError as error:
-        if isinstance(error, GraphQLErrors):
-            missing = any(m.startswith(NOT_FOUND) for m in messages(error.errors))
-        else:
-            missing = NOT_FOUND in str(error)
-        if not missing:
-            raise
-        data = None
+    data = issue_refs.found(gql, query, i=ident)
     if data is None or data["issue"] is None:
         raise IssueError(f"{ident}: no such issue")
     return data

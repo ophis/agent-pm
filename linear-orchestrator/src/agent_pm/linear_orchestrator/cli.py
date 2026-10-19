@@ -92,7 +92,7 @@ def main(argv=None):
         "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
         "issue": (
             issue.main,
-            "read, move, comment on or archive one Linear issue: issue read|move|comment|archive ID",
+            "read, move, comment on or archive one Linear issue, list issues, look up references",
         ),
     }
     if arguments and arguments[0] in entries:

@@ -715,6 +715,7 @@ class TmuxCli:
         """start's setup in one call, without events, pane-died `died`: the runner's `python` STAGEs
         argv and env (over the server's) in a 0600 file in its private `handover_dir` for RELAUNCH,
         keeping tmux's command line short; a failed launch deletes it. Returns process().
+        Forwards OSC 52 copies.
         """
         session_name(session)
         tag_options = _tags(session, tags or {})
@@ -755,6 +756,8 @@ class TmuxCli:
                     RELAUNCH,
                     path,
                     *(";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"),
+                    *(";", "set-option", "-s", "set-clipboard", "on"),
+                    *(";", "set-option", "-qp", "-t", f"={session}:", "allow-passthrough", "on"),
                     *tag_options,
                     *decorations,
                     *_recorded(session),

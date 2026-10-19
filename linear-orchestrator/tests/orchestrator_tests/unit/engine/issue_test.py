@@ -18,6 +18,7 @@ from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.issue_fixtures import (
     ArchiveGql,
     Gql,
+    IssueCase,
     WriteGql,
     comment,
     conn,
@@ -27,28 +28,8 @@ from orchestrator_tests.unit.issue_fixtures import (
     tree,
     write_issue,
 )
-from orchestrator_tests.unit.run_fixtures import CORE_LOCAL
 
 KEY = "lin_api_TESTSECRET0123456789"
-
-
-class IssueCase(Case):
-    def setUp(self):
-        super().setUp()
-        self.root = os.path.join(self.home, "root")
-        os.makedirs(self.root)
-        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(f'[linear_orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL)
-        self.config = os.path.join(self.root, "config.toml")
-        with open(self.config, "w") as f:
-            f.write(tp.CONFIG)
-
-    def run_main(self, argv, gql, stdin=b""):
-        out, err = io.BytesIO(), io.StringIO()
-        code = issue.main(
-            argv, gql=gql, config_path=self.config, out=out, err=err, stdin=io.BytesIO(stdin)
-        )
-        return code, out.getvalue(), err.getvalue()
 
 
 class Help(Case):
@@ -67,6 +48,49 @@ class Help(Case):
             text = output.getvalue()
             for phrase in ("agent-pm-linear issue read TASK-1", "8192", "Exit 0", "--help"):
                 self.assertIn(phrase, text)
+
+    def test_lookup_help_names_resources_fields_pages_and_examples(self):
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            cli.main(["issue", "lookup", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        text = output.getvalue()
+        for phrase in (
+            "teams,states,labels,projects,milestones,users",
+            "team_id",
+            "1-50 (default 20)",
+            "next_cursor",
+            "--full --output FILE",
+            "agent-pm-linear issue lookup milestones --project",
+            "8192",
+            "Exit 0",
+        ):
+            self.assertIn(phrase, text.replace(", ", ","))
+
+    def test_list_help_names_filters_fields_pages_and_examples(self):
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            cli.main(["issue", "list", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        text = output.getvalue()
+        for phrase in (
+            "--include-archived",
+            "parent_id",
+            "most\n  recently updated first",
+            "1-50 (default 20)",
+            "agent-pm-linear issue list --assignee me",
+            "agent-pm-linear issue lookup --help",
+            "8192",
+        ):
+            self.assertIn(phrase, text)
 
     def test_write_help_names_the_receipt_and_result_unknown(self):
         for command, phrases in (
@@ -620,3 +644,45 @@ class Full(IssueCase):
         self.assertEqual(code, 1)
         self.assertNotIn(KEY, out.decode() + err)
         self.assertFalse(os.path.exists(path))
+
+
+def row(n, name="x", cut=()):
+    return {"id": f"id-{n}", "name": name}, list(cut), f"cur-{n}"
+
+
+class FitPage(Case):
+    def test_within_the_limit_nothing_is_cut(self):
+        page = json.loads(issue.fit_page([row(1), row(2, cut=["team_ids"])], "end"))
+        self.assertEqual(page["next_cursor"], "end")
+        self.assertTrue(page["has_next_page"])
+        self.assertEqual(page["truncated"], ["items.1.team_ids"])
+        last = json.loads(issue.fit_page([], None))
+        self.assertEqual(
+            last, {"items": [], "truncated": [], "has_next_page": False, "next_cursor": None}
+        )
+
+    def test_over_the_limit_trailing_items_drop_and_the_cursor_follows_the_last_kept(self):
+        rows = [row(n, "名" * 400, cut=["team_ids"]) for n in range(50)]
+        data = issue.fit_page(rows, None)
+        self.assertLessEqual(len(data), 8192)
+        page = json.loads(data)
+        kept = len(page["items"])
+        self.assertLess(kept, 50)
+        self.assertEqual((page["has_next_page"], page["next_cursor"]), (True, f"cur-{kept - 1}"))
+        self.assertEqual(page["truncated"], [f"items.{n}.team_ids" for n in range(kept)])
+        self.assertEqual(page["items"][-1]["name"], "名" * 400)
+
+    def test_a_lone_item_shortens_its_text_but_keeps_its_references(self):
+        item = {"id": "i" * 3000, "name": "n" * 9000, "labels": [{"id": "l1", "name": "m" * 3000}]}
+        page = json.loads(issue.fit_page([(item, [], "c")], None))
+        got = page["items"][0]
+        self.assertEqual((got["id"], got["labels"][0]["id"]), ("i" * 3000, "l1"))
+        self.assertLess(len(got["name"]), 9000)
+        self.assertTrue(("n" * 9000).startswith(got["name"]))
+        self.assertIn("items.0.name", page["truncated"])
+        self.assertIsNone(page["next_cursor"])
+
+    def test_references_alone_over_the_limit_fail(self):
+        item = {"id": "i" * 9000, "name": ""}
+        with self.assertRaises(OverflowError):
+            issue.fit_page([(item, [], "c")], None)
