@@ -867,6 +867,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended, chain_steps):
             workdir,
             Context(role, a.task, a.client, tier=cfg.task_tier(a.task)),
             chain_steps(),
+            translate_on=cfg.selection.translate,
             provider=delegate_cls,
             overlays=(cfg.core,),
         )

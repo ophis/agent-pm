@@ -39,11 +39,12 @@ class ResolverName(StrEnum):
 
 @dataclass(frozen=True)
 class Selection:
-    """[selection]: the Selector class (built with no arguments; None only without resolvers)
-    and the Resolver chain in its order; no resolvers: no chain.
+    """[selection]: the Selector class (built with no arguments; None only without resolvers),
+    whether translate runs, and the Resolver chain in its order; no resolvers: no chain.
     """
 
     selector: type | None
+    translate: bool
     resolvers: tuple[ResolverName, ...]
 
 

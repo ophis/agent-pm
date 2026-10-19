@@ -5181,7 +5181,8 @@ class InsideAnAgentSession(RouterArguments):
 STATE = "LEAK-STATE a session registry"
 LEAK = "LEAK-SENTINEL"
 SELECTION_ON = (
-    '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\nresolvers = ["tier"]\n'
+    '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
+    'translate = true\nresolvers = ["tier"]\n'
 )
 # a start row's fields before model selection
 START_FIELDS = {
@@ -5252,7 +5253,7 @@ class ResolverChain(OuterBase):
 
     def test_new_run_with_selection_off_launches_as_today(self):
         selector = FakeSelector()
-        for selection in ("", "[selection]\nresolvers = []\n"):
+        for selection in ("", "[selection]\ntranslate = true\nresolvers = []\n"):
             for task, tier in (("light-build", 3), (None, None)):
                 with self.subTest(selection=selection, task=task):
                     self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n" + selection)

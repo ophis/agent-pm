@@ -13,4 +13,6 @@ SUBPACKAGES = {
 OBJECT_EXPORT_MODULES = ("selector/src/agent_pm/selector/__init__.py",)
 
 
-OBJECT_EXPORTS_ALLOWED = {}
+OBJECT_EXPORTS_ALLOWED = {
+    (f"{PKG}.selector", "JEV_DEFAULT"): "TASK-744 Jev's default SelectorConfig, for the router",
+}
