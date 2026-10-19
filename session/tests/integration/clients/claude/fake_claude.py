@@ -176,6 +176,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
         "--output-format",
         "--settings",
         "--mcp-config",
+        "--append-system-prompt",
     ):
         ap.add_argument(opt)
     for opt in ("--add-dir", "--allowedTools"):
