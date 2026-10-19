@@ -112,7 +112,7 @@ Checks: [Docker checks › Build](docker-checks.md#build).
 
 ### Plugins
 
-A container's clients load the plugins its image holds: `[session.hosts.docker] plugins`, default `["autopilot"]`
+A container's Claude Code and Codex load the plugins its image holds (OpenCode loads none): `[session.hosts.docker] plugins`, default `["autopilot"]`
 (the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review`); `[]`: none. Never agent-pm's own:
 every session runs with it disabled, and the image holds the team at `/opt/agent-pm/team`.
 
