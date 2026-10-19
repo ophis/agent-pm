@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
+from agent_pm.session.clients.common import question
 from agent_pm.session.clients.opencode.common import (
     NATIVE,
     TUI_RESERVED,
@@ -53,8 +54,11 @@ class OpenCodeTui(Homed, Tui):
             "session.idle": HookKind.TURN_END,
             "session.error": HookKind.TURN_FAILED,
             "permission.asked": HookKind.BLOCKED,
+            "question.asked": HookKind.BLOCKED,
             "session.busy": HookKind.ACTIVITY,
             "permission.replied": HookKind.ACTIVITY,
+            "question.replied": HookKind.ACTIVITY,
+            "question.rejected": HookKind.ACTIVITY,
             "tool": HookKind.ACTIVITY,
         }
     )
@@ -124,6 +128,8 @@ class OpenCodeTui(Homed, Tui):
         return [TurnFailed(_text(payload, "error") or "unknown", _text(payload, "message"))]
 
     def blocked_reason(self, payload):
+        if "questions" in payload:
+            return question(payload["questions"])
         return _text(payload, "permission")
 
     def activity(self, payload):

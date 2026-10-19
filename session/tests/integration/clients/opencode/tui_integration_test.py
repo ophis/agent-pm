@@ -236,6 +236,26 @@ class TuiSessions(Case):
         handle.send("allow")
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("built"))
 
+    def test_a_question_blocks_until_answered(self):
+        self.scene([[{"question": "Database"}, {"text": "picked"}]])
+        handle, stream = self.start()
+        self.assertEqual(stream.until(Blocked)[-1], Blocked("question: Database"))
+        self.assertEqual(self.words(1)[-1], "w1 blocked")
+        handle.send("answer")
+        found = stream.until(TurnEnd)
+        self.assertEqual(found[0], Activity(""))
+        self.assertEqual(found[-1], TurnEnd("picked"))
+        self.assertEqual(self.words(2)[-1], "w1 done")
+
+    def test_a_dismissed_question_works_on(self):
+        self.scene([[{"question": "Database", "child": True}, {"text": "skipped"}]])
+        handle, stream = self.start()
+        self.assertEqual(stream.until(Blocked)[-1], Blocked("question: Database"))
+        handle.send("dismiss")
+        found = stream.until(TurnEnd)
+        self.assertEqual(found[0], Activity(""))
+        self.assertEqual(found[-1], TurnEnd("skipped"))
+
     def test_tool_parts_are_activity_and_foreign_sessions_are_ignored(self):
         self.scene([[{"tool": "read"}, {"foreign": True}, {"busy": True}, {"text": "ok"}]])
         _, stream = self.start()

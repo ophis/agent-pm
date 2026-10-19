@@ -27,7 +27,7 @@ from agent_pm.session.clients.codex.common import (
     reset_at,
 )
 from agent_pm.session.clients.codex.common.types import Snapshot
-from agent_pm.session.clients.common import scan, split_flags
+from agent_pm.session.clients.common import question, scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
     ClientHome,
@@ -58,9 +58,14 @@ HOOKS = (
     ("UserPromptSubmit", "userPromptSubmit", "activity"),
     ("PostToolUse", "postToolUse", "activity"),
     ("PermissionRequest", "permissionRequest", "blocked"),
+    ("PreToolUse", "preToolUse", "blocked"),
     ("Stop", "stop", "turn_end"),
     ("Interrupt", "interrupt", "turn_end"),
 )
+# Plan mode's question dialog asks no permission: its tool's PreToolUse is the blocked hook, its
+# PostToolUse the answer (an Esc interrupts the turn).
+QUESTION = "request_user_input"
+MATCHERS = MappingProxyType({"PreToolUse": f"^{QUESTION}$"})
 
 
 FIELDS = frozenset(
@@ -328,6 +333,15 @@ class CodexTui(Tui):
         return value if isinstance(value, str) else ""
 
     def blocked_reason(self, payload):
+        if payload.get("tool_name") == QUESTION:
+            found = payload.get("tool_input")
+            asked = found.get("questions") if isinstance(found, dict) else None
+            titles = [
+                q.get("header") or q.get("question")
+                for q in (asked if isinstance(asked, list) else ())
+                if isinstance(q, dict)
+            ]
+            return question(titles)
         return self.activity(payload)
 
     def shows(self, dialog, screen):
@@ -421,7 +435,9 @@ def hook_flags(plan: HookPlan) -> tuple[str, ...]:
         for word in (
             "-c",
             (
-                f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
+                f"hooks.{event}=[{{"
+                + (f"matcher={json.dumps(MATCHERS[event])}," if event in MATCHERS else "")
+                + f'hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
                 f"timeout={3 if event == 'Interrupt' else 10}}}]}}]"
             ),
         )

@@ -25,6 +25,7 @@ class OpenCodeClient(Client):
             "efforts",
             "env",
             "ollama_port",
+            "ollama_context",
             "executable",
             "model",
             "providers",

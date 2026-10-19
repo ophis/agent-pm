@@ -278,11 +278,15 @@ class HookTrustIntegrationTest(Live):
                 "userPromptSubmit",
                 "postToolUse",
                 "permissionRequest",
+                "preToolUse",
                 "stop",
                 "interrupt",
             ],
         )
-        self.assertEqual([row["timeoutSec"] for row in rows], [10, 10, 10, 10, 10, 3])
+        self.assertEqual([row["timeoutSec"] for row in rows], [10, 10, 10, 10, 10, 10, 3])
+        self.assertEqual(
+            [row["matcher"] for row in rows], [None] * 4 + ["^request_user_input$", None, None]
+        )
         self.assertFalse((self.codex_home / "config.toml").exists())
 
     @staticmethod
@@ -584,6 +588,24 @@ class TuiLaunchIntegrationTest(Live):
         handle.stop()
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.session_cls.list("w1"), [])
+
+    def test_a_plan_mode_question_blocks_until_answered(self):
+        self.scene(
+            [[{"kind": "question"}, {"kind": "tool", "tool_name": "request_user_input"}, "ok"]]
+        )
+        handle = self.start()
+        found = Stream(self, handle).until(TurnEnd)
+        self.assertEqual(
+            found,
+            [
+                Activity(),
+                Activity(),
+                Blocked("question: Scope"),
+                Activity("request_user_input"),
+                TurnEnd("ok"),
+            ],
+        )
+        self.assertEqual(self.lines(2), ["w1 blocked", "w1 done"])
 
     def test_no_opening_input(self):
         handle = self.start()

@@ -478,7 +478,59 @@ class SelectionTest(Case):
         self.assertNotIn("plugin", json.loads(plain["OPENCODE_CONFIG_CONTENT"]))
 
 
-class WorktreeTest(Case):
+class CompactionTest(Case):
+    def setUp(self):
+        cwd = os.path.realpath(self.home)
+        self.spec = Spec(workdir=self.home, access=Access(cwd=cwd, project=True), sid="run-1")
+
+    def inline(self, **config) -> dict:
+        found = common(**config)
+        return json.loads(found.environment(self.spec, LOCAL_CONTEXT)["OPENCODE_CONFIG_CONTENT"])
+
+    def limits(self, config: dict, provider: str) -> dict:
+        return {
+            name: model["limit"] for name, model in config["provider"][provider]["models"].items()
+        }
+
+    def test_each_model_compacts_its_headroom_below_its_window(self):
+        config = self.inline(
+            providers={"strata": {**STRATA, "context": 204800}, "lab": STRATA},
+            tiers={"1": "strata/big", "2": "lab/n"},
+        )
+        # OpenCode compacts once a step reaches limit.input - compaction.reserved.
+        self.assertEqual(config["compaction"], {"reserved": 0})
+        self.assertEqual(
+            self.limits(config, "ollama"),
+            {"qwen3.6:35b-mlx": {"context": 65536, "input": 32768, "output": 16384}},
+        )
+        big = {"context": 204800, "input": 152800, "output": 32000}
+        self.assertEqual(self.limits(config, "strata"), {"m": big, "big": big})
+        small = {"context": 65536, "input": 32768, "output": 16384}
+        self.assertEqual(self.limits(config, "lab"), {"m": small, "n": small})
+
+    def test_the_headroom_is_the_reply_and_20000_at_most_half_the_window(self):
+        for window, threshold, output in (
+            (65536, 32768, 16384),
+            (104000, 58000, 26000),
+            (131072, 79072, 32000),
+            (20000, 10000, 5000),
+        ):
+            with self.subTest(window=window):
+                config = self.inline(ollama_context=window)
+                self.assertEqual(
+                    self.limits(config, "ollama")["qwen3.6:35b-mlx"],
+                    {"context": window, "input": threshold, "output": output},
+                )
+
+    def test_a_window_must_be_a_positive_integer(self):
+        for window in (True, 0, -1, 1.5, "65536"):
+            with self.subTest(window=window):
+                with self.assertRaisesRegex(ConfigError, r"ollama_context must be"):
+                    common(ollama_context=window)
+                with self.assertRaisesRegex(ConfigError, r"\.providers must be"):
+                    common(providers={"strata": {**STRATA, "context": window}})
+        self.assertEqual(common(ollama_context=8192).ollama_context, 8192)
+
     def test_only_a_trailing_line_end_is_cut_from_the_toplevel(self):
         repo = os.path.realpath(os.path.join(self.home, "repo "))
         os.makedirs(os.path.join(repo, ".git"))
