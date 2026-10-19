@@ -33,6 +33,7 @@ Q_LABEL = f"query($id: String!) {{ issueLabel(id: $id) {{ {LABEL} }} }}"
 Q_MILESTONE = f"query($id: String!) {{ projectMilestone(id: $id) {{ {MILESTONE} }} }}"
 Q_USER = f"query($id: String!) {{ user(id: $id) {{ {USER} }} }}"
 Q_ME = f"query {{ viewer {{ {USER} }} }}"
+SETTABLE = {"isGroup": {"eq": False}}
 Q_ISSUE = "query($id: String!) { issue(id: $id) { id identifier } }"
 Q_PROJECT = (
     "query($id: String!, $t: ID) { project(id: $id) { id name "
@@ -145,19 +146,22 @@ def command(resource, value, *scope):
     return " ".join(shlex.quote(w) for w in words)
 
 
-def resolve(gql, value, *, option, what, find, near, get, scope, lookup):
-    """The one node value names. find and near are sources of the exact matches and of the
-    candidates shown when none matches; an id is read through get, (query, field, variables), and
-    must satisfy scope; what names the resource and its scope in errors.
+def resolve(gql, value, *, option, what, find, near, get, scope, lookup, usable=None):
+    """The one node value names. find is the source of the exact matches, of which only the usable
+    ones count when any is; near(text) the source of the candidates shown when none matches (None:
+    any in scope). An id is read through get, (query, field, variables), and must satisfy scope;
+    what names the resource and its scope in errors.
     """
     if UUID_RE.fullmatch(value):
         node = entity(gql, get[0], get[1], id=value, **get[2])
-        if node is None:
-            raise IssueError(f"{option} {value}: no such {what}; list them: {lookup}")
-        if not scope(node):
-            raise IssueError(f"{option} {value}: {show(node)} is not a {what}; list them: {lookup}")
-        return node
+        if node is not None and scope(node):
+            return node
+        why = "no such " + what if node is None else f"{show(node)} is not a {what}"
+        raise IssueError(
+            f"{option} {value}: {why}; {_candidates(gql, near(None))}; list them: {lookup}"
+        )
     found = [row[0] for row in issue_page.walk(gql, find)]
+    found = [n for n in found if usable is None or usable(n)] or found
     if len(found) == 1:
         return found[0]
     if found:
@@ -165,11 +169,16 @@ def resolve(gql, value, *, option, what, find, near, get, scope, lookup):
         raise IssueError(
             f"{option} {value!r}: {len(found)} match, name one by id: {listed}; list them: {lookup}"
         )
-    rows, more, _ = issue_page.fetch(gql, near, CANDIDATES)
-    listed = ", ".join(show(row[0]) for row in rows) + (", …" if more else "") or "none"
     raise IssueError(
-        f"{option} {value!r}: no {what} has that name; candidates: {listed}; list them: {lookup}"
+        f"{option} {value!r}: no {what} has that name; {_candidates(gql, near(value))}; "
+        f"list them: {lookup}"
     )
+
+
+def _candidates(gql, source):
+    rows, more, _ = issue_page.fetch(gql, source, CANDIDATES)
+    listed = ", ".join(show(row[0]) for row in rows) or "none"
+    return f"candidates: {listed}" + (", …" if more else "")
 
 
 def team(gql, value):
@@ -180,7 +189,7 @@ def team(gql, value):
         option="--team",
         what="team",
         find=teams({"or": [{"name": {"eq": value}}, {"key": {"eqIgnoreCase": value}}]}),
-        near=teams(team_text(value)),
+        near=lambda text: teams(team_text(text)),
         get=(Q_TEAM, "team", {}),
         scope=lambda _: True,
         lookup=command("teams", value),
@@ -195,7 +204,7 @@ def project(gql, team_id, value):
         option="--project",
         what=f"project of team {team_id}",
         find=projects(team_id, {"name": {"eq": value}}),
-        near=projects(team_id, named(value)),
+        near=lambda text: projects(team_id, named(text)),
         get=(Q_PROJECT, "project", {"t": team_id}),
         scope=lambda node: bool(node["teams"]["nodes"]),
         lookup=command("projects", value, "--team", team_id),
@@ -210,7 +219,7 @@ def state(gql, team_id, value):
         option="--state",
         what=f"workflow state of team {team_id}",
         find=states(team_id, {"name": {"eq": value}}),
-        near=states(team_id, named(value)),
+        near=lambda text: states(team_id, named(text)),
         get=(Q_STATE, "workflowState", {}),
         scope=lambda node: node["team"]["id"] == team_id,
         lookup=command("states", value, "--team", team_id),
@@ -232,7 +241,8 @@ def label(gql, team_id, value):
         option="--label",
         what=f"label of team {team_id} or the workspace",
         find=labels(team_id, {"name": {"eq": value}}),
-        near=labels(team_id, every({"isGroup": {"eq": False}}, named(value)), _current),
+        near=lambda text: labels(team_id, every(SETTABLE, named(text)), _current),
+        usable=lambda node: not (node["isGroup"] or node["retiredAt"]),
         get=(Q_LABEL, "issueLabel", {}),
         scope=lambda node: node["team"] is None or node["team"]["id"] == team_id,
         lookup=lookup,
@@ -257,7 +267,7 @@ def milestone(gql, project_id, value):
         option="--milestone",
         what=f"milestone of project {project_id}",
         find=milestones(project_id, {"name": {"eq": value}}),
-        near=milestones(project_id, named(value)),
+        near=lambda text: milestones(project_id, named(text)),
         get=(Q_MILESTONE, "projectMilestone", {}),
         scope=lambda node: node["project"]["id"] == project_id,
         lookup=command("milestones", value, "--project", project_id),
@@ -276,7 +286,7 @@ def user(gql, value):
         option="--assignee",
         what="user",
         find=users(None, {"or": [{"name": {"eq": value}}, {"email": {"eqIgnoreCase": value}}]}),
-        near=users(None, user_text(value)),
+        near=lambda text: users(None, user_text(text)),
         get=(Q_USER, "user", {}),
         scope=lambda _: True,
         lookup=command("users", value),

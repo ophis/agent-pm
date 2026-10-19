@@ -97,7 +97,7 @@ _PAGES = (
     "  after the last one kept); a lone item's longest text is shortened, never\n"
     "  an id, each named in truncated as items.<n>.<field>.\n"
     f"  {FULL}: every page, written as indented JSON {{items, truncated}}\n"
-    "  to FILE; prints only {count, output: FILE's absolute path}; not with\n"
+    "  to FILE; prints only {output: FILE's absolute path}; not with\n"
     "  --cursor or --limit.\n"
     "References: an id or an exact name; a team also takes its key. Without\n"
     "  --team, the configured team. No match, several, or one outside the team\n"
@@ -475,7 +475,7 @@ def _run(gql, args, team_id, body):
     rows = issue_page.walk(gql, source)
     cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
     payload = {"items": [item for item, _, _ in rows], "truncated": cut}
-    return _written(args.output, payload, {"count": len(rows)})
+    return _written(args.output, payload, {})
 
 
 def _written(output, payload, summary):

@@ -132,7 +132,7 @@ class Filters(IssueCase):
         )
         path = os.path.join(self.root, "issues.json")
         code, out, _ = self.run_main(["list", "--full", "--output", path], gql)
-        self.assertEqual((code, json.loads(out)), (0, {"count": 2, "output": path}))
+        self.assertEqual((code, json.loads(out)), (0, {"output": path}))
         with open(path, encoding="utf-8") as f:
             items = json.load(f)["items"]
         self.assertEqual([i["identifier"] for i in items], ["TASK-1", "TASK-2"])

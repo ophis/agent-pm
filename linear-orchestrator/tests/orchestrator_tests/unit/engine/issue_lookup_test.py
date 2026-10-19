@@ -188,7 +188,7 @@ class Pages(IssueCase):
         path = os.path.join(self.root, "projects.json")
         code, out, err = self.run_main(["lookup", "projects", "--full", "--output", path], gql)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(json.loads(out), {"count": 2, "output": path})
+        self.assertEqual(json.loads(out), {"output": path})
         with open(path, encoding="utf-8") as f:
             written = json.load(f)
         self.assertEqual([i["name"] for i in written["items"]], ["A", "B"])

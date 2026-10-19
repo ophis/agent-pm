@@ -27,7 +27,7 @@ def source(gql, args, team_id):
     if resource is Resource.STATES:
         return issue_refs.states(team, named, _state)
     if resource is Resource.LABELS:
-        applicable = issue_refs.every({"isGroup": {"eq": False}}, named)
+        applicable = issue_refs.every(issue_refs.SETTABLE, named)
         return issue_refs.labels(team, applicable, _label)
     if resource is Resource.PROJECTS:
         return issue_refs.projects(team, named, _project)

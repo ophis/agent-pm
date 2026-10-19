@@ -34,12 +34,23 @@ class Team(Case):
         self.assertEqual(issue_refs.team(gql, uid(7))["key"], "ENG")
         self.assertEqual(gql.sent("team"), [{"id": uid(7)}])
 
-    def test_an_unknown_id_names_the_lookup(self):
+    def test_an_unknown_id_names_candidates_and_the_lookup(self):
+        gql = Routes(team=MISSING, teams=edges([team_ref(1, "ENG")]))
         with self.assertRaises(IssueError) as cm:
-            issue_refs.team(Routes(team=MISSING), uid(7))
-        self.assertIn("no such team", str(cm.exception))
-        self.assertIn("agent-pm-linear issue lookup teams", str(cm.exception))
-        self.assertNotIn("--query", str(cm.exception))
+            issue_refs.team(gql, uid(7))
+        text = str(cm.exception)
+        self.assertIn(f"no such team; candidates: {uid(1)} ENG 'team ENG';", text)
+        self.assertIn("agent-pm-linear issue lookup teams", text)
+        self.assertNotIn("--query", text)
+        near = gql.sent("teams")[0]
+        self.assertEqual((near["first"], near["f"]), (issue_refs.CANDIDATES, None))
+
+    def test_no_candidate_but_more_pages_says_so(self):
+        # every candidate on the page was skipped, yet more pages exist
+        gql = Routes(issueLabels=[edges([]), edges([label(7, "x", retired="2026")], more=True)])
+        with self.assertRaises(IssueError) as cm:
+            issue_refs.label(gql, TEAM, "x")
+        self.assertIn("candidates: none, …;", str(cm.exception))
 
     def test_other_failures_are_not_a_missing_entity(self):
         with self.assertRaises(LinearError):
@@ -87,7 +98,10 @@ class Project(Case):
         gql = Routes(project=project(4, "Agent PM"))
         self.assertEqual(issue_refs.project(gql, TEAM, uid(4))["id"], uid(4))
         self.assertEqual(gql.sent("project"), [{"id": uid(4), "t": TEAM}])
-        outside = Routes(project=project(5, "Elsewhere", team_ids=()))
+        outside = Routes(
+            project=project(5, "Elsewhere", team_ids=()),
+            team={"projects": edges([project(4, "Agent PM")])},
+        )
         with self.assertRaises(IssueError) as cm:
             issue_refs.project(outside, OTHER_TEAM, uid(5))
         text = str(cm.exception)
@@ -135,10 +149,14 @@ class State(Case):
         self.assertIn(f"lookup states --team {TEAM} --query started", str(cm.exception))
 
     def test_an_id_of_another_team_is_refused(self):
-        gql = Routes(workflowState=state(3, "Todo", team_id=OTHER_TEAM))
+        gql = Routes(
+            workflowState=state(3, "Todo", team_id=OTHER_TEAM),
+            workflowStates=edges([state(4, "Todo")]),
+        )
         with self.assertRaises(IssueError) as cm:
             issue_refs.state(gql, TEAM, uid(3))
         self.assertIn(f"is not a workflow state of team {TEAM}", str(cm.exception))
+        self.assertIn(f"candidates: {uid(4)} 'Todo';", str(cm.exception))
 
 
 class Label(Case):
@@ -163,8 +181,14 @@ class Label(Case):
                 self.assertIn(phrase, str(cm.exception))
                 self.assertIn(f"lookup labels --team {TEAM}", str(cm.exception))
 
+    def test_only_settable_same_named_labels_count(self):
+        nodes = [label(1, "bug", None, retired="2026-01-01T00:00:00.000Z"), label(2, "bug")]
+        self.assertEqual(
+            issue_refs.label(Routes(issueLabels=edges(nodes)), TEAM, "bug")["id"], uid(2)
+        )
+
     def test_a_label_of_another_team_is_refused(self):
-        gql = Routes(issueLabel=label(6, "bug", OTHER_TEAM))
+        gql = Routes(issueLabel=label(6, "bug", OTHER_TEAM), issueLabels=edges([label(1, "bug")]))
         with self.assertRaises(IssueError):
             issue_refs.label(gql, TEAM, uid(6))
 
@@ -185,7 +209,10 @@ class Milestone(Case):
         gql = Routes(project={"projectMilestones": edges([milestone(7, "M1", uid(5))])})
         self.assertEqual(issue_refs.milestone(gql, uid(5), "M1")["id"], uid(7))
         self.assertEqual(gql.sent("project")[0]["p"], uid(5))
-        other = Routes(projectMilestone=milestone(7, "M1", uid(6)))
+        other = Routes(
+            projectMilestone=milestone(7, "M1", uid(6)),
+            project={"projectMilestones": edges([milestone(8, "M1", uid(5))])},
+        )
         with self.assertRaises(IssueError) as cm:
             issue_refs.milestone(other, uid(5), uid(7))
         self.assertIn(f"lookup milestones --project {uid(5)}", str(cm.exception))
