@@ -2,8 +2,6 @@
 once, every other relation left alone.
 """
 
-import subprocess
-
 from agent_pm.linear_orchestrator.engine import issue_read, issue_relation
 from agent_pm.linear_orchestrator.engine.types import (
     GraphQLErrors,
@@ -13,6 +11,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     WriteUnknown,
 )
 from orchestrator_tests.case import Case
+from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, SecondFails, uid
 
 BOARD = ("TASK-1", "TASK-2", "TASK-3")
@@ -103,7 +102,7 @@ class Remove(Case):
             ({"success": False}, "issueRelationDelete: success: false"),
             (GraphQLErrors([{"message": "boom"}]), "boom"),
             (Unavailable("issueRelation", reason="timed out"), "result unknown"),
-            (subprocess.TimeoutExpired("security", 5), "TimeoutExpired"),
+            (TimeoutExpired("security", 5), "TimeoutExpired"),
             (PermissionError("denied"), "PermissionError"),
         )
         for result, cause in cases:
