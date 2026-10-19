@@ -322,6 +322,12 @@ class CodexTui(Tui):
             self.last = ""
         return self.last_reply
 
+    def pending(self, payload):
+        """0: Codex's Stop reports no background work, whose end starts no turn (docs/sessions.md
+        › Client policy).
+        """
+        return 0
+
     def activity(self, payload):
         value = payload.get("tool_name")
         return value if isinstance(value, str) else ""
