@@ -1,7 +1,8 @@
 """agent-pm-linear issue: fixed issue subcommands and the rules they share. stdout holds one JSON
 object of at most LIMIT UTF-8 bytes, a write's receipt at most RECEIPT; diagnostics go to stderr, as
-bounded; exit OK, FAILED (Linear failed, or a write's result is unknown) or USAGE (usage,
-configuration or an unresolved reference).
+bounded; exit OK, FAILED (Linear failed, a write's result is unknown, a refusal, or create's
+relations partly failed, its report on stdout) or USAGE (usage, configuration or an unresolved
+reference).
 """
 
 import argparse
@@ -213,7 +214,7 @@ _CREATE_HELP = (
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
     "  repeatable, repeats count once; one issue given to both exits 2.\n"
     "A timeout while creating leaves the result unknown: look for the issue with\n"
-    "  agent-pm-linear issue list --query TITLE before creating it again.\n"
+    "  agent-pm-linear issue list --team TEAM --query=TITLE before creating it again.\n"
     "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
     "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
     "  with its error), recover and truncated: run only the recover commands\n"

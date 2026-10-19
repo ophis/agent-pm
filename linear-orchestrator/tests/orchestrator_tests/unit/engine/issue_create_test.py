@@ -193,9 +193,18 @@ class Create(Case):
         with self.assertRaises(WriteUnknown) as cm:
             run(fake, blocks=["TASK-3"])
         text = str(cm.exception)
-        for phrase in ("result unknown", "timed out", "issue list --query 'Fix login'"):
+        for phrase in ("result unknown", "timed out", f"list --team {TEAM} --query='Fix login'"):
             self.assertIn(phrase, text)
         self.assertEqual(len(fake.writes), 1)
+
+    def test_the_outage_check_names_the_given_team_and_survives_a_dash_title(self):
+        fake = create_gql(
+            created=Unavailable("issueCreate", reason="timed out"),
+            teams=edges([{"id": uid(1), "name": "Ops", "key": "OPS"}]),
+        )
+        with self.assertRaises(WriteUnknown) as cm:
+            run(fake, team="OPS", title="-x")
+        self.assertIn(f"issue list --team {uid(1)} --query=-x ", str(cm.exception))
 
     def test_a_refused_create_fails_and_adds_no_relation(self):
         for created in ({"success": False, "issue": None}, GraphQLErrors([{"message": "boom"}])):

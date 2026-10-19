@@ -86,10 +86,10 @@ def create(gql, fields, relations, viewer):
     try:
         node = ops.call(gql, M_CREATE, "issueCreate", **{"in": fields})["issue"]
     except Unavailable as error:
-        query = shlex.quote(fields["title"])
+        check = f"--team {fields['teamId']} --query={shlex.quote(fields['title'])}"
         raise WriteUnknown(
             f"create: result unknown ({error}): look for it with "
-            f"agent-pm-linear issue list --query {query} before creating it again"
+            f"agent-pm-linear issue list {check} before creating it again"
         ) from None
     done, failed = [], []
     for option, other in relations:

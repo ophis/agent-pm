@@ -5,7 +5,7 @@ never retried.
 
 import sys
 
-from agent_pm.linear_orchestrator.engine import issue_page, issue_read, ops
+from agent_pm.linear_orchestrator.engine import issue_read, ops
 from agent_pm.linear_orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
 
 
@@ -68,13 +68,10 @@ def comment(gql, ident, body):
 
 
 def _states(gql, team):
-    page, seen = team["states"], set()
+    page = team["states"]
     states = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        after = issue_page.advance(
-            f"team {team['key']} states", page["pageInfo"]["endCursor"], seen
-        )
-        page = gql(Q_STATES, t=team["id"], c=after)["team"]["states"]
+        page = gql(Q_STATES, t=team["id"], c=page["pageInfo"]["endCursor"])["team"]["states"]
         states += page["nodes"]
     return states
 

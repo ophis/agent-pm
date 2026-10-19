@@ -3,7 +3,7 @@ names only those two (addedLabelIds, removedLabelIds), so every other label stay
 issue carries neither, or the new one would join a label group the issue already holds another of.
 """
 
-from agent_pm.linear_orchestrator.engine import issue_page, issue_read, issue_refs, issue_write
+from agent_pm.linear_orchestrator.engine import issue_read, issue_refs, issue_write
 from agent_pm.linear_orchestrator.engine.types import IssueError, LabelRefused, LinearError
 
 
@@ -63,10 +63,10 @@ def swap(gql, ident, old, new):
 
 
 def _all(gql, ident, node):
-    page, seen = node["labels"], set()
+    page = node["labels"]
     labels = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        after = issue_page.advance(f"{ident} labels", page["pageInfo"]["endCursor"], seen)
+        after = page["pageInfo"]["endCursor"]
         page = (gql(Q_MORE, i=node["id"], c=after)["issue"] or {}).get("labels")
         if not issue_read.is_page(page):
             raise LinearError(f"{ident}: labels page missing: deleted mid-read?")

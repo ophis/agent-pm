@@ -479,7 +479,7 @@ class Create(IssueCase):
         )
         self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
         self.assertIn("result unknown", err)
-        self.assertIn("issue list --query Fix", err)
+        self.assertIn("issue list --team 00000000-0000-4000-8000-000000000001 --query=Fix", err)
 
 
 class Archive(IssueCase):

@@ -2,7 +2,7 @@
 side, so `A --blocks B` and `B --blocked-by A` name the same edge; any other relation stays.
 """
 
-from agent_pm.linear_orchestrator.engine import issue_page, issue_read, issue_refs, issue_write
+from agent_pm.linear_orchestrator.engine import issue_read, issue_refs, issue_write
 from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError
 
 # direction: the issue's connection holding the edge, and the field naming its other end
@@ -65,10 +65,10 @@ def relation(gql, op, ident, direction, other):
 
 def _all(gql, ident, node, direction):
     name = SIDES[direction][0]
-    page, seen = node[name], set()
+    page = node[name]
     records = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        after = issue_page.advance(f"{ident} {name}", page["pageInfo"]["endCursor"], seen)
+        after = page["pageInfo"]["endCursor"]
         page = (gql(Q_MORE[direction], i=node["id"], c=after)["issue"] or {}).get(name)
         if not issue_read.is_page(page):
             raise LinearError(f"{ident}: {name} page missing: deleted mid-read?")
