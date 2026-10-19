@@ -24,6 +24,7 @@ flowchart TB
   end
   subgraph SR[agent_pm.selector]
     SS["engine/: Selector · SelectorConfig · SelectorError"]
+    SJ["backends/jev.py<br>JevSelector"]
   end
   subgraph DL[agent_pm.delegate]
     D["cli.py<br>agent-pm-delegate"]
@@ -85,7 +86,7 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); it
 
 ## Resolver chain
 
-Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and returns the issue's state text; then each step of the chain, a `Resolver` paired with its `Choice`, lists its own options from config for the `Context` so far and asks a `Selector` (`agent_pm.selector`, a decision API such as Jev or Kev) to pick one. A step switched off, or failing with `SelectionError`, uses its `fallback`, today's choice. The router applies each `Choice` to the `Context` and records it on the run's start row. `TierResolver` picks the tier and effort among the client's `[clients.<client>.tiers]` and `efforts` in session's merged config. The router loop and the Jev and Kev selectors come later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
+Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and returns the issue's state text; then each step of the chain, a `Resolver` paired with its `Choice`, lists its own options from config for the `Context` so far and asks a `Selector` (`agent_pm.selector`, a decision API such as Jev or Kev) to pick one. A step switched off, or failing with `SelectionError`, uses its `fallback`, today's choice. The router applies each `Choice` to the `Context` and records it on the run's start row. `TierResolver` picks the tier and effort among the client's `[clients.<client>.tiers]` and `efforts` in session's merged config. `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev: one `POST` to `/v1/systemone` per select, https only (http only on a loopback IP), with no proxy or redirect, its key from `SelectorConfig.key_command` (`JEV_DEFAULT`: Keychain item `typesafe-jev`). The router loop and a Kev selector come later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
 
 ```mermaid
 classDiagram
@@ -96,6 +97,9 @@ classDiagram
   }
   class FakeSelector {
     <<test fake>>
+  }
+  class JevSelector {
+    config
   }
   class Choice {
     <<abstract>>
@@ -130,6 +134,7 @@ classDiagram
     +translate(issue, workdir, provider, overlays) str
   }
   Selector <|-- FakeSelector
+  Selector <|-- JevSelector
   Choice <|-- TierChoice
   Resolver <|-- TierResolver
   Resolver <|-- FakeResolver
