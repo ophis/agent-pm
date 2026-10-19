@@ -2908,6 +2908,26 @@ class RunLaunching(OuterBase):
                     self.expected(task=task, resume=kw.get("mode") == "resume"),
                 )
 
+    def test_resume_reuses_the_recorded_tier_and_effort(self):
+        self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n")
+        rows = (
+            ("tier and effort", {"tier": 1, "effort": "low"}, 1, "low"),
+            ("effort only", {"effort": "max"}, 3, "max"),
+            ("invalid", {"tier": 7, "effort": ""}, 3, None),
+            ("an old row", {}, 3, None),
+        )
+        for name, started, tier, effort in rows:
+            with self.subTest(name):
+                self.api.detached.clear()
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(self.runs)
+                self.assertEqual(
+                    self.outer(mode="resume", started_task="light-build", started=started), 0
+                )
+                self.assertEqual(
+                    self.detached(tier=tier, effort=effort), self.expected(task=None, resume=True)
+                )
+
     def test_a_long_input_reaches_run_py_intact(self):
         big = "".join(
             f"Requirement {i}: keep the session registry small.\n" for i in range(500)
@@ -3570,9 +3590,11 @@ class ExplicitIssueRuns(TickBase):
         def todo(labels):
             return self.fake(issue("TASK-1", "Todo", "researcher", labels=labels))
 
-        def resumable(task):
+        def resumable(task, choice=None):
             self.moved("TASK-1", 21)
-            self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=20, task=task)
+            self.add(
+                kind="start", ident="TASK-1", sid="a", minutes_ago=20, task=task, choice=choice
+            )
             self.touch("a", 40)
             return self.fake(issue("TASK-1", "In Progress", "researcher"))
 
@@ -3589,6 +3611,11 @@ class ExplicitIssueRuns(TickBase):
                 "plan TASK-1 mode=resume sid=a",
             ),
             ("resume untasked", lambda: resumable(None), "plan TASK-1 mode=resume sid=a"),
+            (
+                "resume recorded",
+                lambda: resumable("light-research", {"tier": 2, "effort": "high"}),
+                "plan TASK-1 mode=resume sid=a tier=2 effort=high",
+            ),
         )
         for name, given, said in cases:
             with self.subTest(name):

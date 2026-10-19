@@ -108,6 +108,7 @@ from agent_pm.linear_orchestrator.engine.runs import (
     latest,
     note,
     parse_log,
+    started_choice,
     started_task,
     trim,
 )
@@ -513,8 +514,10 @@ class Board:
             return
         spec, sid = run[1:]
         if spec.mode == "resume":
-            tier = self.cfg.task_tier(started_task(self.cfg.runs_log, spec.issue, sid))
-            self.say("plan", spec.issue, mode="resume", sid=sid, tier=tier, live=live)
+            tier, effort = resumed_choice(self.cfg, spec.issue, sid)
+            self.say(
+                "plan", spec.issue, mode="resume", sid=sid, tier=tier, effort=effort, live=live
+            )
             return
         tier = self.cfg.task_tier(spec.task)
         self.say("plan", spec.issue, mode="new", client=spec.client, tier=tier, live=live)
@@ -660,6 +663,16 @@ class Board:
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
         return taken, task, role, client, source
+
+
+def resumed_choice(cfg, issue, sid) -> tuple[int | None, str | None]:
+    """A resume's tier and effort: those its start row recorded; no recorded tier: its start's
+    task's [task_tiers] tier, as before start rows recorded one.
+    """
+    tier, effort = started_choice(cfg.runs_log, issue, sid)
+    if tier is None:
+        tier = cfg.task_tier(started_task(cfg.runs_log, issue, sid))
+    return tier, effort
 
 
 def begin(cfg, spec: Spec) -> Spec:
@@ -814,6 +827,10 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     ).replace("\x00", "")
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()
+    if a.mode == "new":
+        tier, effort = cfg.task_tier(a.task), None
+    else:
+        tier, effort = resumed_choice(cfg, a.issue, a.sid)
     try:
         try:
             linear_run = LinearRun(
@@ -827,10 +844,9 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 client=a.client,
                 resume=a.mode == "resume",
                 delegate_kind=kind,
-                # a resume's task is its start row's: the Delegate gets none, the tier stays
-                tier=cfg.task_tier(
-                    a.task if a.mode == "new" else started_task(cfg.runs_log, a.issue, a.sid)
-                ),
+                # a resume's task is its start row's: the Delegate gets none, its choice stays
+                tier=tier,
+                effort=effort,
                 **(
                     {"mode": "tui", "display": attended.display, "events": attended.events}
                     if attended
