@@ -447,37 +447,15 @@ class StartedTask(Case):
 
     def test_a_missing_log_has_none(self):
         self.assertIsNone(runs.started_task(self.log, "TASK-1", "s"))
-        self.assertEqual(runs.started_choice(self.log, "TASK-1", "s"), (None, None))
 
-    def test_started_choice_absent_or_invalid_is_none(self):
-        start = json.loads(row("start", "TASK-1", "s"))
-        self.write(
-            [
-                json.dumps({**start, "kind": "resume", "tier": 4, "effort": "max"}),
-                json.dumps({**start, "tier": 2, "effort": "low"}),
-                json.dumps({**start, "issue": "TASK-2"}),
-                json.dumps({**start, "issue": "TASK-3", "effort": "high"}),
-                *(
-                    json.dumps({**start, "issue": f"TASK-{n}", "tier": tier, "effort": effort})
-                    for n, tier, effort in (
-                        (4, 0, " "),
-                        (5, 5, 3),
-                        (6, True, None),
-                        (7, "2", ""),
-                        (8, 2.0, ["low"]),
-                    )
-                ),
-            ]
-        )
-        for issue, want in (
-            ("TASK-1", (2, "low")),
-            ("TASK-2", (None, None)),
-            ("TASK-3", (None, "high")),
-            *((f"TASK-{n}", (None, None)) for n in range(4, 9)),
-            ("TASK-9", (None, None)),
-        ):
-            with self.subTest(issue=issue):
-                self.assertEqual(runs.started_choice(self.log, issue, "s"), want)
+    def test_started_task_ignores_choice_fields_of_old_start_rows(self):
+        # model selection's start rows (docs/upgrading.md) also held tier and effort
+        plain = {**json.loads(start(SID_A)), "task": "light-build"}
+        self.write([json.dumps(plain)])
+        want = runs.claim(self.log, "TASK-1", SID_A), runs.parse_log(self.log)
+        self.write([json.dumps({**plain, "tier": 2, "effort": "high"})])
+        self.assertEqual(runs.started_task(self.log, "TASK-1", SID_A), "light-build")
+        self.assertEqual((runs.claim(self.log, "TASK-1", SID_A), runs.parse_log(self.log)), want)
 
 
 class NoteLimit(Case):

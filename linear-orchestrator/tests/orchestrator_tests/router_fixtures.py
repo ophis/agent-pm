@@ -404,9 +404,7 @@ class Base(run_fixtures.Base):
         self.add(kind="start", ident=ident, sid=sid, minutes_ago=minutes_ago, role=role)
         self.touch(sid, 40)
 
-    def row(
-        self, kind, ident, sid, role="researcher", client=None, *, task=None, choice=None, **ago
-    ):
+    def row(self, kind, ident, sid, role="researcher", client=None, *, task=None, **ago):
         return json.dumps(
             {
                 "ts": (NOW - timedelta(**ago)).astimezone(WEST).isoformat(timespec="seconds"),
@@ -417,22 +415,10 @@ class Base(run_fixtures.Base):
                 "client": client or CLIENTS.get(role, "a"),
                 "delegate_kind": "harness",
                 **({"task": task} if task else {}),
-                **(choice or {}),
             }
         )
 
-    def add(
-        self,
-        *,
-        kind,
-        ident,
-        sid,
-        minutes_ago,
-        role="researcher",
-        client=None,
-        task=None,
-        choice=None,
-    ):
+    def add(self, *, kind, ident, sid, minutes_ago, role="researcher", client=None, task=None):
         self.lines.append(
             self.row(
                 kind,
@@ -441,7 +427,6 @@ class Base(run_fixtures.Base):
                 role,
                 client,
                 task=task,
-                choice=choice,
                 minutes=minutes_ago,
             )
         )
@@ -677,12 +662,9 @@ class OuterBase(TickBase):
         sid=SID,
         client="a",
         started_task=None,
-        started=None,
-        selector=None,
-        chain_steps=None,
     ):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it, its start
-        row holding started_task and the fields of started (its recorded choice).
+        row holding started_task.
         """
         if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
             role = config.role_for(self.cfg().roles, assignee) or "engineer"
@@ -695,7 +677,6 @@ class OuterBase(TickBase):
                 client=client,
                 delegate_kind="harness",
                 **({"task": started_task} if started_task else {}),
-                **(started or {}),
             )
         a = Spec(
             uuid=UUID,
@@ -717,17 +698,14 @@ class OuterBase(TickBase):
                 run=self.run_,
                 keychain=self.keychain,
                 now=lambda: NOW,
-                selector=selector,
-                **({"chain_steps": chain_steps} if chain_steps else {}),
             )
         self.err = err.getvalue()
         return rc
 
-    def detached(self, role="engineer", *, tier=None, effort=None):
-        """The Delegate Spec of the last detached run, after its role, workdir and options (tier,
-        effort: the role overlay after core).
+    def detached(self, role="engineer", *, tier=None):
+        """The Delegate Spec of the last detached run, after its role, workdir and options (tier:
+        the role tier overlay after core).
         """
-        run = {k: v for k, v in (("tier", tier), ("effort", effort)) if v is not None}
         found, spec, options = self.api.detached[-1]
         self.assertEqual((found, spec.workdir), (role, self.rd))
         self.assertEqual(
@@ -735,7 +713,8 @@ class OuterBase(TickBase):
             {
                 "display": None,
                 "callback": ["agent-pm-linear", "writeback", "--issue", ID, "--workdir", self.rd],
-                "overlays": (self.cfg().core,) + (({"roles": {role: run}},) if run else ()),
+                "overlays": (self.cfg().core,)
+                + (() if tier is None else ({"roles": {role: {"tier": tier}}},)),
             },
         )
         return spec

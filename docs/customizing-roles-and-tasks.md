@@ -27,7 +27,7 @@ dir = "Research/"
 
 - **Client:** `client` picks it; `agent-pm-delegate run --client` overrides it for one run. The flags a role run passes its client: [Client policy](sessions.md#client-policy).
 - **Destination:** `[output]` (`local`, `github`, `pull-request` or `orchestrator`); a lower level's `[output]` replaces the whole table.
-- **Access:** `read`, `write` and `commands` widen what the agent run may read, write and run (a role or task text naming `<commands>` gets the approved ones listed); `templates` inlines templates into its prompt.
+- **Access:** `read`, `write` and `commands` widen what the agent run may read, write and run; `templates` inlines templates into its prompt.
 - **Board runs:** the same keys under `[linear_orchestrator.core]` (e.g. `[linear_orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.
 
 ## Add roles, tasks and templates

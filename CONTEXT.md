@@ -1,6 +1,6 @@
 # Agent PM
 
-An unattended pipeline that runs role agents on tasks, in six layers (`docs/architecture.md`).
+An unattended pipeline that runs role agents on tasks, in five layers (`docs/architecture.md`).
 
 ## Language
 
@@ -9,11 +9,11 @@ One project of the stack and its package, `<project>/src/agent_pm/<package>/`; i
 _Avoid_: level (a config override level)
 
 **Role**:
-A persona with standards and boundaries (researcher, pm, engineer, dummy-tester, choice-translator), defined by a charter plus config.
+A persona with standards and boundaries (researcher, pm, engineer, dummy-tester), defined by a charter plus config.
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, research, light research, product design, build, light build, echo, translate), defined by its task file's steps and listed in its role's task index.
+One job a role can do (deep research, research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
 _Avoid_: skill, job
 
 **Principles**:
@@ -103,21 +103,6 @@ _Avoid_: orchestration layer, runner
 **Issue**:
 A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
 _Avoid_: ticket, card, 票
-
-**Selector**:
-The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`); `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev.
-_Avoid_: router, chooser
-
-**Resolver chain**:
-The router's steps that decide a new run's launch choices from its issue: translate the issue into state text once, then each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step without state or failing falls back to today's choice. `[linear_orchestrator.selection] resolvers` lists the chain; none: no chain, no translate. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py` and `engine/chain.py`.
-_Avoid_: chooser
-
-**Resolver**:
-One step of the Resolver chain: lists its own options from config for the Context so far, asks a Selector and returns its Choice (`choose`), or today's choice (`fallback`); `TierResolver` picks the tier and effort. In code: the ABC `Resolver` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
-_Avoid_: chooser, selector
-
-**Choice**:
-What a Resolver returns: it writes itself into the run's Context (`apply`) and gives its runs.jsonl start-row fields (`record`); `TierChoice` holds a tier and effort. In code: the ABC `Choice` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
 
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.

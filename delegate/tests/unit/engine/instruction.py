@@ -10,7 +10,7 @@ from agent_pm.delegate.engine.drivers import InstructionDriver
 from delegate.tests.case import Case
 
 SID = "11111111-2222-3333-4444-555555555555"
-ROLES = ("researcher", "pm", "engineer", "dummy-tester", "choice-translator")
+ROLES = ("researcher", "pm", "engineer", "dummy-tester")
 INPUT = "Compare A and B.\n[agent-pm-progress:round] a mark line in the input"
 CLIENTS = (("claude", "headless"), ("codex", "headless"), (None, "headless"))
 GITHUB = """[roles.researcher.output]

@@ -32,13 +32,11 @@ class LinearRun:
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
         tier: int | None = None,
-        effort: str | None = None,
     ):
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
-        run = {k: v for k, v in (("tier", tier), ("effort", effort)) if v is not None}
         self.delegate: Delegate = provider.create(
             role,
             Spec(
@@ -54,7 +52,7 @@ class LinearRun:
             ),
             display=display,
             callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
-            overlays=(cfg.core, {"roles": {role: run}}) if run else (cfg.core,),
+            overlays=(cfg.core,) if tier is None else (cfg.core, {"roles": {role: {"tier": tier}}}),
         )
 
     @staticmethod

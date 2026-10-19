@@ -4,7 +4,7 @@ import tomllib
 from dataclasses import replace
 from importlib.resources import files
 
-from agent_pm import session, utils
+from agent_pm import session
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.base import TEAM, outline
 from agent_pm.delegate.composer.teams import START
@@ -224,7 +224,6 @@ class Shipped(Case):
             "pm": "product-design",
             "engineer": "build",
             "dummy-tester": "echo",
-            "choice-translator": "translate",
         }
         self.assertEqual(set(roles()), set(defaults))
         for role, default in defaults.items():
@@ -248,28 +247,6 @@ class Shipped(Case):
             self.assertTrue(text.startswith("# "), name)
             self.assertNotIn("{{", text, name)
             self.assertNotIn("agent-pm-progress:budget", text, name)
-
-    def test_the_choice_translator_runs_on_claudes_haiku_tier_and_returns_only_a_state(self):
-        _, run = composed("choice-translator", "translate")
-        self.assertEqual(
-            (run.client, run.tier, run.effort, run.output["type"]),
-            ("claude", 4, "low", "orchestrator"),
-        )
-        tiers = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]["tiers"]
-        self.assertEqual(tiers["4"], "haiku")
-        overlay = {"roles": {"choice-translator": {"commands": ["ticket-tool read *"]}}}
-        prompt, _ = composed("choice-translator", "translate", overlays=[overlay])
-        self.assertEqual(parameters(prompt)["<commands>"], "`ticket-tool read *`")
-        self.assertEqual(parameters(composed("choice-translator")[0])["<commands>"], "`none`")
-        steps = task_text("translate")
-        for literal in (
-            "run the read command `<commands>` lists, with the ticket's id as its argument",
-            "`<commands>` lists no read command, or the read fails → `failed`",
-            "State only: no headings, no options, no recommendation, no choice of a model, tier or "
-            "effort.",
-        ):
-            with self.subTest(literal=literal):
-                self.assertIn(literal, steps)
 
     def test_engineers_tasks_name_their_skill_by_slash_command(self):
         for t in ("build", "light-build"):
@@ -726,7 +703,6 @@ class Real(RealConfig):
                 "pm": ["worktree"],
                 "engineer": ["worktree", "status"],
                 "dummy-tester": ["worktree"],
-                "choice-translator": ["worktree"],
             },
         )
 

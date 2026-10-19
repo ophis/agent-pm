@@ -39,19 +39,12 @@ class ProjectRoots(Case):
                 sandbox.project_roots(tmp), (f"{tmp}/linear-x/src", f"{tmp}/utils/src")
             )
 
-    def test_this_repos_are_its_six_projects(self):
+    def test_this_repos_are_its_five_projects(self):
         self.assertEqual(
             sandbox.project_roots(REPO),
             tuple(
                 os.path.join(REPO, project, "src")
-                for project in (
-                    "delegate",
-                    "linear-orchestrator",
-                    "manager",
-                    "selector",
-                    "session",
-                    "utils",
-                )
+                for project in ("delegate", "linear-orchestrator", "manager", "session", "utils")
             ),
         )
 

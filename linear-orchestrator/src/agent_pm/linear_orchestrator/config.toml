@@ -69,22 +69,6 @@ canceled = ""
 # local: [linear_orchestrator.task_tiers]
 # local: light-build = 3
 
-# The Resolver chain (docs/architecture.md › Resolver chain); optional, off by default. It picks a new run's launch
-# choices from its issue; a resume keeps its start row's.
-#   selector   "<module>:<Class>": the Selector the resolvers ask, a concrete agent_pm.selector Selector built with no
-#              arguments; Jev's key service, URL, model and timeout: [selector.jev]
-#              (selector/src/agent_pm/selector/config.toml); required when resolvers are listed
-#   resolvers  the chain, in order: "tier" (the run's tier and effort among its client's tiers and efforts; its
-#              fallback, also when the translation or the Selector fails: [task_tiers]'s tier and the role's effort);
-#              before a new run with resolvers, the choice-translator role first turns the issue into state text for
-#              them; [] → no chain, no translation: runs start as before model selection
-[selection]
-selector = "agent_pm.selector:JevSelector"
-resolvers = []
-
-# local: [linear_orchestrator.selection]
-# local: resolvers = ["tier"]
-
 # Agent labels; optional: set agent_label_group to the Agent group's id and map each client to its child label id.
 # Both empty disables selection; otherwise set both. Client names come from Delegate configuration.
 [agent_labels]
@@ -171,8 +155,3 @@ max_runs = 3
 gate = "agent-pm-linear router --brake researcher"
 # local: [linear_orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"
-
-[core.roles.choice-translator]
-# the issue read its translate task runs, like the gate a bin/ command on the router's PATH
-# (engine/selection.py translate)
-commands = ["agent-pm-linear issue read *"]
