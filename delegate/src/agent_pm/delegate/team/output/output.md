@@ -18,4 +18,6 @@ Statuses:
 - **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires; or `covered` related work ([Principles › Overlap](#overlap)). The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
 
+**Write once**: write the deliverable's text once; a later step that needs it elsewhere copies that file (`cp`); only a Destination asking for it inline in the outcome repeats it.
+
 The input gives an earlier version → revise it, keeping what still holds.

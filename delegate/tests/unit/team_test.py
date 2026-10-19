@@ -40,6 +40,11 @@ PUBLISHING = (
     {"type": "github", "repo": "o/docs", "branch": "main", "dir": "reports/"},
 )
 
+WRITE_ONCE = (
+    "\n**Write once**: write the deliverable's text once; a later step that needs it elsewhere copies "
+    "that file (`cp`); only a Destination asking for it inline in the outcome repeats it.\n"
+)
+
 
 def destined(role, output, *, docker=False):
     """The real core's prompt for `role` with `output`, rendered for Docker when `docker`."""
@@ -170,6 +175,17 @@ class Acceptance(Case):
         for output in PUBLISHING:
             with self.subTest(output=output["type"]):
                 self.assertEqual(output_rules(destined("researcher", output)), returning)
+
+    def test_every_destination_has_the_write_once_rule(self):
+        for output in ({"type": "local"}, {"type": "orchestrator"}, *PUBLISHING):
+            for docker in (False, True):
+                with self.subTest(output=output["type"], docker=docker):
+                    self.assertIn(
+                        WRITE_ONCE, output_rules(destined("researcher", output, docker=docker))
+                    )
+        step = task_text("product-design").split("7. **Review.**", 1)[1].split("\n8.", 1)[0]
+        self.assertIn("`<Workdir>/tmp/prd.md`", step)
+        self.assertIn("copies that file", step)
 
     def test_each_task_file_has_one_start_mark_and_a_resume_section(self):
         for name in os.listdir(TASKS):
