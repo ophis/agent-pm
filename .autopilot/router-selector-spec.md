@@ -121,6 +121,274 @@ class Selector(ABC):
 
 `agent_pm.selector` does not re-export assemble or decision names; callers import each from its own package.
 
+### Class diagram
+
+```mermaid
+classDiagram
+  direction TB
+
+  namespace utils {
+    class Endpoint {
+      <<frozen>>
+      url: str
+      model: str
+      timeout: float
+      key_command: tuple~str~  «repr=False»
+    }
+  }
+
+  namespace decision {
+    class Decider {
+      <<abstract>>
+      +name: str  «abstract property»
+      +decide(state: str, questions: Sequence~Question~) tuple~Answer~
+    }
+    class Question {
+      <<frozen>>
+      id: str
+      prompt: str
+      options: tuple~Option~
+    }
+    class Option {
+      <<frozen>>
+      id: str
+      text: str
+    }
+    class Answer {
+      <<frozen>>
+      question: str
+      choice: str
+      probabilities: Mapping~str, float~
+      confidence: float
+    }
+    class DecisionError {
+      <<exception>>
+      reason: DecisionFailure
+    }
+    class DecisionFailure {
+      <<StrEnum>>
+      error
+      timeout
+      no-key
+      invalid
+    }
+    class Backend {
+      <<StrEnum>>
+      jev
+      kev
+    }
+    class DecisionConfig {
+      <<frozen>>
+      backend: Backend
+      endpoint: Endpoint
+    }
+  }
+
+  namespace assemble {
+    class Assembler {
+      <<abstract>>
+      +assemble(task: TaskInput) Assembly
+    }
+    class TaskInput {
+      <<union>>
+      TextInput | RefInput | FeaturesInput
+    }
+    class TextInput {
+      <<frozen>>
+      text: str
+      kind → TEXT
+    }
+    class RefInput {
+      <<frozen>>
+      ref: str
+      text: str
+      kind → REF
+    }
+    class FeaturesInput {
+      <<frozen>>
+      type: str
+      difficulty: str
+      context: int | None
+      kind → FEATURES
+    }
+    class InputKind {
+      <<StrEnum>>
+      text
+      ref
+      features
+    }
+    class Assembly {
+      <<frozen>>
+      state: str
+      reason: AssembleFailure | None
+    }
+    class AssembleFailure {
+      <<StrEnum>>
+      error
+      timeout
+      no-key
+      invalid
+    }
+    class AssembleConfig {
+      <<frozen>>
+      enabled: bool
+      endpoint: Endpoint
+    }
+  }
+
+  namespace selector {
+    class Selector {
+      <<abstract>>
+      +select(task, candidates, usage=None, pin=None, thresholds=None) Selection
+    }
+    class Model {
+      <<frozen>>
+      provider: str
+      name: str
+      efforts: tuple~str~
+      default_effort: str
+      context: int
+      price_in: float
+      price_out: float
+      capabilities: str
+      enabled: bool
+      id → "provider/name"
+    }
+    class Candidate {
+      <<frozen>>
+      model: Model
+      effort: str
+    }
+    class Candidates {
+      <<frozen>>
+      options: tuple~Candidate~
+      default: Candidate | None
+    }
+    class Pin {
+      <<frozen>>
+      model: str | None
+      effort: str | None
+    }
+    class ProviderUsage {
+      <<frozen>>
+      five_hour: Window | None
+      weekly: Window | None
+    }
+    class Window {
+      <<frozen>>
+      used_percent: float
+      resets_at: float | None
+    }
+    class Thresholds {
+      <<frozen>>
+      five_hour: float
+      weekly: float
+    }
+    class Selection {
+      <<frozen>>
+      pick: Candidate | None
+      ranking: tuple~Ranked~
+      excluded: tuple~Exclusion~
+      decided_by: str | None
+      input: InputKind
+      assemble_reason: AssembleFailure | None
+      decision_reason: DecisionFailure | None
+    }
+    class Ranked {
+      <<frozen>>
+      candidate: Candidate
+      score: float
+    }
+    class Exclusion {
+      <<frozen>>
+      model: str
+      reason: ExclusionReason
+    }
+    class ExclusionReason {
+      <<StrEnum>>
+      disabled
+      effort
+      context
+      usage
+    }
+    class DecidedBy {
+      <<StrEnum>>
+      fallback
+      pinned
+      single
+      disabled
+    }
+    class ConfigError {
+      <<exception>>
+      model: str
+      field: str
+    }
+  }
+
+  namespace linear_orchestrator {
+    class TierTable {
+      <<frozen>>
+      client: str
+      models: Mapping~int, str~
+      efforts: tuple~str~
+    }
+    class SelectorConfig {
+      <<frozen>>
+      enabled: bool
+      pin_roles: tuple~str~
+      max_options: int
+      models: ModelTable
+      assemble: AssembleConfig
+      decision: DecisionConfig
+    }
+    class RunChoice {
+      <<frozen>>
+      tier: int
+      effort: str
+      selection: Selection
+    }
+    class Router {
+      <<existing>>
+      gate.THRESHOLDS: Thresholds
+    }
+  }
+
+  TaskInput <|.. TextInput
+  TaskInput <|.. RefInput
+  TaskInput <|.. FeaturesInput
+  Question *-- Option
+  DecisionError --> DecisionFailure
+  DecisionConfig --> Backend
+  DecisionConfig --> Endpoint
+  AssembleConfig --> Endpoint
+  Assembly --> AssembleFailure
+  Candidate --> Model
+  Candidates *-- Candidate
+  ProviderUsage *-- Window
+  Selection --> Candidate
+  Selection *-- Ranked
+  Selection *-- Exclusion
+  Selection --> InputKind
+  Exclusion --> ExclusionReason
+
+  Selector ..> Assembler : injected at construction
+  Selector ..> Decider : injected at construction
+  Selector ..> TaskInput
+  Selector ..> Candidates
+  Selector ..> Pin
+  Selector ..> ProviderUsage
+  Selector ..> Thresholds
+
+  Router ..> Selector : select()
+  Router ..> TierTable
+  Router ..> RunChoice
+  RunChoice --> Selection
+  SelectorConfig --> AssembleConfig
+  SelectorConfig --> DecisionConfig
+```
+
+Dashed arrow: a call or dependency; solid: a field reference; `*--`: composition. Import direction (AC1): linear_orchestrator → selector → assemble, decision → utils. Factories, loaders and the orchestrator conversions are not drawn: Construction contract.
+
 ### Contracts each docstring states (no code enforces them here)
 
 - **Untrusted text**: task text, `TaskInput`, `state` and API responses are untrusted data. Implementations send `state` only as delimited data that cannot change questions or options; the control on an injected answer is the option-id check (`INVALID`), so injection can at most steer among the given options.
