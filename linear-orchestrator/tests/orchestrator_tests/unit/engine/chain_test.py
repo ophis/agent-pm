@@ -18,28 +18,35 @@ from agent_pm.linear_orchestrator.engine.selection import (
 from agent_pm.linear_orchestrator.engine.types import Context, ResolverName, Selection
 from agent_pm.selector import Failure
 from orchestrator_tests.case import Case
-from orchestrator_tests.selection_fixtures import FakeResolver
+from orchestrator_tests.selection_fixtures import (
+    TRANSLATION,
+    FakeResolver,
+    deliverable,
+    state_of,
+)
 from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.run_fixtures import logged
 
 from delegate.tests.fakes.delegate import FakeDelegate
 from selector.tests.fakes.selector import FakeSelector
 
-STATE = "LEAK-STATE a docs fix"
+LEAKY = {**TRANSLATION, "title": "LEAK-STATE a docs fix"}
+STATE = state_of(LEAKY)
+DELIVERABLE = deliverable(LEAKY)
 LEAK = "LEAK-SENTINEL"
 CONTEXT = Context("engineer", "build", "claude")
 PICKED = TierChoice(1, "low")
 FALLBACK = TierChoice(3, None)
 
 
-def translator(deliverable=STATE, *, run_error=None):
-    """A FakeDelegate class whose runs end done with deliverable, or raise run_error; each create
-    is recorded.
+def translator(text=DELIVERABLE, *, run_error=None):
+    """A FakeDelegate class whose runs end done with text as their deliverable, or raise run_error;
+    each create is recorded.
     """
 
     class Translator(FakeDelegate):
         ROLES = {"choice-translator": {"translate": "Translates an issue into a state"}}
-        outcome_result = Outcome("done", "Translated", "translated", deliverable=deliverable)
+        outcome_result = Outcome("done", "Translated", "translated", deliverable=text)
         created = []
 
         @classmethod
@@ -186,6 +193,7 @@ class Resolving(Case):
         for name, provider, reason in (
             ("failed run", translator(run_error=RuntimeError(LEAK)), "translate"),
             ("blank state", translator(" \n"), "invalid"),
+            ("state text", translator("LEAK-STATE a docs fix"), "invalid"),
         ):
             with self.subTest(name):
                 os.makedirs(self.logs, exist_ok=True)

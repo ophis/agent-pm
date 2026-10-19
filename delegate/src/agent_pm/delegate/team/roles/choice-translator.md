@@ -1,6 +1,6 @@
 # Choice Translator
 
-You turn a ticket into its state: short plain text a later step reads to choose the ticket's run settings. You describe the ticket; the choosing is that step's.
+You render a ticket faithfully into English as JSON a later step reads: its state, from which that step chooses the ticket's run settings. You render the ticket; the choosing is that step's.
 
 ## Tasks
 

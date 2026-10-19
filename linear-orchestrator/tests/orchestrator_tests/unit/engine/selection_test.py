@@ -4,6 +4,7 @@ session's merged tier config; FakeResolver passes the resolver contracts.
 
 import dataclasses
 import inspect
+import json
 import os
 import unittest
 from unittest import mock
@@ -26,9 +27,12 @@ from agent_pm.selector import State as SelectorState
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
     STATE,
+    TRANSLATION,
     FakeResolver,
     ResolverContract,
     TierChoiceContract,
+    deliverable,
+    state_of,
 )
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -80,12 +84,10 @@ class Translating(Case):
         return path
 
     def test_one_headless_run_of_the_role_whose_deliverable_is_the_state(self):
-        fake = provider(done("  a docs fix \n"))
+        fake = provider(done(f"  {deliverable()} \n"))
         core = {"output": "x"}
         workdir = self.workdir()
-        self.assertEqual(
-            translate("TASK-1", workdir, provider=fake, overlays=(core,)), "a docs fix"
-        )
+        self.assertEqual(translate("TASK-1", workdir, provider=fake, overlays=(core,)), STATE)
         ((role, spec, overlays),) = fake.created
         self.assertEqual(role, "choice-translator")
         self.assertEqual(
@@ -106,9 +108,8 @@ class Translating(Case):
     def test_the_real_roles_outcome_is_its_state_or_a_translate_error(self):
         index = HarnessDelegate.roles()
         self.assertEqual(list(index["choice-translator"]), ["translate"])
-        state = "Kind: a docs wording tweak.\nSize: one file in one repo.\n"
         for outcome, want in (
-            (Outcome("done", "state of TASK-1", "a docs tweak", deliverable=state), state.strip()),
+            (Outcome("done", "state of TASK-1", "a docs tweak", deliverable=deliverable()), STATE),
             (Outcome("failed", "state of TASK-1", "the ticket read failed"), None),
         ):
 
@@ -123,6 +124,81 @@ class Translating(Case):
                 with self.assertRaises(SelectionError) as caught:
                     translate("TASK-1", self.workdir(), provider=Role)
                 self.assertEqual(caught.exception.reason, SelectionFailure.TRANSLATE)
+
+    def test_the_json_deliverable_becomes_the_state(self):
+        comments = [
+            {"author": "B", "created_at": "2026-10-19T11:00:00Z", "body": "Newest."},
+            {"author": "", "created_at": "2026-10-19T09:00:00Z", "body": "Oldest, first."},
+            {"author": "C", "created_at": "2026-10-19T10:00:00Z", "body": "Middle."},
+            {"author": "D", "created_at": "2026-10-19T09:00:00Z", "body": "Oldest, second."},
+        ]
+        translation = {
+            "title": "Fix the login page typo",
+            "description": "",
+            "status": "In Progress",
+            "labels": ["Bug", "UI"],
+            "comments": comments,
+        }
+        state = translate(
+            "TASK-1", self.workdir(), provider=provider(done(deliverable(translation)))
+        )
+        self.assertEqual(
+            dict(state.fields),
+            {
+                "title": "Fix the login page typo",
+                "description": "",
+                "status": "In Progress",
+                "labels": ["Bug", "UI"],
+            },
+        )
+        self.assertEqual(state.droppable, ("comments", tuple(comments[i] for i in (1, 3, 2, 0))))
+        self.assertEqual(
+            translate("TASK-1", self.workdir(), provider=provider(done(deliverable()))),
+            state_of(TRANSLATION),
+        )
+
+    def test_a_deliverable_off_the_shape_is_invalid(self):
+        comment = TRANSLATION["comments"][0]
+        cases = {
+            "not json": "title: Fix a typo",
+            "json and more": deliverable() + " {}",
+            "a list": json.dumps([TRANSLATION]),
+            "a string": json.dumps("Fix a typo"),
+            "a missing key": deliverable({k: v for k, v in TRANSLATION.items() if k != "status"}),
+            "an extra key": deliverable({**TRANSLATION, "url": "u"}),
+            "a number title": deliverable({**TRANSLATION, "title": 1}),
+            "a null description": deliverable({**TRANSLATION, "description": None}),
+            "a label list status": deliverable({**TRANSLATION, "status": ["Todo"]}),
+            "labels a string": deliverable({**TRANSLATION, "labels": "Bug"}),
+            "a number label": deliverable({**TRANSLATION, "labels": ["Bug", 2]}),
+            "comments an object": deliverable({**TRANSLATION, "comments": comment}),
+            "a string comment": deliverable({**TRANSLATION, "comments": ["Also check"]}),
+            "a comment missing a key": deliverable(
+                {**TRANSLATION, "comments": [{"author": "A", "body": "x"}]}
+            ),
+            "a comment with an extra key": deliverable(
+                {**TRANSLATION, "comments": [{**comment, "id": "c1"}]}
+            ),
+            "a null author": deliverable(
+                {**TRANSLATION, "comments": [{**comment, "author": None}]}
+            ),
+            "an author object": deliverable(
+                {**TRANSLATION, "comments": [{**comment, "author": {"name": "A"}}]}
+            ),
+            "a number created_at": deliverable(
+                {**TRANSLATION, "comments": [{**comment, "created_at": 1}]}
+            ),
+            "a null body": deliverable({**TRANSLATION, "comments": [{**comment, "body": None}]}),
+        }
+        for name, text in cases.items():
+            with self.subTest(name), self.assertRaises(SelectionError) as caught:
+                translate("TASK-1", self.workdir(), provider=provider(done(text)))
+            self.assertEqual(
+                (caught.exception.reason, str(caught.exception)),
+                (SelectionFailure.INVALID, "invalid"),
+            )
+            error = caught.exception
+            self.assertTrue(error.__context__ is None or error.__suppress_context__)
 
     def test_a_blank_issue_is_refused_before_any_run(self):
         fake = provider(done("x"))
@@ -201,7 +277,7 @@ class TierOptions(Case):
         selector = FakeSelector()
         TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE)
         ((state, question),) = selector.calls
-        self.assertEqual(state, SelectorState({"text": STATE}))
+        self.assertIs(state, STATE)
         self.assertEqual(question.instructions, "Choose the option that best fits the state.")
         options = [f"{m} / {e}" for m in models for e in efforts]
         self.assertEqual(list(question.options.items()), [(o, o) for o in options])
@@ -247,9 +323,10 @@ class LocalOverride(LocalConfig):
 
 
 class TierFailures(LocalConfig):
-    def test_a_blank_state_is_refused(self):
-        with self.assertRaises(ValueError):
-            TierResolver(FakeSelector(), task_tiers={}).choose(" ", CLAUDE)
+    def test_a_state_without_fields_or_not_a_state_is_refused(self):
+        for state in (SelectorState({}), "Fix a typo"):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                TierResolver(FakeSelector(), task_tiers={}).choose(state, CLAUDE)
 
     def test_empty_or_non_table_tiers_or_efforts_are_invalid(self):
         for local in ("efforts = []", "tiers = []", "tiers = [1]"):
@@ -339,12 +416,11 @@ class FakeClientResolverContract(ResolverContract, Case):
 
 class FakeScript(Case):
     def test_a_scripted_choice_wins_for_its_state(self):
-        fake = FakeResolver(
-            default=TierChoice(2, "high"), choices={"a docs fix": TierChoice(3, "low")}
-        )
-        self.assertEqual(fake.choose("a docs fix", CLAUDE), TierChoice(3, "low"))
-        self.assertEqual(fake.choose("other", CLAUDE), TierChoice(2, "high"))
-        self.assertEqual(fake.calls, [("a docs fix", CLAUDE), ("other", CLAUDE)])
+        other = state_of({**TRANSLATION, "title": "other"})
+        fake = FakeResolver(default=TierChoice(2, "high"), choices=[(STATE, TierChoice(3, "low"))])
+        self.assertEqual(fake.choose(state_of(), CLAUDE), TierChoice(3, "low"))
+        self.assertEqual(fake.choose(other, CLAUDE), TierChoice(2, "high"))
+        self.assertEqual(fake.calls, [(STATE, CLAUDE), (other, CLAUDE)])
 
     def test_a_scripted_error_is_raised(self):
         error = SelectionError(SelectionFailure.SELECT)

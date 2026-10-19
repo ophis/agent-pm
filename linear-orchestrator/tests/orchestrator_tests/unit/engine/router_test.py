@@ -75,7 +75,7 @@ from orchestrator_tests.router_fixtures import (
     pr_search,
     who,
 )
-from orchestrator_tests.selection_fixtures import FakeResolver
+from orchestrator_tests.selection_fixtures import TRANSLATION, FakeResolver, deliverable, state_of
 from orchestrator_tests.unit.board_ids import HEADER, TASK_GROUP, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
@@ -5178,7 +5178,8 @@ class InsideAnAgentSession(RouterArguments):
                 self.assertEqual(self.main(["--help"]), (0, ""))
 
 
-STATE = "LEAK-STATE a session registry"
+LEAKY = {**TRANSLATION, "title": "LEAK-STATE a session registry"}
+STATE = state_of(LEAKY)
 LEAK = "LEAK-SENTINEL"
 SELECTION_ON = (
     '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\nresolvers = ["tier"]\n'
@@ -5229,7 +5230,9 @@ class ResolverChain(OuterBase):
     def setUp(self):
         super().setUp()
         self.gql.issue = node(description="LEAK-DESCRIPTION", comments=[USER_NOTE])
-        self.api.translation = Outcome("done", "Translated", "translated", deliverable=STATE)
+        self.api.translation = Outcome(
+            "done", "Translated", "translated", deliverable=deliverable(LEAKY)
+        )
 
     def expected(self, role="engineer", **kw):
         text = INPUT.replace("Add a session registry.", "LEAK-DESCRIPTION")
@@ -5274,7 +5277,7 @@ class ResolverChain(OuterBase):
         self.assertEqual(
             (translated.input, translated.workdir, translated.task), (ID, self.rd, "translate")
         )
-        self.assertEqual([dict(state.fields) for state, _ in selector.calls], [{"text": STATE}])
+        self.assertEqual([state for state, _ in selector.calls], [STATE])
         row = self.start_row()
         self.assertEqual(
             (row["kind"], row["client"], row["tier"], row["effort"]),

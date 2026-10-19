@@ -1,9 +1,10 @@
 """FakeResolver, a Resolver that asks no Selector, and the contracts a Resolver passes: ResolverContract
 (hooks make() -> Resolver, context() -> Context) and TierChoiceContract (adds the TierChoice checks).
-A contract subclass also inherits Case.
+A contract subclass also inherits Case. TRANSLATION: a translate deliverable's JSON value, STATE its State.
 """
 
-from collections.abc import Mapping
+import json
+from collections.abc import Mapping, Sequence
 from typing import Generic, TypeVar
 
 from agent_pm.linear_orchestrator.engine.selection import (
@@ -12,17 +13,40 @@ from agent_pm.linear_orchestrator.engine.selection import (
     Resolver,
     TierChoice,
 )
+from agent_pm.selector import State as SelectorState
 
 C = TypeVar("C", bound=Choice)
 
-STATE = "Fix a typo in the README."
+TRANSLATION = {
+    "title": "Fix a typo in the README",
+    "description": "The word 'instal' in the README.",
+    "status": "Todo",
+    "labels": ["Docs"],
+    "comments": [
+        {"author": "A", "created_at": "2026-10-19T09:00:00Z", "body": "Also check CONTRIBUTING."}
+    ],
+}
+
+
+def deliverable(translation: Mapping = TRANSLATION) -> str:
+    """translation as the translate run's deliverable."""
+    return json.dumps(translation, ensure_ascii=False)
+
+
+def state_of(translation: Mapping = TRANSLATION) -> SelectorState:
+    """translation (comments oldest first) as translate's State."""
+    fields = {k: v for k, v in translation.items() if k != "comments"}
+    return SelectorState(fields, droppable=("comments", tuple(translation["comments"])))
+
+
+STATE = state_of()
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 class FakeResolver(Resolver[C], Generic[C]):
-    """choose returns choices[state] when given, else default; error, when given, is raised
-    instead; fallback returns fallback (default when not given); calls records each (state,
-    context).
+    """choose returns the choice paired with an equal state in choices, else default; error, when
+    given, is raised instead; fallback returns fallback (default when not given); calls records
+    each (state, context).
     """
 
     def __init__(
@@ -30,22 +54,22 @@ class FakeResolver(Resolver[C], Generic[C]):
         *,
         default: C,
         fallback: C | None = None,
-        choices: Mapping[str, C] | None = None,
+        choices: Sequence[tuple[SelectorState, C]] = (),
         error: Exception | None = None,
     ):
         self.default = default
         self.fallback_choice = default if fallback is None else fallback
-        self.choices = dict(choices or {})
+        self.choices = tuple(choices)
         self.error = error
-        self.calls: list[tuple[str, Context]] = []
+        self.calls: list[tuple[SelectorState, Context]] = []
 
-    def choose(self, state: str, context: Context) -> C:
+    def choose(self, state: SelectorState, context: Context) -> C:
         self.calls.append((state, context))
-        if not state.strip():
-            raise ValueError("state: want a non-blank state")
+        if not isinstance(state, SelectorState) or not state.fields:
+            raise ValueError("state: want a State with fields")
         if self.error is not None:
             raise self.error
-        return self.choices.get(state, self.default)
+        return next((c for s, c in self.choices if s == state), self.default)
 
     def fallback(self, context: Context) -> C:
         return self.fallback_choice
@@ -58,9 +82,10 @@ class ResolverContract:
     def context(self) -> Context:
         return Context("engineer", "build", "claude")
 
-    def test_a_blank_state_is_refused(self):
-        with self.assertRaises(ValueError):
-            self.make().choose("  ", self.context())
+    def test_a_state_without_fields_or_not_a_state_is_refused(self):
+        for state in (SelectorState({}), "Fix a typo"):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                self.make().choose(state, self.context())
 
     def test_the_same_state_and_context_give_the_same_choice(self):
         resolver = self.make()

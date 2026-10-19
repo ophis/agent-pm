@@ -1,10 +1,12 @@
-"""The router's choice chain. translate turns an issue into the state once; each step is a Resolver
+"""The router's choice chain. translate turns an issue into the state once, a faithful English
+rendering of its title, description, status, labels and comments; each step is a Resolver
 paired with its Choice: choose picks one for the state given the Context so far, among options it
 reads from config, by asking a Selector; fallback gives today's choice, for a step switched off or
 a SelectionError. The router applies each Choice to the Context in a fixed order and records it for
 resume, logging only reason codes: issue text, the state and replies are untrusted data.
 """
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -23,6 +25,9 @@ SESSION_CONFIG = (("agent_pm.session", "config.toml"),)
 SESSION_CLIENTS = "clients"
 TRANSLATOR_ROLE = "choice-translator"
 TRANSLATOR_TASK = "translate"
+# The translate deliverable's JSON shape: its keys and each value's type.
+TRANSLATION_FIELDS = {"title": str, "description": str, "status": str, "labels": list}
+COMMENT_FIELDS = {"author": str, "created_at": str, "body": str}
 
 
 class SelectionFailure(StrEnum):
@@ -58,7 +63,7 @@ class Resolver(ABC, Generic[C]):
     """Lists its own options from config, given the context; callers pass it none."""
 
     @abstractmethod
-    def choose(self, state: str, context: Context) -> C: ...
+    def choose(self, state: SelectorState, context: Context) -> C: ...
 
     @abstractmethod
     def fallback(self, context: Context) -> C:
@@ -87,13 +92,13 @@ class TierResolver(Resolver[TierChoice]):
         self.selector = selector
         self.task_tiers = task_tiers
 
-    def choose(self, state: str, context: Context) -> TierChoice:
-        if not state.strip():
-            raise ValueError("state: want a non-blank state")
+    def choose(self, state: SelectorState, context: Context) -> TierChoice:
+        if not isinstance(state, SelectorState) or not state.fields:
+            raise ValueError("state: want a State with fields")
         options = _tier_options(context.client)
         try:
             pick = self.selector.select(
-                SelectorState({"text": state}),
+                state,
                 Question("Choose the option that best fits the state.", {o: o for o in options}),
             )
         except SelectorError as error:
@@ -108,10 +113,11 @@ class TierResolver(Resolver[TierChoice]):
 
 def translate(
     issue: str, workdir: str, *, provider: type[Delegate], overlays: Sequence[Mapping] = ()
-) -> str:
-    """The state for issue (`TASK-123`): the deliverable of one headless run, through provider (as
-    LinearRun creates its runs), of the choice-translator role's task, whose config sets its client
-    and tier.
+) -> SelectorState:
+    """The state for issue (`TASK-123`), parsed from the JSON deliverable of one headless run,
+    through provider (as LinearRun creates its runs), of the choice-translator role's task, whose
+    config sets its client and tier: fields title, description, status and labels; droppable its
+    comments, oldest first by created_at. A deliverable off that shape: INVALID.
     """
     if not issue.strip():
         raise ValueError("issue: want an issue identifier")
@@ -124,10 +130,33 @@ def translate(
     outcome = result.outcome
     if outcome is None or outcome.status != OutcomeStatus.DONE:
         raise SelectionError(SelectionFailure.TRANSLATE)
-    state = outcome.deliverable.strip()
-    if not state:
+    try:
+        translation = json.loads(outcome.deliverable)
+    except (ValueError, RecursionError):
+        raise SelectionError(SelectionFailure.INVALID) from None
+    if not _translation(translation):
         raise SelectionError(SelectionFailure.INVALID)
-    return state
+    comments = sorted(translation.pop("comments"), key=lambda c: c["created_at"])
+    return SelectorState(translation, droppable=("comments", tuple(comments)))
+
+
+def _translation(value: object) -> bool:
+    """Whether value is the translate deliverable's exact shape."""
+    if not isinstance(value, dict) or set(value) != {*TRANSLATION_FIELDS, "comments"}:
+        return False
+    if not all(isinstance(value[k], kind) for k, kind in TRANSLATION_FIELDS.items()):
+        return False
+    comments = value["comments"]
+    return (
+        all(isinstance(label, str) for label in value["labels"])
+        and isinstance(comments, list)
+        and all(
+            isinstance(c, dict)
+            and set(c) == set(COMMENT_FIELDS)
+            and all(isinstance(c[k], kind) for k, kind in COMMENT_FIELDS.items())
+            for c in comments
+        )
+    )
 
 
 def _tier_options(client: str) -> dict[str, TierChoice]:
