@@ -21,30 +21,31 @@ typeCheckingMode = "basic"
 reportUnnecessaryComparison = "error"
 reportUnnecessaryCast = "error"
 pythonVersion = "3.11"
-include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
-extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+include = ["manager/src", "linear-orchestrator/src", "selector/src", "delegate/src", "session/src", "utils/src"]
+extraPaths = ["manager/src", "linear-orchestrator/src", "selector/src", "delegate/src", "session/src", "utils/src"]
 
 [tool.vulture]
 paths = [
-    "manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src",
+    "manager/src", "linear-orchestrator/src", "selector/src", "delegate/src", "session/src",
+    "utils/src",
     ".github/vulture_whitelist.py",
 ]
 
 [tool.importlinter]
 include_external_packages = true
 contract_types = ["units: tests.import_contracts.UnitsContract"]
-root_packages = ["agent_pm", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests", "utils.tests", "tests"]
+root_packages = ["agent_pm", "manager.tests", "orchestrator_tests", "selector.tests", "delegate.tests", "session.tests", "utils.tests", "tests"]
 
 [[tool.importlinter.contracts]]
 name = "Production layers"
 type = "layers"
-layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
+layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.selector", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
 
 [[tool.importlinter.contracts]]
 name = "Manager communicates with layers only through commands"
 type = "forbidden"
 source_modules = ["agent_pm.manager"]
-forbidden_modules = ["agent_pm.session", "agent_pm.delegate", "agent_pm.linear_orchestrator"]
+forbidden_modules = ["agent_pm.session", "agent_pm.delegate", "agent_pm.linear_orchestrator", "agent_pm.selector"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
@@ -66,7 +67,7 @@ dependencies = [
 name = "manager uses lower public packages"
 type = "forbidden"
 source_modules = ["agent_pm.manager", "manager.tests"]
-forbidden_modules = ["agent_pm.linear_orchestrator.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+forbidden_modules = ["agent_pm.linear_orchestrator.*", "agent_pm.selector.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
@@ -79,7 +80,7 @@ forbidden_modules = ["tests"]
 name = "linear_orchestrator uses lower public packages"
 type = "forbidden"
 source_modules = ["agent_pm.linear_orchestrator", "orchestrator_tests"]
-forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+forbidden_modules = ["agent_pm.selector.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
 ignore_imports = [
     "orchestrator_tests.unit.engine.writeback_test -> agent_pm.delegate.engine.types",
@@ -117,6 +118,26 @@ source_modules = ["orchestrator_tests"]
 forbidden_modules = ["tests", "agent_pm.manager", "manager.tests"]
 
 [[tool.importlinter.contracts]]
+name = "selector uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.selector", "selector.tests"]
+forbidden_modules = ["agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "selector tests respect layer ownership"
+type = "forbidden"
+source_modules = ["selector.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
+
+[[tool.importlinter.contracts]]
+name = "Selector imports only itself, utils and the standard library"
+type = "units"
+container = "agent_pm.selector"
+units = ["agent_pm.selector"]
+dependencies = ["agent_pm.selector -> agent_pm.utils"]
+
+[[tool.importlinter.contracts]]
 name = "delegate uses lower public packages"
 type = "forbidden"
 source_modules = ["agent_pm.delegate", "delegate.tests"]
@@ -134,7 +155,7 @@ ignore_imports = [
 name = "delegate tests respect layer ownership"
 type = "forbidden"
 source_modules = ["delegate.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "manager.tests", "orchestrator_tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.selector", "manager.tests", "orchestrator_tests", "selector.tests"]
 
 [[tool.importlinter.contracts]]
 name = "session uses lower public packages"
@@ -147,13 +168,13 @@ allow_indirect_imports = true
 name = "session tests respect layer ownership"
 type = "forbidden"
 source_modules = ["session.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "manager.tests", "orchestrator_tests", "delegate.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.selector", "agent_pm.delegate", "manager.tests", "orchestrator_tests", "selector.tests", "delegate.tests"]
 
 [[tool.importlinter.contracts]]
 name = "utils tests respect layer ownership"
 type = "forbidden"
 source_modules = ["utils.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.selector", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "selector.tests", "delegate.tests", "session.tests"]
 
 [[tool.importlinter.contracts]]
 name = "Modes do not import the session API"
