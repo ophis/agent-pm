@@ -76,7 +76,7 @@ NOQA_ALLOWED = {
 
 OPTION_TUPLES_ALLOWED = {
     (f"{ORCH_FILES}engine/log.py", "ONCE"): "the log fields keying a once-only line",
-    (f"{ORCH_FILES}engine/prune.py", "ARCHIVE_ROLES"): "roles whose finished issues are archived",
+    (f"{ORCH_FILES}engine/prune.py", "ARCHIVE_ROLES"): "roles whose Done issues are archived",
 }
 
 

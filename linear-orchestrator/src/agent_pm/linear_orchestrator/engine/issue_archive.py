@@ -5,9 +5,9 @@ first; a failed read raises before anything is written.
 
 from agent_pm.linear_orchestrator.engine import issue_page, issue_read, issue_write
 from agent_pm.linear_orchestrator.engine.prune import M_ARCHIVE
+from agent_pm.linear_orchestrator.engine.router import DONE
 from agent_pm.linear_orchestrator.engine.types import ArchiveRefused, LinearError
 
-FINISHED = frozenset({"completed", "canceled"})
 SHOWN = 20
 _NODE = "id identifier state { name type }"
 
@@ -104,7 +104,7 @@ def _checked(ident, parent, page):
 
 
 def _unfinished(node, descendants):
-    return [n for n in (node, *descendants) if n["state"]["type"] not in FINISHED]
+    return [n for n in (node, *descendants) if n["state"]["type"] not in DONE]
 
 
 def _item(node):

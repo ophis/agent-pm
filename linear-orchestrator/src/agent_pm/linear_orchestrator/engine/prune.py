@@ -1,6 +1,6 @@
 """Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
-such as Duplicate: ops.Team.finished) at least 2 hours ago (its latest move into one; unknown:
-skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
+such as Duplicate: ops.Team.finished) at least 2 hours ago (finished_at; unknown: skipped) whose
+workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
 - deletes its agent files, uncommitted work included, through its Delegate (Delegate.clean; its
@@ -9,9 +9,10 @@ configured one) reports agent files in (Delegate.checkouts not None):
   <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the default
   that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs only,
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
-- archives every finished issue of the team assigned to the pm or engineer role account, unless a
-  sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs too):
-  skipped until each is finished or archived.
+- archives every finished issue of the team, a Done one only when assigned to the pm or engineer
+  role account (a researcher's report stays), any other whatever its assignee, none included, unless
+  a sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs
+  too): skipped until each is finished or archived.
 
 For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
@@ -57,6 +58,7 @@ from agent_pm.utils import (
     StatusState,
     common_dir,
     one_line,
+    parse_time,
     remove_tree,
     under,
 )
@@ -68,13 +70,23 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
-Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " + HISTORY + " } }"
+STAMPS = "canceledAt completedAt"
+Q_ISSUE = (
+    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
+    + STAMPS
+    + " "
+    + HISTORY
+    + " } }"
+)
 CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
 Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
 Q_FINISHED = (
-    """query($t: ID, $s: [ID!], $a: [ID!], $c: String, $after: String) { issues(filter: { team: { id: { eq: $t } },
-  state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
+    """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
+  issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
+  { state: { id: { in: $s } } }] }, first: 50, after: $c) {
   nodes { id identifier """
+    + STAMPS
+    + " "
     + CHILDREN
     + " "
     + HISTORY
@@ -98,7 +110,8 @@ Prerequisites and effects:
   Keychain credentials and access to the configured work_dir/local clones.
   Configuration and executable lookup: agent-pm-linear --help
   For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
-  hours (latest transition; unknown age is skipped), close recorded runs and
+  hours (the latest of their move into one and Linear's canceledAt and
+  completedAt; unknown age is skipped), close recorded runs and
   delete agent files, including uncommitted work, through their Delegate.
   Close/cleanup refusal preserves later steps for a future tick. Unknown run
   inventory prevents run/file pruning; archival still proceeds.
@@ -106,10 +119,11 @@ Prerequisites and effects:
   ISSUE-* branches already contained in origin/branch or origin/default;
   preserve the default branch and unpushed branches. No fetch is performed.
   Clones under work_dir/work or temporary directories are skipped.
-  Archive team issues finished at least 2 hours ago and assigned to
-  pm/engineer role accounts; unknown finish times are skipped, and so is an
-  issue with an unfinished sub-issue at any depth (archiving it archives its
-  sub-issues and theirs).
+  Archive team issues finished at least 2 hours ago: Canceled/Duplicate
+  whatever the assignee (none or researcher too), Done only when assigned to
+  pm/engineer role accounts (researcher reports stay). Unknown finish times
+  are skipped, and so is an issue with an unfinished sub-issue at any depth
+  (archiving it archives its sub-issues and theirs).
   For issues in any other state but Todo/In Progress, 7 days after both their
   latest move into it and their latest recorded run, delete their checkouts
   and temp files through their Delegate, keeping the other agent files and the
@@ -254,15 +268,20 @@ class Pruner:
         return True
 
     def finished_issues(self, finished):
+        """Done issues of ARCHIVE_ROLES and other finished ones of anyone."""
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
-        if not ids:
-            return []
+        done = sorted(finished & {self.team.states["done"]})
         # Every page before any archive: archiving shifts the pages.
         nodes, cursor = [], None
         while True:
-            page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)[
-                "issues"
-            ]
+            page = self.gql(
+                Q_FINISHED,
+                t=self.team.id,
+                d=done,
+                s=sorted(finished.difference(done)),
+                a=ids,
+                c=cursor,
+            )["issues"]
             nodes += page["nodes"]
             end = page["pageInfo"]["endCursor"]
             if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
@@ -280,7 +299,7 @@ class Pruner:
             return
         for node in nodes:
             ident = node["identifier"]
-            since = last_move(node["history"]["nodes"], finished)
+            since = finished_at(node, finished)
             if since is None:
                 self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
                 continue
@@ -355,7 +374,7 @@ class Pruner:
         if state not in finished:
             self.prune_stalled(ident, last_move(issue["history"]["nodes"], {state}))
             return
-        since = last_move(issue["history"]["nodes"], finished)
+        since = finished_at(issue, finished)
         if since is None:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
         elif self.has_agent(ident, quiet=True):
@@ -455,6 +474,15 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
+
+
+def finished_at(issue, finished):
+    """The latest of issue's move into finished and its canceledAt and completedAt (the history
+    read can lack a move into Duplicate that canceledAt holds); None: unknown."""
+    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue[k]]
+    if moved := last_move(issue["history"]["nodes"], finished):
+        times.append(moved)
+    return max(times, default=None)
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):

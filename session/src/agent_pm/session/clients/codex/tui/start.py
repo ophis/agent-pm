@@ -203,7 +203,7 @@ def main(data):
         launch(data)
     except Stopped as exc:
         return 128 + exc.signum
-    except (StartError, common.RecoveryError, OSError, ValueError) as exc:
+    except (StartError, common.ConfigError, common.RecoveryError, OSError, ValueError) as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         return 1
     return 0

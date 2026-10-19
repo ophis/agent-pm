@@ -24,6 +24,7 @@ from agent_pm.session.clients.codex.common import (
     SessionStore,
     launch_options,
     limit_message,
+    mcp_off,
     native_id,
     refuse_mode,
     reset_at,
@@ -324,12 +325,23 @@ class CodexTui(Tui):
         return [*early, *super().hook_events(label, payload)]
 
     def reply(self, payload):
-        if payload.get("hook_event_name") != "Interrupt":
-            message = payload.get("last_assistant_message")
-            self.last_reply = message if isinstance(message, str) else ""
-            self.unseen = self.last_reply if self.last_reply.strip() != self.last.strip() else ""
-            self.last = ""
+        """An Interrupt's turn end has no text: its turn's came as Replies, and the previous
+        turn's is never repeated. Claude Code has no interrupt hook, so its interrupted turn has no
+        turn end at all; Codex's Interrupt keeps its `done`, so the session is not left working.
+        """
+        if payload.get("hook_event_name") == "Interrupt":
+            return ""
+        message = payload.get("last_assistant_message")
+        self.last_reply = message if isinstance(message, str) else ""
+        self.unseen = self.last_reply if self.last_reply.strip() != self.last.strip() else ""
+        self.last = ""
         return self.last_reply
+
+    def pending(self, payload):
+        """0: Codex's Stop reports no background work, whose end starts no turn (docs/sessions.md
+        › Client policy).
+        """
+        return 0
 
     def activity(self, payload):
         value = payload.get("tool_name")
@@ -457,7 +469,7 @@ def passed(flags) -> list[str]:
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:
-    return [*hook_flags(plan.hook), *passed((*plan.permission, *snapshot.flags))]
+    return [*hook_flags(plan.hook), *passed((*plan.permission, *mcp_off(snapshot.flags, snapshot)))]
 
 
 def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> list[str]:
@@ -476,7 +488,7 @@ def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> 
         "-c",
         'tui.notification_method="bel"',
         *plan.permission,
-        *supplied,
+        *mcp_off(supplied, snapshot),
         *launch_options(snapshot),
         *hook_flags(plan.hook),
         "-c",

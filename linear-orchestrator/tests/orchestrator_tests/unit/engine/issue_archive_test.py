@@ -50,6 +50,18 @@ class Archive(Case):
         )
         self.assertEqual(gql.writes, [(prune.M_ARCHIVE, {"i": "id-TASK-1"})])
 
+    def test_a_duplicate_is_finished_as_prune_counts_it(self):
+        for name, root in (
+            ("issue", tree("TASK-1", "duplicate")),
+            ("sub-issue", tree("TASK-1", "completed", tree("TASK-2", "duplicate"))),
+        ):
+            with self.subTest(duplicate=name):
+                plan = issue_archive.dry_run(ArchiveGql(root), "TASK-1")
+                self.assertEqual((plan["result"], plan["unfinished"]), ("changed", []))
+                gql = ArchiveGql(root)
+                self.assertEqual(issue_archive.archive(gql, "TASK-1")["result"], "changed")
+                self.assertEqual(gql.writes, [(prune.M_ARCHIVE, {"i": "id-TASK-1"})])
+
     def test_any_unfinished_issue_refuses_and_writes_nothing(self):
         cases = {
             "root": (tree("TASK-1", "started", tree("TASK-2")), "TASK-1"),
