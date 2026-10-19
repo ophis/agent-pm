@@ -692,7 +692,10 @@ class CommittedConfiguration(Case):
 
     def test_packaged_client_max_runs(self):
         local = HEADER + role("researcher") + role("pm") + role("engineer")
-        self.assertEqual(self.load(local).client_max_runs, {"opencode": 1})
+        self.assertEqual(self.load(local).client_max_runs, {})
+        self.assertEqual(
+            self.load(local + "[client_max_runs]\nopencode = 1\n").client_max_runs, {"opencode": 1}
+        )
         self.assertEqual(
             self.load(local + "[client_max_runs]\nclaude = 3\nopencode = 2\n").client_max_runs,
             {"opencode": 2, "claude": 3},
