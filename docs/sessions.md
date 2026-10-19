@@ -37,6 +37,8 @@ Text sent to a Codex or Claude tui session mid-turn joins that turn. Codex takes
 
 When the session has an events file, the first answer after the joined text appends `HH:MM:SS <name> reply <id>` before the turn's `done`, its text kept 30 days in `<events>.replies/<id>`; `agent-pm-crew pending --content` and `next-event --content` print that text. A watcher reads the session file within a few seconds (started by Codex's steer hook, or Claude's PostToolUse hook once a message is queued), and the turn's Stop hook reads it once more. An answer given only in the next turn has no `reply`; that turn's `done` holds it.
 
+A Codex turn that fails (an API error once Codex's own retries are spent) fires no hook, unlike Claude's StopFailure. The tui reads the failure from its session file's `task_complete` error and headless from its `turn.failed` event; either is a failed turn and, as with Claude, ends a role run's attempt at once instead of after `idle_timeout`. A usage limit stays a usage limit.
+
 ## Client policy
 
 Role runs' client flags are `[policy.<client>]` in `delegate/src/agent_pm/delegate/config.toml` (`[policy.claude]`, `[policy.codex]`; none packaged for OpenCode, so none unless a local `[delegate.policy.opencode]` sets them), after the session's `[clients.<client>] flags` and permission mode. Their system-prompt flag (`--append-system-prompt`, Codex's `developer_instructions`) tells a role run its final reply is the outcome block alone; OpenCode has no such flag, its config being the session's. A local list replaces the default whole: copy that flag into it, and the MCP one.

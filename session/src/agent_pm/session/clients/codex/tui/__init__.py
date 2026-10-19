@@ -1,6 +1,7 @@
 """Codex interactive launch plans, hook callbacks and event interpretation.
 Each new assistant message in the bound native session file since launch is one Reply, read from a
-cursor; a Stop's text that lands later is not repeated.
+cursor; a Stop's text that lands later is not repeated. A failed turn's `task_complete` error there
+is a TurnFailed.
 """
 
 import json
@@ -22,6 +23,7 @@ from agent_pm.session.clients.codex.common import (
     RecoveryError,
     SessionStore,
     launch_options,
+    limit_message,
     mcp_off,
     native_id,
     refuse_mode,
@@ -42,6 +44,7 @@ from agent_pm.session.engine.types import (
     Reply,
     SessionEvent,
     Spec,
+    TurnFailed,
 )
 from agent_pm.session.modes.client_adapters.tui import Tui
 from agent_pm.utils import json_records, module_roots, read_beneath, source_path
@@ -255,7 +258,7 @@ class CodexTui(Tui):
                 return []
         lines = (read_beneath("/", self.transcript, offset=self.offset) or b"").split(b"\n")[:-1]
         self.offset += sum(len(line) + 1 for line in lines)  # a line still being written waits
-        return [reply for record in json_records(lines) for reply in self._record(record)]
+        return [event for record in json_records(lines) for event in self._record(record)]
 
     def replay(self, records):
         """Ends in the latest turn's state: a Stop since the hook log's last prompt leaves its text
@@ -271,7 +274,13 @@ class CodexTui(Tui):
         self.unseen = ended if ended and ended.strip() and ended != newest else ""
         return found
 
-    def _record(self, record: dict) -> list[Reply]:
+    def _record(self, record: dict) -> list[Reply | TurnFailed]:
+        failed = records.failure(record)
+        if failed is not None:
+            kind, message = failed
+            if limit_message(message):
+                return []
+            return [TurnFailed(kind, message)]
         found = records.message(record)
         if found is None:
             return []

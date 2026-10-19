@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     Reply,
     Stderr,
     TurnEnd,
+    TurnFailed,
 )
 from agent_pm.session.modes.headless import HeadlessMode
 
@@ -136,6 +137,23 @@ class HeadlessTest(Base):
             list(run.parse({"type": "turn.failed", "error": {"message": message}})),
             [Stderr(message), LimitHit()],
         )
+
+    def test_turn_failed_is_a_failed_turn_and_an_error_is_not(self):
+        run = self.run_instance()
+        self.assertEqual(
+            list(run.parse({"type": "error", "message": "retrying"})), [Stderr("retrying")]
+        )
+        self.assertEqual(
+            list(run.parse({"type": "turn.failed", "error": {"message": "bad request"}})),
+            [Stderr("bad request"), TurnFailed("turn_failed", "bad request")],
+        )
+        for record in (
+            {"type": "turn.failed"},
+            {"type": "turn.failed", "error": {"message": " "}},
+            {"type": "turn.failed", "error": 5},
+        ):
+            with self.subTest(record=record):
+                self.assertEqual(list(run.parse(record)), [TurnFailed("turn_failed", "")])
 
     def test_fresh_launch_resets_limit_guard(self):
         run = self.run_instance()

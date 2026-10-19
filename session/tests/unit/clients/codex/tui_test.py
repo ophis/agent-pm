@@ -33,6 +33,7 @@ from agent_pm.session.engine.types import (
     Permission,
     Reply,
     TurnEnd,
+    TurnFailed,
 )
 from agent_pm.session.modes.tui import TuiMode
 from agent_pm.utils import LOCAL_ENV_VARS
@@ -83,6 +84,12 @@ def _said(role, *texts):
         "type": "response_item",
         "payload": {"type": "message", "role": role, "content": content},
     }
+
+
+def _failed(message, info="other"):
+    """A Codex session file's record of a turn that failed."""
+    error = {"message": message, "codex_error_info": info}
+    return {"type": "event_msg", "payload": {"type": "task_complete", "error": error}}
 
 
 def _append(path, *records):
@@ -623,6 +630,35 @@ class TuiTest(Base):
         run, path = self.bound()
         _append(path, _said("assistant", "a", "b"))
         self.assertEqual(run.observe(), [Reply("a\nb")])
+
+    def test_observe_reports_a_failed_turn_after_its_replies(self):
+        run, path = self.bound()
+        _append(path, _said("user", "go"), _said("assistant", "a"), _failed("bad request"))
+        self.assertEqual(run.observe(), [Reply("a"), TurnFailed("other", "bad request")])
+
+    def test_observe_leaves_a_usage_limit_to_the_screen(self):
+        run, path = self.bound()
+        for message in (
+            "You've hit your usage limit. Try again at 3:00 PM.",
+            "You’ve hit your usage limit.",
+        ):
+            _append(path, _failed(message, "usage_limit_exceeded"))
+            self.assertEqual(run.observe(), [])
+        _append(path, _failed("Usage limit reached.", "usage_limit_exceeded"))
+        self.assertEqual(
+            run.observe(), [TurnFailed("usage_limit_exceeded", "Usage limit reached.")]
+        )
+
+    def test_observe_reports_a_failed_turn_once_and_none_before_the_cursor(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        path = self.rollout()
+        _append(path, _said("user", "old"), _failed("old failure"))
+        run, _, _ = self.launch(resume=True)
+        self.assertEqual(run.observe(), [])
+        _append(path, _said("user", "new"), _failed("new failure"))
+        self.assertEqual(run.observe(), [TurnFailed("other", "new failure")])
+        self.assertEqual(run.observe(), [])
 
     def test_observe_waits_for_a_whole_line(self):
         run, path = self.bound()

@@ -34,6 +34,7 @@ from agent_pm.session.engine.types import (
     Mode,
     Spec,
     TurnEnd,
+    TurnFailed,
 )
 
 from session.tests import live_tmux
@@ -961,6 +962,17 @@ class TuiRecoveryIntegrationTest(Live):
         )
         self.assertIsNone(self.hooks()[-1]["payload"]["last_assistant_message"])
         self.assertEqual(self.lines(2), ["w1 done"] * 2)
+
+    def test_a_failed_turn_without_stop_is_a_turn_failed(self):
+        self.scene([[{"kind": "fail", "message": "bad request"}], ["after"]])
+        handle = self.start()
+        stream = Stream(self, handle)
+        self.assertEqual(stream.until(TurnFailed)[-1], TurnFailed("other", "bad request"))
+        self.assertNotIn("Stop", [h["hook"] for h in self.hooks()])
+        handle.send("recover")
+        # The failed turn's hook Activities may come after its TurnFailed, read first.
+        after = stream.until(TurnEnd)
+        self.assertEqual((set(after[:-1]), after[-1]), ({Activity()}, TurnEnd("after")))
 
     def test_root_child_cwd_and_rebinding_filters_publish_only_valid_hooks(self):
         invalid = [

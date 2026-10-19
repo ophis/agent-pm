@@ -50,3 +50,40 @@ class MessageTest(Case):
         self.assertEqual(records.message(content), ("user", ""))
         record = _said("assistant", "text", {"type": "output_text", "text": 5}, None)
         self.assertEqual(records.message(record), ("assistant", ""))
+
+
+def _completed(**payload):
+    return {"type": "event_msg", "payload": {"type": "task_complete", **payload}}
+
+
+class FailureTest(Case):
+    def test_failure_reads_kind_and_message(self):
+        for error, found in (
+            ({"message": "bad", "codex_error_info": "other"}, ("other", "bad")),
+            (
+                {"message": "502", "codex_error_info": {"http_connection_failed": {"code": 502}}},
+                ("http_connection_failed", "502"),
+            ),
+            ({"message": "m", "codex_error_info": {"a": 1, "b": 2}}, ("unknown", "m")),
+            ({"message": "m", "codex_error_info": {5: 1}}, ("unknown", "m")),
+            ({"message": "m", "codex_error_info": ""}, ("unknown", "m")),
+            ({"message": "m", "codex_error_info": 3}, ("unknown", "m")),
+            ({"message": "m"}, ("unknown", "m")),
+            ({"codex_error_info": "other"}, ("other", "")),
+            ({"message": 5, "codex_error_info": "other"}, ("other", "")),
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(records.failure(_completed(error=error)), found)
+
+    def test_failure_ignores_other_records(self):
+        for record in (
+            _completed(last_agent_message="done"),
+            _completed(error=None),
+            _completed(error="bad"),
+            {"type": "event_msg", "payload": {"type": "turn_aborted", "error": {"message": "x"}}},
+            {"type": "event_msg", "payload": None},
+            {"type": "response_item", "payload": {"type": "task_complete", "error": {}}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+        ):
+            with self.subTest(record=record):
+                self.assertIsNone(records.failure(record))

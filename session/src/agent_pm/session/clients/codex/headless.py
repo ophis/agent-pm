@@ -1,12 +1,14 @@
-"""Codex headless launches and native JSON events with session binding and usage limits."""
+"""Codex headless launches and native JSON events with session binding, usage limits and failed
+turns.
+"""
 
 import json
 import os
 
 from agent_pm.session.clients.codex.common import (
-    LIMIT_PREFIXES,
     CodexCommon,
     launch_flags,
+    limit_message,
     native_id,
     reset_at,
 )
@@ -21,6 +23,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
 )
 from agent_pm.session.modes.client_adapters.headless import Headless
 
@@ -105,8 +108,11 @@ class CodexHeadless(Headless):
         error = record.get("message") if kind == "error" else record.get("error")
         if isinstance(error, dict):
             error = error.get("message")
-        if isinstance(error, str) and error.strip():
-            yield Stderr(error)
-            if not self.limit_sent and error.replace("’", "'").startswith(LIMIT_PREFIXES):
+        found = error if isinstance(error, str) and error.strip() else ""
+        if found:
+            yield Stderr(found)
+            if not self.limit_sent and limit_message(found):
                 self.limit_sent = True
-                yield LimitHit(reset_at(error, self.common.config.get("env", {})))
+                yield LimitHit(reset_at(found, self.common.config.get("env", {})))
+        if kind == "turn.failed" and not self.limit_sent:  # an `error` may precede a retry
+            yield TurnFailed("turn_failed", found)
