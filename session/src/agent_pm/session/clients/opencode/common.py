@@ -122,6 +122,11 @@ def _provider(name, table) -> bool:
     )
 
 
+MODEL = (
+    "model",
+    lambda v: isinstance(v, str) and v.strip() != "" and v.isprintable(),
+    "a provider/model name",
+)
 PROVIDERS = (
     "providers",
     lambda v: isinstance(v, Mapping) and all(_provider(k, t) for k, t in v.items()),
@@ -235,7 +240,7 @@ def refuse_env(env: Mapping[str, str], where: str) -> None:
 class OpenCodeCommon:
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, PROVIDERS, *CHECKS))
+        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, MODEL, PROVIDERS, *CHECKS))
         self.executable = config.get("executable") or "opencode"
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
@@ -245,8 +250,12 @@ class OpenCodeCommon:
         self.port = config.get("ollama_port", OLLAMA_PORT)
         self.providers = {name: dict(t) for name, t in config.get("providers", {}).items()}
         self.tiers = dict(config.get("tiers", {}))
-        for tier, model in self.tiers.items():
-            self._listed(f"tiers.{tier}", model)
+        self.default = config.get("model", "")
+        for key, model in (
+            ("model", self.default),
+            *((f"tiers.{t}", m) for t, m in self.tiers.items()),
+        ):
+            self._listed(key, model)
         self.efforts = dict(config.get("efforts", {}))
         self.env = dict(config.get("env", {}))
         refuse_env(self.env, f"{TABLE}.env")
@@ -267,9 +276,13 @@ class OpenCodeCommon:
             raise ConfigError(f"{missing} in {TABLE}")
         return found
 
-    def model(self, tier: int | None) -> str | None:
-        tier_key = None if tier is None else str(tier)
-        return self._mapped(self.tiers, tier_key, f"no model for tier {tier}")
+    def model(self, tier: int | None) -> str:
+        """The tier's model, else `model`: never OpenCode's pick."""
+        if tier is None:
+            return self.default
+        if (found := self.tiers.get(str(tier))) is None:
+            raise ConfigError(f"no model for tier {tier} in {TABLE}")
+        return found
 
     def variant(self, effort: Effort | None) -> str | None:
         return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
@@ -371,16 +384,17 @@ class OpenCodeCommon:
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
-            # OpenCode's built-in providers (OpenCode Zen's included) stay off.
+            # Built-in providers (OpenCode Zen's included) off.
             "enabled_providers": list(providers),
             "provider": providers,
             "permission": permission,
         }
 
     def _provider(self, title: str, url: str, name: str, listed) -> dict:
-        """An OpenAI-compatible provider entry: its listed models, then those its tiers name."""
+        """An OpenAI-compatible provider: its listed models, then those tiers or model name."""
         prefix = f"{name}/"
-        mapped = (m.removeprefix(prefix) for m in self.tiers.values() if m.startswith(prefix))
+        named = (*self.tiers.values(), self.default)
+        mapped = (m.removeprefix(prefix) for m in named if m.startswith(prefix))
         return {
             "npm": "@ai-sdk/openai-compatible",
             "name": title,

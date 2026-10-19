@@ -36,6 +36,7 @@ from session.tests.unit.clients.opencode.support import (
 )
 
 HOOK = ("/bin/agent-pm-session", "hook", "/home/x/.agent-pm/tui/w1")
+MODEL = ("--model", "ollama/qwen3.6:35b-mlx")
 OTHER = "ses_otherOtherOtherOther0001"
 
 
@@ -70,15 +71,23 @@ class LaunchTest(Base):
         )
         self.assertEqual((launch.cwd, launch.project), (self.cwd, True))
 
-    def test_no_prompt_no_flag_and_no_variant(self):
+    def test_no_tier_runs_the_configured_model(self):
         launch = self.launch(self.spec(prompt="", effort="high"))
-        self.assertEqual(launch.argv, ("opencode",))
+        self.assertEqual(launch.argv, ("opencode", *MODEL))
+        tiers = {"1": "ollama/a", "2": "ollama/a", "3": "ollama/a", "4": "ollama/a"}
+        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "model": "ollama/b"})
+        self.assertEqual(
+            self.launch(self.spec(prompt=""), client).argv[1:], ("--model", "ollama/b")
+        )
+        self.assertEqual(
+            self.launch(self.spec(prompt="", tier=2), client).argv[1:], ("--model", "ollama/a")
+        )
 
     def test_a_resume_selects_its_session_and_opens_with_the_prompt(self):
         self.client.common.bind(self.cwd, "run-1", SES)
         run = self.run_tui()
         launch = run.launch(self.spec(resume=True, prompt="Fix it."), HOOK)
-        self.assertEqual(launch.argv, ("opencode", "--session", SES))
+        self.assertEqual(launch.argv, ("opencode", "--session", SES, *MODEL))
         self.assertEqual(run.opening, (tui.START, "Fix it."))
         self.assertEqual(launch.env["AGENT_PM_OPENCODE_SESSION"], SES)
         bare = self.run_tui()
@@ -116,13 +125,22 @@ class LaunchTest(Base):
         launch = self.launch(self.spec(flags=("--log-level", "INFO")), client, context)
         self.assertEqual(
             launch.argv,
-            ("opencode", "--agent", "build", "--auto", "--log-level", "INFO", "--prompt=Hi there"),
+            (
+                "opencode",
+                *MODEL,
+                "--agent",
+                "build",
+                "--auto",
+                "--log-level",
+                "INFO",
+                "--prompt=Hi there",
+            ),
         )
 
     def test_the_executable_is_argv0(self):
         client = OpenCodeClient({**packaged_table(), "executable": "/opt/oc1/bin/opencode"})
         launch = self.launch(self.spec(prompt=""), client)
-        self.assertEqual(launch.argv, ("/opt/oc1/bin/opencode",))
+        self.assertEqual(launch.argv, ("/opt/oc1/bin/opencode", *MODEL))
 
     def test_a_2x_opencode_is_refused(self):
         with (
@@ -138,7 +156,9 @@ class LaunchTest(Base):
             launch = self.launch(
                 self.spec(env={"XDG_DATA_HOME": data}), client, context=DOCKER_CONTEXT
             )
-        self.assertEqual(launch.argv, ("/opt/agent-pm/bin/opencode", "--auto", "--prompt=Hi there"))
+        self.assertEqual(
+            launch.argv, ("/opt/agent-pm/bin/opencode", *MODEL, "--auto", "--prompt=Hi there")
+        )
         self.assertNotIn(["--version"], [call.args[0][1:] for call in run.call_args_list])
         config = json.loads(launch.env["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(config["plugin"], [f"file://{IMAGE_CLIENT}/plugin.js"])

@@ -113,8 +113,19 @@ class LaunchTest(Base):
         with self.assertRaisesRegex(ConfigError, "no model for tier 3"):
             self.launch(self.spec(tier=3), client=client)
 
-    def test_no_tier(self):
-        self.assertNotIn("--model", self.command(self.launch(self.spec())))
+    def test_no_tier_runs_the_configured_model(self):
+        self.assertTrue(holds(self.command(self.launch(self.spec())), ("--model", MODEL)))
+        client = OpenCodeClient({**packaged_table(), "providers": STRATA, "model": "strata/d"})
+        launch = self.launch(self.spec(), client=client)
+        self.assertTrue(holds(self.command(launch), ("--model", "strata/d")))
+        self.assertEqual(
+            self.inline(launch)["provider"]["strata"]["models"],
+            {"m": {"name": "m"}, "d": {"name": "d"}},
+        )
+        tiers = {"1": "ollama/a", "2": "ollama/a", "3": "ollama/a", "4": "ollama/a"}
+        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "model": "ollama/b"})
+        ollama = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
+        self.assertEqual(ollama["models"], {"a": {"name": "a"}, "b": {"name": "b"}})
 
     def test_variant(self):
         command = self.command(self.launch(self.spec(effort=Effort.HIGH)))
@@ -152,7 +163,8 @@ class LaunchTest(Base):
 
     def test_only_ollama_tiers_are_listed(self):
         tiers = {"1": "ollama/a", "2": "ollama/a", "3": "strata/b", "4": "ollama/c"}
-        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "providers": STRATA})
+        config = {"tiers": tiers, "providers": STRATA, "model": "ollama/c"}
+        client = OpenCodeClient({**packaged_table(), **config})
         models = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
         self.assertEqual(models["models"], {"a": {"name": "a"}, "c": {"name": "c"}})
 
@@ -164,7 +176,8 @@ class LaunchTest(Base):
     def test_a_configured_provider_is_enabled_with_its_and_its_tiers_models(self):
         tiers = {"1": "ollama/a", "2": "strata/b", "3": "strata/m", "4": "strata/b"}
         providers = {**STRATA, "lab": {"base_url": "https://lab.lan/v1", "models": []}}
-        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "providers": providers})
+        config = {"tiers": tiers, "providers": providers, "model": "ollama/a"}
+        client = OpenCodeClient({**packaged_table(), **config})
         launch = self.launch(self.spec(tier=2), client=client)
         inline = self.inline(launch)
         self.assertEqual(inline["enabled_providers"], ["ollama", "lab", "strata"])

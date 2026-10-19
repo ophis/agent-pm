@@ -54,8 +54,8 @@ class ConfigTest(Case):
         self.assertEqual(found.modes, {"auto": (), "yolo": ("--auto",)})
 
     def test_an_unknown_key_is_a_config_error(self):
-        with self.assertRaisesRegex(ConfigError, "unknown key 'model'"):
-            OpenCodeClient({**packaged_table(), "model": "x"})
+        with self.assertRaisesRegex(ConfigError, "unknown key 'small_model'"):
+            OpenCodeClient({**packaged_table(), "small_model": "x"})
 
     def test_ollama_port_must_be_an_integer_port(self):
         for port in (True, 0, 65536, "11434", 1.5):
@@ -70,6 +70,12 @@ class ConfigTest(Case):
         for key, value in (("tiers", {"1": 3}), ("efforts", {"low": ""}), ("env", {"A": 1})):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, rf"\.{key} must be"):
                 common(**{key: value})
+
+    def test_the_model_names_ollama_or_a_listed_provider(self):
+        self.assertEqual(common(model="ollama/b").model(None), "ollama/b")
+        for model in ("", " ", 3, "other/b", "b"):
+            with self.subTest(model=model), self.assertRaisesRegex(ConfigError, r"\.model"):
+                common(model=model)
 
     def test_the_packaged_table_has_no_provider(self):
         self.assertEqual(common().providers, {})
@@ -110,7 +116,7 @@ class ConfigTest(Case):
 
     def test_a_missing_tier_or_effort_is_a_config_error(self):
         found = common(tiers={"1": "ollama/a"}, efforts={"low": "low"})
-        self.assertIsNone(found.model(None))
+        self.assertEqual(found.model(None), "ollama/qwen3.6:35b-mlx")
         self.assertIsNone(found.variant(None))
         with self.assertRaisesRegex(ConfigError, r"no model for tier 3"):
             found.model(3)
