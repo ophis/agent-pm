@@ -217,11 +217,12 @@ class ConfigureTest(Base):
             ),
             (
                 {"default_host": "ghost"},
-                "[hosts] default: want one of tmux (a removed Host: docs/upgrading.md)",
+                "[hosts] default: 'ghost' is not a Host here (removed Hosts: docs/upgrading.md); "
+                "want one of tmux",
             ),
             (
                 {"default_host": None},
-                "[hosts] default: want one of tmux (a removed Host: docs/upgrading.md)",
+                "[hosts] default: want one of tmux",
             ),
         ):
             with self.subTest(kw=kw):

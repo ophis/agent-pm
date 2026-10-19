@@ -1059,8 +1059,8 @@ class RouterEntry(OuterBase):
         self.assertEqual(rc, 1)
         self.assertEqual(
             self.said()[-1],
-            "launch-error TASK-7 error=ConfigError: [hosts] default: want one of docker, tmux"
-            " (a removed Host: docs/upgrading.md)",
+            "launch-error TASK-7 error=ConfigError: [hosts] default: 'absent' is not a Host here "
+            "(removed Hosts: docs/upgrading.md); want one of docker, tmux",
         )
         self.assertEqual(self.todo["state"], "In Progress")
         self.assertFalse(os.path.lexists(self.rd))

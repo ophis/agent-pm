@@ -218,7 +218,8 @@ class ConfigTest(SessionCliCase):
             ("[session]\nbogus = 1\n", f"{local}: unknown key 'bogus' in [session]"),
             (
                 '[session.hosts]\ndefault = "nope"\n',
-                "config: [hosts] default: want one of docker, tmux (a removed Host: docs/upgrading.md)",
+                "config: [hosts] default: 'nope' is not a Host here (removed Hosts: "
+                "docs/upgrading.md); want one of docker, tmux",
             ),
             ('[session.hosts.tmux]\nstatus_line = "yes"\n', "status_line: want true or false"),
             (
