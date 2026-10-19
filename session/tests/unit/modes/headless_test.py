@@ -4,9 +4,11 @@ process. Real children: session/tests/integration/modes/headless_integration_tes
 """
 
 import contextlib
+import errno
 import io
 import os
 import queue
+import stat
 import sys
 import threading
 import time
@@ -31,7 +33,9 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.hosts.base import Piped
+from agent_pm.session.modes.base import POINTER
 from agent_pm.session.modes.headless import PUT_WAIT, QUEUE_MAX, HeadlessMode
+from agent_pm.utils import over_argv
 
 from session.tests.case import PLUGIN_BIN
 from session.tests.fakes.terminal import MemoryHost
@@ -422,6 +426,63 @@ class ThroughItsHost(Base):
             self.start_on(host, client_class=Seen)
         self.assertEqual(len(seen), 1)
         self.assertIs(seen[0], context)
+
+    def test_an_over_budget_prompt_becomes_a_pointer_to_a_file_in_the_workdir(self):
+        big, path = "雪" * 40_000, os.path.join(self.dir, "prompt", "prompt.md")
+        host = PipingHost(FakePiped())
+        self.start_on(host, prompt=big)
+        (spec,) = StubRun.specs
+        self.assertEqual(spec.prompt, POINTER.format(size=len(big.encode()), path=path))
+        self.assertEqual(spec.access.reads, (os.path.dirname(path),))
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), big)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode), 0o700)
+        self.assertIsNone(host.pipes[0][2])
+
+    def test_a_container_context_puts_the_prompt_in_metadata_not_on_disk(self):
+        context = ClientContext(
+            "host.docker.internal",
+            Permission.YOLO,
+            Container("/image/bin", "/image/python", "/image/modules", "/run/state"),
+        )
+        big, path = "雪" * 40_000, "/run/state/prompt/prompt.md"
+        host = PipingHost(FakePiped())
+        with mock.patch.object(host, "_client_context", return_value=context):
+            self.start_on(host, prompt=big, name="w")
+        metadata = host.pipes[0][2]
+        self.assertEqual((metadata["prompt_file"], metadata["prompt"]), (path, big))
+        self.assertEqual(StubRun.specs[0].prompt, POINTER.format(size=len(big.encode()), path=path))
+        self.assertFalse(os.path.lexists(os.path.join(self.dir, "prompt")))
+
+    def test_a_prompt_within_the_budget_stays_and_preflight_writes_nothing(self):
+        at = "a" * 99_998
+        self.assertTrue(over_argv(at + "a") and not over_argv(at))
+        self.start_on(PipingHost(FakePiped()), prompt=at)
+        self.assertEqual(StubRun.specs[0].prompt, at)
+        HeadlessMode.preflight(
+            Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, prompt="雪" * 40_000),
+            StubClient(),
+            registry=self.session_cls._config().registry,
+            host=PipingHost(FakePiped()),
+        )
+        self.assertFalse(os.path.lexists(os.path.join(self.dir, "prompt")))
+
+    def test_an_unwritable_prompt_file_starts_nothing(self):
+        real = os.open
+
+        def refusing(path, *args, **kwargs):
+            if str(path).endswith("prompt.md"):
+                raise OSError(errno.EACCES, "Permission denied")
+            return real(path, *args, **kwargs)
+
+        host = PipingHost(FakePiped())
+        with (
+            mock.patch("os.open", refusing),
+            self.assertRaisesRegex(SessionError, "^prompt file .*prompt.md: Permission denied$"),
+        ):
+            self.start_on(host, prompt="雪" * 40_000)
+        self.assertEqual((host.pipes, self.recorded), ([], []))
 
     def test_a_nameless_spec_gets_no_host_env_metadata_or_resume(self):
         host = HomeHost(FakePiped())

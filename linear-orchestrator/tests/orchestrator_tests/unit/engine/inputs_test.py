@@ -950,6 +950,65 @@ class DocumentFences(Case):
                 )
 
 
+class LinkedDocumentBudget(Case):
+    """Linked documents inline up to LINKED_INLINE_MAX bytes in all; the rest are listed."""
+
+    def doc(self, name, text):
+        return inputs.Doc(BASE + f"Research/{name}.md", f"Research/{name}.md", text)
+
+    def render(self, role, docs, earlier=None):
+        return inputs.render(
+            issue("Q", ident="ENG-7" if role == "engineer" else "RES-4"),
+            role,
+            inputs.Sources(tuple(docs), earlier),
+            humans=HUMANS,
+            target=BuildInputs.TARGET if role == "engineer" else None,
+            docs=DOCS,
+        )
+
+    def listed(self, name):
+        return (
+            f"### `Research/{name}.md`\n\n(not inlined: over the 50000-byte budget for linked "
+            f"documents; read it at {BASE}Research/{name}.md)"
+        )
+
+    def test_linked_documents_inline_up_to_the_budget_then_list_the_rest(self):
+        a, b = "雪" * 10_000, "b" * 20_001
+        docs = [self.doc("a", a), self.doc("gone", None), self.doc("b", b)]
+        for role, heading in (
+            ("researcher", "## Linked documents (context)"),
+            ("pm", "## Reports"),
+            ("engineer", "## Linked documents (context)"),
+        ):
+            with self.subTest(role=role):
+                got = self.render(role, docs)
+                self.assertIn(
+                    f"{heading}\n\n### `Research/a.md`\n\n{fenced(a)}\n\n"
+                    "### `Research/gone.md`\n\n(not found on main)\n\n" + self.listed("b"),
+                    got,
+                )
+                self.assertNotIn(b, got)
+        self.assertEqual(inputs.LINKED_INLINE_MAX, 50_000)
+
+    def test_a_later_smaller_doc_still_inlines(self):
+        a, b, c = "雪" * 10_000, "b" * 20_001, "c" * 20_000
+        got = self.render(
+            "researcher", [self.doc(n, t) for n, t in zip("abc", (a, b, c), strict=True)]
+        )
+        self.assertIn(self.listed("b") + f"\n\n### `Research/c.md`\n\n{fenced(c)}", got)
+
+    def test_prd_and_earlier_version_are_never_capped(self):
+        big, fill = "p" * 60_000, "f" * 50_000
+        prd = inputs.Doc(BuildInputs.PRD.url, BuildInputs.PRD.path, big)
+        got = self.render("engineer", [prd, self.doc("f", fill)])
+        self.assertIn(fenced(big), got)
+        self.assertIn(fenced(fill), got)
+        earlier = inputs.Doc(BASE + "Research/e.md", "Research/e.md", big)
+        got = self.render("researcher", [self.doc("f", fill)], earlier)
+        self.assertIn(fenced(big), got)
+        self.assertIn(fenced(fill), got)
+
+
 class DesignInputs(Case):
     HANDOFF = lines(
         "Handoff from RES-4: https://linear.app/t/issue/RES-4",

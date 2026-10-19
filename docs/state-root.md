@@ -12,7 +12,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   ├── run/                      the harness's files, kept as the run's record
 │   │   ├── delegate.json         the run's state, beside its locks
 │   │   ├── run.jsonl             session records; resume reads them
-│   │   └── out.md                the deliverable
+│   │   └── out.md                the deliverable of a `local` or `orchestrator` run
 │   └── writeback.json            the write-back ledger, beside its lock
 ├── logs/
 │   ├── runs.jsonl                each run's start, resume and limit rows

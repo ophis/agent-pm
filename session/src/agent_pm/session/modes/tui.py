@@ -424,6 +424,7 @@ class _Start:
     store: TuiStore
     state: dict
     metadata: Mapping[str, str]
+    prompt_file: tuple[str, str] | None = None  # (path, text) this mode writes
 
     def validate(self) -> None:
         self.store.host.validate(self.store.name, self.launch)
@@ -513,6 +514,10 @@ class TuiMode(BaseMode):
         )
         spec = cls._noted(spec, client)
         run._context = host._client_context()
+        spec, prompt_file = cls._pointed(spec, run._context, store.dir)
+        if prompt_file and run._context.container:
+            path, text = prompt_file
+            metadata, prompt_file = {**metadata, "prompt_file": path, "prompt": text}, None
         hook = store.hook_argv()
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
@@ -523,7 +528,7 @@ class TuiMode(BaseMode):
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise SessionError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
-        return _Start(prepared, run, store, state, metadata)
+        return _Start(prepared, run, store, state, metadata, prompt_file)
 
     @classmethod
     def start(
@@ -548,6 +553,8 @@ class TuiMode(BaseMode):
 
         def launch() -> InteractiveProcess:
             try:
+                if pending.prompt_file:
+                    cls._write_prompt(*pending.prompt_file)
                 return host.terminal(
                     store.name,
                     pending.launch,

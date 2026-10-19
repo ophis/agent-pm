@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -10,12 +11,15 @@ from unittest import mock
 
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Access, Spec
+from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
+from agent_pm.session.modes.base import POINTER
 
 from session.tests import fake_client
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
+from session.tests.live_tmux import wait
 from session.tests.tui_support import SID, Live
 
 NAME = "w1"
@@ -120,6 +124,51 @@ class PollCostTest(Live):
                 "display-message",
             ],
         )
+
+
+class LongPromptTest(Live):
+    """A prompt over Linux's 128 KiB exec argument limit still starts its client."""
+
+    def started_with(self, host):
+        prompt = "雪 a\n" * 40_000
+        os.makedirs(self.workdir)
+        with open(self.clients["fake"]["scenario"], "w") as f:
+            json.dump([{"read": True}], f)
+        tui.TuiMode.start(
+            Spec(
+                workdir=self.workdir,
+                access=Access(cwd=self.workdir),
+                name=NAME,
+                client="fake",
+                sid=SID,
+                prompt=prompt,
+                events=self.events,
+            ),
+            self.session_cls._config().registry.client("fake"),
+            registry=self.session_cls._config().registry,
+            record=lambda _info: None,
+            host=host,
+        )
+        self.addCleanup(tui.TuiStore.attach(NAME, host=host).close)
+        log, path = self.clients["fake"]["log"], os.path.join(self.agent_pm, "tui", NAME, "prompt")
+        wait(lambda: os.path.exists(log) and os.path.getsize(log), what="the client's log")
+        with open(log, encoding="utf-8") as f:
+            argv = json.loads(f.readline())["argv"]
+        path = os.path.join(path, "prompt.md")
+        self.assertEqual(
+            argv[argv.index("--") + 1],
+            POINTER.format(size=len(prompt.encode()), path=path),
+        )
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), prompt)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode), 0o700)
+
+    def test_a_prompt_over_128_kib_starts_on_tmux_with_a_pointer_to_its_file(self):
+        self.started_with(TmuxHost("tmux"))
+
+    def test_a_prompt_over_128_kib_starts_on_pty_with_a_pointer_to_its_file(self):
+        self.started_with(PtyHost("pty"))
 
 
 if __name__ == "__main__":

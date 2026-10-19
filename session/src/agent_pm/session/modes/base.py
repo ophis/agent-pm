@@ -17,6 +17,7 @@ from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     ClientBound,
+    ClientContext,
     ClientHome,
     ConfigError,
     KeyPress,
@@ -40,7 +41,14 @@ from agent_pm.utils import (
     Display,
     command_path,
     nested_start,
+    over_argv,
 )
+
+POINTER = (
+    "Your prompt is {size} bytes, too long for a command line, so it is in {path}. Read all of "
+    "that file now, in parts if your read tool limits size, and follow it as this message."
+)
+PROMPT_FILE = os.path.join("prompt", "prompt.md")
 
 
 def child_env(
@@ -214,6 +222,31 @@ class BaseMode(ABC):
         if spec.access.commands and client.client_note:
             return replace(spec, prompt=spec.prompt + "\n\n" + client.client_note)
         return spec
+
+    @staticmethod
+    def _pointed(
+        spec: Spec, context: ClientContext, local_dir: str
+    ) -> tuple[Spec, tuple[str, str] | None]:
+        """spec, its prompt over_argv replaced by a POINTER to its prompt file, whose dir it may read,
+        under its container's state root, else local_dir; that file's path and text.
+        """
+        if not over_argv(spec.prompt):
+            return spec, None
+        root = context.container.state_root if context.container else local_dir
+        path = os.path.join(root, PROMPT_FILE)
+        access = replace(spec.access, reads=(*spec.access.reads, os.path.dirname(path)))
+        pointer = POINTER.format(size=len(spec.prompt.encode("utf-8")), path=path)
+        return replace(spec, prompt=pointer, access=access), (path, spec.prompt)
+
+    @staticmethod
+    def _write_prompt(path: str, text: str) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as error:
+            raise SessionError(f"prompt file {path}: {error.strerror}") from error
 
     @staticmethod
     def _launched(

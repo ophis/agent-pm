@@ -654,8 +654,11 @@ class Docker(Base):
                 got, _ = self.planned(keys={"output": output}, out=None)
                 self.assertNotIn("deliverable_file", got.prompt)
                 self.assertNotIn("deliverable.md", got.prompt)
-                if output["type"] != "pull-request":
+                if output["type"] == "pull-request":
+                    self.assertNotIn("`deliverable`", got.prompt)
+                else:
                     self.assertIn("inline in the outcome's `deliverable`", got.prompt)
+                    self.assertIn("\n- `deliverable`: the document, when ", got.prompt)
         self.driver.docker = False
         got, _ = self.planned(keys={"output": {"type": "local"}}, out=None)
         self.assertNotIn("AGENT_PM_USERS", got.session.env)
