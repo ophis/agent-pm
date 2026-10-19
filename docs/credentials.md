@@ -198,12 +198,12 @@ Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--us
 Run each with `C` a running worker container (`docker ps --filter label=agent-pm.session --format '{{.Names}}'`),
 once for each client's worker: Claude, Codex, OpenCode. Each prints counts only.
 
-| Resource | Command | Pass | Requirements | Claude | Codex |
-|---|---|---|---|---|---|
-| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` |
+| Resource | Command | Pass | Requirements | Claude | Codex | OpenCode |
+|---|---|---|---|---|---|---|
+| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` | pending |
 
 Each search covers every mount (the workspace volume, the binds, the tmpfs), skipping only `/proc` and `/sys`. The
 container's own tmux socket is not Docker's, so the socket search names `docker`.

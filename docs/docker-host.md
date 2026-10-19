@@ -295,9 +295,10 @@ the container gets no model credential ([Credentials](credentials.md#who-logs-in
 3. Pull every tier's model, `ollama pull qwen3.6:35b-mlx` by default (`[session.clients.opencode.tiers]`;
    `ollama_port`, default 11434, is its port).
 
-The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and its config comes from the Client alone
+The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and the Client gives its config
 (`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, no auto-update):
-none of the Mac's OpenCode install, config or plugins goes into the container. An existing
+none of the Mac's OpenCode install, config or plugins goes into the container (the cwd's own `opencode.json` and
+`.opencode/` still load: OpenCode has no project trust). An existing
 `~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
 image. Its session state is `~/.agent-pm/docker-state/<name>/opencode/` (`opencode_dir`). Then
 `agent-pm-crew worker NAME --client opencode` starts a worker in a container; an OpenCode board run:
