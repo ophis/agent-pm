@@ -122,6 +122,7 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 ## The task board
 
 - **Continue issue work**: before resuming, restarting or rerunning work on an issue, or sending its pane an answer, follow-up, rework or PR-gate fix, re-read the issue's current state; if it is not In Progress, move it there before work continues. For board pipeline launches and harness resumes, the run's write-back owns this move; for workers, ad-hoc role runs and direct pane work, do it yourself. Keep it In Progress until the normal end-of-run move. After pane work without a harness, check the result, relay its deliverable and move it to the normal end state yourself.
+- **Board runs**: hand an issue's work to the board by its ID, `agent-pm-crew issue <ID>` (Launch) or moving the issue to Todo; the router picks its model, tier and effort, so never read an issue to choose a model, tier or effort for it.
 - As a discussion concludes, update its issues without asking: description, title, label, state, blocking relations.
 - Record each decision as a comment on its issue, marked `(the user, <YYYY-MM-DD>)`, and fold it into the descriptions and issues it changes. Mark your own proposal "proposed, not decided" until the user says yes; never record an assumption as the user's decision.
 - Manage issues yourself, not through a sub-agent.
