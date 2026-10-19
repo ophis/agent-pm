@@ -8,8 +8,8 @@ ORCH = "linear_orchestrator"
 ORCH_PKG = f"{PKG}.{ORCH}"
 
 
-# config.toml tables keyed by client name: a `<client> = <whole number>` key line in one (real, `# local:` or
-# commented) may name a client; the rest of the line may not
+# config.toml tables keyed by client name: a `# local: <client> = <whole number>` key line in one may name a client;
+# the rest of the line, and a real or plain-commented key line, may not
 CLIENT_LIMIT_TABLES = ("client_max_runs",)
 
 
