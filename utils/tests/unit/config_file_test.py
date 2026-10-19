@@ -1,6 +1,6 @@
 """
-utils/config_file.py: load, merge, read_resources (layers, ownership, the one local file), unset,
-freeze and thaw.
+utils/config_file.py: load, merge, read_resources (layers, ownership, the one local file, unknown
+keys tolerated), unset, freeze and thaw.
 """
 
 import copy
@@ -21,6 +21,7 @@ from agent_pm.utils.config_file import (
     merge,
     read_resources,
     thaw,
+    tolerate_unknown_keys,
     unset,
 )
 
@@ -291,6 +292,36 @@ class Resources(Case):
         ):
             self.local(text)
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
+                read_resources(self.resources)
+
+    def test_tolerated_unknown_keys_are_reported_and_dropped(self):
+        self.local('[delegate]\nnewer_field = 1\nclient = "y"\n[session]\nnewer = {x = 1}\n')
+        with self.assertRaisesRegex(ConfigFileError, r"unknown key 'newer' in \[session\]"):
+            read_resources(self.resources)
+        reported = []
+        with tolerate_unknown_keys(reported.append):
+            cfg = read_resources(self.resources)
+        self.assertEqual(
+            reported,
+            [
+                "~/.agent-pm/config.local.toml: unknown key 'newer' in [session]",
+                "~/.agent-pm/config.local.toml: unknown key 'newer_field' in [delegate]",
+            ],
+        )
+        self.assertNotIn("newer_field", cfg)
+        self.assertNotIn("newer", cfg)
+        self.assertEqual(cfg["client"], "y")
+        with self.assertRaisesRegex(ConfigFileError, "newer"):
+            read_resources(self.resources)
+
+    def test_tolerating_unknown_keys_keeps_every_other_error(self):
+        for text in ('client = "x"\n', "session = 1\n"):
+            self.local(text)
+            with (
+                self.subTest(text=text),
+                tolerate_unknown_keys(self.fail),
+                self.assertRaises(ConfigFileError),
+            ):
                 read_resources(self.resources)
 
     def test_flat_key_errors_with_supplied_layers(self):

@@ -9,6 +9,7 @@ name (RENAMED_KEYS); nested tables are validated by their owners. Flat local key
 Explicit paths replace files while retaining the defaults as their validation schema.
 """
 
+import contextlib
 import copy
 import os
 import tomllib
@@ -21,6 +22,7 @@ from agent_pm.utils.paths import STATE
 
 LOCAL = f"{STATE}/config.local.toml"
 RENAMED_KEYS = MappingProxyType({"runtime": "client"})
+_TOLERATED: list[Callable[[str], None]] = []
 
 
 class ConfigFileError(ValueError):
@@ -30,6 +32,16 @@ class ConfigFileError(ValueError):
 def renamed_key(key: str) -> str:
     """An unknown-key error's hint for a renamed key, else ""."""
     return f"; renamed to {RENAMED_KEYS[key]!r}" if key in RENAMED_KEYS else ""
+
+
+@contextlib.contextmanager
+def tolerate_unknown_keys(report: Callable[[str], None]) -> Iterator[None]:
+    """Unknown local keys go to `report`, not raised."""
+    _TOLERATED.append(report)
+    try:
+        yield
+    finally:
+        _TOLERATED.pop()
 
 
 def merge(base: dict, over: dict) -> dict:
@@ -125,9 +137,11 @@ def read_resources(
         checked = {}
         for keys, value in _leaves(overlay, ()):
             if keys[0] not in schema:
-                raise ConfigFileError(
-                    f"{local}: unknown key {keys[0]!r} in [{section}]{renamed_key(keys[0])}"
-                )
+                error = f"{local}: unknown key {keys[0]!r} in [{section}]{renamed_key(keys[0])}"
+                if not _TOLERATED:
+                    raise ConfigFileError(error)
+                _TOLERATED[-1](error)
+                continue
             if value == {}:
                 continue
             table = checked
