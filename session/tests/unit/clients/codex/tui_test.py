@@ -482,12 +482,6 @@ class TuiTest(Base):
         self.assertEqual(
             run.hook_events("Stop", self.payload(last_assistant_message=None)), [TurnEnd()]
         )
-        self.assertEqual(
-            run.hook_events(
-                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1])
-            ),
-            [TurnEnd("raw", 0)],
-        )
         for fields in (
             {"agent_id": CHILD},
             {"session_id": "invalid"},
@@ -497,7 +491,19 @@ class TuiTest(Base):
             self.assertEqual(run.hook_events("Stop", self.payload(**fields)), [])
         self.assertEqual(run.hook_events("unknown", self.payload()), [])
 
-    def test_interrupt_retains_root_reply_on_live_and_attach_replay(self):
+    def test_a_stop_reports_no_background_work(self):
+        run, _, _ = self.launch()
+        self.assertEqual(
+            run.hook_events(
+                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1])
+            ),
+            [ClientBound(NATIVE), TurnEnd("raw", 0)],
+        )
+        for payload in ({"background_tasks": [1, {}]}, {}, self.payload()):
+            with self.subTest(payload=payload):
+                self.assertEqual(run.pending(payload), 0)
+
+    def test_interrupt_ends_its_turn_without_the_previous_turns_text(self):
         run = self.client.tui()
         self.assertEqual(
             run.hook_events("Interrupt", self.payload()), [ClientBound(NATIVE), TurnEnd()]
@@ -508,15 +514,23 @@ class TuiTest(Base):
         )
         self.assertEqual(
             run.hook_events("Interrupt", self.payload(last_assistant_message="discard")),
-            [TurnEnd("kept")],
+            [TurnEnd()],
+        )
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message="after")),
+            [TurnEnd("after")],
         )
         attached = self.client.tui()
         self.assertEqual(
-            attached.hook_events("Stop", self.payload(last_assistant_message="kept")),
-            [ClientBound(NATIVE), TurnEnd("kept")],
+            attached.replay(
+                [
+                    ("Stop", self.payload(last_assistant_message="kept")),
+                    ("UserPromptSubmit", self.payload()),
+                    ("Interrupt", self.payload()),
+                ]
+            ),
+            [ClientBound(NATIVE), TurnEnd("kept"), Activity(""), TurnEnd()],
         )
-        self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd("kept")])
-        attached.hook_events("Stop", self.payload(last_assistant_message=None))
         self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd()])
 
     def test_restore_readies_a_fresh_tui_as_the_one_that_launched(self):
@@ -1001,6 +1015,20 @@ class SuppliedFlagsTest(Base):
                 self.assertEqual(argv.count(value), 1)
                 self.assertEqual(argv[argv.index(value) - 1], flag)
         self.assertEqual(argv.count("-s"), 1)
+
+    def test_the_mcp_off_flag_reaches_codex_and_its_trust_step_expanded(self):
+        (self.codex_home / "config.toml").write_text('[mcp_servers.t]\ncommand = "t"\n')
+        _, data = self.launch(dataclasses.replace(self.spec, flags=("-c", "mcp_servers={}")))
+        plan = tui.decode(data)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        off = ["-c", "mcp_servers.t.enabled=false", "-c", 'mcp_servers.t.command="t"']
+        for argv in (
+            tui.execution_argv(plan, snapshot, "hooks.state={trusted}"),
+            tui.trust_args(plan, snapshot),
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(holds(argv, off), argv)
+                self.assertNotIn("mcp_servers={}", argv)
 
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")

@@ -359,7 +359,8 @@ class GraphQLProjection(ServerCase):
             page = self.gql(
                 prune.Q_FINISHED,
                 t=TEAM,
-                s=[STATES["done"], STATES["canceled"]],
+                d=[STATES["done"]],
+                s=[STATES["canceled"]],
                 a=[self.engineer],
                 c=cursor,
             )["issues"]
