@@ -25,7 +25,7 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
 
 1. Check out the target repo with `[--base <Base:>]` ([Principles › Work › Worktree](#work)), `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; stand-in `build`; `<slug>` 2–4 lowercase English words joined by `-`). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
-   - Exit 1 → `failed`, `summary` the error; stop.
+   - Exit 1 → `failed`, `summary` one line, the error's first line within 300 characters, the error verbatim in the deliverable; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.
 2. Run `python3 -P <team>/tools/repo.py status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`. JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
 - **Merge**: where named, merge `origin/<base>` into `<branch>`; never rebase.

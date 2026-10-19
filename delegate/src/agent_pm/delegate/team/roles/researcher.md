@@ -20,7 +20,7 @@ Read the input; decide its type ([Researcher › Type and target](#type-and-targ
 - **Target** (local, mixed): the repos the input names, one or more ([Principles › Work › Target repo](#work)). None → too vague.
 - **Prepare** (local, mixed): in the main session, before any agent or workflow, check out each target repo ([Principles › Work › Worktree](#work)), `<branch>` `<id>-<task>`, `<task>` this task, `deep-research`, `research` or `light-research`.
   - Any exit 2 → `needs_input`; a `questions` entry quotes its error.
-  - Exit 1 → list that repo's part under Gaps. Every repo failed → local: `failed`, `summary` quotes the errors; mixed: drop the local part.
+  - Exit 1 → list that repo's part under Gaps. Every repo failed → local: `failed`, `summary` one line naming each failed repo with its error's first line, within 300 characters, the errors verbatim in the deliverable; mixed: drop the local part.
 - Never run code from the worktrees.
 - From agent results take only findings, sources, verification, confidence and gaps.
 - **Agents** inherit your tools, so each prompt restricts its agent: a **reader** to read-only file tools (read, search, list) inside the worktrees; a **web agent** to web search and fetch, with no **private detail** in queries: internal names, paths, permalinks, private repo names, `repo` or `commit`, repo content, content of documents the input attaches or pastes, secrets.
