@@ -15,6 +15,7 @@ from unittest import mock
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.event.reply import OUTCOME
 from agent_pm.session import Access, Spec
 
 from delegate.tests.case import packaged
@@ -94,11 +95,13 @@ class NewRun(Integration):
         mode = argv.index("--permission-mode")
         self.assertEqual(argv[mode : mode + 2], ["--permission-mode", "auto"])
         policy = argv.index("--strict-mcp-config")
-        self.assertEqual(argv[policy : policy + 2], ["--strict-mcp-config", "--"])
+        rule = argv[policy + 1]
+        self.assertEqual(argv[policy + 2], "--")
+        self.assertTrue(rule.startswith("--append-system-prompt=") and f"`{OUTCOME}`" in rule, rule)
         self.assertEqual(
             argv[argv.index("--settings") + 1], '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
         )
-        for flag in ("--permission-mode", "--strict-mcp-config", "--settings"):
+        for flag in ("--permission-mode", "--strict-mcp-config", "--settings", rule):
             self.assertEqual(argv.count(flag), 1, flag)
 
     def test_add_dirs_never_hold_the_workdir_or_its_run_dir(self):

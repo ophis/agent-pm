@@ -71,7 +71,7 @@ def _relations(gql, given):
     picked = {}
     for option, values in given.items():
         for value in dict.fromkeys(values):
-            node = issue_refs.issue(gql, value, option)
+            node = issue_refs.issue(gql, value, option=option)
             first, _ = picked.setdefault(node["id"], (option, node))
             if first != option:
                 raise IssueError(

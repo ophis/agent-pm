@@ -443,7 +443,10 @@ class Prompt(Fake):
             ),
             "`[agent-pm-progress:start] <what that line asks you to report>`",
             "all background work and every agent you spawned have finished",
-            ("your last reply is one fenced code block whose info string is `agent-pm-outcome`"),
+            (
+                "your last reply is one fenced code block whose info string is `agent-pm-outcome`, with no "
+                "text before or after it"
+            ),
             "one JSON object of the fields in [Output](#output)",
             "`deliverable_file`",
         ):

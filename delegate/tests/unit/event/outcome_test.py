@@ -103,7 +103,7 @@ class Validate(Base):
             ({**DONE, "files": "x.md"}, "must be lists"),
             ({**DONE, "extra": 1}, "unknown field 'extra'"),
             ({**DONE, "title": "x" * 201}, "title is longer than 200"),
-            ({**DONE, "summary": "x" * 4001}, "summary is longer than 4000"),
+            ({**DONE, "summary": "x" * 301}, "summary is longer than 300"),
             ({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text"),
             ({**DONE, "files": None}, "files must be a list"),
             ({**DONE, "url": None}, "url must be text"),
@@ -114,6 +114,9 @@ class Validate(Base):
         ):
             with self.subTest(msg=msg, data=data):
                 self.fails(data, msg)
+
+    def test_a_summary_of_up_to_300_characters_holds(self):
+        self.assertEqual(self.check({**DONE, "summary": "x" * 300}).summary, "x" * 300)
 
     def test_the_status_is_one_of_the_outcome_statuses(self):
         for status in STATUSES:

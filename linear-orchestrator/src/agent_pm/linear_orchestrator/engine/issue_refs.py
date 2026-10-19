@@ -230,7 +230,7 @@ def _current(node):
     return None if node["retiredAt"] else (node, [])
 
 
-def label(gql, team_id, value):
+def label(gql, team_id, value, *, option="--label"):
     """The label of team_id or the workspace whose id or exact name is value; a label group or a
     retired label is refused, as no issue can be given one.
     """
@@ -238,7 +238,7 @@ def label(gql, team_id, value):
     node = resolve(
         gql,
         value,
-        option="--label",
+        option=option,
         what=f"label of team {team_id} or the workspace",
         find=labels(team_id, {"name": {"eq": value}}),
         near=lambda text: labels(team_id, every(SETTABLE, named(text)), _current),
@@ -249,11 +249,11 @@ def label(gql, team_id, value):
     )
     if node["isGroup"]:
         raise IssueError(
-            f"--label {value}: {show(node)} is a label group: name one of its labels; "
+            f"{option} {value}: {show(node)} is a label group: name one of its labels; "
             f"list them: {lookup}"
         )
     if node["retiredAt"]:
-        raise IssueError(f"--label {value}: {show(node)} is retired; list them: {lookup}")
+        raise IssueError(f"{option} {value}: {show(node)} is retired; list them: {lookup}")
     return node
 
 
@@ -293,7 +293,7 @@ def user(gql, value):
     )
 
 
-def issue(gql, value, option="--parent"):
+def issue(gql, value, *, option="--parent"):
     """{id, identifier} of the issue whose identifier (TASK-1) or id is value."""
     if not (re.fullmatch(ISSUE_ID, value) or UUID_RE.fullmatch(value)):
         raise IssueError(

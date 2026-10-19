@@ -157,9 +157,10 @@ harness_host = ""
 
 # [policy.<client>]   a role run's flags and env, the Delegate's, after the session's [clients.<client>] flags and
 #                     permission mode (session/src/agent_pm/session/config.toml), which keep agent-pm's own plugin off
-#                     and hold every permission flag (docs/sessions.md › Client policy); [] → none
+#                     and hold every permission flag (docs/sessions.md › Client policy); [] → none. The system-prompt
+#                     flag keeps a final reply to its outcome block: a local list replacing this one keeps it too
 [policy.claude]
-flags = ["--strict-mcp-config"]
+flags = ["--strict-mcp-config", '--append-system-prompt=When you return your outcome, that reply is the `agent-pm-outcome` fenced block alone: write no summary or other text before or after it.']
 
 [policy.codex]
-flags = []
+flags = ["-c", 'developer_instructions="When you return your outcome, that reply is the `agent-pm-outcome` fenced block alone: write no summary or other text before or after it."']

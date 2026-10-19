@@ -4,7 +4,7 @@ Your result is an **outcome**, returned per [Output › Return](#return), plus a
 
 - `status`: `done` | `needs_input` | `failed`.
 - `title`: one line.
-- `summary`: 3–5 lines.
+- `summary`: 1–2 short lines (≤ 300 characters); every detail goes in the deliverable.
 - `questions`: `needs_input` only, 1–4.
 - `url`: the delivered link, when [Output › Destination](#destination) gives one.
 - `files`: absolute paths, when your task asks for them.

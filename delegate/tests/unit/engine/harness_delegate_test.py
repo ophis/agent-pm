@@ -1101,16 +1101,18 @@ class StatusTest(HarnessCase):
         record = self.make(spec=spec).detach()
         view = HarnessDelegate.attach(record)
         agent = HarnessSession.live[record.sessions[1]]
-        for result, expected in (
-            (None, "agent content"),
-            (Result(0, None), "agent content"),
-            (Result(0, Outcome("done", "T", "S")), None),
-            (Result(1, None, error="boom"), None),
+        block = "```agent-pm-outcome\n{}\n```"
+        for result, given, expected in (
+            (None, "agent content", "agent content"),
+            (Result(0, None), "agent content", "agent content"),
+            (None, f"Built X.\n{block}\nDone.", block),
+            (Result(0, Outcome("done", "T", "S")), "agent content", None),
+            (Result(1, None, error="boom"), "agent content", None),
         ):
-            with self.subTest(result=result):
+            with self.subTest(result=result, given=given):
                 if result is not None:
                     view._complete(result)
-                with mock.patch.object(agent, "content", return_value="agent content") as content:
+                with mock.patch.object(agent, "content", return_value=given) as content:
                     self.assertEqual(
                         view.content(),
                         expected if expected is not None else view.status().to_line(),

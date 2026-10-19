@@ -48,5 +48,5 @@ The Input has a `## Related work` section → before your task's steps, judge ea
 | `intersects` | finished | as `partial` | none |
 | `supersedes`, `intersects` | in progress, canceled | all of the request | cross-link |
 
-- **Board proposal**: appended to `summary` past its line limit, one line per action: `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
+- **Board proposal**: a final `Board proposal` section of the deliverable, one line per action: `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
 - `none` → no mention.

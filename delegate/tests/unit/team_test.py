@@ -194,7 +194,8 @@ class Shipped(Case):
             "`doc=` the PRD's file",
             "`requirement=` the brief and the user's later words, verbatim, with the documents they name",
             "asking no more rigor or scope than the brief does",
-            "`capped` or `needs-author` → the PRD still ships; the outcome's `summary` lists the open blockers",
+            "`capped` or `needs-author` → the PRD still ships; its open blockers and `needs-author`'s "
+            "questions go under Open questions, and the outcome's `summary` gives the blockers' count.",
         ):
             self.assertIn(literal, step)
         self.assertNotIn("cap=", step)
@@ -511,20 +512,59 @@ class Real(RealConfig):
                     if len(step.strip()) >= 30 and not step.startswith("#"):
                         self.assertNotIn(step.strip(), prompt, (role, task, t))
 
-    def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
+    def test_deep_research_falls_back_to_both_method_files(self):
         prompt, _ = composed("researcher")
         self.assertEqual(parameters(prompt)["<team>"], f"`{TEAM}`")
         for name in ("deep-research", "ultracode"):
             self.assertTrue(os.path.isfile(os.path.join(TEAM, "methods", f"{name}.md")), name)
-            self.assertIn(f"`<team>/methods/{name}.md`", prompt)
+        self.assertIn("`<team>/methods/deep-research.md`", prompt)
+        self.assertIn("`<team>/methods/ultracode.md`", task_text("deep-research"))
         for phrase in (
             "No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",
-            "per the ultracode method ([Researcher › Methods](#methods))",
+            "per the **ultracode method** `<team>/methods/ultracode.md` (read-only)",
+            "The ultracode round's agents are readers",
+            "the deep-research method's agents are web agents",
             "No Workflow tool → follow that method.",
             "Before the second, the brake ([Researcher › Methods](#methods)).",
             "No subagents with a round's tools → skip that round, under Gaps.",
         ):
             self.assertIn(phrase, task_text("deep-research"))
+
+    def test_the_summary_is_short_and_details_go_in_the_deliverable(self):
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                prompt = composed(role, task)[0]
+                self.assertIn(
+                    "- `summary`: 1–2 short lines (≤ 300 characters); every detail goes in the "
+                    "deliverable.",
+                    prompt,
+                )
+        for path, text in team_texts().items():
+            for stale in ("3–5 lines", "to `summary`", "`summary` with", "`summary`'s final line"):
+                with self.subTest(path=path, stale=stale):
+                    self.assertNotIn(stale, text)
+        overlap = section(composed("researcher")[0], "Overlap")
+        self.assertIn(
+            "- **Board proposal**: a final `Board proposal` section of the deliverable, one line per "
+            "action: ",
+            overlap,
+        )
+        standards = section(composed("researcher")[0], "Standards")
+        self.assertIn(
+            "- `summary`: line 1 the answer and the type; line 2, only when there are any, the **status "
+            "items** (upgrade advice, SVG status, length check, in that order) joined by `; `.",
+            standards,
+        )
+
+    def test_only_the_deep_research_task_names_ultracode(self):
+        # Claude Code answers a bare ultracode with a Workflow reminder, so no prompt says it.
+        for task in (None, *catalog()["researcher"]):
+            with self.subTest(task=task):
+                self.assertNotIn("ultracode", composed("researcher", task)[0].lower())
+        for task in catalog()["researcher"]:
+            with self.subTest(task=task):
+                named = "ultracode" in task_text(task).lower()
+                self.assertEqual(named, task == "deep-research")
 
     def test_every_repo_command_takes_the_inputs_checkout(self):
         found = {}
@@ -578,7 +618,7 @@ class Real(RealConfig):
             (
                 "echo's summary overrides Output's length",
                 task_text("echo"),
-                "`summary` the input's first line, not [Output](#output)'s 3–5 lines.",
+                "`summary` the input's first line, cut to 300 characters.",
             ),
             (
                 "a build's files are its spec and plan doc",
