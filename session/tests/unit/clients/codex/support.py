@@ -16,6 +16,21 @@ from agent_pm.session.engine.types import LOCAL_CONTEXT, Access, Launch, Permiss
 from session.tests.case import REPO, Case
 
 PLUGIN_OFF = ("-c", "plugins.agent-pm@agent-pm.enabled=false")
+TOOLS_OFF = (
+    *(
+        ("-c", f"plugins.{name}@openai-bundled.enabled=false")
+        for name in (
+            "browser",
+            "chrome",
+            "chrome-dev",
+            "chrome-internal",
+            "computer-use",
+            "unified-computer-use",
+        )
+    ),
+    ("--disable", "apps"),
+    ("--disable", "tool_suggest"),
+)
 UNIFIED = (
     ("-s", "danger-full-access"),
     ("-c", 'approval_policy="on-request"'),
@@ -28,9 +43,9 @@ NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
 
 
-def packaged() -> CodexClient:
-    """The client the packaged session config.toml builds."""
-    table = dict(registry.settings(read_config(local=os.devnull))["clients"]["codex"])
+def packaged(local: str = os.devnull) -> CodexClient:
+    """The client the packaged session config.toml, under `local`, builds."""
+    table = dict(registry.settings(read_config(local=local))["clients"]["codex"])
     table.pop("implementation")
     return CodexClient(table)
 

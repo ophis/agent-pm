@@ -48,6 +48,7 @@ from session.tests.unit.clients.codex.support import (
     MODES,
     NATIVE,
     PLUGIN_OFF,
+    TOOLS_OFF,
     UNIFIED,
     Base,
     committed_tui,
@@ -978,6 +979,16 @@ class SuppliedFlagsTest(Base):
         argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
         start = argv.index(PLUGIN_OFF[1]) - 1
         self.assertEqual(argv[start : start + 2], list(PLUGIN_OFF))
+
+    def test_the_packaged_config_turns_the_browser_computer_use_apps_and_suggestions_off(self):
+        self.client = packaged()
+        _, data = self.launch(self.spec)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
+        for pair in TOOLS_OFF:
+            with self.subTest(pair=pair):
+                self.assertTrue(holds(argv, pair), argv)
+                self.assertEqual(argv.count(pair[1]), 1)
 
     def test_the_packaged_config_gives_a_crew_worker_each_codex_policy_flag_once(self):
         self.client = packaged()

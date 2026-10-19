@@ -58,12 +58,24 @@ max = "max"
 
 # [clients.codex]   Codex (session/src/agent_pm/session/clients/codex/)
 #   flags            codex flags added before a Spec's to every new session; a resume keeps its own; empty → none.
-#                    Default: as [clients.claude] flags'; the plugin id stays unquoted, or the key never matches
+#                    Default: as [clients.claude] flags', plus Codex 0.163.0's bundled browser and computer-use
+#                    plugins, Apps and tool_suggest off (docs/sessions.md › Session settings); a plugin id stays
+#                    unquoted, or the key never matches
 # [clients.codex.modes]  auto: no Codex sandbox, auto-reviewed approvals; yolo: no sandbox, no approvals. Neither
 #                    grants a directory, hooks, session or cwd (docs/sessions.md › Client policy)
 [clients.codex]
 implementation = "agent_pm.session.clients.codex:CodexClient"
-flags = ["-c", "plugins.agent-pm@agent-pm.enabled=false"]
+flags = [
+    "-c", "plugins.agent-pm@agent-pm.enabled=false",
+    "-c", "plugins.browser@openai-bundled.enabled=false",
+    "-c", "plugins.chrome@openai-bundled.enabled=false",
+    "-c", "plugins.chrome-dev@openai-bundled.enabled=false",
+    "-c", "plugins.chrome-internal@openai-bundled.enabled=false",
+    "-c", "plugins.computer-use@openai-bundled.enabled=false",
+    "-c", "plugins.unified-computer-use@openai-bundled.enabled=false",
+    "--disable", "apps",
+    "--disable", "tool_suggest",
+]
 
 [clients.codex.modes]
 auto = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']
