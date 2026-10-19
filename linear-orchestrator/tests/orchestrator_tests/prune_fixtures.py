@@ -78,7 +78,11 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
             hits = [
                 i
                 for i, (state, _) in issues.items()
-                if i not in gql.gone and owners.get(i) in v["a"] and STATE_IDS[state] in v["s"]
+                if i not in gql.gone
+                and (
+                    (owners.get(i) in v["a"] and STATE_IDS[state] in v["d"])
+                    or STATE_IDS[state] in v["s"]
+                )
             ]
             start = int(v["c"] or 0)
             return {

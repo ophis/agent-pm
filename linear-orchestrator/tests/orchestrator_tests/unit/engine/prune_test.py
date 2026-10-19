@@ -16,6 +16,7 @@ from orchestrator_tests.process_fixtures import CompletedProcess
 from orchestrator_tests.prune_fixtures import (
     NOW,
     ROLES,
+    STATE_IDS,
     TEAM_OBJ,
     PruneDelegate,
     PruneScenario,
@@ -287,6 +288,44 @@ class RetentionCleanup(PruneScenario):
             ],
         )
 
+    def test_archives_canceled_and_duplicate_issues_of_any_assignee(self):
+        gql = gql_for(
+            {
+                "TASK-1": ("Canceled", [(30, "Canceled")]),
+                "TASK-2": ("Duplicate", [(30, "Duplicate")]),
+                "TASK-3": ("Canceled", [(30, "Canceled")]),
+                "TASK-4": ("Duplicate", [(2, "Duplicate")]),
+                "TASK-5": ("Duplicate", [(2 - 1 / 3600, "Duplicate")]),
+                "TASK-6": ("Canceled", [(30, "Canceled")]),
+                "TASK-8": ("Done", [(30, "Done")]),
+                "TASK-9": ("Done", [(30, "Done")]),
+            },
+            owners={
+                "TASK-1": None,
+                "TASK-2": "u-researcher",
+                "TASK-3": "u-other",
+                "TASK-4": None,
+                "TASK-5": None,
+                "TASK-6": "u-researcher",
+                "TASK-8": "u-researcher",
+                "TASK-9": None,
+            },
+            children={"TASK-6": {"TASK-7": "started"}},
+        )
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2", "id-TASK-3", "id-TASK-4"])
+        self.assertEqual(
+            out.splitlines(),
+            [
+                "prune-archived TASK-1",
+                "prune-archived TASK-2",
+                "prune-archived TASK-3",
+                "prune-archived TASK-4",
+                "prune-skip TASK-6 reason=archive: sub-issue TASK-7 not finished",
+            ],
+        )
+
     def test_not_archived(self):
         done = ("Done", [(50, "Done")])
         gql = gql_for(
@@ -317,7 +356,8 @@ class RetentionCleanup(PruneScenario):
         )
         (v,) = gql.finished
         self.assertEqual(sorted(v["a"]), ["u-engineer", "u-pm"])
-        self.assertEqual(sorted(v["s"]), sorted(FINISHED))
+        self.assertEqual(v["d"], [STATE_IDS["Done"]])
+        self.assertEqual(sorted(v["s"]), sorted(FINISHED - {STATE_IDS["Done"]}))
 
     def test_archive_failure_others_archived(self):
         done = ("Done", [(30, "Done")])
@@ -460,6 +500,7 @@ class RetentionCleanup(PruneScenario):
             [
                 f"prune-closed TASK-7 session={SID}",
                 "prune-removed TASK-7 what=agent dir",
+                "prune-archived TASK-7",
             ],
         )
         self.assertEqual((seen, self.closed()), ([True], [A]))
@@ -644,7 +685,11 @@ class WorkdirRetention(PruneScenario):
         )
         self.assertEqual(
             self.prune(gql),
-            (0, "prune-removed TASK-7 what=workdir\nprune-removed TASK-8 what=workdir"),
+            (
+                0,
+                "prune-removed TASK-7 what=workdir\nprune-removed TASK-8 what=workdir\n"
+                "prune-archived TASK-8",
+            ),
         )
         self.assertEqual(os.listdir(self.work), [])
 
@@ -862,7 +907,11 @@ class Stalled(PruneScenario):
         _, gql = self.stalled(state="Duplicate")
         self.assertEqual(
             self.prune(gql),
-            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
+            (
+                0,
+                f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir\n"
+                "prune-archived TASK-7",
+            ),
         )
         self.assertIsNone(self.checkouts("TASK-7"))
 

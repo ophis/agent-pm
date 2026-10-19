@@ -9,9 +9,10 @@ configured one) reports agent files in (Delegate.checkouts not None):
   <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the default
   that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs only,
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
-- archives every finished issue of the team assigned to the pm or engineer role account, unless a
-  sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs too):
-  skipped until each is finished or archived.
+- archives every finished issue of the team, a Done one only when assigned to the pm or engineer
+  role account (a researcher's report stays), any other whatever its assignee, none included, unless
+  a sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs
+  too): skipped until each is finished or archived.
 
 For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
@@ -72,8 +73,9 @@ Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " +
 CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
 Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
 Q_FINISHED = (
-    """query($t: ID, $s: [ID!], $a: [ID!], $c: String, $after: String) { issues(filter: { team: { id: { eq: $t } },
-  state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
+    """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
+  issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
+  { state: { id: { in: $s } } }] }, first: 50, after: $c) {
   nodes { id identifier """
     + CHILDREN
     + " "
@@ -106,10 +108,11 @@ Prerequisites and effects:
   ISSUE-* branches already contained in origin/branch or origin/default;
   preserve the default branch and unpushed branches. No fetch is performed.
   Clones under work_dir/work or temporary directories are skipped.
-  Archive team issues finished at least 2 hours ago and assigned to
-  pm/engineer role accounts; unknown finish times are skipped, and so is an
-  issue with an unfinished sub-issue at any depth (archiving it archives its
-  sub-issues and theirs).
+  Archive team issues finished at least 2 hours ago: Canceled/Duplicate
+  whatever the assignee (none or researcher too), Done only when assigned to
+  pm/engineer role accounts (researcher reports stay). Unknown finish times
+  are skipped, and so is an issue with an unfinished sub-issue at any depth
+  (archiving it archives its sub-issues and theirs).
   For issues in any other state but Todo/In Progress, 7 days after both their
   latest move into it and their latest recorded run, delete their checkouts
   and temp files through their Delegate, keeping the other agent files and the
@@ -254,15 +257,20 @@ class Pruner:
         return True
 
     def finished_issues(self, finished):
+        """Done issues of ARCHIVE_ROLES and other finished ones of anyone."""
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
-        if not ids:
-            return []
+        done = sorted(finished & {self.team.states["done"]})
         # Every page before any archive: archiving shifts the pages.
         nodes, cursor = [], None
         while True:
-            page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)[
-                "issues"
-            ]
+            page = self.gql(
+                Q_FINISHED,
+                t=self.team.id,
+                d=done,
+                s=sorted(finished.difference(done)),
+                a=ids,
+                c=cursor,
+            )["issues"]
             nodes += page["nodes"]
             end = page["pageInfo"]["endCursor"]
             if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:

@@ -558,6 +558,10 @@ class FakeLinear:
             "project": rec["project"] and rec["project"]["id"],
         }
         for field, cond in flt.items():
+            if field == "or":
+                if not any(self._match(rec, f) for f in cond):
+                    return False
+                continue
             if field not in values:
                 raise Problem(f"fake: no issue filter {field}")
             for c, arg in (cond["id"] if field != "id" and "id" in cond else cond).items():
@@ -637,8 +641,10 @@ class FakeLinear:
             caller,
             {
                 "team": {"id": {"eq": v.get("t")}},
-                "state": {"id": {"in": v.get("s")}},
-                "assignee": {"id": {"in": v.get("a")}},
+                "or": [
+                    {"state": {"id": {"in": v.get("d")}}, "assignee": {"id": {"in": v.get("a")}}},
+                    {"state": {"id": {"in": v.get("s")}}},
+                ],
             },
             50,
             v.get("c"),
