@@ -22,7 +22,7 @@ from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import SID_ENV, Record, answer_keys, nested_start
+from agent_pm.utils import SID_ENV, Record, answer_keys, nested_start, one_line
 
 
 def _query_help(command):
@@ -182,6 +182,9 @@ def main(argv=None):
         cfg = load()
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         print(f"agent-pm-linear: {error}", file=sys.stderr)
+        if args.command == "writeback" and getattr(error, "logs_dir", None):
+            event_log.use_logs(error.logs_dir)
+            _refused(args.issue, error)
         return 2
     event_log.use_logs(cfg.logs_dir)
     if args.command == "writeback":
@@ -252,7 +255,13 @@ def _writeback(cfg, issue, workdir):
         return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-linear writeback: {error}", file=sys.stderr)
+        _refused(issue, error)
         return 2
+
+
+def _refused(issue, error):
+    # the harness keeps a failed callback's exit code; the log keeps why
+    event_log.log("writeback", "refused", issue, quiet=True, reason=one_line(str(error)), exit=2)
 
 
 if __name__ == "__main__":

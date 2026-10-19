@@ -12,9 +12,11 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import promote, prune, router, runs
+from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
+from orchestrator_tests.unit.run_fixtures import logged
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -602,3 +604,35 @@ class WritebackUsage(RunCase):
                 self.assertEqual((result, output), (2, ""))
                 self.assertIn("agent-pm-linear writeback: ", errors)
                 self.assertIn(error, errors)
+                row = logged(self.cfg.logs_dir)[-1]
+                self.assertEqual(
+                    (row["src"], row["kind"], row["issue"], row["exit"]),
+                    ("writeback", "refused", "TASK-1", 2),
+                )
+                self.assertIn(error, row["reason"])
+
+    def test_a_configuration_it_cannot_load_is_logged_where_its_logs_go(self):
+        refused = ConfigError("config.local.toml: unknown key 'k'", logs_dir=self.cfg.logs_dir)
+        with mock.patch.object(cli, "load", side_effect=refused):
+            result, output, errors = _call(
+                ["writeback", "--issue", "TASK-1", "--workdir", "/w"], stdin="{}\n"
+            )
+        self.assertEqual((result, output), (2, ""))
+        self.assertEqual(errors, "agent-pm-linear: config.local.toml: unknown key 'k'\n")
+        row = logged(self.cfg.logs_dir)[-1]
+        self.assertEqual(
+            {k: v for k, v in row.items() if k != "ts"},
+            {
+                "src": "writeback",
+                "kind": "refused",
+                "issue": "TASK-1",
+                "reason": "config.local.toml: unknown key 'k'",
+                "exit": 2,
+            },
+        )
+
+    def test_a_configuration_refused_before_its_logs_dir_is_known_is_only_printed(self):
+        with mock.patch.object(cli, "load", side_effect=ConfigError("no work_dir")):
+            result, _, errors = _call(["writeback", "--issue", "TASK-1", "--workdir", "/w"])
+        self.assertEqual((result, errors), (2, "agent-pm-linear: no work_dir\n"))
+        self.assertEqual(logged(self.cfg.logs_dir), [])
