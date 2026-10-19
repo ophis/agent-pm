@@ -1,7 +1,7 @@
 # Docker broker protocol
 
-**Protocol 14** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
-(Session's Docker Host, Python). `version` writes `{"protocol_version":"14"}`.
+**Protocol 15** is the contract for TASK-559 (`agent-pm-broker`, Go) and TASK-560
+(Session's Docker Host, Python). `version` writes `{"protocol_version":"15"}`.
 This version is independent of the agent-pm package version. Python requires exact
 equality before other calls; mismatch is a local preflight error that prints the
 broker installation/upgrade command supplied by TASK-559. It creates no container.
@@ -21,6 +21,7 @@ refresh's required nullable `credential_expires_at` and permits Codex refresh wi
 Protocol 12 replaces the exact-list audit with `min_version` and drops the status rule field.
 Protocol 13 adds start's required `github_user_id`. Protocol 14 adds the `opencode` client with
 `opencode_dir`, start's required `clients.opencode` and the `agent-pm.client` container label.
+Protocol 15 adds the manifest's optional `opencode_providers`, whose API keys start writes into the container.
 Bump the version whenever that wire format changes. A plugin upgraded without
 reinstalling the broker then fails the handshake, so an old stub never meets a new relay.
 
@@ -46,8 +47,9 @@ manifest. References are internal, so Go and Python can load it without network 
 
 Input fixtures' `argv` arrays represent arguments after the executable, in canonical
 order. They are test data, not JSON sent to the broker. These commands consume no
-stdin. `login claude` reads a token; both it and `login github <app>` read the login keychain password once
-when the item's access needs a change, interactively without echo; neither has a JSON contract. `login github <app>` then
+stdin. `login claude` reads a token and `login opencode <provider>` that provider's API key; they and
+`login github <app>` read the login keychain password once when the item's access needs a change, all interactively
+without echo; none has a JSON contract. `login github <app>` then
 looks up `<app>[bot]` (`GET /users/<app>[bot]`, no credential) and saves its user ID ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
@@ -83,7 +85,8 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `client` | Required: `claude`, `codex` or `opencode` |
 | `claude_dir` | Required only for Claude, forbidden for the others; mounted read/write at the same container path |
 | `codex_dir` | Required only for Codex, forbidden for the others; volatile container home with only its `sessions/` host-bound |
-| `opencode_dir` | Required only for OpenCode, forbidden for the others; mounted read/write at the same container path as the container's `XDG_DATA_HOME`. OpenCode gets no client credential |
+| `opencode_dir` | Required only for OpenCode, forbidden for the others; mounted read/write at the same container path as the container's `XDG_DATA_HOME`. OpenCode gets no client credential beyond `opencode_providers`' keys |
+| `opencode_providers` | Optional, OpenCode only: unique provider names (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, never `ollama`), at most 32; absent is none. Start writes each one's API key, saved by `agent-pm-broker login opencode <provider>`, to `/run/agent-pm/secrets/opencode/<provider>.key` (0400, through `docker exec` stdin) |
 | `github` | Required: `null` (no GitHub token), or `{"app": "agent-pm-bot"}`, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
@@ -118,7 +121,9 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
   inside the volume.
 - Require the image to exist, be broker-built and carry `agent-pm.version`; tag syntax
   alone does not establish provenance. Missing login fails before creation and tells
-  the user to run `agent-pm-broker login <client>`; only that client's login is read.
+  the user to run `agent-pm-broker login <client>`; only that client's login is read. An OpenCode
+  start reads only its `opencode_providers`' keys; a missing one is `login_required`, naming
+  `agent-pm-broker login opencode <provider>`.
 - Use the system account home, never `$HOME`, for the fixed endpoint
   `unix://<account-home>/.docker/run/docker.sock`. Ignore `DOCKER_HOST`,
   `DOCKER_CONTEXT` and `~/.docker/config.json`.
@@ -127,7 +132,7 @@ Schemas cannot prove filesystem, keychain, image provenance or daemon state:
 
 | Command | Fields and meaning |
 |---|---|
-| `version` | `protocol_version`: exact string `14` |
+| `version` | `protocol_version`: exact string `15` |
 | `build` | `image`: broker tag; `digest`: final image content digest (`sha256:` plus 64 lowercase hex); `rebuilt`: whether this call rebuilt it: with `--max-age` (1 to 9 digits), also when the image was built that many seconds ago or earlier (`0`: always), keeping it if that rebuild fails with `build_failed` (except `0`); without it, never for age |
 | `start` | `container`: canonical name; `endpoint`: fixed daemon socket URL; `image_digest`: final image digest; `clients.claude`, `clients.codex` and `clients.opencode`: actual runnable version strings after preparation, every start reporting all three (an OpenCode start below the broker's minimum OpenCode is `start_failed`, asking for an image rebuild); `client_update`: object below; `github`: one `{"account", "expires_at"}` per installation token written in (`[]` with `github` `null` or no installation), sorted by account; `github_user_id`: the App's bot user ID as `login github` saved it, `null` with `github` `null` (no saved ID: `login_required`, nothing created); `credential_expires_at`: Codex's initial access-token UTC expiry, `null` for Claude and OpenCode |
 | `refresh` | `container`: requested canonical name; `github`: the new tokens' `{"account", "expires_at"}`, `[]` without GitHub; `credential_expires_at`: published Codex access-token UTC expiry, `null` for Claude and OpenCode |

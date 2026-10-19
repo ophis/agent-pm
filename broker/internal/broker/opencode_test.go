@@ -3,9 +3,13 @@ package broker
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
 const apiKey = "sk-strata-SECRET"
@@ -20,6 +24,14 @@ type fakeSecrets struct {
 	putErr   error
 	puts     []string
 	returned [][]byte
+}
+
+// AppAccess is fakeApps' for an item that exists, else ErrNotFound.
+func (k *fakeSecrets) AppAccess(service, account string) (AppAccess, error) {
+	if _, ok := k.items[service+"/"+account]; !ok {
+		return AppAccess{}, ErrNotFound
+	}
+	return k.fakeApps.AppAccess(service, account)
 }
 
 func (k *fakeSecrets) Secret(service, account string) ([]byte, error) {
@@ -158,6 +170,88 @@ func TestLoginOpencodeReadsBack(t *testing.T) {
 	} {
 		if _, err := loginOpencode(t, tc.k, &askOnce{}, apiKey); err == nil || err.Error() != tc.fails {
 			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+// providerKeys is a keychain holding an API key for each provider, its value apiKey-<provider>.
+func providerKeys(providers ...string) *fakeSecrets {
+	k := &fakeSecrets{items: map[string][]byte{}}
+	for _, p := range providers {
+		k.items["agent-pm-opencode/"+p] = []byte(apiKey + "-" + p)
+	}
+	return k
+}
+
+func TestOpencodeKeysReady(t *testing.T) {
+	for name, tc := range map[string]struct {
+		k       *fakeSecrets
+		code    protocol.Code
+		message string
+	}{
+		"all":     {k: providerKeys("strata", "lab")},
+		"missing": {k: providerKeys("strata"), code: protocol.LoginRequired, message: "No API key for OpenCode provider lab: run agent-pm-broker login opencode lab."},
+		"other build": {k: func() *fakeSecrets { k := providerKeys("strata", "lab"); k.access = reinstalled(); return k }(), code: protocol.LoginRequired,
+			message: "The OpenCode provider strata API key trusts another broker build: run agent-pm-broker login opencode strata."},
+		"keychain": {k: func() *fakeSecrets {
+			k := providerKeys("strata", "lab")
+			k.accessErr = errors.New("user denied")
+			return k
+		}(),
+			code: protocol.KeychainFailed, message: "Keychain access to the OpenCode provider strata API key failed."},
+	} {
+		err := OpencodeKeys{Keychain: tc.k}.Ready([]string{"strata", "lab"})
+		var e *protocol.Error
+		if tc.code == "" && err != nil || tc.code != "" && (!errors.As(err, &e) || e.Code != tc.code || e.Message != tc.message || e.Cause != "") {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(tc.k.returned) != 0 {
+			t.Fatalf("%s: Ready read a key", name)
+		}
+	}
+}
+
+func TestOpencodeKeysInject(t *testing.T) {
+	e := &fakeExec{}
+	k := providerKeys("strata", "lab")
+	if err := (OpencodeKeys{Keychain: k}).Inject([]string{"strata", "lab"}, e.run); err != nil {
+		t.Fatal(err)
+	}
+	script := "mkdir -p -m 0700 " + docker.SecretsDir + "/opencode && umask 0377 && set -C && cat > " + docker.SecretsDir + `/opencode/"$1".key`
+	want := [][]string{{"/bin/sh", "-c", script, "sh", "strata"}, {"/bin/sh", "-c", script, "sh", "lab"}}
+	if !reflect.DeepEqual(e.argv, want) || string(e.stdin[0]) != apiKey+"-strata" || string(e.stdin[1]) != apiKey+"-lab" {
+		t.Fatalf("%q %q", e.argv, e.stdin)
+	}
+	for _, b := range k.returned {
+		if !bytes.Equal(b, make([]byte, len(b))) {
+			t.Fatal("read buffer not erased")
+		}
+	}
+	for name, tc := range map[string]struct {
+		k           *fakeSecrets
+		dockerErr   error
+		code        protocol.Code
+		unreachable bool
+	}{
+		"docker fails": {k: providerKeys("strata"), dockerErr: &docker.CommandError{Exit: 1, Stderr: "cat: " + apiKey}},
+		"unreachable":  {k: providerKeys("strata"), dockerErr: errors.Join(docker.ErrUnreachable, errors.New(apiKey)), unreachable: true},
+		"missing":      {k: providerKeys(), code: protocol.LoginRequired},
+		"needs dialog": {k: func() *fakeSecrets { k := providerKeys("strata"); k.readErr = ErrNeedsDialog; return k }(), code: protocol.LoginRequired},
+		"keychain fail": {k: func() *fakeSecrets {
+			k := providerKeys("strata")
+			k.readErr = errors.New("keychain status -25293")
+			return k
+		}(), code: protocol.KeychainFailed},
+	} {
+		e := &fakeExec{err: tc.dockerErr}
+		err := OpencodeKeys{Keychain: tc.k}.Inject([]string{"strata"}, e.run)
+		var pe *protocol.Error
+		var ce *docker.CommandError
+		if err == nil || strings.Contains(err.Error(), apiKey) || errors.Is(err, docker.ErrUnreachable) != tc.unreachable || errors.As(err, &ce) {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if tc.code != "" && (!errors.As(err, &pe) || pe.Code != tc.code || len(e.argv) != 0) {
+			t.Fatalf("%s: %v, exec %q", name, err, e.argv)
 		}
 	}
 }

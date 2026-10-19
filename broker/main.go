@@ -210,6 +210,7 @@ func withHost(command, container string, progress io.Writer, f func(launcher.Hos
 	d.Progress = progress
 	h := launcher.NewHost(home, d.Endpoint(), d, broker.Credentials{Keychain: broker.SystemKeychain{Home: home}}, tokens(home, rec), rec)
 	h.Codex = broker.NewCodex(home, nil)
+	h.Opencode = broker.OpencodeKeys{Keychain: broker.SystemKeychain{Home: home}}
 	h.Progress = progress
 	h.Lock = broker.FileLock(filepath.Join(home, ".agent-pm/docker/images.lock"))
 	return f(h)

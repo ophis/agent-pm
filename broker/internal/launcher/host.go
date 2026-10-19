@@ -30,6 +30,14 @@ type CodexCredentials interface {
 	Refresh(context.Context, func([]string, []byte) error, func(string) error) (string, error)
 }
 
+// ProviderKeys is the broker package's side of an OpenCode start: the listed providers' API keys, which the launcher
+// never sees. Errors are as Credentials'.
+type ProviderKeys interface {
+	Ready(providers []string) error
+	// Inject writes each provider's key through exec, as Credentials.Inject does.
+	Inject(providers []string, exec func(argv []string, stdin []byte) error) error
+}
+
 // Tokens is the broker package's GitHub side: a container's installation tokens, which the launcher never sees.
 // Errors are *protocol.Error, wrap docker.ErrUnreachable, or are opaque, carrying no Docker stderr.
 type Tokens interface {
@@ -49,6 +57,7 @@ type Host struct {
 	Docker   docker.Runner
 	Creds    Credentials
 	Codex    CodexCredentials
+	Opencode ProviderKeys
 	GitHub   Tokens
 	Versions CodexVersions
 	Progress io.Writer                         // nil: none; build's notes on older images, after Docker's progress; start's phase times
