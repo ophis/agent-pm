@@ -718,13 +718,8 @@ class List(Base):
         lines = out.splitlines()
         self.assertEqual([line for line in lines if not line.startswith("  ")], HEADS)
         echo = Composer().index("dummy-tester")["echo"]
-        translate = Composer().index("choice-translator")["translate"]
-        self.assertIn(f"\ndummy-tester  local  built-in\n  echo: {echo}  [built-in]\n", out)
         self.assertTrue(
-            out.endswith(
-                f"\nchoice-translator  orchestrator  built-in\n  translate: {translate}  [built-in]\n"
-            ),
-            out,
+            out.endswith(f"\ndummy-tester  local  built-in\n  echo: {echo}  [built-in]\n"), out
         )
         self.assertTrue(
             all(line.endswith("  [built-in]") for line in lines if line.startswith("  "))

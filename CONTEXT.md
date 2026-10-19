@@ -9,11 +9,11 @@ One project of the stack and its package, `<project>/src/agent_pm/<package>/`; i
 _Avoid_: level (a config override level)
 
 **Role**:
-A persona with standards and boundaries (researcher, pm, engineer, dummy-tester, choice-translator), defined by a charter plus config.
+A persona with standards and boundaries (researcher, pm, engineer, dummy-tester), defined by a charter plus config.
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, research, light research, product design, build, light build, echo, translate), defined by its task file's steps and listed in its role's task index.
+One job a role can do (deep research, research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
 _Avoid_: skill, job
 
 **Principles**:
