@@ -52,7 +52,6 @@ def resolve(
     context: Context,
     chain: Sequence[Step],
     *,
-    translate_on: bool,
     provider: type[Delegate],
     overlays: Sequence[Mapping],
 ) -> tuple[Context, dict[str, object]]:
@@ -62,11 +61,10 @@ def resolve(
     if not chain:
         return context, {}
     state = None
-    if translate_on:
-        try:
-            state = translate(issue, workdir, provider=provider, overlays=overlays)
-        except SelectionError as error:
-            log("router", "choice", issue, step="translate", by="fallback", reason=error.reason)
+    try:
+        state = translate(issue, workdir, provider=provider, overlays=overlays)
+    except SelectionError as error:
+        log("router", "choice", issue, step="translate", by="fallback", reason=error.reason)
     records: dict[str, object] = {}
     for step in chain:
         choice, reason, selector = None, None, None

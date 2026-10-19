@@ -469,13 +469,11 @@ class ConfigurationLoading(ConfigFile, Case):
         for text in (PIPELINE, PIPELINE + "[selection]\n"):
             with self.subTest(text=text[-12:]):
                 cfg = self.load(text)
-                self.assertEqual(
-                    cfg.selection, Selection(selector=None, translate=False, resolvers=())
-                )
+                self.assertEqual(cfg.selection, Selection(selector=None, resolvers=()))
         with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
             self.assertEqual(
                 tomllib.load(f)["selection"],
-                {"selector": "agent_pm.selector:JevSelector", "translate": False, "resolvers": []},
+                {"selector": "agent_pm.selector:JevSelector", "resolvers": []},
             )
 
     def test_selection_local_override(self):
@@ -485,21 +483,19 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         self.assertEqual(
             self.load(PIPELINE).selection,
-            Selection(selector=FakeSelector, translate=False, resolvers=(ResolverName.TIER,)),
+            Selection(selector=FakeSelector, resolvers=(ResolverName.TIER,)),
         )
-        self.local("[selection]\ntranslate = true\n")
+        self.local('[selection]\nselector = "agent_pm.selector:JevSelector"\n')
         self.assertEqual(
-            self.load(
-                PIPELINE + '[selection]\nselector = "agent_pm.selector:JevSelector"\n'
-            ).selection,
-            Selection(selector=JevSelector, translate=True, resolvers=()),
+            self.load(PIPELINE + '[selection]\nresolvers = ["tier"]\n').selection,
+            Selection(selector=JevSelector, resolvers=(ResolverName.TIER,)),
         )
 
     def test_selection_rejected(self):
         cases = [
             (
                 PIPELINE.replace("[roles.", "selection = true\n[roles.", 1),
-                "selection must be a table of selector, translate and resolvers",
+                "selection must be a table of selector and resolvers",
             ),
             (
                 PIPELINE + "[selection]\nclient = true\ntier = false\n",
@@ -508,9 +504,9 @@ class ConfigurationLoading(ConfigFile, Case):
             *[
                 (
                     PIPELINE + f"[selection]\ntranslate = {value}\n",
-                    f"selection.translate must be true or false: {shown}",
+                    "[selection] has unknown keys: translate",
                 )
-                for value, shown in (("1", "1"), ('"true"', "'true'"))
+                for value in ("true", "false")
             ],
             *[
                 (
@@ -544,6 +540,22 @@ class ConfigurationLoading(ConfigFile, Case):
         for text, message in cases:
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
+
+    def test_an_unbuildable_selector_is_refused_at_load(self):
+        """With resolvers, load builds the configured Selector once: bad [selector.jev] values
+        fail here, not at a run's start.
+        """
+        jev = PIPELINE + '[selection]\nselector = "agent_pm.selector:JevSelector"\n'
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            CORE_LOCAL + '\n[selector.jev]\nurl = "http://example.com/v1/systemone"\n',
+        )
+        self.assertEqual(self.load(jev).selection.selector, JevSelector)
+        self.fails(
+            "linear-orchestrator/config.toml: selection.selector: "
+            "url: want https, or http on a loopback IP, without userinfo",
+            jev + 'resolvers = ["tier"]\n',
+        )
 
     def test_client_max_runs(self):
         for text, limits in (
