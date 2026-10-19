@@ -85,6 +85,17 @@ class State(StrEnum):
     CANCELED = "canceled"
 
 
+class Resource(StrEnum):
+    """What agent-pm-linear issue lookup lists."""
+
+    TEAMS = "teams"
+    STATES = "states"
+    LABELS = "labels"
+    PROJECTS = "projects"
+    MILESTONES = "milestones"
+    USERS = "users"
+
+
 class FinishedType(StrEnum):
     """Linear state types finished beside the configured done state: Duplicate is canceled-type."""
 
