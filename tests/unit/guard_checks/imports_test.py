@@ -64,21 +64,14 @@ class OrchestratorSessionImports(Sample):
 
 class OrchestratorImports(Sample):
     """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
-    names delegate's and selector's __all__ export; no other package imports it.
+    names delegate's __all__ exports; no other package imports it.
     """
 
     DELEGATE = "from agent_pm.delegate.engine.base import Delegate\nclass HarnessDelegate: pass\n"
     DELEGATE_INIT = DELEGATE + '__all__ = ["Delegate", "ConfigError"]\n'
-    SELECTOR_INIT = 'from agent_pm.selector.engine.base import Selector\n__all__ = ["Selector"]\n'
 
     def check(self, files):
-        root = self.tree(
-            {
-                f"delegate/{PKG}/delegate/__init__.py": self.DELEGATE_INIT,
-                f"selector/{PKG}/selector/__init__.py": self.SELECTOR_INIT,
-                **files,
-            }
-        )
+        root = self.tree({f"delegate/{PKG}/delegate/__init__.py": self.DELEGATE_INIT, **files})
         return imports.orchestrator_imports(root)
 
     def test_the_real_tree_is_clean(self):
@@ -96,7 +89,6 @@ class OrchestratorImports(Sample):
                     "from agent_pm.utils import Record\nimport agent_pm.utils\n",
                     "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
                     "from agent_pm.linear_orchestrator.engine import runs\nfrom . import log\n",
-                    "from agent_pm.selector import Selector\nimport agent_pm.selector\n",
                 )
             ),
             *(
@@ -107,11 +99,6 @@ class OrchestratorImports(Sample):
                         "agent_pm.delegate.HarnessDelegate",
                     ),
                     ("from agent_pm.delegate import composer\n", "agent_pm.delegate.composer"),
-                    (
-                        "from agent_pm.selector.engine.base import Selector\n",
-                        "agent_pm.selector.engine",
-                    ),
-                    ("from agent_pm.selector import Unexported\n", "agent_pm.selector.Unexported"),
                     (
                         "from agent_pm.delegate.composer import Composer\n",
                         "agent_pm.delegate.composer",

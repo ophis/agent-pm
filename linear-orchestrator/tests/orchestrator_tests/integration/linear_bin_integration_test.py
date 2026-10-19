@@ -79,7 +79,7 @@ class Command(Case):
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         self.assertIn("agent-pm-linear router", done.stdout)
 
-    def test_it_sets_pythonpath_to_five_roots_and_puts_its_dir_first_on_path(self):
+    def test_it_sets_pythonpath_to_four_roots_and_puts_its_dir_first_on_path(self):
         repo = os.path.join(self.tmp, "repo")
         bin_dir = os.path.join(repo, "bin")
         os.makedirs(bin_dir)
@@ -93,7 +93,7 @@ class Command(Case):
         self.assertEqual(done.returncode, 0, done.stderr)
         roots = ":".join(
             os.path.join(repo, p, "src")
-            for p in ("utils", "session", "delegate", "selector", "linear-orchestrator")
+            for p in ("utils", "session", "delegate", "linear-orchestrator")
         )
         self.assertEqual(
             done.stdout.splitlines(),

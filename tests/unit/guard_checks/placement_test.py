@@ -223,7 +223,6 @@ class PackageTop(Sample):
                 "team/x.py",
                 "misc/x.py",
             ),
-            **self.package("selector", "__init__.py", "engine/x.py"),
             **self.package(ORCH_PROJECT, "__init__.py", "engine/x.py", "config.toml"),
             **self.package("manager", "__init__.py", "engine/crew.py", "engine/roster.py", "y.py"),
         }
