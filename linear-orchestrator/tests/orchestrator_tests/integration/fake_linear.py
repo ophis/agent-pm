@@ -449,6 +449,15 @@ class FakeLinear:
             )
             rec["state"], rec["updatedAt"] = state, at
 
+    def _entered(self, rec, kind):
+        """When rec last moved into its state, if that state is of type kind (Linear clears it on
+        leaving); else None."""
+        if TYPES[NAMES[rec["state"]]] != kind:
+            return None
+        return max(
+            (h["createdAt"] for h in rec["history"] if h["toStateId"] == rec["state"]), default=None
+        )
+
     def _state(self, sid):
         return {"id": sid, "name": TITLES[NAMES[sid]], "type": TYPES[NAMES[sid]]}
 
@@ -515,6 +524,8 @@ class FakeLinear:
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
             },
+            "canceledAt": self._entered(rec, "canceled"),
+            "completedAt": self._entered(rec, "completed"),
             "relations": {
                 "nodes": [
                     {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}

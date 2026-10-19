@@ -50,8 +50,9 @@ Prerequisites and effects:
   the source to Done. Existing next-stage issues are reused. Required human
   instructions absent: return the source to In Review with a comment.
   Every tick also prunes: close finished runs, delete agent files and archive
-  finished issues (Done ones of pm/engineer only). This includes uncommitted agent work. Cleanup
-  ages, safeguards and retention: agent-pm-linear prune --help
+  finished issues (Done ones of pm/engineer only). This includes uncommitted
+  agent work. Cleanup ages, safeguards and retention:
+  agent-pm-linear prune --help
   A prune failure is logged without breaking Handoff work.
   Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
   plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear

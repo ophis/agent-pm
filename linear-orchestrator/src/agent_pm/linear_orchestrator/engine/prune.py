@@ -479,7 +479,7 @@ class Pruner:
 def finished_at(issue, finished):
     """The latest of issue's move into finished and its canceledAt and completedAt (the history
     read can lack a move into Duplicate that canceledAt holds); None: unknown."""
-    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue.get(k)]
+    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue[k]]
     if moved := last_move(issue["history"]["nodes"], finished):
         times.append(moved)
     return max(times, default=None)
