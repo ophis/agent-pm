@@ -4,7 +4,7 @@ Requirement source: the user's 补充要求 第 1 轮 on TASK-742 (2026-10-19, a
 
 1. **Selector**: state text and a list of choices in, one decision API call, the chosen option out; abstract, Jev and Kev being separate implementations (later).
 2. **Translation**: one function, `translate(issue, …) -> str`, no class: a ticket number in, the state text out (no choices), by running a new delegate role plus task, "choice translator", on Claude Haiku through delegate's existing public `Delegate`/`Spec` interface the way `LinearRun` does (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/linear_run.py:40-56`): headless, the ticket as input, the state read from its outcome; never session directly. Tests inject a fake Delegate provider (as `LinearRun`'s `delegate_cls`). One translation per ticket serves every resolver; a new kind of choice never changes it.
-3. **Resolver chain**: the router runs resolvers in a fixed order. A `Resolver[C]` (renamed from Chooser so it does not read as a synonym of Selector) is abstract with `choose(state, context) -> C` and `fallback(context) -> C` (today's behaviour, for a step switched off or a failed `Selector`); a `Choice` is abstract with `apply(context) -> context` (writes itself into the context and the run's config) and `record() -> dict` (for runs.jsonl, used on resume). Each concrete resolver produces its concrete choice (factory-method style); each lists its own options from config given the context and passes them to the `Selector`; callers never pass options to a resolver. This issue: `TierResolver` → `TierChoice(tier, effort)`; later pairs `ClientResolver` → `ClientChoice(client)`, `RoleResolver` → `RoleChoice(role, task)`, which slot in earlier in the chain; later steps never change. The router loop is generic: for each resolver in the chain, choice = choose (or fallback), context = choice.apply(context), record choice.record(). Every step is optional: a switched-off step, or one whose `Selector` fails (error, timeout, no-key, invalid), falls back to today's behaviour (tier from `[task_tiers]`, client from the Agent label, role from routing), still fills its context entry, and the router logs only the reason code. In this issue the router fills role, task and client from the issue (client from its Agent label).
+3. **Resolver chain**: the router runs resolvers in a fixed order. A `Resolver[C]` (renamed from Chooser so it does not read as a synonym of Selector) is abstract with `choose(state, context) -> C` and `fallback(context) -> C` (today's behaviour, for a step switched off or a failed `Selector`); a `Choice` is abstract with `apply(context) -> context` (writes itself into the context and the run's config) and `record() -> dict` (for runs.jsonl, used on resume). Each concrete resolver produces its concrete choice (factory-method style); each lists its own options from config given the context and passes them to the `Selector`; callers never pass options to a resolver. This issue: `TierResolver` → `TierChoice(tier, effort)`; later pairs `ClientResolver` → `ClientChoice(client)` and, as two separate layers, `RoleResolver` → `RoleChoice(role)` and `TaskResolver` → `TaskChoice(task)` (Later), which slot in earlier in the chain; later steps never change. The router loop is generic: for each resolver in the chain, choice = choose (or fallback), context = choice.apply(context), record choice.record(). Every step is optional: a switched-off step, or one whose `Selector` fails (error, timeout, no-key, invalid), falls back to today's behaviour (tier from `[task_tiers]`, client from the Agent label, role from routing), still fills its context entry, and the router logs only the reason code. In this issue the router fills role, task and client from the issue (client from its Agent label).
 4. **Tier options**: the tier resolver reads the tier table from session's own config (`[clients.<client>.tiers]` and `efforts`), the single source, as the merged config: the packaged session `config.toml` with `~/.agent-pm/config.local.toml`'s overrides, via utils config_file, never the packaged resource alone; no copy of the tiers in the orchestrator config.
 5. Dropped: model attribute table, usage, pin, ranking and exclusion details, multiple input kinds.
 
@@ -17,7 +17,7 @@ TASK-511 wants the router to decide how a run launches from the ticket: first it
 | In | Out (later issues) |
 | --- | --- |
 | New project `selector/`, package `agent_pm.selector`: `Selector` ABC, `SelectorConfig`, `Backend`, `Failure`, `SelectorError`; `FakeSelector`, `SelectorContract` | `JevSelector` and `KevSelector` and their HTTP calls |
-| `linear_orchestrator.engine.selection`: `translate`; `Context`; abstract `Choice` and `Resolver[C]`; `TierChoice`, `TierResolver`; `SelectionError`; `FakeResolver`, `ResolverContract`, `TierChoiceContract` | The `choice-translator` role, its task and its config (client, Haiku tier); the router loop, `Context` filling, the per-step on/off keys, logging and resume from `record()`; `ClientResolver`/`ClientChoice`, `RoleResolver`/`RoleChoice` |
+| `linear_orchestrator.engine.selection`: `translate`; `Context`; abstract `Choice` and `Resolver[C]`; `TierChoice`, `TierResolver`; `SelectionError`; `FakeResolver`, `ResolverContract`, `TierChoiceContract` | The `choice-translator` role, its task and its config (client, Haiku tier); the router loop, `Context` filling, the per-step on/off keys, logging and resume from `record()`; `ClientResolver`/`ClientChoice`, `RoleResolver`/`RoleChoice`, `TaskResolver`/`TaskChoice` (Later) |
 | Import contracts, guard data and repo wiring for the new project; vulture entries; docs | Model attribute table, usage, pin, ranking, exclusion, multiple input kinds (dropped); `agent-pm-select` CLI, `select-model` skill |
 
 Constraints:
@@ -53,7 +53,7 @@ sequenceDiagram
 The router loop (binding the router issue), for each enabled-or-not resolver in the chain's fixed order:
 
 ```python
-for resolver in chain:                       # later: ClientResolver, RoleResolver, then TierResolver
+for resolver in chain:                       # later: ClientResolver, RoleResolver, TaskResolver, then TierResolver
     try:
         choice = resolver.choose(state, context) if on(resolver) else resolver.fallback(context)
     except SelectionError as error:          # log error.reason and error.selector_reason only
@@ -158,9 +158,15 @@ classDiagram
     class RoleChoice {
       <<later issue>>
       role: str
-      task: str
     }
     class RoleResolver {
+      <<later issue>>
+    }
+    class TaskChoice {
+      <<later issue>>
+      task: str
+    }
+    class TaskResolver {
       <<later issue>>
     }
     class SelectionError {
@@ -192,13 +198,16 @@ classDiagram
   Choice <|-- TierChoice
   Choice <|-- ClientChoice
   Choice <|-- RoleChoice
+  Choice <|-- TaskChoice
   Resolver <|-- TierResolver
   Resolver <|-- ClientResolver
   Resolver <|-- RoleResolver
+  Resolver <|-- TaskResolver
   Resolver <|-- FakeResolver
   TierResolver ..> TierChoice : creates
   ClientResolver ..> ClientChoice : creates
   RoleResolver ..> RoleChoice : creates
+  TaskResolver ..> TaskChoice : creates
   Choice ..> Context : apply
   SelectorConfig --> Backend
   SelectorError --> Failure
@@ -215,6 +224,12 @@ classDiagram
 ```
 
 Dashed arrow: a call, use or creation; `<|--`: implements. Classes marked later issue are not built here; neither are the router loop, the role or the Jev and Kev calls.
+
+## Later (out of scope here)
+
+- Resolvers are added layer by layer, as needed, each a `Resolver`/`Choice` pair slotted into the chain before the steps that depend on it.
+- Role and task are two separate layers: `RoleResolver` → `RoleChoice(role)`, `TaskResolver` → `TaskChoice(task)`. With only `RoleResolver` in the chain, `context.task` stays empty (`None`) and the role picks its task from its own index, as a run without a task does today.
+- Tier today depends on the task (`[task_tiers]`), so `TierResolver` must not require one: with `context.task` `None` it still chooses among the client's tiers, and its `fallback` gives `TierChoice(None, None)`, the role's own tier and effort (AC9).
 
 ## Acceptance criteria
 
@@ -342,5 +357,6 @@ Tests: `linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py` (`Fa
 - D12: `Context` carries role, task, client, tier and effort, the run's config so far; a `None` tier or effort means the role's configured one, so `TierChoice(None, None)` is today's behaviour for a task without `[task_tiers]`.
 - D13: Fallback is the router's: a resolver raises `SelectionError` (with `selector_reason`, the `Selector`'s code, for the log line) and the router calls `fallback`; resolvers never fall back silently.
 - D14: `translate` sets no client or tier: the `choice-translator` role's config sets Claude and its Haiku tier (the role's issue), since `orchestrator_text` forbids client names in the orchestrator; it passes the router's overlays (`cfg.core`) as `LinearRun` does.
+- D16: `TierResolver` never requires `context.task` (Later): `choose` ignores it and `fallback` treats `None` as no `[task_tiers]` entry.
 - D15: The method names stay `choose` and `fallback` as the user gave them; only the class names became `Resolver`, `TierResolver`.
 - Left to the implementer: docstring wording, test names.
