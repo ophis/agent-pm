@@ -136,7 +136,8 @@ SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-# a start row's own fields: a choice record never sets them
+# a start row's fields outside Context: a choice record never sets them (it may set role, task,
+# client, tier and effort)
 ROW_FIELDS = frozenset(
     ("ts", "kind", "issue", "sid", "delegate_kind", "uuid", "project", "target", "key")
 )
@@ -696,13 +697,16 @@ def begin(cfg, spec: Spec) -> Spec:
     return spec
 
 
-def record(cfg, spec: Spec, *, role, now, target=None, context=None, choices=None) -> str:
+def record(cfg, spec: Spec, *, now, role=None, target=None, context=None, choices=None) -> str:
     """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
-    uuid, project, target, the role's key), which its write-back reads, its task and client (the
-    final context's when given) and its chain's choices, which a resume reuses; returns its
-    Delegate kind. ValueError: a choice field is one of the row's own (ROW_FIELDS).
+    uuid, project, target, the role's key), which its write-back reads, its role, task and client
+    (the final context's when given, else role and spec's) and its chain's choices, which a resume
+    reuses; returns its Delegate kind. ValueError: a choice field is one of ROW_FIELDS.
     """
-    task, client = (spec.task, spec.client) if context is None else (context.task, context.client)
+    if context is not None:
+        role, task, client = context.role, context.task, context.client
+    else:
+        task, client = spec.task, spec.client
     if spec.mode == "new":
         if clash := next((k for k in choices or {} if k in ROW_FIELDS), None):
             raise ValueError(f"choice record field {clash} is a start-row field")
@@ -896,9 +900,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended, chain_steps):
                 return _label_client_error(a, cfg, ctx.gql, error)
             raise
         if a.mode == "new":
-            record(
-                cfg, a, role=context.role, target=slug, now=now, context=context, choices=choices
-            )
+            record(cfg, a, target=slug, now=now, context=context, choices=choices)
         detached = linear_run.detach()
     except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))

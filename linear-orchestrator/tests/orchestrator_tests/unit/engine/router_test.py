@@ -5375,11 +5375,10 @@ class ResolverChain(OuterBase):
             client="a",
         )
         cfg = self.cfg()
-        context = Context("engineer", "light-build", "b", 2, "low")
+        context = Context("pm", "light-build", "b", 2, "low")
         router.record(
             cfg,
             spec,
-            role="engineer",
             now=lambda: NOW,
             context=context,
             choices={"tier": 2, "effort": "low", "client": "b"},
@@ -5388,15 +5387,16 @@ class ResolverChain(OuterBase):
         self.assertEqual(
             {k: row.get(k) for k in ("role", "client", "task", "tier", "effort", "key")},
             {
-                "role": "engineer",
+                "role": "pm",
                 "client": "b",
                 "task": "light-build",
                 "tier": 2,
                 "effort": "low",
-                "key": cfg.roles["engineer"].key,
+                "key": cfg.roles["pm"].key,
             },
         )
-        for field in ("key", "sid", "uuid"):
+        self.assertNotEqual(cfg.roles["pm"].key, cfg.roles["engineer"].key)
+        for field in sorted(router.ROW_FIELDS):
             with self.subTest(field=field):
                 before = self.raw_runs()
                 with self.assertRaises(ValueError) as caught:

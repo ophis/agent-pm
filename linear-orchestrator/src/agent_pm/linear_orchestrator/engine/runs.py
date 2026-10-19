@@ -1,7 +1,7 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, a sid's start row as its Claim, its task (`started_task`) and its recorded
-tier and effort (`started_choice`), live limit rows
-(`limits`), `failed` rows (a new run that failed before its LinearRun) as Failures, `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim, its task (`started_task`) and its recorded tier
+and effort (`started_choice`), live limit rows (`limits`), `failed` rows (a new run that failed
+before its LinearRun) as Failures, `trim` to KEEP.
 """
 
 import json
