@@ -71,6 +71,7 @@ SURFACES = {
             "router",
             "promote",
             "prune",
+            "issue",
             "status",
             "show",
             "hide",
@@ -147,7 +148,7 @@ class HelpSafety(Case):
             self.assertIn("agent-pm-", out)
 
     def matrix(self):
-        self.assertEqual(sum(len(commands) + 1 for _, commands in SURFACES.values()), 58)
+        self.assertEqual(sum(len(commands) + 1 for _, commands in SURFACES.values()), 59)
         before = self.snapshot()
         for root, (package, commands) in SURFACES.items():
             for leaf in [None, *commands]:
