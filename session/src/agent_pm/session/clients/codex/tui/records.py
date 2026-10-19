@@ -1,4 +1,4 @@
-"""The one reader of a Codex session file's message and failed-turn records."""
+"""The one reader of a Codex session file's records."""
 
 TEXT = {"user": "input_text", "assistant": "output_text"}  # role → its text blocks' type
 
@@ -23,9 +23,7 @@ def message(record: dict) -> tuple[str, str] | None:
 
 
 def failure(record: dict) -> tuple[str, str] | None:
-    """A failed turn's `task_complete` error: its kind (`codex_error_info`, or a variant's one key)
-    and message; else None.
-    """
+    """A failed turn's error kind (`codex_error_info`, or its one key) and message."""
     payload = record.get("payload")
     if record.get("type") != "event_msg" or not isinstance(payload, dict):
         return None

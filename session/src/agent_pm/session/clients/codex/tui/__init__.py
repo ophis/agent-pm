@@ -1,7 +1,7 @@
 """Codex interactive launch plans, hook callbacks and event interpretation.
 Each new assistant message in the bound native session file since launch is one Reply, read from a
-cursor; a Stop's text that lands later is not repeated. A turn's failure fires no hook: its
-`task_complete` error there is a TurnFailed, unless the screen shows it as a usage limit.
+cursor; a Stop's text that lands later is not repeated. A failed turn's `task_complete` error there
+is a TurnFailed.
 """
 
 import json
@@ -278,7 +278,7 @@ class CodexTui(Tui):
         failed = records.failure(record)
         if failed is not None:
             kind, message = failed
-            if limit_message(message):  # the screen's LimitHit reports it
+            if limit_message(message):
                 return []
             return [TurnFailed(kind, message)]
         found = records.message(record)
