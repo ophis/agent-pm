@@ -32,6 +32,7 @@ from session.tests.unit.clients.codex.support import (
     MODES,
     NATIVE,
     PLUGIN_OFF,
+    TOOLS_OFF,
     Base,
     committed_headless,
     holds,
@@ -456,6 +457,24 @@ class ConfiguredFlags(Base):
         argv = committed_headless(packaged(), spec).argv
         start = argv.index(PLUGIN_OFF[1]) - 1
         self.assertEqual(argv[start : start + 2], PLUGIN_OFF)
+
+    def test_the_packaged_config_turns_the_browser_computer_use_apps_and_suggestions_off(self):
+        spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
+        argv = committed_headless(packaged(), spec).argv
+        for pair in TOOLS_OFF:
+            with self.subTest(pair=pair):
+                self.assertTrue(holds(argv, pair), argv)
+                self.assertEqual(argv.count(pair[1]), 1)
+        self.assertNotIn("plugins", [argv[i + 1] for i, w in enumerate(argv) if w == "--disable"])
+
+    def test_a_local_flags_list_without_an_entry_gives_that_tool_back(self):
+        local = self.root / "config.local.toml"
+        kept = [word for pair in (PLUGIN_OFF, *TOOLS_OFF[:-2], TOOLS_OFF[-1]) for word in pair]
+        local.write_text(f"[session.clients.codex]\nflags = {json.dumps(kept)}\n", encoding="utf-8")
+        spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
+        argv = committed_headless(packaged(str(local)), spec).argv
+        self.assertNotIn("apps", argv)
+        self.assertTrue(holds(argv, TOOLS_OFF[-1]), argv)
 
     def test_only_the_runs_permission_modes_flags_reach_codex_never_its_record(self):
         client = CodexClient({**self.client.config, "modes": MODES})

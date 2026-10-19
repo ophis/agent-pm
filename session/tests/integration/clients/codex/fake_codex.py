@@ -30,6 +30,8 @@ def parse(args):
     parser.add_argument("-s", choices=("danger-full-access", "workspace-write"), required=True)
     parser.add_argument("-m")
     parser.add_argument("-c", action="append", default=[])
+    parser.add_argument("--enable", action="append", default=[])
+    parser.add_argument("--disable", action="append", default=[])
     parser.add_argument("--add-dir", action="append", default=[])
     if "--" not in args or args.index("--") != len(args) - 2:
         raise RuntimeError("expected caller prompt after --")
