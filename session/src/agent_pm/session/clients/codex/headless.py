@@ -6,9 +6,9 @@ import json
 import os
 
 from agent_pm.session.clients.codex.common import (
-    LIMIT_PREFIXES,
     CodexCommon,
     launch_flags,
+    limit_message,
     native_id,
     reset_at,
 )
@@ -111,7 +111,7 @@ class CodexHeadless(Headless):
         found = error if isinstance(error, str) and error.strip() else ""
         if found:
             yield Stderr(found)
-            if not self.limit_sent and found.replace("’", "'").startswith(LIMIT_PREFIXES):
+            if not self.limit_sent and limit_message(found):
                 self.limit_sent = True
                 yield LimitHit(reset_at(found, self.common.config.get("env", {})))
         if kind == "turn.failed" and not self.limit_sent:  # an `error` may precede a retry

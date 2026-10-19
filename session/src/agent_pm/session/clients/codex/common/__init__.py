@@ -70,6 +70,13 @@ LIMIT_PREFIXES = (
     "You hit your spend cap set in your workspace.",
     "You hit your spend cap set by the owner of your workspace.",
 )
+
+
+def limit_message(text: str) -> bool:
+    """Codex's usage-limit message, a curly apostrophe read as straight."""
+    return text.replace("’", "'").startswith(LIMIT_PREFIXES)
+
+
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 RESET = re.compile(
     r"(?:Try|try) again at (?:(?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2})"

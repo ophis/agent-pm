@@ -23,6 +23,7 @@ from agent_pm.session.clients.codex.common import (
     RecoveryError,
     SessionStore,
     launch_options,
+    limit_message,
     native_id,
     refuse_mode,
     reset_at,
@@ -276,7 +277,7 @@ class CodexTui(Tui):
         failed = records.failure(record)
         if failed is not None:
             kind, message = failed
-            if message.replace("’", "'").startswith(LIMIT_PREFIXES):  # limit(screen)'s
+            if limit_message(message):  # the screen's LimitHit reports it
                 return []
             return [TurnFailed(kind, message)]
         found = records.message(record)

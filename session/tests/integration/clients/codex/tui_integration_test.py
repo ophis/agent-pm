@@ -970,7 +970,9 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(stream.until(TurnFailed)[-1], TurnFailed("other", "bad request"))
         self.assertNotIn("Stop", [h["hook"] for h in self.hooks()])
         handle.send("recover")
-        self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("after")])
+        # The failed turn's hook Activities may come after its TurnFailed, read first.
+        after = stream.until(TurnEnd)
+        self.assertEqual((set(after[:-1]), after[-1]), ({Activity()}, TurnEnd("after")))
 
     def test_root_child_cwd_and_rebinding_filters_publish_only_valid_hooks(self):
         invalid = [
