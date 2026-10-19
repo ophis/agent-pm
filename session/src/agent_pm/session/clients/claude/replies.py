@@ -1,6 +1,7 @@
 """Claude mid-turn replies. Claude Code queues a message sent while a turn runs (a `queue-operation`
 enqueue record) and, once the running tool returns, joins it to that turn as a `queued_command`
-attachment; no hook runs for it. One after the turn's first assistant record is an interjection;
+attachment; no hook runs for it. A message one (commandMode prompt, not a background task's
+notification) after the turn's first assistant record is an interjection;
 the first assistant text after it is its answer, stored and announced as `reply <id>` by a detached
 watcher (watch.py) or the turn's Stop hook, whichever finds it first. UserPromptSubmit opens the
 turn, PostToolUse scans it and starts the watcher while a message waits, Stop scans with its text
@@ -84,7 +85,8 @@ def _record(found: dict, at: int, record: dict) -> None:
         attachment = record.get("attachment")
         if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
             found["queued"] = max(found["queued"] - 1, 0)
-            if found["spoke"]:
+            sent = attachment.get("commandMode", "prompt") == "prompt"  # not a task's notice
+            if found["spoke"] and sent:
                 found["steers"] = [*found["steers"], at][-STEERS_MAX:]
     elif kind in ("user", "assistant"):
         message = record.get("message")

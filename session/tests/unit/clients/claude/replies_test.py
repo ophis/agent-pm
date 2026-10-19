@@ -38,6 +38,15 @@ RESULT = {"type": "user", "message": {"content": [{"type": "tool_result", "conte
 ENQUEUE = {"type": "queue-operation", "operation": "enqueue", "content": "status?"}
 DEQUEUE = {"type": "queue-operation", "operation": "dequeue"}
 QUEUED = {"type": "attachment", "attachment": {"type": "queued_command", "prompt": "status?"}}
+REMOVE = {"type": "queue-operation", "operation": "remove"}
+NOTIFIED = {  # a background task's completion, as Claude Code queues it
+    "type": "attachment",
+    "attachment": {
+        "type": "queued_command",
+        "prompt": "<task-notification>done</task-notification>",
+        "commandMode": "task-notification",
+    },
+}
 
 
 class Clock:
@@ -155,6 +164,20 @@ class TurnTest(RepliesBase):
         self.append(ENQUEUE, ENQUEUE, RESULT, QUEUED, QUEUED, said(text("both")))
         self.stop("both")
         self.assertEqual(self.answers(), ["both", "both"])
+
+    def test_task_notification_is_no_interjection(self):
+        self.open_turn()
+        self.append(ENQUEUE, RESULT, REMOVE, NOTIFIED, said(text("build still running")))
+        self.hook("PostToolUse", tool_name="Bash")
+        self.stop("build still running")
+        self.assertEqual(self.lines(), [])
+
+    def test_a_prompt_mode_message_is_an_interjection(self):
+        self.open_turn()
+        queued = {**QUEUED, "attachment": {**QUEUED["attachment"], "commandMode": "prompt"}}
+        self.append(ENQUEUE, RESULT, queued, said(text("answer")))
+        self.stop("answer")
+        self.assertEqual(self.answers(), ["answer"])
 
     def test_queued_message_opening_a_turn_is_no_interjection(self):
         self.hook("SessionStart", source="startup")
