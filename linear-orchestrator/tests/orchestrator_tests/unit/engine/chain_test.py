@@ -22,7 +22,7 @@ from agent_pm.linear_orchestrator.engine.selection import (
     SelectionFailure,
 )
 from agent_pm.linear_orchestrator.engine.types import Context, ResolverName, Selection
-from agent_pm.selector import Failure, SelectorError
+from agent_pm.selector import Answer, Failure, SelectorError
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
     TRANSLATION,
@@ -106,11 +106,25 @@ class FailingOn(FakeSelector):
         return super().select(state, question)
 
 
-def layers(selector):
+class DoubtfulOn(FakeSelector):
+    """A FakeSelector answering the question whose instructions are doubtful with confidence 0.2."""
+
+    def __init__(self, picks, *, doubtful):
+        super().__init__(picks)
+        self.doubtful = doubtful
+
+    def select(self, state, question):
+        answer = super().select(state, question)
+        return Answer(answer.pick, 0.2) if question.instructions == self.doubtful else answer
+
+
+def layers(selector, min_confidence=0.0):
     """The model and effort Steps over selector, with [task_tiers] build = 2."""
     cfg = SimpleNamespace(
         task_tiers={"build": 2},
-        selection=Selection(FakeSelector, (ResolverName.MODEL, ResolverName.EFFORT)),
+        selection=Selection(
+            FakeSelector, (ResolverName.MODEL, ResolverName.EFFORT), min_confidence
+        ),
     )
     return chain.steps(cfg, selector)
 
@@ -193,6 +207,7 @@ class Resolving(Case):
                 for failure in Failure
             ),
             (SelectionError(SelectionFailure.INVALID), {"reason": "invalid"}),
+            (SelectionError(SelectionFailure.LOW_CONFIDENCE), {"reason": "low-confidence"}),
         ]
         for error, codes in cases:
             with self.subTest(codes=codes):
@@ -342,6 +357,58 @@ class Resolving(Case):
                 self.assertEqual(self.choices(), want)
                 self.assert_no_leak()
 
+    def test_a_low_confidence_layer_falls_back_alone(self):
+        """A layer whose answer's confidence is under [selection] min_confidence falls back for
+        itself alone, logging only the code; the other layer's answer still counts.
+        """
+        claude = self.claude_tiers()
+        cases = (
+            (
+                "model doubtful",
+                MODEL_INSTRUCTIONS,
+                (replace(CONTEXT, tier=2, effort="high"), {"tier": 2, "effort": "high"}),
+                [
+                    ("model", "fallback", "low-confidence", {"tier": 2}),
+                    ("effort", "selector", None, {"effort": "high"}),
+                ],
+                EFFORT_INSTRUCTIONS.format(model=claude["2"]),
+            ),
+            (
+                "effort doubtful",
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+                (replace(CONTEXT, tier=3), {"tier": 3}),
+                [
+                    ("model", "selector", None, {"tier": 3}),
+                    ("effort", "fallback", "low-confidence", {}),
+                ],
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+            ),
+        )
+        for name, doubtful, resolved, lines, effort_asked in cases:
+            with self.subTest(name):
+                self.truncate_log()
+                selector = DoubtfulOn([claude["3"], "high"], doubtful=doubtful)
+                self.assertEqual(self.resolve(layers(selector, 0.5)), resolved)
+                self.assertEqual(
+                    [q.instructions for _, q in selector.calls], [MODEL_INSTRUCTIONS, effort_asked]
+                )
+                want = [
+                    {
+                        "kind": "choice",
+                        "issue": "TASK-1",
+                        "step": step,
+                        "by": by,
+                        **({} if reason is None else {"reason": reason}),
+                        "choice": record,
+                    }
+                    for step, by, reason, record in lines
+                ]
+                self.assertEqual(self.choices(), want)
+                self.assert_no_leak()
+        self.truncate_log()
+        selector = DoubtfulOn([claude["3"], "high"], doubtful=MODEL_INSTRUCTIONS)
+        self.assertEqual(self.resolve(layers(selector, 0.2))[1], {"tier": 3, "effort": "high"})
+
     def test_no_state_falls_back_in_both_layers(self):
         selector = FakeSelector()
         self.assertEqual(
@@ -360,7 +427,8 @@ class Resolving(Case):
 
     def test_steps_build_no_selector_without_resolvers(self):
         cfg = SimpleNamespace(
-            task_tiers={}, selection=Selection(selector=Unbuildable, resolvers=())
+            task_tiers={},
+            selection=Selection(selector=Unbuildable, resolvers=(), min_confidence=0.0),
         )
         self.assertEqual(chain.steps(cfg), ())
 
@@ -368,7 +436,9 @@ class Resolving(Case):
         cfg = SimpleNamespace(
             task_tiers={"build": 2},
             selection=Selection(
-                selector=FakeSelector, resolvers=(ResolverName.MODEL, ResolverName.EFFORT)
+                selector=FakeSelector,
+                resolvers=(ResolverName.MODEL, ResolverName.EFFORT),
+                min_confidence=0.3,
             ),
         )
         injected = FakeSelector()
@@ -382,6 +452,7 @@ class Resolving(Case):
                 self.assertIsInstance(effort_step.resolver, EffortResolver)
                 for step in (model_step, effort_step):
                     self.assertIsInstance(step.resolver.selector, FakeSelector)
+                    self.assertEqual(step.resolver.min_confidence, 0.3)
                     if given is not None:
                         self.assertIs(step.resolver.selector, given)
                 self.assertEqual(model_step.resolver.fallback(CONTEXT), ModelChoice(2))

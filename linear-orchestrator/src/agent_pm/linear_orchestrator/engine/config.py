@@ -398,9 +398,9 @@ def _selection(cfg) -> Selection:
     table = cfg.setdefault("selection", {})
     if not isinstance(table, dict):
         raise ConfigError(
-            "linear-orchestrator/config.toml: selection must be a table of selector and resolvers"
+            "linear-orchestrator/config.toml: selection must be a table of selector, resolvers and min_confidence"
         )
-    if extra := sorted(set(table) - {"selector", "resolvers"}):
+    if extra := sorted(set(table) - {"selector", "resolvers", "min_confidence"}):
         raise ConfigError(
             f"linear-orchestrator/config.toml: [selection] has unknown keys: {', '.join(extra)}"
         )
@@ -417,6 +417,11 @@ def _selection(cfg) -> Selection:
         raise ConfigError(
             f"linear-orchestrator/config.toml: selection.resolvers must list model before effort: {resolvers!r}"
         )
+    floor = table.get("min_confidence", 0.0)
+    if not isinstance(floor, (int, float)) or isinstance(floor, bool) or not 0 <= floor <= 1:
+        raise ConfigError(
+            f"linear-orchestrator/config.toml: selection.min_confidence must be a number from 0 to 1: {floor!r}"
+        )
     path = table.get("selector")
     if path is None and resolvers:
         raise ConfigError(
@@ -428,7 +433,7 @@ def _selection(cfg) -> Selection:
             selector()  # its own config's errors fail here, not at a run's start
     except (OSError, ValueError) as error:
         raise ConfigError(f"linear-orchestrator/config.toml: selection.selector: {error}") from None
-    return Selection(selector, tuple(ResolverName(r) for r in resolvers))
+    return Selection(selector, tuple(ResolverName(r) for r in resolvers), float(floor))
 
 
 def _agent_labels(cfg):

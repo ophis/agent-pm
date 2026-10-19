@@ -1,4 +1,4 @@
-"""The selector's data types: state, question, config, backends and failure codes."""
+"""The selector's data types: state, question, answer, config, backends and failure codes."""
 
 import json
 from collections.abc import Mapping
@@ -10,6 +10,11 @@ from types import MappingProxyType
 class Backend(StrEnum):
     JEV = "jev"
     KEV = "kev"
+
+
+class Kind(StrEnum):
+    CHOICE = "choice"
+    SCORE = "score"
 
 
 class Failure(StrEnum):
@@ -61,17 +66,31 @@ class State:
 
 @dataclass(frozen=True)
 class Question:
-    """options: option → description, in order. ValueError: none, a blank one, blank instructions."""
+    """options: option → description, in order (a score: lowest first). ValueError: none,
+    a blank one, blank instructions, a bad kind, a score not of 2-10.
+    """
 
     instructions: str
     options: Mapping[str, str]
+    kind: Kind = Kind.CHOICE
 
     def __post_init__(self):
         object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
+        object.__setattr__(self, "kind", Kind(self.kind))
         if not isinstance(self.instructions, str) or not self.instructions.strip():
             raise ValueError("question: want non-blank instructions")
         if not self.options or any(not isinstance(o, str) or not o.strip() for o in self.options):
             raise ValueError("question: want one or more non-blank options")
+        if self.kind is Kind.SCORE and not 2 <= len(self.options) <= 10:
+            raise ValueError("question: want 2 to 10 score levels")
+
+
+@dataclass(frozen=True)
+class Answer:
+    """confidence: 0 to 1, or None: not asked."""
+
+    pick: str
+    confidence: float | None
 
 
 @dataclass(frozen=True)

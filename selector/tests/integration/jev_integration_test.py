@@ -8,9 +8,11 @@ import unittest
 from unittest import mock
 
 from agent_pm.selector import (
+    Answer,
     Backend,
     Failure,
     JevSelector,
+    Kind,
     Question,
     SelectorConfig,
     SelectorError,
@@ -18,7 +20,7 @@ from agent_pm.selector import (
 )
 from agent_pm.selector.backends.jev import ANTI_INJECTION
 
-from selector.tests.contracts.selector import QUESTION, STATE, SelectorContract
+from selector.tests.contracts.selector import QUESTION, SCORE, STATE, SelectorContract
 from selector.tests.fakes.decision_api import ELSEWHERE, PATH, DecisionApi, Reply
 from utils.tests.case import Case
 
@@ -54,7 +56,7 @@ class JevSelectorContract(SelectorContract, JevCase):
 
 class Wire(JevCase):
     def test_the_mock_api_receives_the_pilot_format(self):
-        self.assertEqual(self.jev().select(STATE, QUESTION), "low")
+        self.assertEqual(self.jev().select(STATE, QUESTION), Answer("low", 1.0))
         [request] = self.api.requests
         self.assertEqual((request.method, request.path), ("POST", PATH))
         self.assertEqual(request.headers["Authorization"], "Bearer test-jev-key")
@@ -90,17 +92,48 @@ class Wire(JevCase):
 
     def test_scripted_picks_answer_the_first_of_them_in_the_criteria(self):
         self.api.picks = ["b", "high"]
-        self.assertEqual(self.jev().select(STATE, QUESTION), "high")
-        self.assertEqual(self.jev().select(STATE, Question("Pick.", {"a": "", "b": ""})), "b")
-        self.assertEqual(self.jev().select(STATE, Question("Pick.", {"c": "", "d": ""})), "c")
+        self.assertEqual(self.jev().select(STATE, QUESTION).pick, "high")
+        self.assertEqual(self.jev().select(STATE, Question("Pick.", {"a": "", "b": ""})).pick, "b")
+        self.assertEqual(self.jev().select(STATE, Question("Pick.", {"c": "", "d": ""})).pick, "c")
+
+    def test_a_score_question_carries_its_levels_and_its_answer_maps_to_one(self):
+        self.api.picks = ["b", "medium"]
+        self.assertEqual(self.jev().select(STATE, SCORE), Answer("medium", 1.0))
+        [request] = self.api.requests
+        self.assertEqual(
+            request.body["questions"],
+            {
+                "score": {
+                    "type": "score",
+                    "instructions": ANTI_INJECTION + " " + "Score the effort.",
+                    "criteria": [
+                        "low: the least reasoning",
+                        "medium: more reasoning than low",
+                        "high: the most reasoning",
+                    ],
+                }
+            },
+        )
+        self.api.picks = ["z"]
+        self.assertEqual(self.jev().select(STATE, SCORE).pick, "low")
+
+    def test_scripted_confidences_answer_the_requests_in_order(self):
+        self.api.confidences = [0.9, 0.2]
+        levels = Question("Score.", {"a": "least", "b": "most"}, Kind.SCORE)
+        self.assertEqual(self.jev().select(STATE, levels), Answer("a", 0.9))
+        self.assertEqual(self.jev().select(STATE, QUESTION), Answer("low", 0.2))
+        self.assertEqual(self.jev().select(STATE, levels).confidence, 1.0)
+        self.assertEqual(self.api.confidences, [])
 
     def test_a_proxy_env_is_bypassed(self):
         self.assertEqual(os.environ["http_proxy"], DEAD_PROXY)
-        self.assertEqual(self.jev().select(STATE, QUESTION), "low")
+        self.assertEqual(self.jev().select(STATE, QUESTION).pick, "low")
         self.assertEqual(len(self.api.requests), 1)
 
     def test_a_single_option_sends_nothing(self):
-        self.assertEqual(self.jev().select(STATE, Question("Pick.", {"high": "most"})), "high")
+        self.assertEqual(
+            self.jev().select(STATE, Question("Pick.", {"high": "most"})), Answer("high", None)
+        )
         self.assertEqual(self.api.requests, [])
 
     def test_a_redirect_is_not_followed(self):

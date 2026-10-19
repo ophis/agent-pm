@@ -5320,6 +5320,24 @@ class ResolverChain(OuterBase):
                 self.assertNotIn("effort", self.start_row())
                 self.assert_no_leak()
 
+    def test_a_low_confidence_answer_falls_back_and_still_starts_the_run(self):
+        self.write_config(OUTER + SELECTION_ON + "min_confidence = 0.5\n")
+        pick, _ = claude_pick()
+        selector = FakeSelector([pick, "low"], confidence=0.2)
+        self.assertEqual(self.outer(client="claude", selector=selector), 0)
+        self.assertEqual(self.detached(), self.expected(client="claude"))
+        self.assertEqual(len(selector.calls), 2)
+        self.assertEqual(
+            self.choices(),
+            [
+                {"step": step, "by": "fallback", "reason": "low-confidence", "choice": {}}
+                for step in ("model", "effort")
+            ],
+        )
+        self.assertNotIn("tier", self.start_row())
+        self.assertNotIn("effort", self.start_row())
+        self.assert_no_leak()
+
     def test_translate_failure_still_starts_the_run(self):
         self.write_config(OUTER + SELECTION_ON + "[task_tiers]\nlight-build = 2\n")
         self.api.translation = RuntimeError(LEAK)
@@ -5339,18 +5357,20 @@ class ResolverChain(OuterBase):
 
     def test_the_configured_selector_picks(self):
         """One selector line swaps the Selector: FakeSelector picks each question's first option,
-        the tier-1 model and the client's first effort.
+        the lowest level: the weakest model's lowest tier and the client's first effort.
         """
         self.write_config(OUTER + SELECTION_ON)
         claude = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]
         effort = next(iter(claude["efforts"]))
+        weakest = claude["tiers"][max(claude["tiers"], key=int)]
+        tier = min(int(t) for t, m in claude["tiers"].items() if m == weakest)
         self.assertEqual(self.outer(client="claude"), 0)
-        self.assertEqual(self.detached(tier=1, effort=effort), self.expected(client="claude"))
-        self.assertEqual((self.start_row()["tier"], self.start_row()["effort"]), (1, effort))
+        self.assertEqual(self.detached(tier=tier, effort=effort), self.expected(client="claude"))
+        self.assertEqual((self.start_row()["tier"], self.start_row()["effort"]), (tier, effort))
         self.assertEqual(
             self.choices(),
             [
-                {"step": "model", "by": "selector", "choice": {"tier": 1}},
+                {"step": "model", "by": "selector", "choice": {"tier": tier}},
                 {"step": "effort", "by": "selector", "choice": {"effort": effort}},
             ],
         )

@@ -28,8 +28,12 @@ class Step:
 
 
 RESOLVERS: Mapping[ResolverName, Callable[[Config, Selector], Resolver]] = {
-    ResolverName.MODEL: lambda cfg, selector: ModelResolver(selector, task_tiers=cfg.task_tiers),
-    ResolverName.EFFORT: lambda _cfg, selector: EffortResolver(selector),
+    ResolverName.MODEL: lambda cfg, selector: ModelResolver(
+        selector, task_tiers=cfg.task_tiers, min_confidence=cfg.selection.min_confidence
+    ),
+    ResolverName.EFFORT: lambda cfg, selector: EffortResolver(
+        selector, min_confidence=cfg.selection.min_confidence
+    ),
 }
 
 

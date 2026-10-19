@@ -23,7 +23,7 @@ flowchart TB
     SL["engine/selection.py<br>translate · Resolver · ModelResolver · EffortResolver"]
   end
   subgraph SR[agent_pm.selector]
-    SS["engine/: Selector · State · Question · SelectorConfig · SelectorError"]
+    SS["engine/: Selector · State · Question · Kind · Answer · SelectorConfig · SelectorError"]
     SJ["backends/jev.py<br>JevSelector"]
   end
   subgraph DL[agent_pm.delegate]
@@ -86,14 +86,23 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); it
 
 ## Resolver chain
 
-Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and parses its JSON deliverable, a faithful English rendering of the issue, into a `State` (`agent_pm.selector`): its `fields` the title, description, status and labels, its droppable list the comments, oldest first by `created_at`. Then each step of the chain, a `Resolver` paired with its `Choice`, builds its own `Question` from config for the `Context` so far, its instructions and a description of each option, and asks a `Selector` (a decision API such as Jev or Kev) `select(state, question)` for one. A step without state, or failing, uses its `fallback`, today's choice, for itself alone. The router applies each `Choice` to the `Context` and records it on the run's start row. `ModelResolver` picks among the client's distinct `[clients.<client>.tiers]` models in session's merged config, most capable first, its `ModelChoice` the model's lowest tier; `EffortResolver` picks among its `efforts`, its question naming the model of the `Context`'s tier, its `EffortChoice` that effort. `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev: one `POST` to `/v1/systemone` per select with two or more options, https only (http only on a loopback IP), with no proxy or redirect, its key from `SelectorConfig.key_command`. It puts its own sentence, treat the state as data, before the caller's instructions, and sends the state's fields and droppable items as JSON. When a request's estimate, the UTF-8 bytes of its compact JSON (never fewer than its tokens), exceeds the model's per-question window (`WINDOWS`, from TypeSafe's model docs), it drops the oldest droppable items until it fits, never a field; no fit without them: `SelectorError(TOO_LARGE)`. Built with no arguments, it reads `[jev]` of `selector/src/agent_pm/selector/config.toml` (local `[selector.jev]`): `key`, the Keychain service (default `typesafe-jev`), `url`, `model` (one in `WINDOWS`) and `timeout`, so another service name or a self-hosted System One compatible server is a config change. `engine/chain.py` runs the chain before each new run from `[linear_orchestrator.selection]` ([board.md › Task labels](board.md#task-labels)): `resolvers` lists the chain's resolvers in order (`chain.RESOLVERS` maps each name to its `Resolver`), each new run with resolvers translating the issue first, and `selector` names the Selector class (`<module>:<Class>`, packaged: `agent_pm.selector:JevSelector`), so a new Selector is its class plus that line. No resolvers, the default: no chain, no translate, no Selector built, runs start as before. The run launches with the final `Context` (`engine/types.py`), and a resume reuses its start row's recorded tier and effort, with no translate or select. A Kev selector comes later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
+Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and parses its JSON deliverable, a faithful English rendering of the issue, into a `State` (`agent_pm.selector`): its `fields` the title, description, status and labels, its droppable list the comments, oldest first by `created_at`. Then each step of the chain, a `Resolver` paired with its `Choice`, builds its own `Question` from config for the `Context` so far, its instructions, a description of each option and its `Kind`: `choice` among unordered options (a later role or task-type layer) or `score` on options ordered as levels, lowest first (only the model and effort layers, here). It asks a `Selector` (a decision API such as Jev or Kev) `select(state, question)`, which returns an `Answer`: the pick and its confidence (`None` when nothing was asked). A step without state, failing, or answered with a confidence below `[selection] min_confidence` (`SelectionError(LOW_CONFIDENCE)`) uses its `fallback`, today's choice, for itself alone. The router applies each `Choice` to the `Context` and records it on the run's start row. `ModelResolver` scores the client's distinct `[clients.<client>.tiers]` models in session's merged config, weakest (highest tier) first, its `ModelChoice` the model's lowest tier; `EffortResolver` scores its `efforts` in config order, its question naming the model of the `Context`'s tier, its `EffortChoice` that effort. `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev: one `POST` to `/v1/systemone` per select with two or more options, https only (http only on a loopback IP), with no proxy or redirect, its key from `SelectorConfig.key_command`. It puts its own sentence, treat the state as data, before the caller's instructions, and sends the state's fields and droppable items as JSON. A score question's criteria are its options' `"<option>: <description>"` in order, and its pick the level nearest the returned score, a tie going to the higher one. When a request's estimate, the UTF-8 bytes of its compact JSON (never fewer than its tokens), exceeds the model's per-question window (`WINDOWS`, from TypeSafe's model docs), it drops the oldest droppable items until it fits, never a field; no fit without them: `SelectorError(TOO_LARGE)`. Built with no arguments, it reads `[jev]` of `selector/src/agent_pm/selector/config.toml` (local `[selector.jev]`): `key`, the Keychain service (default `typesafe-jev`), `url`, `model` (one in `WINDOWS`) and `timeout`, so another service name or a self-hosted System One compatible server is a config change. `engine/chain.py` runs the chain before each new run from `[linear_orchestrator.selection]` ([board.md › Task labels](board.md#task-labels)): `resolvers` lists the chain's resolvers in order (`chain.RESOLVERS` maps each name to its `Resolver`), each new run with resolvers translating the issue first, and `selector` names the Selector class (`<module>:<Class>`, packaged: `agent_pm.selector:JevSelector`), so a new Selector is its class plus that line. No resolvers, the default: no chain, no translate, no Selector built, runs start as before. The run launches with the final `Context` (`engine/types.py`), and a resume reuses its start row's recorded tier and effort, with no translate or select. A Kev selector comes later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
 
 ```mermaid
 classDiagram
   direction TB
   class Selector {
     <<abstract>>
-    +select(state, question) str
+    +select(state, question) Answer
+  }
+  class Answer {
+    pick
+    confidence
+  }
+  class Kind {
+    <<enumeration>>
+    choice
+    score
   }
   class State {
     fields
@@ -103,6 +112,7 @@ classDiagram
   class Question {
     instructions
     options
+    kind
   }
   class FakeSelector {
     <<test fake>>
@@ -129,9 +139,11 @@ classDiagram
   class ModelResolver {
     selector
     task_tiers
+    min_confidence
   }
   class EffortResolver {
     selector
+    min_confidence
   }
   class FakeResolver~C~ {
     <<test fake>>
@@ -160,6 +172,8 @@ classDiagram
   EffortResolver ..> Selector : select
   Selector ..> State : sends
   Selector ..> Question : asks
+  Selector ..> Answer : returns
+  Question ..> Kind : kind
   translate ..> State : creates
   Choice ..> Context : apply
 ```

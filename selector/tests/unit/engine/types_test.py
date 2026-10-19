@@ -7,8 +7,10 @@ import inspect
 import unittest
 
 from agent_pm.selector import (
+    Answer,
     Backend,
     Failure,
+    Kind,
     Question,
     Selector,
     SelectorConfig,
@@ -25,6 +27,16 @@ class Interface(Case):
         self.assertEqual(
             list(inspect.signature(Selector.select).parameters), ["self", "state", "question"]
         )
+
+    def test_select_returns_an_answer(self):
+        self.assertIs(inspect.signature(Selector.select).return_annotation, Answer)
+        self.assertEqual([f.name for f in dataclasses.fields(Answer)], ["pick", "confidence"])
+        answer = Answer("high", 0.8)
+        self.assertEqual((answer.pick, answer.confidence), ("high", 0.8))
+        self.assertIsNone(Answer("only", None).confidence)
+        field = "pick"
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            setattr(answer, field, "low")
 
     def test_a_selector_without_select_cannot_be_built(self):
         with self.assertRaises(TypeError):
@@ -62,6 +74,23 @@ class Values(Case):
     def test_the_question_keeps_its_options_order(self):
         question = Question("Pick.", {"b": "desc b", "a": "desc a"})
         self.assertEqual(list(question.options.items()), [("b", "desc b"), ("a", "desc a")])
+
+    def test_a_score_question_needs_two_to_ten_levels(self):
+        self.assertEqual([k.value for k in Kind], ["choice", "score"])
+        self.assertIs(Question("Pick.", {"a": "desc a"}).kind, Kind.CHOICE)
+        levels = {f"l{i}": f"level {i}" for i in range(11)}
+        for count in (2, 10):
+            with self.subTest(count=count):
+                options = dict(list(levels.items())[:count])
+                question = Question("Score.", options, Kind.SCORE)
+                self.assertIs(question.kind, Kind.SCORE)
+                self.assertEqual(list(question.options), list(options))
+        for count in (1, 11):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                Question("Score.", dict(list(levels.items())[:count]), Kind.SCORE)
+        self.assertEqual(len(Question("Pick.", levels).options), 11)
+        with self.assertRaises(ValueError):
+            Question("Pick.", {"a": "", "b": ""}, "rank")
 
     def test_bad_questions_or_states_are_refused_when_built(self):
         for instructions, options in (

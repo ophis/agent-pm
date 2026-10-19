@@ -71,18 +71,21 @@ canceled = ""
 
 # The Resolver chain (docs/architecture.md › Resolver chain); optional, off by default. It picks a new run's launch
 # choices from its issue; a resume keeps its start row's.
-#   selector   "<module>:<Class>": the Selector the resolvers ask, a concrete agent_pm.selector Selector built with no
-#              arguments; Jev's key service, URL, model and timeout: [selector.jev]
-#              (selector/src/agent_pm/selector/config.toml); required when resolvers are listed
-#   resolvers  the chain, in order, model before effort: "model" (the run's tier: the lowest tier of the model
-#              picked among its client's tiers) and "effort" (the effort among its client's efforts, for the model of
-#              the run's tier); each falls back on its own, also when the translation or the Selector fails: model to
-#              [task_tiers]'s tier, effort to the role's effort; before a new run with resolvers, the
-#              choice-translator role first renders the issue faithfully into English as their state; [] → no
-#              chain, no translation: runs start as before model selection
+#   selector        "<module>:<Class>": the Selector the resolvers ask, a concrete agent_pm.selector Selector built
+#                   with no arguments; Jev's key service, URL, model and timeout: [selector.jev]
+#                   (selector/src/agent_pm/selector/config.toml); required when resolvers are listed
+#   resolvers       the chain, in order, model before effort: "model" (the run's tier: the lowest tier of the model
+#                   scored among its client's tiers) and "effort" (the effort scored among its client's efforts, for
+#                   the model of the run's tier); each falls back on its own, also when the translation or the
+#                   Selector fails: model to [task_tiers]'s tier, effort to the role's effort; before a new run with
+#                   resolvers, the choice-translator role first renders the issue faithfully into English as their
+#                   state; [] → no chain, no translation: runs start as before model selection
+#   min_confidence  a number from 0 to 1: a resolver whose Selector answer's confidence is below it falls back; 0 →
+#                   never; 0.1 is provisional, to be calibrated on historical tickets
 [selection]
 selector = "agent_pm.selector:JevSelector"
 resolvers = []
+min_confidence = 0.1
 
 # local: [linear_orchestrator.selection]
 # local: resolvers = ["model", "effort"]

@@ -469,11 +469,17 @@ class ConfigurationLoading(ConfigFile, Case):
         for text in (PIPELINE, PIPELINE + "[selection]\n"):
             with self.subTest(text=text[-12:]):
                 cfg = self.load(text)
-                self.assertEqual(cfg.selection, Selection(selector=None, resolvers=()))
+                self.assertEqual(
+                    cfg.selection, Selection(selector=None, resolvers=(), min_confidence=0.0)
+                )
         with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
             self.assertEqual(
                 tomllib.load(f)["selection"],
-                {"selector": "agent_pm.selector:JevSelector", "resolvers": []},
+                {
+                    "selector": "agent_pm.selector:JevSelector",
+                    "resolvers": [],
+                    "min_confidence": 0.1,
+                },
             )
 
     def test_selection_local_override(self):
@@ -483,12 +489,12 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         self.assertEqual(
             self.load(PIPELINE).selection,
-            Selection(selector=FakeSelector, resolvers=(ResolverName.MODEL,)),
+            Selection(selector=FakeSelector, resolvers=(ResolverName.MODEL,), min_confidence=0.0),
         )
         self.local('[selection]\nselector = "agent_pm.selector:JevSelector"\n')
         self.assertEqual(
             self.load(PIPELINE + '[selection]\nresolvers = ["effort"]\n').selection,
-            Selection(selector=JevSelector, resolvers=(ResolverName.EFFORT,)),
+            Selection(selector=JevSelector, resolvers=(ResolverName.EFFORT,), min_confidence=0.0),
         )
 
     def test_resolvers_are_model_and_effort_in_that_order(self):
@@ -524,11 +530,41 @@ class ConfigurationLoading(ConfigFile, Case):
                     PIPELINE + f"[selection]\nresolvers = {value}\n",
                 )
 
+    def test_min_confidence(self):
+        for value, floor in (("0", 0.0), ("0.1", 0.1), ("0.75", 0.75), ("1", 1.0), ("1.0", 1.0)):
+            with self.subTest(value):
+                text = PIPELINE + f"[selection]\nmin_confidence = {value}\n"
+                selection = self.load(text).selection
+                self.assertEqual(selection.min_confidence, floor)
+                self.assertIsInstance(selection.min_confidence, float)
+        self.local("[selection]\nmin_confidence = 0.4\n")
+        self.assertEqual(
+            self.load(PIPELINE + "[selection]\nmin_confidence = 0.1\n").selection.min_confidence,
+            0.4,
+        )
+        self.local("")
+        for value, shown in (
+            ("-0.1", "-0.1"),
+            ("1.5", "1.5"),
+            ("2", "2"),
+            ("true", "True"),
+            ('"0.5"', "'0.5'"),
+            ("nan", "nan"),
+            ("inf", "inf"),
+            ("[]", "[]"),
+        ):
+            with self.subTest(value):
+                self.fails(
+                    "linear-orchestrator/config.toml: selection.min_confidence must be a number "
+                    f"from 0 to 1: {shown}",
+                    PIPELINE + f"[selection]\nmin_confidence = {value}\n",
+                )
+
     def test_selection_rejected(self):
         cases = [
             (
                 PIPELINE.replace("[roles.", "selection = true\n[roles.", 1),
-                "selection must be a table of selector and resolvers",
+                "selection must be a table of selector, resolvers and min_confidence",
             ),
             (
                 PIPELINE + "[selection]\nclient = true\ntier = false\n",

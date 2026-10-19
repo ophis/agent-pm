@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from agent_pm.selector.engine.types import Question, State
+from agent_pm.selector.engine.types import Answer, Question, State
 
 
 class Selector(ABC):
@@ -11,7 +11,7 @@ class Selector(ABC):
     """
 
     @abstractmethod
-    def select(self, state: State, question: Question) -> str:
-        """A key of question.options. ValueError: bad input; SelectorError: a failed call, or
-        TOO_LARGE: no fit even with no droppable items.
+    def select(self, state: State, question: Question) -> Answer:
+        """Picks a key of question.options. ValueError: bad input; SelectorError: a failed call,
+        or TOO_LARGE: no fit even with no droppable items.
         """

@@ -40,12 +40,14 @@ class ResolverName(StrEnum):
 
 @dataclass(frozen=True)
 class Selection:
-    """[selection]: the Selector class (built with no arguments; None only without resolvers)
-    and the Resolver chain in its order; no resolvers: no chain.
+    """[selection]: the Selector class (built with no arguments; None only without resolvers),
+    the Resolver chain in its order (no resolvers: no chain) and the confidence below which a
+    resolver's answer falls back.
     """
 
     selector: type | None
     resolvers: tuple[ResolverName, ...]
+    min_confidence: float
 
 
 @dataclass(frozen=True)

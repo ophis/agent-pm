@@ -275,7 +275,8 @@ agent-pm 0.6.28.
 - [ ] [Measured readers](#measured-readers): `agent-pm-opencode`.
 - [ ] Jev: with the `[selector.jev] key` service (default `typesafe-jev`) in the Keychain,
   `JevSelector().select(State({"title": <title>}), Question(<instructions>, {<a>: <description a>, <b>: <description b>}))`
-  returns `<a>` or `<b>`. It also confirms two unverified wire assumptions (TASK-744): the state sent as a JSON object
+  returns an `Answer` picking `<a>` or `<b>`, its confidence from 0 to 1, and so does that call with `Kind.SCORE` after
+  the options. It also confirms two unverified wire assumptions (TASK-744): the state sent as a JSON object
   of its fields and each criterion's text being its option's description.
 
 ## Risks

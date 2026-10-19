@@ -1,6 +1,6 @@
 """engine/selection.py: translate over a fake Delegate, the chain's Context and Resolver, and the
-ModelResolver and EffortResolver over session's merged client config; FakeResolver passes the
-resolver contracts.
+ModelResolver and EffortResolver over session's merged client config, their score questions and
+confidence floor; FakeResolver passes the resolver contracts.
 """
 
 import dataclasses
@@ -28,7 +28,15 @@ from agent_pm.linear_orchestrator.engine.selection import (
     SelectionFailure,
     translate,
 )
-from agent_pm.selector import Backend, Failure, JevSelector, SelectorConfig, SelectorError
+from agent_pm.selector import (
+    Answer,
+    Backend,
+    Failure,
+    JevSelector,
+    Kind,
+    SelectorConfig,
+    SelectorError,
+)
 from agent_pm.selector import State as SelectorState
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
@@ -284,15 +292,22 @@ class Types(Case):
         error = SelectionError(SelectionFailure.SELECT, Failure.TIMEOUT)
         self.assertEqual((str(error), error.selector_reason), ("select", Failure.TIMEOUT))
         self.assertIsNone(SelectionError(SelectionFailure.INVALID).selector_reason)
-        self.assertEqual([f.value for f in SelectionFailure], ["translate", "select", "invalid"])
+        self.assertEqual(
+            [f.value for f in SelectionFailure],
+            ["translate", "select", "invalid", "low-confidence"],
+        )
 
 
-def model_layer(selector=None):
-    return ModelResolver(FakeSelector() if selector is None else selector, task_tiers={})
+FLOOR = 0.5
 
 
-def effort_layer(selector=None):
-    return EffortResolver(FakeSelector() if selector is None else selector)
+def model_layer(selector=None, floor=FLOOR):
+    selector = FakeSelector() if selector is None else selector
+    return ModelResolver(selector, task_tiers={}, min_confidence=floor)
+
+
+def effort_layer(selector=None, floor=FLOOR):
+    return EffortResolver(FakeSelector() if selector is None else selector, min_confidence=floor)
 
 
 LAYERS = {"model": model_layer, "effort": effort_layer}
@@ -316,25 +331,26 @@ class LayerCase(Case):
 
 
 class ModelLayer(LayerCase):
-    def test_the_instructions_ask_for_the_least_costly_capable_model(self):
+    def test_the_instructions_score_the_capability_the_work_needs(self):
         self.assertEqual(
             MODEL_INSTRUCTIONS,
-            "Choose the least costly model that can still complete the work this issue asks for, "
-            "to the standard it sets. The options are the run's models, from most to least capable.",
+            "Score how capable a model this issue's work needs: the lowest level that can still "
+            "complete it to the standard it sets. The levels run from the least to the most "
+            "capable model.",
         )
 
-    def test_the_options_are_the_clients_models_in_tier_order_described_by_rank(self):
+    def test_a_score_question_from_weakest_to_strongest(self):
         tiers = session_clients()["claude"]["tiers"]
         models = [tiers[t] for t in sorted(tiers, key=int)]
         _, question = self.ask(model_layer)
-        self.assertEqual(question.instructions, MODEL_INSTRUCTIONS)
+        self.assertEqual((question.instructions, question.kind), (MODEL_INSTRUCTIONS, Kind.SCORE))
         self.assertEqual(
             list(question.options.items()),
             [
-                (models[0], "tier 1: the most capable and most costly"),
-                (models[1], "tier 2: less capable and less costly than the models above it"),
-                (models[2], "tier 3: less capable and less costly than the models above it"),
-                (models[3], "tier 4: the least capable and least costly"),
+                (models[3], "tier 4, the least capable and least costly"),
+                (models[2], "tier 3, more capable and more costly than the levels before it"),
+                (models[1], "tier 2, more capable and more costly than the levels before it"),
+                (models[0], "tier 1, the most capable and most costly"),
             ],
         )
 
@@ -348,11 +364,11 @@ class ModelLayer(LayerCase):
         choice, question = self.ask(model_layer, OPENCODE, picks=["small:1"])
         self.assertEqual(choice, ModelChoice(3))
         self.assertEqual(
-            dict(question.options),
-            {
-                "big:1": "tier 1: the most capable and most costly",
-                "small:1": "tier 3: the least capable and least costly",
-            },
+            list(question.options.items()),
+            [
+                ("small:1", "tier 3, the least capable and least costly"),
+                ("big:1", "tier 1, the most capable and most costly"),
+            ],
         )
 
     def test_opencodes_single_model_is_offered_once_and_sends_nothing(self):
@@ -360,8 +376,9 @@ class ModelLayer(LayerCase):
         choice, question = self.ask(model_layer, OPENCODE)
         self.assertEqual(choice, ModelChoice(1))
         self.assertEqual(
-            dict(question.options), {model: "tier 1: the most capable and most costly"}
+            dict(question.options), {model: "tier 1, the least capable and least costly"}
         )
+        self.assertIs(question.kind, Kind.CHOICE)  # a score question needs two levels
         # A window no request fits and no key command: a call would fail.
         jev = JevSelector(
             SelectorConfig(Backend.JEV, "http://127.0.0.1:9/v1", "jev-1.13.0", 5.0, 1, ())
@@ -370,14 +387,12 @@ class ModelLayer(LayerCase):
             mock.patch("subprocess.run") as run,
             mock.patch("urllib.request.OpenerDirector.open") as post,
         ):
-            self.assertEqual(
-                ModelResolver(jev, task_tiers={}).choose(STATE, OPENCODE), ModelChoice(1)
-            )
+            self.assertEqual(model_layer(jev).choose(STATE, OPENCODE), ModelChoice(1))
         run.assert_not_called()
         post.assert_not_called()
 
     def test_the_fallback_is_the_task_tiers_tier(self):
-        resolver = ModelResolver(FakeSelector(), task_tiers={"light-build": 3})
+        resolver = ModelResolver(FakeSelector(), task_tiers={"light-build": 3}, min_confidence=0.5)
         self.assertEqual(
             resolver.fallback(Context("engineer", "light-build", "claude")), ModelChoice(3)
         )
@@ -387,29 +402,30 @@ class ModelLayer(LayerCase):
 
 
 class EffortLayer(LayerCase):
-    def test_the_instructions_ask_for_the_lowest_effort_the_model_needs(self):
+    def test_the_instructions_score_the_effort_the_model_needs(self):
         self.assertEqual(
             EFFORT_INSTRUCTIONS.format(model="sonnet"),
-            "The run uses the model sonnet. Choose the lowest reasoning effort at which that model "
-            "can still complete the work this issue asks for, to the standard it sets.",
+            "The run uses the model sonnet. Score the reasoning effort that model needs to "
+            "complete this issue's work to the standard it sets: the lowest level that suffices.",
         )
         self.assertEqual(
             EFFORT_INSTRUCTIONS_NO_MODEL,
-            "Choose the lowest reasoning effort at which the run's model can still complete the "
-            "work this issue asks for, to the standard it sets.",
+            "Score the reasoning effort the run's model needs to complete this issue's work to "
+            "the standard it sets: the lowest level that suffices.",
         )
 
-    def test_the_options_are_the_clients_efforts_in_order_described_by_rank(self):
+    def test_a_score_question_from_low_to_max(self):
         efforts = list(session_clients()["claude"]["efforts"])
         self.assertEqual(efforts, list(EFFORTS))
         _, question = self.ask(effort_layer)
+        self.assertIs(question.kind, Kind.SCORE)
         self.assertEqual(
             list(question.options.items()),
             [
                 ("low", "the least reasoning: fastest and cheapest"),
-                ("medium", "more reasoning than the efforts before it"),
-                ("high", "more reasoning than the efforts before it"),
-                ("xhigh", "more reasoning than the efforts before it"),
+                ("medium", "more reasoning than the levels before it"),
+                ("high", "more reasoning than the levels before it"),
+                ("xhigh", "more reasoning than the levels before it"),
                 ("max", "the most reasoning: slowest and costliest"),
             ],
         )
@@ -444,7 +460,7 @@ class EffortLayer(LayerCase):
         self.assertEqual(choice, EffortChoice("high"))
 
     def test_the_fallback_is_the_roles_effort(self):
-        resolver = EffortResolver(FakeSelector())
+        resolver = effort_layer()
         for context in (CLAUDE, dataclasses.replace(CLAUDE, tier=2, effort="max")):
             with self.subTest(context=context):
                 self.assertEqual(resolver.fallback(context), EffortChoice(None))
@@ -505,19 +521,71 @@ class LayerFailures(LayerCase):
             )
             self.assertTrue(error.__suppress_context__)
 
-    def test_a_pick_outside_the_options_is_invalid(self):
+    def test_a_pick_outside_the_options_or_not_an_answer_is_invalid(self):
         class Stray(FakeSelector):
+            def __init__(self, answer):
+                super().__init__()
+                self.answer = answer
+
             def select(self, state, question):
-                return "not an option"
+                return self.answer
 
         for name, make in LAYERS.items():
+            for answer in (Answer("not an option", 1.0), "low"):
+                with self.subTest(name, answer=answer):
+                    self.assert_invalid(lambda make=make, answer=answer: make(Stray(answer)))
+
+    def test_more_than_ten_levels_are_invalid(self):
+        many = {str(i): f"model-{i}" for i in range(1, 12)}
+        for name, table in (
+            ("model", {"tiers": many, "efforts": {"low": "low"}}),
+            ("effort", {"tiers": {"1": "m"}, "efforts": {f"e{i}": "e" for i in range(11)}}),
+        ):
+            with (
+                self.subTest(name),
+                mock.patch("tomllib.load", return_value={"clients": {"claude": table}}),
+            ):
+                self.assert_invalid(LAYERS[name])
+
+
+class Confidence(LayerCase):
+    def test_an_answer_below_the_floor_is_low_confidence(self):
+        for name, make in LAYERS.items():
+            for confidence, floor in ((0.49, 0.5), (0.0, 0.1), (0.99, 1.0)):
+                selector = FakeSelector(confidence=confidence)
+                with (
+                    self.subTest(name, confidence=confidence),
+                    self.assertRaises(SelectionError) as caught,
+                ):
+                    make(selector, floor).choose(STATE, CLAUDE)
+                error = caught.exception
+                self.assertEqual(
+                    (error.reason, error.selector_reason, str(error)),
+                    (SelectionFailure.LOW_CONFIDENCE, None, "low-confidence"),
+                )
+                self.assertEqual(len(selector.calls), 1)
+
+    def test_an_answer_at_or_above_the_floor_is_the_choice(self):
+        for confidence, floor in ((0.5, 0.5), (1.0, 0.5), (0.0, 0.0), (1.0, 1.0)):
+            with self.subTest(confidence=confidence, floor=floor):
+                selector = FakeSelector(["high"], confidence=confidence)
+                self.assertEqual(
+                    effort_layer(selector, floor).choose(STATE, CLAUDE), EffortChoice("high")
+                )
+                self.assertEqual(model_layer(selector, floor).choose(STATE, CLAUDE).tier, 4)
+
+    def test_an_answer_without_a_confidence_passes(self):
+        for name, make in LAYERS.items():
             with self.subTest(name):
-                self.assert_invalid(lambda make=make: make(Stray()))
+                make(FakeSelector(confidence=None), 1.0).choose(STATE, CLAUDE)
+        # one model: the FakeSelector answers without a confidence, as Jev does unasked
+        doubtful = FakeSelector(confidence=0.0)
+        self.assertEqual(model_layer(doubtful, 1.0).choose(STATE, OPENCODE), ModelChoice(1))
 
 
 class ModelResolverContract(ModelChoiceContract, Case):
     def make(self):
-        return ModelResolver(FakeSelector(), task_tiers={})
+        return model_layer()
 
 
 class FakeModelResolverContract(ModelChoiceContract, Case):
@@ -527,7 +595,7 @@ class FakeModelResolverContract(ModelChoiceContract, Case):
 
 class EffortResolverContract(EffortChoiceContract, Case):
     def make(self):
-        return EffortResolver(FakeSelector())
+        return effort_layer()
 
 
 class FakeEffortResolverContract(EffortChoiceContract, Case):

@@ -1,6 +1,8 @@
 """DecisionApi, a loopback System One endpoint: it records each request and answers with its
-scripted reply, by default the first of picks in the request's criteria, else its first criteria
-key; /elsewhere counts hits, a redirect's target.
+scripted reply, by default its one question's: a choice the first of picks in its criteria, else
+its first criteria key; a score the level of the first of picks whose "<pick>: " starts a criteria
+entry, else level 0; with the next of confidences, consumed one per answer, else 1.0. /elsewhere
+counts hits, a redirect's target.
 """
 
 import json
@@ -30,9 +32,10 @@ class Reply:
 
 
 class DecisionApi:
-    def __init__(self, picks: Sequence[str] = ()):
+    def __init__(self, picks: Sequence[str] = (), *, confidences: Sequence[float] = ()):
         self.reply = Reply()
         self.picks = list(picks)
+        self.confidences = list(confidences)
         self.requests: list[Request] = []
         self.elsewhere = 0
         self._server = _Server(("127.0.0.1", 0), _Handler)
@@ -62,9 +65,20 @@ class DecisionApi:
         if self.reply.body is not None:
             return self.reply
         questions = request.body.get("questions") if isinstance(request.body, dict) else None
-        criteria = questions["choice"]["criteria"] if isinstance(questions, dict) else {}
-        pick = next((p for p in self.picks if p in criteria), next(iter(criteria), None))
-        body = json.dumps({"answers": {"choice": {"type": "choice", "choice": pick}}}).encode()
+        ((name, question),) = questions.items() if isinstance(questions, dict) else (("", {}),)
+        criteria = question.get("criteria", {})
+        confidence = self.confidences.pop(0) if self.confidences else 1.0
+        if question.get("type") == "score":
+            level = next(
+                (i for p in self.picks for i, c in enumerate(criteria) if c.startswith(f"{p}: ")),
+                0,
+            )
+            legend = dict(enumerate(criteria))
+            answer = {"type": "score", "score": level, "confidence": confidence, "legend": legend}
+        else:
+            pick = next((p for p in self.picks if p in criteria), next(iter(criteria), None))
+            answer = {"type": "choice", "choice": pick, "confidence": confidence}
+        body = json.dumps({"answers": {name: answer}}).encode()
         return Reply(self.reply.status, body, self.reply.headers)
 
 

@@ -1,4 +1,6 @@
-"""selector/backends/jev.py: JevSelector's config, key, exchange, trim and failure codes."""
+"""selector/backends/jev.py: JevSelector's config, key, exchange, trim, choice and score answers and
+failure codes.
+"""
 
 import contextlib
 import http.client
@@ -13,9 +15,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.selector import (
+    Answer,
     Backend,
     Failure,
     JevSelector,
+    Kind,
     Question,
     SelectorConfig,
     SelectorError,
@@ -30,28 +34,45 @@ KEY = "test-jev-key"
 URL = "https://api.example/v1/systemone"
 STATE = State({"title": "state-marker"})
 QUESTION = Question("instructions-marker", {"low-marker": "low-desc", "high-marker": "high-desc"})
+LEVELS = {"low-marker": "low-desc", "mid-marker": "mid-desc", "high-marker": "high-desc"}
+SCORE = Question("instructions-marker", LEVELS, Kind.SCORE)
 CONFIG = SelectorConfig(Backend.JEV, URL, "jev-x", 3.0, 32000, ("/bin/key", "item"))
 KEYCHAIN = ("/usr/bin/security", "find-generic-password", "-s", "typesafe-jev", "-w")
 
 
+def asked(question=QUESTION):
+    """The request's questions for question: a choice's criteria its options and descriptions, a
+    score's its "<option>: <description>" levels in order.
+    """
+    criteria = (
+        dict(question.options)
+        if question.kind is Kind.CHOICE
+        else [f"{o}: {d}" for o, d in question.options.items()]
+    )
+    instructions = f"{ANTI_INJECTION} {question.instructions}"
+    return {
+        question.kind.value: {
+            "type": question.kind.value,
+            "instructions": instructions,
+            "criteria": criteria,
+        }
+    }
+
+
 def estimate(state, question=QUESTION, model="jev-x"):
     """The estimate (spec D3) of the body sending state.sent(...) as given."""
-    body = {
-        "model": model,
-        "state": state,
-        "questions": {
-            "choice": {
-                "type": "choice",
-                "instructions": f"{ANTI_INJECTION} {question.instructions}",
-                "criteria": dict(question.options),
-            }
-        },
-    }
+    body = {"model": model, "state": state, "questions": asked(question)}
     return len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
 
-def reply(choice="high-marker"):
-    return json.dumps({"answers": {"choice": {"type": "choice", "choice": choice}}}).encode()
+def reply(choice="high-marker", **confidence):
+    answer = {"type": "choice", "choice": choice, **confidence}
+    return json.dumps({"answers": {"choice": answer}}).encode()
+
+
+def scored(score=2, confidence=0.9, **extra):
+    answer = {"type": "score", "score": score, "confidence": confidence, **extra}
+    return json.dumps({"answers": {"score": answer}}).encode()
 
 
 def respond(body):
@@ -229,7 +250,9 @@ class Config(JevCase):
 
 class Select(JevCase):
     def test_a_single_option_reads_no_key_and_sends_nothing(self):
-        self.assertEqual(self.ask(question=Question("Pick.", {"only": "desc"})), "only")
+        self.assertEqual(
+            self.ask(question=Question("Pick.", {"only": "desc"})), Answer("only", None)
+        )
         self.run.assert_not_called()
         self.build.assert_not_called()
 
@@ -237,7 +260,8 @@ class Select(JevCase):
         big = State({"title": "x" * 1000}, ("comments", ("y" * 1000,)))
         only = Question("Pick.", {"only": "desc"})
         self.assertEqual(
-            self.ask(state=big, question=only, config=replace(CONFIG, window=10)), "only"
+            self.ask(state=big, question=only, config=replace(CONFIG, window=10)),
+            Answer("only", None),
         )
         self.run.assert_not_called()
         self.build.assert_not_called()
@@ -265,12 +289,21 @@ class Trim(JevCase):
         ):
             with self.subTest(window=window):
                 self.assertEqual(
-                    self.ask(state=self.state(), config=replace(CONFIG, window=window)),
+                    self.ask(state=self.state(), config=replace(CONFIG, window=window)).pick,
                     "high-marker",
                 )
                 state = self.sent()["state"]
                 self.assertEqual(state, {"title": "t\u00e9", "status": "Todo", "comments": kept})
                 self.assertEqual(list(state), ["title", "status", "comments"])
+
+    def test_a_score_question_trims_against_its_own_body(self):
+        window = estimate(self.state().sent(1), SCORE)
+        self.assertGreater(window, estimate(self.state().sent(1)))
+        self.ask(
+            state=self.state(), question=SCORE, body=scored(), config=replace(CONFIG, window=window)
+        )
+        self.assertEqual(self.sent()["state"]["comments"], ["mid-\u00e9\u00e9", "new-\u00e9\u00e9"])
+        self.assertEqual(self.sent()["questions"], asked(SCORE))
 
     def test_no_fit_without_droppable_items_is_too_large_and_posts_nothing(self):
         bare = State({"title": "t\u00e9", "status": "Todo"})
@@ -339,7 +372,7 @@ class Key(JevCase):
 
 class Exchange(JevCase):
     def test_one_post_carrying_the_callers_question(self):
-        self.assertEqual(self.ask(), "high-marker")
+        self.assertEqual(self.ask(), Answer("high-marker", None))
         self.assertEqual(len(self.opener.calls), 1)
         request, timeout = self.opener.calls[0]
         self.assertEqual((request.full_url, request.get_method(), timeout), (URL, "POST", 3.0))
@@ -407,7 +440,7 @@ class Exchange(JevCase):
 
     def test_a_reply_at_the_limit_is_read(self):
         body = reply()
-        self.assertEqual(self.ask(body=body + b" " * (MAX_REPLY - len(body))), "high-marker")
+        self.assertEqual(self.ask(body=body + b" " * (MAX_REPLY - len(body))).pick, "high-marker")
 
 
 class Timeout(JevCase):
@@ -421,11 +454,93 @@ class Timeout(JevCase):
                 self.assertEqual(self.opener.calls[0][1], 3.0)
 
 
-class Answer(JevCase):
+class Choice(JevCase):
     def test_an_answer_outside_the_choices_is_invalid(self):
         for choice in ("other", "HIGH-MARKER", "", None, 1, ["high-marker"]):
             with self.subTest(choice=choice):
                 self.assertEqual(self.failure(body=reply(choice)).reason, Failure.INVALID)
+
+    def test_a_choice_confidence_is_returned_and_absent_is_none(self):
+        for confidence, want in ((0.4, 0.4), (0, 0.0), (1, 1.0), (0.25, 0.25)):
+            with self.subTest(confidence=confidence):
+                answer = self.ask(body=reply(confidence=confidence))
+                self.assertEqual(answer, Answer("high-marker", want))
+                self.assertIsInstance(answer.confidence, float)
+        self.assertIsNone(self.ask(body=reply()).confidence)
+
+    def test_a_bad_choice_confidence_is_invalid(self):
+        for confidence in (-0.1, 1.1, True, "0.5", None, [0.5], float("nan"), float("inf")):
+            with self.subTest(confidence=confidence):
+                failure = self.failure(body=reply(confidence=confidence))
+                self.assertEqual(failure.reason, Failure.INVALID)
+
+
+class Score(JevCase):
+    def test_a_score_question_sends_its_levels_in_order(self):
+        self.assertEqual(self.ask(question=SCORE, body=scored()), Answer("high-marker", 0.9))
+        body = self.sent()
+        self.assertEqual(
+            body["questions"],
+            {
+                "score": {
+                    "type": "score",
+                    "instructions": f"{ANTI_INJECTION} instructions-marker",
+                    "criteria": [
+                        "low-marker: low-desc",
+                        "mid-marker: mid-desc",
+                        "high-marker: high-desc",
+                    ],
+                }
+            },
+        )
+        self.assertEqual(body["state"], {"title": "state-marker"})
+
+    def test_the_pick_is_the_nearest_level_a_tie_going_up(self):
+        for score, pick in (
+            (0, "low-marker"),
+            (0.49, "low-marker"),
+            (0.5, "mid-marker"),
+            (1, "mid-marker"),
+            (1.49, "mid-marker"),
+            (1.5, "high-marker"),
+            (2.0, "high-marker"),
+        ):
+            with self.subTest(score=score):
+                answer = self.ask(question=SCORE, body=scored(score, 0.55))
+                self.assertEqual(answer, Answer(pick, 0.55))
+
+    def test_the_rest_of_the_answer_is_ignored(self):
+        legend = {"0": "low-marker: low-desc", "1": "mid-marker: mid-desc"}
+        probabilities = {"0": 0.2, "1": 0.8, "2": 0.0}
+        body = scored(0.8, 0.6, legend=legend, probabilities=probabilities)
+        self.assertEqual(self.ask(question=SCORE, body=body), Answer("mid-marker", 0.6))
+
+    def test_a_score_off_the_levels_or_not_finite_is_invalid(self):
+        for score in (-0.01, 2.01, 3, float("nan"), float("inf"), True, "1", None, [1]):
+            with self.subTest(score=score):
+                failure = self.failure(question=SCORE, body=scored(score))
+                self.assertEqual(failure.reason, Failure.INVALID)
+
+    def test_a_missing_or_bad_score_confidence_is_invalid(self):
+        bodies = {
+            "missing": json.dumps({"answers": {"score": {"type": "score", "score": 1}}}).encode(),
+            **{
+                repr(c): scored(1, c)
+                for c in (-0.1, 1.1, True, "0.5", None, float("nan"), float("-inf"))
+            },
+        }
+        for name, body in bodies.items():
+            with self.subTest(name):
+                self.assertEqual(self.failure(question=SCORE, body=body).reason, Failure.INVALID)
+
+    def test_a_reply_without_its_score_is_an_error(self):
+        for body in (
+            reply(),
+            b'{"answers": {"score": "high-marker"}}',
+            b'{"answers": {"score": {"type": "score", "confidence": 0.9}}}',
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.failure(question=SCORE, body=body).reason, Failure.ERROR)
 
 
 class Errors(JevCase):
@@ -466,7 +581,9 @@ class Errors(JevCase):
                 self.assertIsNone(error.__context__)
 
     def test_only_selector_or_value_errors_leave_select(self):
-        self.assertEqual(self.ask(state=State({"text": "\ud800 lone surrogate"})), "high-marker")
+        self.assertEqual(
+            self.ask(state=State({"text": "\ud800 lone surrogate"})).pick, "high-marker"
+        )
         self.assertEqual(self.sent()["state"]["text"], "\ud800 lone surrogate")
         for name, kw in self.CASES.items():
             with self.subTest(name):

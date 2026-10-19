@@ -1,10 +1,10 @@
 """The router's choice chain. translate turns an issue into the state once, a faithful English
 rendering of its title, description, status, labels and comments; each step is a Resolver
 paired with its Choice: choose picks one for the state given the Context so far, among described
-options it reads from config, by asking a Selector its own question; fallback gives today's choice,
-for a step switched off or a SelectionError. The router applies each Choice to the Context in a
-fixed order and records it for resume, logging only reason codes: issue text, the state and replies
-are untrusted data.
+options it reads from config, by asking a Selector its own question, refusing an answer below its
+confidence floor; fallback gives today's choice, for a step switched off or a SelectionError. The
+router applies each Choice to the Context in a fixed order and records it for resume, logging only
+reason codes: issue text, the state and replies are untrusted data.
 """
 
 import json
@@ -17,7 +17,7 @@ from typing import Generic, TypeVar
 import agent_pm.utils as utils
 from agent_pm.delegate import Delegate, Spec
 from agent_pm.linear_orchestrator.engine.types import Context
-from agent_pm.selector import Failure, Question, Selector, SelectorError
+from agent_pm.selector import Answer, Failure, Kind, Question, Selector, SelectorError
 from agent_pm.selector import State as SelectorState
 from agent_pm.utils import OutcomeStatus
 
@@ -30,26 +30,27 @@ TRANSLATOR_TASK = "translate"
 TRANSLATION_FIELDS = {"title": str, "description": str, "status": str, "labels": list}
 COMMENT_FIELDS = {"author": str, "created_at": str, "body": str}
 MODEL_INSTRUCTIONS = (
-    "Choose the least costly model that can still complete the work this issue asks for, to the "
-    "standard it sets. The options are the run's models, from most to least capable."
+    "Score how capable a model this issue's work needs: the lowest level that can still complete "
+    "it to the standard it sets. The levels run from the least to the most capable model."
 )
 EFFORT_INSTRUCTIONS_NO_MODEL = (
-    "Choose the lowest reasoning effort at which the run's model can still complete the work this "
-    "issue asks for, to the standard it sets."
+    "Score the reasoning effort the run's model needs to complete this issue's work to the "
+    "standard it sets: the lowest level that suffices."
 )
 EFFORT_INSTRUCTIONS = (
-    "The run uses the model {model}. Choose the lowest reasoning effort at which that model can "
-    "still complete the work this issue asks for, to the standard it sets."
+    "The run uses the model {model}. Score the reasoning effort that model needs to complete this "
+    "issue's work to the standard it sets: the lowest level that suffices."
 )
-# An option's description by its rank: (first, between, last).
+# A level's description by its rank, lowest first: (first, between, last); the Selector puts the
+# option's name before it.
 MODEL_RANKS = (
-    "the most capable and most costly",
-    "less capable and less costly than the models above it",
     "the least capable and least costly",
+    "more capable and more costly than the levels before it",
+    "the most capable and most costly",
 )
 EFFORT_RANKS = (
     "the least reasoning: fastest and cheapest",
-    "more reasoning than the efforts before it",
+    "more reasoning than the levels before it",
     "the most reasoning: slowest and costliest",
 )
 
@@ -58,6 +59,7 @@ class SelectionFailure(StrEnum):
     TRANSLATE = "translate"
     SELECT = "select"
     INVALID = "invalid"
+    LOW_CONFIDENCE = "low-confidence"
 
 
 class SelectionError(Exception):
@@ -117,13 +119,14 @@ class EffortChoice(Choice):
 
 
 class ModelResolver(Resolver[ModelChoice]):
-    """Options: the context client's distinct models in session's merged config, in tier order; a
-    pick is its model's lowest tier. fallback: [task_tiers]'s tier for the task.
+    """Levels: the context client's distinct models in session's merged config, weakest (highest
+    tier) first; a pick is its model's lowest tier. fallback: [task_tiers]'s tier for the task.
     """
 
-    def __init__(self, selector: Selector, *, task_tiers: Mapping[str, int]):
+    def __init__(self, selector: Selector, *, task_tiers: Mapping[str, int], min_confidence: float):
         self.selector = selector
         self.task_tiers = task_tiers
+        self.min_confidence = min_confidence
 
     def choose(self, state: SelectorState, context: Context) -> ModelChoice:
         _check(state)
@@ -131,11 +134,12 @@ class ModelResolver(Resolver[ModelChoice]):
         lowest: dict[str, int] = {}
         for tier, model in tiers.items():
             lowest.setdefault(model, tier)
+        weakest_first = list(reversed(lowest.items()))
         options = {
-            model: f"tier {tier}: {_rank(i, len(lowest), MODEL_RANKS)}"
-            for i, (model, tier) in enumerate(lowest.items())
+            model: f"tier {tier}, {_rank(i, len(weakest_first), MODEL_RANKS)}"
+            for i, (model, tier) in enumerate(weakest_first)
         }
-        pick = _select(self.selector, state, Question(MODEL_INSTRUCTIONS, options))
+        pick = _select(self.selector, state, MODEL_INSTRUCTIONS, options, self.min_confidence)
         return ModelChoice(lowest[pick])
 
     def fallback(self, context: Context) -> ModelChoice:
@@ -143,12 +147,14 @@ class ModelResolver(Resolver[ModelChoice]):
 
 
 class EffortResolver(Resolver[EffortChoice]):
-    """Options: the context client's efforts in session's merged config, in config order; the
-    question names the model its tiers map the context's tier to. fallback: the role's effort.
+    """Levels: the context client's efforts in session's merged config, in config order (least
+    first); the question names the model its tiers map the context's tier to. fallback: the role's
+    effort.
     """
 
-    def __init__(self, selector: Selector):
+    def __init__(self, selector: Selector, *, min_confidence: float):
         self.selector = selector
+        self.min_confidence = min_confidence
 
     def choose(self, state: SelectorState, context: Context) -> EffortChoice:
         _check(state)
@@ -160,7 +166,9 @@ class EffortResolver(Resolver[EffortChoice]):
             else EFFORT_INSTRUCTIONS.format(model=model)
         )
         options = {e: _rank(i, len(efforts), EFFORT_RANKS) for i, e in enumerate(efforts)}
-        return EffortChoice(_select(self.selector, state, Question(instructions, options)))
+        return EffortChoice(
+            _select(self.selector, state, instructions, options, self.min_confidence)
+        )
 
     def fallback(self, context: Context) -> EffortChoice:
         return EffortChoice(None)
@@ -246,11 +254,27 @@ def _rank(index: int, count: int, ranks: tuple[str, str, str]) -> str:
     return first if index == 0 else last if index == count - 1 else between
 
 
-def _select(selector: Selector, state: SelectorState, question: Question) -> str:
+def _select(
+    selector: Selector,
+    state: SelectorState,
+    instructions: str,
+    levels: Mapping[str, str],
+    min_confidence: float,
+) -> str:
+    """The pick of a score question on levels (a choice for a single one, which needs no call); a
+    question off the Selector's limits (more than 10 levels): INVALID; an answer's confidence
+    below min_confidence: LOW_CONFIDENCE.
+    """
     try:
-        pick = selector.select(state, question)
+        question = Question(instructions, levels, Kind.SCORE if len(levels) > 1 else Kind.CHOICE)
+    except ValueError:
+        raise SelectionError(SelectionFailure.INVALID) from None
+    try:
+        answer = selector.select(state, question)
     except SelectorError as error:
         raise SelectionError(SelectionFailure.SELECT, error.reason) from None
-    if pick not in question.options:
+    if not isinstance(answer, Answer) or answer.pick not in question.options:
         raise SelectionError(SelectionFailure.INVALID)
-    return pick
+    if answer.confidence is not None and answer.confidence < min_confidence:
+        raise SelectionError(SelectionFailure.LOW_CONFIDENCE)
+    return answer.pick
