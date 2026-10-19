@@ -279,7 +279,8 @@ class Host(ABC):
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> InteractiveProcess:
-        """metadata carries private sid/client/generation separately from the published Record."""
+        """metadata: private sid/client/generation, apart from the published Record; a container
+        Host writes prompt to prompt_file."""
         ...
 
     def pipe(

@@ -3,6 +3,7 @@ kills (kill_group), piped starts (piped_popen), timed output probes (probe) and 
 """
 
 import contextlib
+import json
 import os
 import re
 import shlex
@@ -15,6 +16,7 @@ from agent_pm.utils.environment import environment_ok
 
 SHORT, LONG = 60, 600
 STOP_WAIT = 5
+PROMPT_ARGV_MAX = 100_000  # JSON bytes; exec takes 128 KiB per arg
 USERINFO = re.compile(r"//[^@/\s]+@")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -36,6 +38,10 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
                 proc.kill()
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=wait)
+
+
+def over_argv(text: str) -> bool:
+    return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) > PROMPT_ARGV_MAX
 
 
 def piped_popen(

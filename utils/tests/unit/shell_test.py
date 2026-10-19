@@ -8,7 +8,15 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.utils import STOP_WAIT, command_path, kill_group, probe, resume_command, shell
+from agent_pm.utils import (
+    STOP_WAIT,
+    command_path,
+    kill_group,
+    over_argv,
+    probe,
+    resume_command,
+    shell,
+)
 
 from utils.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
@@ -121,6 +129,22 @@ class Probe(Case):
         killpg.assert_called_once_with(4242, signal.SIGKILL)
         proc.wait.assert_called_once_with(timeout=STOP_WAIT)
         self.assertTrue(proc.stdout.closed)
+
+
+class OverArgv(Case):
+    def test_measures_the_json_encoded_utf_8_bytes(self):
+        for text, want in (
+            ("a" * (shell.PROMPT_ARGV_MAX - 2), False),
+            ("a" * (shell.PROMPT_ARGV_MAX - 1), True),
+            ("\n" * (shell.PROMPT_ARGV_MAX // 2 - 1), False),
+            ("\n" * (shell.PROMPT_ARGV_MAX // 2), True),
+            ('"' * 60_000, True),
+            ("雪" * 33_332, False),
+            ("雪" * 33_333, True),
+            ("", False),
+        ):
+            with self.subTest(size=len(text), head=text[:1]):
+                self.assertIs(over_argv(text), want)
 
 
 class ErrText(Case):

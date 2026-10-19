@@ -118,6 +118,12 @@ PIPED = "pipe"
 READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
 STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
+_ARG_STRLEN_MAX = 131072  # Linux exec's limit on one argument, its NUL included
+# modes/base.py BaseMode._write_prompt in the container: keep the two alike
+PROMPT_STAGE = """import os, sys
+os.makedirs(os.path.dirname(sys.argv[1]), 0o700, exist_ok=True)
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, 'wb') as f: f.write(sys.stdin.buffer.read())"""
 LOCK_WAIT = 30
 KILL_WAIT = 5
 POLL = 0.2
@@ -821,6 +827,12 @@ class DockerHost(Host):
 
     def _check_cwd(self, name: str, launch: Launch, *, missing_ok: bool = False) -> None:
         super().validate(name, launch)
+        for i, arg in enumerate(launch.argv):
+            if (size := len(arg.encode("utf-8"))) + 1 > _ARG_STRLEN_MAX:
+                raise ConfigError(
+                    f"docker session {name}: argument {i} is {size} bytes, over the "
+                    f"{_ARG_STRLEN_MAX}-byte limit Linux exec allows one argument"
+                )
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd) and not (missing_ok and not os.path.lexists(cwd)):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")
@@ -902,6 +914,7 @@ class DockerHost(Host):
         try:
             stops.check()
             self._stage_files(container, metadata)
+            self._stage_prompt(container, metadata)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -1090,6 +1103,7 @@ class DockerHost(Host):
         lock = proc = None
         try:
             stops.check()
+            self._stage_prompt(container, metadata)
             lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
@@ -1174,6 +1188,26 @@ class DockerHost(Host):
             raise SessionError(f"staging client runtime: {error}") from None
         if result.returncode:
             raise SessionError("staging client runtime failed")
+
+    def _stage_prompt(self, container: str, metadata: Mapping[str, str]) -> None:
+        """metadata's prompt written at its prompt_file in the container, as its agent user."""
+        path = metadata.get("prompt_file")
+        if path is None:
+            return
+        argv, env = docker_call(
+            self.docker,
+            *("exec", "-i", "--user", "agent", container),
+            *(IMAGE_PYTHON, "-I", "-c", PROMPT_STAGE, path),
+        )
+        try:
+            result = self.run(argv, env, input=metadata["prompt"], timeout=RUN_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SessionError(f"staging prompt file: {error}") from None
+        if result.returncode:
+            why = (result.stderr or "").strip().splitlines()
+            raise SessionError(
+                f"staging prompt file: {why[-1] if why else f'exit status {result.returncode}'}"
+            )
 
     def _exec_env(self, launch: Launch, started: Started) -> dict[str, str]:
         """launch's env, plus with a GitHub App its bot as PR author and git identity."""

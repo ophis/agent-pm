@@ -49,7 +49,8 @@ from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.modes import tui, tui_hook
-from agent_pm.utils import StatusState, inode_lock
+from agent_pm.session.modes.base import POINTER
+from agent_pm.utils import StatusState, inode_lock, over_argv
 
 from session.tests import fake_client
 from session.tests.case import PLUGIN_BIN, Case
@@ -137,6 +138,14 @@ class Restored(ScanTui):
     def hook_events(self, label, payload):
         self.owner.calls.append(("hook_events", label))
         return super().hook_events(label, payload)
+
+
+class Seen(ScanTui):
+    """A ScanTui keeping the Spec it launched and putting its prompt first in argv."""
+
+    def launch(self, spec, hook):
+        self.spec = spec
+        return Launch(("/bin/run", spec.prompt, *hook))
 
 
 class FreshClient(fake_client.FakeClient):
@@ -2342,3 +2351,93 @@ class TmuxErrorTest(TmuxBase):
         with self.assertRaises(SessionError) as caught:
             tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")
+
+
+BIG = "雪" * 40_000
+
+
+class PromptFileTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.path = os.path.join(self.dir, "prompt", "prompt.md")
+        self.seen = Seen(self.client)
+
+    def pointer(self, path):
+        return POINTER.format(size=len(BIG.encode()), path=path)
+
+    def test_an_over_budget_prompt_becomes_a_pointer_with_its_dir_readable(self):
+        self.start(run=self.seen, prompt=BIG, access=Access(cwd=self.tmp, reads=("/r",)))
+        self.assertEqual(
+            (self.seen.spec.prompt, self.prepared.argv[1]), (self.pointer(self.path),) * 2
+        )
+        self.assertEqual(self.seen.spec.access.reads, ("/r", os.path.dirname(self.path)))
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), BIG)
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode), 0o700)
+        self.assertNotIn("prompt_file", self.host.calls.terminal.call_args.kwargs["metadata"])
+
+    def test_a_resume_s_over_budget_prompt_is_a_pointer_too(self):
+        self.start(run=self.seen, prompt=BIG, resume=True)
+        self.assertEqual(self.seen.spec.prompt, self.pointer(self.path))
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), BIG)
+
+    def test_a_container_context_puts_the_prompt_in_metadata_not_on_disk(self):
+        context = ClientContext(
+            "host.docker.internal",
+            Permission.YOLO,
+            Container("/image/bin", "/image/python", "/image/modules", "/run/state"),
+        )
+        with mock.patch.object(self.host, "_client_context", return_value=context):
+            self.start(run=self.seen, prompt=BIG)
+        metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
+        path = "/run/state/prompt/prompt.md"
+        self.assertEqual((metadata["prompt_file"], metadata["prompt"]), (path, BIG))
+        self.assertEqual(self.seen.spec.prompt, self.pointer(path))
+        self.assertEqual(self.seen.spec.access.reads, ("/run/state/prompt",))
+        self.assertFalse(os.path.lexists(os.path.dirname(self.path)))
+
+    def test_preflight_writes_no_prompt_file(self):
+        prepared = tui.TuiMode.preflight(
+            Spec(
+                workdir=self.tmp,
+                access=Access(cwd=self.tmp),
+                name=NAME,
+                client="fake",
+                sid=SID,
+                prompt=BIG,
+            ),
+            self.client,
+            registry=self.session_cls._config().registry,
+            host=self.host,
+        )
+        self.assertEqual(prepared.spec.prompt, self.pointer(self.path))
+        self.assertFalse(os.path.lexists(os.path.dirname(self.path)))
+
+    def test_a_prompt_within_the_budget_stays_in_argv(self):
+        at = "a" * 99_998  # the longest prompt over_argv keeps in argv
+        self.assertFalse(over_argv(at))
+        self.assertTrue(over_argv(at + "a"))
+        self.start(run=self.seen, prompt=at)
+        self.assertEqual((self.prepared.argv[1], self.seen.spec.access.reads), (at, ()))
+        self.assertFalse(os.path.lexists(os.path.dirname(self.path)))
+
+    def test_an_unwritable_prompt_file_fails_the_start(self):
+        real = os.open
+
+        def refusing(path, *args, **kwargs):
+            if str(path).endswith("prompt.md"):
+                raise OSError(errno.EACCES, "Permission denied")
+            return real(path, *args, **kwargs)
+
+        with (
+            mock.patch("os.open", refusing),
+            self.assertRaisesRegex(
+                SessionError,
+                f"^cannot start tui session {NAME}: prompt file {re.escape(self.path)}: "
+                "Permission denied$",
+            ),
+        ):
+            self.start(run=self.seen, prompt=BIG)
+        self.host.calls.terminal.assert_not_called()

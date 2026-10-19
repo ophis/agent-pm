@@ -40,7 +40,12 @@ from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
-from agent_pm.session.hosts.docker.host import KEPT_RETRY, DockerHost, DockerTerminal
+from agent_pm.session.hosts.docker.host import (
+    KEPT_RETRY,
+    PROMPT_STAGE,
+    DockerHost,
+    DockerTerminal,
+)
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
@@ -448,6 +453,59 @@ class StartTest(Base):
             self.assertEqual(
                 json.load(f)["mounts"], [{"path": self.home_dir + "/sessions", "rw": True}]
             )
+
+    def test_a_prompt_file_is_staged_in_the_container_before_the_tmux_launch(self):
+        path, text = "/run/agent-pm/prompt/prompt.md", "雪\n" * 50_000
+        self.start(prompt_file=path, prompt=text)
+        calls = [call for call in self.order if isinstance(call, list)]
+        staged = [i for i, call in enumerate(calls) if PROMPT_STAGE in call]
+        launched = [i for i, call in enumerate(calls) if tmux_cli.RELAUNCH in call]
+        self.assertEqual(len(staged), 1)
+        self.assertLess(staged[0], launched[0])
+        self.assertEqual(
+            calls[staged[0]],
+            ["exec", "-i", "--user", "agent", CONTAINER, PYTHON, "-I", "-c", PROMPT_STAGE, path],
+        )
+        self.assertEqual(self.docker.inputs[staged[0]], text)
+
+    def test_no_prompt_file_stages_nothing(self):
+        self.start()
+        self.assertFalse(any(PROMPT_STAGE in call for call in self.order if isinstance(call, list)))
+
+    def test_prompt_staging_errors_name_the_step(self):
+        metadata = {"prompt_file": "/run/agent-pm/prompt/prompt.md", "prompt": "private"}
+        for result, want in (
+            (done(1, "", ""), "^staging prompt file: exit status 1$"),
+            (
+                done(1, "", "Traceback (most recent call last):\nOSError: [Errno 28] No space\n"),
+                r"^staging prompt file: OSError: \[Errno 28\] No space$",
+            ),
+            (OSError("unavailable"), "^staging prompt file: unavailable$"),
+            (TimeoutExpired("exec", 1), "^staging prompt file: "),
+        ):
+            with (
+                self.subTest(result=type(result).__name__),
+                mock.patch.object(
+                    self.host,
+                    "run",
+                    **(
+                        {"side_effect": result}
+                        if isinstance(result, BaseException)
+                        else {"return_value": result}
+                    ),
+                ),
+                self.assertRaisesRegex(SessionError, want) as raised,
+            ):
+                self.host._stage_prompt(CONTAINER, metadata)
+            self.assertNotIn("private", str(raised.exception))
+
+    def test_a_failed_prompt_stage_rolls_the_start_back(self):
+        with (
+            mock.patch.object(self.host, "_stage_prompt", side_effect=SessionError("no room")),
+            self.assertRaisesRegex(SessionError, "no room"),
+        ):
+            self.start(prompt_file="/run/agent-pm/prompt/prompt.md", prompt="x")
+        self.assertEqual(self.broker.closed, [CONTAINER])
 
     def test_staging_failure_rolls_back_the_container(self):
         with (
@@ -1395,6 +1453,24 @@ class PipeTest(Base):
         self.assertEqual(self.broker.closed, [CONTAINER])
         self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
 
+    def test_a_prompt_file_is_staged_before_docker_exec(self):
+        path = "/run/agent-pm/prompt/prompt.md"
+        self.pipe(prompt_file=path, prompt="雪" * 9).close()
+        calls = [call for call in self.order if isinstance(call, list) or call == "exec"]
+        staged = [i for i, call in enumerate(calls) if PROMPT_STAGE in call]
+        self.assertEqual(len(staged), 1)
+        self.assertLess(staged[0], calls.index("exec"))
+        self.assertIn("雪" * 9, self.docker.inputs)
+
+    def test_a_failed_prompt_stage_ends_the_pipe_before_docker_exec(self):
+        with (
+            mock.patch.object(self.host, "_stage_prompt", side_effect=SessionError("no room")),
+            self.assertRaisesRegex(SessionError, "no room"),
+        ):
+            self.pipe(prompt_file="/run/agent-pm/prompt/prompt.md", prompt="x")
+        self.assertNotIn("exec", self.order)
+        self.assertEqual(self.broker.closed, [CONTAINER])
+
     def test_a_github_app_reaches_the_piped_client_and_its_tokens_are_refreshed(self):
         expiries = [{"account": "ophis", "expires_at": "2000-01-01T00:00:00Z"}]
         self.host.github = "agent-pm-bot"
@@ -1567,6 +1643,22 @@ class PreflightTest(Base):
         self.assertEqual(self.order, ["version", ("build", REPO)])
         self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
+
+    def test_an_argument_over_the_linux_limit_is_refused_before_any_docker_call(self):
+        fits, over = "a" * 131_071, "雪" * 43_691  # 131,073 bytes
+        self.host.validate("w", Launch(("agent", fits), cwd=self.cwd))
+        self.order.clear()
+        want = (
+            "^docker session w: argument 1 is 131073 bytes, over the 131072-byte limit Linux "
+            "exec allows one argument$"
+        )
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.validate("w", Launch(("agent", over), cwd=self.cwd))
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.terminal("w", Launch(("agent", over), cwd=self.cwd), metadata={})
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.pipe("w", Launch(("agent", over), cwd=self.cwd), metadata={})
+        self.assertEqual(self.order, [])
 
     def test_a_failed_handshake_stops_before_build(self):
         self.broker.failing["version"] = SessionError("broker: protocol '1', want '2'")

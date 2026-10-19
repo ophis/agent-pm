@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.engine.types import Access, Launch, Reply, SessionError, Spec, Stderr
+from agent_pm.session.modes.base import POINTER
 from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.fakes.terminal import MemoryHost
@@ -46,6 +47,9 @@ sys.stderr.flush()
 os.close(2)
 time.sleep(0.3)
 print(json.dumps({"text": "late"}))
+"""
+ECHO = """import json, sys
+print(json.dumps({"text": sys.argv[1]}), flush=True)
 """
 RAISING = """import time
 print('{"raise": "boom"}', flush=True)
@@ -182,6 +186,20 @@ class Streams(Base):
         self.assertEqual(self.mode.state(), "absent")
         self.mode.stop()
         self.assertEqual(self.mode.returncode(0), 3)
+
+    def test_a_prompt_over_128_kib_starts_with_a_pointer_to_its_file(self):
+        class Echo(StubRun):
+            def launch(self, spec):
+                super().launch(spec)
+                return Launch((sys.executable, "-I", "-c", ECHO, spec.prompt))
+
+        prompt, path = "雪 a\n" * 40_000, os.path.join(self.dir, "prompt", "prompt.md")
+        self.start(StubClient(run=Echo), prompt=prompt)
+        self.addCleanup(self.mode.stop)
+        pointer = POINTER.format(size=len(prompt.encode()), path=path)
+        self.assertEqual(self.drain(), [Reply(pointer)])
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), prompt)
 
     def test_ended_only_after_stderr_then_stdout(self):
         self.begin((sys.executable, "-I", "-c", STDERR_FIRST))
