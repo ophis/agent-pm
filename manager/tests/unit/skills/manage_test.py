@@ -132,6 +132,21 @@ class Manage(Case):
         ):
             self.assertIn(literal, issues)
 
+    def test_issue_work_goes_to_the_board_by_id_and_the_router_picks_its_model(self):
+        runs = rule("**Board runs**")
+        self.assertIn(runs, section("manage", "The task board"))
+        for literal in (
+            "by its ID",
+            "`agent-pm-crew issue <ID>`",
+            "moving the issue to Todo",
+            "the router picks its model, tier and effort",
+            "never read an issue to choose a model, tier or effort",
+        ):
+            self.assertIn(literal, runs, literal)
+        for line in body("manage").splitlines():
+            if re.search(r"\b(tier|effort)\b", line):
+                self.assertEqual(runs, line)
+
     def test_approved_board_proposals_run_after_a_state_reread(self):
         board = section("manage", "The task board")
         proposals = rule("**Board proposals**")

@@ -44,7 +44,7 @@ TOML_CLIENT = re.compile(r'\s*client\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 TOML_TABLE = re.compile(r"\s*(?:#\s*local:\s*)?\[\s*([^\]\s]+)\s*\]\s*(?:#.*)?\Z")
 
 
-TOML_LIMIT_KEY = re.compile(r"\s*(?:#\s*(?:local:\s*)?)?[a-z][a-z0-9_]*\s*=\s*\d+\s*(?:#.*)?\Z")
+TOML_LIMIT_KEY = re.compile(r"\s*#\s*local:\s*[a-z][a-z0-9_]*\s*=\s*\d+\s*(?:#.*)?\Z")
 
 
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
@@ -391,7 +391,7 @@ def orchestrator_text(repo: str) -> list[str]:
 
 
 def _client_limit_keys(lines):
-    """Numbers of the key lines in a CLIENT_LIMIT_TABLES table, its `# local:` header included."""
+    """Numbers of the `# local:` key lines in a CLIENT_LIMIT_TABLES table, its `# local:` header included."""
     table, keys = None, set()
     for number, line in enumerate(lines, 1):
         if header := TOML_TABLE.match(line):
