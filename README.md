@@ -131,7 +131,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
 | [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
-| [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
+| [Tests](docs/tests.md) | lint, test suites, coverage, live tests a local model can gate (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, OpenCode on the host's Ollama, risks |
 | [Docker checks](docs/docker-checks.md) | hand checks for each Docker Host step and the pending Codex live checks |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: purpose, least privilege, storage, readers, lifetime, revocation |
