@@ -21,6 +21,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     IssueCase,
     LabelGql,
     RelationGql,
+    SecondFails,
     WriteGql,
     comment,
     conn,
@@ -636,6 +637,14 @@ class Relation(IssueCase):
                 self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
                 self.assertIn(phrase, err)
         self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1, 1])
+
+    def test_a_keychain_failure_after_a_delete_exits_one_naming_it(self):
+        twice = [["r-1", "blocks", "TASK-1", "TASK-2"], ["r-2", "blocks", "TASK-1", "TASK-2"]]
+        gql = SecondFails(("TASK-1", "TASK-2"), twice, later=OSError("keychain"))
+        code, out, err = self.run_main(["relation", "remove", "TASK-1", "--blocks", "TASK-2"], gql)
+        self.assertEqual((code, out), (1, b""))
+        for phrase in ("deleted 1 of 2", "r-1", "OSError", "issue read TASK-1"):
+            self.assertIn(phrase, err)
 
 
 class LabelSwap(IssueCase):

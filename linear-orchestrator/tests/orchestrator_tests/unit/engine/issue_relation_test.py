@@ -2,6 +2,8 @@
 once, every other relation left alone.
 """
 
+import subprocess
+
 from agent_pm.linear_orchestrator.engine import issue_read, issue_relation
 from agent_pm.linear_orchestrator.engine.types import (
     GraphQLErrors,
@@ -11,7 +13,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     WriteUnknown,
 )
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, uid
+from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, SecondFails, uid
 
 BOARD = ("TASK-1", "TASK-2", "TASK-3")
 # the same edge, TASK-1 blocking TASK-2, named from either end
@@ -101,6 +103,8 @@ class Remove(Case):
             ({"success": False}, "issueRelationDelete: success: false"),
             (GraphQLErrors([{"message": "boom"}]), "boom"),
             (Unavailable("issueRelation", reason="timed out"), "result unknown"),
+            (subprocess.TimeoutExpired("security", 5), "TimeoutExpired"),
+            (PermissionError("denied"), "PermissionError"),
         )
         for result, cause in cases:
             gql = SecondFails(BOARD, twice, later=result)
@@ -118,19 +122,6 @@ class Remove(Case):
             issue_relation.relation(gql, "remove", "TASK-1", "blocks", "TASK-2")
         self.assertEqual(str(cm.exception), "issueRelationDelete: success: false")
         self.assertEqual(len(gql.writes), 1)
-
-
-class SecondFails(RelationGql):
-    """RelationGql whose second mutation answers with `later`, raised when an exception."""
-
-    def __init__(self, *args, later, **options):
-        super().__init__(*args, **options)
-        self.later = later
-
-    def _mutate(self, query, variables):
-        if len(self.writes) == 2:
-            self.result = self.later
-        return super()._mutate(query, variables)
 
 
 class Refused(Case):

@@ -2,6 +2,8 @@
 side, so `A --blocks B` and `B --blocked-by A` name the same edge; any other relation stays.
 """
 
+import subprocess
+
 from agent_pm.linear_orchestrator.engine import issue_read, issue_refs, issue_write
 from agent_pm.linear_orchestrator.engine.client import messages
 from agent_pm.linear_orchestrator.engine.types import (
@@ -71,10 +73,10 @@ def _remove(gql, operation, ident, ids):
     for n, record in enumerate(ids):
         try:
             issue_write.write(gql, operation, ident, M_REMOVE, "issueRelationDelete", i=record)
-        except LinearError as error:
+        except (LinearError, OSError, subprocess.SubprocessError) as error:
             if not n:
                 raise
-            cause = error
+            cause = error if isinstance(error, LinearError) else type(error).__name__
             if isinstance(error, GraphQLErrors):
                 cause = "linear api error: " + "; ".join(messages(error.errors))
             kind = WriteUnknown if isinstance(error, WriteUnknown) else LinearError
