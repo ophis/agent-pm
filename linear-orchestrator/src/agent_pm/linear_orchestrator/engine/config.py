@@ -420,7 +420,9 @@ def _selection(cfg) -> Selection:
         )
     try:
         selector = None if path is None else utils.load_class(path, Selector)
-    except ValueError as error:
+        if selector is not None and resolvers:
+            selector()  # its own config's errors fail here, not at a run's start
+    except (OSError, ValueError) as error:
         raise ConfigError(f"linear-orchestrator/config.toml: selection.selector: {error}") from None
     return Selection(selector, tuple(ResolverName(r) for r in resolvers))
 

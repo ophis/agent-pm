@@ -4,6 +4,7 @@ import contextlib
 import http.client
 import io
 import json
+import os
 import unittest
 import urllib.error
 import urllib.request
@@ -12,7 +13,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.selector import (
-    JEV_DEFAULT,
     Backend,
     Failure,
     JevSelector,
@@ -79,9 +79,13 @@ class JevCase(Case):
 
 
 class Config(JevCase):
+    def local(self, text):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write(text)
+
     def test_the_defaults(self):
         self.assertEqual(
-            JEV_DEFAULT,
+            JevSelector().config,
             SelectorConfig(
                 Backend.JEV,
                 "https://api.typesafe.ai/v1/systemone",
@@ -90,7 +94,49 @@ class Config(JevCase):
                 ("/usr/bin/security", "find-generic-password", "-s", "typesafe-jev", "-w"),
             ),
         )
-        self.assertIs(JevSelector().config, JEV_DEFAULT)
+
+    def test_local_settings(self):
+        self.local(
+            '[selector.jev]\nkey = "own-jev"\nurl = "http://127.0.0.1:8000/v1/systemone"\n'
+            'model = "jev-2"\ntimeout = 5\n'
+        )
+        self.assertEqual(
+            JevSelector().config,
+            SelectorConfig(
+                Backend.JEV,
+                "http://127.0.0.1:8000/v1/systemone",
+                "jev-2",
+                5.0,
+                ("/usr/bin/security", "find-generic-password", "-s", "own-jev", "-w"),
+            ),
+        )
+        self.local('[selector.jev]\nmodel = "jev-3"\n')
+        config = JevSelector().config
+        self.assertEqual(
+            (config.url, config.model, config.timeout, config.key_command[3]),
+            ("https://api.typesafe.ai/v1/systemone", "jev-3", 2.0, "typesafe-jev"),
+        )
+
+    def test_bad_local_settings_are_refused(self):
+        for text, message in (
+            ("token = 'x'", "[selector.jev] has unknown keys: token"),
+            ('key = ""', "selector.jev.key must be a Keychain service name: ''"),
+            ("key = 1", "selector.jev.key must be a Keychain service name: 1"),
+            ("url = 1", "selector.jev.url must be a URL: 1"),
+            ('model = " "', "selector.jev.model must be a model name: ' '"),
+            ("timeout = 0", "selector.jev.timeout must be positive seconds: 0"),
+            ("timeout = true", "selector.jev.timeout must be positive seconds: True"),
+            ('timeout = "2"', "selector.jev.timeout must be positive seconds: '2'"),
+            (
+                'url = "http://example.com/v1/systemone"',
+                "url: want https, or http on a loopback IP, without userinfo",
+            ),
+        ):
+            with self.subTest(text=text):
+                self.local(f"[selector.jev]\n{text}\n")
+                with self.assertRaises(ValueError) as caught:
+                    JevSelector()
+                self.assertIn(message, str(caught.exception))
 
     def test_only_https_or_loopback_http(self):
         for url in (

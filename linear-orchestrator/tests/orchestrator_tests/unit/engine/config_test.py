@@ -541,6 +541,22 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
+    def test_an_unbuildable_selector_is_refused_at_load(self):
+        """With resolvers, load builds the configured Selector once: bad [selector.jev] values
+        fail here, not at a run's start.
+        """
+        jev = PIPELINE + '[selection]\nselector = "agent_pm.selector:JevSelector"\n'
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            CORE_LOCAL + '\n[selector.jev]\nurl = "http://example.com/v1/systemone"\n',
+        )
+        self.assertEqual(self.load(jev).selection.selector, JevSelector)
+        self.fails(
+            "linear-orchestrator/config.toml: selection.selector: "
+            "url: want https, or http on a loopback IP, without userinfo",
+            jev + 'resolvers = ["tier"]\n',
+        )
+
     def test_client_max_runs(self):
         for text, limits in (
             (PIPELINE, {}),
