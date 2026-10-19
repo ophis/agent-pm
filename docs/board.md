@@ -90,7 +90,7 @@ flowchart LR
 ```
 
 ```bash
-bin/agent-pm-linear router --issue <ID>         # run one issue now, skipping the hours, max_runs and usage gates
+bin/agent-pm-linear router --issue <ID>         # run one issue now, skipping the hours, run limits and usage gates
 bin/agent-pm-linear router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
 bin/agent-pm-linear status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
 bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
@@ -104,6 +104,17 @@ Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's op
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
+
+### Run limits
+
+A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (unset: 1), and its client fewer than its `[client_max_runs]` entry. An unlisted client is unlimited; the packaged config sets `opencode = 1`, as the host's local models run one job at a time. Set others in `~/.agent-pm/config.local.toml`:
+
+```toml
+[linear_orchestrator.client_max_runs]
+claude = 3
+```
+
+Both layers count the live runs in `runs.jsonl`, a run between rounds included, a client's by the client its run records. A tick checks role, then client, then the usage gate. A full client's Todo issue logs `claim-skip` with reason `<client> is full` and the tick tries the next one; a full client's In Progress issue logs `recover-skip` and waits. `router --issue` skips both limits, but its run counts. Ad-hoc runs (`agent-pm-delegate run`, `agent-pm-session start`) and crew workers bypass the router and `runs.jsonl`: no limit applies to them and they count toward none, so an OpenCode crew worker adds to the local model's load.
 
 ### Linear MCP off
 
