@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -53,8 +54,8 @@ class ConfigTest(Case):
         self.assertEqual(found.modes, {"auto": (), "yolo": ("--auto",)})
 
     def test_an_unknown_key_is_a_config_error(self):
-        with self.assertRaisesRegex(ConfigError, "unknown key 'model'"):
-            OpenCodeClient({**packaged_table(), "model": "x"})
+        with self.assertRaisesRegex(ConfigError, "unknown key 'small_model'"):
+            OpenCodeClient({**packaged_table(), "small_model": "x"})
 
     def test_ollama_port_must_be_an_integer_port(self):
         for port in (True, 0, 65536, "11434", 1.5):
@@ -70,9 +71,60 @@ class ConfigTest(Case):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, rf"\.{key} must be"):
                 common(**{key: value})
 
+    def test_the_model_names_ollama_or_a_listed_provider(self):
+        self.assertEqual(common(model="ollama/b").model(None), "ollama/b")
+        for model in ("", " ", 3, "other/b", "b"):
+            with self.subTest(model=model), self.assertRaisesRegex(ConfigError, r"\.model"):
+                common(model=model)
+
+    def test_the_packaged_table_has_no_provider(self):
+        self.assertEqual(common().providers, {})
+
+    def test_a_provider_table_is_checked(self):
+        good = {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}
+        for providers in (
+            {"strata": "x"},
+            {"strata": {"base_url": good["base_url"]}},
+            {"strata": {**good, "api_key": "k"}},
+            {"strata": {**good, "base_url": "10.0.0.5:8080/v1"}},
+            {"strata": {**good, "base_url": "http://a b/v1"}},
+            {"strata": {**good, "models": "m"}},
+            {"strata": {**good, "models": [""]}},
+            {"strata": {**good, "models": ["a b"]}},
+            {"str/ata": good},
+            {"": good},
+            {"ollama": good},
+            [good],
+        ):
+            with (
+                self.subTest(providers=providers),
+                self.assertRaisesRegex(ConfigError, r"\.providers must be"),
+            ):
+                common(providers=providers)
+        self.assertEqual(common(providers={"strata": good}).providers, {"strata": good})
+
+    def test_a_tier_names_ollama_or_a_listed_provider(self):
+        good = {"base_url": "https://strata.lan/v1", "models": []}
+        found = common(providers={"strata": good}, tiers={"1": "strata/m", "2": "ollama/a"})
+        self.assertEqual(found.model(1), "strata/m")
+        for model in ("other/b", "b", "strata/", "/m", "opencode/big-pickle"):
+            with (
+                self.subTest(model=model),
+                self.assertRaisesRegex(ConfigError, rf"tiers\.1 {re.escape(repr(model))}: not"),
+            ):
+                common(providers={"strata": good}, tiers={"1": model})
+
+    def test_without_model_a_run_without_a_tier_is_refused(self):
+        table = packaged_table()
+        del table["model"]
+        found = OpenCodeClient(table).common
+        self.assertEqual(found.model(1), "ollama/qwen3.6:35b-mlx")
+        with self.assertRaisesRegex(ConfigError, r"no model for a run without a tier"):
+            found.model(None)
+
     def test_a_missing_tier_or_effort_is_a_config_error(self):
         found = common(tiers={"1": "ollama/a"}, efforts={"low": "low"})
-        self.assertIsNone(found.model(None))
+        self.assertEqual(found.model(None), "ollama/qwen3.6:35b-mlx")
         self.assertIsNone(found.variant(None))
         with self.assertRaisesRegex(ConfigError, r"no model for tier 3"):
             found.model(3)
@@ -94,10 +146,12 @@ class ConfigTest(Case):
             ["--dangerously-skip-permissions"],
             ["--dangerouslySkipPermissions"],
             ["--continue"],
+            ["-m", "ollama/b"],
+            ["--model=ollama/b"],
         ):
             with self.subTest(flags=flags), self.assertRaises(ConfigError):
                 common(flags=flags)
-        for mode in (["--session", SES], ["--format", "json"], ["--dir", "/tmp"]):
+        for mode in (["--session", SES], ["--format", "json"], ["--dir", "/tmp"], ["-m", "x"]):
             with self.subTest(mode=mode), self.assertRaises(ConfigError):
                 common(modes={"auto": mode})
         self.assertEqual(common(flags=["--agent", "build"]).flags, ("--agent", "build"))

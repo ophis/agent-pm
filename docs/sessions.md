@@ -41,9 +41,23 @@ auto = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'ap
 
 OpenCode sessions run on every Host, but outside an `isolated` Host (tmux, pty, or `[hosts.docker] isolated = false`) only in a trusted cwd (`Access.project`; a role run's: under `trusted_dirs`, so given by `--cwd`, as its default cwd, the workdir's `agent/`, never is): OpenCode 1.x has no project trust, so in any cwd it runs `.opencode/plugins/*.js` and installs the npm plugins `opencode.json` lists, and `OPENCODE_DISABLE_PROJECT_CONFIG` does not stop it. A start, TUI or headless, and a resume in an untrusted cwd there fail before OpenCode starts: run it on the Docker Host or in a trusted cwd. On the tmux and pty Hosts both modes run `[clients.opencode] executable` (default `opencode`) and refuse to start when its `--version` is not 1.x: where PATH finds a 2.x (Homebrew's `opencode` is 2.x), set it to a 1.x install's absolute path in `~/.agent-pm/config.local.toml`'s `[session.clients.opencode]`. On the Docker Host they run the image's `/opt/agent-pm/bin/opencode` instead (`executable` is ignored; the broker checks its version), in yolo mode, with Ollama at `host.docker.internal`. The TUI loads `session/src/agent_pm/session/clients/opencode/plugin.js` (on the Docker Host, the image's copy), which turns OpenCode's events into `agent-pm-session hook` calls: `session.busy` and `tool` → `working`, `permission.asked` → `blocked`, `session.idle` → `done` with the turn's last assistant text, `session.error` → a failed turn. A start's prompt goes in as `--prompt`; a resume (`opencode --session <ses_…>`) types its prompt once the plugin has started. A long message shows as `[Pasted ~N lines]` in the TUI but is sent in full.
 
+Each launch's OpenCode config (`OPENCODE_CONFIG_CONTENT`) enables only the `ollama` provider and the `[clients.opencode.providers.<name>]` ones (`enabled_providers`): OpenCode's built-in providers, OpenCode Zen's included, stay off, so `opencode models` under that config lists only these. Every launch passes `--model`: its tier's (`[clients.opencode.tiers]`), else `[clients.opencode] model` (default `ollama/qwen3.6:35b-mlx`), never OpenCode's own pick. Each of these names `ollama/<model>` or `<name>/<model>` of a providers table, else the client refuses its config. A provider is any OpenAI-compatible server, such as one on your LAN:
+
+```toml
+# ~/.agent-pm/config.local.toml
+[session.clients.opencode.providers.strata]
+base_url = "http://<LAN host>:8080/v1"
+models = ["qwen3.8-flash-next-iq2_xs"]   # beside the models tiers and model map to it
+
+[session.clients.opencode.tiers]
+1 = "strata/qwen3.8-flash-next-iq2_xs"
+```
+
+Its API key stays OpenCode's: on the tmux and pty Hosts run `opencode auth login` once, pick Other and enter the provider's name (`strata`), and OpenCode keeps the key in its `auth.json`; agent-pm never reads or passes it. A Docker Host container has no key ([Docker host › OpenCode](docker-host.md#opencode)).
+
 A crew worker's cwd is always trusted (you pick it), so `agent-pm-crew worker NAME --client opencode --cwd DIR` starts on tmux in any `DIR`; a role run only under `trusted_dirs`; a board run never (its cwd is the workdir's `agent/`): run OpenCode board runs on the Docker Host ([Linear board › OpenCode](board.md#opencode)).
 
-On the tmux and pty Hosts OpenCode needs the host's Ollama ([Docker host › OpenCode](docker-host.md#opencode) steps 1–3) and an OpenCode 1.x. With none on PATH, `npm install -g opencode-ai@1.19.3`; ignore npm's warning that its postinstall did not run. Beside a 2.x, install 1.x under its own prefix, leaving the 2.x as it is, and point `executable` at it:
+On the tmux and pty Hosts OpenCode needs the host's Ollama for `ollama/` models ([Docker host › OpenCode](docker-host.md#opencode) steps 1–3) and an OpenCode 1.x. With none on PATH, `npm install -g opencode-ai@1.19.3`; ignore npm's warning that its postinstall did not run. Beside a 2.x, install 1.x under its own prefix, leaving the 2.x as it is, and point `executable` at it:
 
 ```bash
 npm install -g --prefix ~/.local/opencode-1 opencode-ai@1.19.3
