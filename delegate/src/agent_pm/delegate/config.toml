@@ -150,6 +150,16 @@ type = "pull-request"
 tier = 3
 effort = "low"
 
+# ── Choice Translator ───────────────────────────────────
+# Its own client and tier: Claude's tier 4 (haiku: session/src/agent_pm/session/config.toml).
+[roles.choice-translator]
+tier = 4
+effort = "low"
+client = "claude"
+
+[roles.choice-translator.output]
+type = "orchestrator"
+
 # [delegates]
 #   harness_host  the [hosts.<name>] (session/src/agent_pm/session/config.toml) the harness runs on; "" → the agent's Host.
 #                 An agent on the Docker Host needs a harness on another one, e.g. "tmux"
