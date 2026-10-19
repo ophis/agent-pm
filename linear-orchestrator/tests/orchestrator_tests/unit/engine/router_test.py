@@ -33,7 +33,7 @@ from agent_pm.linear_orchestrator.engine import (
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.selection import Choice
 from agent_pm.linear_orchestrator.engine.types import Context, LinearError, Spec, Unavailable
-from agent_pm.selector import JEV_DEFAULT, Failure, JevSelector, SelectorError
+from agent_pm.selector import Failure, SelectorError
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
@@ -5180,7 +5180,25 @@ class InsideAnAgentSession(RouterArguments):
 
 STATE = "LEAK-STATE a session registry"
 LEAK = "LEAK-SENTINEL"
-SELECTION_ON = "[selection]\ntranslate = true\ntier = true\n"
+SELECTION_ON = (
+    '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
+    'translate = true\nresolvers = ["tier"]\n'
+)
+# a start row's fields before model selection
+START_FIELDS = {
+    "ts",
+    "kind",
+    "issue",
+    "sid",
+    "role",
+    "client",
+    "delegate_kind",
+    "uuid",
+    "project",
+    "target",
+    "key",
+    "task",
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -5234,17 +5252,17 @@ class ResolverChain(OuterBase):
         self.assertNotIn("LEAK", text)
 
     def test_new_run_with_selection_off_launches_as_today(self):
-        self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n")
         selector = FakeSelector()
-        for task, tier in (("light-build", 3), (None, None)):
-            with self.subTest(task=task):
-                self.api.detached.clear()
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(self.runs)
-                self.assertEqual(self.outer(task=task, selector=selector), 0)
-                self.assertEqual(self.detached(tier=tier), self.expected(task=task))
-                self.assertEqual(self.start_row().get("tier"), tier)
-                self.assertNotIn("effort", self.start_row())
+        for selection in ("", "[selection]\ntranslate = true\nresolvers = []\n"):
+            for task, tier in (("light-build", 3), (None, None)):
+                with self.subTest(selection=selection, task=task):
+                    self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n" + selection)
+                    self.api.detached.clear()
+                    with contextlib.suppress(FileNotFoundError):
+                        os.remove(self.runs)
+                    self.assertEqual(self.outer(task=task, selector=selector), 0)
+                    self.assertEqual(self.detached(tier=tier), self.expected(task=task))
+                    self.assertEqual(set(self.start_row()), START_FIELDS)
         self.assertEqual((selector.calls, self.api.translations, self.choices()), ([], [], []))
 
     def test_new_run_launches_and_records_the_selected_tier_and_effort(self):
@@ -5309,25 +5327,25 @@ class ResolverChain(OuterBase):
         )
         self.assert_no_leak()
 
-    def test_without_a_selector_the_chain_asks_jev(self):
-        """Its steps get a JevSelector with JEV_DEFAULT; the step is off, so nothing asks it."""
-        self.write_config(OUTER)
-        given = []
-
-        def steps(cfg, selector):
-            given.append(selector)
-            return chain.steps(cfg, selector)
-
-        self.assertEqual(self.outer(steps=steps), 0)
-        self.assertEqual(self.detached(), self.expected())
-        (selector,) = given
-        self.assertIsInstance(selector, JevSelector)
-        self.assertEqual(selector.config, JEV_DEFAULT)
+    def test_the_configured_selector_picks(self):
+        """One selector line swaps the Selector: FakeSelector picks the first option, the tier-1
+        model with the client's first effort.
+        """
+        self.write_config(OUTER + SELECTION_ON)
+        claude = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]
+        effort = next(iter(claude["efforts"]))
+        self.assertEqual(self.outer(client="claude"), 0)
+        self.assertEqual(self.detached(tier=1, effort=effort), self.expected(client="claude"))
+        self.assertEqual((self.start_row()["tier"], self.start_row()["effort"]), (1, effort))
+        self.assertEqual(
+            self.choices(),
+            [{"step": "tier", "by": "selector", "choice": {"tier": 1, "effort": effort}}],
+        )
 
     def test_new_run_launches_with_the_final_context(self):
         self.write_config(OUTER + SELECTION_ON)
-        step = chain.Step("relabel", FakeResolver(default=Relabel("b", "light-build")), on=True)
-        self.assertEqual(self.outer(steps=lambda _cfg, _selector: (step,)), 0)
+        step = chain.Step("relabel", FakeResolver(default=Relabel("b", "light-build")))
+        self.assertEqual(self.outer(chain_steps=lambda _cfg, _selector: (step,)), 0)
         self.assertEqual(self.detached(), self.expected(client="b", task="light-build"))
         row = self.start_row()
         self.assertEqual(

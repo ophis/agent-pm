@@ -1,10 +1,11 @@
-"""The Resolver chain the router runs before a new run: translate the issue once, then each Step in
-order chooses its Choice from the state, or takes its fallback when switched off, without a state
-or failing; each Choice applies to the Context and records its start-row fields. Logs carry only
-step names, reason codes and records, never the issue, the state or an error's text.
+"""The Resolver chain the router runs before a new run: [selection] resolvers, in order, asking the
+configured Selector. Translate the issue once, then each Step chooses its Choice from the state,
+or takes its fallback without a state or failing; each Choice applies to the Context and records
+its start-row fields. No resolvers: no chain. Logs carry only step names, reason codes and
+records, never the issue, the state or an error's text.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from agent_pm.delegate import Delegate
@@ -15,21 +16,34 @@ from agent_pm.linear_orchestrator.engine.selection import (
     TierResolver,
     translate,
 )
-from agent_pm.linear_orchestrator.engine.types import Config, Context, SelectionStep
+from agent_pm.linear_orchestrator.engine.types import Config, Context, ResolverName
 from agent_pm.selector import Selector
 
 
 @dataclass(frozen=True)
 class Step:
-    name: str  # its [selection] key and log name
+    name: ResolverName  # its [selection] resolvers name and log name
     resolver: Resolver
-    on: bool
 
 
-def steps(cfg: Config, selector: Selector) -> tuple[Step, ...]:
-    """The chain in its fixed order: today only the tier step."""
-    tier = TierResolver(selector, task_tiers=cfg.task_tiers)
-    return (Step(SelectionStep.TIER.value, tier, cfg.selection[SelectionStep.TIER]),)
+RESOLVERS: Mapping[ResolverName, Callable[[Config, Selector], Resolver]] = {
+    ResolverName.TIER: lambda cfg, selector: TierResolver(selector, task_tiers=cfg.task_tiers),
+}
+
+
+def steps(cfg: Config, selector: Selector | None = None) -> tuple[Step, ...]:
+    """The [selection] resolvers' Steps asking selector, else a new configured Selector; none
+    without resolvers.
+    """
+    names = cfg.selection.resolvers
+    if not names:
+        return ()
+    if selector is None:
+        configured = cfg.selection.selector
+        selector = None if configured is None else configured()
+        if not isinstance(selector, Selector):
+            raise ValueError("[selection] resolvers need a Selector")  # config.load refuses it
+    return tuple(Step(name, RESOLVERS[name](cfg, selector)) for name in names)
 
 
 def resolve(
@@ -42,12 +56,13 @@ def resolve(
     provider: type[Delegate],
     overlays: Sequence[Mapping],
 ) -> tuple[Context, dict[str, object]]:
-    """The final Context and every step's records; a state only when translate and a step are on.
-    ValueError: two steps record the same field.
+    """The final Context and every step's records; no chain: context as given, no translate, no
+    log. ValueError: two steps record the same field.
     """
-    logged = translate_on or any(step.on for step in chain)
+    if not chain:
+        return context, {}
     state = None
-    if translate_on and any(step.on for step in chain):
+    if translate_on:
         try:
             state = translate(issue, workdir, provider=provider, overlays=overlays)
         except SelectionError as error:
@@ -55,9 +70,7 @@ def resolve(
     records: dict[str, object] = {}
     for step in chain:
         choice, reason, selector = None, None, None
-        if not step.on:
-            reason = "off"
-        elif state is None:
+        if state is None:
             reason = "no-state"
         else:
             try:
@@ -74,15 +87,14 @@ def resolve(
         if (twice := next((k for k in record if k in records), None)) is not None:
             raise ValueError(f"choice record field {twice} recorded twice")
         records.update(record)
-        if logged:
-            log(
-                "router",
-                "choice",
-                issue,
-                step=step.name,
-                by=by,
-                reason=reason,
-                selector=selector,
-                choice=record,
-            )
+        log(
+            "router",
+            "choice",
+            issue,
+            step=step.name,
+            by=by,
+            reason=reason,
+            selector=selector,
+            choice=record,
+        )
     return context, records

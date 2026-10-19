@@ -1,5 +1,5 @@
-"""engine/chain.py: resolve over FakeResolvers and a fake translator Delegate (switches, fallbacks,
-order, records, reason-code-only logs), steps over a FakeSelector.
+"""engine/chain.py: resolve over FakeResolvers and a fake translator Delegate (no chain, fallbacks,
+order, records, reason-code-only logs), steps over the configured Selector class.
 """
 
 import os
@@ -15,7 +15,7 @@ from agent_pm.linear_orchestrator.engine.selection import (
     TierChoice,
     TierResolver,
 )
-from agent_pm.linear_orchestrator.engine.types import Context
+from agent_pm.linear_orchestrator.engine.types import Context, ResolverName, Selection
 from agent_pm.selector import Failure
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import FakeResolver
@@ -66,8 +66,17 @@ class ClientChoice(Choice):
         return {"client": self.client}
 
 
-def tier(*, on=True, **kw):
-    return chain.Step("tier", FakeResolver(default=PICKED, fallback=FALLBACK, **kw), on)
+def tier(**kw):
+    return chain.Step(ResolverName.TIER, FakeResolver(default=PICKED, fallback=FALLBACK, **kw))
+
+
+def client(name):
+    return chain.Step("client", FakeResolver(default=ClientChoice(name)))
+
+
+class Unbuildable(FakeSelector):
+    def __init__(self):
+        raise AssertionError("no chain builds no Selector")
 
 
 class Resolving(Case):
@@ -103,13 +112,11 @@ class Resolving(Case):
             text = f.read()
         self.assertNotIn("LEAK", text)
 
-    def test_all_off_uses_fallbacks_without_translate_or_log(self):
-        step = tier(on=False)
-        self.assertEqual(
-            self.resolve((step,), translate_on=False),
-            (replace(CONTEXT, tier=3), {"tier": 3}),
-        )
-        self.assertEqual((self.provider.created, step.resolver.calls, self.choices()), ([], [], []))
+    def test_no_resolvers_is_no_chain(self):
+        for translate_on in (False, True):
+            with self.subTest(translate_on=translate_on):
+                self.assertEqual(self.resolve((), translate_on=translate_on), (CONTEXT, {}))
+        self.assertEqual((self.provider.created, self.choices()), ([], []))
 
     def test_active_chain_translates_once_and_applies_the_choice(self):
         step = tier()
@@ -136,15 +143,6 @@ class Resolving(Case):
             ],
         )
         self.assert_no_leak()
-
-    def test_translate_on_steps_off_skips_translate(self):
-        step = tier(on=False)
-        self.assertEqual(self.resolve((step,)), (replace(CONTEXT, tier=3), {"tier": 3}))
-        self.assertEqual((self.provider.created, step.resolver.calls), ([], []))
-        self.assertEqual(
-            [(e["step"], e["by"], e["reason"]) for e in self.choices()],
-            [("tier", "fallback", "off")],
-        )
 
     def test_step_on_translate_off_falls_back_no_state(self):
         step = tier()
@@ -207,64 +205,70 @@ class Resolving(Case):
                 os.makedirs(self.logs, exist_ok=True)
                 with open(os.path.join(self.logs, "orchestrator.jsonl"), "w"):
                     pass
-                on, off = (
-                    tier(),
-                    chain.Step("client", FakeResolver(default=ClientChoice("x")), on=False),
-                )
+                first, second = tier(), client("x")
                 self.assertEqual(
-                    self.resolve((on, off), provider=provider),
+                    self.resolve((first, second), provider=provider),
                     (replace(CONTEXT, tier=3, client="x"), {"tier": 3, "client": "x"}),
                 )
-                self.assertEqual(on.resolver.calls, [])
+                self.assertEqual((first.resolver.calls, second.resolver.calls), ([], []))
                 self.assertEqual(
                     [(e["step"], e["by"], e.get("reason")) for e in self.choices()],
                     [
                         ("translate", "fallback", reason),
                         ("tier", "fallback", "no-state"),
-                        ("client", "fallback", "off"),
+                        ("client", "fallback", "no-state"),
                     ],
                 )
                 self.assert_no_leak()
 
     def test_steps_run_in_order_on_the_applied_context(self):
-        for first, second, context, records in (
+        failing = SelectionError(SelectionFailure.INVALID)
+        for first, second, context, records, seen in (
             (
-                chain.Step("client", FakeResolver(default=ClientChoice("codex")), on=True),
+                client("codex"),
                 tier(),
                 replace(CONTEXT, client="codex", tier=1, effort="low"),
                 {"client": "codex", "tier": 1, "effort": "low"},
+                replace(CONTEXT, client="codex"),
             ),
             (
-                tier(on=False),
-                chain.Step("client", FakeResolver(default=ClientChoice("codex")), on=True),
+                tier(error=failing),
+                client("codex"),
                 replace(CONTEXT, client="codex", tier=3),
                 {"tier": 3, "client": "codex"},
+                replace(CONTEXT, tier=3),
             ),
         ):
             with self.subTest(first=first.name):
                 self.assertEqual(self.resolve((first, second)), (context, records))
-                self.assertEqual(first.resolver.calls, [(STATE, CONTEXT)] if first.on else [])
-                self.assertEqual(
-                    second.resolver.calls,
-                    [(STATE, first.resolver.default.apply(CONTEXT))]
-                    if first.on
-                    else [(STATE, replace(CONTEXT, tier=3))],
-                )
+                self.assertEqual(first.resolver.calls, [(STATE, CONTEXT)])
+                self.assertEqual(second.resolver.calls, [(STATE, seen)])
 
     def test_a_key_recorded_twice_is_refused(self):
         with self.assertRaises(ValueError) as caught:
             self.resolve((tier(), tier()))
         self.assertEqual(str(caught.exception), "choice record field tier recorded twice")
 
-    def test_steps_are_the_tier_step_switched_by_config(self):
-        selector = FakeSelector()
-        for on in (False, True):
-            with self.subTest(on=on):
-                cfg = SimpleNamespace(
-                    task_tiers={"build": 2}, selection={"translate": True, "tier": on}
-                )
-                (step,) = chain.steps(cfg, selector)
-                self.assertEqual((step.name, step.on), ("tier", on))
+    def test_steps_build_no_selector_without_resolvers(self):
+        cfg = SimpleNamespace(
+            task_tiers={}, selection=Selection(selector=Unbuildable, translate=True, resolvers=())
+        )
+        self.assertEqual(chain.steps(cfg), ())
+
+    def test_steps_build_the_configured_selector(self):
+        cfg = SimpleNamespace(
+            task_tiers={"build": 2},
+            selection=Selection(
+                selector=FakeSelector, translate=True, resolvers=(ResolverName.TIER,)
+            ),
+        )
+        injected = FakeSelector()
+        for given, kind in ((None, FakeSelector), (injected, FakeSelector)):
+            with self.subTest(injected=given is not None):
+                (step,) = chain.steps(cfg, given)
+                self.assertEqual(step.name, ResolverName.TIER)
                 self.assertIsInstance(step.resolver, TierResolver)
-                self.assertIs(step.resolver.selector, selector)
+                self.assertIsInstance(step.resolver.selector, kind)
+                if given is not None:
+                    self.assertIs(step.resolver.selector, given)
                 self.assertEqual(step.resolver.fallback(CONTEXT), TierChoice(2, None))

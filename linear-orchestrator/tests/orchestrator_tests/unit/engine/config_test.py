@@ -12,7 +12,8 @@ from unittest import mock
 
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import State
+from agent_pm.linear_orchestrator.engine.types import ResolverName, Selection, State
+from agent_pm.selector import JevSelector
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
@@ -30,6 +31,7 @@ from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, 
 from orchestrator_tests.unit.config_fixtures import GATE
 
 from delegate.tests.fakes.delegate import FakeDelegate
+from selector.tests.fakes.selector import FakeSelector
 from utils.tests.case import local_section
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
@@ -464,39 +466,80 @@ class ConfigurationLoading(ConfigFile, Case):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
     def test_selection_defaults_off(self):
-        off = {"translate": False, "tier": False}
         for text in (PIPELINE, PIPELINE + "[selection]\n"):
             with self.subTest(text=text[-12:]):
                 cfg = self.load(text)
-                self.assertEqual(cfg.selection, off)
-                with self.assertRaises(TypeError):
-                    cfg.selection["tier"] = True
+                self.assertEqual(
+                    cfg.selection, Selection(selector=None, translate=False, resolvers=())
+                )
         with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
-            self.assertEqual(tomllib.load(f)["selection"], off)
+            self.assertEqual(
+                tomllib.load(f)["selection"],
+                {"selector": "agent_pm.selector:JevSelector", "translate": False, "resolvers": []},
+            )
 
     def test_selection_local_override(self):
-        self.local("[selection]\ntier = true\n")
-        self.assertEqual(self.load(PIPELINE).selection, {"translate": False, "tier": True})
+        self.local(
+            '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
+            'resolvers = ["tier"]\n'
+        )
+        self.assertEqual(
+            self.load(PIPELINE).selection,
+            Selection(selector=FakeSelector, translate=False, resolvers=(ResolverName.TIER,)),
+        )
         self.local("[selection]\ntranslate = true\n")
-        self.assertEqual(self.load(PIPELINE).selection, {"translate": True, "tier": False})
+        self.assertEqual(
+            self.load(
+                PIPELINE + '[selection]\nselector = "agent_pm.selector:JevSelector"\n'
+            ).selection,
+            Selection(selector=JevSelector, translate=True, resolvers=()),
+        )
 
     def test_selection_rejected(self):
         cases = [
             (
                 PIPELINE.replace("[roles.", "selection = true\n[roles.", 1),
-                "selection must be a table of <step> = true | false",
+                "selection must be a table of selector, translate and resolvers",
             ),
             (
-                PIPELINE + "[selection]\nclient = true\nrole = false\n",
-                "[selection] has unknown keys: client, role",
+                PIPELINE + "[selection]\nclient = true\ntier = false\n",
+                "[selection] has unknown keys: client, tier",
             ),
             *[
                 (
-                    PIPELINE + f"[selection]\ntier = {value}\n",
-                    f"selection.tier must be true or false: {shown}",
+                    PIPELINE + f"[selection]\ntranslate = {value}\n",
+                    f"selection.translate must be true or false: {shown}",
                 )
                 for value, shown in (("1", "1"), ('"true"', "'true'"))
             ],
+            *[
+                (
+                    PIPELINE + f"[selection]\nresolvers = {value}\n",
+                    f"selection.resolvers must be a list of distinct resolvers (tier): {shown}",
+                )
+                for value, shown in (
+                    ('"tier"', "'tier'"),
+                    ('["tier", "tier"]', "['tier', 'tier']"),
+                    ('["client"]', "['client']"),
+                    ("[1]", "[1]"),
+                )
+            ],
+            *[
+                (
+                    PIPELINE + f"[selection]\nselector = {json.dumps(path)}\n",
+                    f"selection.selector: {path}{why}",
+                )
+                for path, why in (
+                    ("JevSelector", ": want module.path:Class"),
+                    ("agent_pm.selector:Selector", " must be a concrete Selector subclass"),
+                    ("agent_pm.selector:SelectorConfig", " must be a concrete Selector subclass"),
+                    ("agent_pm.selector:Kev", ": agent_pm.selector has no Kev"),
+                )
+            ],
+            (
+                PIPELINE + '[selection]\nresolvers = ["tier"]\n',
+                "selection.selector: required when resolvers are listed",
+            ),
         ]
         for text, message in cases:
             with self.subTest(message, text=text):

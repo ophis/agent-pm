@@ -123,12 +123,10 @@ from agent_pm.linear_orchestrator.engine.types import (
     Invalid,
     IssueError,
     LinearError,
-    SelectionStep,
     Spec,
     Transient,
     Unavailable,
 )
-from agent_pm.selector import JevSelector
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -746,18 +744,17 @@ def outer(
     now=datetime.now,
     attended: Attended | None = None,
     selector=None,
-    steps=chain.steps,
+    chain_steps=chain.steps,
 ):
     """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given; a
-    new run's launch choices come from the Resolver chain steps(cfg, selector), selector a
-    JevSelector (JEV_DEFAULT) when none.
+    new run's launch choices come from the Resolver chain chain_steps(cfg, selector), selector
+    None: [selection]'s.
 
     Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
     first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new
     run failing before then leaves a `failed` row, an attempt that Recover cannot read back.
     """
     rc = None
-    selector = selector or JevSelector()
     try:
         rc = _outer(
             a,
@@ -767,7 +764,7 @@ def outer(
             keychain=keychain,
             now=now,
             attended=attended,
-            chain_steps=steps(cfg, selector),
+            chain_steps=functools.partial(chain_steps, cfg, selector),
         )
         return rc
     finally:
@@ -864,9 +861,9 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended, chain_steps):
         context, choices = chain.resolve(
             a.issue,
             workdir,
-            Context(role, a.task, a.client),
-            chain_steps,
-            translate_on=cfg.selection[SelectionStep.TRANSLATE],
+            Context(role, a.task, a.client, tier=cfg.task_tier(a.task)),
+            chain_steps(),
+            translate_on=cfg.selection.translate,
             provider=delegate_cls,
             overlays=(cfg.core,),
         )

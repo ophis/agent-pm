@@ -31,6 +31,23 @@ class Docs:
     dirs: Mapping[str, str]
 
 
+class ResolverName(StrEnum):
+    """A Resolver [selection] resolvers may list."""
+
+    TIER = "tier"
+
+
+@dataclass(frozen=True)
+class Selection:
+    """[selection]: the Selector class (built with no arguments; None only without resolvers),
+    whether translate runs, and the Resolver chain in its order; no resolvers: no chain.
+    """
+
+    selector: type | None
+    translate: bool
+    resolvers: tuple[ResolverName, ...]
+
+
 @dataclass(frozen=True)
 class Config:
     team: str
@@ -40,7 +57,7 @@ class Config:
     task_label_group: str
     task_labels: Mapping[str, str]
     task_tiers: Mapping[str, int]
-    selection: Mapping[str, bool]
+    selection: Selection
     agent_label_group: str
     agent_labels: Mapping[str, str]
     client_max_runs: Mapping[str, int]
@@ -87,13 +104,6 @@ class Context:
     client: str
     tier: int | None = None
     effort: str | None = None
-
-
-class SelectionStep(StrEnum):
-    """A [selection] switch: translate, then the Resolver chain's steps in their order."""
-
-    TRANSLATE = "translate"
-    TIER = "tier"
 
 
 class State(StrEnum):

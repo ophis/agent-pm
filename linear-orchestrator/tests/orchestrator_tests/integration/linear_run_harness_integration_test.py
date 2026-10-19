@@ -5,7 +5,7 @@ import os
 from agent_pm.delegate import Delegate
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
-from agent_pm.linear_orchestrator.engine.types import Config, Docs
+from agent_pm.linear_orchestrator.engine.types import Config, Docs, Selection
 from agent_pm.utils import load_class
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
@@ -32,7 +32,7 @@ class HarnessRun(HarnessCase):
             task_label_group="",
             task_labels={},
             task_tiers={},
-            selection={"translate": False, "tier": False},
+            selection=Selection(None, translate=False, resolvers=()),
             agent_label_group="",
             agent_labels={},
             client_max_runs={},
