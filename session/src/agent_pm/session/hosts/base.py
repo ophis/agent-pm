@@ -279,18 +279,14 @@ class Host(ABC):
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> InteractiveProcess:
-        """metadata carries private sid/client/generation separately from the published Record; a
-        container Host also writes metadata's prompt, if any, at its prompt_file in the container
-        before the client starts.
-        """
+        """metadata: private sid/client/generation, apart from the published Record; a container
+        Host writes prompt to prompt_file."""
         ...
 
     def pipe(
         self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
     ) -> Piped:
-        """A headless client on pipes, run here. Every Host's pipe writes launch.stdin, unless None,
-        whole to the client's stdin, then closes it.
-        """
+        """A headless client on pipes, run here, fed launch.stdin."""
         return LocalPiped(
             piped_popen(launch.argv, env=dict(launch.env), cwd=launch.cwd, stdin_text=launch.stdin)
         )

@@ -1,4 +1,4 @@
-"""Runs COMMAND with TEXT (--stdin: its own stdin) on its stdin, copying its stdout and stderr; kills it, exiting 124, when
+"""Runs COMMAND with TEXT (or its own stdin) on its stdin, copying its stdout and stderr; kills it, exiting 124, when
 no stdout line is a JSON object with a string sessionID within SECONDS. Unstartable: 127; bad
 arguments: 2. Standalone: the standard library only.
 """
@@ -15,7 +15,6 @@ LOCK_WAIT = 1  # seconds the watch waits for a line being copied
 
 
 def _arguments(argv: list[str]) -> tuple[float, str | None, list[str]]:
-    """The timeout, the prompt (None: --stdin) and the command."""
     if argv[2:4] == ["--stdin", "--"] and len(argv) > 4:
         text, command = None, argv[4:]
     elif argv[2:3] == ["--prompt"] and argv[4:5] == ["--"] and len(argv) > 5:

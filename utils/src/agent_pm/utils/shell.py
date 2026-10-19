@@ -1,6 +1,5 @@
 """Subprocess runs with a timeout, their stderr shown with URL userinfo masked; process-group
 kills (kill_group), piped starts (piped_popen), timed output probes (probe) and shell resume commands.
-over_argv: whether a prompt is too long to pass as one exec argument.
 """
 
 import contextlib
@@ -18,7 +17,7 @@ from agent_pm.utils.environment import environment_ok
 
 SHORT, LONG = 60, 600
 STOP_WAIT = 5
-PROMPT_ARGV_MAX = 100_000  # bytes; Linux exec refuses one argument over 128 KiB
+PROMPT_ARGV_MAX = 100_000  # bytes; exec allows 128 KiB per argument
 USERINFO = re.compile(r"//[^@/\s]+@")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -43,12 +42,12 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
 
 
 def over_argv(text: str) -> bool:
-    """Whether text, JSON-encoded as a launch plan may carry it, is over PROMPT_ARGV_MAX bytes."""
+    """Whether text JSON-encoded is over PROMPT_ARGV_MAX bytes."""
     return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) > PROMPT_ARGV_MAX
 
 
 def _feed(stream, text: str) -> None:
-    with contextlib.suppress(OSError):  # the child stopped reading
+    with contextlib.suppress(OSError):
         stream.buffer.write(text.encode("utf-8"))
     with contextlib.suppress(OSError):
         stream.close()
@@ -62,7 +61,6 @@ def piped_popen(
     stderr: int = subprocess.PIPE,
     stdin_text: str | None = None,
 ) -> subprocess.Popen:
-    """stdin_text: written whole as UTF-8 to the child's stdin by a daemon thread, then closed."""
     proc = subprocess.Popen(
         argv,
         cwd=cwd,

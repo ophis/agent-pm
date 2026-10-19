@@ -1,5 +1,5 @@
 """OpenCode's headless Mode: `opencode run --format json` behind launcher.py, which feeds it the
-prompt on stdin (`run` quotes an argument holding a space), read from its own stdin when over_argv. The first sessionID binds the run; text
+prompt on stdin (`run` quotes an argument holding a space). The first sessionID binds the run; text
 parts are Replies, tools Activity, an error the failed turn; the end is the turn's, its last text.
 """
 

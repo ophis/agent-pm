@@ -348,7 +348,7 @@ class Launch:
 
     project: bool | None = None
     blocked_signals: tuple[int, ...] = ()
-    stdin: str | None = None  # a headless client's, written to it whole, then closed
+    stdin: str | None = None
 
     def __post_init__(self):
         if self.stdin is not None and not _clean_string(self.stdin):
