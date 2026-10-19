@@ -45,6 +45,12 @@ WRITE_ONCE = (
     "that file (`cp`); only a Destination asking for it inline in the outcome repeats it.\n"
 )
 
+NO_COMMENTS = (
+    "\n**No comments**: never comment or reply on your task's ticket or PR yourself, by any tool; "
+    "what the ticket should get goes in the outcome (`summary`; `questions` for `needs_input`), "
+    "which write-back posts.\n"
+)
+
 
 def destined(role, output, *, docker=False):
     """The real core's prompt for `role` with `output`, rendered for Docker when `docker`."""
@@ -186,6 +192,17 @@ class Acceptance(Case):
         step = task_text("product-design").split("7. **Review.**", 1)[1].split("\n8.", 1)[0]
         self.assertIn("`<Workdir>/tmp/prd.md`", step)
         self.assertIn("copies that file", step)
+
+    def test_runs_post_no_comments_on_their_ticket_or_pr(self):
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                self.assertEqual(output_rules(composed(role, task)[0]).count(NO_COMMENTS), 1)
+        for output in ({"type": "local"}, {"type": "orchestrator"}, *PUBLISHING):
+            for docker in (False, True):
+                with self.subTest(output=output["type"], docker=docker):
+                    self.assertIn(
+                        NO_COMMENTS, output_rules(destined("researcher", output, docker=docker))
+                    )
 
     def test_each_task_file_has_one_start_mark_and_a_resume_section(self):
         for name in os.listdir(TASKS):
