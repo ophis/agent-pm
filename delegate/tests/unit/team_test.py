@@ -619,7 +619,7 @@ class Real(RealConfig):
             standards,
         )
 
-    def test_a_failed_runs_summary_is_one_line_and_its_errors_go_in_the_deliverable(self):
+    def test_a_failed_runs_summary_is_one_line(self):
         for role, line in (
             (
                 "researcher",
@@ -630,13 +630,17 @@ class Real(RealConfig):
             (
                 "engineer",
                 "- Exit 1 → `failed`, `summary` one line, the error's first line within 300 "
-                "characters, the error verbatim in the deliverable; stop.",
+                "characters; stop.",
             ),
         ):
             with self.subTest(role=role):
                 self.assertIn(line, composed(role)[0])
         for path, text in team_texts().items():
-            for stale in ("`summary` quotes the errors", "`summary` the error;"):
+            for stale in (
+                "`summary` quotes the errors",
+                "`summary` the error;",
+                "the error verbatim in the deliverable",
+            ):
                 with self.subTest(path=path, stale=stale):
                     self.assertNotIn(stale, text)
 
