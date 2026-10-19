@@ -136,7 +136,6 @@ classDiagram
   TierResolver ..> TierChoice : creates
   TierResolver ..> Selector : select
   Choice ..> Context : apply
-  translate ..> Context : state for every step
 ```
 
 Dashed arrow: a call, use or creation; `<|--`: implements. `translate` runs the role through `agent_pm.delegate` (`Delegate.create` and `run`, as `LinearRun` does); `TierResolver` reads session's merged config by resource name, never importing session.

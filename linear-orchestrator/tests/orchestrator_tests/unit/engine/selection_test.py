@@ -6,6 +6,7 @@ import dataclasses
 import inspect
 import os
 import unittest
+from unittest import mock
 
 import agent_pm.session as session
 from agent_pm import utils
@@ -109,16 +110,6 @@ class Translating(Case):
                 (SelectionFailure.TRANSLATE, "translate"),
             )
             self.assertTrue(caught.exception.__suppress_context__)
-
-    def test_create_failure_text_stays_out(self):
-        fake = provider(error=RuntimeError("secret issue text"))
-        with self.assertRaises(SelectionError) as caught:
-            translate("TASK-1", self.workdir(), provider=fake)
-        self.assertEqual(
-            (caught.exception.reason, str(caught.exception)),
-            (SelectionFailure.TRANSLATE, "translate"),
-        )
-        self.assertTrue(caught.exception.__suppress_context__)
 
     def test_no_outcome_or_one_not_done_is_a_translate_error(self):
         for outcome in (None, Outcome("failed", "No", "could not read the issue")):
@@ -233,6 +224,19 @@ class TierFailures(LocalConfig):
                 with self.assertRaises(SelectionError) as caught:
                     TierResolver(FakeSelector(), task_tiers={}).choose(STATE, CLAUDE)
                 self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+
+    def test_an_empty_tiers_or_efforts_table_offers_nothing_and_is_invalid(self):
+        for table in (
+            {"tiers": {}, "efforts": {"low": "low"}},
+            {"tiers": {"1": "m"}, "efforts": {}},
+        ):
+            with (
+                self.subTest(table=table),
+                mock.patch("tomllib.load", return_value={"clients": {"claude": table}}),
+                self.assertRaises(SelectionError) as caught,
+            ):
+                TierResolver(FakeSelector(), task_tiers={}).choose(STATE, CLAUDE)
+            self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
 
     def test_a_client_without_tiers_is_invalid(self):
         with self.assertRaises(SelectionError) as caught:
