@@ -1,6 +1,6 @@
 # Agent PM
 
-An unattended pipeline that runs role agents on tasks, in five layers (`docs/architecture.md`).
+An unattended pipeline that runs role agents on tasks, in six layers (`docs/architecture.md`).
 
 ## Language
 
@@ -103,6 +103,14 @@ _Avoid_: orchestration layer, runner
 **Issue**:
 A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
 _Avoid_: ticket, card, 票
+
+**Selector**:
+The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`).
+_Avoid_: router, chooser
+
+**Resolver chain**:
+The router's steps that decide a new run's launch choices from its issue: each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step off or failing falls back to today's choice. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`.
+_Avoid_: chooser
 
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
