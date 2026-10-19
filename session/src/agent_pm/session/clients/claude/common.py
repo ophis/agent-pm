@@ -44,8 +44,23 @@ from agent_pm.utils import (
 TABLE = "[clients.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
 STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
-STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
-STATE_MAX = 64 * 1024
+STATE_KEYS = frozenset(
+    {
+        "version",
+        "cwd",
+        "sid",
+        "dirs",
+        "env",
+        "flags",
+        "project",
+        "commands",
+        "reads",
+        "model",
+        "effort",
+        "name",
+    }
+)
+STATE_MAX = 1 << 20
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
 HOME = ClientHome("claude_dir", "claude", "CLAUDE_CONFIG_DIR", "claude-setup-token")
@@ -209,8 +224,11 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         state = None
     if not (
         isinstance(state, dict)
+        and state.get("version") == 2
         and frozenset(state) == STATE_KEYS
-        and state["version"] == 1
+        and all(strings(state[k]) for k in ("flags", "commands", "reads"))
+        and type(state["project"]) is bool
+        and all(state[k] is None or isinstance(state[k], str) for k in ("model", "effort", "name"))
         and state["sid"] == sid
         and isinstance(state["cwd"], str)
         and os.path.realpath(state["cwd"]) == os.path.realpath(cwd)
@@ -426,28 +444,41 @@ class ClaudeCommon:
         return resume_command(cwd, {}, (COMMAND, "client-resume", "claude", self.store, cwd, sid))
 
     def save(self, spec: Spec) -> None:
-        """What resume_main replays: spec's cwd, Access.dirs and config, Access and Spec env."""
-        cwd, sid = spec.access.cwd, self.uuid(spec.sid)
-        env = {**self.env(), **spec.access.env, **spec.env}
+        """What resume_main replays: spec's cwd, flags, model, effort, name and Access, and the
+        config, Access and Spec env.
+        """
+        access, sid = spec.access, self.uuid(spec.sid)
+        env = {**self.env(), **access.env, **spec.env}
         state = {
-            "version": 1,
-            "cwd": cwd,
+            "version": 2,
+            "cwd": access.cwd,
             "sid": sid,
-            "dirs": list(spec.access.dirs),
+            "dirs": list(access.dirs),
             "env": {k: v for k, v in env.items() if k not in LOCAL_ENV_VARS},
+            "flags": list(spec.flags),
+            "project": access.project,
+            "commands": list(access.commands),
+            "reads": list(access.reads),
+            "model": self.model(spec.tier),
+            "effort": self.effort(spec.effort),
+            "name": spec.name,
         }
+        text = json.dumps(state)
+        if len(text) > STATE_MAX:
+            raise ConfigError("claude resume state: over 1 MiB")
         try:
             os.makedirs(self.store, 0o700, exist_ok=True)
-            save(_state_path(self.store, cwd, sid), json.dumps(state), durable=True)
+            save(_state_path(self.store, access.cwd, sid), text, durable=True)
         except OSError as error:
             raise ConfigError(f"claude resume state: {error}") from None
         for error in drop_stale(self.store):
             print(f"claude resume: {error}", file=sys.stderr)
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags and auto
-        mode's, the saved dirs and env over this environment, in CWD; 1 and one stderr line when it
-        cannot.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID as launch() would, the saved
+        launch and env over this environment, in CWD; 1 and one stderr line when it cannot. It runs
+        on this machine, not the launch's Host, so in auto mode with this config's flags and allow,
+        as they are now; and as the TUI without hooks, whose callback serves only an agent-pm session.
         """
         try:
             store, cwd, sid = argv
@@ -456,23 +487,27 @@ class ClaudeCommon:
             return 1
         try:
             state = _load(store, cwd, self.uuid(sid))
-            added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
-            configured, own = _split((*self.flags, *self.modes[Permission.AUTO]), state["cwd"])
             path = self.transcript(state["cwd"], sid, state["env"])
             native, _, _ = next(
                 hop
                 for hop in reversed(self.walk(path, sid, self.config_dir(state["env"])))
                 if hop[1]
             )
-            command = [
-                "claude",
-                *self.selector(native, resume=True),
-                *own,
-                *_settings(*configured),
-                *added,
-            ]
-            os.execvpe(command[0], command, {**os.environ, **TUI_ENV, **state["env"]})
+            command = self._argv(
+                state["cwd"],
+                self.selector(native, resume=True),
+                Permission.AUTO,
+                flags=tuple(state["flags"]),
+                project=state["project"],
+                dirs=tuple(state["dirs"]),
+                commands=tuple(state["commands"]),
+                reads=tuple(state["reads"]),
+                model=state["model"],
+                effort=state["effort"],
+                name=state["name"],
+            )
+            os.execvpe(command[0], list(command), {**os.environ, **TUI_ENV, **state["env"]})
         except (ConfigError, OSError) as exc:
             print(f"claude resume: {exc}", file=sys.stderr)
             return 1
@@ -495,28 +530,11 @@ class ClaudeCommon:
         env: Mapping[str, str] = MappingProxyType({}),
         permission: Permission,
     ) -> Launch:
-        """Build a Claude command with configured settings, `permission`'s mode flags, access grants,
-        output arguments and spec.flags before `tail`; env under the config's. Exactly one
-        --settings: the config's and its mode's, then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
-        docs leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that
-        a --strict-mcp-config in spec.flags would drop.
-        """
-        if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
-            raise ConfigError("--setting-sources is set by the Claude client: use Access.project")
+        """Build a Claude command (_argv) for `spec`; env under the config's."""
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd
-        configured, own = _split((*self.flags, *self.modes[permission]), cwd)
-        supplied, flags = _split(spec.flags, cwd)
-        hooked = ({"hooks": dict(hooks)},) if hooks else ()
-        mcp = os.path.join(cwd, ".mcp.json")
-        allow = (
-            *(f"Bash({command})" for command in access.commands),
-            *_read_rules(access.reads),
-            *self.allow,
-        )
-        strict = any(flag.arg == "--strict-mcp-config" for flag in scan(spec.flags))
         if not isinstance(sid, str):
             raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
         merged = {
@@ -532,24 +550,22 @@ class ClaudeCommon:
                 for hop in reversed(self.walk(transcript, sid, self.config_dir(merged)))
                 if hop[1]
             )
-        selection = self.selector(native, resume=spec.resume)
-        argv = (
-            "claude",
-            *head,
-            *selection,
-            *(("--model", model) if model is not None else ()),
-            *(("--effort", effort) if effort is not None else ()),
-            *(("--name", spec.name) if spec.name is not None else ()),
-            *own,
-            "--setting-sources",
-            "user,project,local" if access.project else "user",
-            *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
-            *output,
-            *_settings(*configured, *supplied, *hooked),
-            *(arg for d in access.dirs for arg in ("--add-dir", d)),
-            *(("--allowedTools", *allow) if allow else ()),
-            *flags,
-            *tail,
+        argv = self._argv(
+            cwd,
+            self.selector(native, resume=spec.resume),
+            permission,
+            flags=spec.flags,
+            project=access.project,
+            dirs=access.dirs,
+            commands=access.commands,
+            reads=access.reads,
+            model=model,
+            effort=effort,
+            name=spec.name,
+            head=head,
+            output=output,
+            hooks=hooks,
+            tail=tail,
         )
         return Launch(
             argv,
@@ -557,6 +573,62 @@ class ClaudeCommon:
             unset=self.UNSET,
             transcript=transcript or "",
             resume=self.resume(cwd, sid),
+        )
+
+    def _argv(
+        self,
+        cwd: str,
+        selection: tuple[str, ...],
+        permission: Permission,
+        *,
+        flags: tuple[str, ...],
+        project: bool,
+        dirs: tuple[str, ...],
+        commands: tuple[str, ...],
+        reads: tuple[str, ...],
+        model: str | None,
+        effort: str | None,
+        name: str | None,
+        head: tuple[str, ...] = (),
+        output: tuple[str, ...] = (),
+        hooks: Mapping = MappingProxyType({}),
+        tail: tuple[str, ...] = (),
+    ) -> tuple[str, ...]:
+        """Claude's argv: configured settings, `permission`'s mode flags, access grants, output
+        arguments and `flags` before `tail`. Exactly one --settings: the config's and its mode's,
+        then `flags`', then `hooks`, merged (a file path read relative to `cwd`), since the docs
+        leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that a
+        --strict-mcp-config in `flags` would drop.
+        """
+        if any(flag.word == "--setting-sources" for flag in scan(flags)):
+            raise ConfigError("--setting-sources is set by the Claude client: use Access.project")
+        configured, own = _split((*self.flags, *self.modes[permission]), cwd)
+        supplied, rest = _split(flags, cwd)
+        hooked = ({"hooks": dict(hooks)},) if hooks else ()
+        mcp = os.path.join(cwd, ".mcp.json")
+        allow = (
+            *(f"Bash({command})" for command in commands),
+            *_read_rules(reads),
+            *self.allow,
+        )
+        strict = any(flag.arg == "--strict-mcp-config" for flag in scan(flags))
+        return (
+            "claude",
+            *head,
+            *selection,
+            *(("--model", model) if model is not None else ()),
+            *(("--effort", effort) if effort is not None else ()),
+            *(("--name", name) if name is not None else ()),
+            *own,
+            "--setting-sources",
+            "user,project,local" if project else "user",
+            *(("--mcp-config", mcp) if project and strict and os.path.isfile(mcp) else ()),
+            *output,
+            *_settings(*configured, *supplied, *hooked),
+            *(arg for d in dirs for arg in ("--add-dir", d)),
+            *(("--allowedTools", *allow) if allow else ()),
+            *rest,
+            *tail,
         )
 
     def probe(self) -> Launch:
