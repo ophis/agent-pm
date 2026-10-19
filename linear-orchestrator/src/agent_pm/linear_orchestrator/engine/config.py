@@ -15,13 +15,10 @@ from agent_pm.linear_orchestrator.engine.types import (
     Config,
     ConfigError,
     Docs,
-    ResolverName,
     Role,
-    Selection,
     State,
     Task,
 )
-from agent_pm.selector import Selector
 from agent_pm.utils import GUARD, STATE, temp_dirs, under
 
 LOCAL = utils.LOCAL
@@ -37,7 +34,6 @@ TOP_KEYS = {
     "task_label_group",
     "task_labels",
     "task_tiers",
-    "selection",
     "agent_label_group",
     "agent_labels",
     "client_max_runs",
@@ -205,7 +201,6 @@ def _load(cfg, work):
         states=frozen["states"],
         task_labels=frozen["task_labels"],
         task_tiers=frozen["task_tiers"],
-        selection=cfg["selection"],
         agent_label_group=cfg["agent_label_group"],
         agent_labels=frozen["agent_labels"],
         client_max_runs=frozen["client_max_runs"],
@@ -288,7 +283,6 @@ def _load_config(cfg, local):
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
     _task_tiers(cfg)
-    cfg["selection"] = _selection(cfg)
     _agent_labels(cfg)
     _client_max_runs(cfg)
 
@@ -392,42 +386,6 @@ def _task_tiers(cfg):
             raise ConfigError(
                 f"linear-orchestrator/config.toml: task_tiers.{k} must be a tier, a whole number 1-4: {v!r}"
             )
-
-
-def _selection(cfg) -> Selection:
-    table = cfg.setdefault("selection", {})
-    if not isinstance(table, dict):
-        raise ConfigError(
-            "linear-orchestrator/config.toml: selection must be a table of selector, translate and resolvers"
-        )
-    if extra := sorted(set(table) - {"selector", "translate", "resolvers"}):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: [selection] has unknown keys: {', '.join(extra)}"
-        )
-    translate = table.get("translate", False)
-    if not isinstance(translate, bool):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: selection.translate must be true or false: {translate!r}"
-        )
-    resolvers = table.get("resolvers", [])
-    if (
-        not isinstance(resolvers, list)
-        or not all(isinstance(r, str) and r in set(ResolverName) for r in resolvers)
-        or len(set(resolvers)) < len(resolvers)
-    ):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: selection.resolvers must be a list of distinct resolvers ({', '.join(ResolverName)}): {resolvers!r}"
-        )
-    path = table.get("selector")
-    if path is None and resolvers:
-        raise ConfigError(
-            "linear-orchestrator/config.toml: selection.selector: required when resolvers are listed"
-        )
-    try:
-        selector = None if path is None else utils.load_class(path, Selector)
-    except ValueError as error:
-        raise ConfigError(f"linear-orchestrator/config.toml: selection.selector: {error}") from None
-    return Selection(selector, translate, tuple(ResolverName(r) for r in resolvers))
 
 
 def _agent_labels(cfg):

@@ -4,14 +4,11 @@ alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructe
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
 api.live; its Record shows its display option; its outcome is api.outcomes' for its issue;
 check_tui records its (display, events) in api.tui_checks (tui_error raises); checkouts(W) is
-api.checkouts' for W, asked logged in api.asked; clean(W) appends W to api.cleaned. Only a
-choice-translator run runs: its spec goes to api.translations, its outcome is api.translation
-(an exception: raised).
+api.checkouts' for W, asked logged in api.asked; clean(W) appends W to api.cleaned.
 """
 
 import os
 from dataclasses import replace
-from types import SimpleNamespace
 
 from agent_pm.delegate import ConfigError, Delegate, SessionError
 from agent_pm.linear_orchestrator.engine import runs
@@ -174,12 +171,7 @@ def provider(api, cfg):
             )
 
         def run(self, on_event=None):
-            if self.role != "choice-translator":
-                raise AssertionError("scenario must not launch")
-            api.translations.append(self.spec)
-            if isinstance(api.translation, Exception):
-                raise api.translation
-            return SimpleNamespace(code=0, outcome=api.translation)
+            raise AssertionError("scenario must not launch")
 
         def resume(self, *, mode=None, input=None):
             raise AssertionError("legacy launcher owns this scenario")

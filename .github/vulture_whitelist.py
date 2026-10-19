@@ -5,6 +5,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
 from agent_pm.linear_orchestrator.engine.issue_refs import milestone
+from agent_pm.linear_orchestrator.engine.selection import Choice, Resolver, TierResolver, translate
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.selector import Backend
 from agent_pm.session.clients.claude import ClaudeClient
@@ -77,3 +78,5 @@ _ = Backend.KEV
 _ = _.choices
 # urllib's HTTPRedirectHandler calls it on each redirect, which JevSelector refuses.
 _ = _.redirect_request
+# The router's chain runs translate and each Resolver and applies and records each Choice.
+_ = translate, TierResolver, Resolver.fallback, Choice.apply, Choice.record

@@ -62,11 +62,6 @@ NOQA_ALLOWED = {
         "start_run",
     ): "A recorded launch may fail.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/chain.py",
-        "BLE001",
-        "resolve",
-    ): "A resolver breaking its contract still falls back.",
-    (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/selection.py",
         "BLE001",
         "translate",
