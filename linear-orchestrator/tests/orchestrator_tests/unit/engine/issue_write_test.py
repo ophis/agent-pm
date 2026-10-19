@@ -1,4 +1,9 @@
-"""agent-pm-linear issue move: the state resolved in the issue's own team, one write, the receipt."""
+"""agent-pm-linear issue move and comment: the state resolved in the issue's own team, the body read
+verbatim, one write, the receipt.
+"""
+
+import io
+import os
 
 from agent_pm.linear_orchestrator.engine import issue_write, ops
 from agent_pm.linear_orchestrator.engine.types import (
@@ -12,6 +17,7 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.unit.issue_fixtures import VIEWER, WriteGql, conn, team, write_issue
 
 DONE = (("s-todo", "Todo", "unstarted"), ("s-done", "Done", "completed"))
+BODY = 'say "hi", `ls`, $HOME and ${x} \\n\nline two\n中文正文\n'
 
 
 class Move(Case):
@@ -112,5 +118,77 @@ class Move(Case):
             gql = WriteGql(write_issue(team_node=team("TASK", DONE)), result=result)
             with self.subTest(result=result), self.assertRaises(LinearError) as cm:
                 issue_write.move(gql, "TASK-2", "Done")
+            self.assertNotIsInstance(cm.exception, WriteUnknown)
+            self.assertEqual(len(gql.writes), 1)
+
+
+class ReadBody(Case):
+    def test_a_file_or_stdin_reads_verbatim(self):
+        path = os.path.join(self.home, "body.md")
+        with open(path, "wb") as f:
+            f.write(BODY.encode("utf-8"))
+        self.assertEqual(issue_write.read_body(path, io.BytesIO()), BODY)
+        self.assertEqual(issue_write.read_body("-", io.BytesIO(BODY.encode("utf-8"))), BODY)
+
+    def test_an_unusable_body_is_refused(self):
+        blank, latin = os.path.join(self.home, "blank.md"), os.path.join(self.home, "latin.md")
+        with open(blank, "w", encoding="utf-8") as f:
+            f.write(" \n\t\n")
+        with open(latin, "wb") as f:
+            f.write("café".encode("latin-1"))
+        cases = (
+            (os.path.join(self.home, "missing.md"), b"", "No such file"),
+            (self.home, b"", "directory"),
+            (latin, b"", "not UTF-8"),
+            (blank, b"", "empty"),
+            ("-", b"", "empty"),
+            ("-", b"\xff", "not UTF-8"),
+        )
+        for path, stdin, phrase in cases:
+            with self.subTest(phrase=phrase, path=path), self.assertRaises(IssueError) as cm:
+                issue_write.read_body(path, io.BytesIO(stdin))
+            self.assertIn(f"--body-file {path}", str(cm.exception))
+            self.assertIn(phrase, str(cm.exception))
+
+
+class Comment(Case):
+    def test_posts_the_body_verbatim_as_a_variable(self):
+        gql = WriteGql(write_issue())
+        receipt = issue_write.comment(gql, "TASK-2", BODY)
+        self.assertEqual(gql.writes, [(issue_write.M_COMMENT, {"i": "id-TASK-2", "b": BODY})])
+        self.assertEqual(
+            receipt,
+            {
+                "issue": {
+                    "id": "id-TASK-2",
+                    "identifier": "TASK-2",
+                    "url": "https://linear.app/t/issue/TASK-2",
+                },
+                "operation": "comment",
+                "result": "changed",
+                "actor": VIEWER,
+                "comment_id": "c-new",
+            },
+        )
+
+    def test_no_such_issue_posts_nothing(self):
+        gql = WriteGql(None)
+        with self.assertRaises(IssueError):
+            issue_write.comment(gql, "TASK-2", BODY)
+        self.assertEqual(gql.writes, [])
+
+    def test_a_write_outage_is_result_unknown_and_never_retried(self):
+        gql = WriteGql(write_issue(), result=Unavailable("commentCreate", reason="timed out"))
+        with self.assertRaises(WriteUnknown) as cm:
+            issue_write.comment(gql, "TASK-2", BODY)
+        self.assertIn("comment TASK-2: result unknown", str(cm.exception))
+        self.assertNotIn("中文", str(cm.exception))
+        self.assertEqual(len(gql.writes), 1)
+
+    def test_a_refused_write_fails_and_is_not_unknown(self):
+        for result in ({"success": False}, GraphQLErrors([{"message": "boom"}])):
+            gql = WriteGql(write_issue(), result=result)
+            with self.subTest(result=result), self.assertRaises(LinearError) as cm:
+                issue_write.comment(gql, "TASK-2", BODY)
             self.assertNotIsInstance(cm.exception, WriteUnknown)
             self.assertEqual(len(gql.writes), 1)

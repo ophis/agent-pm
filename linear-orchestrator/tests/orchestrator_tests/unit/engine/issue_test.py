@@ -1,4 +1,6 @@
-"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read and move through main."""
+"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move and comment through
+main.
+"""
 
 import io
 import json
@@ -39,9 +41,11 @@ class IssueCase(Case):
         with open(self.config, "w") as f:
             f.write(tp.CONFIG)
 
-    def run_main(self, argv, gql):
+    def run_main(self, argv, gql, stdin=b""):
         out, err = io.BytesIO(), io.StringIO()
-        code = issue.main(argv, gql=gql, config_path=self.config, out=out, err=err)
+        code = issue.main(
+            argv, gql=gql, config_path=self.config, out=out, err=err, stdin=io.BytesIO(stdin)
+        )
         return code, out.getvalue(), err.getvalue()
 
 
@@ -63,7 +67,10 @@ class Help(Case):
                 self.assertIn(phrase, text)
 
     def test_write_help_names_the_receipt_and_result_unknown(self):
-        for command, phrases in (("move", ("--state VALUE", "issue's own team", "unchanged")),):
+        for command, phrases in (
+            ("move", ("--state VALUE", "issue's own team", "unchanged")),
+            ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
+        ):
             output = io.StringIO()
             with (
                 self.subTest(command=command),
@@ -92,6 +99,8 @@ class Help(Case):
             ["nope"],
             ["move", "TASK-1"],
             ["move", "TASK-1", "--state", "Done", "--state", "Todo"],
+            ["comment", "TASK-1"],
+            ["comment", "TASK-1", "--body-file", "a.md", "--body-file", "b.md"],
         ):
             with (
                 self.subTest(argv=argv),
@@ -277,6 +286,52 @@ class Move(IssueCase):
                 self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
                 self.assertIn(phrase, err)
                 self.assertLessEqual(len(gql.writes), 1)
+
+
+BODY = 'say "hi", `ls`, $HOME and ${x}\nline two\n中文正文\n'
+
+
+class Comment(IssueCase):
+    def test_posts_a_file_or_stdin_and_prints_a_receipt_without_the_body(self):
+        path = os.path.join(self.root, "body.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(BODY)
+        for argv, stdin in (
+            (["comment", "TASK-2", "--body-file", path], b""),
+            (["comment", "TASK-2", "--body-file", "-"], BODY.encode("utf-8")),
+        ):
+            gql = WriteGql(write_issue())
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(argv, gql, stdin)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(gql.writes[0][1]["b"], BODY)
+                receipt = json.loads(out)
+                self.assertEqual(
+                    (receipt["operation"], receipt["result"], receipt["comment_id"]),
+                    ("comment", "changed", "c-new"),
+                )
+                self.assertNotIn("中文".encode(), out)
+                self.assertLessEqual(len(out), 1024)
+
+    def test_an_unusable_body_exits_two_before_any_call(self):
+        blank = os.path.join(self.root, "blank.md")
+        with open(blank, "w", encoding="utf-8") as f:
+            f.write("\n  \n")
+        for path, stdin in ((blank, b""), (os.path.join(self.root, "nope.md"), b""), ("-", b"")):
+            gql = WriteGql(write_issue())
+            with self.subTest(path=path):
+                code, out, err = self.run_main(
+                    ["comment", "TASK-2", "--body-file", path], gql, stdin
+                )
+                self.assertEqual((code, out, gql.calls), (2, b"", []))
+                self.assertTrue(err.startswith("agent-pm-linear issue: --body-file"), err)
+
+    def test_a_write_outage_exits_one_as_result_unknown(self):
+        gql = WriteGql(write_issue(), result=Unavailable("commentCreate", reason="timed out"))
+        code, out, err = self.run_main(["comment", "TASK-2", "--body-file", "-"], gql, b"hi")
+        self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
+        self.assertIn("result unknown", err)
+        self.assertIn("agent-pm-linear issue read TASK-2", err)
 
 
 class Failures(IssueCase):

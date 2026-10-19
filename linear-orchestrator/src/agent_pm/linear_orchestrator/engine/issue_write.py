@@ -1,5 +1,6 @@
-"""agent-pm-linear issue move: resolve the target within the issue's own team, write once and
-answer with a receipt; a write Linear never answered is WriteUnknown, never retried.
+"""agent-pm-linear issue move and comment: resolve the target within the issue's own team, read a
+body verbatim, write once and answer with a receipt; a write Linear never answered is WriteUnknown,
+never retried.
 """
 
 from agent_pm.linear_orchestrator.engine import issue_read, ops
@@ -14,6 +15,11 @@ Q_MOVE = (
     "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url state { id } "
     f"team {{ id key {_states_page()} }} }} }}"
 )
+Q_COMMENT = "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url } }"
+M_COMMENT = (
+    "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) "
+    "{ success comment { id } } }"
+)
 Q_STATES = f"query($t: String!, $c: String) {{ team(id: $t) {{ {_states_page(', after: $c')} }} }}"
 
 
@@ -26,6 +32,35 @@ def move(gql, ident, value):
         return receipt(node, "move", "unchanged", data["viewer"])
     write(gql, "move", ident, ops.M_STATE, "issueUpdate", i=node["id"], s=state["id"])
     return receipt(node, "move", "changed", data["viewer"])
+
+
+def read_body(path, stdin):
+    """The UTF-8 text of path, or of stdin (bytes) for -, verbatim; IssueError when it cannot be read
+    or holds only whitespace.
+    """
+    try:
+        if path == "-":
+            raw = stdin.read()
+        else:
+            with open(path, "rb") as f:
+                raw = f.read()
+        body = raw.decode("utf-8")
+    except OSError as error:
+        raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
+    except UnicodeDecodeError:
+        raise IssueError(f"--body-file {path}: not UTF-8") from None
+    if not body.strip():
+        raise IssueError(f"--body-file {path}: empty body")
+    return body
+
+
+def comment(gql, ident, body):
+    """Post body as a new top-level comment on ident."""
+    data = issue_read.lookup(gql, Q_COMMENT, ident)
+    node = data["issue"]
+    out = write(gql, "comment", ident, M_COMMENT, "commentCreate", i=node["id"], b=body)
+    comment_id = (out.get("comment") or {}).get("id")
+    return receipt(node, "comment", "changed", data["viewer"], comment_id=comment_id)
 
 
 def _states(gql, team):

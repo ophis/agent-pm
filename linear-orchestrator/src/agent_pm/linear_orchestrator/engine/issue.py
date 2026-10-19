@@ -49,13 +49,16 @@ _RULES = (
     "  2: usage, configuration, Keychain, or an issue that does not resolve.\n\n"
 )
 _HELP = (
-    _RULES + "  move writes as that account and prints a receipt instead.\n\n"
+    _RULES.removesuffix("\n")
+    + "  move and comment write as that account and print a receipt instead; for\n"
+    "  them exit 1 also means the write's result is unknown (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
-    "  agent-pm-linear issue move TASK-1 --state Done\n\n"
+    "  agent-pm-linear issue move TASK-1 --state Done\n"
+    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
-    "  agent-pm-linear issue move --help\n"
+    "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _READ_HELP = (
@@ -84,8 +87,9 @@ _WRITE_RULES = (
     "  Writes Linear as the configured harness_key account (Keychain); an issue\n"
     "  needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
-    "  operation, result (changed or unchanged), actor {id, name}%s; it never\n"
-    "  echoes what was written or Linear's response. Diagnostics go to stderr.\n"
+    "  operation, result (changed or unchanged), actor {id, name}%s.\n"
+    "  It never echoes what was written or Linear's response. Diagnostics go to\n"
+    "  stderr.\n"
     "  Exit 0: changed or unchanged; 1: Linear failed (GraphQL errors, success\n"
     "  false, HTTP) or the result is unknown; 2: usage, configuration, Keychain,\n"
     "  or an issue or value that does not resolve: nothing was written.\n"
@@ -105,6 +109,21 @@ _MOVE_HELP = (
     "  agent-pm-linear issue move TASK-1 --state 'In Progress'\n\n"
     "Recovery and next help:\n"
     "  The issue's current state: agent-pm-linear issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+
+_COMMENT_HELP = (
+    _WRITE_RULES
+    % ", comment_id"
+    + "--body-file FILE: the comment's Markdown body, UTF-8, sent verbatim as a\n"
+    "  GraphQL variable: quotes, backticks, $ and newlines need no escaping.\n"
+    "  - reads stdin. Blank, unreadable or non-UTF-8, or --body-file given twice:\n"
+    "  exit 2 before anything is written. Each run posts a new top-level comment.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
+    "  agent-pm-linear issue comment TASK-1 --body-file - < note.md\n\n"
+    "Recovery and next help:\n"
+    "  Whether a comment landed: agent-pm-linear issue read TASK-1\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 
@@ -222,6 +241,17 @@ def _parser():
     move.add_argument(
         "--state", required=True, action=_Once, metavar="VALUE", help="state name or id"
     )
+    comment = commands.add_parser(
+        "comment",
+        help="post a comment on one issue from a UTF-8 file or stdin",
+        description="Post a new top-level comment on one issue, its body read verbatim.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_COMMENT_HELP,
+    )
+    comment.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    comment.add_argument(
+        "--body-file", required=True, action=_Once, metavar="FILE", help="UTF-8 body; -: stdin"
+    )
     return parser
 
 
@@ -233,9 +263,11 @@ def receipt(payload):
     return data
 
 
-def _run(gql, args):
+def _run(gql, args, body):
     if args.command == "move":
         return receipt(issue_write.move(gql, args.id, args.state))
+    if args.command == "comment":
+        return receipt(issue_write.comment(gql, args.id, body))
     view = issue_read.view(gql, args.id, full=args.full)
     if not args.full:
         return fit(
@@ -251,13 +283,22 @@ def _run(gql, args):
     return encode({"identifier": view["identifier"], "output": path})
 
 
-def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
+def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
     err = sys.stderr if err is None else err
     if args.command == "read" and args.full != (args.output is not None):
         diagnose(err, f"--full and --output go together: read {args.id} {FULL}")
         return USAGE
+    body = None
+    if args.command == "comment":
+        try:
+            body = issue_write.read_body(
+                args.body_file, sys.stdin.buffer if stdin is None else stdin
+            )
+        except IssueError as error:
+            diagnose(err, error)
+            return USAGE
     try:
         cfg = config.load(path=config_path)
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
@@ -265,7 +306,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
         return USAGE
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
-        data = _run(gql, args)
+        data = _run(gql, args, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE

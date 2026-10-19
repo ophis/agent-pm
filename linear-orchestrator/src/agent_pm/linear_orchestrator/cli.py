@@ -90,7 +90,10 @@ def main(argv=None):
         "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
         "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
-        "issue": (issue.main, "read or move one Linear issue: issue read|move ID"),
+        "issue": (
+            issue.main,
+            "read, move or comment on one Linear issue: issue read|move|comment ID",
+        ),
     }
     if arguments and arguments[0] in entries:
         return entries[arguments[0]][0](arguments[1:])
