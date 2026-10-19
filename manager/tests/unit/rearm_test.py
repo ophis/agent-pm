@@ -6,7 +6,6 @@ import io
 import json
 import os
 import re
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.manager import rearm
@@ -17,16 +16,27 @@ MANAGER = {"AGENT_PM_MANAGER": "mgr", "AGENT_PM_HOLDER_ID": "holder-1"}
 SKILL = os.path.join(REPO, "manager", "skills", "manage", "SKILL.md")
 
 
-def _run(environ: dict[str, str], stdin: bytes) -> tuple[int, str, str]:
-    out, err = io.StringIO(), io.StringIO()
+def _run(environ: dict[str, str], stdin: bytes, written=None) -> tuple[int, str, str]:
+    """main() with fd 0 reading stdin, fd 1 into the returned text (or the given os.write fake)."""
+    source, out, err = io.BytesIO(stdin), bytearray(), io.StringIO()
+
+    def read(fd, size):
+        assert fd == 0
+        return source.read(size)
+
+    def write(fd, data):
+        assert fd == 1
+        out.extend(data[:7])  # a short write: main must write the rest
+        return min(len(data), 7)
+
     with (
         mock.patch.dict(os.environ, environ, clear=True),
-        mock.patch("sys.stdin", SimpleNamespace(buffer=io.BytesIO(stdin))),
-        mock.patch("sys.stdout", out),
+        mock.patch("os.read", side_effect=read),
+        mock.patch("os.write", side_effect=written or write),
         mock.patch("sys.stderr", err),
     ):
         code = rearm.main()
-    return code, out.getvalue(), err.getvalue()
+    return code, out.decode(), err.getvalue()
 
 
 def _start(source: object) -> bytes:
@@ -88,23 +98,21 @@ class MainTest(Case):
                 self.assertEqual(_run(MANAGER, stdin), (0, "", ""))
 
     def test_closed_stdout_exits_zero(self):
-        out = io.StringIO()
-        out.close()
-        err = io.StringIO()
-        with (
-            mock.patch.dict(os.environ, MANAGER, clear=True),
-            mock.patch("sys.stdin", SimpleNamespace(buffer=io.BytesIO(_start("resume")))),
-            mock.patch("sys.stdout", out),
-            mock.patch("sys.stderr", err),
-        ):
-            self.assertEqual(rearm.main(), 0)
-        self.assertEqual(err.getvalue(), "")
+        for error in (BrokenPipeError(), OSError(9, "Bad file descriptor")):
+            with self.subTest(error):
+                write = mock.Mock(side_effect=error)
+                self.assertEqual(_run(MANAGER, _start("resume"), write), (0, "", ""))
+                write.assert_called_once()
 
     def test_non_manager_reads_no_stdin(self):
-        stdin = mock.Mock()
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch("sys.stdin", stdin):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("os.read") as read,
+            mock.patch("os.write") as write,
+        ):
             self.assertEqual(rearm.main(), 0)
-        self.assertEqual(stdin.mock_calls, [])
+        read.assert_not_called()
+        write.assert_not_called()
 
     def test_opens_nothing(self):
         with mock.patch("builtins.open", side_effect=AssertionError("opened a file")):
@@ -205,3 +213,19 @@ class PromptTest(Case):
         self.assertIn("this second `attach` printed", self.steps[arm])
         self.assertIn("the backlog is every event line after N", self.text)
         self.assertIn("When that Monitor ends or expires, repeat from step 1", self.text)
+
+
+class HooksJsonTest(Case):
+    def test_session_start_entry(self):
+        with open(os.path.join(REPO, "manager", "hooks", "hooks.json"), encoding="utf-8") as f:
+            hooks = json.load(f)
+        self.assertEqual(hooks["modules"], ["./quiet.tsx"])
+        (entry,) = hooks["hooks"]["SessionStart"]
+        self.assertEqual(set(entry["matcher"].split("|")), rearm.SOURCES)
+        (command,) = entry["hooks"]
+        self.assertEqual(command["type"], "command")
+        script = re.fullmatch(r'python3 -I "\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', command["command"])
+        assert script is not None, command["command"]
+        self.assertEqual(os.path.join(REPO, script[1]), os.path.abspath(rearm.__file__))
+        with open(os.path.join(REPO, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["hooks"], "./manager/hooks/hooks.json")

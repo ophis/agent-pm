@@ -56,14 +56,19 @@ def main() -> int:
     name = manager(os.environ)
     if name is None:
         return 0
+    # Raw fds: a closed or broken stdout then fails here, not in a flush at exit.
     try:
-        event = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+        chunks = []
+        while chunk := os.read(0, 65536):
+            chunks.append(chunk)
+        event = json.loads(b"".join(chunks).decode("utf-8"))
         source = event.get("source") if isinstance(event, dict) else None
         if not isinstance(source, str) or source not in SOURCES:
             return 0
         context = {"hookEventName": "SessionStart", "additionalContext": prompt(name, source)}
-        sys.stdout.write(json.dumps({"hookSpecificOutput": context}) + "\n")
-        sys.stdout.flush()
+        data = (json.dumps({"hookSpecificOutput": context}) + "\n").encode()
+        while data:
+            data = data[os.write(1, data) :]
     except (OSError, ValueError, RecursionError):
         pass
     return 0
