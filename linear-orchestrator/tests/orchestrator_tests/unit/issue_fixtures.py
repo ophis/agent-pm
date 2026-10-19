@@ -424,6 +424,19 @@ class RelationGql:
         return [call for call in self.calls if call[0].startswith("mutation")]
 
 
+class SecondFails(RelationGql):
+    """RelationGql whose second mutation answers with `later`, raised when an exception."""
+
+    def __init__(self, *args, later, **options):
+        super().__init__(*args, **options)
+        self.later = later
+
+    def _mutate(self, query, variables):
+        if len(self.writes) == 2:
+            self.result = self.later
+        return super()._mutate(query, variables)
+
+
 def _issue_ref(variables):
     ident = variables["id"]
     if ident.startswith("NOPE"):

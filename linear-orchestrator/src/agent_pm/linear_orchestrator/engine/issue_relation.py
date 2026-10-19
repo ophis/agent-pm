@@ -2,8 +2,16 @@
 side, so `A --blocks B` and `B --blocked-by A` name the same edge; any other relation stays.
 """
 
+import subprocess
+
 from agent_pm.linear_orchestrator.engine import issue_read, issue_refs, issue_write
-from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError
+from agent_pm.linear_orchestrator.engine.client import messages
+from agent_pm.linear_orchestrator.engine.types import (
+    GraphQLErrors,
+    IssueError,
+    LinearError,
+    WriteUnknown,
+)
 
 # direction: the issue's connection holding the edge, and the field naming its other end
 SIDES = {"blocks": ("relations", "relatedIssue"), "blocked_by": ("inverseRelations", "issue")}
@@ -56,11 +64,27 @@ def relation(gql, op, ident, direction, other):
         variables = {"i": blocker["id"], "r": blocked["id"]}
         issue_write.write(gql, operation, ident, M_ADD, "issueRelationCreate", **variables)
     else:
-        for record in edge:
-            issue_write.write(
-                gql, operation, ident, M_REMOVE, "issueRelationDelete", i=record["id"]
-            )
+        _remove(gql, operation, ident, [r["id"] for r in edge])
     return issue_write.receipt(node, operation, "changed", data["viewer"])
+
+
+def _remove(gql, operation, ident, ids):
+    """Delete each record of ids; a failure after the first names the ones already deleted."""
+    for n, record in enumerate(ids):
+        try:
+            issue_write.write(gql, operation, ident, M_REMOVE, "issueRelationDelete", i=record)
+        except (LinearError, OSError, subprocess.SubprocessError) as error:
+            if not n:
+                raise
+            cause = error if isinstance(error, LinearError) else type(error).__name__
+            if isinstance(error, GraphQLErrors):
+                cause = "linear api error: " + "; ".join(messages(error.errors))
+            kind = WriteUnknown if isinstance(error, WriteUnknown) else LinearError
+            raise kind(
+                f"{operation} {ident}: deleted {n} of {len(ids)} records of the edge "
+                f"({', '.join(ids[:n])}), then {record} failed: {cause}; check with "
+                f"agent-pm-linear issue read {ident} before running it again"
+            ) from None
 
 
 def _all(gql, ident, node, direction):

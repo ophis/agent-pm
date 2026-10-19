@@ -230,9 +230,10 @@ def _current(node):
     return None if node["retiredAt"] else (node, [])
 
 
-def label(gql, team_id, value, *, option="--label"):
-    """The label of team_id or the workspace whose id or exact name is value; a label group or a
-    retired label is refused, as no issue can be given one.
+def label(gql, team_id, value, *, option="--label", retired=False):
+    """The label of team_id or the workspace whose id or exact name is value; a label group is
+    refused, as no issue can be given one, and so is a retired label unless retired, a current one
+    of the same name still winning.
     """
     lookup = command("labels", value, "--team", team_id)
     node = resolve(
@@ -252,7 +253,7 @@ def label(gql, team_id, value, *, option="--label"):
             f"{option} {value}: {show(node)} is a label group: name one of its labels; "
             f"list them: {lookup}"
         )
-    if node["retiredAt"]:
+    if node["retiredAt"] and not retired:
         raise IssueError(f"{option} {value}: {show(node)} is retired; list them: {lookup}")
     return node
 

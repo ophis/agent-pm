@@ -11,7 +11,8 @@ from agent_pm.linear_orchestrator.engine.types import (
     WriteUnknown,
 )
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, uid
+from orchestrator_tests.process_fixtures import TimeoutExpired
+from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, SecondFails, uid
 
 BOARD = ("TASK-1", "TASK-2", "TASK-3")
 # the same edge, TASK-1 blocking TASK-2, named from either end
@@ -94,6 +95,32 @@ class Remove(Case):
         issue_relation.relation(gql, "remove", "TASK-2", "blocked_by", "TASK-1")
         self.assertEqual([v["i"] for _, v in gql.writes], ["r-1", "r-2"])
         self.assertEqual(gql.relations, [])
+
+    def test_a_later_record_failing_says_which_ones_went(self):
+        twice = [["r-1", "blocks", "TASK-1", "TASK-2"], ["r-2", "blocks", "TASK-1", "TASK-2"]]
+        cases = (
+            ({"success": False}, "issueRelationDelete: success: false"),
+            (GraphQLErrors([{"message": "boom"}]), "boom"),
+            (Unavailable("issueRelation", reason="timed out"), "result unknown"),
+            (TimeoutExpired("security", 5), "TimeoutExpired"),
+            (PermissionError("denied"), "PermissionError"),
+        )
+        for result, cause in cases:
+            gql = SecondFails(BOARD, twice, later=result)
+            with self.subTest(cause=cause), self.assertRaises(LinearError) as cm:
+                issue_relation.relation(gql, "remove", "TASK-1", "blocks", "TASK-2")
+            text = str(cm.exception)
+            for phrase in ("relation remove TASK-1", "deleted 1 of 2", "r-1", cause, "read TASK-1"):
+                self.assertIn(phrase, text)
+            self.assertEqual(gql.relations, [twice[1]])
+
+    def test_the_first_record_failing_is_the_plain_error(self):
+        twice = [["r-1", "blocks", "TASK-1", "TASK-2"], ["r-2", "blocks", "TASK-1", "TASK-2"]]
+        gql = RelationGql(BOARD, twice, result={"success": False})
+        with self.assertRaises(LinearError) as cm:
+            issue_relation.relation(gql, "remove", "TASK-1", "blocks", "TASK-2")
+        self.assertEqual(str(cm.exception), "issueRelationDelete: success: false")
+        self.assertEqual(len(gql.writes), 1)
 
 
 class Refused(Case):

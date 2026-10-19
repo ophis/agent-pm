@@ -62,6 +62,17 @@ class Swap(Case):
                 receipt = issue_label.swap(gql, "TASK-2", old, "chore")
                 self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
 
+    def test_a_rerun_after_old_was_retired_is_unchanged(self):
+        retired = {**BUG, "retiredAt": "2026-01-01T00:00:00.000Z"}
+        catalog = (*[n for n in CATALOG if n is not BUG], retired)
+        for old in ("bug", BUG["id"]):
+            gql = gql_of(CHORE, KEEP, catalog=catalog)
+            with self.subTest(old=old):
+                receipt = issue_label.swap(gql, "TASK-2", old, "chore")
+                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+        with self.assertRaises(LabelRefused):
+            issue_label.swap(gql_of(KEEP, catalog=catalog), "TASK-2", "bug", "chore")
+
     def test_the_same_label_carried_is_unchanged(self):
         gql = gql_of(BUG)
         self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", BUG["id"])["result"], "unchanged")
@@ -145,6 +156,20 @@ class Refused(Case):
                 issue_label.swap(gql, ident, old, "chore")
             self.assertIn(phrase, str(cm.exception))
             self.assertEqual(gql.writes, [])
+
+    def test_two_carried_old_labels_of_one_name_list_both_and_the_lookup(self):
+        twins = (label(8, "dup"), label(9, "dup", None))
+        gql = gql_of(*twins, catalog=(*CATALOG, *twins))
+        with self.assertRaises(IssueError) as cm:
+            issue_label.swap(gql, "TASK-2", "dup", "chore")
+        text = str(cm.exception)
+        for phrase in (
+            uid(8),
+            uid(9),
+            f"list them: agent-pm-linear issue lookup labels --team {TEAM}",
+        ):
+            self.assertIn(phrase, text)
+        self.assertEqual(gql.writes, [])
 
     def test_a_write_outage_is_result_unknown_and_never_retried(self):
         gql = gql_of(BUG, result=Unavailable("issueUpdate", reason="timed out"))

@@ -37,8 +37,9 @@ def move(gql, ident, value):
 
 
 def read_body(path, stdin=None):
-    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim; IssueError
-    when it cannot be read or holds only whitespace and byte order marks.
+    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim but for a
+    leading byte order mark; IssueError when it cannot be read or holds only whitespace and byte
+    order marks.
     """
     try:
         if path != "-":
@@ -48,7 +49,7 @@ def read_body(path, stdin=None):
             raise IssueError("--body-file -: no stdin to read")
         else:
             raw = stream.read()
-        body = raw.decode("utf-8")
+        body = raw.decode("utf-8-sig")
     except OSError as error:
         raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
     except UnicodeDecodeError:

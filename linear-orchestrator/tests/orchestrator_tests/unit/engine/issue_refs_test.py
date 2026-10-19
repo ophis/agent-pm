@@ -181,6 +181,19 @@ class Label(Case):
                 self.assertIn(phrase, str(cm.exception))
                 self.assertIn(f"lookup labels --team {TEAM}", str(cm.exception))
 
+    def test_retired_true_takes_a_retired_label_never_a_group(self):
+        old = label(5, "old", retired="2026-01-01T00:00:00.000Z")
+        for gql, value in (
+            (Routes(issueLabels=edges([old])), "old"),
+            (Routes(issueLabel=old), uid(5)),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(issue_refs.label(gql, TEAM, value, retired=True), old)
+        group = label(4, "Type", is_group=True)
+        with self.assertRaises(IssueError) as cm:
+            issue_refs.label(Routes(issueLabel=group), TEAM, uid(4), retired=True)
+        self.assertIn("is a label group", str(cm.exception))
+
     def test_only_settable_same_named_labels_count(self):
         nodes = [label(1, "bug", None, retired="2026-01-01T00:00:00.000Z"), label(2, "bug")]
         self.assertEqual(

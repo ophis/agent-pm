@@ -131,6 +131,14 @@ class ReadBody(Case):
         self.assertEqual(issue_write.read_body(path, io.BytesIO()), BODY)
         self.assertEqual(issue_write.read_body("-", io.BytesIO(BODY.encode("utf-8"))), BODY)
 
+    def test_only_a_leading_byte_order_mark_is_dropped(self):
+        path = os.path.join(self.home, "bom-body.md")
+        data = b"\xef\xbb\xbf" + (BODY + "﻿").encode("utf-8")
+        with open(path, "wb") as f:
+            f.write(data)
+        self.assertEqual(issue_write.read_body(path, io.BytesIO()), BODY + "﻿")
+        self.assertEqual(issue_write.read_body("-", io.BytesIO(data)), BODY + "﻿")
+
     def test_an_unusable_body_is_refused(self):
         blank, latin = os.path.join(self.home, "blank.md"), os.path.join(self.home, "latin.md")
         with open(blank, "w", encoding="utf-8") as f:

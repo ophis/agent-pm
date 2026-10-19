@@ -204,7 +204,8 @@ _CREATE_HELP = (
     "  relations. Every value resolves first, as agent-pm-linear issue list --help\n"
     "  describes; one that does not exits 2 with nothing created.\n"
     "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
-    "  sent verbatim; - reads stdin; blank or unreadable exits 2.\n"
+    "  sent verbatim, minus a leading byte order mark; - reads stdin; blank or\n"
+    "  unreadable exits 2.\n"
     "--label VALUE, repeatable: not a group or retired. --project VALUE: the\n"
     "  team's. --milestone VALUE: --project's, which it needs. --parent ID: an issue.\n"
     "  --assignee VALUE: a user's id, name, email or me (the harness_key account).\n"
@@ -217,7 +218,8 @@ _CREATE_HELP = (
     "  agent-pm-linear issue list --team TEAM --query=TITLE before creating it again.\n"
     "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
     "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
-    "  with its error), recover and truncated: run only the recover commands\n"
+    "  with its error), recover and truncated; done and failed are cut before\n"
+    "  recover. Run only the recover commands\n"
     "  (agent-pm-linear issue relation add …), never create again.\n\n"
     "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
     "  agent-pm-linear issue create --title 'Fix login' --body-file note.md\n"
@@ -249,7 +251,8 @@ _COMMENT_HELP = (
     _WRITE_RULES
     % ", comment_id"
     + "--body-file FILE: the comment's Markdown body, UTF-8, sent verbatim as a\n"
-    "  GraphQL variable: quotes, backticks, $ and newlines need no escaping.\n"
+    "  GraphQL variable: quotes, backticks, $ and newlines need no escaping; a\n"
+    "  leading byte order mark is dropped.\n"
     "  - reads stdin. Blank, unreadable or non-UTF-8, or --body-file given twice:\n"
     "  exit 2 before anything is written. Each run posts a new top-level comment.\n\n"
     "Example (configured Linear access and TASK-1):\n"
@@ -292,7 +295,9 @@ _RELATION_HELP = (
     "  same edge. add creates it, already there: result unchanged; remove\n"
     "  deletes it, not there: result unchanged; nothing is written then. The\n"
     "  reverse edge and relations of other types (related, duplicate) between\n"
-    "  the two stay as they are.\n\n"
+    "  the two stay as they are. remove deletes every record of the edge; one\n"
+    "  failing after others went exits 1 naming the deleted ids: check with\n"
+    "  agent-pm-linear issue read ID before running it again.\n\n"
     "Example (configured Linear access, TASK-1 and TASK-2):\n"
     "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n"
     "  agent-pm-linear issue relation remove TASK-1 --blocks TASK-2\n"
@@ -308,9 +313,9 @@ _SWAP_HELP = (
     + "Replaces the label --from OLD names on ID by the one --to NEW names, in one\n"
     "  update naming only those two: every other label stays. Each is an id or an\n"
     "  exact name (case-sensitive) of a label of the issue's team or the\n"
-    "  workspace; OLD is first looked for among the issue's labels. NEW is no\n"
-    "  label group and not retired. NEW already there is not added again; OLD\n"
-    "  missing and NEW there: result unchanged, nothing written.\n"
+    "  workspace; OLD is first looked for among the issue's labels and may be\n"
+    "  retired. NEW is no label group and not retired. NEW already there is not\n"
+    "  added again; OLD missing and NEW there: result unchanged, nothing written.\n"
     "  Refused (exit 1, nothing written): the issue carries neither, or NEW is in\n"
     "  a label group the issue already holds another label of.\n\n"
     "Example (configured Linear access and TASK-1):\n"
@@ -336,10 +341,11 @@ def encode(payload):
     return text.encode("utf-8", "backslashreplace") + b"\n"
 
 
-def fit(payload, lists, texts, follow):
-    """payload encoded within LIMIT: drop the last item of its largest list in lists, then halve its
-    longest text at a dotted path in texts, naming each cut in truncated, until it fits; continue is
-    follow once anything is truncated, absent when follow is None.
+def fit(payload, tiers, texts, follow):
+    """payload encoded within LIMIT: drop the last item of its largest list in the first of tiers
+    (tuples of list fields) with one not empty, then halve its longest text at a dotted path in
+    texts, naming each cut in truncated, until it fits; continue is follow once anything is
+    truncated, absent when follow is None.
     """
     payload = copy.deepcopy(payload)
     while True:
@@ -348,7 +354,7 @@ def fit(payload, lists, texts, follow):
         data = encode(payload)
         if len(data) <= LIMIT:
             return data
-        if full := [f for f in lists if payload[f]]:
+        if full := next((f for f in ([f for f in t if payload[f]] for t in tiers) if f), None):
             field = max(full, key=lambda f: len(encode(payload[f])))
             payload[field].pop()
             kept = len(payload[field])
@@ -671,7 +677,7 @@ def _run(gql, args, team_id, body):
     if args.command == "label":
         return receipt(issue_label.swap(gql, args.id, args.old, args.new))
     if args.command == "archive" and args.dry_run:
-        return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
+        return fit(issue_archive.dry_run(gql, args.id), (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
         return receipt(issue_archive.archive(gql, args.id))
     if args.command == "read":
@@ -680,7 +686,7 @@ def _run(gql, args, team_id, body):
             return _written(args.output, view, {"identifier": view["identifier"]})
         return fit(
             issue_read.compact(view),
-            ("comments", "labels", "blocks", "blocked_by", "children"),
+            (("comments", "labels", "blocks", "blocked_by", "children"),),
             TEXTS,
             f"agent-pm-linear issue read {view['identifier']} {FULL}",
         )
@@ -735,7 +741,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
     except RelationsFailed as error:
-        out.write(fit(error.report, ("done", "failed", "recover"), (), None))
+        out.write(fit(error.report, (("done", "failed"), ("recover",)), (), None))
         diagnose(err, error)
         return FAILED
     except (LinearError, Unavailable, OverflowError, ArchiveRefused, LabelRefused) as error:
