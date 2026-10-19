@@ -110,7 +110,7 @@ The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace 
 
 1. Open Claude Code in that project's directory and run `/mcp`.
 2. Select the Linear entry and choose **Disable**. Claude Code records this for that project only ([Disable a server without removing it](https://code.claude.com/docs/en/mcp#disable-a-server-without-removing-it)); other servers and projects keep their settings. Never remove the server or edit its config by hand.
-3. Start a new session there and check: `/mcp` shows the Linear entry disabled, no Linear MCP tool is offered, and `bin/agent-pm-linear issue read <ID>` still prints the issue. Another project's `/mcp` still shows it enabled.
+3. Start a new session there and check: `/mcp` shows the Linear entry disabled, no Linear MCP tool is offered, `bin/agent-pm-linear issue read <ID>` still prints the issue, and every other server there keeps its earlier state. Another project's `/mcp` still shows the Linear entry as before.
 
 ### Agent label
 

@@ -1,18 +1,13 @@
 ---
 name: linear
 description: "Read, find, create and change Linear issues with fixed agent-pm-linear issue commands: no hand-written GraphQL."
-allowed-tools:
-  - Bash(agent-pm-linear issue read *)
-  - Bash(agent-pm-linear issue list)
-  - Bash(agent-pm-linear issue list *)
-  - Bash(agent-pm-linear issue lookup *)
 ---
 
 # linear
 
 Every common Linear issue operation is one `agent-pm-linear issue` command: use it, never a raw GraphQL query or a Linear MCP tool. Only an operation the table lacks (editing a description, other entities) falls back to your own Linear tool, such as a personal `/linear`.
 
-Each command acts as the configured `harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-linear`.
+Each command acts as the configured `harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. None is pre-approved: `read`, `list` and `lookup` write a file with `--full --output`. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-linear`, writing `${CLAUDE_SKILL_DIR}` as this file's directory, an absolute path.
 
 ## Commands
 
@@ -91,7 +86,7 @@ Each run adds or removes that one edge in that one direction; other relations st
 
 ## When a write fails
 
-- **Result unknown** (a timeout or outage mid-write, exit 1): `read` the issue before running the write again; nothing retries by itself. For `create`, look for it first: `agent-pm-linear issue list --query 'Fix login'`.
+- **Result unknown** (a timeout or outage mid-write, exit 1): `read` the issue before running the write again; nothing retries by itself. For `create`, first run the `list --team … --query=…` command its error prints, which searches the team it wrote to.
 - **Partial create** (exit 1, `"result": "partial"`): the issue exists; `done` and `failed` list its relations, and `recover` holds the `relation add` command for each failed one. Run only the `recover` commands; never run `create` again.
 
 ## Archiving
@@ -101,4 +96,4 @@ agent-pm-linear issue archive TASK-1 --dry-run
 agent-pm-linear issue archive TASK-1
 ```
 
-Archiving takes every sub-issue with it. `archive` reads all of them, at every depth, and archives only when the issue and each unarchived sub-issue are completed or canceled (state type). Otherwise it exits 1 naming the unfinished ones; there is no override. `--dry-run` lists what would go, writing nothing. It closes no run and deletes no file.
+Archiving takes every sub-issue with it. `archive` reads all of them, at every depth, and archives only when the issue and each unarchived sub-issue are completed or canceled (state type). Otherwise it exits 1 naming the unfinished ones; there is no override. `--dry-run` lists what would go, writing nothing, and exits 0 whatever it finds: read its `result` (`refused` when anything blocks) and `unfinished`. It closes no run and deletes no file.

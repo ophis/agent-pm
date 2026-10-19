@@ -125,7 +125,11 @@ class Manage(Case):
         board = section("manage", "The task board")
         issues = rule("**Issue operations**")
         self.assertIn(issues, board)
-        for literal in ("`/agent-pm:linear`", "`agent-pm-linear issue`", "never a hand-written query"):
+        for literal in (
+            "`/agent-pm:linear`",
+            "`agent-pm-linear issue`",
+            "never a hand-written query",
+        ):
             self.assertIn(literal, issues)
 
     def test_approved_board_proposals_run_after_a_state_reread(self):

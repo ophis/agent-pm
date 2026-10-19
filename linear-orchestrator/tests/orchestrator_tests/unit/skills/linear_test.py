@@ -1,5 +1,5 @@
 """linear-orchestrator/skills/linear/SKILL.md: every issue command it shows is one
-agent-pm-linear issue accepts, it shows every one, and its pre-approved rules only read.
+agent-pm-linear issue accepts, it shows every one, and it pre-approves none.
 """
 
 import contextlib
@@ -8,9 +8,6 @@ import io
 from agent_pm.linear_orchestrator.engine import issue
 from orchestrator_tests.case import Case
 from orchestrator_tests.skills.linear import body, examples, front, rules
-
-READS = ("read", "list", "lookup")
-
 
 def _commands(parser):
     """Every leaf command of parser, as its words after `issue`."""
@@ -35,12 +32,9 @@ class LinearSkill(Case):
         for command in _commands(issue._parser()):
             self.assertIn(tuple(command), shown, command)
 
-    def test_its_pre_approved_rules_only_read(self):
-        self.assertTrue(rules())
-        for rule in rules():
-            with self.subTest(rule=rule):
-                self.assertIn(rule.split()[2], READS)
-                self.assertTrue(rule.startswith("agent-pm-linear issue "))
+    def test_it_pre_approves_nothing_since_even_reads_write_with_output(self):
+        self.assertEqual(rules(), [])
+        self.assertNotIn("allowed-tools", front())
 
     def test_it_states_the_relation_direction_partial_create_and_archive_rules(self):
         text = body()
