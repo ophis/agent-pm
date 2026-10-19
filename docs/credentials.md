@@ -23,6 +23,8 @@ with the broker. The user accepted this on 2026-10-18; the broker is unchanged (
 | `tmux`, `pty` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install: `claude setup-token`, pasted into `<B> login claude` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / `setup-token` | `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:423`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
+| `tmux`, `pty` | OpenCode | no one: it uses the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)) | — | no container | — |
+| Docker | OpenCode | no one: it uses the host's Ollama through `host.docker.internal` | — | no model credential, only the GitHub tokens (`with-secrets --client opencode`) | — |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
 ([Log in](docker-host.md#log-in)). Local Hosts use the host `gh` login below.
