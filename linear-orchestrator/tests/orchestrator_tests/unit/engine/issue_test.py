@@ -127,11 +127,59 @@ class Read(IssueCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.decode("utf-8"))["description"], "a\ud800b")
 
-    def test_a_result_too_large_even_bare_fails(self):
-        code, out, err = self.run_main(["read", "TASK-2"], Gql(issue_node(title="t" * 9000)))
-        self.assertEqual((code, out), (1, b""))
-        self.assertIn("8192", err)
-        self.assertIn("--full --output FILE", err)
+    def test_truncated_never_names_a_dropped_comment(self):
+        node = issue_node(
+            "TASK-2",
+            description="述" * 700,
+            comments=conn([comment(n, body="评" * 400) for n in range(1, 6)]),
+            relations=conn(
+                [
+                    {"type": "blocks", "relatedIssue": rel(f"TASK-{n}", title="界" * 200)}
+                    for n in range(30, 40)
+                ]
+            ),
+        )
+        code, out, _ = self.run_main(["read", "TASK-2"], Gql(node))
+        self.assertEqual(code, 0)
+        view = json.loads(out)
+        self.assertLess(len(view["comments"]), 5)
+        for field in view["truncated"]:
+            parts = field.split(".")
+            if parts[0] == "comments" and len(parts) == 3:
+                self.assertLess(int(parts[1]), len(view["comments"]), field)
+            self.assertIn(parts[0], view)
+
+    def test_text_too_large_even_without_lists_is_shortened(self):
+        node = issue_node(
+            "TASK-2",
+            title="t" * 9000,
+            parent=rel("TASK-9", title="p" * 3000),
+            project={"id": "p1", "name": "n" * 3000},
+            description="d" * 600,
+        )
+        code, out, err = self.run_main(["read", "TASK-2"], Gql(node))
+        self.assertEqual((code, err), (0, ""))
+        self.assertLessEqual(len(out), 8192)
+        view = json.loads(out)
+        self.assertIn("title", view["truncated"])
+        self.assertLess(len(view["title"]), 9000)
+        self.assertTrue(view["title"].startswith("ttt"))
+        self.assertEqual(
+            (view["id"], view["identifier"], view["url"], view["parent"]["identifier"]),
+            ("id-TASK-2", "TASK-2", "https://linear.app/t/issue/TASK-2", "TASK-9"),
+        )
+        self.assertEqual(view["continue"], "agent-pm-linear issue read TASK-2 --full --output FILE")
+        for path, value in (
+            ("parent.title", view["parent"]["title"]),
+            ("project.name", view["project"]["name"]),
+        ):
+            if path in view["truncated"]:
+                self.assertLess(len(value), 3000, path)
+
+    def test_only_the_cut_text_is_named(self):
+        code, out, _ = self.run_main(["read", "TASK-2"], Gql(issue_node(title="t" * 9000)))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["truncated"], ["title"])
 
 
 class Failures(IssueCase):
