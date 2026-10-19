@@ -658,6 +658,15 @@ class StartTest(Base):
         self.assertFalse(any("/host/bin" in arg or "AGENT_HOME" in arg for arg in new))
         for tag in ("@kind docker", f"@generation {GEN}", "@sid s1"):
             self.assertIn(tag, " ".join(new))
+
+    def test_the_container_tmux_forwards_a_panes_clipboard_copy_to_the_attached_terminal(self):
+        self.start()
+        (new,) = [call for call in self.docker.execs() if "new-session" in call]
+        for option in (
+            "; set-option -s set-clipboard on ;",
+            "; set-option -qp -t =w: allow-passthrough on ;",
+        ):
+            self.assertIn(option, " ".join(new))
         self.assertIn("set-option @state dead ; wait-for -S agent-pm-dead", new)
         self.assertNotIn("@record", " ".join(new))
         argv = self.popen_mock.call_args.args[0]

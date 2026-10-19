@@ -616,6 +616,8 @@ class LaunchTest(Case):
                 tmux_cli.RELAUNCH,
                 path,
                 *(";", "set-option", "-p", "-t", "=w:", "remain-on-exit", "on"),
+                *(";", "set-option", "-s", "set-clipboard", "on"),
+                *(";", "set-option", "-qp", "-t", "=w:", "allow-passthrough", "on"),
                 *(";", "set-option", "-t", "=w:", "@kind", "docker"),
                 *chained(deco),
                 *recorded("w"),
