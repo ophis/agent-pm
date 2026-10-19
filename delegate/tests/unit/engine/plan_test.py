@@ -496,7 +496,7 @@ class Policy(Base):
     )
     SHIPPED = {
         "claude": (("--strict-mcp-config", f"--append-system-prompt={RULE}"), {}),
-        "codex": (("-c", f"developer_instructions={json.dumps(RULE)}"), {}),
+        "codex": (("-c", "mcp_servers={}", "-c", f"developer_instructions={json.dumps(RULE)}"), {}),
         "fake": ((), {}),
     }
 
@@ -522,9 +522,30 @@ class Policy(Base):
                 self.assertEqual(argv.count(value), 1)
                 self.assertEqual(argv[argv.index(value) - 1], flag)
         self.assertEqual(argv.count("-s"), 1)
-        rule = self.SHIPPED["codex"][0][1]
+        rule = self.SHIPPED["codex"][0][-1]
         self.assertEqual(argv.count(rule), 1)
         self.assertEqual(argv[argv.index(rule) - 1], "-c")
+        self.assertNotIn("mcp_servers={}", argv)
+
+    def test_a_codex_role_run_turns_off_each_mcp_server_its_codex_config_names(self):
+        got, _ = self.planned(client="codex")
+        os.makedirs(got.session.access.cwd)
+        home = self.enterContext(
+            tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
+        )
+        codex_home = os.path.join(home, ".codex")
+        os.mkdir(codex_home)
+        with open(os.path.join(codex_home, "config.toml"), "w") as f:
+            f.write('[mcp_servers.tickets]\nurl = "https://tickets/mcp"\n')
+        with mock.patch.dict(os.environ, {"HOME": home, "CODEX_HOME": codex_home}):
+            argv = committed_headless(codex_client(), replace(got.session, prompt="hi")).argv
+        off = (
+            "-c",
+            "mcp_servers.tickets.enabled=false",
+            "-c",
+            'mcp_servers.tickets.url="https://tickets/mcp"',
+        )
+        self.assertIn(off, [argv[i : i + 4] for i in range(len(argv))])
 
     def test_a_local_policy_replaces_the_shipped_one(self):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
