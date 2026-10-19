@@ -50,8 +50,9 @@ Recovery: agent-pm-crew attach. Run `agent-pm-crew pending --content` at the beg
 active turn before status reports or new launches. Handle and ack as in step 3.
 6. Only if a background tool's runtime contract guarantees a notification to this conversation, \
 run the `next-event:` command this second `attach` printed (its N and GEN) as that tool's task, \
-without `--follow`. After handling each event, rerun that command. Never arm from a line number \
-you remember or from the last line printed. On reader exit, notification failure or expiration, \
+without `--follow`. After handling and acking each event, run `agent-pm-crew attach` again and \
+use its newly printed `next-event:` command. Never arm from a line number you remember or from \
+the last line printed. On reader exit, notification failure or expiration, \
 repeat from step 1; without a notifying tool, keep Manual monitoring.
 """
 

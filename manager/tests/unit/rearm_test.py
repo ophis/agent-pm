@@ -295,7 +295,19 @@ class ManualPromptTest(PromptTest):
             "`next-event:` command this second `attach` printed (its N and GEN)", self.text
         )
         self.assertIn("without `--follow`", self.text)
-        self.assertIn("After handling each event, rerun", self.text)
+
+    def test_each_one_shot_read_uses_a_fresh_attach_cursor(self):
+        self.assertIn(
+            "After handling and acking each event, run `agent-pm-crew attach` again and use its "
+            "newly printed `next-event:` command",
+            self.text,
+        )
+
+    def test_reader_failures_recover_and_no_notifying_tool_stays_manual(self):
+        self.assertIn(
+            "On reader exit, notification failure or expiration, repeat from step 1", self.text
+        )
+        self.assertIn("without a notifying tool, keep Manual monitoring", self.text)
 
     def test_steps_in_order(self):
         order = (
