@@ -752,7 +752,7 @@ def outer(
 ):
     """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given; a
     new run's launch choices come from the Resolver chain chain_steps(cfg, selector), selector
-    None: [selection]'s.
+    None: the one [selection] configures.
 
     Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
     first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new

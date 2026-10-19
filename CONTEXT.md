@@ -109,7 +109,7 @@ The generic layer that asks a decision API (Jev or Kev) one question, a state an
 _Avoid_: router, chooser
 
 **Resolver chain**:
-The router's steps that decide a new run's launch choices from its issue: each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step off or failing falls back to today's choice. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`.
+The router's steps that decide a new run's launch choices from its issue: each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step without state or failing falls back to today's choice. `[linear_orchestrator.selection] resolvers` lists the chain; none: no chain. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py` and `engine/chain.py`.
 _Avoid_: chooser
 
 **Resolver**:
