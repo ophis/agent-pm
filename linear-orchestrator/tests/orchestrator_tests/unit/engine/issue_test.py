@@ -293,6 +293,17 @@ class Full(IssueCase):
         self.assertIn("timed out", err)
         self.assertFalse(os.path.exists(path))
 
+    def test_a_vanished_page_fails_with_a_capped_diagnostic_and_no_file(self):
+        gql = self.gql()
+        gql.pages["children"] = [None]
+        path = os.path.join(self.root, "TASK-2.json")
+        code, out, err = self.run_main(["read", "TASK-2", "--full", "--output", path], gql)
+        self.assertEqual((code, out), (1, b""))
+        self.assertEqual(err.count("\n"), 1)
+        self.assertTrue(err.startswith("agent-pm-linear issue: TASK-2: children page missing"), err)
+        self.assertNotIn("Traceback", err)
+        self.assertFalse(os.path.exists(path))
+
     def test_an_auth_failure_writes_no_file_and_shows_no_credential(self):
         found = CompletedProcess([], 0, stdout=KEY + "\n", stderr="")
         refused = urllib.error.HTTPError(client.URL, 401, "Unauthorized", {}, io.BytesIO(b"{}"))

@@ -49,7 +49,7 @@ def issue_node(ident="TASK-2", **fields):
 
 class Gql:
     """Answers the read query with `node`, each later page of a connection from `pages[name]` (in
-    order; an exception there is raised), and records every (query, variables) call; an exception
+    order; an exception there is raised, None or a dict without nodes answers as the whole issue), and records every (query, variables) call; an exception
     in `fail` is raised instead.
     """
 
@@ -66,5 +66,9 @@ class Gql:
                 page = self.pages[name].pop(0)
                 if isinstance(page, BaseException):
                     raise page
-                return {"issue": {name: page}}
+                return (
+                    {"issue": page}
+                    if page is None or "nodes" not in page
+                    else {"issue": {name: page}}
+                )
         return {"issue": self.node}

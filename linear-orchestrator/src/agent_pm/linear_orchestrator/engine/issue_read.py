@@ -75,11 +75,22 @@ def view(gql, ident, *, full=False):
         nodes[name] = list(page["nodes"])
         while full and page["pageInfo"]["hasNextPage"]:
             after = page["pageInfo"]["endCursor"]
-            page = gql(MORE[name], i=node["id"], c=after)["issue"][name]
+            page = _later(gql, ident, node["id"], name, after)
             nodes[name] += page["nodes"]
         if page["pageInfo"]["hasNextPage"]:
             more.append(_CUTS[name])
     return _shape(node, nodes, more)
+
+
+def _later(gql, ident, issue_id, name, after):
+    page = (gql(MORE[name], i=issue_id, c=after)["issue"] or {}).get(name)
+    if (
+        isinstance(page, dict)
+        and isinstance(page.get("nodes"), list)
+        and isinstance(page.get("pageInfo"), dict)
+    ):
+        return page
+    raise LinearError(f"{ident}: {name} page missing: deleted or archived mid-read?")
 
 
 def _shape(node, nodes, truncated):

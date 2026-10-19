@@ -228,3 +228,13 @@ class Full(Case):
         pages["children"] = [LinearError("linear api error: boom")]
         with self.assertRaises(LinearError):
             issue_read.view(Gql(node, pages), "TASK-2", full=True)
+
+    def test_a_vanished_later_page_is_a_linear_failure(self):
+        for answer in (None, {"children": None}, {"children": {"nodes": []}}, {}):
+            node, pages = self.node_and_pages()
+            pages["children"] = [answer]
+            with (
+                self.subTest(answer=answer),
+                self.assertRaisesRegex(LinearError, "TASK-2: children page missing"),
+            ):
+                issue_read.view(Gql(node, pages), "TASK-2", full=True)
