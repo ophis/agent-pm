@@ -1,6 +1,7 @@
 """agent-pm-linear issue: fixed issue subcommands and the rules they share. stdout holds one JSON
-object of at most LIMIT UTF-8 bytes; diagnostics go to stderr, as bounded; exit OK, FAILED (Linear
-failed) or USAGE (usage, configuration or an unresolved reference).
+object of at most LIMIT UTF-8 bytes, a write's receipt at most RECEIPT; diagnostics go to stderr, as
+bounded; exit OK, FAILED (Linear failed, or a write's result is unknown) or USAGE (usage,
+configuration or an unresolved reference).
 """
 
 import argparse
@@ -14,7 +15,7 @@ import sys
 import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.linear_orchestrator.engine import config, issue_read
+from agent_pm.linear_orchestrator.engine import config, issue_read, issue_write
 from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
@@ -26,7 +27,7 @@ from agent_pm.linear_orchestrator.engine.types import (
 )
 
 OK, FAILED, USAGE = 0, 1, 2
-LIMIT = 8192
+LIMIT, RECEIPT = 8192, 1024
 PROG = "agent-pm-linear issue"
 FULL = "--full --output FILE"
 TEXTS = (
@@ -48,10 +49,13 @@ _RULES = (
     "  2: usage, configuration, Keychain, or an issue that does not resolve.\n\n"
 )
 _HELP = (
-    _RULES + "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue read TASK-1\n\n"
+    _RULES + "  move writes as that account and prints a receipt instead.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue read TASK-1\n"
+    "  agent-pm-linear issue move TASK-1 --state Done\n\n"
     "Recovery and next help:\n"
-    "  Command details: agent-pm-linear issue read --help\n"
+    "  Command details: agent-pm-linear issue read --help,\n"
+    "  agent-pm-linear issue move --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _READ_HELP = (
@@ -73,6 +77,43 @@ _READ_HELP = (
     "Recovery and next help:\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
+
+
+_WRITE_RULES = (
+    "Prerequisites and effects:\n"
+    "  Writes Linear as the configured harness_key account (Keychain); an issue\n"
+    "  needs no recorded run. Help needs no credentials or services.\n"
+    "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
+    "  operation, result (changed or unchanged), actor {id, name}%s; it never\n"
+    "  echoes what was written or Linear's response. Diagnostics go to stderr.\n"
+    "  Exit 0: changed or unchanged; 1: Linear failed (GraphQL errors, success\n"
+    "  false, HTTP) or the result is unknown; 2: usage, configuration, Keychain,\n"
+    "  or an issue or value that does not resolve: nothing was written.\n"
+    "  A timeout or outage during the write leaves the result unknown: check with\n"
+    "  agent-pm-linear issue read ID before running it again; nothing retries.\n\n"
+)
+_MOVE_HELP = (
+    _WRITE_RULES
+    % ""
+    + "--state VALUE: the id or exact name (case-sensitive) of a workflow state of\n"
+    "  the issue's own team, so a name other teams share still means this team's.\n"
+    "  A state type such as completed is no name. No match, or a name the team\n"
+    "  holds twice: exit 2 listing the team's states (name and id). Already in\n"
+    "  that state: result unchanged, nothing written.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue move TASK-1 --state Done\n"
+    "  agent-pm-linear issue move TASK-1 --state 'In Progress'\n\n"
+    "Recovery and next help:\n"
+    "  The issue's current state: agent-pm-linear issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+
+
+class _Once(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest) is not None:
+            parser.error(f"{option_string} given twice")
+        setattr(namespace, self.dest, values)
 
 
 def encode(payload):
@@ -155,7 +196,7 @@ def diagnose(err, message):
 def _parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Read Linear issues with fixed subcommands.",
+        description="Read and write Linear issues with fixed subcommands.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_HELP,
     )
@@ -170,14 +211,51 @@ def _parser():
     read.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
     read.add_argument("--full", action="store_true", help="every page and body; needs --output")
     read.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
+    move = commands.add_parser(
+        "move",
+        help="set one issue's workflow state by name, within its team",
+        description="Set one issue's workflow state by name or id, within the issue's team.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_MOVE_HELP,
+    )
+    move.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    move.add_argument(
+        "--state", required=True, action=_Once, metavar="VALUE", help="state name or id"
+    )
     return parser
+
+
+def receipt(payload):
+    """payload encoded within RECEIPT, its actor's name halved until it fits."""
+    actor = payload["actor"]
+    while len(data := encode(payload)) > RECEIPT and actor["name"]:
+        actor["name"] = actor["name"][: len(actor["name"]) // 2]
+    return data
+
+
+def _run(gql, args):
+    if args.command == "move":
+        return receipt(issue_write.move(gql, args.id, args.state))
+    view = issue_read.view(gql, args.id, full=args.full)
+    if not args.full:
+        return fit(
+            issue_read.compact(view),
+            ("comments", "labels", "blocks", "blocked_by", "children"),
+            TEXTS,
+            f"agent-pm-linear issue read {view['identifier']} {FULL}",
+        )
+    try:
+        path = write_full(args.output, view)
+    except OSError as error:
+        raise IssueError(f"--output {args.output}: {error.strerror or error}") from None
+    return encode({"identifier": view["identifier"], "output": path})
 
 
 def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
     err = sys.stderr if err is None else err
-    if args.full != (args.output is not None):
+    if args.command == "read" and args.full != (args.output is not None):
         diagnose(err, f"--full and --output go together: read {args.id} {FULL}")
         return USAGE
     try:
@@ -187,14 +265,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
         return USAGE
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
-        view = issue_read.view(gql, args.id, full=args.full)
-        if not args.full:
-            data = fit(
-                issue_read.compact(view),
-                ("comments", "labels", "blocks", "blocked_by", "children"),
-                TEXTS,
-                f"agent-pm-linear issue read {view['identifier']} {FULL}",
-            )
+        data = _run(gql, args)
     except IssueError as error:
         diagnose(err, error)
         return USAGE
@@ -207,12 +278,5 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
     except (LinearError, Unavailable, OverflowError) as error:
         diagnose(err, error)
         return FAILED
-    if args.full:
-        try:
-            path = write_full(args.output, view)
-        except OSError as error:
-            diagnose(err, f"--output {args.output}: {error.strerror or error}")
-            return USAGE
-        data = encode({"identifier": view["identifier"], "output": path})
     out.write(data)
     return OK

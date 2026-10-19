@@ -1,4 +1,4 @@
-"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read through main."""
+"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read and move through main."""
 
 import io
 import json
@@ -13,7 +13,16 @@ from agent_pm.linear_orchestrator.engine.types import GraphQLErrors, LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
-from orchestrator_tests.unit.issue_fixtures import Gql, comment, conn, issue_node, rel
+from orchestrator_tests.unit.issue_fixtures import (
+    Gql,
+    WriteGql,
+    comment,
+    conn,
+    issue_node,
+    rel,
+    team,
+    write_issue,
+)
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL
 
 KEY = "lin_api_TESTSECRET0123456789"
@@ -53,6 +62,22 @@ class Help(Case):
             for phrase in ("agent-pm-linear issue read TASK-1", "8192", "Exit 0", "--help"):
                 self.assertIn(phrase, text)
 
+    def test_write_help_names_the_receipt_and_result_unknown(self):
+        for command, phrases in (("move", ("--state VALUE", "issue's own team", "unchanged")),):
+            output = io.StringIO()
+            with (
+                self.subTest(command=command),
+                redirect_stdout(output),
+                mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
+                mock.patch("subprocess.run", side_effect=AssertionError("ran a process")),
+                self.assertRaises(SystemExit) as cm,
+            ):
+                cli.main(["issue", command, "--help"])
+            self.assertEqual(cm.exception.code, 0)
+            text = output.getvalue()
+            for phrase in (*phrases, "1024", "result unknown", "Exit 0", f"issue {command} TASK-1"):
+                self.assertIn(phrase, text)
+
     def test_top_level_help_lists_the_namespace(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit):
@@ -60,7 +85,14 @@ class Help(Case):
         self.assertIn("issue", output.getvalue())
 
     def test_usage_errors_exit_two(self):
-        for argv in ([], ["read"], ["read", "TASK-1", "TASK-2"], ["nope"]):
+        for argv in (
+            [],
+            ["read"],
+            ["read", "TASK-1", "TASK-2"],
+            ["nope"],
+            ["move", "TASK-1"],
+            ["move", "TASK-1", "--state", "Done", "--state", "Todo"],
+        ):
             with (
                 self.subTest(argv=argv),
                 redirect_stderr(io.StringIO()),
@@ -180,6 +212,71 @@ class Read(IssueCase):
         code, out, _ = self.run_main(["read", "TASK-2"], Gql(issue_node(title="t" * 9000)))
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["truncated"], ["title"])
+
+
+DONE = (("s-todo", "Todo", "unstarted"), ("s-done", "Done", "completed"))
+
+
+class Move(IssueCase):
+    def test_prints_the_receipt(self):
+        gql = mock.Mock(wraps=WriteGql(write_issue(team_node=team("TASK", DONE))))
+        code, out, err = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(
+            json.loads(out),
+            {
+                "issue": {
+                    "id": "id-TASK-2",
+                    "identifier": "TASK-2",
+                    "url": "https://linear.app/t/issue/TASK-2",
+                },
+                "operation": "move",
+                "result": "changed",
+                "actor": {"id": "u-me", "name": "Me"},
+            },
+        )
+        self.assertTrue(out.endswith(b"\n"))
+        self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+
+    def test_already_there_exits_zero_unchanged(self):
+        gql = WriteGql(write_issue(state="s-done", team_node=team("TASK", DONE)))
+        code, out, _ = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        self.assertEqual((code, json.loads(out)["result"], gql.writes), (0, "unchanged", []))
+
+    def test_a_long_actor_name_still_fits_one_kib(self):
+        gql = WriteGql(
+            write_issue(team_node=team("TASK", DONE)), viewer={"id": "u-me", "name": "名" * 2000}
+        )
+        code, out, _ = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        self.assertEqual(code, 0)
+        self.assertLessEqual(len(out), 1024)
+        receipt = json.loads(out.decode("utf-8"))
+        self.assertTrue(receipt["actor"]["name"].startswith("名"))
+        self.assertEqual(receipt["issue"]["identifier"], "TASK-2")
+
+    def test_failures_print_no_receipt(self):
+        node = write_issue(team_node=team("TASK", DONE))
+        cases = (
+            (WriteGql(node), "Shipped", 2, "Done (s-done)"),
+            (WriteGql(None), "Done", 2, "no such issue"),
+            (WriteGql(node, result={"success": False}), "Done", 1, "success: false"),
+            (WriteGql(node, result=GraphQLErrors([{"message": "boom"}])), "Done", 1, "boom"),
+            (
+                WriteGql(node, result=Unavailable("issueUpdate", reason="timed out")),
+                "Done",
+                1,
+                "result unknown",
+            ),
+            (WriteGql(node, fail=Unavailable("issue", reason="timed out")), "Done", 1, "timed out"),
+            (WriteGql(node, fail=CalledProcessError(44, ["security"])), "Done", 2, "Keychain"),
+        )
+        for gql, state, want, phrase in cases:
+            with self.subTest(phrase=phrase):
+                code, out, err = self.run_main(["move", "TASK-2", "--state", state], gql)
+                self.assertEqual((code, out), (want, b""))
+                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertIn(phrase, err)
+                self.assertLessEqual(len(gql.writes), 1)
 
 
 class Failures(IssueCase):
