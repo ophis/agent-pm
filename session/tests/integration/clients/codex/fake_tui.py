@@ -331,6 +331,12 @@ class InteractiveSession:
         elif step["kind"] == "interrupt":
             self.fire("Interrupt", {"turn_id": ident})
             return True
+        elif step["kind"] == "fail":  # a failed turn: its session file's error and no Stop
+            error = {"message": step["message"], "codex_error_info": step.get("info", "other")}
+            payload = {"type": "task_complete", "turn_id": ident, "error": error}
+            with self.path.open("a") as stream:
+                stream.write(json.dumps({"type": "event_msg", "payload": payload}) + "\n")
+            return True
         elif step["kind"] == "screen":
             print("\x1b[2J\x1b[H" + step["text"], flush=True)
         elif step["kind"] == "steer":  # the next input line joins this turn; its answer follows
