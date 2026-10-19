@@ -20,10 +20,10 @@ What the user must decide, each with a suggested answer; until the user answers,
 Unknowns, and the low-confidence or single-source findings the PRD relies on.
 
 ## Approach and trade-offs
-Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs as a table ([Principles › Writing › Diagrams and tables](#writing)), which one is chosen and why.
+Optional; omit when nothing is compared. 2–3 viable product or scope options, or architecture options only when the requirement is itself an architecture or layering decision ([PM › Boundaries](#boundaries)), and their trade-offs as a table ([Principles › Writing › Diagrams and tables](#writing)), which one is chosen and why.
 
 ## System diagram
-Optional; omit when the change has no structure worth drawing. The components the change touches and how they connect or flow, as a diagram ([Principles › Writing › Diagrams and tables](#writing)).
+Optional; omit when the change has no structure worth drawing. The existing components the change touches and how they connect or flow, plus the chosen architecture under the exception in [PM › Boundaries](#boundaries), as a diagram ([Principles › Writing › Diagrams and tables](#writing)).
 
 ## Requirements
 Ids (`FR-<n>`, `NFR-<n>`) are never renumbered on revision. Each subsection is one table: the header row shown, then one row per requirement, split finer when one spans modules. Rows of one functional module are adjacent; its name fills the Module cell of its first row only, left empty on the rest (no HTML).
