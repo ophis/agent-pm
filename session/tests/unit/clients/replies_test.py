@@ -165,3 +165,12 @@ class WatcherTest(SharedBase):
         with file_lock(self.path + ".watch", wait=False):
             found, took = self.watch(lambda _deadline: 1)
         self.assertEqual((found, took), (0, 0.0))
+
+
+class MainTest(SharedBase):
+    def test_runs_with_one_absolute_state_file(self):
+        self.assertEqual(replies.main([self.path], len), len(self.path))
+        for argv in ([], ["relative.json"], [self.path, self.path]):
+            with self.subTest(argv=argv):
+                self.assertEqual(replies.main(argv, len), 2)
+        self.assertIn("usage: watch <absolute state file>", self.stderr.getvalue())

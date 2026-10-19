@@ -127,6 +127,14 @@ def watch(
         return 0
 
 
+def main(argv: list[str], run: Callable[[str], int]) -> int:
+    """A watcher module's entry: run(its absolute state file)."""
+    if len(argv) != 1 or not argv[0].startswith("/"):
+        print("usage: watch <absolute state file>", file=sys.stderr)
+        return 2
+    return run(argv[0])
+
+
 def _watch(settle, size, clock: Clock, sleep: Sleep, label: str) -> int:
     began = idle = grew = clock()
     last = -1

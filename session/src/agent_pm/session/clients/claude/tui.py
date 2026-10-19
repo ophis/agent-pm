@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent_pm.session.clients.claude import replies
 from agent_pm.session.clients.claude.common import (
     TAIL,
     TUI_ENV,
@@ -86,7 +87,7 @@ class ClaudeTui(Tui):
 
     def __init__(self, common: ClaudeCommon):
         self.common = common
-        self.sid = ""
+        self.sid = self.name = ""  # name: its session's, for its reply lines
         self.spec: Spec | None = None
         self.transcript, self.start, self.offset = "", 0, 0
         self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
@@ -102,7 +103,7 @@ class ClaudeTui(Tui):
 
     def launch(self, spec: Spec, hook):
         common = self.common
-        self.sid, self.spec = spec.sid or "", spec
+        self.sid, self.spec, self.name = spec.sid or "", spec, spec.name or ""
         matchers = {"Notification": self.MATCHER, self.START: self.START_MATCHER}
         hooks = {
             label: [
@@ -126,10 +127,11 @@ class ClaudeTui(Tui):
             self.common.save(self.spec)
 
     def hook_callback(self):
-        return HookCallback(__name__, {"transcript": self._origin, "start": self.start})
+        state = {"transcript": self._origin, "start": self.start}
+        return HookCallback(__name__, {**state, "store": self.common.store, "name": self.name})
 
     def restore(self, spec, state):
-        self.sid = spec.sid or ""
+        self.sid, self.name = spec.sid or "", spec.name or ""
         path, start = state.get("transcript"), state.get("start")
         if not (
             isinstance(path, str) and os.path.isabs(path) and type(start) is int and start >= 0
@@ -304,13 +306,17 @@ class ClaudeTui(Tui):
 
 
 def on_hook(call: HookCall) -> dict | None:
+    began = time.monotonic()
     path = call.state.get("transcript")
     if not isinstance(path, str) or not os.path.isabs(path):
         return None
     config_dir = os.path.dirname(os.path.dirname(os.path.dirname(path)))
     ids = {hop[0] for hop in _chain(path, call.sid, config_dir)}
     native = call.payload.get("session_id")
-    return call.payload if isinstance(native, str) and native in ids else None
+    if not isinstance(native, str) or native not in ids:
+        return None
+    replies.on_hook(call, began=began)  # a Stop's replies precede the Host hook's done
+    return call.payload
 
 
 def _chain(path: str, sid: str, config_dir: str) -> list[tuple[str, str | None, str | None]]:
