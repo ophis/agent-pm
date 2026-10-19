@@ -303,6 +303,19 @@ class StartTest(Base):
                 ).startswith("hooks.state=")
             )
 
+    def test_an_unreadable_mcp_layer_fails_the_start_in_one_line_before_any_spawn(self):
+        run = self.client.tui()
+        spec = dataclasses.replace(self.spec, prompt="prompt", flags=("-c", "mcp_servers={}"))
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = run.launch(spec, HOOK)
+        run.commit()
+        (self.codex_home / "config.toml").write_text("[mcp_servers\n")
+        stderr = io.StringIO()
+        with mock.patch("subprocess.Popen") as proc, mock.patch("sys.stderr", stderr):
+            self.assertEqual(tui_start.main(json.loads(launch.argv[-1])), 1)
+        proc.assert_not_called()
+        self.assertRegex(stderr.getvalue(), r"^codex tui: .*config\.toml: invalid TOML: .*\n$")
+
     def test_bad_launch_data_does_not_spawn(self):
         with mock.patch("subprocess.Popen") as proc:
             for data in ("null", "not-json", "{}"):
