@@ -144,6 +144,10 @@ class ArchiveRefused(Exception):
     """An archive the issue's or a descendant's unfinished state blocks; nothing was written."""
 
 
+class LabelRefused(Exception):
+    """A label swap the issue's current labels block; nothing was written."""
+
+
 class InputError(RuntimeError):
     pass
 

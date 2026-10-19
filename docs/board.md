@@ -103,6 +103,7 @@ bin/agent-pm-linear issue move <ID> --state <STATE>  # set its state by name or 
 bin/agent-pm-linear issue comment <ID> --body-file <FILE|->  # post FILE's (or stdin's) UTF-8 body verbatim; prints a receipt
 bin/agent-pm-linear issue archive <ID> [--dry-run]  # archive it only when it and every unarchived sub-issue are completed or canceled; --dry-run lists what goes with it
 bin/agent-pm-linear issue relation add|remove <ID> --blocks|--blocked-by <OTHER>  # add or remove the one blocking edge in that direction; A --blocks B is B --blocked-by A
+bin/agent-pm-linear issue label swap <ID> --from <OLD> --to <NEW>  # replace one label, keeping the rest; refused when it carries neither or NEW's group already has one
 tmux ls                                         # running agent runs
 ```
 

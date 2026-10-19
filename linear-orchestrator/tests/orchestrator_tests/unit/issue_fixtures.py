@@ -1,5 +1,5 @@
-"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment`, `archive` and `relation`
-query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
+"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment`, `archive`, `relation` and
+`label swap` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
 by its root field; IssueCase runs issue.main against a test configuration.
 """
 
@@ -11,11 +11,13 @@ from agent_pm.linear_orchestrator.engine import (
     client,
     issue,
     issue_archive,
+    issue_label,
     issue_read,
     issue_refs,
     issue_relation,
     issue_write,
 )
+from agent_pm.linear_orchestrator.engine.types import GraphQLErrors
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import TEAM
@@ -368,6 +370,82 @@ class RelationGql:
             "identifier": ident,
             "url": f"https://linear.app/t/issue/{ident}",
             name: page,
+        }
+        return {"viewer": self.viewer, "issue": node}
+
+    @property
+    def writes(self):
+        return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+def _holds(node, match):
+    # the IssueLabelFilter subset issue_refs sends
+    if "and" in match:
+        return all(_holds(node, m) for m in match["and"])
+    if "or" in match:
+        return any(_holds(node, m) for m in match["or"])
+    ((field, test),) = match.items()
+    if field == "team":
+        team_id = (node["team"] or {}).get("id")
+        return team_id is None if "null" in test else team_id == test["id"]["eq"]
+    ((kind, want),) = test.items()
+    if kind == "containsIgnoreCase":
+        return want.lower() in node[field].lower()
+    return node[field] == want
+
+
+class LabelGql:
+    """The workspace's `catalog` of labels (label() nodes) and one issue, TASK-2 of team TEAM,
+    carrying the labels whose ids are `carried`: answers `agent-pm-linear issue label swap`'s read
+    with VIEWER and the issue's labels in pages of issue_read.PAGE (cursor: the next offset), each
+    label reference read from the catalog, and the mutation by applying it to carried, or with
+    `result`, raised when an exception. Records every (query, variables) call.
+    """
+
+    def __init__(self, catalog, carried, *, result=None, viewer=VIEWER):
+        self.catalog, self.carried = {n["id"]: n for n in catalog}, list(carried)
+        self.result, self.viewer, self.calls = result, viewer, []
+
+    def _labels(self, offset):
+        nodes = [
+            {"id": i, "name": self.catalog[i]["name"], "parent": self.catalog[i]["parent"]}
+            for i in self.carried
+        ]
+        page = nodes[offset : offset + issue_read.PAGE]
+        more = offset + issue_read.PAGE < len(nodes)
+        return conn(page, more=more, cursor=str(offset + issue_read.PAGE) if more else None)
+
+    def _mutate(self, variables):
+        if isinstance(self.result, BaseException):
+            raise self.result
+        if self.result is not None:
+            return {"issueUpdate": self.result}
+        kept = [i for i in self.carried if i not in variables["r"]]
+        self.carried = kept + [i for i in variables["a"] if i not in kept]
+        return {"issueUpdate": {"success": True}}
+
+    def __call__(self, query, **variables):
+        self.calls.append((query, variables))
+        if query.startswith("mutation"):
+            return self._mutate(variables)
+        if query == issue_refs.Q_LABEL:
+            if variables["id"] not in self.catalog:
+                raise GraphQLErrors([{"message": "Entity not found: IssueLabel"}])
+            return {"issueLabel": self.catalog[variables["id"]]}
+        if query.startswith("query($f: IssueLabelFilter"):
+            found = [n for n in self.catalog.values() if _holds(n, variables["f"])]
+            return {"issueLabels": edges(found[: variables["first"]])}
+        if variables["i"] not in ("TASK-2", "id-TASK-2"):
+            return {"viewer": self.viewer, "issue": None}
+        labels = self._labels(int(variables.get("c") or 0))
+        if query == issue_label.Q_MORE:
+            return {"issue": {"labels": labels}}
+        node = {
+            "id": "id-TASK-2",
+            "identifier": "TASK-2",
+            "url": "https://linear.app/t/issue/TASK-2",
+            "team": {"id": TEAM, "key": "TASK"},
+            "labels": labels,
         }
         return {"viewer": self.viewer, "issue": node}
 

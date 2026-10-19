@@ -1,5 +1,5 @@
-"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move, comment, archive
-and relation through main.
+"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move, comment, archive,
+relation and label swap through main.
 """
 
 import io
@@ -19,11 +19,13 @@ from orchestrator_tests.unit.issue_fixtures import (
     ArchiveGql,
     Gql,
     IssueCase,
+    LabelGql,
     RelationGql,
     WriteGql,
     comment,
     conn,
     issue_node,
+    label,
     rel,
     team,
     tree,
@@ -100,6 +102,7 @@ class Help(Case):
             ("archive", ("--dry-run", "completed or canceled", "every page", "no override")),
             ("relation add", ("--blocks OTHER", "--blocked-by OTHER", "same edge", "itself")),
             ("relation remove", ("--blocks OTHER", "other types", "unchanged")),
+            ("label swap", ("--from OLD", "--to NEW", "label group", "every other label")),
         ):
             output = io.StringIO()
             with (
@@ -139,6 +142,10 @@ class Help(Case):
             ["relation", "add", "TASK-1", "--blocks", "TASK-2", "--blocked-by", "TASK-3"],
             ["relation", "remove", "TASK-1", "--blocks", "TASK-2", "--blocks", "TASK-3"],
             ["relation", "add", "--blocks", "TASK-2"],
+            ["label", "swap", "TASK-1", "--from", "bug"],
+            ["label", "swap", "TASK-1", "--to", "bug"],
+            ["label", "swap", "TASK-1", "--from", "a", "--from", "b", "--to", "c"],
+            ["label", "TASK-1", "--from", "a", "--to", "b"],
         ):
             with (
                 self.subTest(argv=argv),
@@ -509,6 +516,57 @@ class Relation(IssueCase):
                 self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
                 self.assertIn(phrase, err)
         self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1, 1])
+
+
+class LabelSwap(IssueCase):
+    BUG, CHORE, KEEP = label(1, "bug"), label(2, "chore"), label(3, "keep")
+
+    def test_prints_the_receipt(self):
+        gql = LabelGql((self.BUG, self.CHORE, self.KEEP), [self.BUG["id"], self.KEEP["id"]])
+        code, out, err = self.run_main(
+            ["label", "swap", "TASK-2", "--from", "bug", "--to", "chore"], gql
+        )
+        self.assertEqual((code, err, len(gql.writes)), (0, "", 1))
+        self.assertEqual(
+            json.loads(out),
+            {
+                "issue": {
+                    "id": "id-TASK-2",
+                    "identifier": "TASK-2",
+                    "url": "https://linear.app/t/issue/TASK-2",
+                },
+                "operation": "label swap",
+                "result": "changed",
+                "actor": {"id": "u-me", "name": "Me"},
+            },
+        )
+        self.assertLessEqual(len(out), 1024)
+
+    def test_failures_print_no_receipt(self):
+        catalog = (self.BUG, self.CHORE, self.KEEP)
+        cases = (
+            (LabelGql(catalog, [self.KEEP["id"]]), "chore", 1, "refused"),
+            (LabelGql(catalog, [self.BUG["id"]]), "nope", 2, "--to 'nope'"),
+            (
+                LabelGql(
+                    catalog,
+                    [self.BUG["id"]],
+                    result=Unavailable("issueUpdate", reason="timed out"),
+                ),
+                "chore",
+                1,
+                "result unknown",
+            ),
+        )
+        for gql, new, want, phrase in cases:
+            with self.subTest(phrase=phrase):
+                code, out, err = self.run_main(
+                    ["label", "swap", "TASK-2", "--from", "bug", "--to", new], gql
+                )
+                self.assertEqual((code, out), (want, b""))
+                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertIn(phrase, err)
+        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1])
 
 
 class Failures(IssueCase):

@@ -18,6 +18,7 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import (
     config,
     issue_archive,
+    issue_label,
     issue_list,
     issue_lookup,
     issue_page,
@@ -32,6 +33,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     KeychainError,
+    LabelRefused,
     LinearError,
     Resource,
     Unavailable,
@@ -78,9 +80,9 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  move, comment, archive and relation write as that account and print a\n"
-    "  receipt instead; for them exit 1 also means the write's result is unknown,\n"
-    "  for archive also a refusal (their --help).\n\n"
+    + "  move, comment, archive, relation and label swap write as that account and\n"
+    "  print a receipt instead; for them exit 1 also means the write's result is\n"
+    "  unknown, for archive and label swap also a refusal (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
     "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
@@ -88,13 +90,15 @@ _HELP = (
     "  agent-pm-linear issue move TASK-1 --state Done\n"
     "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-linear issue archive TASK-1 --dry-run\n"
-    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n\n"
+    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n"
+    "  agent-pm-linear issue label swap TASK-1 --from todo --to doing\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
     "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
     "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help,\n"
     "  agent-pm-linear issue archive --help,\n"
-    "  agent-pm-linear issue relation add --help\n"
+    "  agent-pm-linear issue relation add --help,\n"
+    "  agent-pm-linear issue label swap --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _PAGES = (
@@ -258,6 +262,26 @@ _RELATION_HELP = (
     "  agent-pm-linear issue relation add TASK-2 --blocked-by TASK-1\n\n"
     "Recovery and next help:\n"
     "  The issue's relations (blocks, blocked_by): agent-pm-linear issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+
+_SWAP_HELP = (
+    _WRITE_RULES
+    % ""
+    + "Replaces the label --from OLD names on ID by the one --to NEW names, in one\n"
+    "  update naming only those two: every other label stays. Each is an id or an\n"
+    "  exact name (case-sensitive) of a label of the issue's team or the\n"
+    "  workspace; OLD is first looked for among the issue's labels. NEW is no\n"
+    "  label group and not retired. NEW already there is not added again; OLD\n"
+    "  missing and NEW there: result unchanged, nothing written.\n"
+    "  Refused (exit 1, nothing written): the issue carries neither, or NEW is in\n"
+    "  a label group the issue already holds another label of.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue label swap TASK-1 --from todo --to doing\n"
+    "  agent-pm-linear issue label swap TASK-1 --from bug --to feature\n\n"
+    "Recovery and next help:\n"
+    "  The issue's labels: agent-pm-linear issue read TASK-1\n"
+    "  Label names and ids: agent-pm-linear issue lookup labels --team TASK\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 
@@ -496,6 +520,25 @@ def _parser():
                 metavar="OTHER",
                 help=f"{what}: an issue identifier or id",
             )
+    labels = commands.add_parser(
+        "label",
+        help="replace one label of an issue, keeping the rest",
+        description="Change one issue's labels one at a time.",
+    )
+    swap = labels.add_subparsers(dest="op", required=True).add_parser(
+        "swap",
+        help="replace label OLD by NEW on one issue, keeping every other label",
+        description="Replace one label of an issue by another, keeping every other label.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_SWAP_HELP,
+    )
+    swap.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    swap.add_argument(
+        "--from", dest="old", required=True, action=_Once, metavar="OLD", help="label id or name"
+    )
+    swap.add_argument(
+        "--to", dest="new", required=True, action=_Once, metavar="NEW", help="label id or name"
+    )
     return parser
 
 
@@ -548,6 +591,8 @@ def _run(gql, args, team_id, body):
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
         return receipt(issue_relation.relation(gql, args.op, args.id, direction, other))
+    if args.command == "label":
+        return receipt(issue_label.swap(gql, args.id, args.old, args.new))
     if args.command == "archive" and args.dry_run:
         return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
     if args.command == "archive":
@@ -614,7 +659,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
-    except (LinearError, Unavailable, OverflowError, ArchiveRefused) as error:
+    except (LinearError, Unavailable, OverflowError, ArchiveRefused, LabelRefused) as error:
         diagnose(err, error)
         return FAILED
     out.write(data)
