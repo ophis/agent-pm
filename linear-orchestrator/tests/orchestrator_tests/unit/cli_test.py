@@ -46,6 +46,8 @@ class Commands(Case):
             "issue move",
             "issue comment",
             "issue archive",
+            "issue relation add",
+            "issue relation remove",
         ):
             output = io.StringIO()
             with redirect_stdout(output):
@@ -94,6 +96,8 @@ class Commands(Case):
             "issue move",
             "issue comment",
             "issue archive",
+            "issue relation add",
+            "issue relation remove",
         )
         for command in commands:
             for flag in ("--help", "-h"):

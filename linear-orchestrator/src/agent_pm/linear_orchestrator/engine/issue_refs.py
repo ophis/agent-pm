@@ -293,13 +293,13 @@ def user(gql, value):
     )
 
 
-def issue(gql, value):
+def issue(gql, value, *, option="--parent"):
     """{id, identifier} of the issue whose identifier (TASK-1) or id is value."""
     if not (re.fullmatch(ISSUE_ID, value) or UUID_RE.fullmatch(value)):
         raise IssueError(
-            f"--parent {value!r}: want an issue identifier such as TASK-1 or an issue id"
+            f"{option} {value!r}: want an issue identifier such as TASK-1 or an issue id"
         )
     node = entity(gql, Q_ISSUE, "issue", id=value)
     if node is None:
-        raise IssueError(f"--parent {value}: no such issue")
+        raise IssueError(f"{option} {value}: no such issue")
     return node

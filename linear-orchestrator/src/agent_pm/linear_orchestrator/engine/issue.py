@@ -22,6 +22,7 @@ from agent_pm.linear_orchestrator.engine import (
     issue_lookup,
     issue_page,
     issue_read,
+    issue_relation,
     issue_write,
 )
 from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
@@ -77,21 +78,23 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  move, comment and archive write as that account and print a receipt\n"
-    "  instead; for them exit 1 also means the write's result is unknown, for\n"
-    "  archive also a refusal (their --help).\n\n"
+    + "  move, comment, archive and relation write as that account and print a\n"
+    "  receipt instead; for them exit 1 also means the write's result is unknown,\n"
+    "  for archive also a refusal (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
     "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
     "  agent-pm-linear issue lookup states --team TASK\n"
     "  agent-pm-linear issue move TASK-1 --state Done\n"
     "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
-    "  agent-pm-linear issue archive TASK-1 --dry-run\n\n"
+    "  agent-pm-linear issue archive TASK-1 --dry-run\n"
+    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
     "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
     "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help,\n"
-    "  agent-pm-linear issue archive --help\n"
+    "  agent-pm-linear issue archive --help,\n"
+    "  agent-pm-linear issue relation add --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _PAGES = (
@@ -236,6 +239,25 @@ _ARCHIVE_HELP = (
     "  agent-pm-linear issue archive TASK-1\n\n"
     "Recovery and next help:\n"
     "  An unfinished issue: agent-pm-linear issue move TASK-1 --state Done\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+
+_RELATION_HELP = (
+    _WRITE_RULES
+    % ""
+    + "--blocks OTHER: the edge ID blocks OTHER; --blocked-by OTHER: OTHER blocks ID.\n"
+    "  Exactly one, given once; OTHER an issue identifier (TASK-2) or id, never ID\n"
+    "  itself (exit 2). ID --blocks OTHER and OTHER --blocked-by ID name the\n"
+    "  same edge. add creates it, already there: result unchanged; remove\n"
+    "  deletes it, not there: result unchanged; nothing is written then. The\n"
+    "  reverse edge and relations of other types (related, duplicate) between\n"
+    "  the two stay as they are.\n\n"
+    "Example (configured Linear access, TASK-1 and TASK-2):\n"
+    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n"
+    "  agent-pm-linear issue relation remove TASK-1 --blocks TASK-2\n"
+    "  agent-pm-linear issue relation add TASK-2 --blocked-by TASK-1\n\n"
+    "Recovery and next help:\n"
+    "  The issue's relations (blocks, blocked_by): agent-pm-linear issue read TASK-1\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 
@@ -450,6 +472,30 @@ def _parser():
     archive.add_argument(
         "--dry-run", action="store_true", help="list what it would archive; write nothing"
     )
+    relation = commands.add_parser(
+        "relation",
+        help="add or remove one blocking relation between two issues",
+        description="Add or remove one blocking relation between two issues.",
+    )
+    edits = relation.add_subparsers(dest="op", required=True)
+    for op, verb in (("add", "Add"), ("remove", "Remove")):
+        edit = edits.add_parser(
+            op,
+            help=f"{op} the edge ID blocks OTHER, or OTHER blocks ID",
+            description=f"{verb} one blocking edge between ID and OTHER, in the given direction.",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=_RELATION_HELP,
+        )
+        edit.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+        way = edit.add_mutually_exclusive_group(required=True)
+        for direction, what in (("blocks", "ID blocks OTHER"), ("blocked_by", "OTHER blocks ID")):
+            way.add_argument(
+                "--" + direction.replace("_", "-"),
+                dest=direction,
+                action=_Once,
+                metavar="OTHER",
+                help=f"{what}: an issue identifier or id",
+            )
     return parser
 
 
@@ -498,6 +544,10 @@ def _run(gql, args, team_id, body):
         return receipt(issue_write.move(gql, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
+    if args.command == "relation":
+        direction = "blocks" if args.blocks is not None else "blocked_by"
+        other = getattr(args, direction)
+        return receipt(issue_relation.relation(gql, args.op, args.id, direction, other))
     if args.command == "archive" and args.dry_run:
         return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
     if args.command == "archive":

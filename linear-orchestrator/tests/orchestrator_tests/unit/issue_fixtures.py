@@ -1,5 +1,5 @@
-"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment` and `archive` query them,
-and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
+"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment`, `archive` and `relation`
+query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
 by its root field; IssueCase runs issue.main against a test configuration.
 """
 
@@ -12,6 +12,8 @@ from agent_pm.linear_orchestrator.engine import (
     issue,
     issue_archive,
     issue_read,
+    issue_refs,
+    issue_relation,
     issue_write,
 )
 from orchestrator_tests.case import Case
@@ -299,6 +301,75 @@ class ArchiveGql:
             return {"viewer": self.viewer, "issue": None}
         node = {k: v for k, v in self.root.items() if k != "kids"}
         return {"viewer": self.viewer, "issue": node | {"children": self._page(self.root, 0)}}
+
+    @property
+    def writes(self):
+        return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+class RelationGql:
+    """A board of issues by identifier, each one's id id-<identifier> unless `ids` names it, and its
+    relations, records [relation id, type, from identifier, to identifier]: answers
+    `agent-pm-linear issue relation`'s read with VIEWER and the issue's side in pages of
+    issue_read.PAGE (cursor: the next offset), an issue reference read, and each mutation by
+    applying it to relations, or with `result`, raised when an exception. Records every (query,
+    variables) call.
+    """
+
+    def __init__(self, idents, relations=(), *, ids=None, result=None, viewer=VIEWER):
+        self.ids = {ident: f"id-{ident}" for ident in idents} | dict(ids or {})
+        self.result, self.viewer = result, viewer
+        self.relations, self.calls = [list(r) for r in relations], []
+
+    def _ident(self, value):
+        found = [i for i, issue_id in self.ids.items() if value in (i, issue_id)]
+        return found[0] if found else None
+
+    def _side(self, ident, direction, offset):
+        name, end = issue_relation.SIDES[direction]
+        mine, other = (2, 3) if direction == "blocks" else (3, 2)
+        nodes = [
+            {"id": r[0], "type": r[1], end: {"id": self.ids[r[other]]}}
+            for r in self.relations
+            if r[mine] == ident
+        ]
+        page = nodes[offset : offset + issue_read.PAGE]
+        more = offset + issue_read.PAGE < len(nodes)
+        return name, conn(page, more=more, cursor=str(offset + issue_read.PAGE) if more else None)
+
+    def _mutate(self, query, variables):
+        if isinstance(self.result, BaseException):
+            raise self.result
+        field = client.operation(query)
+        if self.result is not None:
+            return {field: self.result}
+        if field == "issueRelationCreate":
+            pair = [self._ident(variables["i"]), self._ident(variables["r"])]
+            self.relations.append([f"r-new-{len(self.calls)}", "blocks", *pair])
+        else:
+            self.relations = [r for r in self.relations if r[0] != variables["i"]]
+        return {field: {"success": True}}
+
+    def __call__(self, query, **variables):
+        self.calls.append((query, variables))
+        if query.startswith("mutation"):
+            return self._mutate(query, variables)
+        if query == issue_refs.Q_ISSUE:
+            ident = self._ident(variables["id"])
+            return {"issue": {"id": self.ids[ident], "identifier": ident} if ident else None}
+        ident = self._ident(variables["i"])
+        if ident is None:
+            return {"viewer": self.viewer, "issue": None}
+        for direction in issue_relation.SIDES:
+            if query in (issue_relation.Q_READ[direction], issue_relation.Q_MORE[direction]):
+                name, page = self._side(ident, direction, int(variables.get("c") or 0))
+        node = {
+            "id": self.ids[ident],
+            "identifier": ident,
+            "url": f"https://linear.app/t/issue/{ident}",
+            name: page,
+        }
+        return {"viewer": self.viewer, "issue": node}
 
     @property
     def writes(self):

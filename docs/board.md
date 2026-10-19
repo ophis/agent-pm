@@ -102,6 +102,7 @@ bin/agent-pm-linear issue lookup <RESOURCE>     # teams, states, labels, project
 bin/agent-pm-linear issue move <ID> --state <STATE>  # set its state by name or id within its own team; prints a receipt
 bin/agent-pm-linear issue comment <ID> --body-file <FILE|->  # post FILE's (or stdin's) UTF-8 body verbatim; prints a receipt
 bin/agent-pm-linear issue archive <ID> [--dry-run]  # archive it only when it and every unarchived sub-issue are completed or canceled; --dry-run lists what goes with it
+bin/agent-pm-linear issue relation add|remove <ID> --blocks|--blocked-by <OTHER>  # add or remove the one blocking edge in that direction; A --blocks B is B --blocked-by A
 tmux ls                                         # running agent runs
 ```
 
