@@ -1,7 +1,7 @@
 """agent-pm-linear issue read: the query, the view's fields and directions, and the compact limits."""
 
 from agent_pm.linear_orchestrator.engine import issue_read
-from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError
+from agent_pm.linear_orchestrator.engine.types import GraphQLErrors, IssueError, LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.issue_fixtures import Gql, comment, conn, issue_node, rel
 
@@ -132,6 +132,12 @@ class View(Case):
         missing = LinearError("linear api error: [{'message': 'Entity not found: Issue'}]")
         with self.assertRaisesRegex(IssueError, "TASK-2: no such issue"):
             issue_read.view(Gql(None, fail=missing), "TASK-2")
+        missing = GraphQLErrors([{"message": "Entity not found: Issue"}])
+        with self.assertRaisesRegex(IssueError, "TASK-2: no such issue"):
+            issue_read.view(Gql(None, fail=missing), "TASK-2")
+        other = GraphQLErrors([{"message": "boom", "extensions": {"code": "Entity not found"}}])
+        with self.assertRaises(GraphQLErrors):
+            issue_read.view(Gql(None, fail=other), "TASK-2")
         other = LinearError("linear api error: [{'message': 'boom'}]")
         with self.assertRaises(LinearError):
             issue_read.view(Gql(None, fail=other), "TASK-2")

@@ -4,10 +4,18 @@ cut to the default limits by compact, or with every page for --full.
 
 import re
 
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, IssueError, LinearError
+from agent_pm.linear_orchestrator.engine.client import messages
+from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
+    UUID_RE,
+    GraphQLErrors,
+    IssueError,
+    LinearError,
+)
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250
+NOT_FOUND = "Entity not found"
 _REL = "id identifier title state { name }"
 CONNECTIONS = {
     "comments": "id body createdAt parentId quotedText user { id name } onBehalfOf { id name }",
@@ -64,7 +72,11 @@ def view(gql, ident, *, full=False):
     try:
         node = gql(Q_FULL if full else Q_READ, i=ident)["issue"]
     except LinearError as error:
-        if "Entity not found" not in str(error):
+        if isinstance(error, GraphQLErrors):
+            missing = any(m.startswith(NOT_FOUND) for m in messages(error.errors))
+        else:
+            missing = NOT_FOUND in str(error)
+        if not missing:
             raise
         node = None
     if node is None:

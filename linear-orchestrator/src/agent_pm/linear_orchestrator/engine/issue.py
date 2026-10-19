@@ -15,10 +15,12 @@ import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import config, issue_read
-from agent_pm.linear_orchestrator.engine.client import linear_gql
+from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
+    GraphQLErrors,
     IssueError,
+    KeychainError,
     LinearError,
     Unavailable,
 )
@@ -196,9 +198,12 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None):
     except IssueError as error:
         diagnose(err, error)
         return USAGE
-    except (subprocess.SubprocessError, OSError) as error:
+    except (subprocess.SubprocessError, OSError, KeychainError) as error:
         diagnose(err, f"harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}")
         return USAGE
+    except GraphQLErrors as error:
+        diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
+        return FAILED
     except (LinearError, Unavailable, OverflowError) as error:
         diagnose(err, error)
         return FAILED

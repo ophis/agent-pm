@@ -7,7 +7,12 @@ import subprocess
 import urllib.error
 import urllib.request
 
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import (
+    GraphQLErrors,
+    KeychainError,
+    LinearError,
+    Unavailable,
+)
 from agent_pm.utils import one_line
 
 URL = "https://api.linear.app/graphql"
@@ -50,10 +55,26 @@ def linear_gql(query, *, service, timeout=30, **variables):
     if not isinstance(body, dict):
         raise Unavailable(operation(query), reason="response not a GraphQL object")
     if body.get("errors"):
-        raise LinearError(f"linear api error: {body['errors']}")
+        raise GraphQLErrors(body["errors"])
     if not isinstance(body.get("data"), dict):
         raise Unavailable(operation(query), reason="response has no GraphQL data")
     return body["data"]
+
+
+def messages(errors):
+    """Each GraphQL error's message (at most 500 characters) and its extensions.code, never the
+    rest of the error.
+    """
+    found = []
+    for error in errors if isinstance(errors, list) else [None]:
+        error = error if isinstance(error, dict) else {}
+        text = error.get("message")
+        text = text if isinstance(text, str) else "unrecognized GraphQL error"
+        text = text if len(text) <= 500 else text[:500] + "…"
+        extensions = error.get("extensions")
+        code = extensions.get("code") if isinstance(extensions, dict) else None
+        found.append(f"{text} ({code})" if isinstance(code, str) else text)
+    return found
 
 
 def _rate_limited(e):
@@ -81,7 +102,7 @@ def _key(service, timeout):
         timeout=timeout,
     ).stdout.strip()
     if not _clean(found):
-        raise LinearError(f"Linear key of {service}: empty, not printable or holds whitespace")
+        raise KeychainError(f"Linear key of {service}: empty, not printable or holds whitespace")
     return found
 
 

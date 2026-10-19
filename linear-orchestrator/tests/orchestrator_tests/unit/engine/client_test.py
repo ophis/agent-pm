@@ -75,6 +75,15 @@ class LinearGql(Case):
         ):
             client.linear_gql(VIEWER)
 
+    def test_a_bad_keychain_key_is_a_keychain_error(self):
+        for out in ("\n", "lin api\n"):
+            with (
+                self.subTest(out=out),
+                mock.patch("subprocess.run", return_value=SimpleNamespace(stdout=out)),
+                self.assertRaises(types.KeychainError),
+            ):
+                client.linear_gql(VIEWER, service="svc")
+
     def test_a_bad_keychain_key_raises_naming_only_the_service(self):
         for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
             with (
@@ -194,8 +203,9 @@ class Unavailable(Case):
                 )
 
     def test_graphql_errors_in_a_200_stay_systemexit(self):
-        with self.assertRaises(LinearError) as cm:
+        with self.assertRaises(types.GraphQLErrors) as cm:
             self.gql(VIEWER, body=errors("RATELIMITED"))
+        self.assertEqual(client.messages(cm.exception.errors), ["m (RATELIMITED)"])
         self.assertEqual(
             str(cm.exception),
             "linear api error: [{'message': 'm', 'extensions': {'code': 'RATELIMITED'}}]",
@@ -265,3 +275,27 @@ class HasKey(Case):
             self.assertEqual(
                 m.call_args.args[0], ["/usr/bin/security", "find-generic-password", "-s", "svc"]
             )
+
+
+class Messages(Case):
+    def test_each_message_and_code_only(self):
+        raw = [
+            {"message": "boom", "extensions": {"code": "INPUT_ERROR"}, "path": ["issue"]},
+            {"message": "two"},
+            {"message": "x" * 600, "extensions": "odd"},
+            None,
+            {"extensions": {"code": "C"}},
+        ]
+        self.assertEqual(
+            client.messages(raw),
+            [
+                "boom (INPUT_ERROR)",
+                "two",
+                "x" * 500 + "…",
+                "unrecognized GraphQL error",
+                "unrecognized GraphQL error (C)",
+            ],
+        )
+        for value in ({"message": "m"}, "text", 1):
+            with self.subTest(value=value):
+                self.assertEqual(client.messages(value), ["unrecognized GraphQL error"])

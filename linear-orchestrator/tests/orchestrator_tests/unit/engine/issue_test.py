@@ -9,7 +9,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import client, issue
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import GraphQLErrors, LinearError, Unavailable
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -223,6 +223,37 @@ class Failures(IssueCase):
         self.assertEqual(code, 1)
         self.assertLessEqual(len(err.encode("utf-8")), 8192)
         self.assertIn("bytes omitted", err)
+
+    def test_graphql_diagnostics_print_only_messages_and_codes(self):
+        raw = [
+            {
+                "message": "boom",
+                "extensions": {"code": "INPUT_ERROR", "userPresentableMessage": "hidden"},
+                "path": ["issue"],
+                "locations": [{"line": 1, "column": 2}],
+            },
+            {"message": "two"},
+        ]
+        code, out, err = self.run_main(["read", "TASK-2"], Gql(None, fail=GraphQLErrors(raw)))
+        self.assertEqual((code, out), (1, b""))
+        self.assertEqual(err, "agent-pm-linear issue: linear api error: boom (INPUT_ERROR); two\n")
+
+    def test_many_graphql_messages_stay_capped(self):
+        raw = [{"message": "错" * 1000, "extensions": {"code": "E"}} for _ in range(50)]
+        code, _, err = self.run_main(["read", "TASK-2"], Gql(None, fail=GraphQLErrors(raw)))
+        self.assertEqual(code, 1)
+        self.assertLessEqual(len(err.encode("utf-8")), 8192)
+        self.assertNotIn("[{", err)
+
+    def test_an_unusable_keychain_key_is_configuration(self):
+        for key in ("", "lin api"):
+            found = CompletedProcess([], 0, stdout=key + "\n", stderr="")
+            with self.subTest(key=key), mock.patch("subprocess.run", return_value=found):
+                code, out, err = self.run_main(["read", "TASK-2"], client.linear_gql)
+            self.assertEqual((code, out), (2, b""))
+            self.assertIn("Keychain", err)
+            if key:
+                self.assertNotIn(key, err)
 
     def test_an_auth_failure_shows_no_credential(self):
         found = CompletedProcess([], 0, stdout=KEY + "\n", stderr="")
