@@ -5,7 +5,7 @@ Turn the input into a reviewed PRD.
 ## Steps
 
 1. **Read** the input. Precedence: the **user's later words** (their messages after the **brief**, the request) > the brief > reports.
-2. **Judge.** What to build unclear → `needs_input`, stop; only the audience or depth unclear → self-grill. Decide whether the PRD needs **research** and a **self-grill** (open decisions or rival approaches).
+2. **Judge.** What to build unclear → `needs_input`, stop; only the audience or depth unclear → self-grill. Decide whether the PRD needs **research** and a **self-grill** (open decisions or rival options, within [PM › Boundaries](#boundaries)).
 3. **Report progress:**
    [agent-pm-progress:start] whether the PRD needs research and a self-grill
 4. **Research**, if needed, only what the PRD needs, on the web per [PM › Boundaries](#boundaries); too deep for now → Risks. The input names a target repo → check it out first ([Principles › Work › Worktree](#work)), `<branch>` `<id>-product-design`, and read the product's code there, read-only; exit 2 or 1 → the error under Risks, go on without the code.

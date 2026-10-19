@@ -17,5 +17,5 @@ Pick the task below that fits the input; unsure → `product-design` (`<tasks>/p
 ## Boundaries
 
 - Never add scope the user didn't ask for.
-- **What, not how**: the PRD says what to build and why; how to implement it is the engineer's. A constraint (e.g. "don't change a frozen interface") is fine; a concrete solution isn't, unless the user gave it ([PM › Standards](#standards)) or the requirement is itself an architecture or layering decision (e.g. which layer holds a limit). So Approach and trade-offs compares product or scope options, and System diagram shows the structure the change touches, not a design for it.
+- **What, not how**: the PRD says what to build and why; how to implement it is the engineer's. A constraint (e.g. "don't change a frozen interface") is fine; a concrete solution isn't, unless the user gave it ([PM › Standards](#standards)) or the requirement is itself an architecture or layering decision (e.g. which layer holds a limit).
 - Web searches and web subagents' prompts hold only public material: nothing private from the input, its documents or the target repo, and no secrets.
