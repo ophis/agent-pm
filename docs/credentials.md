@@ -1,7 +1,7 @@
 # Credentials
 
 Every credential agent-pm uses: who logs in, what each is for, where it is stored, who can read it, how long it lives
-and how to revoke it. Local Hosts (`tmux`, `pty`) and the Docker Host (`[session.hosts] default = "docker"`,
+and how to revoke it. The local Host (`tmux`) and the Docker Host (`[session.hosts] default = "docker"`,
 [Docker host](docker-host.md)) differ for the model clients; their columns are separate. Sources are `path:line` in
 this repo or the official docs linked at the end. Requirement IDs (`TASK-549 FR-7`) are the Docker Host PRDs' of
 TASK-545, TASK-548, TASK-549 and TASK-550. `<B>` is `/usr/local/libexec/agent-pm/agent-pm-broker`. This page holds no
@@ -19,15 +19,15 @@ with the broker; a provider API key is the same long-lived key in every containe
 
 | Host | Client | Who logs in, how | Login state | Container gets | The copy goes |
 |---|---|---|---|---|---|
-| `tmux`, `pty` | Claude Code | the user, beforehand: `claude`, then `/login` ([Claude auth]) | macOS Keychain; `~/.claude/.credentials.json` (0600) if the Keychain refuses the write ([Claude auth]) | no container | — |
-| `tmux`, `pty` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
+| `tmux` | Claude Code | the user, beforehand: `claude`, then `/login` ([Claude auth]) | macOS Keychain; `~/.claude/.credentials.json` (0600) if the Keychain refuses the write ([Claude auth]) | no container | — |
+| `tmux` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install: `claude setup-token`, pasted into `<B> login claude` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / `setup-token` | `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:423`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
-| `tmux`, `pty` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm never reads it | no container | — |
+| `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm never reads it | no container | — |
 | Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: the user, once per broker install and provider: `<B> login opencode <name>` ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv (`broker/internal/broker/opencode.go:22`, `session/src/agent_pm/session/clients/opencode/common.py:388`) | deleted with the container; never revoked |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
-([Log in](docker-host.md#log-in)). Local Hosts use the host `gh` login below.
+([Log in](docker-host.md#log-in)). The local Host uses the host `gh` login below.
 
 ## Credentials
 
@@ -91,7 +91,7 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 
 ### Claude Code login
 
-| Field | Local (`tmux`, `pty`) | Docker | Source |
+| Field | Local (`tmux`) | Docker | Source |
 |---|---|---|---|
 | Purpose | the user's own Claude Code | worker and role-run Claude Code in a container | [Who logs in](#who-logs-in) |
 | Minimum permission | the user's subscription login | a setup-token: subscription, model requests only | [Claude auth] |
@@ -104,7 +104,7 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 
 Docker uses the decided path A, centralized refresh ([Plan A conclusion](docker-codex.md#plan-a-validation-report)).
 
-| Field | Local (`tmux`, `pty`) | Docker | Source |
+| Field | Local (`tmux`) | Docker | Source |
 |---|---|---|---|
 | Purpose | the user's own Codex | worker and role-run Codex in a container | [Codex operations](docker-codex.md) |
 | Minimum permission | the user's ChatGPT login | the broker's own ChatGPT login; the container gets an access token without a refresh token | `broker/internal/broker/codex.go:397` |
@@ -117,7 +117,7 @@ Docker uses the decided path A, centralized refresh ([Plan A conclusion](docker-
 
 One per `[session.clients.opencode.providers.<name>]` table, such as a LAN Strata server.
 
-| Field | Local (`tmux`, `pty`) | Docker | Source |
+| Field | Local (`tmux`) | Docker | Source |
 |---|---|---|---|
 | Purpose | OpenCode's requests to the provider | the same, from a container | [OpenCode sessions](sessions.md#opencode-sessions) |
 | Minimum permission | whatever the provider's key grants; issue one for agent-pm alone | the same | the provider |

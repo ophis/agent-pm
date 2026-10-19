@@ -46,7 +46,7 @@ agent-pm is built in layers: each does one job and calls only the one below. Tak
 | Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
 | Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
 | Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
-| Session | Starts, watches and resumes a coding agent (Claude Code, Codex, OpenCode) in tmux, a pty or a Docker container, the same way for every client. | [Sessions](docs/sessions.md) |
+| Session | Starts, watches and resumes a coding agent (Claude Code, Codex, OpenCode) in tmux or a Docker container, the same way for every client. | [Sessions](docs/sessions.md) |
 
 The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). The roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
@@ -58,9 +58,9 @@ One agent keeps you waiting; many agents by hand route every prompt, check and a
 
 ## System structure
 
-Each session runs on a Host you pick: a local one (tmux or a pty), where the client runs on your Mac as you, or the Docker Host, where it runs isolated in its own container. The broker, on the Mac, keeps the logins in the login keychain and hands each container only its own credentials (GitHub tokens that last an hour), taking them back when the container closes.
+Each session runs on a Host you pick: the local one (tmux), where the client runs on your Mac as you, or the Docker Host, where it runs isolated in its own container. The broker, on the Mac, keeps the logins in the login keychain and hands each container only its own credentials (GitHub tokens that last an hour), taking them back when the container closes.
 
-![Flexible hosts: each session runs on a Host you pick, locally (tmux or a pty, not isolated) or in its own Docker container (isolated, so the client runs in yolo mode by default). The broker keeps the logins and gives each container only its own credentials: GitHub tokens valid an hour and revoked at close, a Codex access token without its refresh token, a Claude setup-token copy. The container cannot reach the host keychain, Linear keys, gh login or Docker socket, but reaches the host's 127.0.0.1 services (an accepted risk); its work leaves only through GitHub](docs/images/system.svg)
+![Flexible hosts: each session runs on a Host you pick, locally (tmux, not isolated) or in its own Docker container (isolated, so the client runs in yolo mode by default). The broker keeps the logins and gives each container only its own credentials: GitHub tokens valid an hour and revoked at close, a Codex access token without its refresh token, a Claude setup-token copy. The container cannot reach the host keychain, Linear keys, gh login or Docker socket, but reaches the host's 127.0.0.1 services (an accepted risk); its work leaves only through GitHub](docs/images/system.svg)
 
 Details: [Docker host](docs/docker-host.md), [Credentials](docs/credentials.md).
 
@@ -91,7 +91,7 @@ Nothing checks these. A missing one fails the agent run.
 | `claude` CLI, Python 3.11+ | every agent run |
 | the [`autopilot`](https://github.com/ophis/claude-autopilot) plugin, in each client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, then `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, then `codex plugin add autopilot@claude-autopilot` | the engineer's build tasks (`/autopilot:build`, `/autopilot:light-build`) and the PM's PRD review (`/autopilot:review`). Not needed otherwise. |
 | tmux 3.3+ | tui runs on the `tmux` Host |
-| [Ollama](https://ollama.com) on `127.0.0.1` with its context length at least 65536 and the tier model pulled; on `tmux` and `pty` also OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | OpenCode runs only ([Docker host › OpenCode](docs/docker-host.md#opencode), [OpenCode sessions](docs/sessions.md#opencode-sessions)) |
+| [Ollama](https://ollama.com) on `127.0.0.1` with its context length at least 65536 and the tier model pulled; on `tmux` also OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | OpenCode runs only ([Docker host › OpenCode](docs/docker-host.md#opencode), [OpenCode sessions](docs/sessions.md#opencode-sessions)) |
 | `git`, `gh` logged in | coding (checkouts, pull requests) and GitHub destinations. Not needed otherwise. |
 | iTerm2 running | the default iTerm2 split |
 | Docker Desktop running; the broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), installed by `sh <plugin dir>/broker/install.sh` (needs `sudo` and `gh` logged in); one login each: `B login claude` (paste a `claude setup-token`), `B login github agent-pm-bot`, and for Codex `sudo B install-codex <version>`, then `B login codex`; OpenCode needs none | the Docker Host only ([Docker host](docs/docker-host.md)); no Node on the host. What each credential grants, where it lives and how to revoke it: [Credentials](docs/credentials.md). |

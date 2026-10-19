@@ -23,8 +23,6 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── sessions/<client>/            what a client session's resume command replays: claude/, codex/, opencode/
 ├── tui/<name>/                   a running tui session's state and hook log (hooks.jsonl, .1)
 ├── tui/<name>.lock               that name's start and close lock
-├── pty/<name>/                   a pty-host session's files
-├── pty/<name>.lock               that name's start and close lock
 ├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
 ├── hidden/<name>.json            whether that name's tmux session is hidden, for its sid
 ├── managers/<name>/              a manager's Roster and events file
@@ -47,7 +45,6 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `sessions/` | saving a client session's state: an entry not saved or resumed for 30 days | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session; the tui sweep; its hook writer: at 1 MiB `hooks.jsonl` becomes `hooks.jsonl.1`, replacing the old `.1` | no: closing the session removes it |
 | `tui/<name>.lock` | closing or stopping the session; the tui sweep | while no session of that name starts or closes |
-| `pty/<name>/`, `pty/<name>.lock` | closing the session (both) or a detached session's exit (the dir); the pty sweep | no: closing the session removes them; a `<name>.lock` while no session of that name starts or closes |
 | `workers/<sid>/` | each `agent-pm-session` start, restart or resume that launches a worker's client: a sid whose `worker.json` is over 30 days old, that no `by-name/` entry names and no worker lock holds | once you won't restart or resume the worker |
 | `hidden/<name>.json` | each write of one (a `--display none` start, `show`, `hide`): an entry unwritten for 30 days whose tmux session is gone | any time: that session then reads not hidden |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
@@ -56,4 +53,4 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `docker-state/<name>/` | each new Docker start of that name remakes its client config dir; restart and resume keep it | once you won't restart or resume that session |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
-Each tui start runs the tui sweep and each pty start the pty sweep, over the other names of their dir whose files all went unchanged for 30 days: the tui sweep drops a name its host has no session of, the pty sweep one with no process left; a name whose lock is held stays.
+Each tui start runs the tui sweep over the other names of `tui/` whose files all went unchanged for 30 days: it drops a name its host has no session of; a name whose lock is held stays.

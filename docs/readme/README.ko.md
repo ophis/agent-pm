@@ -32,7 +32,7 @@ agent-pm은 레이어로 구성되며, 각 레이어는 한 가지 일만 하고
 | Manager | 아래 레이어들의 드라이버. 대화하는 에이전트로, worker, role run, 보드 run을 시작하고 감시하며 보고합니다. | [데모](#데모-manager-하나-worker-여럿) |
 | Linear orchestrator | Linear 보드에서 role을 실행합니다. 제 워크플로입니다. | [Linear 보드](../board.md) |
 | Delegate (코어) | session을 통해 role이 하나의 task를 실행하게 하고, 검사된 결과를 돌려줍니다. 단독으로도 쓸 수 있는 Claude Code 및 Codex 플러그인입니다. | [설치](#설치) |
-| Session | tmux 또는 pty에서 코딩 에이전트(Claude Code, Codex, OpenCode)를 시작, 감시, 재개합니다. 모든 client에서 같은 방식입니다. | [Sessions](../sessions.md) |
+| Session | tmux 또는 Docker 컨테이너에서 코딩 에이전트(Claude Code, Codex, OpenCode)를 시작, 감시, 재개합니다. 모든 client에서 같은 방식입니다. | [Sessions](../sessions.md) |
 
 Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 제 철학입니다(리서치, PRD, 빌드 순으로, 각 단계 사이에 사람의 검토). role과 task 자체도 직접 편집할 수 있습니다([role과 task 사용자 지정](../customizing-roles-and-tasks.md)).
 
@@ -85,7 +85,7 @@ Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 �
 | `claude` CLI, Python 3.11+ | 모든 에이전트 run |
 | [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, 각 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot` | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
 | tmux 3.3+ | `tmux` Host의 tui run |
-| `127.0.0.1`에서만 듣고 컨텍스트 길이 65536 이상, tier 모델을 pull한 [Ollama](https://ollama.com); `tmux`와 `pty`에서는 OpenCode 1.x도(`npm install -g opencode-ai@1.19.3`) | OpenCode만([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
+| `127.0.0.1`에서만 듣고 컨텍스트 길이 65536 이상, tier 모델을 pull한 [Ollama](https://ollama.com); `tmux`에서는 OpenCode 1.x도(`npm install -g opencode-ai@1.19.3`) | OpenCode만([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, 로그인된 `gh` | 코딩(checkout, pull request)과 GitHub 대상. 그 외에는 필요 없음. |
 | 실행 중인 iTerm2 | 기본 iTerm2 분할 |
 | 실행 중인 Docker Desktop; broker `B`(`/usr/local/libexec/agent-pm/agent-pm-broker`), `sh <plugin dir>/broker/install.sh`로 설치(`sudo`와 로그인된 `gh` 필요); 로그인은 각각 한 번: `B login claude`(`claude setup-token` 붙여넣기), `B login github agent-pm-bot`, Codex는 `sudo B install-codex <version>` 후 `B login codex`; OpenCode는 필요 없음 | Docker Host 전용([Docker host](../docker-host.md)); 호스트에 Node는 필요 없음. 각 자격 증명의 권한, 저장 위치, 폐기 방법: [Credentials](../credentials.md). |
