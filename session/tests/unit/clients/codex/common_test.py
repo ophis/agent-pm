@@ -1383,6 +1383,14 @@ class ResumeMainTest(Base):
         self.assertEqual({key: env[key] for key in SECRETS}, SECRETS)
         self.assertEqual((env["CODEX_HOME"], env["CALLER"]), (str(self.codex_home), "kept"))
 
+    def test_main_reads_the_configs_current_flags_before_the_recorded_ones(self):
+        self.bound()
+        self.client = CodexClient({**self.client.config, "flags": ["--disable", "apps"]})
+        argv = self.run_main()[1].call_args.args[1]
+        self.assertEqual(
+            (argv[:2], argv[2:8]), (("codex", "resume"), ("--disable", "apps", *FLAGS))
+        )
+
     def test_main_runs_here_in_auto_mode(self):
         self.client = CodexClient({**self.client.config, "modes": MODES})
         self.common = self.client.common
@@ -1464,10 +1472,13 @@ class ResumeAccessTest(Base):
         with self.assertRaisesRegex(ConfigError, "missing Codex native ID for run ID 'caller-id'"):
             self.common.resume_launch(state)
 
-    def test_resume_launch_ignores_client_config(self):
+    def test_resume_launch_reads_only_the_configs_flags(self):
         self.spec = dataclasses.replace(self.spec, access=Access(cwd=str(self.cwd)))
         self.prepare()
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.assertEqual(
             CodexClient({}).common.resume_launch(state), self.common.resume_launch(state)
         )
+        configured = CodexClient({"flags": ["--disable", "apps"]}).common.resume_launch(state)
+        self.assertEqual(configured.argv[:4], ("codex", "resume", "--disable", "apps"))
+        self.assertEqual(configured.env, self.common.resume_launch(state).env)

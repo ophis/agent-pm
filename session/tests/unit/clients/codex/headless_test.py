@@ -437,20 +437,40 @@ class SuppliedPolicy(Base):
 
 class ConfiguredFlags(Base):
     OWN = ("-c", "plugins.x@m.enabled=false")
+    NEW = ("-c", "plugins.y@m.enabled=false")
 
-    def test_the_configs_flags_precede_the_specs_and_resume_keeps_them(self):
+    def test_the_configs_flags_precede_the_specs_and_a_resume_reads_the_current_ones(self):
         client = CodexClient({**self.client.config, "flags": list(self.OWN)})
         spec = dataclasses.replace(self.spec, flags=CODEX)
         first = committed_headless(client, dataclasses.replace(spec, prompt="one"))
         start = first.argv.index(self.OWN[0])
         self.assertEqual(first.argv[start : start + 6], (*self.OWN, *CODEX))
         state = self.common.bind(str(self.work), spec.sid, NATIVE)
-        self.assertEqual(state.snapshot.flags, (*self.OWN, *CODEX))
+        self.assertEqual(state.snapshot.flags, CODEX)
         self.rollout()
+        changed = CodexClient({**self.client.config, "flags": list(self.NEW)})
         resumed = committed_headless(
-            self.client, dataclasses.replace(spec, prompt="two", resume=True)
+            changed, dataclasses.replace(spec, flags=(), prompt="two", resume=True)
         )
-        self.assertIn(self.OWN[1], resumed.argv)
+        start = resumed.argv.index(self.NEW[0])
+        self.assertEqual(resumed.argv[start : start + 6], (*self.NEW, *CODEX))
+        self.assertNotIn(self.OWN[1], resumed.argv)
+
+    def test_a_session_started_before_the_tools_went_off_resumes_without_them(self):
+        committed_headless(self.client, dataclasses.replace(self.spec, flags=CODEX, prompt="one"))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        spec = dataclasses.replace(self.spec, flags=CODEX, prompt="two", resume=True)
+        argv = committed_headless(packaged(), spec).argv
+        for pair in TOOLS_OFF:
+            with self.subTest(pair=pair):
+                self.assertTrue(holds(argv, pair), argv)
+
+    def test_the_configs_flags_grant_no_directory(self):
+        with self.assertRaisesRegex(
+            ConfigError, r"^--add-dir: \[clients\.codex\] flags grant no directory"
+        ):
+            CodexClient({**self.client.config, "flags": ["--add-dir", str(self.extra)]})
 
     def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
         spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
@@ -527,7 +547,10 @@ class ConfiguredFlags(Base):
                 "[clients.codex].modes must be a table from auto and yolo to a list of strings",
             ),
             ({"yolo": ["-C", "/x"]}, "-C /x: the Codex client sets hooks, session and cwd"),
-            ({"auto": ["--add-dir", "/x"]}, "--add-dir: a permission mode grants no directory"),
+            (
+                {"auto": ["--add-dir", "/x"]},
+                "--add-dir: a permission mode's flags grant no directory",
+            ),
         ):
             with self.subTest(modes=modes), self.assertRaises(ConfigError) as caught:
                 CodexClient({**self.client.config, "modes": modes})

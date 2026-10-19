@@ -953,6 +953,26 @@ class SuppliedFlagsTest(Base):
         start = argv.index(own[1]) - 1
         self.assertEqual(argv[start : start + 4], [*own, "--enable", "web"])
 
+    def test_a_resume_reads_the_configs_current_flags_and_the_recorded_ones(self):
+        self.client = CodexClient(
+            {**self.client.config, "flags": ["-c", "plugins.x@m.enabled=false"]}
+        )
+        spec = dataclasses.replace(self.spec, flags=("--enable", "web"))
+        self.launch(spec)
+        self.common.bind(str(self.work), spec.sid, NATIVE)
+        self.rollout()
+        self.client = CodexClient({**self.client.config, "flags": ["--disable", "apps"]})
+        _, data = self.launch(dataclasses.replace(spec, flags=()), resume=True)
+        plan = tui.decode(data)
+        self.assertEqual(plan.flags, ("--disable", "apps"))
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        self.assertEqual(snapshot.flags, ("--enable", "web"))
+        argv = tui.execution_argv(plan, snapshot, "hooks.state={trusted}")
+        start = argv.index("--disable")
+        self.assertEqual(argv[start : start + 4], ["--disable", "apps", "--enable", "web"])
+        self.assertNotIn("plugins.x@m.enabled=false", argv)
+        self.assertTrue(holds(tui.trust_args(plan, snapshot), ("--disable", "apps")))
+
     def test_only_the_runs_permission_modes_flags_reach_codex_and_its_trust_step(self):
         self.client = CodexClient({**self.client.config, "modes": MODES})
         for permission, present, absent in (
@@ -1161,6 +1181,7 @@ class PlanTest(PlanCase):
                 "sid",
                 "store",
                 "permission",
+                "flags",
             },
         )
         self.assertEqual(data["hook"], list(self.plan.hook.argv))
@@ -1190,7 +1211,6 @@ class PlanTest(PlanCase):
             ("commands", {"Stop": "foreign"}),
             ("hook_flags", ["-c", "hooks.Stop=[]"]),
             ("add_dirs", ["/foreign-write-root"]),
-            ("flags", ["--add-dir", "/foreign-write-root"]),
             ("options", ["--add-dir", "/foreign-write-root"]),
         ):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "launch fields"):
@@ -1205,6 +1225,29 @@ class PlanTest(PlanCase):
             ):
                 tui.decode(data | {"permission": value})
         self.assertEqual(tui.decode(data | {"permission": ["--yolo"]}).permission, ("--yolo",))
+
+    def test_wire_configured_flags_grant_no_directory_hooks_or_cwd(self):
+        data = json.loads(tui.encode(self.plan))
+        for value in (["--add-dir", "/foreign"], ["-C", "/foreign"], ["-c", "hooks.Stop=[]"]):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "^Codex tui launch: "),
+            ):
+                tui.decode(data | {"flags": value})
+        flags = ["--disable", "apps"]
+        self.assertEqual(tui.decode(data | {"flags": flags}).flags, tuple(flags))
+
+    def test_the_configs_flags_go_between_the_mode_and_the_recorded_ones(self):
+        plan = dataclasses.replace(self.plan, permission=("--yolo",), flags=("--disable", "apps"))
+        command = tui.execution_argv(plan, self.snapshot, "trusted")
+        start = len(self.frontend)
+        self.assertEqual(
+            command[start : start + 5], ["--yolo", "--disable", "apps", "-m", "requested"]
+        )
+        self.assertEqual(
+            tui.trust_args(plan, self.snapshot)[-6:],
+            ["--disable", "apps", "-c", 'model_verbosity="low"', "--enable", "web"],
+        )
 
     def test_wire_validates_each_command_component_and_prompt(self):
         data = json.loads(tui.encode(self.plan))

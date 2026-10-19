@@ -701,11 +701,13 @@ def refuse(flags) -> None:
             raise ConfigError(f"{flag.text}: the Codex client sets hooks, session and cwd")
 
 
-def refuse_mode(flags) -> None:
-    """A permission mode's flags grant no directory, hooks, session or cwd."""
+def refuse_mode(flags, owner: str = "a permission mode's flags") -> None:
+    """Flags read at each launch, a permission mode's or the config's, grant no directory, hooks,
+    session or cwd: a resume's grants stay those recorded at its start.
+    """
     refuse(flags)
     if any(flag.word == "--add-dir" for flag in scan(flags, VALUED)):
-        raise ConfigError("--add-dir: a permission mode grants no directory")
+        raise ConfigError(f"--add-dir: {owner} grant no directory")
 
 
 def _native_id(state: SessionState) -> str:
@@ -790,10 +792,14 @@ def launch_options(snapshot: Snapshot) -> list[str]:
     return result
 
 
-def launch_flags(snapshot: Snapshot, *, interactive: bool, mode: Sequence[str]) -> list[str]:
-    """`mode`: the launch's permission mode flags, never in the snapshot."""
+def launch_flags(
+    snapshot: Snapshot, *, interactive: bool, mode: Sequence[str], configured: Sequence[str]
+) -> list[str]:
+    """`mode` and `configured`: the launch's permission mode flags and the config's current
+    flags, never in the snapshot.
+    """
     supplied, _ = split_flags(snapshot.flags)
-    result = [*mode, *supplied, *launch_options(snapshot)]
+    result = [*mode, *configured, *supplied, *launch_options(snapshot)]
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result
@@ -847,7 +853,7 @@ class CodexCommon:
         check_config(config, TABLE, (FLAGS, MODES, *CHECKS))
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
-        refuse(self.flags)
+        refuse_mode(self.flags, f"{TABLE} flags")
         for flags in self.modes.values():
             refuse_mode(flags)
 
@@ -942,7 +948,7 @@ class CodexCommon:
                 "model": self._mapped("tiers", spec.tier),
                 "effort": self._mapped("efforts", spec.effort and spec.effort.value),
                 "codex_home": home,
-                "flags": [*self.flags, *spec.flags],
+                "flags": list(spec.flags),
                 "env": explicit,
             }
         )
@@ -954,8 +960,7 @@ class CodexCommon:
             _config_home(cwd, environment.get("CODEX_HOME")),
             "codex_home",
         )
-        flags = (*self.flags, *spec.flags)
-        added = [absolute_path(path, "dir") for path in added_dirs(flags, cwd)]
+        added = [absolute_path(path, "dir") for path in added_dirs(spec.flags, cwd)]
         return [
             cwd,
             home,
@@ -1030,7 +1035,7 @@ class CodexCommon:
         argv = (
             "codex",
             *selection[:-1],
-            *launch_flags(snapshot, interactive=True, mode=mode),
+            *launch_flags(snapshot, interactive=True, mode=mode, configured=self.flags),
             *selection[-1:],
             *literal,
         )
