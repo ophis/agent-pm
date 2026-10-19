@@ -749,25 +749,6 @@ class ResumeTest(Base):
                     {**json.loads(PLUGIN), "model": "x"},
                 )
 
-    def test_a_version_1_state_resumes_with_the_configs_flags_allow_and_dirs(self):
-        self.client = ClaudeClient({**self.client.config, "allow": ["Read"]})
-        self.committed(flags=("--strict-mcp-config",))
-        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
-        with open(path, encoding="utf-8") as f:
-            state = json.load(f)
-        old = {k: state[k] for k in ("cwd", "sid", "dirs", "env")}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, **old}, f)
-        code, err, _, execute = self.resumed([store(), self.cwd, SID])
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(
-            execute[0].args[1],
-            [
-                *("claude", "--resume", SID, "--setting-sources", "user,project,local"),
-                *("--add-dir", "/o x", "--add-dir", "/p", "--allowedTools", "Read"),
-            ],
-        )
-
     def test_a_hand_edited_state_cannot_set_setting_sources(self):
         self.committed()
         (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
@@ -831,7 +812,7 @@ class ResumeTest(Base):
         for data in (
             "not json",
             "{}",
-            json.dumps({"version": 1, "cwd": self.cwd, "sid": other, "dirs": [], "env": {}}),
+            json.dumps({"version": 1, "cwd": self.cwd, "sid": SID, "dirs": [], "env": {}}),
             *(
                 json.dumps({**json.loads(saved), **bad})
                 for bad in (

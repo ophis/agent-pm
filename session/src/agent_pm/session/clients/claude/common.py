@@ -44,21 +44,22 @@ from agent_pm.utils import (
 TABLE = "[clients.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
 STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
-V1_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
-# What a version 1 state, saved before these keys, replays: its unset --setting-sources was
-# Claude's default, user,project,local.
-V1_LAUNCH = MappingProxyType(
+STATE_KEYS = frozenset(
     {
-        "flags": (),
-        "project": True,
-        "commands": (),
-        "reads": (),
-        "model": None,
-        "effort": None,
-        "name": None,
+        "version",
+        "cwd",
+        "sid",
+        "dirs",
+        "env",
+        "flags",
+        "project",
+        "commands",
+        "reads",
+        "model",
+        "effort",
+        "name",
     }
 )
-STATE_KEYS = V1_KEYS | V1_LAUNCH.keys()
 STATE_MAX = 1 << 20
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
@@ -223,19 +224,11 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         state = None
     if not (
         isinstance(state, dict)
-        and (
-            (state.get("version") == 1 and frozenset(state) == V1_KEYS)
-            or (
-                state.get("version") == 2
-                and frozenset(state) == STATE_KEYS
-                and all(strings(state[k]) for k in ("flags", "commands", "reads"))
-                and type(state["project"]) is bool
-                and all(
-                    state[k] is None or isinstance(state[k], str)
-                    for k in ("model", "effort", "name")
-                )
-            )
-        )
+        and state.get("version") == 2
+        and frozenset(state) == STATE_KEYS
+        and all(strings(state[k]) for k in ("flags", "commands", "reads"))
+        and type(state["project"]) is bool
+        and all(state[k] is None or isinstance(state[k], str) for k in ("model", "effort", "name"))
         and state["sid"] == sid
         and isinstance(state["cwd"], str)
         and os.path.realpath(state["cwd"]) == os.path.realpath(cwd)
@@ -248,7 +241,7 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         os.utime(path, follow_symlinks=False)
     except OSError as error:
         print(f"claude resume: cannot renew {path}: {error}", file=sys.stderr)
-    return {**V1_LAUNCH, **state}
+    return state
 
 
 CHECKS = (
