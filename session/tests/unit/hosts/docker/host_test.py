@@ -475,7 +475,11 @@ class StartTest(Base):
     def test_prompt_staging_errors_name_the_step(self):
         metadata = {"prompt_file": "/run/agent-pm/prompt/prompt.md", "prompt": "private"}
         for result, want in (
-            (done(1, "", "private"), "^staging prompt file: exit status 1$"),
+            (done(1, "", ""), "^staging prompt file: exit status 1$"),
+            (
+                done(1, "", "Traceback (most recent call last):\nOSError: [Errno 28] No space\n"),
+                r"^staging prompt file: OSError: \[Errno 28\] No space$",
+            ),
             (OSError("unavailable"), "^staging prompt file: unavailable$"),
             (TimeoutExpired("exec", 1), "^staging prompt file: "),
         ):

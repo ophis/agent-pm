@@ -1204,7 +1204,10 @@ class DockerHost(Host):
         except (OSError, subprocess.TimeoutExpired) as error:
             raise SessionError(f"staging prompt file: {error}") from None
         if result.returncode:
-            raise SessionError(f"staging prompt file: exit status {result.returncode}")
+            why = (result.stderr or "").strip().splitlines()
+            raise SessionError(
+                f"staging prompt file: {why[-1] if why else f'exit status {result.returncode}'}"
+            )
 
     def _exec_env(self, launch: Launch, started: Started) -> dict[str, str]:
         """launch's env, plus with a GitHub App its bot as PR author and git identity."""
