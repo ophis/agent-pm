@@ -40,16 +40,14 @@ def read_body(path, stdin=None):
     """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim; IssueError
     when it cannot be read or holds only whitespace and byte order marks.
     """
-    if path == "-" and stdin is None:
-        stdin = getattr(sys.stdin, "buffer", None)
-        if stdin is None:
-            raise IssueError("--body-file -: no stdin to read")
     try:
-        if path == "-":
-            raw = stdin.read()
-        else:
+        if path != "-":
             with open(path, "rb") as f:
                 raw = f.read()
+        elif (stream := getattr(sys.stdin, "buffer", None) if stdin is None else stdin) is None:
+            raise IssueError("--body-file -: no stdin to read")
+        else:
+            raw = stream.read()
         body = raw.decode("utf-8")
     except OSError as error:
         raise IssueError(f"--body-file {path}: {error.strerror or error}") from None

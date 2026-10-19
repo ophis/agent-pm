@@ -14,6 +14,7 @@ from agent_pm.linear_orchestrator.engine import (
     issue_read,
     issue_write,
 )
+from agent_pm.linear_orchestrator.engine.types import GraphQLErrors
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import TEAM
@@ -303,3 +304,74 @@ class ArchiveGql:
     @property
     def writes(self):
         return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+NEW = {"id": "id-TASK-9", "identifier": "TASK-9", "url": "https://linear.app/t/issue/TASK-9"}
+
+
+def by_name(*nodes):
+    """A Routes answer: the edges of nodes whose name the query's filter names exactly."""
+
+    def find(found):
+        if isinstance(found, dict):
+            if isinstance(found.get("name"), dict) and "eq" in found["name"]:
+                return found["name"]["eq"]
+            found = list(found.values())
+        if isinstance(found, list):
+            return next((n for n in map(find, found) if n is not None), None)
+        return None
+
+    return lambda variables: edges([n for n in nodes if n["name"] == find(variables)])
+
+
+class CreateGql(Routes):
+    """Routes for create's reads; issueCreate answers `created` (default: NEW made), each
+    issueRelationCreate the next of `relations` (default: success); an exception there is raised.
+    Records every (query, variables) call.
+    """
+
+    def __init__(self, *, created=None, relations=(), **routes):
+        super().__init__(**routes)
+        self.created, self.relations = created, list(relations)
+
+    def __call__(self, query, **variables):
+        if not query.startswith("mutation"):
+            return super().__call__(query, **variables)
+        self.calls.append((query, variables))
+        field = client.operation(query)
+        if field == "issueCreate":
+            answer = {"success": True, "issue": NEW} if self.created is None else self.created
+        else:
+            answer = self.relations.pop(0) if self.relations else {"success": True}
+        if isinstance(answer, BaseException):
+            raise answer
+        return {field: answer}
+
+    @property
+    def writes(self):
+        return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+def _issue_ref(variables):
+    ident = variables["id"]
+    if ident.startswith("NOPE"):
+        return GraphQLErrors([{"message": "Entity not found: Issue"}])
+    return {"id": f"id-{ident}", "identifier": ident}
+
+
+def create_gql(**overrides):
+    """A CreateGql knowing team TEAM's states Backlog and Todo, labels bug, ops (workspace) and old
+    (retired), project Agent PM with milestone M1, user Ann, and every issue but NOPE-*.
+    """
+    routes = {
+        "workflowStates": by_name(state(2, "Backlog", "backlog"), state(3, "Todo")),
+        "issueLabels": by_name(
+            label(4, "bug"), label(5, "ops", None), label(6, "old", retired="2026-01-01")
+        ),
+        "team": lambda v: {"projects": by_name(project(7, "Agent PM"))(v)},
+        "project": lambda v: {"projectMilestones": by_name(milestone(8, "M1", uid(7)))(v)},
+        "users": by_name(user(9, "Ann")),
+        "issue": _issue_ref,
+        "viewer": VIEWER,
+    }
+    return CreateGql(**{**routes, **overrides})

@@ -18,6 +18,7 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import (
     config,
     issue_archive,
+    issue_create,
     issue_list,
     issue_lookup,
     issue_page,
@@ -32,6 +33,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     IssueError,
     KeychainError,
     LinearError,
+    RelationsFailed,
     Resource,
     Unavailable,
 )
@@ -77,21 +79,23 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  move, comment and archive write as that account and print a receipt\n"
-    "  instead; for them exit 1 also means the write's result is unknown, for\n"
-    "  archive also a refusal (their --help).\n\n"
+    + "  create, move, comment and archive write as that account and print a\n"
+    "  receipt instead; for them exit 1 also means the write's result is unknown,\n"
+    "  for create also a relation that failed, for archive also a refusal (their\n"
+    "  --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
     "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
     "  agent-pm-linear issue lookup states --team TASK\n"
+    "  agent-pm-linear issue create --title 'Fix login' --body-file note.md --blocks TASK-1\n"
     "  agent-pm-linear issue move TASK-1 --state Done\n"
     "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-linear issue archive TASK-1 --dry-run\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
     "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
-    "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help,\n"
-    "  agent-pm-linear issue archive --help\n"
+    "  agent-pm-linear issue create --help, agent-pm-linear issue move --help,\n"
+    "  agent-pm-linear issue comment --help, agent-pm-linear issue archive --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _PAGES = (
@@ -184,6 +188,38 @@ _WRITE_RULES = (
     "  or an issue or value that does not resolve: nothing was written.\n"
     "  A timeout or outage during the write leaves the result unknown: check with\n"
     "  agent-pm-linear issue read ID before running it again; nothing retries.\n\n"
+)
+_CREATE_HELP = (
+    _WRITE_RULES
+    % ""
+    + "Creates one issue in --team (default: the configured team), then its blocking\n"
+    "  relations. Every value resolves first, as agent-pm-linear issue list --help\n"
+    "  describes; one that does not exits 2 with nothing created.\n"
+    "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
+    "  sent verbatim; - reads stdin; blank or unreadable exits 2.\n"
+    "--label VALUE, repeatable: not a group or retired. --project VALUE: the\n"
+    "  team's. --milestone VALUE: --project's, which it needs. --parent ID: an issue.\n"
+    "  --assignee VALUE: a user's id, name, email or me (the harness_key account).\n"
+    "  Each one not given stays unset.\n"
+    f"--state VALUE: a workflow state of the team; default {issue_create.BACKLOG}. A team\n"
+    f"  without a state named {issue_create.BACKLOG} exits 2: no other state is taken.\n"
+    "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
+    "  repeatable, repeats count once; one issue given to both exits 2.\n"
+    "A timeout while creating leaves the result unknown: look for the issue with\n"
+    "  agent-pm-linear issue list --query TITLE before creating it again.\n"
+    "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
+    "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
+    "  with its error), recover and truncated: run only the recover commands\n"
+    "  (agent-pm-linear issue relation add …), never create again.\n\n"
+    "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
+    "  agent-pm-linear issue create --title 'Fix login' --body-file note.md\n"
+    "  agent-pm-linear issue create --title 'Fix login' --body-file - --label bug \\\n"
+    "    --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me \\\n"
+    "    --state Todo --blocks TASK-2 --blocked-by TASK-3 < note.md\n\n"
+    "Recovery and next help:\n"
+    "  The new issue: agent-pm-linear issue read <identifier>\n"
+    "  Option values: agent-pm-linear issue lookup --help\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
 )
 _MOVE_HELP = (
     _WRITE_RULES
@@ -417,6 +453,42 @@ def _parser():
     )
     lookup.add_argument("--project", metavar="VALUE", help="milestones: the project's id or name")
     _paged(lookup)
+    create = commands.add_parser(
+        "create",
+        help="create one issue with labels, project, milestone, parent, assignee, state and "
+        "blocking relations",
+        description="Create one issue with its fields and blocking relations in one run.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CREATE_HELP,
+    )
+    create.add_argument("--title", required=True, action=_Once, metavar="TEXT", help="not blank")
+    create.add_argument(
+        "--body-file", required=True, action=_Once, metavar="FILE", help="UTF-8 Markdown; -: stdin"
+    )
+    for option, what in (
+        ("--team", "team id, name or key (default: configured)"),
+        ("--project", "project id or name"),
+        ("--milestone", "milestone id or name, of --project"),
+        ("--parent", "parent issue identifier (TASK-1) or id"),
+        ("--assignee", "user id, name, email or me"),
+        ("--state", f"workflow state id or name (default: {issue_create.BACKLOG})"),
+    ):
+        metavar = "ID" if option == "--parent" else "VALUE"
+        create.add_argument(option, action=_Once, metavar=metavar, help=what)
+    create.add_argument(
+        "--label", action="append", default=[], metavar="VALUE", help="label id or name; repeatable"
+    )
+    create.add_argument(
+        "--blocks", action="extend", nargs="+", default=[], metavar="ID", help="issues it blocks"
+    )
+    create.add_argument(
+        "--blocked-by",
+        action="extend",
+        nargs="+",
+        default=[],
+        metavar="ID",
+        help="issues blocking it",
+    )
     move = commands.add_parser(
         "move",
         help="set one issue's workflow state by name, within its team",
@@ -474,6 +546,8 @@ def _limit(text):
 
 def _usage(args):
     """The usage error in args' page options, or None."""
+    if args.command == "create" and not args.title.strip():
+        return "--title: empty title"
     if "full" not in args:
         return None
     if args.full != (args.output is not None):
@@ -498,6 +572,8 @@ def _run(gql, args, team_id, body):
         return receipt(issue_write.move(gql, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
+    if args.command == "create":
+        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, team_id, body)))
     if args.command == "archive" and args.dry_run:
         return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
     if args.command == "archive":
@@ -539,7 +615,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, usage)
         return USAGE
     body = None
-    if args.command == "comment":
+    if args.command in ("comment", "create"):
         try:
             body = issue_write.read_body(args.body_file, stdin)
         except IssueError as error:
@@ -561,6 +637,10 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
+        return FAILED
+    except RelationsFailed as error:
+        out.write(fit(error.report, ("done", "failed", "recover"), (), None))
+        diagnose(err, error)
         return FAILED
     except (LinearError, Unavailable, OverflowError, ArchiveRefused) as error:
         diagnose(err, error)

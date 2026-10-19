@@ -99,6 +99,7 @@ bin/agent-pm-linear issue read <ID>             # the issue's fields, newest com
 bin/agent-pm-linear issue read <ID> --full --output <FILE>  # every page and body, written to FILE
 bin/agent-pm-linear issue list                  # the team's issues every filter (--query, --state, --label, --assignee me, …) holds, newest update first
 bin/agent-pm-linear issue lookup <RESOURCE>     # teams, states, labels, projects, milestones (--project) or users with ids, 20 a page (--limit, --cursor)
+bin/agent-pm-linear issue create --title <TEXT> --body-file <FILE|->  # one issue with --label, --project, --milestone, --parent, --assignee, --state (default Backlog), --blocks and --blocked-by; a failed relation exits 1 printing only the commands that add it
 bin/agent-pm-linear issue move <ID> --state <STATE>  # set its state by name or id within its own team; prints a receipt
 bin/agent-pm-linear issue comment <ID> --body-file <FILE|->  # post FILE's (or stdin's) UTF-8 body verbatim; prints a receipt
 bin/agent-pm-linear issue archive <ID> [--dry-run]  # archive it only when it and every unarchived sub-issue are completed or canceled; --dry-run lists what goes with it
