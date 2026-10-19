@@ -56,6 +56,7 @@ from agent_pm.utils import (
     STATE,
     drop_stale,
     environment_ok,
+    load_config,
     number,
     open_beneath,
     resume_command,
@@ -90,6 +91,10 @@ VALUED = {
     "--disable": "--disable",
     "--add-dir": "--add-dir",
 }
+
+MCP_OFF = "mcp_servers={}"
+SYSTEM_CONFIG = "/etc/codex/config.toml"
+_SERVER_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 _SESSION_VERSION = 1
 
@@ -774,6 +779,68 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
     return os.path.abspath(os.path.join(cwd, os.path.expanduser(config_home or "~/.codex")))
 
 
+def _config_layers(snapshot: Snapshot) -> list[str]:
+    """The config files Codex may read for `snapshot`, lowest precedence first; a trusted project
+    adds each `.codex/config.toml` from / down to the cwd.
+    """
+    layers = [SYSTEM_CONFIG, os.path.join(snapshot.codex_home, "config.toml")]
+    if snapshot.project:
+        ancestors = [snapshot.cwd]
+        while (parent := os.path.dirname(ancestors[-1])) != ancestors[-1]:
+            ancestors.append(parent)
+        layers += [os.path.join(d, ".codex", "config.toml") for d in reversed(ancestors)]
+    return layers
+
+
+def _mcp_servers(snapshot: Snapshot) -> dict[str, tuple[str, str]]:
+    """Each MCP server the layers name: its transport key and value, the later layer's winning."""
+    found = {}
+    for path in _config_layers(snapshot):
+        if not os.path.lexists(path):
+            continue
+        try:
+            servers = load_config(path).get("mcp_servers", {})
+        except OSError as error:
+            raise ConfigError(f"{path}: {error}") from None
+        except ValueError as error:
+            raise ConfigError(f"{path}: invalid TOML: {error}") from None
+        if not isinstance(servers, dict):
+            raise ConfigError(f"{path}: mcp_servers is not a table")
+        for name, server in servers.items():
+            if not isinstance(server, dict):
+                raise ConfigError(f"{path}: mcp_servers.{name} is not a table")
+            for key in ("command", "url"):
+                if key not in server:
+                    continue
+                if not isinstance(server[key], str):
+                    raise ConfigError(f"{path}: mcp_servers.{name}.{key} is not a string")
+                if not _SERVER_NAME.fullmatch(name):
+                    raise ConfigError(
+                        f"{path}: MCP server {name!r}: a -c flag cannot turn it off; rename it"
+                    )
+                found[name] = (key, server[key])
+    return found
+
+
+def mcp_off(flags: Sequence[str], snapshot: Snapshot) -> list[str]:
+    """`flags` with each `-c mcp_servers={}` (MCP_OFF) replaced by flags turning off every server
+    the config layers name: `-c` merges tables, so MCP_OFF alone removes none. Each also gets its
+    transport, so a name no layer Codex loads defines (a Docker launch) is still valid.
+    """
+    result, servers, end = [], None, 0
+    for flag in scan(flags, VALUED):
+        end = flag.end
+        if flag.word != "-c" or flag.value != MCP_OFF:
+            result.extend(flags[flag.start : flag.end])
+            continue
+        if servers is None:
+            servers = _mcp_servers(snapshot)
+        for name, (key, value) in sorted(servers.items()):
+            result += ["-c", f"mcp_servers.{name}.enabled=false"]
+            result += ["-c", f"mcp_servers.{name}.{key}={json.dumps(value, ensure_ascii=False)}"]
+    return [*result, *flags[end:]]
+
+
 def launch_options(snapshot: Snapshot) -> list[str]:
     result = [
         *(("-m", snapshot.model) if snapshot.model is not None else ()),
@@ -793,7 +860,7 @@ def launch_options(snapshot: Snapshot) -> list[str]:
 def launch_flags(snapshot: Snapshot, *, interactive: bool, mode: Sequence[str]) -> list[str]:
     """`mode`: the launch's permission mode flags, never in the snapshot."""
     supplied, _ = split_flags(snapshot.flags)
-    result = [*mode, *supplied, *launch_options(snapshot)]
+    result = [*mode, *mcp_off(supplied, snapshot), *launch_options(snapshot)]
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result

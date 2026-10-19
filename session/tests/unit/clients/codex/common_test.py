@@ -20,6 +20,7 @@ from agent_pm.session.clients.codex.common import (
     NativeMetadata,
     RecoveryError,
     SessionStore,
+    mcp_off,
     read_metadata,
     snapshot_data,
     validate_snapshot,
@@ -1471,3 +1472,123 @@ class ResumeAccessTest(Base):
         self.assertEqual(
             CodexClient({}).common.resume_launch(state), self.common.resume_launch(state)
         )
+
+
+OFF = ("-c", "mcp_servers={}")
+SYSTEM = "/etc/codex/config.toml"
+
+
+class McpOffTest(Base):
+    """`-c mcp_servers={}` turns off every server the launch's Codex config layers name."""
+
+    def setUp(self):
+        super().setUp()
+        self.system = self.root / "etc" / "codex" / "config.toml"
+        here = {SYSTEM: str(self.system)}
+        lexists, opened = os.path.lexists, open
+        self.enterContext(
+            mock.patch("os.path.lexists", side_effect=lambda path: lexists(here.get(path, path)))
+        )
+        self.enterContext(
+            mock.patch(
+                "builtins.open",
+                side_effect=lambda path, *a, **k: opened(here.get(path, path), *a, **k),
+            )
+        )
+
+    def write(self, path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def snapshot(self, *, project=False):
+        access = replace(self.spec.access, project=project)
+        return self.common.prepare(replace(self.spec, access=access)).snapshot
+
+    def test_without_the_flag_flags_and_servers_stay(self):
+        self.write(self.codex_home / "config.toml", '[mcp_servers.tickets]\ncommand = "t"\n')
+        flags = ["-c", 'model="m"', "--enable", "web"]
+        self.assertEqual(mcp_off(flags, self.snapshot()), flags)
+
+    def test_with_no_config_the_flag_is_dropped(self):
+        self.assertEqual(mcp_off(["-a", *OFF, "-b"], self.snapshot()), ["-a", "-b"])
+
+    def test_each_user_server_is_turned_off_with_its_own_transport_in_place(self):
+        self.write(
+            self.codex_home / "config.toml",
+            '[mcp_servers.web]\nurl = "https://x/mcp"\n\n'
+            '[mcp_servers.tickets]\ncommand = "/bin/t"\nargs = ["a"]\n',
+        )
+        self.assertEqual(
+            mcp_off(["-a", f"--config={OFF[1]}", "-b"], self.snapshot()),
+            [
+                "-a",
+                *("-c", "mcp_servers.tickets.enabled=false"),
+                *("-c", 'mcp_servers.tickets.command="/bin/t"'),
+                *("-c", "mcp_servers.web.enabled=false"),
+                *("-c", 'mcp_servers.web.url="https://x/mcp"'),
+                "-b",
+            ],
+        )
+
+    def test_a_later_layer_wins_and_project_layers_count_only_in_a_trusted_project(self):
+        self.write(self.system, '[mcp_servers.s]\ncommand = "system"\n')
+        self.write(self.codex_home / "config.toml", '[mcp_servers.s]\ncommand = "user"\n')
+        untrusted = self.snapshot()
+        self.write(self.work / ".codex" / "config.toml", '[mcp_servers.p]\ncommand = "up"\n')
+        self.write(self.cwd / ".codex" / "config.toml", '[mcp_servers.p]\nurl = "https://p"\n')
+        self.assertEqual(
+            mcp_off(list(OFF), untrusted),
+            ["-c", "mcp_servers.s.enabled=false", "-c", 'mcp_servers.s.command="user"'],
+        )
+        self.assertEqual(
+            mcp_off(list(OFF), self.snapshot(project=True)),
+            [
+                *("-c", "mcp_servers.p.enabled=false", "-c", 'mcp_servers.p.url="https://p"'),
+                *("-c", "mcp_servers.s.enabled=false", "-c", 'mcp_servers.s.command="user"'),
+            ],
+        )
+
+    def test_a_table_with_no_transport_adds_nothing(self):
+        self.write(self.system, '[mcp_servers.s]\ncommand = "system"\n')
+        self.write(self.codex_home / "config.toml", "[mcp_servers.s]\nenabled = true\n")
+        self.write(self.codex_home / "other.toml", "")
+        self.assertEqual(
+            mcp_off(list(OFF), self.snapshot()),
+            ["-c", "mcp_servers.s.enabled=false", "-c", 'mcp_servers.s.command="system"'],
+        )
+
+    def test_a_layer_it_cannot_read_fails_closed(self):
+        path = self.codex_home / "config.toml"
+        snapshot = self.snapshot()
+        for text, message in (
+            ("[mcp_servers\n", "invalid"),
+            ('mcp_servers = "x"\n', "not a table"),
+            ('[mcp_servers]\nx = "y"\n', "not a table"),
+            ("[mcp_servers.x]\ncommand = 1\n", "not a string"),
+            ('[mcp_servers."a.b"]\ncommand = "c"\n', "cannot turn it off"),
+        ):
+            self.write(path, text)
+            with self.subTest(text=text), self.assertRaisesRegex(ConfigError, message) as raised:
+                mcp_off(list(OFF), snapshot)
+            self.assertIn(str(path), str(raised.exception))
+        with (
+            mock.patch("builtins.open", side_effect=PermissionError("denied")),
+            self.assertRaisesRegex(ConfigError, f"{path}.*denied"),
+        ):
+            mcp_off(list(OFF), snapshot)
+
+    def test_every_launch_rereads_the_layers(self):
+        self.spec = replace(self.spec, flags=OFF)
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            first = committed_headless(self.client, replace(self.spec, prompt="hi")).argv
+        self.assertNotIn(OFF[1], first)
+        self.assertFalse(any(word.startswith("mcp_servers.") for word in first))
+        self.write(self.codex_home / "config.toml", '[mcp_servers.t]\ncommand = "t"\n')
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        self.assertEqual(state.snapshot.flags, OFF)
+        resumed = committed_headless(self.client, replace(self.spec, prompt="hi", resume=True))
+        for argv in (resumed.argv, self.common.resume_launch(state).argv):
+            with self.subTest(argv=argv):
+                self.assertNotIn(OFF[1], argv)
+                self.assertIn("mcp_servers.t.enabled=false", argv)

@@ -1002,6 +1002,20 @@ class SuppliedFlagsTest(Base):
                 self.assertEqual(argv[argv.index(value) - 1], flag)
         self.assertEqual(argv.count("-s"), 1)
 
+    def test_the_mcp_off_flag_reaches_codex_and_its_trust_step_expanded(self):
+        (self.codex_home / "config.toml").write_text('[mcp_servers.t]\ncommand = "t"\n')
+        _, data = self.launch(dataclasses.replace(self.spec, flags=("-c", "mcp_servers={}")))
+        plan = tui.decode(data)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        off = ["-c", "mcp_servers.t.enabled=false", "-c", 'mcp_servers.t.command="t"']
+        for argv in (
+            tui.execution_argv(plan, snapshot, "hooks.state={trusted}"),
+            tui.trust_args(plan, snapshot),
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(holds(argv, off), argv)
+                self.assertNotIn("mcp_servers={}", argv)
+
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")
         spec = dataclasses.replace(self.spec, flags=flags, env={"S": "s"})

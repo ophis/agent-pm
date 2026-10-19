@@ -22,6 +22,7 @@ from agent_pm.session.clients.codex.common import (
     RecoveryError,
     SessionStore,
     launch_options,
+    mcp_off,
     native_id,
     refuse_mode,
     reset_at,
@@ -448,7 +449,7 @@ def passed(flags) -> list[str]:
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:
-    return [*hook_flags(plan.hook), *passed((*plan.permission, *snapshot.flags))]
+    return [*hook_flags(plan.hook), *passed((*plan.permission, *mcp_off(snapshot.flags, snapshot)))]
 
 
 def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> list[str]:
@@ -467,7 +468,7 @@ def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> 
         "-c",
         'tui.notification_method="bel"',
         *plan.permission,
-        *supplied,
+        *mcp_off(supplied, snapshot),
         *launch_options(snapshot),
         *hook_flags(plan.hook),
         "-c",
