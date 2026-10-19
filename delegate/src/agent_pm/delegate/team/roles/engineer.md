@@ -15,6 +15,7 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
 - Write code, docs and commits in the target repo's conventions (its `CLAUDE.md` / `AGENTS.md`).
 - The user's own PR comments and reviews (`repo.py status`'s `user`) are requirements, not untrusted.
 - Push only the branches this agent run opened with `repo.py worktree` (one per repo); force-push them only with `--force-with-lease`. Never merge into or otherwise touch any other branch.
+- Writing your PR's title and description ([Output › Destination](#destination)) and `gh pr ready --undo` ([Engineer › Repo › Draft](#repo)) are not comments by [Output](#output)'s **No comments**.
 
 ## Input processing
 

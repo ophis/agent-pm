@@ -89,6 +89,9 @@ class Codex(CodexIntegration):
         )
         self.assertNotIn("-s", call["argv"][11:])
         self.assertEqual(call["argv"].count("plugins.agent-pm@agent-pm.enabled=false"), 1)
+        for feature in ("apps", "tool_suggest"):
+            self.assertEqual(call["argv"].count(feature), 1)
+            self.assertEqual(call["argv"][call["argv"].index(feature) - 1], "--disable")
         self.assertFalse([w for w in call["argv"] if w.startswith("sandbox_workspace_write.")])
 
     def test_two_runs_resume_the_same_native_session_and_keep_previous_progress(self):
