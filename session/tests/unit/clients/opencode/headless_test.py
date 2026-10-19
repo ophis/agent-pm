@@ -37,7 +37,7 @@ from session.tests.unit.clients.opencode.support import (
 
 MODEL = "ollama/qwen3.6:35b-mlx"
 STRATA = {"strata": {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}}
-LIMIT = {"context": 65536, "input": 32768, "output": 32000}  # the default window's
+LIMIT = {"context": 65536, "input": 32768, "output": 16384}  # the default window's
 
 
 def decide(rules: dict, path: str) -> str | None:

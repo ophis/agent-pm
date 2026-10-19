@@ -422,10 +422,11 @@ class OpenCodeCommon:
         prefix = f"{name}/"
         named = (*self.tiers.values(), *((self.default,) if self.default else ()))
         mapped = (m.removeprefix(prefix) for m in named if m.startswith(prefix))
+        output = min(REPLY, window // 4)
         limit = {
             "context": window,
-            "input": window - min(REPLY + BUFFER, window // 2),
-            "output": REPLY,
+            "input": window - min(output + BUFFER, window // 2),
+            "output": output,
         }
         return {
             "npm": "@ai-sdk/openai-compatible",

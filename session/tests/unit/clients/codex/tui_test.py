@@ -468,7 +468,7 @@ class TuiTest(Base):
             ),
             [Blocked("question: Scope; And?")],
         )
-        for tool_input in (None, {"questions": None}):
+        for tool_input in (None, "x", {"questions": None}, {"questions": 3}, {"questions": "ab"}):
             with self.subTest(tool_input=tool_input):
                 self.assertEqual(
                     run.hook_events(

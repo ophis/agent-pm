@@ -337,7 +337,9 @@ class CodexTui(Tui):
             found = payload.get("tool_input")
             asked = found.get("questions") if isinstance(found, dict) else None
             titles = [
-                q.get("header") or q.get("question") for q in asked or () if isinstance(q, dict)
+                q.get("header") or q.get("question")
+                for q in (asked if isinstance(asked, list) else ())
+                if isinstance(q, dict)
             ]
             return question(titles)
         return self.activity(payload)
