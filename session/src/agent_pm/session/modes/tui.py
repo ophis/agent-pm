@@ -517,6 +517,10 @@ class TuiMode(BaseMode):
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
         )
+        if prepared.stdin is not None:
+            raise ConfigError(
+                f"client {spec.client!r} gave a tui launch stdin; its terminal is its stdin"
+            )
         prepared = cls._host_resume(prepared, host, name)
         if run._runtime_files:
             metadata = {**metadata, "runtime_files": json.dumps(dict(run._runtime_files))}

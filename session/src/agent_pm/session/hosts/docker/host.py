@@ -1115,7 +1115,7 @@ class DockerHost(Host):
                     *launch.argv,
                 ),
             )
-            proc = piped_popen(argv, env={**docker_env, **env})
+            proc = piped_popen(argv, env={**docker_env, **env}, stdin_text=launch.stdin)
             laps("client")
             _save_result(name, created, laps.phases)
             stops.check()

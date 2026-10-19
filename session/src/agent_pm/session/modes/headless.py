@@ -184,4 +184,10 @@ class HeadlessMode(BaseMode):
 
 def _launch(prepared: Prepared) -> Launch:
     info = prepared.info
-    return Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)
+    return Launch(
+        prepared.argv,
+        env=prepared.env,
+        cwd=info.cwd,
+        transcript=info.transcript,
+        stdin=prepared.stdin,
+    )

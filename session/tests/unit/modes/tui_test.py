@@ -1,5 +1,6 @@
 """Tui mode behavior through nonspawning Host and InteractiveProcess boundaries."""
 
+import dataclasses
 import errno
 import fcntl
 import io
@@ -847,6 +848,18 @@ class StartTest(Base):
             self.start(events=None)
         self.assertIs(caught.exception.__cause__, failure)
         self.host.calls.validate.assert_called_once()
+        self.nothing_hosted()
+
+    def test_a_tui_launch_with_stdin_is_refused_before_anything(self):
+        class StdinTui(ScanTui):
+            def launch(self, spec, hook):
+                return dataclasses.replace(super().launch(spec, hook), stdin="text")
+
+        with self.assertRaisesRegex(
+            ConfigError, "^client 'fake' gave a tui launch stdin; its terminal is its stdin$"
+        ):
+            self.start(run=StdinTui(self.client))
+        self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
     def test_an_unsupported_tui_mode_is_refused_before_anything(self):

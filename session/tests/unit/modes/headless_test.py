@@ -352,6 +352,18 @@ class ThroughItsHost(Base):
         )
         self.assertEqual(len(self.recorded), 1)
 
+    def test_a_launch_s_stdin_reaches_its_host_pipe(self):
+        host = PipingHost(FakePiped())
+        self.mode = HeadlessMode.start(
+            Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub"),
+            StubClient(Launch(NOTHING, stdin="雪" * 9)),
+            registry=self.session_cls._config().registry,
+            record=self.recorded.append,
+            host=host,
+        )
+        ((_, launch, _),) = host.pipes
+        self.assertEqual((self.mode.prepared.stdin, launch.stdin), ("雪" * 9, "雪" * 9))
+
     def test_returncode_closes_the_piped_once_and_state_never(self):
         piped = FakePiped(codes=[None, None, 0, 0])
         mode = self.start_on(PipingHost(piped))

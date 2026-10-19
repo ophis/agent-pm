@@ -3,6 +3,7 @@ kill, bounded waits, and a session running once started.
 """
 
 import contextlib
+import hashlib
 import io
 import logging
 import os
@@ -46,6 +47,9 @@ sys.stderr.flush()
 os.close(2)
 time.sleep(0.3)
 print(json.dumps({"text": "late"}))
+"""
+DIGEST = """import hashlib, json, sys
+print(json.dumps({"text": hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}), flush=True)
 """
 RAISING = """import time
 print('{"raise": "boom"}', flush=True)
@@ -182,6 +186,13 @@ class Streams(Base):
         self.assertEqual(self.mode.state(), "absent")
         self.mode.stop()
         self.assertEqual(self.mode.returncode(0), 3)
+
+    def test_a_200_kib_stdin_reaches_the_child_whole(self):
+        text = "雪 a\n" * 40_000
+        self.start(StubClient(Launch((sys.executable, "-I", "-c", DIGEST), stdin=text)))
+        self.addCleanup(self.mode.stop)
+        self.assertEqual(self.drain(), [Reply(hashlib.sha256(text.encode()).hexdigest())])
+        self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
 
     def test_ended_only_after_stderr_then_stdout(self):
         self.begin((sys.executable, "-I", "-c", STDERR_FIRST))

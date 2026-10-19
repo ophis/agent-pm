@@ -102,6 +102,20 @@ class FrozenLaunchData(Case):
             with self.subTest(invalid=invalid), self.assertRaises(ConfigError):
                 Launch(("x",), blocked_signals=invalid)
 
+    def test_launch_stdin_must_be_none_or_clean_text(self):
+        self.assertIsNone(Launch(("x",)).stdin)
+        self.assertEqual(Launch(("x",), stdin="雪\n" * 3).stdin, "雪\n" * 3)
+        self.assertEqual(Launch(("x",), stdin="").stdin, "")
+        for invalid in ("a\0b", b"bytes", 1):
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaisesRegex(
+                    ConfigError, "^launch: stdin must be None or a string without NUL$"
+                ),
+            ):
+                Launch(("x",), stdin=invalid)
+        self.assertIsNone(Prepared(Spec(workdir="/w", access=Access(cwd="/w")), INFO).stdin)
+
     def test_access_launch_and_prepared_keep_a_copy_of_the_callers_env(self):
         for build in (
             lambda env: Access(cwd="/c", env=env),

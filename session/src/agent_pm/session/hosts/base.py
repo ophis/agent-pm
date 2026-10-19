@@ -285,8 +285,12 @@ class Host(ABC):
     def pipe(
         self, name: str | None, launch: Launch, *, metadata: Mapping[str, str] | None = None
     ) -> Piped:
-        """A headless client on pipes, run here."""
-        return LocalPiped(piped_popen(launch.argv, env=dict(launch.env), cwd=launch.cwd))
+        """A headless client on pipes, run here. Every Host's pipe writes launch.stdin, unless None,
+        whole to the client's stdin, then closes it.
+        """
+        return LocalPiped(
+            piped_popen(launch.argv, env=dict(launch.env), cwd=launch.cwd, stdin_text=launch.stdin)
+        )
 
     @abstractmethod
     def attach(self, name: str) -> Process: ...

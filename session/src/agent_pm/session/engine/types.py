@@ -348,8 +348,11 @@ class Launch:
 
     project: bool | None = None
     blocked_signals: tuple[int, ...] = ()
+    stdin: str | None = None  # a headless client's, written to it whole, then closed
 
     def __post_init__(self):
+        if self.stdin is not None and not _clean_string(self.stdin):
+            raise ConfigError("launch: stdin must be None or a string without NUL")
         if not isinstance(self.blocked_signals, tuple) or any(
             isinstance(value, bool)
             or not isinstance(value, int)
@@ -432,6 +435,7 @@ class Prepared:
     info: SessionInfo
     argv: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
+    stdin: str | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))

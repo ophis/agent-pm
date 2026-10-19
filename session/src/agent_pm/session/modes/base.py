@@ -230,4 +230,4 @@ class BaseMode(ABC):
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
         env = child_env(command, cwd, drop, spec.client, inherit=inherit)
-        return Prepared(spec, info, command.argv, env)
+        return Prepared(spec, info, command.argv, env, command.stdin)
