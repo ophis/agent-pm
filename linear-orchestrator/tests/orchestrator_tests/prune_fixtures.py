@@ -48,10 +48,17 @@ ROLES = {
 TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED)
 
 
-def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
+def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, stamps=None):
     """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
-    left out)."""
-    owners, children = owners or {}, children or {}
+    left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null)."""
+    owners, children, stamps = owners or {}, children or {}, stamps or {}
+
+    def at(ident):
+        given = stamps.get(ident, {})
+        return {
+            k: None if k not in given else (NOW - timedelta(hours=given[k])).isoformat()
+            for k in ("canceledAt", "completedAt")
+        }
 
     def subs(ident):
         return {
@@ -93,6 +100,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
                             "identifier": i,
                             "history": history(i),
                             "children": subs(i),
+                            **at(i),
                         }
                         for i in hits[start : start + page]
                     ],
@@ -114,7 +122,11 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None):
                 gql.gone.add(ident)
             return {"issueArchive": {"success": ident not in refuse}}
         return {
-            "issue": {"state": {"id": STATE_IDS[issues[v["i"]][0]]}, "history": history(v["i"])}
+            "issue": {
+                "state": {"id": STATE_IDS[issues[v["i"]][0]]},
+                "history": history(v["i"]),
+                **at(v["i"]),
+            }
         }
 
     gql.calls, gql.finished, gql.archived, gql.gone, gql.subs = [], [], [], set(), []

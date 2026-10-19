@@ -326,6 +326,39 @@ class RetentionCleanup(PruneScenario):
             ],
         )
 
+    def test_linear_finish_stamps_stand_in_for_a_missing_history_move(self):
+        for ident in ("TASK-1", "TASK-2", "TASK-3"):
+            self.mkc(ident)
+        gql = gql_for(
+            {
+                "TASK-1": ("Duplicate", [(40, "In Progress")]),
+                "TASK-2": ("Done", []),
+                "TASK-3": ("Duplicate", []),
+                "TASK-4": ("Canceled", [(30, "Canceled")]),
+            },
+            owners={"TASK-2": "u-pm"},
+            stamps={
+                "TASK-1": {"canceledAt": 30},
+                "TASK-2": {"completedAt": 30},
+                "TASK-3": {"canceledAt": 1},
+                "TASK-4": {"canceledAt": 1},
+            },
+        )
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2"])
+        self.assertEqual(
+            out.splitlines(),
+            [
+                "prune-removed TASK-1 what=agent dir",
+                "prune-removed TASK-2 what=agent dir",
+                "prune-archived TASK-1",
+                "prune-archived TASK-2",
+            ],
+        )
+        self.assertTrue(os.path.isdir(self.cfg.issue_workdir("TASK-3")))
+        self.assertIsNotNone(self.checkouts("TASK-3"))
+
     def test_not_archived(self):
         done = ("Done", [(50, "Done")])
         gql = gql_for(

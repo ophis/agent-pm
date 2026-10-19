@@ -1,6 +1,6 @@
 """Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
-such as Duplicate: ops.Team.finished) at least 2 hours ago (its latest move into one; unknown:
-skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
+such as Duplicate: ops.Team.finished) at least 2 hours ago (finished_at; unknown: skipped) whose
+workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
 - deletes its agent files, uncommitted work included, through its Delegate (Delegate.clean; its
@@ -58,6 +58,7 @@ from agent_pm.utils import (
     StatusState,
     common_dir,
     one_line,
+    parse_time,
     remove_tree,
     under,
 )
@@ -69,7 +70,14 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
-Q_ISSUE = "query($i: String!, $after: String) { issue(id: $i) { state { id } " + HISTORY + " } }"
+STAMPS = "canceledAt completedAt"
+Q_ISSUE = (
+    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
+    + STAMPS
+    + " "
+    + HISTORY
+    + " } }"
+)
 CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
 Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
 Q_FINISHED = (
@@ -77,6 +85,8 @@ Q_FINISHED = (
   issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
   { state: { id: { in: $s } } }] }, first: 50, after: $c) {
   nodes { id identifier """
+    + STAMPS
+    + " "
     + CHILDREN
     + " "
     + HISTORY
@@ -100,7 +110,8 @@ Prerequisites and effects:
   Keychain credentials and access to the configured work_dir/local clones.
   Configuration and executable lookup: agent-pm-linear --help
   For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
-  hours (latest transition; unknown age is skipped), close recorded runs and
+  hours (the latest of their move into one and Linear's canceledAt and
+  completedAt; unknown age is skipped), close recorded runs and
   delete agent files, including uncommitted work, through their Delegate.
   Close/cleanup refusal preserves later steps for a future tick. Unknown run
   inventory prevents run/file pruning; archival still proceeds.
@@ -288,7 +299,7 @@ class Pruner:
             return
         for node in nodes:
             ident = node["identifier"]
-            since = last_move(node["history"]["nodes"], finished)
+            since = finished_at(node, finished)
             if since is None:
                 self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
                 continue
@@ -363,7 +374,7 @@ class Pruner:
         if state not in finished:
             self.prune_stalled(ident, last_move(issue["history"]["nodes"], {state}))
             return
-        since = last_move(issue["history"]["nodes"], finished)
+        since = finished_at(issue, finished)
         if since is None:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
         elif self.has_agent(ident, quiet=True):
@@ -463,6 +474,15 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
+
+
+def finished_at(issue, finished):
+    """The latest of issue's move into finished and its canceledAt and completedAt (the history
+    read can lack a move into Duplicate that canceledAt holds); None: unknown."""
+    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue.get(k)]
+    if moved := last_move(issue["history"]["nodes"], finished):
+        times.append(moved)
+    return max(times, default=None)
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
