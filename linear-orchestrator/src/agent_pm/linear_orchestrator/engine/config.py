@@ -16,6 +16,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
     Docs,
     Role,
+    SelectionStep,
     State,
     Task,
 )
@@ -34,6 +35,7 @@ TOP_KEYS = {
     "task_label_group",
     "task_labels",
     "task_tiers",
+    "selection",
     "agent_label_group",
     "agent_labels",
     "client_max_runs",
@@ -201,6 +203,9 @@ def _load(cfg, work):
         states=frozen["states"],
         task_labels=frozen["task_labels"],
         task_tiers=frozen["task_tiers"],
+        selection=MappingProxyType(
+            {k.value: cfg["selection"].get(k, False) for k in SelectionStep}
+        ),
         agent_label_group=cfg["agent_label_group"],
         agent_labels=frozen["agent_labels"],
         client_max_runs=frozen["client_max_runs"],
@@ -283,6 +288,7 @@ def _load_config(cfg, local):
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
     _task_tiers(cfg)
+    _selection(cfg)
     _agent_labels(cfg)
     _client_max_runs(cfg)
 
@@ -385,6 +391,23 @@ def _task_tiers(cfg):
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 4:
             raise ConfigError(
                 f"linear-orchestrator/config.toml: task_tiers.{k} must be a tier, a whole number 1-4: {v!r}"
+            )
+
+
+def _selection(cfg):
+    steps = cfg.setdefault("selection", {})
+    if not isinstance(steps, dict):
+        raise ConfigError(
+            "linear-orchestrator/config.toml: selection must be a table of <step> = true | false"
+        )
+    if extra := sorted(set(steps) - set(SelectionStep)):
+        raise ConfigError(
+            f"linear-orchestrator/config.toml: [selection] has unknown keys: {', '.join(extra)}"
+        )
+    for k, v in steps.items():
+        if not isinstance(v, bool):
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: selection.{k} must be true or false: {v!r}"
             )
 
 

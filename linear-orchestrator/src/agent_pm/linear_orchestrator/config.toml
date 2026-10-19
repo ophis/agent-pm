@@ -69,6 +69,20 @@ canceled = ""
 # local: [linear_orchestrator.task_tiers]
 # local: light-build = 3
 
+# Resolver chain switches (docs/architecture.md › Resolver chain); optional, each off by default. They pick a new run's
+# launch choices from its issue; a resume keeps its start row's.
+#   translate  true → before a new run with a step on, the choice-translator role turns the issue into state text for
+#              the steps; false → every step uses its fallback
+#   tier       true → a decision API picks the run's tier and effort among its client's tiers and efforts; false, or
+#              when it fails → [task_tiers]'s tier and the role's effort. No decision API is wired yet: it falls back
+[selection]
+translate = false
+tier = false
+
+# local: [linear_orchestrator.selection]
+# local: translate = true
+# local: tier = true
+
 # Agent labels; optional: set agent_label_group to the Agent group's id and map each client to its child label id.
 # Both empty disables selection; otherwise set both. Client names come from Delegate configuration.
 [agent_labels]

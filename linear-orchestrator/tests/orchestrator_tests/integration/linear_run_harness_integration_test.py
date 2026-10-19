@@ -32,6 +32,7 @@ class HarnessRun(HarnessCase):
             task_label_group="",
             task_labels={},
             task_tiers={},
+            selection={"translate": False, "tier": False},
             agent_label_group="",
             agent_labels={},
             client_max_runs={},

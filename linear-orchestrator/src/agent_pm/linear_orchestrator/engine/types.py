@@ -40,6 +40,7 @@ class Config:
     task_label_group: str
     task_labels: Mapping[str, str]
     task_tiers: Mapping[str, int]
+    selection: Mapping[str, bool]
     agent_label_group: str
     agent_labels: Mapping[str, str]
     client_max_runs: Mapping[str, int]
@@ -75,6 +76,13 @@ class Config:
     def task_tier(self, task: str | None) -> int | None:
         """The [task_tiers] tier of task, else None: the run keeps its Delegate tier."""
         return None if task is None else self.task_tiers.get(task)
+
+
+class SelectionStep(StrEnum):
+    """A [selection] switch: translate, then the Resolver chain's steps in their order."""
+
+    TRANSLATE = "translate"
+    TIER = "tier"
 
 
 class State(StrEnum):

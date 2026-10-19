@@ -463,6 +463,45 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
+    def test_selection_defaults_off(self):
+        off = {"translate": False, "tier": False}
+        for text in (PIPELINE, PIPELINE + "[selection]\n"):
+            with self.subTest(text=text[-12:]):
+                cfg = self.load(text)
+                self.assertEqual(cfg.selection, off)
+                with self.assertRaises(TypeError):
+                    cfg.selection["tier"] = True
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
+            self.assertEqual(tomllib.load(f)["selection"], off)
+
+    def test_selection_local_override(self):
+        self.local("[selection]\ntier = true\n")
+        self.assertEqual(self.load(PIPELINE).selection, {"translate": False, "tier": True})
+        self.local("[selection]\ntranslate = true\n")
+        self.assertEqual(self.load(PIPELINE).selection, {"translate": True, "tier": False})
+
+    def test_selection_rejected(self):
+        cases = [
+            (
+                PIPELINE.replace("[roles.", "selection = true\n[roles.", 1),
+                "selection must be a table of <step> = true | false",
+            ),
+            (
+                PIPELINE + "[selection]\nclient = true\nrole = false\n",
+                "[selection] has unknown keys: client, role",
+            ),
+            *[
+                (
+                    PIPELINE + f"[selection]\ntier = {value}\n",
+                    f"selection.tier must be true or false: {shown}",
+                )
+                for value, shown in (("1", "1"), ('"true"', "'true'"))
+            ],
+        ]
+        for text, message in cases:
+            with self.subTest(message, text=text):
+                self.fails("linear-orchestrator/config.toml: " + message, text)
+
     def test_client_max_runs(self):
         for text, limits in (
             (PIPELINE, {}),
