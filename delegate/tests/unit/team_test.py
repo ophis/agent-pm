@@ -311,7 +311,8 @@ class Shipped(Case):
             (
                 "- **Done**, once the build converges, committing nothing more: [Engineer › Repo](#repo) step 2 "
                 "again (its `pr` now the draft PR the build may have opened), then `status: done`; "
-                "`deliverable` what changed, the input's `Links:`, how to verify, and each of this run's builds' "
+                "the deliverable (the PR description): what changed, the input's `Links:`, how to verify, and "
+                "each of this run's builds' "
                 "deferred non-blocking review items verbatim, for the manager or the user to decide on (never "
                 "fix them or start a build for them); `autopilot` the `status` and `head` of this run's last "
                 "`autopilot-result`; `title`"
@@ -319,6 +320,8 @@ class Shipped(Case):
             charter,
         )
         self.assertNotIn("leftover", charter)
+        self.assertNotIn("`deliverable`", charter)
+        self.assertIn("redo Done's deliverable and `autopilot`", charter)
         self.assertNotIn("Merge](#repo)", section(composed("engineer")[0], "Finish"))
         self.assertIn(
             '- `autopilot`: `{"status", "head"}`, when your task asks for it.\n',
@@ -693,7 +696,7 @@ class Real(RealConfig):
                 "`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                 "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                 "a new build of your task's slash command ([Engineer › Autopilot](#autopilot))",
-                "redo Done's `deliverable` and `autopilot`, then [Output › Destination](#destination) updates "
+                "redo Done's deliverable and `autopilot`, then [Output › Destination](#destination) updates "
                 "the PR, then step 1",
                 "3 fix builds",
                 "20 minutes",
