@@ -5,10 +5,12 @@ section overlays its file before the next layer. Sections use the package's fina
 hyphens replaced by underscores. Only supplied layers are read and validated against their own
 and lower files; read_resources also always validates the local [utils] section, which accepts no
 keys without a utils resource. Unknown top-level keys are rejected, a renamed one naming its new
-name (RENAMED_KEYS); nested tables are validated by their owners. Flat local keys are rejected.
+name (RENAMED_KEYS), inside tolerate_unknown_keys reported and dropped; nested tables are validated
+by their owners. Flat local keys are rejected.
 Explicit paths replace files while retaining the defaults as their validation schema.
 """
 
+import contextlib
 import copy
 import os
 import tomllib
@@ -21,6 +23,7 @@ from agent_pm.utils.paths import STATE
 
 LOCAL = f"{STATE}/config.local.toml"
 RENAMED_KEYS = MappingProxyType({"runtime": "client"})
+_TOLERATED: list[Callable[[str], None]] = []
 
 
 class ConfigFileError(ValueError):
@@ -30,6 +33,15 @@ class ConfigFileError(ValueError):
 def renamed_key(key: str) -> str:
     """An unknown-key error's hint for a renamed key, else ""."""
     return f"; renamed to {RENAMED_KEYS[key]!r}" if key in RENAMED_KEYS else ""
+
+
+@contextlib.contextmanager
+def tolerate_unknown_keys(report: Callable[[str], None]) -> Iterator[None]:
+    _TOLERATED.append(report)
+    try:
+        yield
+    finally:
+        _TOLERATED.pop()
 
 
 def merge(base: dict, over: dict) -> dict:
@@ -125,9 +137,11 @@ def read_resources(
         checked = {}
         for keys, value in _leaves(overlay, ()):
             if keys[0] not in schema:
-                raise ConfigFileError(
-                    f"{local}: unknown key {keys[0]!r} in [{section}]{renamed_key(keys[0])}"
-                )
+                error = f"{local}: unknown key {keys[0]!r} in [{section}]{renamed_key(keys[0])}"
+                if not _TOLERATED:
+                    raise ConfigFileError(error)
+                _TOLERATED[-1](error)
+                continue
             if value == {}:
                 continue
             table = checked

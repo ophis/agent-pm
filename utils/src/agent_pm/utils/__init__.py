@@ -8,6 +8,7 @@ from agent_pm.utils.config_file import (
     read_resources,
     renamed_key,
     thaw,
+    tolerate_unknown_keys,
     unset,
 )
 from agent_pm.utils.config_file import load as load_config
@@ -192,6 +193,7 @@ __all__ = [
     "temp_dirs",
     "thaw",
     "timestamp",
+    "tolerate_unknown_keys",
     "under",
     "unfenced",
     "unset",

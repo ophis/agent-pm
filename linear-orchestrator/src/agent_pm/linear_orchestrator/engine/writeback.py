@@ -87,6 +87,10 @@ PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
+# a run whose client's turn failed (delegate runner's Result.error) ends without an outcome; it is
+# written back as failed under its own steps, a later outcome of its session keeping theirs
+TURN_FAILED = "the client's turn failed: "
+NO_OUTCOME = "no-outcome:"
 
 
 def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, target):
@@ -324,11 +328,11 @@ def _url(ctx, url):
     return ""
 
 
-def finish(ctx, outcome: Outcome) -> bool:
+def finish(ctx, outcome: Outcome, *, steps="") -> bool:
     # never raises: Stopped stops the steps and returns False, so the session comment's end is
-    # still written
+    # still written; `steps` prefixes each step's name
     try:
-        return _finish(ctx, outcome)
+        return _finish(ctx, outcome, steps)
     except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after failed steps.
         _error(ctx, "finish", e)
         return False
@@ -389,7 +393,7 @@ def _attach(ctx, url, title, attached):
             raise
 
 
-def _finish(ctx, o):
+def _finish(ctx, o, steps=""):
     task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
     body, state, url = _completion_body(ctx, o)
 
@@ -414,7 +418,7 @@ def _finish(ctx, o):
         return False
     if state == "in_review":
         body += subscribe(gql, issue, ctx.humans)
-    if _post(ctx, "comment", body):
+    if _post(ctx, f"{steps}comment", body):
         return False
 
     if (
@@ -425,11 +429,13 @@ def _finish(ctx, o):
         return False
 
     if _step(
-        ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")
+        ctx,
+        f"{steps}move:{state}",
+        lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress"),
     ):
         return False
     # the write-back is complete: Recover replays a valid outcome's write-back until this is ledgered
-    return _step(ctx, "outcome", lambda: None) is None
+    return _step(ctx, f"{steps}outcome", lambda: None) is None
 
 
 def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
@@ -585,7 +591,11 @@ def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
         )
     # Finished: the outcome (once ledgered, never again), the limit, then the session's end
     outcome = event.outcome
-    ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
+    if outcome is None and event.limit is None and event.error.startswith(TURN_FAILED):
+        failed = Outcome(OutcomeStatus.FAILED, "The client's turn failed", event.error)
+        ok = f"{NO_OUTCOME}outcome" in _done(ctx) or finish(ctx, failed, steps=NO_OUTCOME)
+    else:
+        ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
     if event.limit is not None:
         ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
     elif outcome is None:
