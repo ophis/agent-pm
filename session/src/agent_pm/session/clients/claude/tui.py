@@ -8,14 +8,20 @@ import json
 import os
 import re
 import shlex
-import stat
 import time
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.clients.claude.common import TAIL, TUI_ENV, ClaudeCommon, read
+from agent_pm.session.clients.claude.common import (
+    TAIL,
+    TUI_ENV,
+    ClaudeCommon,
+    read,
+    size,
+    texts,
+)
 from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -112,7 +118,7 @@ class ClaudeTui(Tui):
             spec, hooks, tail=tail, env=TUI_ENV, permission=self._context.permission
         )
         self._tracking(launch.transcript)
-        self.start = self.offset = _size(launch.transcript)
+        self.start = self.offset = size(launch.transcript)
         return launch
 
     def commit(self):
@@ -148,7 +154,7 @@ class ClaudeTui(Tui):
     def observe(self):
         found: list[Reply | LimitHit] = []
         while True:
-            self.offset = min(self.offset, _size(self.transcript))
+            self.offset = min(self.offset, size(self.transcript))
             data = read(self.transcript, offset=self.offset) or b""
             end = data.rfind(b"\n") + 1
             self.offset += end
@@ -227,7 +233,7 @@ class ClaudeTui(Tui):
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if record.get("type") == "user":
-            if isinstance(content, str) or _texts(content):  # a prompt: a new turn
+            if isinstance(content, str) or texts(content):  # a prompt: a new turn
                 self.last = self.unseen = ""
                 self.limited = False
             return []
@@ -240,9 +246,9 @@ class ClaudeTui(Tui):
             quota = quota if isinstance(quota, dict) else {}
             resets = number(quota.get("resetsAt")) if quota.get("status") == "rejected" else None
             if resets is None:
-                resets = _resets_in("\n".join(_texts(content)))
+                resets = _resets_in("\n".join(texts(content)))
             return self._limit(resets)
-        text = "\n".join(_texts(content))
+        text = "\n".join(texts(content))
         if not text.strip():
             return []
         if self.unseen and text.strip() == self.unseen.strip():
@@ -324,30 +330,11 @@ def _first(payload: dict, *keys: str) -> str:
     return next((value for value in values if isinstance(value, str) and value), "")
 
 
-def _size(path: str) -> int:
-    """A regular file's size; 0 for anything else."""
-    try:
-        info = os.stat(path)
-    except (OSError, ValueError):
-        return 0
-    return info.st_size if stat.S_ISREG(info.st_mode) else 0
-
-
-def _texts(content) -> list[str]:
-    if not isinstance(content, list):
-        return []
-    return [
-        b["text"]
-        for b in content
-        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
-    ]
-
-
 def _last_text(data: bytes) -> str:
     """The text blocks of the last assistant message with text, over its records sharing one
     message.id.
     """
-    last, texts = None, []
+    last, found = None, []
     for line in reversed(data.split(b"\n")):
         try:
             record = json.loads(line)
@@ -361,17 +348,17 @@ def _last_text(data: bytes) -> str:
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(message, dict) or not isinstance(content, list):
             continue
-        blocks = _texts(content)
+        blocks = texts(content)
         mid = message.get("id")
         mid = mid if isinstance(mid, str) and mid else object()
         if last is None:
             if blocks:
-                last, texts = mid, blocks
+                last, found = mid, blocks
         elif mid != last:
             break
         else:
-            texts = blocks + texts
-    return "\n".join(texts)
+            found = blocks + found
+    return "\n".join(found)
 
 
 def _resets_in(message: str) -> float | None:

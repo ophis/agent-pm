@@ -234,6 +234,26 @@ CHECKS = (
 )
 
 
+def size(path: str) -> int:
+    """A regular file's size; 0 for anything else."""
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError):
+        return 0
+    return info.st_size if stat.S_ISREG(info.st_mode) else 0
+
+
+def texts(content) -> list[str]:
+    """A transcript message content's text blocks."""
+    if not isinstance(content, list):
+        return []
+    return [
+        b["text"]
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+    ]
+
+
 def read(path: str, *, offset: int = 0, limit: int | None = None, tail: bool = False):
     """read_regular; under a Docker session's home, which its container writes, never through a
     link and at most HOME_READ_MAX bytes.
