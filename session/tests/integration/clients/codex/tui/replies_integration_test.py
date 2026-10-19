@@ -1,5 +1,5 @@
 """A Codex tui session's mid-turn answer: a `reply <id>` events line, before the turn's `done`,
-whose stored text is the answer, on the tmux and pty Hosts, with fake Codex and a live hook.
+whose stored text is the answer, on the tmux Host, with fake Codex and a live hook.
 """
 
 import dataclasses
@@ -26,8 +26,6 @@ ANSWER = "half done\nnext: tests"
 
 
 class RepliesTest(Case):
-    host = "tmux"
-
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.addCleanup(tmp.cleanup)
@@ -51,13 +49,7 @@ class RepliesTest(Case):
                 "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)},
             }
         }
-        hosts = Host.parse_hosts(
-            {
-                **HOSTS,
-                "pty": {"implementation": "agent_pm.session.hosts.pty:PtyHost"},
-                "default": "tmux",
-            }
-        )
+        hosts = Host.parse_hosts({**HOSTS, "default": "tmux"})
         self.session_cls = HostedSession.configured(clients=clients, hosts=hosts)
         self.release = self.root / "release"
         steps = [{"kind": "steer", "answer": ANSWER}, {"kind": "pause", "file": str(self.release)}]
@@ -76,7 +68,7 @@ class RepliesTest(Case):
             prompt="hello",
             events=str(self.events),
         )
-        handle = self.session_cls.start(dataclasses.replace(spec), host=self.host)
+        handle = self.session_cls.start(dataclasses.replace(spec))
         self.addCleanup(handle.stop)
         return handle
 
@@ -138,7 +130,3 @@ class RepliesTest(Case):
         self.assertLessEqual(time.monotonic() - sent, 10)
         self.assertNotIn("done", [w[1] for w in self.words()])
         self.release.touch()
-
-
-class PtyRepliesTest(RepliesTest):
-    host = "pty"

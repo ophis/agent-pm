@@ -201,8 +201,8 @@ class FakeTerminal(FakeProcess, InteractiveProcess):
 
 
 def _xterm(key: KeyPress) -> bytes:
-    """A pty Host's translation, xterm's sequences: Ctrl only on an ASCII letter, Shift only on Tab
-    (BTab); else ConfigError.
+    """xterm's sequences: Ctrl only on an ASCII letter, Shift only on Tab (BTab); else
+    ConfigError.
     """
     if not isinstance(key, KeyPress):
         raise ConfigError(f"key {key!r:.80}: want a KeyPress")

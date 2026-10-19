@@ -125,7 +125,7 @@ max = "max"
 #   base_url         its http(s) URL, ending /v1 (http://<host>:8080/v1)
 #   models           model names it lists beside those tiers map to it; [] → only those
 #   context          optional: its context window in tokens, as ollama_context; absent → 65536
-#                    Its API key: on tmux/pty, `opencode auth login` (provider <name>), which agent-pm never reads;
+#                    Its API key: on tmux, `opencode auth login` (provider <name>), which agent-pm never reads;
 #                    on Docker, `agent-pm-broker login opencode <name>`, every listed one (docs/docker-host.md › OpenCode)
 # [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
 [clients.opencode]
@@ -165,8 +165,6 @@ max = "max"
 #                     ([clients.<name>.modes]); false → auto mode
 # [hosts.tmux]
 #   status_line       true → tui sessions show tmux's status line
-# [hosts.pty]         a pty per session, held by its own supervisor; state in ~/.agent-pm/pty/<name>/; cannot show:
-#   outer_terminal    variables of an enclosing terminal a tui program on the pty never gets (its TERM: xterm-256color)
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
 #   plugins           the account's installed plugins every container's image holds, by name or name@marketplace; []: none
@@ -181,12 +179,6 @@ status_line = false
 isolated = false
 # local: [session.hosts.tmux]
 # local: status_line = true
-
-[hosts.pty]
-# PtyHost (session/src/agent_pm/session/hosts/pty/host.py)
-implementation = "agent_pm.session.hosts.pty:PtyHost"
-outer_terminal = ["TMUX", "TMUX_PANE"]
-isolated = false
 
 [hosts.docker]
 # DockerHost (session/src/agent_pm/session/hosts/docker/host.py)

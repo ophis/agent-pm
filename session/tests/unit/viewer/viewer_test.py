@@ -462,18 +462,18 @@ class SessionViewCloseTest(Base):
 
 class NotShowableTest(Base):
     def test_a_host_without_an_attach_target_cannot_show_and_close_is_a_no_op(self):
-        pty = mock.create_autospec(Host, instance=True)
-        pty.name, pty.attachable = "pty", False
-        pty.attach_target.return_value = None
+        plain = mock.create_autospec(Host, instance=True)
+        plain.name, plain.attachable = "plain", False
+        plain.attach_target.return_value = None
         for call in (
-            lambda: self.viewer.show("p1", pty),
-            lambda: self.viewer.hide("p1", pty),
-            lambda: self.viewer.attach_command("p1", pty),
+            lambda: self.viewer.show("p1", plain),
+            lambda: self.viewer.hide("p1", plain),
+            lambda: self.viewer.attach_command("p1", plain),
         ):
             with (
                 self.subTest(call=call),
-                self.assertRaisesRegex(NotShowable, "^host pty cannot show$"),
+                self.assertRaisesRegex(NotShowable, "^host plain cannot show$"),
             ):
                 call()
-        self.viewer.close("p1", pty)
+        self.viewer.close("p1", plain)
         self.tmux.option.assert_not_called()

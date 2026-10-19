@@ -2,7 +2,6 @@
 
 import errno
 import fcntl
-import io
 import itertools
 import json
 import os
@@ -46,8 +45,6 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.hosts.base import InteractiveProcess, Process
-from agent_pm.session.hosts.pty import PtyHost
-from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.modes import tui, tui_hook
 from agent_pm.session.modes.base import POINTER
 from agent_pm.utils import StatusState, inode_lock, over_argv
@@ -975,31 +972,6 @@ class StartTest(Base):
 DAY = 24 * 3600
 
 
-class _Live:
-    """A fake socket to a pty session's process controller: it answers live."""
-
-    def __init__(self, *_):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return False
-
-    def settimeout(self, _):
-        pass
-
-    def connect(self, _):
-        pass
-
-    def sendall(self, _):
-        pass
-
-    def makefile(self, _):
-        return io.BytesIO(b'{"live": true}\n')
-
-
 class SweepTest(Base):
     """Other names' leftovers swept by a start of w1."""
 
@@ -1124,30 +1096,6 @@ class SweepTest(Base):
                 self.assertIsInstance(mode, tui.TuiMode)
                 self.assertEqual(self.names(), ["a", "a.lock", "b", "b.lock", NAME, f"{NAME}.lock"])
                 self.assertEqual(logs.output, [f"WARNING:session:tui sweep: {failure}"])
-
-    def test_one_start_on_a_pty_host_clears_all_four(self):
-        self.leftover("a", host="pty")
-        folder = os.path.join(pty_state.root(), "a")
-        os.makedirs(folder)
-        pty_state.put(folder, pty_state.META, json.dumps({"id": "a", "control": "/nonexistent"}))
-        pty_state.put(folder, pty_state.SUPERVISOR, '{"rc": 0}')
-        open(f"{folder}.lock", "w").close()
-        self.age(
-            31, folder, f"{folder}.lock", *(os.path.join(folder, f) for f in os.listdir(folder))
-        )
-
-        def popen(argv, **_options):
-            pty_state.put(argv[5], pty_state.SUPERVISOR, '{"pid": 4242}')
-            control = json.loads(pty_state.read(argv[5], pty_state.META))["control"]
-            with open(os.path.join(control, "state.json"), "w", encoding="utf-8") as file:
-                file.write('{"started": {}}')
-            return mock.Mock(pid=4242, poll=mock.Mock(return_value=None))
-
-        self.host = PtyHost("pty")
-        with mock.patch("subprocess.Popen", side_effect=popen), mock.patch("socket.socket", _Live):
-            self.start()
-        self.assertEqual(self.names(), [NAME, f"{NAME}.lock"])
-        self.assertEqual(sorted(os.listdir(pty_state.root())), [NAME, f"{NAME}.lock"])
 
 
 class SnapshotTest(Base):

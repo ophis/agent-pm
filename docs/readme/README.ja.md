@@ -32,7 +32,7 @@ agent-pm はレイヤーで構成され、各レイヤーは 1 つの役割だ�
 | Manager | 下位レイヤーのドライバー。対話するエージェントで、worker、role run、ボード run を起動し、監視して報告します。 | [デモ](#デモ1-つの-manager複数の-worker) |
 | Linear orchestrator | Linear ボードから role を動かします。私自身のワークフローです。 | [Linear ボード](../board.md) |
 | Delegate（コア） | session を通じて role に 1 つの task を実行させ、チェック済みの結果を返します。単体でも使える Claude Code / Codex プラグインです。 | [インストール](#インストール) |
-| Session | tmux または pty でコーディングエージェント（Claude Code、Codex、OpenCode）を起動・監視・再開します。どの client でも同じ方法です。 | [Sessions](../sessions.md) |
+| Session | tmux または Docker コンテナでコーディングエージェント（Claude Code、Codex、OpenCode）を起動・監視・再開します。どの client でも同じ方法です。 | [Sessions](../sessions.md) |
 
 Linear orchestrator は、エージェントがどう働くべきかについての私の考え方です（調査、PRD、ビルドの順に進み、各ステージの間に人間のレビューを挟む）。role と task 自体も自由に編集できます（[role と task のカスタマイズ](../customizing-roles-and-tasks.md)）。
 
@@ -85,7 +85,7 @@ Linear orchestrator は、エージェントがどう働くべきかについて
 | `claude` CLI、Python 3.11+ | すべてのエージェント run |
 | [`autopilot`](https://github.com/ophis/claude-autopilot) プラグイン（各 client に）：Claude Code は `/plugin marketplace add ophis/claude-autopilot`、続けて `/plugin install autopilot@claude-autopilot`。Codex は `codex plugin marketplace add ophis/claude-autopilot`、続けて `codex plugin add autopilot@claude-autopilot` | engineer の build task（`/autopilot:build`、`/autopilot:light-build`）と PM の PRD レビュー（`/autopilot:review`）。それ以外では不要。 |
 | tmux 3.3+ | `tmux` Host 上の tui run |
-| `127.0.0.1` だけで待ち受け、コンテキスト長 65536 以上、tier のモデルを pull 済みの [Ollama](https://ollama.com)。`tmux` と `pty` ではさらに OpenCode 1.x（`npm install -g opencode-ai@1.19.3`） | OpenCode のみ（[Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)） |
+| `127.0.0.1` だけで待ち受け、コンテキスト長 65536 以上、tier のモデルを pull 済みの [Ollama](https://ollama.com)。`tmux` ではさらに OpenCode 1.x（`npm install -g opencode-ai@1.19.3`） | OpenCode のみ（[Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)） |
 | `git`、ログイン済みの `gh` | コーディング（checkout、pull request）と GitHub の出力先。それ以外では不要。 |
 | 起動中の iTerm2 | デフォルトの iTerm2 分割 |
 | 起動中の Docker Desktop。broker `B`（`/usr/local/libexec/agent-pm/agent-pm-broker`）、`sh <plugin dir>/broker/install.sh` でインストール（`sudo` とログイン済みの `gh` が必要）。ログインはそれぞれ 1 回：`B login claude`（`claude setup-token` を貼り付け）、`B login github agent-pm-bot`、Codex は `sudo B install-codex <version>` の後に `B login codex`。OpenCode は不要 | Docker Host のみ（[Docker host](../docker-host.md)）。ホストに Node は不要。各認証情報の権限、保存場所、取り消し方法：[Credentials](../credentials.md)。 |

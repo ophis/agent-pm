@@ -253,8 +253,14 @@ class Host(ABC):
                 raise ConfigError(f"[hosts.{key}].implementation: want module.path:Class")
             tables[key] = value
         default = table.get("default")
+        names = ", ".join(sorted(tables))
+        if isinstance(default, str) and default and default not in tables:
+            raise ConfigError(
+                f"[hosts] default: {default!r} is not a Host here (removed Hosts: "
+                f"docs/upgrading.md); want one of {names}"
+            )
         if not isinstance(default, str) or default not in tables:
-            raise ConfigError(f"[hosts] default: want one of {', '.join(sorted(tables))}")
+            raise ConfigError(f"[hosts] default: want one of {names}")
         return Hosts(default, tables)
 
     @abstractmethod

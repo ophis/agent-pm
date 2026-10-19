@@ -32,7 +32,7 @@ O agent-pm é construído em camadas: cada uma faz um só trabalho e só chama a
 | Manager | Um condutor para as camadas abaixo: um agente com quem você conversa, que lança workers, role runs e runs do quadro, acompanha-os e reporta. | [Demo](#demo-um-manager-vários-workers) |
 | Linear orchestrator | Executa os roles a partir de um quadro do Linear: o meu próprio fluxo de trabalho. | [Quadro do Linear](../board.md) |
 | Delegate (núcleo) | Executa um role numa task por meio de uma session e devolve um resultado verificado. Um plugin do Claude Code e do Codex que você pode usar sozinho. | [Instalação](#instalação) |
-| Session | Inicia, acompanha e retoma um agente de programação (Claude Code, Codex, OpenCode) no tmux ou num pty, da mesma forma para todo client. | [Sessions](../sessions.md) |
+| Session | Inicia, acompanha e retoma um agente de programação (Claude Code, Codex, OpenCode) no tmux ou num contêiner Docker, da mesma forma para todo client. | [Sessions](../sessions.md) |
 
 O Linear orchestrator é a minha filosofia de como os agentes devem trabalhar (pesquisa, depois um PRD, depois um build, com revisão humana entre cada etapa). Os roles e as tasks também são seus para editar ([Personalizar roles e tasks](../customizing-roles-and-tasks.md)).
 
@@ -85,7 +85,7 @@ Nada disto é verificado. Se faltar algum, o run do agente falha.
 | CLI `claude`, Python 3.11+ | todo run de agente |
 | o plugin [`autopilot`](https://github.com/ophis/claude-autopilot), em cada client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, depois `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, depois `codex plugin add autopilot@claude-autopilot` | as build tasks do engineer (`/autopilot:build`, `/autopilot:light-build`) e a revisão do PRD pelo PM (`/autopilot:review`). Desnecessário fora isso. |
 | tmux 3.3+ | tui runs no Host `tmux` |
-| [Ollama](https://ollama.com) só em `127.0.0.1`, com contexto de pelo menos 65536 e o modelo do tier baixado; no `tmux` e no `pty` também OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | só OpenCode ([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
+| [Ollama](https://ollama.com) só em `127.0.0.1`, com contexto de pelo menos 65536 e o modelo do tier baixado; no `tmux` também OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | só OpenCode ([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, `gh` autenticado | programar (checkouts, pull requests) e destinos no GitHub. Desnecessário fora isso. |
 | iTerm2 em execução | a divisão padrão do iTerm2 |
 | Docker Desktop em execução; o broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), instalado com `sh <plugin dir>/broker/install.sh` (precisa de `sudo` e `gh` autenticado); um login de cada: `B login claude` (cole um `claude setup-token`), `B login github agent-pm-bot` e, para o Codex, `sudo B install-codex <version>` e depois `B login codex`; o OpenCode não precisa de nenhum | só o Docker Host ([Docker host](../docker-host.md)); o host não precisa de Node. O que cada credencial permite, onde fica e como revogá-la: [Credentials](../credentials.md). |

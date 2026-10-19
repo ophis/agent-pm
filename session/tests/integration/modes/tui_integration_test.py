@@ -11,7 +11,6 @@ from unittest import mock
 
 from agent_pm.session.engine.tmux_cli import TmuxCli
 from agent_pm.session.engine.types import Access, Spec
-from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
 from agent_pm.session.modes.base import POINTER
@@ -166,9 +165,6 @@ class LongPromptTest(Live):
 
     def test_a_prompt_over_128_kib_starts_on_tmux_with_a_pointer_to_its_file(self):
         self.started_with(TmuxHost("tmux"))
-
-    def test_a_prompt_over_128_kib_starts_on_pty_with_a_pointer_to_its_file(self):
-        self.started_with(PtyHost("pty"))
 
 
 if __name__ == "__main__":

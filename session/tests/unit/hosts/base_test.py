@@ -280,7 +280,12 @@ class ParseHosts(Case):
             ),
             *(
                 (table(TWO.replace('default = "a"', line)), f"[hosts] default: want one of {NAMES}")
-                for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []")
+                for line in ("", "default = 1", 'default = ""', "default = []")
+            ),
+            (
+                table(TWO.replace('default = "a"', 'default = "c"')),
+                f"[hosts] default: 'c' is not a Host here (removed Hosts: docs/upgrading.md); "
+                f"want one of {NAMES}",
             ),
         )
         for found, message in cases:

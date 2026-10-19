@@ -105,9 +105,7 @@ class HelpTest(SessionCliCase):
         tmux = displays.display_help(TmuxHost("tmux"))
         self.assertTrue(tmux)
         self.assertTrue(
-            result.stdout.endswith(
-                f"{DISPLAY_HELP}  tmux: {tmux}\n  pty: as given\n  docker: {tmux}\n"
-            ),
+            result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n  docker: {tmux}\n"),
             result.stdout,
         )
 
@@ -118,7 +116,7 @@ class HelpTest(SessionCliCase):
         self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
         self.assertTrue(
             result.stdout.endswith(
-                f"{DISPLAY_HELP}  tmux: {tmux}\n  pty: as given\n  docker: {tmux}\n  fake: as given\n"
+                f"{DISPLAY_HELP}  tmux: {tmux}\n  docker: {tmux}\n  fake: as given\n"
             ),
             result.stdout,
         )
@@ -220,7 +218,8 @@ class ConfigTest(SessionCliCase):
             ("[session]\nbogus = 1\n", f"{local}: unknown key 'bogus' in [session]"),
             (
                 '[session.hosts]\ndefault = "nope"\n',
-                "config: [hosts] default: want one of docker, pty, tmux",
+                "config: [hosts] default: 'nope' is not a Host here (removed Hosts: "
+                "docs/upgrading.md); want one of docker, tmux",
             ),
             ('[session.hosts.tmux]\nstatus_line = "yes"\n', "status_line: want true or false"),
             (
