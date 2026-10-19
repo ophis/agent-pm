@@ -90,6 +90,7 @@ class PluginSkills(Sample):
             [
                 "skill manage: shipped 2 times",
                 "skill act-as: missing",
-                "skill extra: not one of act-as, manage",
+                "skill linear: missing",
+                "skill extra: not one of act-as, linear, manage",
             ],
         )
