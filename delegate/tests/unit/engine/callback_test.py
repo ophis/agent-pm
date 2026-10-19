@@ -1,11 +1,12 @@
 """Domain events encode through the existing one-line DelegateEvent contract; each is delivered to
 the callback argv from the run dir in its own process group, holding the callback lock that names
-its pid; a failed delivery is one callback_error row. sweep kills the group a dead harness's
+its pid; a failed delivery is one callback_error row, a nonzero exit's naming its stderr. sweep kills the group a dead harness's
 callback lock names, then waits for that lock.
 """
 
 import contextlib
 import fcntl
+import io
 import json
 import os
 import signal
@@ -15,6 +16,7 @@ from agent_pm.delegate import ConfigError, DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.callback import (
     CALLBACK_STOP_WAIT,
     CALLBACK_TIMEOUT,
+    STDERR_TAIL,
     EventCallback,
     sweep,
 )
@@ -74,10 +76,12 @@ class Codec(Case):
 
 class Child:
     """subprocess.Popen as EventCallback uses it, scripted by `Child.outcome`: an int is its exit
-    code, an exception is raised by communicate. Records each spawn and call in `Child.calls`.
+    code, an exception is raised by communicate; `Child.stderr` is what it wrote there. Records each
+    spawn and call in `Child.calls`.
     """
 
     outcome: int | BaseException = 0
+    stderr: str = ""
     calls: list = []
 
     def __init__(self, argv, **kwargs):
@@ -95,7 +99,7 @@ class Child:
         if isinstance(Child.outcome, BaseException):
             raise Child.outcome
         self.returncode = Child.outcome
-        return None, None
+        return None, Child.stderr
 
     def wait(self, timeout=None):
         Child.calls.append(("wait",))
@@ -135,7 +139,7 @@ class Delivery(Case):
     def setUp(self):
         self.store = store(os.path.join(self.home, "w"))
         self.work = self.store.layout.run
-        Child.outcome, Child.calls = 0, []
+        Child.outcome, Child.stderr, Child.calls = 0, "", []
         self.popen = self.enterContext(mock.patch("subprocess.Popen", side_effect=Child))
         self.killpg = self.enterContext(
             mock.patch(
@@ -164,8 +168,14 @@ class Delivery(Case):
         _, argv, kwargs = spawn
         self.assertEqual(tuple(argv), ARGV)
         self.assertEqual(
-            (kwargs["cwd"], kwargs["stdin"], kwargs["stdout"], kwargs["process_group"]),
-            (self.work, PIPE, DEVNULL, 0),
+            (
+                kwargs["cwd"],
+                kwargs["stdin"],
+                kwargs["stdout"],
+                kwargs["stderr"],
+                kwargs["process_group"],
+            ),
+            (self.work, PIPE, DEVNULL, PIPE, 0),
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate
@@ -196,6 +206,42 @@ class Delivery(Case):
                 if "killpg" in ending:
                     self.assertEqual(Child.calls[2], ("killpg", PID, signal.SIGKILL))
                 self.assertEqual([row["error"] for row in self.errors(work)], [error])
+
+    def test_a_nonzero_exit_names_its_last_stderr_line_and_keeps_its_tail(self):
+        Child.outcome = 2
+        Child.stderr = "warning: x\nagent-pm-linear: config.local.toml: unknown key 'k'\n\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as harness:
+            self.assertIsNone(self.callback(Begun(SID)))
+        (row,) = self.errors()
+        self.assertEqual(
+            row["error"], "callback exited 2: agent-pm-linear: config.local.toml: unknown key 'k'"
+        )
+        self.assertEqual(row["stderr"], Child.stderr)
+        self.assertEqual(harness.getvalue(), Child.stderr)
+
+    def test_a_long_stderr_keeps_only_its_tail(self):
+        Child.outcome = 1
+        Child.stderr = "a" * STDERR_TAIL + "b" * 10 + "\nlast"
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            self.callback(Begun(SID))
+        (row,) = self.errors()
+        self.assertEqual(row["stderr"], Child.stderr[-STDERR_TAIL:])
+        self.assertEqual(len(row["stderr"]), STDERR_TAIL)
+        self.assertEqual(row["error"], "callback exited 1: last")
+
+    def test_a_successful_delivery_forwards_its_stderr_and_notes_nothing(self):
+        Child.stderr = "note\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as harness:
+            self.callback(Begun(SID))
+        self.assertEqual(harness.getvalue(), "note\n")
+        self.assertEqual(self.errors(), [])
+
+    def test_a_nonzero_exit_without_stderr_has_no_stderr_field(self):
+        Child.outcome = 7
+        self.callback(Begun(SID))
+        (row,) = self.errors()
+        self.assertEqual(row["error"], "callback exited 7")
+        self.assertNotIn("stderr", row)
 
     def test_a_command_that_cannot_start_is_one_callback_error_row(self):
         self.popen.side_effect = FileNotFoundError(2, "No such file or directory", ARGV[0])

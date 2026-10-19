@@ -1,8 +1,8 @@
 """Encode Delegate events, stamped with their run's sid and attempt, and deliver each line to the
 configured callback command: synchronously, in its own process group, from the run dir, its stdout
-discarded. A delivery that fails (exit ≠ 0, CALLBACK_TIMEOUT, OSError) is one `callback_error` row
-in run.jsonl, never retried; an exception once the child exists kills and reaps the group, then
-propagates. The child inherits the held, emptied callback lock, then the lock gets its pid.
+discarded, its stderr relayed. A delivery that fails (exit ≠ 0, CALLBACK_TIMEOUT, OSError) is one
+`callback_error` row in run.jsonl, never retried, an exit's with its stderr's tail; an exception
+once the child exists kills and reaps the group, then propagates. The child inherits the held, emptied callback lock, then the lock gets its pid.
 sweep kills the group a dead harness's held lock names.
 """
 
@@ -14,6 +14,7 @@ import re
 import signal
 import stat
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
@@ -22,11 +23,12 @@ from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Begun, ConfigError, Event, Progress
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.session import RunLog
-from agent_pm.utils import kill_group
+from agent_pm.utils import kill_group, one_line
 
 CALLBACK_TIMEOUT = 300  # seconds: longer than the worst-case write-back
 CALLBACK_STOP_WAIT = 5  # seconds: a killed group to end, then its lock to free
 POLL = 0.05  # seconds
+STDERR_TAIL = 2000
 
 
 class EventCallback:
@@ -76,6 +78,7 @@ class EventCallback:
                     cwd=self.store.layout.run,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     text=True,
                     process_group=0,
                     pass_fds=(descriptor,),
@@ -91,7 +94,7 @@ class EventCallback:
                         kill_group(child)
                         self._failed(f"callback lock {self.store.callback_lock}: {error}")
                         return
-                    child.communicate(line, timeout=CALLBACK_TIMEOUT)
+                    _, stderr = child.communicate(line, timeout=CALLBACK_TIMEOUT)
                 except subprocess.TimeoutExpired:
                     kill_group(child)
                     self._failed(f"callback timed out after {CALLBACK_TIMEOUT} s")
@@ -99,15 +102,25 @@ class EventCallback:
                 except BaseException:
                     kill_group(child)
                     raise
+            if stderr:
+                print(stderr, end="", file=sys.stderr, flush=True)
             if child.returncode:
-                self._failed(f"callback exited {child.returncode}")
+                self._exited(child.returncode, stderr or "")
         except BaseException:
             if child is not None and child.returncode is None:
                 kill_group(child)
             raise
 
-    def _failed(self, error: str) -> None:
-        RunLog(self.store.layout.run).note("callback_error", error=error, best_effort=True)
+    def _exited(self, returncode: int, stderr: str) -> None:
+        last = next((one_line(s) for s in reversed(stderr.splitlines()) if s.strip()), "")
+        self._failed(
+            f"callback exited {returncode}" + (f": {last}" if last else ""),
+            stderr=stderr[-STDERR_TAIL:] or None,
+        )
+
+    def _failed(self, error: str, *, stderr: str | None = None) -> None:
+        fields = {"error": error} | ({} if stderr is None else {"stderr": stderr})
+        RunLog(self.store.layout.run).note("callback_error", **fields, best_effort=True)
 
 
 def _hold(lock: str) -> int:
