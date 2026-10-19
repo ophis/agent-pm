@@ -97,6 +97,7 @@ bin/agent-pm-linear close <ID>                  # end the run and its TUI; the i
 bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
 bin/agent-pm-linear issue read <ID>             # the issue's fields, newest comments and relations as JSON; no run needed
 bin/agent-pm-linear issue read <ID> --full --output <FILE>  # every page and body, written to FILE
+bin/agent-pm-linear issue list                  # the team's issues every filter (--query, --state, --label, --assignee me, …) holds, newest update first
 bin/agent-pm-linear issue lookup <RESOURCE>     # teams, states, labels, projects, milestones (--project) or users with ids, 20 a page (--limit, --cursor)
 tmux ls                                         # running agent runs
 ```

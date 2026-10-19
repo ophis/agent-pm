@@ -14,7 +14,13 @@ import sys
 import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.linear_orchestrator.engine import config, issue_lookup, issue_page, issue_read
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    issue_list,
+    issue_lookup,
+    issue_page,
+    issue_read,
+)
 from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
@@ -42,7 +48,20 @@ TEXTS = (
     "state.name",
 )
 # never shortened by fit_page
-REFS = frozenset(("id", "key", "type", "email", "team_id", "group_id", "project_id"))
+REFS = frozenset(
+    (
+        "id",
+        "identifier",
+        "url",
+        "key",
+        "type",
+        "email",
+        "team_id",
+        "group_id",
+        "project_id",
+        "parent_id",
+    )
+)
 _RULES = (
     "Prerequisites and effects:\n"
     "  Reads Linear as the configured harness_key account (Keychain); an issue\n"
@@ -55,10 +74,11 @@ _RULES = (
 _HELP = (
     _RULES + "Examples (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
+    "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
     "  agent-pm-linear issue lookup states --team TASK\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
-    "  agent-pm-linear issue lookup --help\n"
+    "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _PAGES = (
@@ -74,6 +94,27 @@ _PAGES = (
     "References: an id or an exact name; a team also takes its key. Without\n"
     "  --team, the configured team. No match, several, or one outside the team\n"
     "  exits 2 naming candidates and the lookup command listing them.\n\n"
+)
+_LIST_HELP = (
+    _RULES + "Output items: id, identifier, title, url, state {id, name}, labels\n"
+    "  [{id, name}], assignee {id, name}, project {id, name}, parent_id; empty:\n"
+    "  null or []. Only the team's issues, every given filter holding, most\n"
+    "  recently updated first; archived ones only with --include-archived.\n"
+    "  --query TEXT matches title or description in any case; --state, --label,\n"
+    "  --project in the team, --label not a group or retired; --assignee a\n"
+    "  user's id, name, email or me (the harness_key account); --parent the\n"
+    "  parent issue's identifier or id.\n"
+    + _PAGES
+    + "Examples (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue list --query 'linear issue'\n"
+    "  agent-pm-linear issue list --team TASK --state Todo --label bug\n"
+    "  agent-pm-linear issue list --assignee me --project 'Agent PM'\n"
+    "  agent-pm-linear issue list --parent TASK-1 --include-archived --limit 50\n"
+    "  agent-pm-linear issue list --cursor <next_cursor>\n"
+    "  agent-pm-linear issue list --label bug --full --output bugs.json\n\n"
+    "Recovery and next help:\n"
+    "  Option values: agent-pm-linear issue lookup --help\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
 )
 _LOOKUP_HELP = (
     _RULES + "Output items, every same-named entity its own:\n"
@@ -250,6 +291,22 @@ def _parser():
     read.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
     read.add_argument("--full", action="store_true", help="every page and body; needs --output")
     read.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
+    found = commands.add_parser(
+        "list",
+        help="search one team's issues by text, state, label, project, assignee or parent",
+        description="List one team's issues that every given filter holds as JSON.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_LIST_HELP,
+    )
+    found.add_argument("--query", metavar="TEXT", help="title or description holds TEXT, any case")
+    found.add_argument("--team", metavar="VALUE", help="team id, name or key (default: configured)")
+    found.add_argument("--state", metavar="VALUE", help="workflow state id or name")
+    found.add_argument("--label", metavar="VALUE", help="label id or name")
+    found.add_argument("--project", metavar="VALUE", help="project id or name")
+    found.add_argument("--assignee", metavar="VALUE", help="user id, name, email or me")
+    found.add_argument("--parent", metavar="ID", help="parent issue identifier (TASK-1) or id")
+    found.add_argument("--include-archived", action="store_true", help="archived issues too")
+    _paged(found)
     lookup = commands.add_parser(
         "lookup",
         help="list teams, states, labels, projects, milestones or users with their ids",
@@ -305,7 +362,7 @@ def _usage(args):
 
 def _compact(gql, args, team_id):
     if args.command != "read":
-        source = issue_lookup.source(gql, args, team_id)
+        source = _source(gql, args, team_id)
         rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
     view = issue_read.view(gql, args.id)
@@ -317,12 +374,16 @@ def _compact(gql, args, team_id):
     )
 
 
+def _source(gql, args, team_id):
+    return (issue_list if args.command == "list" else issue_lookup).source(gql, args, team_id)
+
+
 def _full(gql, args, team_id):
     """(what --output gets, what stdout adds to its path)."""
     if args.command == "read":
         view = issue_read.view(gql, args.id, full=True)
         return view, {"identifier": view["identifier"]}
-    rows = issue_page.walk(gql, issue_lookup.source(gql, args, team_id))
+    rows = issue_page.walk(gql, _source(gql, args, team_id))
     cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
     return {"items": [item for item, _, _ in rows], "truncated": cut}, {"count": len(rows)}
 

@@ -92,7 +92,7 @@ def main(argv=None):
         "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
         "issue": (
             issue.main,
-            "Linear issues as bounded JSON: issue read ID, issue lookup RESOURCE",
+            "Linear issues as bounded JSON: issue read ID, issue list, issue lookup RESOURCE",
         ),
     }
     if arguments and arguments[0] in entries:

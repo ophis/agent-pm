@@ -158,7 +158,7 @@ class Routes:
 
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
-        field = re.search(r"\)\s*\{\s*(\w+)", query).group(1)
+        field = re.match(r"query[^{]*\{\s*(\w+)", query).group(1)
         answer = self.routes[field]
         answer = answer.pop(0) if isinstance(answer, list) else answer
         answer = answer(variables) if callable(answer) else answer
@@ -168,4 +168,21 @@ class Routes:
 
     def sent(self, field):
         """The variables of every call to field."""
-        return [v for q, v in self.calls if re.search(r"\)\s*\{\s*" + field + r"\b", q)]
+        return [v for q, v in self.calls if re.match(r"query[^{]*\{\s*" + field + r"\b", q)]
+
+
+def issue_row(ident, team_id=TEAM, **fields):
+    """An issue node as agent-pm-linear issue list queries it."""
+    return {
+        "id": f"id-{ident}",
+        "identifier": ident,
+        "title": f"title {ident}",
+        "url": f"https://linear.app/t/issue/{ident}",
+        "state": {"id": uid(3), "name": "Todo"},
+        "assignee": None,
+        "project": None,
+        "parent": None,
+        "labels": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+        "team": {"id": team_id},
+        **fields,
+    }

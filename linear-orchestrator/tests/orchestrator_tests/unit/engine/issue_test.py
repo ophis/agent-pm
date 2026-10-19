@@ -64,6 +64,27 @@ class Help(Case):
         ):
             self.assertIn(phrase, text.replace(", ", ","))
 
+    def test_list_help_names_filters_fields_pages_and_examples(self):
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            cli.main(["issue", "list", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        text = output.getvalue()
+        for phrase in (
+            "--include-archived",
+            "parent_id",
+            "most\n  recently updated first",
+            "1-50 (default 20)",
+            "agent-pm-linear issue list --assignee me",
+            "agent-pm-linear issue lookup --help",
+            "8192",
+        ):
+            self.assertIn(phrase, text)
+
     def test_top_level_help_lists_the_namespace(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit):
