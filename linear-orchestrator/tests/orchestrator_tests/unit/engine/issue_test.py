@@ -101,7 +101,10 @@ class Help(Case):
         for command, phrases in (
             ("move", ("--state VALUE", "issue's own team", "unchanged")),
             ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
-            ("archive", ("--dry-run", "completed or canceled", "every page", "no override")),
+            (
+                "archive",
+                ("--dry-run", "completed, canceled or duplicate", "every page", "no override"),
+            ),
             (
                 "create",
                 ("--title TEXT", "--blocked-by", "Backlog", "relation add", "never create again"),
