@@ -536,7 +536,7 @@ class SessionInfoTest(Base):
             (resumed["argv"], os.path.realpath(resumed["cwd"])),
             (
                 [
-                    *("--resume", SID, "--permission-mode", "auto"),
+                    *("--resume", SID, "--permission-mode", "auto", "--setting-sources", "user"),
                     *("--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}'),
                 ],
                 self.workdir,

@@ -644,7 +644,10 @@ class ResumeTest(Base):
                     [
                         mock.call(
                             "claude",
-                            ["claude", "--resume", SID, "--add-dir", "/o x", "--add-dir", "/p"],
+                            [
+                                *("claude", "--resume", SID, "--setting-sources", "user"),
+                                *("--add-dir", "/o x", "--add-dir", "/p"),
+                            ],
                             {**os.environ, **TUI_DEFAULTS, **SECRETS, "K": "spec"},
                         )
                     ],
@@ -691,6 +694,84 @@ class ResumeTest(Base):
         self.assertNotIn("--dangerously-skip-permissions", argv)
         self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), json.loads(PLUGIN))
 
+    def resumed_argv(self, mode="headless", **fields) -> list[str]:
+        words = shlex.split(self.committed(mode, **fields).resume)
+        code, err, _, execute = self.resumed(words[6:])
+        self.assertEqual((code, err), (0, ""))
+        return execute[0].args[1]
+
+    def test_the_resume_replays_the_runs_strict_mcp_and_system_prompt(self):
+        flags = ("--strict-mcp-config", "--append-system-prompt=Reply with the outcome alone.")
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                argv = self.resumed_argv(mode, flags=flags)
+                self.assertEqual(argv[-2:], list(flags))
+                self.assertNotIn("-p", argv)
+
+    def test_the_resume_keeps_the_runs_setting_sources_and_project_mcp(self):
+        with open(os.path.join(self.cwd, ".mcp.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        mcp = ("--mcp-config", os.path.join(self.cwd, ".mcp.json"))
+        rows = (
+            (True, ("--strict-mcp-config",), "user,project,local", True),
+            (True, (), "user,project,local", False),
+            (False, ("--strict-mcp-config",), "user", False),
+        )
+        for project, flags, sources, kept in rows:
+            with self.subTest(project=project, flags=flags):
+                access = dataclasses.replace(self.spec.access, project=project)
+                argv = self.resumed_argv(access=access, flags=flags)
+                self.assertTrue(holds(argv, ("--setting-sources", sources)))
+                self.assertEqual(holds(argv, mcp), kept)
+
+    def test_the_resume_replays_the_runs_model_effort_and_name(self):
+        tables = {"tiers": {"1": "fable"}, "efforts": {"high": "high"}}
+        self.client = ClaudeClient({**self.client.config, **tables})
+        argv = self.resumed_argv(tier=1, effort="high", name="w-1")
+        for words in (("--model", "fable"), ("--effort", "high"), ("--name", "w-1")):
+            self.assertTrue(holds(argv, words), words)
+        self.assertNotIn("--model", self.resumed_argv())
+
+    def test_the_resume_replays_the_runs_allowed_tools_and_the_configs(self):
+        self.client = ClaudeClient({**self.client.config, "allow": ["Read"]})
+        access = dataclasses.replace(self.spec.access, commands=("git status",), reads=("/r",))
+        argv = self.resumed_argv(access=access)
+        self.assertEqual(argv[-4:], ["--allowedTools", "Bash(git status)", "Read(//r/**)", "Read"])
+
+    def test_the_resume_merges_the_runs_settings_without_its_hooks(self):
+        self.client = ClaudeClient({**self.client.config, "flags": ["--settings", PLUGIN]})
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                argv = self.resumed_argv(mode, flags=("--settings", '{"model": "x"}'))
+                self.assertEqual(argv.count("--settings"), 1)
+                self.assertEqual(
+                    json.loads(argv[argv.index("--settings") + 1]),
+                    {**json.loads(PLUGIN), "model": "x"},
+                )
+
+    def test_a_version_1_state_resumes_as_before(self):
+        self.committed(flags=("--strict-mcp-config",))
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+        old = {k: state[k] for k in ("cwd", "sid", "dirs", "env")}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, **old}, f)
+        code, err, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(
+            execute[0].args[1],
+            [
+                *("claude", "--resume", SID, "--setting-sources", "user,project,local"),
+                *("--add-dir", "/o x", "--add-dir", "/p"),
+            ],
+        )
+
+    def test_a_state_over_the_limit_is_a_config_error(self):
+        big = "--append-system-prompt=" + "x" * (1 << 20)
+        with self.assertRaisesRegex(ConfigError, "^claude resume state: over 1 MiB$"):
+            self.committed(flags=(big,))
+
     def test_the_state_is_private(self):
         self.committed()
         (name,) = os.listdir(store())
@@ -707,6 +788,8 @@ class ResumeTest(Base):
     def test_a_resume_it_cannot_run_prints_one_line_and_runs_nothing(self):
         self.committed()
         (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        with open(path, encoding="utf-8") as f:
+            saved = f.read()
         other = "1f8fad5b-d9cb-469f-a165-70867728950e"
         rows = [
             ([], "expected STORE CWD SID"),
@@ -731,6 +814,18 @@ class ResumeTest(Base):
             "not json",
             "{}",
             json.dumps({"version": 1, "cwd": self.cwd, "sid": other, "dirs": [], "env": {}}),
+            *(
+                json.dumps({**json.loads(saved), **bad})
+                for bad in (
+                    {"version": 3},
+                    {"flags": "--strict-mcp-config"},
+                    {"project": "yes"},
+                    {"commands": [1]},
+                    {"reads": None},
+                    {"model": 1},
+                    {"name": ["w"]},
+                )
+            ),
         ):
             with self.subTest(data=data):
                 with open(path, "w", encoding="utf-8") as f:
