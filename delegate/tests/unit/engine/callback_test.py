@@ -173,9 +173,10 @@ class Delivery(Case):
                 kwargs["stdin"],
                 kwargs["stdout"],
                 kwargs["stderr"],
+                kwargs["errors"],
                 kwargs["process_group"],
             ),
-            (self.work, PIPE, DEVNULL, PIPE, 0),
+            (self.work, PIPE, DEVNULL, PIPE, "replace", 0),
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate

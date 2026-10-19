@@ -2,8 +2,8 @@
 configured callback command: synchronously, in its own process group, from the run dir, its stdout
 discarded, its stderr relayed. A delivery that fails (exit ≠ 0, CALLBACK_TIMEOUT, OSError) is one
 `callback_error` row in run.jsonl, never retried, an exit's with its stderr's tail; an exception
-once the child exists kills and reaps the group, then propagates. The child inherits the held, emptied callback lock, then the lock gets its pid.
-sweep kills the group a dead harness's held lock names.
+once the child exists kills and reaps the group, then propagates. The child inherits the held,
+emptied callback lock, then the lock gets its pid. sweep kills the group a dead harness's held lock names.
 """
 
 import contextlib
@@ -80,6 +80,7 @@ class EventCallback:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     text=True,
+                    errors="replace",
                     process_group=0,
                     pass_fds=(descriptor,),
                 )
@@ -119,8 +120,11 @@ class EventCallback:
         )
 
     def _failed(self, error: str, *, stderr: str | None = None) -> None:
-        fields = {"error": error} | ({} if stderr is None else {"stderr": stderr})
-        RunLog(self.store.layout.run).note("callback_error", **fields, best_effort=True)
+        log = RunLog(self.store.layout.run)
+        if stderr is None:
+            log.note("callback_error", error=error, best_effort=True)
+        else:
+            log.note("callback_error", error=error, stderr=stderr, best_effort=True)
 
 
 def _hold(lock: str) -> int:

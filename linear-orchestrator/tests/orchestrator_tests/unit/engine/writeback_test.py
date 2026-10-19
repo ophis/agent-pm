@@ -1952,16 +1952,15 @@ class FinishedEvents(Events):
         )
         self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
 
-    def test_a_clean_exit_without_an_outcome_is_a_failure_and_its_session_no_outcome(self):
+    def test_a_clean_exit_without_an_outcome_ends_the_session_as_no_outcome(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
-        self.assertTrue(self.deliver(self.finished(0)))
+        self.assertTrue(self.deliver(self.finished(0, error="the agent run returned no outcome")))
         self.assertEqual(
             self.linear.comments[RUN_SESSION]["body"],
             session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0"),
         )
-        comment = self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"]
-        self.assertEqual(comment, "Build failed: the agent run returned no outcome")
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
 
     def test_a_failed_turn_without_an_outcome_is_written_back_as_failed(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
@@ -1969,7 +1968,7 @@ class FinishedEvents(Events):
         self.assertTrue(self.deliver(self.finished(0, error=TURN_FAILED)))
         harness, states = self.cfg.harness_key, self.cfg.states
         ended = session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0")
-        comment = ops.client_id(RUN_SID, "comment")
+        comment = ops.client_id(RUN_SID, "no-outcome:comment")
         self.assertEqual(
             self.linear.calls[n:],
             [
@@ -1987,7 +1986,8 @@ class FinishedEvents(Events):
             ],
         )
         self.assertEqual(
-            self.ledger()[RUN_SID]["steps"], ["running:1", "comment", "move:in_review", "outcome"]
+            self.ledger()[RUN_SID]["steps"],
+            ["running:1", "no-outcome:comment", "no-outcome:move:in_review", "no-outcome:outcome"],
         )
         self.assertIn(
             f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error={TURN_FAILED}", self.said()
@@ -2013,9 +2013,34 @@ class FinishedEvents(Events):
                 self.assertTrue(self.deliver(event))
                 self.assertEqual(self.linear.state, self.cfg.states[state])
                 self.assertEqual(
-                    self.linear.comments[ops.client_id(OTHER_SID, "comment")]["body"], TURN_FAILED
+                    self.linear.comments[ops.client_id(OTHER_SID, "no-outcome:comment")]["body"],
+                    TURN_FAILED,
                 )
                 self.ledger_reset(OTHER_SID)
+
+    def test_a_partial_turn_failure_write_back_leaves_a_later_outcome_its_own_steps(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("linear api error: down") if op == "state" else None
+        )
+        self.assertFalse(self.deliver(self.finished(0, error=TURN_FAILED)))
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.linear.fail = lambda _op, _v: None
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data(), attempt=2)))
+        self.assertEqual(
+            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
+        )
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["no-outcome:comment", "comment", f"attach:{PR}", "move:in_review", "outcome"],
+        )
+
+    def test_a_failed_turn_with_a_limit_or_an_outcome_is_not_rewritten(self):
+        self.assertTrue(self.deliver(self.finished(1, error=TURN_FAILED, outcome=outcome_data())))
+        self.assertEqual(
+            self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
+        )
+        self.assertNotIn(ops.client_id(RUN_SID, "no-outcome:comment"), self.linear.comments)
 
     def test_a_finished_without_begun_starts_its_session_then(self):
         self.assertTrue(self.deliver(self.finished(1, error="launch failed")))

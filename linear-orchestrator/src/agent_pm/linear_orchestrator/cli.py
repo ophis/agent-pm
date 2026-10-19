@@ -198,8 +198,9 @@ def main(argv=None):
             cfg = load()
         except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
             print(f"agent-pm-linear: {error}", file=sys.stderr)
-            if args.command == "writeback" and getattr(error, "logs_dir", None):
-                event_log.use_logs(error.logs_dir)
+            logs = getattr(error, "logs_dir", None)
+            if args.command == "writeback" and logs:
+                event_log.use_logs(logs)
                 _refused(args.issue, error)
                 _log_ignored(args.issue, ignored)
             return 2
