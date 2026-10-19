@@ -509,7 +509,8 @@ class UsageQueries(HarnessCase):
             HarnessDelegate.usage("dummy-tester", session_cls=SessionClass)
         self.assertEqual(
             str(caught.exception),
-            "[hosts] default: want one of agent, changed, docker, harness, tmux",
+            "[hosts] default: want one of agent, changed, docker, harness, tmux"
+            " (a removed Host: docs/upgrading.md)",
         )
 
 

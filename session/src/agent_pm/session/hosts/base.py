@@ -254,7 +254,10 @@ class Host(ABC):
             tables[key] = value
         default = table.get("default")
         if not isinstance(default, str) or default not in tables:
-            raise ConfigError(f"[hosts] default: want one of {', '.join(sorted(tables))}")
+            raise ConfigError(
+                f"[hosts] default: want one of {', '.join(sorted(tables))}"
+                " (a removed Host: docs/upgrading.md)"
+            )
         return Hosts(default, tables)
 
     @abstractmethod

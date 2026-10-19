@@ -42,7 +42,10 @@ class Configuration(Case):
     def test_a_local_default_host_of_pty_is_refused_naming_the_hosts_left(self):
         local = Path(self.home, "config.local.toml")
         local.write_text('[session.hosts]\ndefault = "pty"\n')
-        with self.assertRaisesRegex(ConfigError, r"^\[hosts\] default: want one of docker, tmux$"):
+        with self.assertRaisesRegex(
+            ConfigError,
+            r"^\[hosts\] default: want one of docker, tmux \(a removed Host: docs/upgrading\.md\)$",
+        ):
             Host.parse_hosts(read_config(local=str(local))["hosts"])
 
     def test_utils_local_keys_are_rejected_as_an_unconfigured_lower_layer(self):

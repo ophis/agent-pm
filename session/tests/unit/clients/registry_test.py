@@ -215,8 +215,14 @@ class ConfigureTest(Base):
                 {"hosts": {"tmux": {"implementation": "agent_pm.TmuxHost"}}},
                 "[hosts.tmux].implementation: want module.path:Class",
             ),
-            ({"default_host": "ghost"}, "[hosts] default: want one of tmux"),
-            ({"default_host": None}, "[hosts] default: want one of tmux"),
+            (
+                {"default_host": "ghost"},
+                "[hosts] default: want one of tmux (a removed Host: docs/upgrading.md)",
+            ),
+            (
+                {"default_host": None},
+                "[hosts] default: want one of tmux (a removed Host: docs/upgrading.md)",
+            ),
         ):
             with self.subTest(kw=kw):
                 self.refused(message, lambda *, kw=kw: build(**kw))

@@ -279,7 +279,10 @@ class ParseHosts(Case):
                 for line in ("", 'implementation = "pkg.mod.AHost"\n', "implementation = 1\n")
             ),
             *(
-                (table(TWO.replace('default = "a"', line)), f"[hosts] default: want one of {NAMES}")
+                (
+                    table(TWO.replace('default = "a"', line)),
+                    f"[hosts] default: want one of {NAMES} (a removed Host: docs/upgrading.md)",
+                )
                 for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []")
             ),
         )
