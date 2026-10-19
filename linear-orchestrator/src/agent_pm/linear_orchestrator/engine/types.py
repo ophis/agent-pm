@@ -148,6 +148,22 @@ class LabelRefused(Exception):
     """A label swap the issue's current labels block; nothing was written."""
 
 
+class RelationsFailed(Exception):
+    """create made the issue but not every blocking relation: .report holds the receipt, done,
+    failed and the recover commands adding only the failed ones.
+    """
+
+    def __init__(self, report):
+        self.report = report
+        failed, total = len(report["failed"]), len(report["failed"]) + len(report["done"])
+        issue = report["issue"]
+        super().__init__(
+            f"create {issue['identifier']}: created {issue['url']}, but {failed} of {total} "
+            f"blocking relations failed; add only them: {'; '.join(report['recover'])}; "
+            "do not run create again"
+        )
+
+
 class InputError(RuntimeError):
     pass
 

@@ -24,6 +24,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     WriteGql,
     comment,
     conn,
+    create_gql,
     issue_node,
     label,
     rel,
@@ -100,6 +101,10 @@ class Help(Case):
             ("move", ("--state VALUE", "issue's own team", "unchanged")),
             ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
             ("archive", ("--dry-run", "completed or canceled", "every page", "no override")),
+            (
+                "create",
+                ("--title TEXT", "--blocked-by", "Backlog", "relation add", "never create again"),
+            ),
             ("relation add", ("--blocks OTHER", "--blocked-by OTHER", "same edge", "itself")),
             ("relation remove", ("--blocks OTHER", "other types", "unchanged")),
             ("label swap", ("--from OLD", "--to NEW", "label group", "every other label")),
@@ -115,7 +120,8 @@ class Help(Case):
                 cli.main(["issue", *command.split(), "--help"])
             self.assertEqual(cm.exception.code, 0)
             text = output.getvalue()
-            for phrase in (*phrases, "1024", "result unknown", "Exit 0", f"issue {command} TASK-1"):
+            example = "issue create --title" if command == "create" else f"issue {command} TASK-1"
+            for phrase in (*phrases, "1024", "result unknown", "Exit 0", example):
                 self.assertIn(phrase, text)
 
     def test_top_level_help_lists_the_namespace(self):
@@ -137,6 +143,12 @@ class Help(Case):
             ["archive"],
             ["archive", "TASK-1", "--force"],
             ["archive", "TASK-1", "--dry-run=yes"],
+            ["create", "--body-file", "a.md"],
+            ["create", "--title", "x"],
+            ["create", "--title", "x", "--body-file", "a.md", "--state", "A", "--state", "B"],
+            ["create", "--title", "x", "--title", "y", "--body-file", "a.md"],
+            ["create", "--title", "x", "--body-file", "a.md", "--body-file", "b.md"],
+            ["create", "--title", "x", "--body-file", "a.md", "--blocks"],
             ["relation", "TASK-1", "--blocks", "TASK-2"],
             ["relation", "add", "TASK-1"],
             ["relation", "add", "TASK-1", "--blocks", "TASK-2", "--blocked-by", "TASK-3"],
@@ -371,12 +383,103 @@ class Comment(IssueCase):
                 self.assertEqual((code, out, gql.calls), (2, b"", []))
                 self.assertTrue(err.startswith("agent-pm-linear issue: --body-file"), err)
 
+    def test_a_file_body_needs_no_stdin(self):
+        path = os.path.join(self.root, "body.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(BODY)
+        gql, out, err = WriteGql(write_issue()), io.BytesIO(), io.StringIO()
+        with mock.patch("sys.stdin", None):
+            code = issue.main(
+                ["comment", "TASK-2", "--body-file", path],
+                gql=gql,
+                config_path=self.config,
+                out=out,
+                err=err,
+            )
+        self.assertEqual((code, err.getvalue()), (0, ""))
+        self.assertEqual(gql.writes[0][1]["b"], BODY)
+
     def test_a_write_outage_exits_one_as_result_unknown(self):
         gql = WriteGql(write_issue(), result=Unavailable("commentCreate", reason="timed out"))
         code, out, err = self.run_main(["comment", "TASK-2", "--body-file", "-"], gql, b"hi")
         self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
         self.assertIn("result unknown", err)
         self.assertIn("agent-pm-linear issue read TASK-2", err)
+
+
+class Create(IssueCase):
+    def body(self):
+        path = os.path.join(self.root, "body.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(BODY)
+        return path
+
+    def test_prints_the_receipt_without_the_body(self):
+        for argv, stdin in (
+            (["--body-file", self.body(), "--blocks", "TASK-3", "TASK-4"], b""),
+            (["--body-file", "-", "--label", "bug", "--blocked-by", "TASK-3"], BODY.encode()),
+        ):
+            gql = create_gql()
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(["create", "--title", "Fix", *argv], gql, stdin)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(gql.writes[0][1]["in"]["description"], BODY)
+                receipt = json.loads(out)
+                self.assertEqual(
+                    (receipt["issue"]["identifier"], receipt["operation"], receipt["result"]),
+                    ("TASK-9", "create", "changed"),
+                )
+                self.assertNotIn("中文".encode(), out)
+                self.assertLessEqual(len(out), 1024)
+
+    def test_a_blank_title_or_body_exits_two_before_any_call(self):
+        for title, stdin in ((" \n", b"body"), ("Fix", b"\xef\xbb\xbf\n")):
+            gql = create_gql()
+            with self.subTest(title=title, stdin=stdin):
+                code, out, err = self.run_main(
+                    ["create", "--title", title, "--body-file", "-"], gql, stdin
+                )
+                self.assertEqual((code, out, gql.calls), (2, b"", []))
+                self.assertIn("empty", err)
+
+    def test_an_unresolved_reference_exits_two_and_creates_nothing(self):
+        gql = create_gql()
+        argv = ["create", "--title", "Fix", "--body-file", "-", "--state", "Shipped"]
+        code, out, err = self.run_main(argv, gql, b"body")
+        self.assertEqual((code, out, gql.writes), (2, b"", []))
+        self.assertIn("lookup states", err)
+
+    def test_a_failed_relation_exits_one_with_the_report_and_its_commands(self):
+        gql = create_gql(relations=[GraphQLErrors([{"message": "boom"}])])
+        argv = ["create", "--title", "Fix", "--body-file", "-", "--blocks", "TASK-3"]
+        code, out, err = self.run_main(argv, gql, b"body")
+        self.assertEqual(code, 1)
+        report = json.loads(out)
+        self.assertEqual((report["result"], report["issue"]["identifier"]), ("partial", "TASK-9"))
+        self.assertEqual(
+            report["recover"], ["agent-pm-linear issue relation add TASK-9 --blocks TASK-3"]
+        )
+        self.assertIn("relation add TASK-9 --blocks TASK-3", err)
+        self.assertIn("not run create again", err)
+
+    def test_many_failed_relations_stay_within_eight_kib(self):
+        many = [f"TASK-{n}" for n in range(100, 400)]
+        gql = create_gql(relations=[LinearError("x" * 300)] * len(many))
+        argv = ["create", "--title", "Fix", "--body-file", "-", "--blocks", *many]
+        code, out, err = self.run_main(argv, gql, b"body")
+        self.assertEqual(code, 1)
+        self.assertLessEqual(len(out), 8192)
+        self.assertLessEqual(len(err.encode()), 8192)
+        self.assertTrue(json.loads(out)["truncated"])
+
+    def test_a_create_outage_exits_one_as_result_unknown(self):
+        gql = create_gql(created=Unavailable("issueCreate", reason="timed out"))
+        code, out, err = self.run_main(
+            ["create", "--title", "Fix", "--body-file", "-"], gql, b"body"
+        )
+        self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
+        self.assertIn("result unknown", err)
+        self.assertIn("issue list --team 00000000-0000-4000-8000-000000000001 --query=Fix", err)
 
 
 class Archive(IssueCase):

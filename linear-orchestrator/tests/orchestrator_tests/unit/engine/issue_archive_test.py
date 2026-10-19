@@ -18,6 +18,19 @@ def many(n, prefix="SUB", kind="completed"):
     return [tree(f"{prefix}-{i}", kind) for i in range(1, n + 1)]
 
 
+class StuckGql(ArchiveGql):
+    """Every children page claims another after it, at cursor (None: no cursor)."""
+
+    def __init__(self, root, cursor):
+        super().__init__(root)
+        self.cursor = cursor
+
+    def _page(self, node, offset):
+        page = super()._page(node, 0)
+        page["pageInfo"] = {"hasNextPage": True, "endCursor": self.cursor}
+        return page
+
+
 class Archive(Case):
     def test_all_finished_archives_once_and_prints_the_receipt(self):
         root = tree("TASK-1", "completed", tree("TASK-2", "canceled", tree("TASK-3")))
@@ -95,6 +108,13 @@ class Archive(Case):
         for page, error, raised in cases:
             gql = ArchiveGql(root, broken={page: error})
             with self.subTest(page=page, error=error), self.assertRaises(raised):
+                issue_archive.archive(gql, "TASK-1")
+            self.assertEqual(gql.writes, [])
+
+    def test_a_next_page_without_a_new_cursor_fails_and_writes_nothing(self):
+        for cursor in (None, "0"):
+            gql = StuckGql(tree("TASK-1", "completed", *many(2)), cursor)
+            with self.subTest(cursor=cursor), self.assertRaisesRegex(LinearError, "endCursor"):
                 issue_archive.archive(gql, "TASK-1")
             self.assertEqual(gql.writes, [])
 

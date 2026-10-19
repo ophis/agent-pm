@@ -3,6 +3,8 @@ body verbatim, write once and answer with a receipt; a write Linear never answer
 never retried.
 """
 
+import sys
+
 from agent_pm.linear_orchestrator.engine import issue_read, ops
 from agent_pm.linear_orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
 
@@ -34,22 +36,24 @@ def move(gql, ident, value):
     return receipt(node, "move", "changed", data["viewer"])
 
 
-def read_body(path, stdin):
-    """The UTF-8 text of path, or of stdin (bytes) for -, verbatim; IssueError when it cannot be read
-    or holds only whitespace.
+def read_body(path, stdin=None):
+    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim; IssueError
+    when it cannot be read or holds only whitespace and byte order marks.
     """
     try:
-        if path == "-":
-            raw = stdin.read()
-        else:
+        if path != "-":
             with open(path, "rb") as f:
                 raw = f.read()
+        elif (stream := getattr(sys.stdin, "buffer", None) if stdin is None else stdin) is None:
+            raise IssueError("--body-file -: no stdin to read")
+        else:
+            raw = stream.read()
         body = raw.decode("utf-8")
     except OSError as error:
         raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
     except UnicodeDecodeError:
         raise IssueError(f"--body-file {path}: not UTF-8") from None
-    if not body.strip():
+    if not body.replace("\ufeff", "").strip():
         raise IssueError(f"--body-file {path}: empty body")
     return body
 
