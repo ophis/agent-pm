@@ -454,6 +454,20 @@ class Shipped(Case):
                 where,
             )
 
+    def test_engineers_pr_title_description_and_draft_are_not_comments(self):
+        exception = (
+            "- Writing your PR's title and description ([Output › Destination](#destination)) and "
+            "`gh pr ready --undo` ([Engineer › Repo › Draft](#repo)) are not comments by "
+            "[Output](#output)'s **No comments**.\n"
+        )
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                prompt = composed(role, task)[0]
+                if role == "engineer":
+                    self.assertIn(exception, section(prompt, "Rules"))
+                else:
+                    self.assertNotIn(exception, prompt)
+
     def test_research_tasks_prepare_before_their_start_mark(self):
         for task in ("research", "light-research"):
             text = task_text(task)
