@@ -87,14 +87,13 @@ class Resolving(Case):
         os.makedirs(self.workdir)
         self.provider = translator()
 
-    def resolve(self, steps, *, translate_on=True, provider=None):
+    def resolve(self, steps, *, provider=None):
         with logs_at(self.logs):
             return chain.resolve(
                 "TASK-1",
                 self.workdir,
                 CONTEXT,
                 steps,
-                translate_on=translate_on,
                 provider=provider or self.provider,
                 overlays=({"core": 1},),
             )
@@ -113,9 +112,7 @@ class Resolving(Case):
         self.assertNotIn("LEAK", text)
 
     def test_no_resolvers_is_no_chain(self):
-        for translate_on in (False, True):
-            with self.subTest(translate_on=translate_on):
-                self.assertEqual(self.resolve((), translate_on=translate_on), (CONTEXT, {}))
+        self.assertEqual(self.resolve(()), (CONTEXT, {}))
         self.assertEqual((self.provider.created, self.choices()), ([], []))
 
     def test_active_chain_translates_once_and_applies_the_choice(self):
@@ -143,17 +140,6 @@ class Resolving(Case):
             ],
         )
         self.assert_no_leak()
-
-    def test_step_on_translate_off_falls_back_no_state(self):
-        step = tier()
-        self.assertEqual(
-            self.resolve((step,), translate_on=False), (replace(CONTEXT, tier=3), {"tier": 3})
-        )
-        self.assertEqual((self.provider.created, step.resolver.calls), ([], []))
-        self.assertEqual(
-            [(e["step"], e["by"], e["reason"]) for e in self.choices()],
-            [("tier", "fallback", "no-state")],
-        )
 
     def test_selector_failure_falls_back_logging_codes_only(self):
         cases = [
@@ -251,16 +237,14 @@ class Resolving(Case):
 
     def test_steps_build_no_selector_without_resolvers(self):
         cfg = SimpleNamespace(
-            task_tiers={}, selection=Selection(selector=Unbuildable, translate=True, resolvers=())
+            task_tiers={}, selection=Selection(selector=Unbuildable, resolvers=())
         )
         self.assertEqual(chain.steps(cfg), ())
 
     def test_steps_build_the_configured_selector(self):
         cfg = SimpleNamespace(
             task_tiers={"build": 2},
-            selection=Selection(
-                selector=FakeSelector, translate=True, resolvers=(ResolverName.TIER,)
-            ),
+            selection=Selection(selector=FakeSelector, resolvers=(ResolverName.TIER,)),
         )
         injected = FakeSelector()
         for given, kind in ((None, FakeSelector), (injected, FakeSelector)):

@@ -398,16 +398,11 @@ def _selection(cfg) -> Selection:
     table = cfg.setdefault("selection", {})
     if not isinstance(table, dict):
         raise ConfigError(
-            "linear-orchestrator/config.toml: selection must be a table of selector, translate and resolvers"
+            "linear-orchestrator/config.toml: selection must be a table of selector and resolvers"
         )
-    if extra := sorted(set(table) - {"selector", "translate", "resolvers"}):
+    if extra := sorted(set(table) - {"selector", "resolvers"}):
         raise ConfigError(
             f"linear-orchestrator/config.toml: [selection] has unknown keys: {', '.join(extra)}"
-        )
-    translate = table.get("translate", False)
-    if not isinstance(translate, bool):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: selection.translate must be true or false: {translate!r}"
         )
     resolvers = table.get("resolvers", [])
     if (
@@ -427,7 +422,7 @@ def _selection(cfg) -> Selection:
         selector = None if path is None else utils.load_class(path, Selector)
     except ValueError as error:
         raise ConfigError(f"linear-orchestrator/config.toml: selection.selector: {error}") from None
-    return Selection(selector, translate, tuple(ResolverName(r) for r in resolvers))
+    return Selection(selector, tuple(ResolverName(r) for r in resolvers))
 
 
 def _agent_labels(cfg):
