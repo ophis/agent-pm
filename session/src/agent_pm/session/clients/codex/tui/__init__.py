@@ -498,7 +498,8 @@ def bind(label, value, workdir, sid, *, root=None):
 
 
 def on_hook(call: HookCall) -> dict | None:
+    began = time.monotonic()
     if not bind(call.label, call.payload, call.workdir, call.sid, root=call.state["store"]):
         return None
-    replies.on_hook(call, call.payload)  # a Stop's replies precede the Host hook's done
+    replies.on_hook(call, began=began)  # a Stop's replies precede the Host hook's done
     return {**call.payload, "hook_event_name": call.label}

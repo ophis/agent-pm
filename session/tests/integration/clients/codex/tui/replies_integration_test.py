@@ -10,10 +10,12 @@ import time
 from pathlib import Path
 from unittest import mock
 
+from agent_pm.session.clients.codex.common import SessionStore
+from agent_pm.session.clients.codex.tui import replies
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Access, Mode, Spec
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import read_reply
+from agent_pm.utils import file_lock, read_reply
 
 from session.tests import live_tmux
 from session.tests.case import HOSTS, REPO, Case
@@ -102,7 +104,21 @@ class RepliesTest(Case):
             what="the turn's first prompt hook",
         )
         handle.send("status?")
+        self.addCleanup(self.watcher_gone)
         return time.monotonic()
+
+    def watcher_gone(self):
+        """Waits out the steer's watcher, which ends IDLE_EXIT s after its last answer."""
+        path = replies.state_path(SessionStore().root, str(self.work), "caller-id")
+
+        def free():
+            try:
+                with file_lock(path + ".watch", wait=False):
+                    return True
+            except BlockingIOError:
+                return False
+
+        live_tmux.wait(free, WAIT, what="the watcher's exit")
 
     def test_steer_writes_reply_before_done(self):
         self.steered()

@@ -90,9 +90,10 @@ class RepliesBase(Base):
         self.hook("UserPromptSubmit", prompt=prompt, turn_id=turn_id)
 
     def open_turn(self, prompt="first", turn_id="t1"):
+        """Codex runs the prompt's hook, then records the prompt."""
         self.hook("SessionStart", source="startup")
-        self.append(_said("user", prompt))
         self.hook("UserPromptSubmit", prompt=prompt, turn_id=turn_id)
+        self.append(_said("user", prompt))
 
     def watch(self, clock=None):
         clock = clock or Clock()
@@ -170,6 +171,51 @@ class SteerTest(RepliesBase):
         (reply_id,) = self.reply_ids()
         self.assertEqual(read_reply(self.events, reply_id), "after")
 
+    def test_steer_recorded_before_its_late_hook_still_replies(self):
+        self.open_turn()
+        self.append(_said("user", "status?"), _said("assistant", "answer"))
+        self.steer("status?")  # the Docker Host runs a relayed hook after Codex goes on
+        self.watch()
+        (reply_id,) = self.reply_ids()
+        self.assertEqual(read_reply(self.events, reply_id), "answer")
+
+    def test_opening_record_is_not_a_steer_record(self):
+        self.open_turn("same")
+        self.append(_said("assistant", "early"))
+        self.steer("same")
+        self.append(_said("user", "same"), _said("assistant", "for the steer"))
+        self.watch()
+        (reply_id,) = self.reply_ids()
+        self.assertEqual(read_reply(self.events, reply_id), "for the steer")
+
+    def test_failed_emit_drops_its_steer_and_still_closes(self):
+        self.open_turn()
+        self.steer("status?")
+        self.append(_said("user", "status?"), _said("assistant", "answer"))
+        with open(self.events + ".replies", "w", encoding="utf-8"):
+            pass
+        got = self.hook("Stop", turn_id="t1", last_assistant_message="answer")
+        self.assertEqual(got["hook_event_name"], "Stop")
+        self.assertEqual(self.lines(), [])
+        self.assertFalse(self.state()["turn"]["open"])
+        self.assertIn("codex reply: ", self.stderr.getvalue())
+
+    def test_deadline_counts_from_the_hook_start(self):
+        self.open_turn()
+        call = HookCall(
+            "Interrupt",
+            {"session_id": NATIVE, "cwd": str(self.cwd)},
+            self.sid,
+            str(self.work),
+            self.events,
+            {"store": SessionStore().root, "name": NAME},
+        )
+        with replies.file_lock(self.state_file, wait=False):
+            began = time.monotonic()
+            replies.on_hook(call, began=began - replies.DEADLINES["Interrupt"])
+            self.assertLess(time.monotonic() - began, 0.5)
+        self.assertIn("locked", self.stderr.getvalue())
+
     def test_identical_prompts_match_in_order(self):
         self.open_turn()
         self.steer("same")
@@ -187,8 +233,8 @@ class SteerTest(RepliesBase):
         self.append(_said("user", "status?"), _said("assistant", "answer"))
         self.watch()
         saved = self.state()
-        steer = {"prompt": "status?", "offset": 0, "cursor": 0, "at": None, "skip": False}
-        saved["steers"] = [steer]
+        steer = {"n": 9, "prompt": "status?", "cursor": 0, "at": None, "skip": False}
+        saved["steers"], saved["turn"]["claimed"] = [steer], []
         with open(self.state_file, "w", encoding="utf-8") as stream:
             json.dump(saved, stream)
         self.watch()
@@ -245,6 +291,7 @@ class SteerTest(RepliesBase):
     def test_non_str_payload_fields_are_absent(self):
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit", prompt=5, turn_id=["x"])
+        self.append(_said("user", "opening"))
         self.hook("UserPromptSubmit", prompt={"a": 1}, turn_id=7)
         self.append(_said("user", "anything"), _said("assistant", "reply"))
         got = self.hook("Stop", last_assistant_message=[1])
@@ -312,12 +359,13 @@ class ScanTest(RepliesBase):
         filler = _said("assistant", "x" * 1000)
         self.append(*[filler] * 3000, _said("user", "status?"), _said("assistant", "answer"))
         state = self.state()
-        (start,) = (steer["cursor"] for steer in state["steers"])
-        (found,) = replies.scan(state, budget=replies.HOOK_SCAN_MAX).values()
+        start = state["turn"]["start"]
+        (found,) = replies.scan(state, budget=replies.HOOK_SCAN_MAX)["steers"].values()
         self.assertIsNone(found["answer"])
         self.assertLessEqual(found["cursor"] - start, replies.SCAN_MAX)
-        (found,) = replies.scan(state, budget=1000).values()
+        (found,) = replies.scan(state, budget=1000)["steers"].values()
         self.assertLessEqual(found["cursor"] - start, 1000)
+        self.assertFalse(found["skip"])  # a read the budget cut short skips no record
         self.watch()
         (reply_id,) = self.reply_ids()
         self.assertEqual(read_reply(self.events, reply_id), "answer")
