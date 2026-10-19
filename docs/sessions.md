@@ -39,6 +39,8 @@ Text sent to a Codex tui session mid-turn joins that turn (a steer). When the se
 
 Role runs' client flags are `[policy.<client>]` in `delegate/src/agent_pm/delegate/config.toml` (`[policy.claude]`, `[policy.codex]`; none packaged for OpenCode, so none unless a local `[delegate.policy.opencode]` sets them), after the session's `[clients.<client>] flags` and permission mode. Their system-prompt flag (`--append-system-prompt`, Codex's `developer_instructions`) tells a role run its final reply is the outcome block alone; OpenCode has no such flag, its config being the session's. A local list replaces the default whole: copy that flag into it.
 
+A role run's TUI turn end without an outcome block gets one nudge, and each later one counts toward giving up (`delegate/src/agent_pm/delegate/engine/runner.py`), unless the client reports background work still running: Claude Code lists it on Stop (`background_tasks`) and starts a new turn when it finishes, so the run waits for that turn. Codex reports none: its Stop (checked against Codex 0.163.0) carries no background work, and nothing shows a background terminal (`/ps`) or subagent starting a new turn as it ends. Counting them would trade the nudge, which asks the agent to wait for background work first, for a wait until `idle_timeout`.
+
 Every session, crew workers and role runs, gets one permission mode from the Host it runs on: an `isolated` Host (`[hosts.docker] isolated = true`) `yolo`, every other Host `auto`. Each mode's flags are the client's, in `[clients.<client>.modes]` in `session/src/agent_pm/session/config.toml`, the only home of permission flags; a start, restart and resume each get the mode of the Host they run on, and `client-resume` (this machine) `auto`:
 
 | Client | `auto` | `yolo` |
