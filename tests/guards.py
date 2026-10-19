@@ -2,7 +2,13 @@
 inventory. Each layer's own data: tests/guard_data/; the checks: tests/guard_checks/.
 """
 
-LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
+LEVELS = (
+    ("utils", "session"),
+    ("delegate",),
+    ("selector",),
+    ("linear-orchestrator",),
+    ("manager",),
+)
 
 
 UNIT_ISOLATION_ALLOWED = {}

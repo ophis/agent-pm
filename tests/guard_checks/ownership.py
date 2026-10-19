@@ -14,6 +14,7 @@ from tests.guard_data.linear_orchestrator import (
     ORCH,
     ORCH_FILES,
     ORCH_PROJECT,
+    TOOL_STRINGS_ALLOWED,
 )
 from tests.guard_data.session import (
     CLIENTS_HOME,
@@ -385,7 +386,9 @@ def orchestrator_text(repo: str) -> list[str]:
             )
         )
         found.update(
-            f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
+            f'{rel}:{line}: str constant "{s}"'
+            for line, s in strings
+            if s in TOOL_STRINGS and (rel, s) not in TOOL_STRINGS_ALLOWED
         )
     return sorted(found)
 

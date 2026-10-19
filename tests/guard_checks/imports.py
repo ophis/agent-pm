@@ -25,6 +25,7 @@ from tests.guard_data.linear_orchestrator import (
     ORCH_SESSION_CONTRACT,
     ORCH_SRC,
 )
+from tests.guard_data.selector import SELECTOR_SRC
 from tests.guard_data.session import SESSION
 from tests.guards import PKG, PROJECTS
 from tests.import_policy import violation
@@ -105,9 +106,12 @@ def orchestrator_session_imports(repo: str) -> list[str]:
 
 def orchestrator_imports(repo: str) -> list[str]:
     """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
-    names in delegate's literal __all__; no other package imports it.
+    names in delegate's and selector's literal __all__; no other package imports it.
     """
-    exported = _literal_all(os.path.join(repo, DELEGATE_SRC, "__init__.py"))
+    exported = {
+        package: _literal_all(os.path.join(repo, src, "__init__.py"))
+        for package, src in (("delegate", DELEGATE_SRC), ("selector", SELECTOR_SRC))
+    }
     found = set()
     for rel, text in _files(os.path.join(repo, ORCH_PROJECT, ORCH_SRC), ".py"):
         tree = ast.parse(text, rel)
@@ -164,19 +168,19 @@ def _orchestrator_module(module):
     parts = module.split(".")
     if parts[0] != PKG:
         return None if parts[0] in sys.stdlib_module_names | {"__future__"} else module
-    if len(parts) == 1 or parts[1] == ORCH or parts[1:] in (["utils"], ["delegate"]):
+    if len(parts) == 1 or parts[1] == ORCH or parts[1:] in (["utils"], ["delegate"], ["selector"]):
         return None
     if parts[1] == "utils":
         return module
-    return ".".join(parts[:3] if parts[1] == "delegate" else parts[:2])
+    return ".".join(parts[:3] if parts[1] in ("delegate", "selector") else parts[:2])
 
 
 def _orchestrator_name(name, exported):
     parts = name.split(".")
     if parts[0] != PKG or len(parts) == 1 or parts[1] in (ORCH, "utils"):
         return None
-    if parts[1] == "delegate":
-        return None if len(parts) == 2 or parts[2] in exported else ".".join(parts[:3])
+    if parts[1] in exported:
+        return None if len(parts) == 2 or parts[2] in exported[parts[1]] else ".".join(parts[:3])
     return ".".join(parts[:2])
 
 

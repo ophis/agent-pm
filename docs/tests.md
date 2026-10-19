@@ -1,7 +1,7 @@
 # Tests
 
 ```bash
-export PYTHONPATH=.:.github:delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
+export PYTHONPATH=.:.github:delegate/src:session/src:utils/src:selector/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
 Lint (tool versions pinned in `.github/workflows/test.yml`):
@@ -13,7 +13,7 @@ ruff format --check --no-cache
 python3 -m tests.unit_imports
 pyright
 lint-imports --no-cache
-pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src selector/src delegate/src session/src utils/src
 vulture
 python3 -m tests.checks
 python3 .github/run_tests.py "Repository integration" tests/integration
