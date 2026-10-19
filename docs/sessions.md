@@ -33,7 +33,9 @@ Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its o
 
 `start --display none` starts a worker without a pane, still opened by the caller, and hidden. Hidden (from that, `hide`, or closing its pane by hand; not from losing the manager's window or detaching its viewer) lasts through `restart` and `resume` until `show`.
 
-Text sent to a Codex tui session mid-turn joins that turn (a steer). When the session has an events file, the first answer after it appends `HH:MM:SS <name> reply <id>` before the turn's `done`, its text kept 30 days in `<events>.replies/<id>`; `agent-pm-crew pending --content` and `next-event --content` print that text. A watcher the steer's hook starts reads the session file within a few seconds, and the turn's Stop hook reads it once more. An answer Codex gives only in the next turn has no `reply`.
+Text sent to a Codex or Claude tui session mid-turn joins that turn. Codex takes it at once (a steer). Claude Code (measured on 2.1.304, a Docker Host worker) queues it, a `queue-operation` enqueue record in its transcript, and once the running tool returns joins it to the turn as a `queued_command` attachment: one turn, one Stop, one `done`. That `done` holds the answer only when the turn's last message does: an answer followed by more tool calls is in an earlier message alone. Text sent after a Claude turn ended starts a new turn with its own `done`.
+
+When the session has an events file, the first answer after the joined text appends `HH:MM:SS <name> reply <id>` before the turn's `done`, its text kept 30 days in `<events>.replies/<id>`; `agent-pm-crew pending --content` and `next-event --content` print that text. A watcher reads the session file within a few seconds (started by Codex's steer hook, or Claude's PostToolUse hook once a message is queued), and the turn's Stop hook reads it once more. An answer given only in the next turn has no `reply`; that turn's `done` holds it.
 
 ## Client policy
 

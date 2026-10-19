@@ -8,55 +8,32 @@ regular file beneath / without following links. Scans start where the turn began
 steer's hook ran (Docker's run late), and skip the turn's opening record and claimed ones.
 """
 
-import contextlib
-import hashlib
 import json
 import os
-import subprocess
 import sys
 import time
-from collections.abc import Callable
 from typing import Any
 
-import agent_pm.utils
+from agent_pm.session.clients import replies as shared
 from agent_pm.session.clients.codex.common import (
     RecoveryError,
     SessionStore,
     session_file,
 )
 from agent_pm.session.clients.codex.tui import records
-from agent_pm.session.engine.status_log import SessionStatusLog
+from agent_pm.session.clients.replies import LIFETIME, Clock, Sleep, locked
 from agent_pm.session.engine.types import HookCall
-from agent_pm.utils import (
-    STALE_AGE,
-    file_lock,
-    json_records,
-    module_roots,
-    open_beneath,
-    read_beneath,
-    save,
-    save_reply,
-    source_path,
-)
+from agent_pm.utils import json_records, open_beneath, read_beneath, save
 
 PENDING_MAX = 16
 CLAIMED_MAX = 64
 PROMPT_MAX = 4096  # characters of a normalized prompt kept for matching
 SCAN_MAX = 1 << 20  # bytes of the session file one steer's scan reads
 HOOK_SCAN_MAX = 4 << 20  # bytes of the session file one scan reads for all steers
-STATE_MAX = 1 << 20
 DEADLINES = {"Interrupt": 1.5}  # seconds from the hook's start; its budget is 3 s, bind's 1 s
 DEADLINE = 5.0  # other hooks', within their 10 s
-LOCK_POLL = 0.05
-WATCH_LOCK_WAIT = 1.0
-POLL = 1.0
-IDLE_EXIT = 2.0
-LIFETIME = 6 * 3600  # a watcher's longest life, and an open turn's before it is stale
-QUIET = 1800  # seconds the session file may stay the same size before a watcher gives up
 LABELS = ("SessionStart", "UserPromptSubmit", "Stop", "Interrupt")
 WATCH = f"{__package__}.watch"  # run as python -P -s -m on this layer's source roots
-Clock = Callable[[], float]
-Sleep = Callable[[float], None]
 
 
 def state_path(store: str, workdir: str, sid: str) -> str:
@@ -148,53 +125,7 @@ def _valid(state) -> bool:
 
 def _load(path: str) -> dict:
     """The state file's state; a fresh one when it is missing, refused or malformed."""
-    data = read_beneath(os.path.dirname(path), path, limit=STATE_MAX + 1)
-    try:
-        state = json.loads(data) if data and len(data) <= STATE_MAX else None
-    except (ValueError, RecursionError):
-        state = None
-    return state if isinstance(state, dict) and _valid(state) else _fresh()
-
-
-def _directory(path: str) -> None:
-    with contextlib.suppress(FileExistsError):
-        os.mkdir(path, 0o700)
-
-
-def _prune(directory: str) -> None:
-    """Drops state files older than STALE_AGE with their lock files (drop_stale would also drop a
-    live run's old lock file).
-    """
-    cutoff = time.time() - STALE_AGE
-    with contextlib.suppress(OSError), os.scandir(directory) as entries:
-        old = [
-            entry.path
-            for entry in entries
-            if entry.name.endswith(".json")
-            and entry.is_file(follow_symlinks=False)
-            and entry.stat(follow_symlinks=False).st_mtime < cutoff
-        ]
-    for path in old:
-        for name in (path, path + ".lock", path + ".watch.lock"):
-            with contextlib.suppress(OSError):
-                os.unlink(name)
-
-
-@contextlib.contextmanager
-def _locked(path: str, deadline: float, clock: Clock, sleep: Sleep):
-    """The state file's lock, waited for until `deadline`, then TimeoutError."""
-    while True:
-        stack = contextlib.ExitStack()
-        try:
-            stack.enter_context(file_lock(path, wait=False))
-            break
-        except BlockingIOError:
-            stack.close()
-            if clock() >= deadline:
-                raise TimeoutError(f"{path}: locked") from None
-            sleep(LOCK_POLL)
-    with stack:
-        yield
+    return shared.load(path, _fresh, _valid)
 
 
 def _size(path: str) -> int:
@@ -294,9 +225,7 @@ def _identity(turn: dict) -> tuple:
 
 def _emit(state: dict, at: int, text: str) -> None:
     """Stores the answer once per steer record, then appends its `reply <id>` line."""
-    reply_id = hashlib.sha256(f"{state['native']}:{at}".encode()).hexdigest()[:32]
-    if save_reply(state["events"], reply_id, text):
-        SessionStatusLog(state["events"]).write(state["name"], "reply", reply_id)
+    shared.emit(state["events"], state["name"], f"{state['native']}:{at}", text)
 
 
 def _commit(current: dict, progress: dict, *, close: bool) -> None:
@@ -340,14 +269,14 @@ def settle(
     """Scans for pending steers' answers, then, locked again, merges what the scan found into the
     same turn, still open (and, `close`, closes it); the pending steers left.
     """
-    with _locked(path, deadline, clock, sleep):
+    with locked(path, deadline, clock, sleep):
         state = _load(path)
     if not state["turn"]["open"]:
         return 0
     if resolve:
         _resolve(state)
     progress = scan(state, final=final, budget=budget) if state["rollout"] else None
-    with _locked(path, deadline, clock, sleep):
+    with locked(path, deadline, clock, sleep):
         current = _load(path)
         if current["turn"]["open"] and _identity(current["turn"]) == _identity(state["turn"]):
             if not current["rollout"]:
@@ -361,58 +290,22 @@ def settle(
 
 def ensure_watcher(path: str) -> None:
     """Starts a detached watcher of `path` unless one holds its watch lock."""
-    try:
-        with file_lock(path + ".watch", wait=False):
-            pass
-    except BlockingIOError:
-        return
-    subprocess.Popen(  # detached: never waited for
-        [sys.executable, "-P", "-s", "-m", WATCH, path],
-        start_new_session=True,
-        close_fds=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={**os.environ, **source_path(module_roots(sys.modules[__name__], agent_pm.utils))},
-        cwd="/",
-    )
+    shared.ensure_watcher(path, WATCH)
 
 
 def watch(path: str, *, clock: Clock | None = None, sleep: Sleep | None = None) -> int:
-    """The watcher: settles every POLL s while steers are pending; ends IDLE_EXIT s after none
-    are, once the session file has not grown for QUIET s, or after LIFETIME s; 0 at once while
-    another watcher holds the watch lock.
-    """
-    try:
-        with file_lock(path + ".watch", wait=False):
-            return _watch(path, clock or time.monotonic, sleep or time.sleep)
-    except BlockingIOError:
-        return 0
-
-
-def _watch(path: str, clock: Clock, sleep: Sleep) -> int:
-    began = idle = grew = clock()
-    size = -1
-    while clock() - began < LIFETIME:
-        try:
-            deadline = clock() + WATCH_LOCK_WAIT
-            pending = settle(
-                path, deadline=deadline, budget=HOOK_SCAN_MAX, clock=clock, sleep=sleep
-            )
-        except (TimeoutError, OSError) as error:
-            print(f"codex reply: {error}", file=sys.stderr)
-            pending = 1
-        if pending:
-            idle = clock()
-        elif clock() - idle >= IDLE_EXIT:
-            return 0
-        found = _size(_load(path)["rollout"])
-        if found != size:
-            size, grew = found, clock()
-        elif clock() - grew >= QUIET:
-            return 0
-        sleep(POLL)
-    return 0
+    """The watcher (shared.watch) of `path`'s pending steers and its session file."""
+    clock, sleep = clock or time.monotonic, sleep or time.sleep
+    return shared.watch(
+        path,
+        lambda deadline: settle(
+            path, deadline=deadline, budget=HOOK_SCAN_MAX, clock=clock, sleep=sleep
+        ),
+        lambda: _size(_load(path)["rollout"]),
+        clock=clock,
+        sleep=sleep,
+        label="codex reply",
+    )
 
 
 def on_hook(call: HookCall, *, began: float) -> None:
@@ -433,8 +326,8 @@ def _on_hook(call: HookCall, deadline: float) -> None:
         return
     clock, sleep, payload = time.monotonic, time.sleep, call.payload
     path = state_path(store, call.workdir, call.sid)
-    _directory(os.path.dirname(path))
-    _prune(os.path.dirname(path))
+    shared.directory(os.path.dirname(path))
+    shared.prune(os.path.dirname(path))
     if call.label in ("Stop", "Interrupt"):
         final = _text(payload.get("last_assistant_message")) if call.label == "Stop" else ""
         settle(
@@ -448,13 +341,13 @@ def _on_hook(call: HookCall, deadline: float) -> None:
             resolve=False,
         )
         return
-    with _locked(path, deadline, clock, sleep):
+    with locked(path, deadline, clock, sleep):
         state = _load(path)
     state.update(name=name, events=events, store=store, workdir=call.workdir, sid=call.sid)
     _resolve(state)  # walks the client's sessions tree: never under the lock
     turn_id, now = _text(payload.get("turn_id")) or None, time.time()
     prompt = _normalized(_text(payload.get("prompt")))
-    with _locked(path, deadline, clock, sleep):
+    with locked(path, deadline, clock, sleep):
         current = _load(path)
         current.update(name=name, events=events, store=store, workdir=call.workdir, sid=call.sid)
         if not current["rollout"]:

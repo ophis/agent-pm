@@ -94,6 +94,11 @@ NOQA_ALLOWED = {
         "BLE001",
         "on_hook",
     ): "steer replies must never fail the hook or keep its done line",
+    (
+        f"{SESSION_SRC}clients/claude/replies.py",
+        "BLE001",
+        "on_hook",
+    ): "replies must never fail the hook or keep its done line",
 }
 
 

@@ -765,7 +765,10 @@ class TranscriptTest(TranscriptCase):
         run = self.launched(resume=True)
         self.assertEqual(
             run.hook_callback(),
-            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
+            HookCallback(
+                ClaudeTui.__module__,
+                {"transcript": self.path, "start": size, "store": run.common.store, "name": ""},
+            ),
         )
         self.assertEqual(run.observe(), [])
         self.append(PROMPT, said("m3", text("Z")))
@@ -783,7 +786,10 @@ class TranscriptTest(TranscriptCase):
         self.assertEqual(run.observe(), [Reply("Y")])
         self.assertEqual(
             run.hook_callback(),
-            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
+            HookCallback(
+                ClaudeTui.__module__,
+                {"transcript": self.path, "start": size, "store": run.common.store, "name": ""},
+            ),
         )
 
     def test_a_bad_cursor_is_refused(self):

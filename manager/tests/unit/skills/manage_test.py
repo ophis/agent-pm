@@ -78,10 +78,12 @@ class Manage(Case):
         self.assertIn("`stale holder generation`", events)
         self.assertFalse([rule for rule in rules("manage") if rule.startswith("env ")])
 
-    def test_a_codex_answer_mid_turn_is_a_reply_event(self):
-        self.assertNotIn("send after `done`", section("manage", "Direct"))
+    def test_a_mid_turn_answer_is_a_reply_event(self):
+        direct = section("manage", "Direct")
+        self.assertNotIn("send after `done`", direct)
+        self.assertIn("A Codex or Claude worker takes text sent mid-turn", direct)
         events = section("manage", "Events")
-        self.assertIn("- **reply `<id>`**", events)
+        self.assertIn("- **reply `<id>`**: a Codex or Claude session answered", events)
         self.assertIn("except `reply`", events)
 
     def test_events_arrive_with_their_content_and_need_no_pane_read(self):
