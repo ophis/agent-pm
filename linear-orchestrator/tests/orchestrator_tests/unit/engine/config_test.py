@@ -463,6 +463,47 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
+    def test_client_max_runs(self):
+        for text, limits in (
+            (PIPELINE, {}),
+            (PIPELINE + "[client_max_runs]\n", {}),
+            (
+                PIPELINE + "[client_max_runs]\nopencode = 1\nghost = 2\n",
+                {"opencode": 1, "ghost": 2},
+            ),
+        ):
+            with self.subTest(limits=limits):
+                cfg = self.load(text)
+                self.assertEqual(cfg.client_max_runs, limits)
+                with self.assertRaises(TypeError):
+                    cfg.client_max_runs["new"] = 1
+        self.local("[client_max_runs]\nopencode = 1\n")
+        self.assertEqual(self.load(PIPELINE).client_max_runs, {"opencode": 1})
+
+    def test_client_max_runs_rejected(self):
+        cases = [
+            (
+                PIPELINE.replace("[roles.", "client_max_runs = 1\n[roles.", 1),
+                "client_max_runs must be a table of <client> = <whole number >= 1>",
+            ),
+            *[
+                (
+                    PIPELINE + f"[client_max_runs]\nopencode = {value}\n",
+                    f"[client_max_runs] opencode must be a whole number >= 1: {shown}",
+                )
+                for value, shown in (
+                    ("0", "0"),
+                    ("-1", "-1"),
+                    ('"2"', "'2'"),
+                    ("true", "True"),
+                    ("1.5", "1.5"),
+                )
+            ],
+        ]
+        for text, message in cases:
+            with self.subTest(message, text=text):
+                self.fails("linear-orchestrator/config.toml: " + message, text)
+
     def test_agent_labels(self):
         for top, table, group, labels in (
             ("", "", "", {}),
@@ -647,6 +688,14 @@ class CommittedConfiguration(Case):
         self.assertEqual(
             {r: {k: p[k] for k in ("account", "key")} for r, p in committed["roles"].items()},
             dict.fromkeys(("researcher", "pm", "engineer"), {"account": "", "key": ""}),
+        )
+
+    def test_packaged_client_max_runs(self):
+        local = HEADER + role("researcher") + role("pm") + role("engineer")
+        self.assertEqual(self.load(local).client_max_runs, {"opencode": 1})
+        self.assertEqual(
+            self.load(local + "[client_max_runs]\nclaude = 3\nopencode = 2\n").client_max_runs,
+            {"opencode": 2, "claude": 3},
         )
 
     def test_without_local_names_what_is_missing(self):

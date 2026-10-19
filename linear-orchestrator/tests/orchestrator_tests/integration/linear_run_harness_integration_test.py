@@ -34,6 +34,7 @@ class HarnessRun(HarnessCase):
             task_tiers={},
             agent_label_group="",
             agent_labels={},
+            client_max_runs={},
             roles={},
             project_repos={},
             local_clones={},

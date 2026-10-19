@@ -36,6 +36,7 @@ TOP_KEYS = {
     "task_tiers",
     "agent_label_group",
     "agent_labels",
+    "client_max_runs",
     "roles",
     "project_repos",
     "local_clones",
@@ -183,6 +184,7 @@ def _load(cfg, work):
             "task_labels",
             "task_tiers",
             "agent_labels",
+            "client_max_runs",
             "project_repos",
             "local_clones",
         )
@@ -201,6 +203,7 @@ def _load(cfg, work):
         task_tiers=frozen["task_tiers"],
         agent_label_group=cfg["agent_label_group"],
         agent_labels=frozen["agent_labels"],
+        client_max_runs=frozen["client_max_runs"],
         project_repos=frozen["project_repos"],
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
@@ -281,6 +284,7 @@ def _load_config(cfg, local):
     _task_labels(cfg)
     _task_tiers(cfg)
     _agent_labels(cfg)
+    _client_max_runs(cfg)
 
 
 def _role_fields(cfg):
@@ -423,6 +427,19 @@ def _agent_labels(cfg):
                 f"linear-orchestrator/config.toml: agent_labels.{k} and task_labels.{tasks[v]} have the same label id {v}"
             )
         seen[v] = k
+
+
+def _client_max_runs(cfg):
+    limits = cfg.setdefault("client_max_runs", {})
+    if not isinstance(limits, dict):
+        raise ConfigError(
+            "linear-orchestrator/config.toml: client_max_runs must be a table of <client> = <whole number >= 1>"
+        )
+    for k, n in limits.items():
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: [client_max_runs] {k} must be a whole number >= 1: {n!r}"
+            )
 
 
 def _runnable(cfg, work, delegate_cls):
