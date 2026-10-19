@@ -63,9 +63,10 @@ class LauncherTest(Case):
         ):
             self.enterContext(mock.patch(target, value))
 
-    def run_with(self, child, *, prompt="Hi there") -> int:
+    def run_with(self, child, *, prompt="Hi there", stdin=None) -> int:
         self.addCleanup(child.stderr.close)
-        argv = ["--timeout", "120", "--prompt", prompt, "--", "opencode", "run"]
+        given = ["--prompt", prompt] if stdin is None else ["--stdin"]
+        argv = ["--timeout", "120", *given, "--", "opencode", "run"]
         with mock.patch.object(launcher.subprocess, "Popen", return_value=child) as popen:
             code = launcher.main(argv)
         popen.assert_called_once()
@@ -85,6 +86,14 @@ class LauncherTest(Case):
         (timer,) = Timers.made
         self.assertEqual(timer.seconds, 120.0)
         self.assertTrue(timer.cancelled)
+
+    def test_the_stdin_form_feeds_its_own_stdin_to_the_command(self):
+        child = Child([BOUND])
+        text = "雪 a\n" * 40_000
+        stdin = io.TextIOWrapper(io.BytesIO(text.encode()))
+        with mock.patch("sys.stdin", stdin):
+            self.assertEqual(self.run_with(child, stdin=True), 0)
+        self.assertEqual(child.stdin.written, text.encode())
 
     def test_a_signal_is_128_plus_its_number(self):
         self.assertEqual(self.run_with(Child([BOUND], code=-signal.SIGKILL)), 128 + signal.SIGKILL)
@@ -258,6 +267,9 @@ class LauncherTest(Case):
             ["--timeout", "inf", "--prompt", "", "--", "a"],
             ["--time", "1", "--prompt", "", "--", "a"],
             ["--timeout", "1", "--prompt", ""],
+            ["--timeout", "1", "--stdin"],
+            ["--timeout", "1", "--stdin", "--"],
+            ["--timeout", "1", "--stdin", "x", "--", "a"],
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(launcher.main(argv), 2)

@@ -1,5 +1,5 @@
 """OpenCode's headless Mode: `opencode run --format json` behind launcher.py, which feeds it the
-prompt on stdin (`run` quotes an argument holding a space). The first sessionID binds the run; text
+prompt on stdin (`run` quotes an argument holding a space), read from its own stdin when over_argv. The first sessionID binds the run; text
 parts are Replies, tools Activity, an error the failed turn; the end is the turn's, its last text.
 """
 
@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
     TurnFailed,
 )
 from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.utils import over_argv
 
 SESSION_TIMEOUT = 120  # seconds a run may take to print its first sessionID
 
@@ -58,6 +59,7 @@ class OpenCodeHeadless(Homed, Headless):
         )
         self.cwd, self.sid = cwd, sid
         self.bound, self.failed, self.last = False, False, ""
+        stdin = spec.prompt if over_argv(spec.prompt) else None
         return Launch(
             (
                 found.python if found else os.path.realpath(sys.executable),
@@ -65,8 +67,7 @@ class OpenCodeHeadless(Homed, Headless):
                 image_path(found, launcher.__file__) if found else launcher.__file__,
                 "--timeout",
                 str(SESSION_TIMEOUT),
-                "--prompt",
-                spec.prompt,
+                *(("--stdin",) if stdin is not None else ("--prompt", spec.prompt)),
                 "--",
                 *command,
             ),
@@ -75,6 +76,7 @@ class OpenCodeHeadless(Homed, Headless):
             cwd=cwd,
             transcript=common.transcript(env, context),
             project=spec.access.project,
+            stdin=stdin,
         )
 
     def events(self, lines):

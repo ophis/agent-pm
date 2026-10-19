@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.utils import over_argv
 
 
 class CodexHeadless(Headless):
@@ -47,7 +48,9 @@ class CodexHeadless(Headless):
         if resume:
             argv.extend(self.common.selector(self.state.native_id, resume=True))
         _, literal = split_flags(snapshot.flags)
-        argv.extend((*literal, spec.prompt) if literal else ("--", spec.prompt))
+        stdin = spec.prompt if over_argv(spec.prompt) else None
+        prompt = "-" if stdin is not None else spec.prompt  # `-`: codex exec reads stdin
+        argv.extend((*literal, prompt) if literal else ("--", prompt))
         return Launch(
             tuple(argv),
             env=self.common.environment(snapshot),
@@ -56,6 +59,7 @@ class CodexHeadless(Headless):
             project=snapshot.project,
             transcript=self.common.transcript(self.state) if resume else "",
             resume=self.common.resume_command(self.state) if resume else "",
+            stdin=stdin,
         )
 
     def commit(self) -> None:

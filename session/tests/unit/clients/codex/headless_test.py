@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.modes.headless import HeadlessMode
+from agent_pm.utils import PROMPT_ARGV_MAX
 
 from session.tests.case import packaged_hosts
 from session.tests.fakes.terminal import MemoryHost
@@ -154,6 +155,28 @@ class HeadlessTest(Base):
         argv = committed_headless(self.client, spec).argv
         start = argv.index("resume")
         self.assertEqual((argv[start + 1], argv[-2:]), (NATIVE, ("--", "again")))
+
+    def test_a_prompt_over_the_argv_budget_goes_on_stdin_on_start_and_resume(self):
+        big = "雪" * 40_000
+        fresh = committed_headless(
+            self.client, dataclasses.replace(self.spec, sid="big", prompt=big)
+        )
+        self.assertEqual((fresh.argv[-2:], fresh.stdin), (("--", "-"), big))
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        resumed = committed_headless(
+            self.client, dataclasses.replace(self.spec, prompt=big, resume=True)
+        )
+        self.assertEqual((resumed.argv[-2:], resumed.stdin), (("--", "-"), big))
+        literal = dataclasses.replace(self.spec, sid="literal", flags=("--", "lit"), prompt=big)
+        launch = committed_headless(self.client, literal)
+        self.assertEqual((launch.argv[-3:], launch.stdin), (("--", "lit", "-"), big))
+        at = "a" * (PROMPT_ARGV_MAX - 2)
+        launch = committed_headless(
+            self.client, dataclasses.replace(self.spec, sid="at-budget", prompt=at)
+        )
+        self.assertEqual((launch.argv[-2:], launch.stdin), (("--", at), None))
 
     def test_source_local_reset_formats_become_unix_seconds(self):
         self.client.common.config["env"] = {"TZ": "UTC"}
