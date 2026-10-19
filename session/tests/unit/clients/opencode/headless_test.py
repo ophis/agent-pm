@@ -36,6 +36,7 @@ from session.tests.unit.clients.opencode.support import (
 )
 
 MODEL = "ollama/qwen3.6:35b-mlx"
+STRATA = {"strata": {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}}
 
 
 def decide(rules: dict, path: str) -> str | None:
@@ -150,10 +151,35 @@ class LaunchTest(Base):
         self.assertEqual(provider["options"]["baseURL"], "http://127.0.0.1:11500/v1")
 
     def test_only_ollama_tiers_are_listed(self):
-        tiers = {"1": "ollama/a", "2": "ollama/a", "3": "other/b", "4": "ollama/c"}
-        client = OpenCodeClient({**packaged_table(), "tiers": tiers})
+        tiers = {"1": "ollama/a", "2": "ollama/a", "3": "strata/b", "4": "ollama/c"}
+        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "providers": STRATA})
         models = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
         self.assertEqual(models["models"], {"a": {"name": "a"}, "c": {"name": "c"}})
+
+    def test_only_ollama_is_enabled_by_default(self):
+        inline = self.inline(self.launch(self.spec()))
+        self.assertEqual(inline["enabled_providers"], ["ollama"])
+        self.assertEqual(list(inline["provider"]), ["ollama"])
+
+    def test_a_configured_provider_is_enabled_with_its_and_its_tiers_models(self):
+        tiers = {"1": "ollama/a", "2": "strata/b", "3": "strata/m", "4": "strata/b"}
+        providers = {**STRATA, "lab": {"base_url": "https://lab.lan/v1", "models": []}}
+        client = OpenCodeClient({**packaged_table(), "tiers": tiers, "providers": providers})
+        launch = self.launch(self.spec(tier=2), client=client)
+        inline = self.inline(launch)
+        self.assertEqual(inline["enabled_providers"], ["ollama", "lab", "strata"])
+        self.assertEqual(
+            inline["provider"]["strata"],
+            {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "strata",
+                "options": {"baseURL": "http://10.0.0.5:8080/v1"},
+                "models": {"m": {"name": "m"}, "b": {"name": "b"}},
+            },
+        )
+        self.assertEqual(inline["provider"]["lab"]["models"], {})
+        self.assertTrue(holds(self.command(launch), ("--model", "strata/b")))
+        self.assertNotIn("apiKey", json.dumps(inline))
 
     def test_auto_has_no_auto_flag(self):
         self.assertNotIn("--auto", self.command(self.launch(self.spec())))

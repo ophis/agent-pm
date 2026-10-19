@@ -17,7 +17,9 @@ class OpenCodeClient(Client):
     selection = ((), ("--session",))
     valued_flags = VALUED
     forbidden_selection = SELECTORS
-    keys = frozenset({"flags", "modes", "tiers", "efforts", "env", "ollama_port", "executable"})
+    keys = frozenset(
+        {"flags", "modes", "tiers", "efforts", "env", "ollama_port", "executable", "providers"}
+    )
     client_note = (
         "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else is "
         "refused."

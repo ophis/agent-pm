@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -69,6 +70,43 @@ class ConfigTest(Case):
         for key, value in (("tiers", {"1": 3}), ("efforts", {"low": ""}), ("env", {"A": 1})):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, rf"\.{key} must be"):
                 common(**{key: value})
+
+    def test_the_packaged_table_has_no_provider(self):
+        self.assertEqual(common().providers, {})
+
+    def test_a_provider_table_is_checked(self):
+        good = {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}
+        for providers in (
+            {"strata": "x"},
+            {"strata": {"base_url": good["base_url"]}},
+            {"strata": {**good, "api_key": "k"}},
+            {"strata": {**good, "base_url": "10.0.0.5:8080/v1"}},
+            {"strata": {**good, "base_url": "http://a b/v1"}},
+            {"strata": {**good, "models": "m"}},
+            {"strata": {**good, "models": [""]}},
+            {"strata": {**good, "models": ["a b"]}},
+            {"str/ata": good},
+            {"": good},
+            {"ollama": good},
+            [good],
+        ):
+            with (
+                self.subTest(providers=providers),
+                self.assertRaisesRegex(ConfigError, r"\.providers must be"),
+            ):
+                common(providers=providers)
+        self.assertEqual(common(providers={"strata": good}).providers, {"strata": good})
+
+    def test_a_tier_names_ollama_or_a_listed_provider(self):
+        good = {"base_url": "https://strata.lan/v1", "models": []}
+        found = common(providers={"strata": good}, tiers={"1": "strata/m", "2": "ollama/a"})
+        self.assertEqual(found.model(1), "strata/m")
+        for model in ("other/b", "b", "strata/", "/m", "opencode/big-pickle"):
+            with (
+                self.subTest(model=model),
+                self.assertRaisesRegex(ConfigError, rf"tiers\.1 {re.escape(repr(model))}: not"),
+            ):
+                common(providers={"strata": good}, tiers={"1": model})
 
     def test_a_missing_tier_or_effort_is_a_config_error(self):
         found = common(tiers={"1": "ollama/a"}, efforts={"low": "low"})

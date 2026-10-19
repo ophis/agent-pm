@@ -86,8 +86,10 @@ max = "max"
 [clients.codex.env]
 
 # [clients.opencode]  OpenCode 1.x, headless and TUI (session/src/agent_pm/session/clients/opencode/); its models run
-#                    on the host's Ollama, which stays on 127.0.0.1. Each launch's OpenCode config (OPENCODE_CONFIG_CONTENT)
-#                    holds the ollama provider at http://<the Host's address>:<ollama_port>/v1, autoupdate off and
+#                    on the host's Ollama, which stays on 127.0.0.1, or a [clients.opencode.providers] one. Each launch's
+#                    OpenCode config (OPENCODE_CONFIG_CONTENT) holds the ollama provider at
+#                    http://<the Host's address>:<ollama_port>/v1 and the configured providers, every other provider
+#                    off (enabled_providers: OpenCode's built-in ones, OpenCode Zen's included), autoupdate off and
 #                    permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
 #                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
 #                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
@@ -100,7 +102,13 @@ max = "max"
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
 #                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
 # [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted
-# [clients.opencode.tiers]    tier "1".."4" → its --model, provider/model; ollama/<model> is listed under the provider
+# [clients.opencode.tiers]    tier "1".."4" → its --model: ollama/<model> or <name>/<model> of a providers table, which
+#                             lists the model; any other provider is refused
+# [clients.opencode.providers.<name>]  an OpenAI-compatible provider (e.g. a LAN server; docs/sessions.md › OpenCode
+#                    sessions); none packaged:
+#   base_url         its http(s) URL, ending /v1 (http://<host>:8080/v1)
+#   models           model names it lists beside those tiers map to it; [] → only those
+#                    Its API key: `opencode auth login` (provider <name>) on the host; agent-pm never reads or passes it
 # [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
 [clients.opencode]
 implementation = "agent_pm.session.clients.opencode:OpenCodeClient"
@@ -113,6 +121,8 @@ auto = []
 yolo = ["--auto"]
 
 [clients.opencode.env]
+
+[clients.opencode.providers]
 
 [clients.opencode.tiers]
 1 = "ollama/qwen3.6:35b-mlx"
