@@ -10,7 +10,7 @@ from unittest import mock
 
 import agent_pm.session as session
 from agent_pm import utils
-from agent_pm.delegate import Outcome
+from agent_pm.delegate import HarnessDelegate, Outcome
 from agent_pm.linear_orchestrator.engine.selection import (
     Choice,
     Context,
@@ -33,6 +33,7 @@ from orchestrator_tests.selection_fixtures import (
 from delegate.tests.fakes.delegate import FakeDelegate
 from selector.tests.fakes.selector import FakeSelector
 
+ORCHESTRATOR_CONFIG = (("agent_pm.linear_orchestrator", "config.toml"),)
 CLAUDE = Context("engineer", "build", "claude")
 OPENCODE = Context("engineer", "build", "opencode")
 
@@ -91,6 +92,36 @@ class Translating(Case):
             ("TASK-1", workdir, "translate", None, "headless", False),
         )
         self.assertEqual(overlays, (core,))
+
+    def test_the_roles_own_config_and_the_board_overlay_run_it_on_haiku_reading_its_ticket(self):
+        core = utils.read_resources(ORCHESTRATOR_CONFIG)["core"]
+        run = HarnessDelegate.resolve("choice-translator", "translate", overlays=(core,))
+        self.assertEqual(
+            (list(run.commands), run.client, run.tier, run.effort, run.output["type"]),
+            (["agent-pm-linear issue read *"], "claude", 4, "low", "orchestrator"),
+        )
+        self.assertEqual(session_clients()["claude"]["tiers"][str(run.tier)], "haiku")
+
+    def test_the_real_roles_outcome_is_its_state_or_a_translate_error(self):
+        index = HarnessDelegate.roles()
+        self.assertEqual(list(index["choice-translator"]), ["translate"])
+        state = "Kind: a docs wording tweak.\nSize: one file in one repo.\n"
+        for outcome, want in (
+            (Outcome("done", "state of TASK-1", "a docs tweak", deliverable=state), state.strip()),
+            (Outcome("failed", "state of TASK-1", "the ticket read failed"), None),
+        ):
+
+            class Role(FakeDelegate):
+                ROLES = index
+                outcome_result = outcome
+
+            with self.subTest(status=outcome.status):
+                if want is not None:
+                    self.assertEqual(translate("TASK-1", self.workdir(), provider=Role), want)
+                    continue
+                with self.assertRaises(SelectionError) as caught:
+                    translate("TASK-1", self.workdir(), provider=Role)
+                self.assertEqual(caught.exception.reason, SelectionFailure.TRANSLATE)
 
     def test_a_blank_issue_is_refused_before_any_run(self):
         fake = provider(done("x"))

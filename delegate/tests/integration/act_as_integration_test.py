@@ -11,7 +11,7 @@ from delegate.tests.case import REPO, Case
 from delegate.tests.skills.act_as import argv, command
 from utils.tests.sandbox import clean_env, python_path
 
-ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
+ROLES = ["researcher", "pm", "engineer", "dummy-tester", "choice-translator"]
 BIN = os.path.join(REPO, "bin")  # the plugin's bin/, on a Claude Code session's PATH
 
 

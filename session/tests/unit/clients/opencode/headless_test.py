@@ -37,6 +37,7 @@ from session.tests.unit.clients.opencode.support import (
 
 MODEL = "ollama/qwen3.6:35b-mlx"
 STRATA = {"strata": {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}}
+LIMIT = {"context": 65536, "input": 32768, "output": 16384}  # the default window's
 
 
 def decide(rules: dict, path: str) -> str | None:
@@ -118,14 +119,13 @@ class LaunchTest(Base):
         client = OpenCodeClient({**packaged_table(), "providers": STRATA, "model": "strata/d"})
         launch = self.launch(self.spec(), client=client)
         self.assertTrue(holds(self.command(launch), ("--model", "strata/d")))
-        self.assertEqual(
-            self.inline(launch)["provider"]["strata"]["models"],
-            {"m": {"name": "m"}, "d": {"name": "d"}},
-        )
+        self.assertEqual(list(self.inline(launch)["provider"]["strata"]["models"]), ["m", "d"])
         tiers = {"1": "ollama/a", "2": "ollama/a", "3": "ollama/a", "4": "ollama/a"}
         client = OpenCodeClient({**packaged_table(), "tiers": tiers, "model": "ollama/b"})
         ollama = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
-        self.assertEqual(ollama["models"], {"a": {"name": "a"}, "b": {"name": "b"}})
+        self.assertEqual(
+            {name: model["name"] for name, model in ollama["models"].items()}, {"a": "a", "b": "b"}
+        )
 
     def test_a_runs_model_flag_is_refused(self):
         for flags in (("-m", "ollama/b"), ("--model", "opencode/big-pickle")):
@@ -152,7 +152,12 @@ class LaunchTest(Base):
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "Ollama",
                 "options": {"baseURL": "http://127.0.0.1:11434/v1"},
-                "models": {"qwen3.6:35b-mlx": {"name": "qwen3.6:35b-mlx"}},
+                "models": {
+                    "qwen3.6:35b-mlx": {
+                        "name": "qwen3.6:35b-mlx",
+                        "limit": LIMIT,
+                    }
+                },
             },
         )
 
@@ -171,7 +176,7 @@ class LaunchTest(Base):
         config = {"tiers": tiers, "providers": STRATA, "model": "ollama/c"}
         client = OpenCodeClient({**packaged_table(), **config})
         models = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
-        self.assertEqual(models["models"], {"a": {"name": "a"}, "c": {"name": "c"}})
+        self.assertEqual(list(models["models"]), ["a", "c"])
 
     def test_only_ollama_is_enabled_by_default(self):
         inline = self.inline(self.launch(self.spec()))
@@ -192,7 +197,10 @@ class LaunchTest(Base):
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "strata",
                 "options": {"baseURL": "http://10.0.0.5:8080/v1"},
-                "models": {"m": {"name": "m"}, "b": {"name": "b"}},
+                "models": {
+                    "m": {"name": "m", "limit": LIMIT},
+                    "b": {"name": "b", "limit": LIMIT},
+                },
             },
         )
         self.assertEqual(inline["provider"]["lab"]["models"], {})

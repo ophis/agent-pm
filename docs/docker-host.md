@@ -312,7 +312,8 @@ Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `local
    `host.docker.internal` ([Risks](#risks)).
 2. Set its context length to at least 65536, or tool calls fail: for the Ollama app,
    `launchctl setenv OLLAMA_CONTEXT_LENGTH 65536`, then quit and reopen it; for `ollama serve`, start it with
-   `OLLAMA_CONTEXT_LENGTH=65536`.
+   `OLLAMA_CONTEXT_LENGTH=65536`. A larger one: set `[session.clients.opencode] ollama_context` to it, or
+   OpenCode compacts as for 65536 ([OpenCode sessions](sessions.md#opencode-sessions)).
 3. Pull every `ollama/` model of the tiers and `model`, `ollama pull qwen3.6:35b-mlx` by default
    (`[session.clients.opencode.tiers]`; `ollama_port`, default 11434, is its port).
 

@@ -53,7 +53,7 @@ class TuiPaths(Base):
 
 
 class PlanPaths(PlanCase):
-    def test_hook_commands_preserve_quoting_and_all_six_timeouts(self):
+    def test_hook_commands_preserve_quoting_timeouts_and_matchers(self):
         roots = []
         for package, name in (("session", "session 'sources"), ("utils", "utils sources 字")):
             root = Path(self.home) / name
@@ -71,11 +71,13 @@ class PlanPaths(PlanCase):
         commands = tui.commands(hook)
         self.assertEqual(list(commands), [event for event, _, _ in HOOKS])
         flags = tui.hook_flags(hook)
-        self.assertEqual(flags[::2], ("-c",) * 6)
+        self.assertEqual(flags[::2], ("-c",) * len(HOOKS))
         for (event, _, _), encoded in zip(HOOKS, flags[1::2], strict=True):
             with self.subTest(event=event):
                 self.assertEqual(shlex.split(commands[event]), [*argv, event])
-                row = tomllib.loads(encoded)["hooks"][event][0]["hooks"][0]
+                group = tomllib.loads(encoded)["hooks"][event][0]
+                self.assertEqual(group.get("matcher"), tui.MATCHERS.get(event))
+                row = group["hooks"][0]
                 self.assertEqual(
                     row,
                     {

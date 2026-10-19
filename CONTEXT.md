@@ -9,11 +9,11 @@ One project of the stack and its package, `<project>/src/agent_pm/<package>/`; i
 _Avoid_: level (a config override level)
 
 **Role**:
-A persona with standards and boundaries (researcher, pm, engineer, dummy-tester), defined by a charter plus config.
+A persona with standards and boundaries (researcher, pm, engineer, dummy-tester, choice-translator), defined by a charter plus config.
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
+One job a role can do (deep research, research, light research, product design, build, light build, echo, translate), defined by its task file's steps and listed in its role's task index.
 _Avoid_: skill, job
 
 **Principles**:
@@ -105,7 +105,7 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Selector**:
-The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`).
+The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`); `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev.
 _Avoid_: router, chooser
 
 **Resolver chain**:

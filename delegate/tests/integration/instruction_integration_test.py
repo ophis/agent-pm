@@ -20,7 +20,7 @@ from delegate.tests.skills.act_as import argv, head, prefix
 from utils.tests.case import local_section
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
-ROLES = ("researcher", "pm", "engineer", "dummy-tester")
+ROLES = ("researcher", "pm", "engineer", "dummy-tester", "choice-translator")
 INPUT = "Compare A and B."
 AGENT_PM = re.compile(r"python3 -P (?:-m agent_pm\.[\w.]+|<team>/tools/[\w-]+\.py) \w+")
 REPO = "python3 -P <team>/tools/repo.py"

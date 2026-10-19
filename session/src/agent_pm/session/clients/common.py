@@ -20,6 +20,12 @@ def strings(value) -> bool:
     return isinstance(value, list) and all(isinstance(s, str) for s in value)
 
 
+def question(titles) -> str:
+    """A question dialog's blocked reason: `question: ` and its titles, the empty ones left out."""
+    found = [t for t in titles if isinstance(t, str) and t] if isinstance(titles, list) else []
+    return f"question: {'; '.join(found)}" if found else "question"
+
+
 FLAGS = ("flags", strings, "a list of strings")
 MODES = (
     "modes",
