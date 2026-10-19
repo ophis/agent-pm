@@ -8,7 +8,7 @@ English · [中文](docs/readme/README.zh-CN.md) · [日本語](docs/readme/READ
 
 </div>
 
-Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
+Runs coding agents (Claude Code, Codex, OpenCode on the host's Ollama models) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
 
 Developers: `AGENTS.md`.
 
@@ -46,7 +46,7 @@ agent-pm is built in layers: each does one job and calls only the one below. Tak
 | Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
 | Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
 | Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
-| Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
+| Session | Starts, watches and resumes a coding agent (Claude Code, Codex, OpenCode) in tmux, a pty or a Docker container, the same way for every client. | [Sessions](docs/sessions.md) |
 
 The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). The roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
@@ -91,9 +91,10 @@ Nothing checks these. A missing one fails the agent run.
 | `claude` CLI, Python 3.11+ | every agent run |
 | the [`autopilot`](https://github.com/ophis/claude-autopilot) plugin, in each client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, then `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, then `codex plugin add autopilot@claude-autopilot` | the engineer's build tasks (`/autopilot:build`, `/autopilot:light-build`) and the PM's PRD review (`/autopilot:review`). Not needed otherwise. |
 | tmux 3.3+ | tui runs on the `tmux` Host |
+| [Ollama](https://ollama.com) on `127.0.0.1` with its context length at least 65536 and the tier model pulled; on `tmux` and `pty` also OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | OpenCode runs only ([Docker host › OpenCode](docs/docker-host.md#opencode), [OpenCode sessions](docs/sessions.md#opencode-sessions)) |
 | `git`, `gh` logged in | coding (checkouts, pull requests) and GitHub destinations. Not needed otherwise. |
 | iTerm2 running | the default iTerm2 split |
-| Docker Desktop running; the broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), installed by `sh <plugin dir>/broker/install.sh` (needs `sudo` and `gh` logged in); one login each: `B login claude` (paste a `claude setup-token`), `B login github agent-pm-bot`, and for Codex `sudo B install-codex <version>`, then `B login codex` | the Docker Host only ([Docker host](docs/docker-host.md)); no Node on the host. What each credential grants, where it lives and how to revoke it: [Credentials](docs/credentials.md). |
+| Docker Desktop running; the broker `B` (`/usr/local/libexec/agent-pm/agent-pm-broker`), installed by `sh <plugin dir>/broker/install.sh` (needs `sudo` and `gh` logged in); one login each: `B login claude` (paste a `claude setup-token`), `B login github agent-pm-bot`, and for Codex `sudo B install-codex <version>`, then `B login codex`; OpenCode needs none | the Docker Host only ([Docker host](docs/docker-host.md)); no Node on the host. What each credential grants, where it lives and how to revoke it: [Credentials](docs/credentials.md). |
 
 How the sessions agent-pm starts load your settings, and why some commands refuse inside them: [Session settings](docs/sessions.md#session-settings).
 
@@ -126,12 +127,12 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Customizing roles and tasks](docs/customizing-roles-and-tasks.md) | run settings, team dirs, role and task files, checks |
 | [Linear board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue) |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
-| [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags |
+| [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions |
 | [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
 | [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage (developers) |
-| [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, risks |
+| [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, OpenCode on the host's Ollama, risks |
 | [Docker checks](docs/docker-checks.md) | hand checks for each Docker Host step and the pending Codex live checks |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: purpose, least privilege, storage, readers, lifetime, revocation |
 | [Docker Codex](docs/docker-codex.md) | Codex install, login, sessions, refresh, version policy and the plan A verdict (probe records: `ophis/private_docs`) |

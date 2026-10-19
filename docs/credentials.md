@@ -196,7 +196,7 @@ Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--us
 ## What a container cannot reach
 
 Run each with `C` a running worker container (`docker ps --filter label=agent-pm.session --format '{{.Names}}'`),
-once for a Claude and once for a Codex worker. Each prints counts only.
+once for each client's worker: Claude, Codex, OpenCode. Each prints counts only.
 
 | Resource | Command | Pass | Requirements | Claude | Codex |
 |---|---|---|---|---|---|

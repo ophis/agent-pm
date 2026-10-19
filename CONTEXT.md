@@ -51,7 +51,7 @@ The component that runs a prompt on the client and mode its caller names, throug
 _Avoid_: facade, runtime (a Mode's class), harness
 
 **Client**:
-The agent program a session runs (Claude Code, Codex, a test fake), and the code that wraps it for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. Named by its `[clients.<name>]` table. In code: the ABC `Client` (`session/src/agent_pm/session/clients/`); its name: `Spec.client`, the run key `client`, `--client` and records' `client` field.
+The agent program a session runs (Claude Code, Codex, OpenCode, a test fake), and the code that wraps it for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. Named by its `[clients.<name>]` table. In code: the ABC `Client` (`session/src/agent_pm/session/clients/`); its name: `Spec.client`, the run key `client`, `--client` and records' `client` field.
 _Avoid_: adapter, runtime (a Mode's class), agent (a role's run), backend, vehicle
 
 **Mode**:

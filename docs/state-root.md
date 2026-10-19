@@ -20,7 +20,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   ├── orchestrator.jsonl.1      the event log before its last rotation
 │   ├── orchestrator.jsonl.lock   one rotation at a time
 │   └── router.lock               one router at a time
-├── sessions/claude/  codex/      what a client session's resume command replays
+├── sessions/<client>/            what a client session's resume command replays: claude/, codex/, opencode/
 ├── tui/<name>/                   a running tui session's state and hook log (hooks.jsonl, .1)
 ├── tui/<name>.lock               that name's start and close lock
 ├── pty/<name>/                   a pty-host session's files
