@@ -2,7 +2,8 @@
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
 // {text, late?: ms} (late: saved ms after the turn's idle), {tool}, {bash, child?} (asks unless
-// --auto, then waits for the stdin line "allow"), {error, recover?} (recovered: the turn goes on, as
+// --auto, then waits for the stdin line "allow"), {question, child?} (asks, then waits for the stdin
+// line "answer" or "dismiss"), {error, recover?} (recovered: the turn goes on, as
 // after a compaction), {unsaved} (an assistant message never completed), {errored} (one that
 // failed), {lateUser: ms} (the whole turn, its user message too, saved ms after its idle),
 // {foreign}, {busy}, {reinit}, {nested}. Each start and nested probe is a FAKE_LOG line.
@@ -121,6 +122,16 @@ async function step(item) {
       await emit("permission.replied", { sessionID: session, requestID: "per_1", reply: "once" });
     }
     await tool(session, "bash");
+  } else if ("question" in item) {
+    const session = item.child ? CHILD : native;
+    if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
+    const questions = [{ question: "Which one?", header: item.question, options: [{ label: "A", description: "" }] }];
+    await emit("question.asked", { id: "que_1", sessionID: session, questions });
+    let line;
+    while ((line = await next()) !== "answer" && line !== "dismiss");
+    if (line === "answer") await emit("question.replied", { sessionID: session, requestID: "que_1", answers: [["A"]] });
+    else await emit("question.rejected", { sessionID: session, requestID: "que_1" });
+    await tool(session, "question");
   } else if ("error" in item) {
     await emit("session.error", { sessionID: native, error: item.error });
     if (!item.recover) {
@@ -134,6 +145,7 @@ async function step(item) {
     await emit("session.status", { sessionID: FOREIGN, status: { type: "busy" } });
     await tool(FOREIGN, "read");
     await emit("permission.asked", { id: "per_2", sessionID: FOREIGN, permission: "bash", patterns: [] });
+    await emit("question.asked", { id: "que_2", sessionID: FOREIGN, questions: [{ question: "?", header: "Foreign", options: [] }] });
     await emit("session.idle", { sessionID: FOREIGN });
   } else if ("busy" in item) {
     await emit("session.status", { sessionID: native, status: { type: "busy" } });

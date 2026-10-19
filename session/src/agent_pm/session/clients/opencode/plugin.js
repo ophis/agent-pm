@@ -1,7 +1,7 @@
 // agent-pm's OpenCode plugin: turns the root session's events into calls of the tui hook command
 // (AGENT_PM_OPENCODE_HOOK, a JSON argv; the label last, a JSON payload on stdin), one at a time.
 // The root is the resumed session (AGENT_PM_OPENCODE_SESSION) or the first session created without
-// a parent; its children's permission asks count too. State lives here, not per plugin call:
+// a parent; its children's permission asks and questions count too. State lives here, not per plugin call:
 // OpenCode calls a plugin again whenever it rebuilds its instance.
 import { spawn } from "node:child_process";
 
@@ -139,6 +139,18 @@ function handle(event, client) {
     case "permission.replied":
       if (!owned(p.sessionID)) return;
       call("permission.replied", { reply: p.reply ?? "" });
+      return;
+    case "question.asked": {
+      // The question tool's prompt: each question's header, else its text.
+      if (!owned(p.sessionID)) return;
+      const titles = (Array.isArray(p.questions) ? p.questions : []).map((q) => q?.header || q?.question || "");
+      call("question.asked", { questions: titles.filter((t) => typeof t === "string") });
+      return;
+    }
+    case "question.replied":
+    case "question.rejected":
+      if (!owned(p.sessionID)) return;
+      call(event.type);
       return;
     case "message.updated":
       if (p.sessionID === root && p.info?.role === "user" && p.info.id) turnUser = p.info.id;

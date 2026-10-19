@@ -299,8 +299,11 @@ class EventsTest(Base):
                 "session.idle": HookKind.TURN_END,
                 "session.error": HookKind.TURN_FAILED,
                 "permission.asked": HookKind.BLOCKED,
+                "question.asked": HookKind.BLOCKED,
                 "session.busy": HookKind.ACTIVITY,
                 "permission.replied": HookKind.ACTIVITY,
+                "question.replied": HookKind.ACTIVITY,
+                "question.rejected": HookKind.ACTIVITY,
                 "tool": HookKind.ACTIVITY,
             },
         )
@@ -316,6 +319,20 @@ class EventsTest(Base):
             run.hook_events("permission.asked", {"session_id": SES, "permission": "bash"}),
             [Blocked("bash")],
         )
+        self.assertEqual(
+            run.hook_events("question.asked", {"session_id": SES, "questions": ["Database"]}),
+            [Blocked("question: Database")],
+        )
+        self.assertEqual(
+            run.hook_events("question.asked", {"session_id": SES, "questions": ["A", "", 3, "B"]}),
+            [Blocked("question: A; B")],
+        )
+        self.assertEqual(
+            run.hook_events("question.asked", {"session_id": SES, "questions": "A"}),
+            [Blocked("question")],
+        )
+        for label in ("question.replied", "question.rejected"):
+            self.assertEqual(run.hook_events(label, {"session_id": SES}), [Activity("")])
         self.assertEqual(
             run.hook_events("session.idle", {"session_id": SES, "last_assistant_message": "Done."}),
             [TurnEnd("Done.")],
