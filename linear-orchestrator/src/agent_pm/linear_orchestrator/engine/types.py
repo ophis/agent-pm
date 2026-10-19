@@ -129,6 +129,10 @@ class IssueError(LookupError):
     pass
 
 
+class ArchiveRefused(Exception):
+    """An archive the issue's or a descendant's unfinished state blocks; nothing was written."""
+
+
 class InputError(RuntimeError):
     pass
 
