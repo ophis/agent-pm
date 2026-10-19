@@ -148,6 +148,27 @@ class Runs(RunCase):
                     (self.cfg.core, {"roles": {"researcher": {"tier": 3}}}),
                 )
 
+    def test_an_effort_overlays_its_role_beside_the_tier(self):
+        for tier, effort, overlay in (
+            (None, "low", ({"roles": {"researcher": {"effort": "low"}}},)),
+            (2, "max", ({"roles": {"researcher": {"tier": 2, "effort": "max"}}},)),
+            (None, None, ()),
+        ):
+            with self.subTest(tier=tier, effort=effort):
+                owner = LinearRun(
+                    "TASK-1",
+                    "Echo input.",
+                    self.cfg.issue_workdir("TASK-1"),
+                    cfg=self.cfg,
+                    role="researcher",
+                    sid=SID,
+                    client="fake",
+                    tier=tier,
+                    effort=effort,
+                    delegate_cls=CapturedDelegate,
+                )
+                self.assertEqual(owner.delegate.accepted[2]["overlays"], (self.cfg.core, *overlay))
+
     def test_spec_passes_only_the_workdir(self):
         owner, _ = self.start(delegate_cls=CapturedDelegate)
         spec = owner.delegate.accepted[1]
