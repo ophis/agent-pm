@@ -119,7 +119,7 @@ READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
 STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
 _ARG_STRLEN_MAX = 131072  # Linux exec's limit on one argument, its NUL included
-# modes/tui.py _write_prompt in the container: keep the two alike
+# modes/base.py BaseMode._write_prompt in the container: keep the two alike
 PROMPT_STAGE = """import os, sys
 os.makedirs(os.path.dirname(sys.argv[1]), 0o700, exist_ok=True)
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
