@@ -127,6 +127,7 @@ class Config(JevCase):
             ("timeout = 0", "selector.jev.timeout must be positive seconds: 0"),
             ("timeout = true", "selector.jev.timeout must be positive seconds: True"),
             ('timeout = "2"', "selector.jev.timeout must be positive seconds: '2'"),
+            ("timeout = inf", "selector.jev.timeout must be positive seconds: inf"),
             (
                 'url = "http://example.com/v1/systemone"',
                 "url: want https, or http on a loopback IP, without userinfo",
@@ -137,6 +138,12 @@ class Config(JevCase):
                 with self.assertRaises(ValueError) as caught:
                     JevSelector()
                 self.assertIn(message, str(caught.exception))
+        for value in ("1", '"x"'):
+            with self.subTest(jev=value):
+                self.local(f"[selector]\njev = {value}\n")
+                with self.assertRaises(ValueError) as caught:
+                    JevSelector()
+                self.assertIn("[selector.jev] must be a table", str(caught.exception))
 
     def test_only_https_or_loopback_http(self):
         for url in (

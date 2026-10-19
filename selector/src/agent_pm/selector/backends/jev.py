@@ -6,6 +6,7 @@ Failure, so select raises outside any handler: no error chains a key or reply.
 import http.client
 import ipaddress
 import json
+import math
 import subprocess
 import urllib.error
 import urllib.parse
@@ -50,9 +51,11 @@ class JevSelector(Selector):
 def jev_config() -> SelectorConfig:
     """[jev] of the selector's config.toml and its local [selector.jev]. ValueError: a bad value."""
     table = agent_pm.utils.read_resources(CONFIG_RESOURCES)["jev"]
+    if not isinstance(table, dict):
+        raise ValueError(f"selector config: [selector.jev] must be a table: {table!r}")
     if extra := sorted(set(table) - {"key", "url", "model", "timeout"}):
         raise ValueError(f"selector config: [selector.jev] has unknown keys: {', '.join(extra)}")
-    key, url, model, timeout = (table.get(k) for k in ("key", "url", "model", "timeout"))
+    key, url, model, timeout = (table[k] for k in ("key", "url", "model", "timeout"))
     for name, value, ok, want in (
         ("key", key, _name(key), "a Keychain service name"),
         ("url", url, isinstance(url, str), "a URL"),
@@ -70,7 +73,12 @@ def _name(value):
 
 
 def _seconds(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
 
 
 def _allowed(url):
