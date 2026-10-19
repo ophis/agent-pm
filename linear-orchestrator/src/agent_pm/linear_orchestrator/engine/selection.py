@@ -1,9 +1,10 @@
 """The router's choice chain. translate turns an issue into the state once, a faithful English
 rendering of its title, description, status, labels and comments; each step is a Resolver
-paired with its Choice: choose picks one for the state given the Context so far, among options it
-reads from config, by asking a Selector; fallback gives today's choice, for a step switched off or
-a SelectionError. The router applies each Choice to the Context in a fixed order and records it for
-resume, logging only reason codes: issue text, the state and replies are untrusted data.
+paired with its Choice: choose picks one for the state given the Context so far, among described
+options it reads from config, by asking a Selector its own question; fallback gives today's choice,
+for a step switched off or a SelectionError. The router applies each Choice to the Context in a
+fixed order and records it for resume, logging only reason codes: issue text, the state and replies
+are untrusted data.
 """
 
 import json
@@ -28,6 +29,29 @@ TRANSLATOR_TASK = "translate"
 # The translate deliverable's JSON shape: its keys and each value's type.
 TRANSLATION_FIELDS = {"title": str, "description": str, "status": str, "labels": list}
 COMMENT_FIELDS = {"author": str, "created_at": str, "body": str}
+MODEL_INSTRUCTIONS = (
+    "Choose the least costly model that can still complete the work this issue asks for, to the "
+    "standard it sets. The options are the run's models, from most to least capable."
+)
+EFFORT_INSTRUCTIONS_NO_MODEL = (
+    "Choose the lowest reasoning effort at which the run's model can still complete the work this "
+    "issue asks for, to the standard it sets."
+)
+EFFORT_INSTRUCTIONS = (
+    "The run uses the model {model}. Choose the lowest reasoning effort at which that model can "
+    "still complete the work this issue asks for, to the standard it sets."
+)
+# An option's description by its rank: (first, between, last).
+MODEL_RANKS = (
+    "the most capable and most costly",
+    "less capable and less costly than the models above it",
+    "the least capable and least costly",
+)
+EFFORT_RANKS = (
+    "the least reasoning: fastest and cheapest",
+    "more reasoning than the efforts before it",
+    "the most reasoning: slowest and costliest",
+)
 
 
 class SelectionFailure(StrEnum):
@@ -71,44 +95,75 @@ class Resolver(ABC, Generic[C]):
 
 
 @dataclass(frozen=True)
-class TierChoice(Choice):
+class ModelChoice(Choice):
     tier: int | None
+
+    def apply(self, context: Context) -> Context:
+        return replace(context, tier=self.tier)
+
+    def record(self) -> dict[str, object]:
+        return {} if self.tier is None else {"tier": self.tier}
+
+
+@dataclass(frozen=True)
+class EffortChoice(Choice):
     effort: str | None
 
     def apply(self, context: Context) -> Context:
-        return replace(context, tier=self.tier, effort=self.effort)
+        return replace(context, effort=self.effort)
 
     def record(self) -> dict[str, object]:
-        return {k: v for k, v in (("tier", self.tier), ("effort", self.effort)) if v is not None}
+        return {} if self.effort is None else {"effort": self.effort}
 
 
-class TierResolver(Resolver[TierChoice]):
-    """Options: one per model and effort of the context client's tiers and efforts in session's
-    merged config; a pick maps back to its model's lowest tier. fallback: [task_tiers]'s tier for
-    the task, the role's effort.
+class ModelResolver(Resolver[ModelChoice]):
+    """Options: the context client's distinct models in session's merged config, in tier order; a
+    pick is its model's lowest tier. fallback: [task_tiers]'s tier for the task.
     """
 
     def __init__(self, selector: Selector, *, task_tiers: Mapping[str, int]):
         self.selector = selector
         self.task_tiers = task_tiers
 
-    def choose(self, state: SelectorState, context: Context) -> TierChoice:
-        if not isinstance(state, SelectorState) or not state.fields:
-            raise ValueError("state: want a State with fields")
-        options = _tier_options(context.client)
-        try:
-            pick = self.selector.select(
-                state,
-                Question("Choose the option that best fits the state.", {o: o for o in options}),
-            )
-        except SelectorError as error:
-            raise SelectionError(SelectionFailure.SELECT, error.reason) from None
-        if pick not in options:
-            raise SelectionError(SelectionFailure.INVALID)
-        return options[pick]
+    def choose(self, state: SelectorState, context: Context) -> ModelChoice:
+        _check(state)
+        tiers, _ = _client_table(context.client)
+        lowest: dict[str, int] = {}
+        for tier, model in tiers.items():
+            lowest.setdefault(model, tier)
+        options = {
+            model: f"tier {tier}: {_rank(i, len(lowest), MODEL_RANKS)}"
+            for i, (model, tier) in enumerate(lowest.items())
+        }
+        pick = _select(self.selector, state, Question(MODEL_INSTRUCTIONS, options))
+        return ModelChoice(lowest[pick])
 
-    def fallback(self, context: Context) -> TierChoice:
-        return TierChoice(self.task_tiers.get(context.task or ""), None)
+    def fallback(self, context: Context) -> ModelChoice:
+        return ModelChoice(self.task_tiers.get(context.task or ""))
+
+
+class EffortResolver(Resolver[EffortChoice]):
+    """Options: the context client's efforts in session's merged config, in config order; the
+    question names the model its tiers map the context's tier to. fallback: the role's effort.
+    """
+
+    def __init__(self, selector: Selector):
+        self.selector = selector
+
+    def choose(self, state: SelectorState, context: Context) -> EffortChoice:
+        _check(state)
+        tiers, efforts = _client_table(context.client)
+        model = None if context.tier is None else tiers.get(context.tier)
+        instructions = (
+            EFFORT_INSTRUCTIONS_NO_MODEL
+            if model is None
+            else EFFORT_INSTRUCTIONS.format(model=model)
+        )
+        options = {e: _rank(i, len(efforts), EFFORT_RANKS) for i, e in enumerate(efforts)}
+        return EffortChoice(_select(self.selector, state, Question(instructions, options)))
+
+    def fallback(self, context: Context) -> EffortChoice:
+        return EffortChoice(None)
 
 
 def translate(
@@ -159,22 +214,43 @@ def _translation(value: object) -> bool:
     )
 
 
-def _tier_options(client: str) -> dict[str, TierChoice]:
+def _check(state):
+    if not isinstance(state, SelectorState) or not state.fields:
+        raise ValueError("state: want a State with fields")
+
+
+def _client_table(client: str) -> tuple[dict[int, str], tuple[str, ...]]:
+    """client's tiers (tier → model, in tier order) and effort names from session's merged config;
+    a bad, missing or empty table: INVALID.
+    """
     try:
         table = utils.read_resources(SESSION_CONFIG)[SESSION_CLIENTS][client]
         tiers, efforts = table["tiers"], table["efforts"]
         if not isinstance(tiers, Mapping) or not isinstance(efforts, Mapping):
             raise TypeError
-        lowest = {}
-        for tier in sorted(tiers, key=int):
-            lowest.setdefault(tiers[tier], int(tier))
+        models = {int(tier): tiers[tier] for tier in sorted(tiers, key=int)}
     except (utils.ConfigFileError, LookupError, TypeError, ValueError):
         raise SelectionError(SelectionFailure.INVALID) from None
-    options = {
-        f"{model} / {effort}": TierChoice(tier, effort)
-        for model, tier in lowest.items()
-        for effort in efforts
-    }
-    if not options:
+    if (
+        not models
+        or not efforts
+        or not all(isinstance(m, str) and m.strip() for m in models.values())
+    ):
         raise SelectionError(SelectionFailure.INVALID)
-    return options
+    return models, tuple(efforts)
+
+
+def _rank(index: int, count: int, ranks: tuple[str, str, str]) -> str:
+    """The description of the option at index among count: the first's, the last's or between's."""
+    first, between, last = ranks
+    return first if index == 0 else last if index == count - 1 else between
+
+
+def _select(selector: Selector, state: SelectorState, question: Question) -> str:
+    try:
+        pick = selector.select(state, question)
+    except SelectorError as error:
+        raise SelectionError(SelectionFailure.SELECT, error.reason) from None
+    if pick not in question.options:
+        raise SelectionError(SelectionFailure.INVALID)
+    return pick

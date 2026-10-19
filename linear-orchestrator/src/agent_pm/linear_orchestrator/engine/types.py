@@ -32,9 +32,10 @@ class Docs:
 
 
 class ResolverName(StrEnum):
-    """A Resolver [selection] resolvers may list."""
+    """A Resolver [selection] resolvers may list, in this order."""
 
-    TIER = "tier"
+    MODEL = "model"
+    EFFORT = "effort"
 
 
 @dataclass(frozen=True)

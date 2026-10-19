@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from agent_pm.delegate import Delegate
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.selection import (
+    EffortResolver,
+    ModelResolver,
     Resolver,
     SelectionError,
-    TierResolver,
     translate,
 )
 from agent_pm.linear_orchestrator.engine.types import Config, Context, ResolverName
@@ -27,7 +28,8 @@ class Step:
 
 
 RESOLVERS: Mapping[ResolverName, Callable[[Config, Selector], Resolver]] = {
-    ResolverName.TIER: lambda cfg, selector: TierResolver(selector, task_tiers=cfg.task_tiers),
+    ResolverName.MODEL: lambda cfg, selector: ModelResolver(selector, task_tiers=cfg.task_tiers),
+    ResolverName.EFFORT: lambda _cfg, selector: EffortResolver(selector),
 }
 
 

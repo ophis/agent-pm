@@ -5182,7 +5182,8 @@ LEAKY = {**TRANSLATION, "title": "LEAK-STATE a session registry"}
 STATE = state_of(LEAKY)
 LEAK = "LEAK-SENTINEL"
 SELECTION_ON = (
-    '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\nresolvers = ["tier"]\n'
+    '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
+    'resolvers = ["model", "effort"]\n'
 )
 # a start row's fields before model selection
 START_FIELDS = {
@@ -5215,11 +5216,11 @@ class Relabel(Choice):
         return {"client": self.client, "task": self.task}
 
 
-def claude_pick(effort="low"):
-    """A pick among claude's options: its tier-3 model with effort, and the tier it maps to."""
+def claude_pick():
+    """claude's tier-3 model, a model layer's pick, and the lowest tier it maps to."""
     tiers = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]["tiers"]
     model = tiers["3"]
-    return f"{model} / {effort}", min(int(t) for t, m in tiers.items() if m == model)
+    return model, min(int(t) for t, m in tiers.items() if m == model)
 
 
 class ResolverChain(OuterBase):
@@ -5270,14 +5271,14 @@ class ResolverChain(OuterBase):
     def test_new_run_launches_and_records_the_selected_tier_and_effort(self):
         self.write_config(OUTER + SELECTION_ON)
         pick, tier = claude_pick()
-        selector = FakeSelector([pick])
+        selector = FakeSelector([pick, "low"])
         self.assertEqual(self.outer(client="claude", selector=selector), 0)
         self.assertEqual(self.detached(tier=tier, effort="low"), self.expected(client="claude"))
         (translated,) = self.api.translations
         self.assertEqual(
             (translated.input, translated.workdir, translated.task), (ID, self.rd, "translate")
         )
-        self.assertEqual([state for state, _ in selector.calls], [STATE])
+        self.assertEqual([state for state, _ in selector.calls], [STATE, STATE])
         row = self.start_row()
         self.assertEqual(
             (row["kind"], row["client"], row["tier"], row["effort"]),
@@ -5285,7 +5286,10 @@ class ResolverChain(OuterBase):
         )
         self.assertEqual(
             self.choices(),
-            [{"step": "tier", "by": "selector", "choice": {"tier": tier, "effort": "low"}}],
+            [
+                {"step": "model", "by": "selector", "choice": {"tier": tier}},
+                {"step": "effort", "by": "selector", "choice": {"effort": "low"}},
+            ],
         )
         self.assert_no_leak()
 
@@ -5303,14 +5307,17 @@ class ResolverChain(OuterBase):
                     self.choices(),
                     [
                         {
-                            "step": "tier",
+                            "step": step,
                             "by": "fallback",
                             "reason": "select",
                             "selector": failure.value,
                             "choice": {},
                         }
+                        for step in ("model", "effort")
                     ],
                 )
+                self.assertNotIn("tier", self.start_row())
+                self.assertNotIn("effort", self.start_row())
                 self.assert_no_leak()
 
     def test_translate_failure_still_starts_the_run(self):
@@ -5324,14 +5331,15 @@ class ResolverChain(OuterBase):
             self.choices(),
             [
                 {"step": "translate", "by": "fallback", "reason": "translate"},
-                {"step": "tier", "by": "fallback", "reason": "no-state", "choice": {"tier": 2}},
+                {"step": "model", "by": "fallback", "reason": "no-state", "choice": {"tier": 2}},
+                {"step": "effort", "by": "fallback", "reason": "no-state", "choice": {}},
             ],
         )
         self.assert_no_leak()
 
     def test_the_configured_selector_picks(self):
-        """One selector line swaps the Selector: FakeSelector picks the first option, the tier-1
-        model with the client's first effort.
+        """One selector line swaps the Selector: FakeSelector picks each question's first option,
+        the tier-1 model and the client's first effort.
         """
         self.write_config(OUTER + SELECTION_ON)
         claude = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]
@@ -5341,7 +5349,10 @@ class ResolverChain(OuterBase):
         self.assertEqual((self.start_row()["tier"], self.start_row()["effort"]), (1, effort))
         self.assertEqual(
             self.choices(),
-            [{"step": "tier", "by": "selector", "choice": {"tier": 1, "effort": effort}}],
+            [
+                {"step": "model", "by": "selector", "choice": {"tier": 1}},
+                {"step": "effort", "by": "selector", "choice": {"effort": effort}},
+            ],
         )
 
     def test_new_run_launches_with_the_final_context(self):

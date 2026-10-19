@@ -6,17 +6,23 @@ import os
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
+import agent_pm.session as session
+from agent_pm import utils
 from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.engine import chain
 from agent_pm.linear_orchestrator.engine.selection import (
+    EFFORT_INSTRUCTIONS,
+    MODEL_INSTRUCTIONS,
     Choice,
+    EffortChoice,
+    EffortResolver,
+    ModelChoice,
+    ModelResolver,
     SelectionError,
     SelectionFailure,
-    TierChoice,
-    TierResolver,
 )
 from agent_pm.linear_orchestrator.engine.types import Context, ResolverName, Selection
-from agent_pm.selector import Failure
+from agent_pm.selector import Failure, SelectorError
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
     TRANSLATION,
@@ -35,8 +41,8 @@ STATE = state_of(LEAKY)
 DELIVERABLE = deliverable(LEAKY)
 LEAK = "LEAK-SENTINEL"
 CONTEXT = Context("engineer", "build", "claude")
-PICKED = TierChoice(1, "low")
-FALLBACK = TierChoice(3, None)
+PICKED = ModelChoice(1)
+FALLBACK = ModelChoice(3)
 
 
 def translator(text=DELIVERABLE, *, run_error=None):
@@ -73,8 +79,8 @@ class ClientChoice(Choice):
         return {"client": self.client}
 
 
-def tier(**kw):
-    return chain.Step(ResolverName.TIER, FakeResolver(default=PICKED, fallback=FALLBACK, **kw))
+def model(**kw):
+    return chain.Step(ResolverName.MODEL, FakeResolver(default=PICKED, fallback=FALLBACK, **kw))
 
 
 def client(name):
@@ -84,6 +90,29 @@ def client(name):
 class Unbuildable(FakeSelector):
     def __init__(self):
         raise AssertionError("no chain builds no Selector")
+
+
+class FailingOn(FakeSelector):
+    """A FakeSelector raising error for the question whose instructions are failing."""
+
+    def __init__(self, picks, *, failing, error):
+        super().__init__(picks)
+        self.failing, self.failing_error = failing, error
+
+    def select(self, state, question):
+        if question.instructions == self.failing:
+            self.calls.append((state, question))
+            raise self.failing_error
+        return super().select(state, question)
+
+
+def layers(selector):
+    """The model and effort Steps over selector, with [task_tiers] build = 2."""
+    cfg = SimpleNamespace(
+        task_tiers={"build": 2},
+        selection=Selection(FakeSelector, (ResolverName.MODEL, ResolverName.EFFORT)),
+    )
+    return chain.steps(cfg, selector)
 
 
 class Resolving(Case):
@@ -113,6 +142,15 @@ class Resolving(Case):
             if e["kind"] == "choice"
         ]
 
+    def truncate_log(self):
+        os.makedirs(self.logs, exist_ok=True)
+        with open(os.path.join(self.logs, "orchestrator.jsonl"), "w"):
+            pass
+
+    def claude_tiers(self):
+        """Session's merged claude tiers: tier string to model."""
+        return utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]["tiers"]
+
     def assert_no_leak(self):
         with open(os.path.join(self.logs, "orchestrator.jsonl"), encoding="utf-8") as f:
             text = f.read()
@@ -123,11 +161,8 @@ class Resolving(Case):
         self.assertEqual((self.provider.created, self.choices()), ([], []))
 
     def test_active_chain_translates_once_and_applies_the_choice(self):
-        step = tier()
-        self.assertEqual(
-            self.resolve((step,)),
-            (replace(CONTEXT, tier=1, effort="low"), {"tier": 1, "effort": "low"}),
-        )
+        step = model()
+        self.assertEqual(self.resolve((step,)), (replace(CONTEXT, tier=1), {"tier": 1}))
         ((role, spec, overlays),) = self.provider.created
         self.assertEqual(
             (role, spec.input, spec.workdir, spec.task, overlays),
@@ -140,9 +175,9 @@ class Resolving(Case):
                 {
                     "kind": "choice",
                     "issue": "TASK-1",
-                    "step": "tier",
+                    "step": "model",
                     "by": "selector",
-                    "choice": {"tier": 1, "effort": "low"},
+                    "choice": {"tier": 1},
                 }
             ],
         )
@@ -165,7 +200,7 @@ class Resolving(Case):
                 with open(os.path.join(self.logs, "orchestrator.jsonl"), "w"):
                     pass
                 self.assertEqual(
-                    self.resolve((tier(error=error),)), (replace(CONTEXT, tier=3), {"tier": 3})
+                    self.resolve((model(error=error),)), (replace(CONTEXT, tier=3), {"tier": 3})
                 )
                 self.assertEqual(
                     self.choices(),
@@ -173,7 +208,7 @@ class Resolving(Case):
                         {
                             "kind": "choice",
                             "issue": "TASK-1",
-                            "step": "tier",
+                            "step": "model",
                             "by": "fallback",
                             **codes,
                             "choice": {"tier": 3},
@@ -184,7 +219,7 @@ class Resolving(Case):
 
     def test_any_other_choose_error_falls_back_as_error(self):
         self.assertEqual(
-            self.resolve((tier(error=KeyError(LEAK)),)), (replace(CONTEXT, tier=3), {"tier": 3})
+            self.resolve((model(error=KeyError(LEAK)),)), (replace(CONTEXT, tier=3), {"tier": 3})
         )
         self.assertEqual([(e["by"], e["reason"]) for e in self.choices()], [("fallback", "error")])
         self.assert_no_leak()
@@ -199,7 +234,7 @@ class Resolving(Case):
                 os.makedirs(self.logs, exist_ok=True)
                 with open(os.path.join(self.logs, "orchestrator.jsonl"), "w"):
                     pass
-                first, second = tier(), client("x")
+                first, second = model(), client("x")
                 self.assertEqual(
                     self.resolve((first, second), provider=provider),
                     (replace(CONTEXT, tier=3, client="x"), {"tier": 3, "client": "x"}),
@@ -209,7 +244,7 @@ class Resolving(Case):
                     [(e["step"], e["by"], e.get("reason")) for e in self.choices()],
                     [
                         ("translate", "fallback", reason),
-                        ("tier", "fallback", "no-state"),
+                        ("model", "fallback", "no-state"),
                         ("client", "fallback", "no-state"),
                     ],
                 )
@@ -220,13 +255,13 @@ class Resolving(Case):
         for first, second, context, records, seen in (
             (
                 client("codex"),
-                tier(),
-                replace(CONTEXT, client="codex", tier=1, effort="low"),
-                {"client": "codex", "tier": 1, "effort": "low"},
+                model(),
+                replace(CONTEXT, client="codex", tier=1),
+                {"client": "codex", "tier": 1},
                 replace(CONTEXT, client="codex"),
             ),
             (
-                tier(error=failing),
+                model(error=failing),
                 client("codex"),
                 replace(CONTEXT, client="codex", tier=3),
                 {"tier": 3, "client": "codex"},
@@ -240,8 +275,88 @@ class Resolving(Case):
 
     def test_a_key_recorded_twice_is_refused(self):
         with self.assertRaises(ValueError) as caught:
-            self.resolve((tier(), tier()))
+            self.resolve((model(), model()))
         self.assertEqual(str(caught.exception), "choice record field tier recorded twice")
+
+    def test_each_layer_falls_back_on_its_own(self):
+        """One layer's failure falls back for it alone; the other still asks the Selector, the
+        effort question naming the model the model layer left.
+        """
+        timeout = SelectorError(Failure.TIMEOUT)
+        claude = self.claude_tiers()
+        cases = (
+            (
+                "model fails",
+                MODEL_INSTRUCTIONS,
+                timeout,
+                (replace(CONTEXT, tier=2, effort="high"), {"tier": 2, "effort": "high"}),
+                [
+                    ("model", "fallback", "select", "timeout", {"tier": 2}),
+                    ("effort", "selector", None, None, {"effort": "high"}),
+                ],
+                EFFORT_INSTRUCTIONS.format(model=claude["2"]),
+            ),
+            (
+                "effort fails",
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+                timeout,
+                (replace(CONTEXT, tier=3), {"tier": 3}),
+                [
+                    ("model", "selector", None, None, {"tier": 3}),
+                    ("effort", "fallback", "select", "timeout", {}),
+                ],
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+            ),
+            (
+                "effort breaks",
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+                RuntimeError(LEAK),
+                (replace(CONTEXT, tier=3), {"tier": 3}),
+                [
+                    ("model", "selector", None, None, {"tier": 3}),
+                    ("effort", "fallback", "error", None, {}),
+                ],
+                EFFORT_INSTRUCTIONS.format(model=claude["3"]),
+            ),
+        )
+        for name, failing, error, resolved, lines, effort_asked in cases:
+            with self.subTest(name):
+                self.truncate_log()
+                selector = FailingOn([claude["3"], "high"], failing=failing, error=error)
+                self.assertEqual(self.resolve(layers(selector)), resolved)
+                self.assertEqual(
+                    [q.instructions for _, q in selector.calls], [MODEL_INSTRUCTIONS, effort_asked]
+                )
+                want = [
+                    {
+                        "kind": "choice",
+                        "issue": "TASK-1",
+                        "step": step,
+                        "by": by,
+                        **({} if reason is None else {"reason": reason}),
+                        **({} if code is None else {"selector": code}),
+                        "choice": record,
+                    }
+                    for step, by, reason, code, record in lines
+                ]
+                self.assertEqual(self.choices(), want)
+                self.assert_no_leak()
+
+    def test_no_state_falls_back_in_both_layers(self):
+        selector = FakeSelector()
+        self.assertEqual(
+            self.resolve(layers(selector), provider=translator(" \n")),
+            (replace(CONTEXT, tier=2), {"tier": 2}),
+        )
+        self.assertEqual(selector.calls, [])
+        self.assertEqual(
+            [(e["step"], e["by"], e.get("reason"), e.get("choice")) for e in self.choices()],
+            [
+                ("translate", "fallback", "invalid", None),
+                ("model", "fallback", "no-state", {"tier": 2}),
+                ("effort", "fallback", "no-state", {}),
+            ],
+        )
 
     def test_steps_build_no_selector_without_resolvers(self):
         cfg = SimpleNamespace(
@@ -252,15 +367,22 @@ class Resolving(Case):
     def test_steps_build_the_configured_selector(self):
         cfg = SimpleNamespace(
             task_tiers={"build": 2},
-            selection=Selection(selector=FakeSelector, resolvers=(ResolverName.TIER,)),
+            selection=Selection(
+                selector=FakeSelector, resolvers=(ResolverName.MODEL, ResolverName.EFFORT)
+            ),
         )
         injected = FakeSelector()
-        for given, kind in ((None, FakeSelector), (injected, FakeSelector)):
+        for given in (None, injected):
             with self.subTest(injected=given is not None):
-                (step,) = chain.steps(cfg, given)
-                self.assertEqual(step.name, ResolverName.TIER)
-                self.assertIsInstance(step.resolver, TierResolver)
-                self.assertIsInstance(step.resolver.selector, kind)
-                if given is not None:
-                    self.assertIs(step.resolver.selector, given)
-                self.assertEqual(step.resolver.fallback(CONTEXT), TierChoice(2, None))
+                model_step, effort_step = chain.steps(cfg, given)
+                self.assertEqual(
+                    (model_step.name, effort_step.name), (ResolverName.MODEL, ResolverName.EFFORT)
+                )
+                self.assertIsInstance(model_step.resolver, ModelResolver)
+                self.assertIsInstance(effort_step.resolver, EffortResolver)
+                for step in (model_step, effort_step):
+                    self.assertIsInstance(step.resolver.selector, FakeSelector)
+                    if given is not None:
+                        self.assertIs(step.resolver.selector, given)
+                self.assertEqual(model_step.resolver.fallback(CONTEXT), ModelChoice(2))
+                self.assertEqual(effort_step.resolver.fallback(CONTEXT), EffortChoice(None))

@@ -105,19 +105,19 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Selector**:
-The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`); `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev.
+The generic layer that asks a decision API (Jev or Kev) one question, a state and the caller's Question (its instructions and a description of each option), and returns the chosen option. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`); `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev.
 _Avoid_: router, chooser
 
 **Resolver chain**:
-The router's steps that decide a new run's launch choices from its issue: translate the issue once into its state, a faithful English JSON rendering of its title, description, status, labels and comments (an `agent_pm.selector.State`, not the workflow `State` enum of `engine/types.py`), then each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step without state or failing falls back to today's choice. `[linear_orchestrator.selection] resolvers` lists the chain; none: no chain, no translate. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py` and `engine/chain.py`.
+The router's steps that decide a new run's launch choices from its issue: translate the issue once into its state, a faithful English JSON rendering of its title, description, status, labels and comments (an `agent_pm.selector.State`, not the workflow `State` enum of `engine/types.py`), then each Resolver lists its options from config, asks a Selector its own question and returns its Choice, which applies itself to the run's Context; a step without state or failing falls back to today's choice, for itself alone. `[linear_orchestrator.selection] resolvers` lists the chain; none: no chain, no translate. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py` and `engine/chain.py`.
 _Avoid_: chooser
 
 **Resolver**:
-One step of the Resolver chain: lists its own options from config for the Context so far, asks a Selector and returns its Choice (`choose`), or today's choice (`fallback`); `TierResolver` picks the tier and effort. In code: the ABC `Resolver` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
+One step of the Resolver chain: lists its own options from config for the Context so far, asks a Selector and returns its Choice (`choose`), or today's choice (`fallback`); `ModelResolver` (`model`) picks the model, `EffortResolver` (`effort`) then its effort. In code: the ABC `Resolver` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
 _Avoid_: chooser, selector
 
 **Choice**:
-What a Resolver returns: it writes itself into the run's Context (`apply`) and gives its runs.jsonl start-row fields (`record`); `TierChoice` holds a tier and effort. In code: the ABC `Choice` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
+What a Resolver returns: it writes itself into the run's Context (`apply`) and gives its runs.jsonl start-row fields (`record`); `ModelChoice` holds the model's tier, `EffortChoice` an effort. In code: the ABC `Choice` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
 
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.

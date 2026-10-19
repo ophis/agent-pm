@@ -479,17 +479,50 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_selection_local_override(self):
         self.local(
             '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
-            'resolvers = ["tier"]\n'
+            'resolvers = ["model"]\n'
         )
         self.assertEqual(
             self.load(PIPELINE).selection,
-            Selection(selector=FakeSelector, resolvers=(ResolverName.TIER,)),
+            Selection(selector=FakeSelector, resolvers=(ResolverName.MODEL,)),
         )
         self.local('[selection]\nselector = "agent_pm.selector:JevSelector"\n')
         self.assertEqual(
-            self.load(PIPELINE + '[selection]\nresolvers = ["tier"]\n').selection,
-            Selection(selector=JevSelector, resolvers=(ResolverName.TIER,)),
+            self.load(PIPELINE + '[selection]\nresolvers = ["effort"]\n').selection,
+            Selection(selector=JevSelector, resolvers=(ResolverName.EFFORT,)),
         )
+
+    def test_resolvers_are_model_and_effort_in_that_order(self):
+        self.local('[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n')
+        for value, names in (
+            ("[]", ()),
+            ('["model"]', (ResolverName.MODEL,)),
+            ('["effort"]', (ResolverName.EFFORT,)),
+            ('["model", "effort"]', (ResolverName.MODEL, ResolverName.EFFORT)),
+        ):
+            with self.subTest(value):
+                text = PIPELINE + f"[selection]\nresolvers = {value}\n"
+                self.assertEqual(self.load(text).selection.resolvers, names)
+        self.assertEqual([str(name) for name in ResolverName], ["model", "effort"])
+        for value, message in (
+            (
+                '["effort", "model"]',
+                "selection.resolvers must list model before effort: ['effort', 'model']",
+            ),
+            (
+                '["tier"]',
+                "selection.resolvers must be a list of distinct resolvers (model, effort): ['tier']",
+            ),
+            (
+                '["model", "tier"]',
+                "selection.resolvers must be a list of distinct resolvers (model, effort): "
+                "['model', 'tier']",
+            ),
+        ):
+            with self.subTest(value):
+                self.fails(
+                    "linear-orchestrator/config.toml: " + message,
+                    PIPELINE + f"[selection]\nresolvers = {value}\n",
+                )
 
     def test_selection_rejected(self):
         cases = [
@@ -511,11 +544,11 @@ class ConfigurationLoading(ConfigFile, Case):
             *[
                 (
                     PIPELINE + f"[selection]\nresolvers = {value}\n",
-                    f"selection.resolvers must be a list of distinct resolvers (tier): {shown}",
+                    f"selection.resolvers must be a list of distinct resolvers (model, effort): {shown}",
                 )
                 for value, shown in (
-                    ('"tier"', "'tier'"),
-                    ('["tier", "tier"]', "['tier', 'tier']"),
+                    ('"model"', "'model'"),
+                    ('["effort", "effort"]', "['effort', 'effort']"),
                     ('["client"]', "['client']"),
                     ("[1]", "[1]"),
                 )
@@ -533,7 +566,7 @@ class ConfigurationLoading(ConfigFile, Case):
                 )
             ],
             (
-                PIPELINE + '[selection]\nresolvers = ["tier"]\n',
+                PIPELINE + '[selection]\nresolvers = ["model"]\n',
                 "selection.selector: required when resolvers are listed",
             ),
         ]
@@ -554,7 +587,7 @@ class ConfigurationLoading(ConfigFile, Case):
         self.fails(
             "linear-orchestrator/config.toml: selection.selector: "
             "url: want https, or http on a loopback IP, without userinfo",
-            jev + 'resolvers = ["tier"]\n',
+            jev + 'resolvers = ["model", "effort"]\n',
         )
 
     def test_client_max_runs(self):

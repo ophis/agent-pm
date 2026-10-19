@@ -10,6 +10,7 @@ Nothing migrates automatically. Do each row that applies, once, by hand or throu
 | If you have | Do |
 |---|---|
 | running agent-pm sessions | Close them first, Docker Host ones before you reinstall the broker too: a reinstalled broker cannot read, so cannot revoke, the old one's GitHub tokens. After a reinstall, delete leftover `agent-pm-tokens` and `agent-pm-revocations` items in Keychain Access (their tokens expire within an hour), then [log in](docker-host.md#log-in) again. |
+| `[linear_orchestrator.selection] resolvers = ["tier"]` | Set `resolvers = ["model", "effort"]`: the model and the effort are now two resolvers, and `agent-pm-linear` refuses `tier` at load ([Task labels](board.md#task-labels)). |
 | board OpenCode runs relying on v0.6.32's packaged `[client_max_runs] opencode = 1` | Add `[linear_orchestrator.client_max_runs]` `opencode = 1` to `~/.agent-pm/config.local.toml`: the packaged config no longer limits any client ([Run limits](board.md#run-limits)). |
 | role runs begun on v0.6.30 or earlier | Let them finish first: an outcome's `summary` now holds at most 300 characters (4000 before), so `agent-pm-linear writeback` refuses a longer one with exit 2, and the run's Linear comment waits for Recover. |
 | Docker Host workspace volumes `agent-pm-ws-*` whose worker gets `Permission denied` writing its cwd (root-owned roots, v0.6.23 or earlier) | Close the session, then `/usr/local/libexec/agent-pm/agent-pm-broker workspace-rm --volume <volume>` (it holds no work); the next start recreates it agent-owned. |

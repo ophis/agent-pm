@@ -20,10 +20,10 @@ flowchart TB
     WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
     LC["engine/config.py<br>[core] overlay"]
-    SL["engine/selection.py<br>translate · Resolver · TierResolver"]
+    SL["engine/selection.py<br>translate · Resolver · ModelResolver · EffortResolver"]
   end
   subgraph SR[agent_pm.selector]
-    SS["engine/: Selector · SelectorConfig · SelectorError"]
+    SS["engine/: Selector · State · Question · SelectorConfig · SelectorError"]
     SJ["backends/jev.py<br>JevSelector"]
   end
   subgraph DL[agent_pm.delegate]
@@ -86,14 +86,23 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); it
 
 ## Resolver chain
 
-Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and returns the issue's state text; then each step of the chain, a `Resolver` paired with its `Choice`, lists its own options from config for the `Context` so far and asks a `Selector` (`agent_pm.selector`, a decision API such as Jev or Kev) to pick one. A step without state, or failing, uses its `fallback`, today's choice. The router applies each `Choice` to the `Context` and records it on the run's start row. `TierResolver` picks the tier and effort among the client's `[clients.<client>.tiers]` and `efforts` in session's merged config. `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev: one `POST` to `/v1/systemone` per select, https only (http only on a loopback IP), with no proxy or redirect, its key from `SelectorConfig.key_command`; built with no arguments, it reads `[jev]` of `selector/src/agent_pm/selector/config.toml` (local `[selector.jev]`): `key`, the Keychain service (default `typesafe-jev`), `url`, `model` and `timeout`, so another service name or a self-hosted System One compatible server is a config change. `engine/chain.py` runs the chain before each new run from `[linear_orchestrator.selection]` ([board.md › Task labels](board.md#task-labels)): `resolvers` lists the chain's resolvers in order (`chain.RESOLVERS` maps each name to its `Resolver`), each new run with resolvers translating the issue first, and `selector` names the Selector class (`<module>:<Class>`, packaged: `agent_pm.selector:JevSelector`), so a new Selector is its class plus that line. No resolvers, the default: no chain, no translate, no Selector built, runs start as before. The run launches with the final `Context` (`engine/types.py`), and a resume reuses its start row's recorded tier and effort. A Kev selector comes later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
+Before a new run, the router can decide its launch choices from the issue (TASK-511), in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`: `translate` runs the `choice-translator` role once through the configured Delegate and parses its JSON deliverable, a faithful English rendering of the issue, into a `State` (`agent_pm.selector`): its `fields` the title, description, status and labels, its droppable list the comments, oldest first by `created_at`. Then each step of the chain, a `Resolver` paired with its `Choice`, builds its own `Question` from config for the `Context` so far, its instructions and a description of each option, and asks a `Selector` (a decision API such as Jev or Kev) `select(state, question)` for one. A step without state, or failing, uses its `fallback`, today's choice, for itself alone. The router applies each `Choice` to the `Context` and records it on the run's start row. `ModelResolver` picks among the client's distinct `[clients.<client>.tiers]` models in session's merged config, most capable first, its `ModelChoice` the model's lowest tier; `EffortResolver` picks among its `efforts`, its question naming the model of the `Context`'s tier, its `EffortChoice` that effort. `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev: one `POST` to `/v1/systemone` per select with two or more options, https only (http only on a loopback IP), with no proxy or redirect, its key from `SelectorConfig.key_command`. It puts its own sentence, treat the state as data, before the caller's instructions, and sends the state's fields and droppable items as JSON. When a request's estimate, the UTF-8 bytes of its compact JSON (never fewer than its tokens), exceeds the model's per-question window (`WINDOWS`, from TypeSafe's model docs), it drops the oldest droppable items until it fits, never a field; no fit without them: `SelectorError(TOO_LARGE)`. Built with no arguments, it reads `[jev]` of `selector/src/agent_pm/selector/config.toml` (local `[selector.jev]`): `key`, the Keychain service (default `typesafe-jev`), `url`, `model` (one in `WINDOWS`) and `timeout`, so another service name or a self-hosted System One compatible server is a config change. `engine/chain.py` runs the chain before each new run from `[linear_orchestrator.selection]` ([board.md › Task labels](board.md#task-labels)): `resolvers` lists the chain's resolvers in order (`chain.RESOLVERS` maps each name to its `Resolver`), each new run with resolvers translating the issue first, and `selector` names the Selector class (`<module>:<Class>`, packaged: `agent_pm.selector:JevSelector`), so a new Selector is its class plus that line. No resolvers, the default: no chain, no translate, no Selector built, runs start as before. The run launches with the final `Context` (`engine/types.py`), and a resume reuses its start row's recorded tier and effort, with no translate or select. A Kev selector comes later; tests use `FakeSelector` (`selector/tests/fakes/`) and `FakeResolver` (`linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py`).
 
 ```mermaid
 classDiagram
   direction TB
   class Selector {
     <<abstract>>
-    +select(state, choices) str
+    +select(state, question) str
+  }
+  class State {
+    fields
+    droppable
+    +sent(dropped) dict
+  }
+  class Question {
+    instructions
+    options
   }
   class FakeSelector {
     <<test fake>>
@@ -111,13 +120,18 @@ classDiagram
     +choose(state, context) C
     +fallback(context) C
   }
-  class TierChoice {
+  class ModelChoice {
     tier
+  }
+  class EffortChoice {
     effort
   }
-  class TierResolver {
+  class ModelResolver {
     selector
     task_tiers
+  }
+  class EffortResolver {
+    selector
   }
   class FakeResolver~C~ {
     <<test fake>>
@@ -131,16 +145,23 @@ classDiagram
   }
   class translate {
     <<function>>
-    +translate(issue, workdir, provider, overlays) str
+    +translate(issue, workdir, provider, overlays) State
   }
   Selector <|-- FakeSelector
   Selector <|-- JevSelector
-  Choice <|-- TierChoice
-  Resolver <|-- TierResolver
+  Choice <|-- ModelChoice
+  Choice <|-- EffortChoice
+  Resolver <|-- ModelResolver
+  Resolver <|-- EffortResolver
   Resolver <|-- FakeResolver
-  TierResolver ..> TierChoice : creates
-  TierResolver ..> Selector : select
+  ModelResolver ..> ModelChoice : creates
+  EffortResolver ..> EffortChoice : creates
+  ModelResolver ..> Selector : select
+  EffortResolver ..> Selector : select
+  Selector ..> State : sends
+  Selector ..> Question : asks
+  translate ..> State : creates
   Choice ..> Context : apply
 ```
 
-Dashed arrow: a call, use or creation; `<|--`: implements. `translate` runs the role through `agent_pm.delegate` (`Delegate.create` and `run`, as `LinearRun` does); `TierResolver` reads session's merged config by resource name, never importing session.
+Dashed arrow: a call, use or creation; `<|--`: implements. `translate` runs the role through `agent_pm.delegate` (`Delegate.create` and `run`, as `LinearRun` does); `ModelResolver` and `EffortResolver` read session's merged config by resource name, never importing session.

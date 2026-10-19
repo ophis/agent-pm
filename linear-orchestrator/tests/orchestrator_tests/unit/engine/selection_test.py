@@ -1,5 +1,6 @@
-"""engine/selection.py: translate over a fake Delegate, the chain's Context and Resolver, and the TierResolver over
-session's merged tier config; FakeResolver passes the resolver contracts.
+"""engine/selection.py: translate over a fake Delegate, the chain's Context and Resolver, and the
+ModelResolver and EffortResolver over session's merged client config; FakeResolver passes the
+resolver contracts.
 """
 
 import dataclasses
@@ -13,24 +14,31 @@ import agent_pm.session as session
 from agent_pm import utils
 from agent_pm.delegate import HarnessDelegate, Outcome
 from agent_pm.linear_orchestrator.engine.selection import (
+    EFFORT_INSTRUCTIONS,
+    EFFORT_INSTRUCTIONS_NO_MODEL,
+    MODEL_INSTRUCTIONS,
     Choice,
     Context,
+    EffortChoice,
+    EffortResolver,
+    ModelChoice,
+    ModelResolver,
     Resolver,
     SelectionError,
     SelectionFailure,
-    TierChoice,
-    TierResolver,
     translate,
 )
-from agent_pm.selector import Failure, SelectorError
+from agent_pm.selector import Backend, Failure, JevSelector, SelectorConfig, SelectorError
 from agent_pm.selector import State as SelectorState
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import (
+    EFFORTS,
     STATE,
     TRANSLATION,
+    EffortChoiceContract,
     FakeResolver,
+    ModelChoiceContract,
     ResolverContract,
-    TierChoiceContract,
     deliverable,
     state_of,
 )
@@ -44,7 +52,7 @@ OPENCODE = Context("engineer", "build", "opencode")
 
 
 def session_clients() -> dict:
-    """Session's own merged parse of its config (the reference the TierResolver must match)."""
+    """Session's own merged parse of its config (the reference the layers must match)."""
     return utils.read_resources(session.CONFIG_RESOURCES)["clients"]
 
 
@@ -247,17 +255,28 @@ class Types(Case):
     def test_apply_and_record_are_the_choices_abstract_methods(self):
         self.assertEqual(Choice.__abstractmethods__, frozenset({"apply", "record"}))
 
-    def test_a_tier_choice_applies_itself_and_records_what_it_sets(self):
+    def test_each_choice_applies_its_field_and_records_it_when_set(self):
+        chosen = dataclasses.replace(CLAUDE, tier=2, effort="high")
+        self.assertEqual(ModelChoice(3).apply(chosen), dataclasses.replace(chosen, tier=3))
+        self.assertEqual(ModelChoice(None).apply(chosen), dataclasses.replace(chosen, tier=None))
         self.assertEqual(
-            TierChoice(3, "low").apply(CLAUDE), dataclasses.replace(CLAUDE, tier=3, effort="low")
+            EffortChoice("low").apply(chosen), dataclasses.replace(chosen, effort="low")
         )
-        self.assertEqual(TierChoice(3, "low").record(), {"tier": 3, "effort": "low"})
-        self.assertEqual(TierChoice(None, None).record(), {})
+        self.assertEqual(EffortChoice(None).apply(chosen), dataclasses.replace(chosen, effort=None))
+        self.assertEqual(
+            [c.record() for c in (ModelChoice(3), ModelChoice(None))], [{"tier": 3}, {}]
+        )
+        self.assertEqual(
+            [c.record() for c in (EffortChoice("low"), EffortChoice(None))], [{"effort": "low"}, {}]
+        )
         self.assertEqual((CLAUDE.tier, CLAUDE.effort), (None, None))
 
-    def test_context_and_tier_choice_are_frozen(self):
-        field = "client"
-        for record, name in ((CLAUDE, field), (TierChoice(3, "low"), "tier")):
+    def test_context_and_choices_are_frozen(self):
+        for record, name in (
+            (CLAUDE, "client"),
+            (ModelChoice(3), "tier"),
+            (EffortChoice("low"), "effort"),
+        ):
             with self.subTest(record=record), self.assertRaises(dataclasses.FrozenInstanceError):
                 setattr(record, name, "x")
 
@@ -268,132 +287,252 @@ class Types(Case):
         self.assertEqual([f.value for f in SelectionFailure], ["translate", "select", "invalid"])
 
 
-class TierOptions(Case):
-    def test_one_option_per_model_and_effort_from_the_claude_tiers(self):
-        clients = session_clients()
-        tiers = clients["claude"]["tiers"]
-        efforts = list(clients["claude"]["efforts"])
-        models = [tiers[t] for t in sorted(tiers, key=int)]
-        selector = FakeSelector()
-        TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE)
-        ((state, question),) = selector.calls
-        self.assertIs(state, STATE)
-        self.assertEqual(question.instructions, "Choose the option that best fits the state.")
-        options = [f"{m} / {e}" for m in models for e in efforts]
-        self.assertEqual(list(question.options.items()), [(o, o) for o in options])
-
-    def test_the_pick_maps_back_to_its_models_lowest_tier(self):
-        tiers = session_clients()["claude"]["tiers"]
-        tier = sorted(tiers, key=int)[2]
-        selector = FakeSelector([f"{tiers[tier]} / low"])
-        self.assertEqual(
-            TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE),
-            TierChoice(int(tier), "low"),
-        )
-
-    def test_tiers_naming_one_model_offer_it_once_under_its_lowest_tier(self):
-        model = session_clients()["opencode"]["tiers"]["1"]
-        selector = FakeSelector([f"{model} / high"])
-        self.assertEqual(
-            TierResolver(selector, task_tiers={}).choose(STATE, OPENCODE), TierChoice(1, "high")
-        )
-        ((_, question),) = selector.calls
-        self.assertEqual({o.split(" / ")[0] for o in question.options}, {model})
+def model_layer(selector=None):
+    return ModelResolver(FakeSelector() if selector is None else selector, task_tiers={})
 
 
-class LocalConfig(Case):
+def effort_layer(selector=None):
+    return EffortResolver(FakeSelector() if selector is None else selector)
+
+
+LAYERS = {"model": model_layer, "effort": effort_layer}
+
+
+class LayerCase(Case):
     def write_local(self, text):
         os.makedirs(self.agent_pm, exist_ok=True)
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
+    def ask(self, layer, context=CLAUDE, picks=()):
+        """layer's choice for STATE in context over a FakeSelector picking picks, and the one
+        question it asked with that state.
+        """
+        selector = FakeSelector(picks)
+        choice = layer(selector).choose(STATE, context)
+        ((state, question),) = selector.calls
+        self.assertIs(state, STATE)
+        return choice, question
 
-class LocalOverride(LocalConfig):
-    def test_the_local_config_overrides_the_opencode_tiers(self):
+
+class ModelLayer(LayerCase):
+    def test_the_instructions_ask_for_the_least_costly_capable_model(self):
+        self.assertEqual(
+            MODEL_INSTRUCTIONS,
+            "Choose the least costly model that can still complete the work this issue asks for, "
+            "to the standard it sets. The options are the run's models, from most to least capable.",
+        )
+
+    def test_the_options_are_the_clients_models_in_tier_order_described_by_rank(self):
+        tiers = session_clients()["claude"]["tiers"]
+        models = [tiers[t] for t in sorted(tiers, key=int)]
+        _, question = self.ask(model_layer)
+        self.assertEqual(question.instructions, MODEL_INSTRUCTIONS)
+        self.assertEqual(
+            list(question.options.items()),
+            [
+                (models[0], "tier 1: the most capable and most costly"),
+                (models[1], "tier 2: less capable and less costly than the models above it"),
+                (models[2], "tier 3: less capable and less costly than the models above it"),
+                (models[3], "tier 4: the least capable and least costly"),
+            ],
+        )
+
+    def test_the_pick_is_its_models_lowest_tier(self):
+        tiers = session_clients()["claude"]["tiers"]
+        choice, _ = self.ask(model_layer, picks=[tiers["3"]])
+        self.assertEqual(choice, ModelChoice(3))
         self.write_local(
             '[session.clients.opencode.tiers]\n1 = "big:1"\n2 = "big:1"\n3 = "small:1"\n4 = "small:1"\n'
         )
-        selector = FakeSelector(["small:1 / low"])
+        choice, question = self.ask(model_layer, OPENCODE, picks=["small:1"])
+        self.assertEqual(choice, ModelChoice(3))
         self.assertEqual(
-            TierResolver(selector, task_tiers={}).choose(STATE, OPENCODE), TierChoice(3, "low")
+            dict(question.options),
+            {
+                "big:1": "tier 1: the most capable and most costly",
+                "small:1": "tier 3: the least capable and least costly",
+            },
         )
-        ((_, question),) = selector.calls
-        self.assertEqual({o.split(" / ")[0] for o in question.options}, {"big:1", "small:1"})
-        self.assertEqual(session_clients()["opencode"]["tiers"]["3"], "small:1")
+
+    def test_opencodes_single_model_is_offered_once_and_sends_nothing(self):
+        model = session_clients()["opencode"]["tiers"]["1"]
+        choice, question = self.ask(model_layer, OPENCODE)
+        self.assertEqual(choice, ModelChoice(1))
+        self.assertEqual(
+            dict(question.options), {model: "tier 1: the most capable and most costly"}
+        )
+        # A window no request fits and no key command: a call would fail.
+        jev = JevSelector(
+            SelectorConfig(Backend.JEV, "http://127.0.0.1:9/v1", "jev-1.13.0", 5.0, 1, ())
+        )
+        with (
+            mock.patch("subprocess.run") as run,
+            mock.patch("urllib.request.OpenerDirector.open") as post,
+        ):
+            self.assertEqual(
+                ModelResolver(jev, task_tiers={}).choose(STATE, OPENCODE), ModelChoice(1)
+            )
+        run.assert_not_called()
+        post.assert_not_called()
+
+    def test_the_fallback_is_the_task_tiers_tier(self):
+        resolver = ModelResolver(FakeSelector(), task_tiers={"light-build": 3})
+        self.assertEqual(
+            resolver.fallback(Context("engineer", "light-build", "claude")), ModelChoice(3)
+        )
+        self.assertEqual(resolver.fallback(CLAUDE), ModelChoice(None))
+        self.assertEqual(resolver.fallback(Context("pm", None, "codex")), ModelChoice(None))
+        self.assertEqual(resolver.fallback(CLAUDE).record(), {})
 
 
-class TierFailures(LocalConfig):
+class EffortLayer(LayerCase):
+    def test_the_instructions_ask_for_the_lowest_effort_the_model_needs(self):
+        self.assertEqual(
+            EFFORT_INSTRUCTIONS.format(model="sonnet"),
+            "The run uses the model sonnet. Choose the lowest reasoning effort at which that model "
+            "can still complete the work this issue asks for, to the standard it sets.",
+        )
+        self.assertEqual(
+            EFFORT_INSTRUCTIONS_NO_MODEL,
+            "Choose the lowest reasoning effort at which the run's model can still complete the "
+            "work this issue asks for, to the standard it sets.",
+        )
+
+    def test_the_options_are_the_clients_efforts_in_order_described_by_rank(self):
+        efforts = list(session_clients()["claude"]["efforts"])
+        self.assertEqual(efforts, list(EFFORTS))
+        _, question = self.ask(effort_layer)
+        self.assertEqual(
+            list(question.options.items()),
+            [
+                ("low", "the least reasoning: fastest and cheapest"),
+                ("medium", "more reasoning than the efforts before it"),
+                ("high", "more reasoning than the efforts before it"),
+                ("xhigh", "more reasoning than the efforts before it"),
+                ("max", "the most reasoning: slowest and costliest"),
+            ],
+        )
+        table = {"tiers": {"1": "m"}, "efforts": {"high": "high", "low": "low"}}
+        with mock.patch("tomllib.load", return_value={"clients": {"claude": table}}):
+            _, question = self.ask(effort_layer)
+        self.assertEqual(
+            dict(question.options),
+            {
+                "high": "the least reasoning: fastest and cheapest",
+                "low": "the most reasoning: slowest and costliest",
+            },
+        )
+
+    def test_the_instructions_name_the_model_of_the_contexts_tier(self):
+        tiers = session_clients()["claude"]["tiers"]
+        for tier in (1, 3):
+            with self.subTest(tier=tier):
+                _, question = self.ask(effort_layer, dataclasses.replace(CLAUDE, tier=tier))
+                self.assertEqual(
+                    question.instructions, EFFORT_INSTRUCTIONS.format(model=tiers[str(tier)])
+                )
+
+    def test_no_tier_or_one_outside_the_clients_tiers_names_no_model(self):
+        for tier in (None, 7):
+            with self.subTest(tier=tier):
+                _, question = self.ask(effort_layer, dataclasses.replace(CLAUDE, tier=tier))
+                self.assertEqual(question.instructions, EFFORT_INSTRUCTIONS_NO_MODEL)
+
+    def test_the_pick_is_the_effort(self):
+        choice, _ = self.ask(effort_layer, picks=["high"])
+        self.assertEqual(choice, EffortChoice("high"))
+
+    def test_the_fallback_is_the_roles_effort(self):
+        resolver = EffortResolver(FakeSelector())
+        for context in (CLAUDE, dataclasses.replace(CLAUDE, tier=2, effort="max")):
+            with self.subTest(context=context):
+                self.assertEqual(resolver.fallback(context), EffortChoice(None))
+        self.assertEqual(resolver.fallback(CLAUDE).record(), {})
+
+
+class LayerFailures(LayerCase):
+    def assert_invalid(self, make, context=CLAUDE):
+        with self.assertRaises(SelectionError) as caught:
+            make().choose(STATE, context)
+        self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+        self.assertTrue(
+            caught.exception.__suppress_context__ or caught.exception.__context__ is None
+        )
+
     def test_a_state_without_fields_or_not_a_state_is_refused(self):
-        for state in (SelectorState({}), "Fix a typo"):
-            with self.subTest(state=state), self.assertRaises(ValueError):
-                TierResolver(FakeSelector(), task_tiers={}).choose(state, CLAUDE)
+        for name, make in LAYERS.items():
+            for state in (SelectorState({}), "Fix a typo"):
+                with self.subTest(name, state=state), self.assertRaises(ValueError):
+                    make().choose(state, CLAUDE)
 
     def test_empty_or_non_table_tiers_or_efforts_are_invalid(self):
-        for local in ("efforts = []", "tiers = []", "tiers = [1]"):
-            with self.subTest(local=local):
-                self.write_local(f"[session.clients.claude]\n{local}\n")
-                with self.assertRaises(SelectionError) as caught:
-                    TierResolver(FakeSelector(), task_tiers={}).choose(STATE, CLAUDE)
-                self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+        for name, make in LAYERS.items():
+            for local in ("efforts = []", "tiers = []", "tiers = [1]"):
+                with self.subTest(name, local=local):
+                    self.write_local(f"[session.clients.claude]\n{local}\n")
+                    self.assert_invalid(make)
 
-    def test_an_empty_tiers_or_efforts_table_offers_nothing_and_is_invalid(self):
-        for table in (
-            {"tiers": {}, "efforts": {"low": "low"}},
-            {"tiers": {"1": "m"}, "efforts": {}},
-        ):
-            with (
-                self.subTest(table=table),
-                mock.patch("tomllib.load", return_value={"clients": {"claude": table}}),
-                self.assertRaises(SelectionError) as caught,
+    def test_empty_or_bad_tiers_or_efforts_tables_are_invalid(self):
+        for name, make in LAYERS.items():
+            for table in (
+                {"tiers": {}, "efforts": {"low": "low"}},
+                {"tiers": {"1": "m"}, "efforts": {}},
+                {"tiers": {"one": "m"}, "efforts": {"low": "low"}},
+                {"tiers": {"1": 2}, "efforts": {"low": "low"}},
+                {"tiers": {"1": " "}, "efforts": {"low": "low"}},
+                {"tiers": {"1": "m"}},
             ):
-                TierResolver(FakeSelector(), task_tiers={}).choose(STATE, CLAUDE)
-            self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+                with (
+                    self.subTest(name, table=table),
+                    mock.patch("tomllib.load", return_value={"clients": {"claude": table}}),
+                ):
+                    self.assert_invalid(make)
 
     def test_a_client_without_tiers_is_invalid(self):
-        with self.assertRaises(SelectionError) as caught:
-            TierResolver(FakeSelector(), task_tiers={}).choose(
-                STATE, Context("engineer", None, "no-such-client")
-            )
-        self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+        for name, make in LAYERS.items():
+            with self.subTest(name):
+                self.assert_invalid(make, Context("engineer", None, "no-such-client"))
 
     def test_a_failed_selector_is_a_select_error_keeping_its_code(self):
-        selector = FakeSelector(error=SelectorError(Failure.NO_KEY))
-        with self.assertRaises(SelectionError) as caught:
-            TierResolver(selector, task_tiers={}).choose(STATE, CLAUDE)
-        error = caught.exception
-        self.assertEqual(
-            (error.reason, error.selector_reason), (SelectionFailure.SELECT, Failure.NO_KEY)
-        )
-        self.assertTrue(error.__suppress_context__)
+        for name, make in LAYERS.items():
+            selector = FakeSelector(error=SelectorError(Failure.NO_KEY))
+            with self.subTest(name), self.assertRaises(SelectionError) as caught:
+                make(selector).choose(STATE, CLAUDE)
+            error = caught.exception
+            self.assertEqual(
+                (error.reason, error.selector_reason), (SelectionFailure.SELECT, Failure.NO_KEY)
+            )
+            self.assertTrue(error.__suppress_context__)
 
     def test_a_pick_outside_the_options_is_invalid(self):
         class Stray(FakeSelector):
             def select(self, state, question):
                 return "not an option"
 
-        with self.assertRaises(SelectionError) as caught:
-            TierResolver(Stray(), task_tiers={}).choose(STATE, CLAUDE)
-        self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+        for name, make in LAYERS.items():
+            with self.subTest(name):
+                self.assert_invalid(lambda make=make: make(Stray()))
 
 
-class TierFallback(Case):
-    def test_the_fallback_is_the_task_tiers_tier_and_the_roles_effort(self):
-        resolver = TierResolver(FakeSelector(), task_tiers={"light-build": 3})
-        self.assertEqual(
-            resolver.fallback(Context("engineer", "light-build", "claude")), TierChoice(3, None)
-        )
-        self.assertEqual(resolver.fallback(CLAUDE), TierChoice(None, None))
-        self.assertEqual(resolver.fallback(Context("pm", None, "codex")), TierChoice(None, None))
-
-
-class TierResolverContract(TierChoiceContract, Case):
+class ModelResolverContract(ModelChoiceContract, Case):
     def make(self):
-        return TierResolver(FakeSelector(), task_tiers={})
+        return ModelResolver(FakeSelector(), task_tiers={})
 
 
-class FakeTierResolverContract(TierChoiceContract, Case):
+class FakeModelResolverContract(ModelChoiceContract, Case):
     def make(self):
-        return FakeResolver(default=TierChoice(2, "high"))
+        return FakeResolver(default=ModelChoice(2))
+
+
+class EffortResolverContract(EffortChoiceContract, Case):
+    def make(self):
+        return EffortResolver(FakeSelector())
+
+
+class FakeEffortResolverContract(EffortChoiceContract, Case):
+    def make(self):
+        return FakeResolver(default=EffortChoice("high"))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -417,9 +556,9 @@ class FakeClientResolverContract(ResolverContract, Case):
 class FakeScript(Case):
     def test_a_scripted_choice_wins_for_its_state(self):
         other = state_of({**TRANSLATION, "title": "other"})
-        fake = FakeResolver(default=TierChoice(2, "high"), choices=[(STATE, TierChoice(3, "low"))])
-        self.assertEqual(fake.choose(state_of(), CLAUDE), TierChoice(3, "low"))
-        self.assertEqual(fake.choose(other, CLAUDE), TierChoice(2, "high"))
+        fake = FakeResolver(default=ModelChoice(2), choices=[(STATE, ModelChoice(3))])
+        self.assertEqual(fake.choose(state_of(), CLAUDE), ModelChoice(3))
+        self.assertEqual(fake.choose(other, CLAUDE), ModelChoice(2))
         self.assertEqual(fake.calls, [(STATE, CLAUDE), (other, CLAUDE)])
 
     def test_a_scripted_error_is_raised(self):
@@ -429,8 +568,8 @@ class FakeScript(Case):
         self.assertIs(caught.exception, error)
 
     def test_the_fallback_is_its_scripted_one_else_the_default(self):
-        fake = FakeResolver(default=TierChoice(2, "high"), fallback=TierChoice(None, None))
-        self.assertEqual(fake.fallback(CLAUDE), TierChoice(None, None))
+        fake = FakeResolver(default=EffortChoice("high"), fallback=EffortChoice(None))
+        self.assertEqual(fake.fallback(CLAUDE), EffortChoice(None))
         self.assertEqual(FakeResolver(default=ClientPick("x")).fallback(CLAUDE), ClientPick("x"))
 
 

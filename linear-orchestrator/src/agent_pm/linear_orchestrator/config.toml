@@ -74,16 +74,18 @@ canceled = ""
 #   selector   "<module>:<Class>": the Selector the resolvers ask, a concrete agent_pm.selector Selector built with no
 #              arguments; Jev's key service, URL, model and timeout: [selector.jev]
 #              (selector/src/agent_pm/selector/config.toml); required when resolvers are listed
-#   resolvers  the chain, in order: "tier" (the run's tier and effort among its client's tiers and efforts; its
-#              fallback, also when the translation or the Selector fails: [task_tiers]'s tier and the role's effort);
-#              before a new run with resolvers, the choice-translator role first turns the issue into state text for
-#              them; [] → no chain, no translation: runs start as before model selection
+#   resolvers  the chain, in order, model before effort: "model" (the run's tier: the lowest tier of the model
+#              picked among its client's tiers) and "effort" (the effort among its client's efforts, for the model of
+#              the run's tier); each falls back on its own, also when the translation or the Selector fails: model to
+#              [task_tiers]'s tier, effort to the role's effort; before a new run with resolvers, the
+#              choice-translator role first renders the issue faithfully into English as their state; [] → no
+#              chain, no translation: runs start as before model selection
 [selection]
 selector = "agent_pm.selector:JevSelector"
 resolvers = []
 
 # local: [linear_orchestrator.selection]
-# local: resolvers = ["tier"]
+# local: resolvers = ["model", "effort"]
 
 # Agent labels; optional: set agent_label_group to the Agent group's id and map each client to its child label id.
 # Both empty disables selection; otherwise set both. Client names come from Delegate configuration.

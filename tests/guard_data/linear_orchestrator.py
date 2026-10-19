@@ -87,8 +87,8 @@ NOQA_ALLOWED = {
 # A tool string (tests/guard_checks/ownership.py TOOL_STRINGS) one orchestrator file may name.
 TOOL_STRINGS_ALLOWED = {
     (f"{ORCH_SRC}engine/selection.py", "clients"): (
-        "TierResolver reads session's merged [clients.<client>.tiers] and efforts, the single source "
-        "of tiers (TASK-742 D10)."
+        "ModelResolver and EffortResolver read session's merged [clients.<client>.tiers] and "
+        "efforts, the single source of tiers (TASK-742 D10)."
     ),
 }
 

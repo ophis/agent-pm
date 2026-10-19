@@ -1,17 +1,20 @@
 """FakeResolver, a Resolver that asks no Selector, and the contracts a Resolver passes: ResolverContract
-(hooks make() -> Resolver, context() -> Context) and TierChoiceContract (adds the TierChoice checks).
-A contract subclass also inherits Case. TRANSLATION: a translate deliverable's JSON value, STATE its State.
+(hooks make() -> Resolver, context() -> Context), ModelChoiceContract and EffortChoiceContract (add
+their Choice's checks). A contract subclass also inherits Case. TRANSLATION: a translate
+deliverable's JSON value, STATE its State.
 """
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Generic, TypeVar
 
 from agent_pm.linear_orchestrator.engine.selection import (
     Choice,
     Context,
+    EffortChoice,
+    ModelChoice,
     Resolver,
-    TierChoice,
 )
 from agent_pm.selector import State as SelectorState
 
@@ -102,12 +105,21 @@ class ResolverContract:
                 self.assertIsInstance(choice.record(), dict)
 
 
-class TierChoiceContract(ResolverContract):
-    def test_the_choice_is_a_tier_and_an_effort(self):
+class ModelChoiceContract(ResolverContract):
+    def test_the_choice_is_a_tier(self):
         choice = self.make().choose(STATE, self.context())
-        self.assertIsInstance(choice, TierChoice)
+        self.assertIsInstance(choice, ModelChoice)
         self.assertIn(choice.tier, range(1, 5))
+        self.assertEqual(choice.apply(self.context()), replace(self.context(), tier=choice.tier))
+        self.assertEqual(choice.record(), {"tier": choice.tier})
+
+
+class EffortChoiceContract(ResolverContract):
+    def test_the_choice_is_an_effort(self):
+        choice = self.make().choose(STATE, self.context())
+        self.assertIsInstance(choice, EffortChoice)
         self.assertIn(choice.effort, EFFORTS)
-        applied = choice.apply(self.context())
-        self.assertEqual((applied.tier, applied.effort), (choice.tier, choice.effort))
-        self.assertEqual(choice.record(), {"tier": choice.tier, "effort": choice.effort})
+        self.assertEqual(
+            choice.apply(self.context()), replace(self.context(), effort=choice.effort)
+        )
+        self.assertEqual(choice.record(), {"effort": choice.effort})

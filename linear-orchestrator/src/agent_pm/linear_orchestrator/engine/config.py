@@ -413,6 +413,10 @@ def _selection(cfg) -> Selection:
         raise ConfigError(
             f"linear-orchestrator/config.toml: selection.resolvers must be a list of distinct resolvers ({', '.join(ResolverName)}): {resolvers!r}"
         )
+    if resolvers != sorted(resolvers, key=list(ResolverName).index):
+        raise ConfigError(
+            f"linear-orchestrator/config.toml: selection.resolvers must list model before effort: {resolvers!r}"
+        )
     path = table.get("selector")
     if path is None and resolvers:
         raise ConfigError(
