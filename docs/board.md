@@ -79,6 +79,8 @@ A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`.
 
 `[linear_orchestrator.task_tiers]` sets a task's model tier, e.g. `light-build = 3` (1 = strongest): the router overlays it on the role's run; a resume takes the tier and effort its start row recorded, else its start's task's tier; an issue with an unlisted task or no label keeps its role's or global tier.
 
+`[linear_orchestrator.selection]` switches the Resolver chain ([architecture.md › Resolver chain](architecture.md#resolver-chain)), each key off by default: `translate` (the `choice-translator` role turns the issue into state text) and `tier` (a decision API picks the new run's tier and effort among its client's). A step switched off, without state (`translate` off or failed) or failing uses today's choice, `[task_tiers]` and the role's effort; the run starts either way. With any key on, each step logs a `choice` line: `step`, `by` (`selector` or `fallback`), `reason` and `selector` codes, and `choice` (its recorded fields), never issue text, state or error text. The new run's start row records the choice, which its resume reuses. No decision API is wired yet, so `tier` falls back with `selector=no-key`.
+
 ## Operating
 
 ```mermaid
@@ -141,7 +143,7 @@ Each new run selects again, retries included. A session resumes only in the clie
 
 Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([modes/base.py:53](../session/src/agent_pm/session/modes/base.py#L53), [router.py:1074](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1074)).
 
-`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:622](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L622)).
+`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)), the fallback tier: a preview runs no Resolver chain; a resume prints its recorded client (its `plan` line adds the tier and effort), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:622](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L622)).
 
 Rollout:
 

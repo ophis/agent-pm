@@ -87,6 +87,7 @@ from traceback import format_exception
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import (
+    chain,
     config,
     inputs,
     issues,
@@ -117,10 +118,12 @@ from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
     ClientSource,
     ConfigError,
+    Context,
     InputError,
     Invalid,
     IssueError,
     LinearError,
+    SelectionStep,
     Spec,
     Transient,
     Unavailable,
@@ -134,6 +137,10 @@ SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
+# a start row's own fields: a choice record never sets them
+ROW_FIELDS = frozenset(
+    ("ts", "kind", "issue", "sid", "delegate_kind", "uuid", "project", "target", "key")
+)
 USAGE = (
     "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
     "[--tui [--display D] [--events FILE]] | --brake ROLE"
@@ -690,34 +697,35 @@ def begin(cfg, spec: Spec) -> Spec:
     return spec
 
 
-def record(cfg, spec: Spec, *, role, now, target=None) -> str:
+def record(cfg, spec: Spec, *, role, now, target=None, context=None, choices=None) -> str:
     """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
-    uuid, project, target, the role's key), which its write-back reads, and its task, which picks
-    a resume's tier; returns its Delegate kind.
+    uuid, project, target, the role's key), which its write-back reads, its task and client (the
+    final context's when given) and its chain's choices, which a resume reuses; returns its
+    Delegate kind. ValueError: a choice field is one of the row's own (ROW_FIELDS).
     """
+    task, client = (spec.task, spec.client) if context is None else (context.task, context.client)
     if spec.mode == "new":
-        kind, claim = (
-            cfg.delegate_kind,
-            {
-                "uuid": spec.uuid,
-                "project": spec.project,
-                "target": target,
-                "key": cfg.roles[role].key,
-                "task": spec.task,
-            },
-        )
+        if clash := next((k for k in choices or {} if k in ROW_FIELDS), None):
+            raise ValueError(f"choice record field {clash} is a start-row field")
+        kind = cfg.delegate_kind
+        claim = {
+            "uuid": spec.uuid,
+            "project": spec.project,
+            "target": target,
+            "key": cfg.roles[role].key,
+            "task": task,
+            **(choices or {}),
+        }
     else:
         kind, claim = delegate_of(parse_log(cfg.runs_log), spec.sid), {}
+    fields = {"role": role, "client": client, "delegate_kind": kind, **claim}
     note(
         cfg.runs_log,
         "start" if spec.mode == "new" else "resume",
         issue=spec.issue,
         sid=spec.sid,
-        role=role,
-        client=spec.client,
-        delegate_kind=kind,
         now=now,
-        **claim,
+        **fields,
     )
     return kind
 
@@ -727,22 +735,46 @@ def fail(ident, kind, reason, rc):
     return rc
 
 
-def outer(a, cfg, *, gql, run, keychain, now=datetime.now, attended: Attended | None = None):
-    """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given.
+def outer(
+    a,
+    cfg,
+    *,
+    gql,
+    run,
+    keychain,
+    now=datetime.now,
+    attended: Attended | None = None,
+    selector=None,
+    steps=chain.steps,
+):
+    """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given; a
+    new run's launch choices come from the Resolver chain steps(cfg, selector), selector
+    NoSelector when none.
+
     Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
     first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new
     run failing before then leaves a `failed` row, an attempt that Recover cannot read back.
     """
     rc = None
+    selector = selector or chain.NoSelector()
     try:
-        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended)
+        rc = _outer(
+            a,
+            cfg,
+            gql=gql,
+            run=run,
+            keychain=keychain,
+            now=now,
+            attended=attended,
+            chain_steps=steps(cfg, selector),
+        )
         return rc
     finally:
         if a.mode == "new" and rc != 0 and a.sid not in {e.sid for e in parse_log(cfg.runs_log)}:
             note(cfg.runs_log, "failed", issue=a.issue, sid=a.sid, now=now)
 
 
-def _outer(a, cfg, *, gql, run, keychain, now, attended):
+def _outer(a, cfg, *, gql, run, keychain, now, attended, chain_steps):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -828,9 +860,17 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()
     if a.mode == "new":
-        tier, effort = cfg.task_tier(a.task), None
+        context, choices = chain.resolve(
+            a.issue,
+            workdir,
+            Context(role, a.task, a.client),
+            chain_steps,
+            translate_on=cfg.selection[SelectionStep.TRANSLATE],
+            provider=delegate_cls,
+            overlays=(cfg.core,),
+        )
     else:
-        tier, effort = resumed_choice(cfg, a.issue, a.sid)
+        context, choices = Context(role, a.task, a.client, *resumed_choice(cfg, a.issue, a.sid)), {}
     try:
         try:
             linear_run = LinearRun(
@@ -838,15 +878,15 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 text,
                 workdir,
                 cfg=cfg,
-                role=role,
+                role=context.role,
                 sid=a.sid,
-                task=a.task,
-                client=a.client,
+                task=context.task,
+                client=context.client,
                 resume=a.mode == "resume",
                 delegate_kind=kind,
                 # a resume's task is its start row's: the Delegate gets none, its choice stays
-                tier=tier,
-                effort=effort,
+                tier=context.tier,
+                effort=context.effort,
                 **(
                     {"mode": "tui", "display": attended.display, "events": attended.events}
                     if attended
@@ -858,7 +898,9 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 return _label_client_error(a, cfg, ctx.gql, error)
             raise
         if a.mode == "new":
-            record(cfg, a, role=role, target=slug, now=now)
+            record(
+                cfg, a, role=context.role, target=slug, now=now, context=context, choices=choices
+            )
         detached = linear_run.detach()
     except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -1182,6 +1224,7 @@ def main(
     keychain=None,
     start=None,
     delegate_cls=None,
+    selector=None,
 ):
     gql = gql or linear_gql
     run = run or config.shell
@@ -1227,7 +1270,14 @@ def main(
     gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
         start = functools.partial(
-            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended
+            outer,
+            cfg=cfg,
+            gql=gql,
+            run=run,
+            keychain=keychain,
+            now=now,
+            attended=attended,
+            selector=selector,
         )
     try:
         if opts["issue"]:

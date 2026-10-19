@@ -1,6 +1,7 @@
 """Orchestrator router behavior at its dependency boundaries."""
 
 import contextlib
+import dataclasses
 import fcntl
 import functools
 import io
@@ -14,9 +15,12 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
+import agent_pm.session as session
+from agent_pm import utils
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.engine import (
+    chain,
     client,
     config,
     inputs,
@@ -27,7 +31,9 @@ from agent_pm.linear_orchestrator.engine import (
     runs,
 )
 from agent_pm.linear_orchestrator.engine import gate as quota
-from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
+from agent_pm.linear_orchestrator.engine.selection import Choice
+from agent_pm.linear_orchestrator.engine.types import Context, LinearError, Spec, Unavailable
+from agent_pm.selector import Failure, SelectorError
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
@@ -69,6 +75,7 @@ from orchestrator_tests.router_fixtures import (
     pr_search,
     who,
 )
+from orchestrator_tests.selection_fixtures import FakeResolver
 from orchestrator_tests.unit.board_ids import HEADER, TASK_GROUP, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
@@ -89,6 +96,8 @@ from orchestrator_tests.unit.run_fixtures import (
     show,
 )
 from orchestrator_tests.unit.target_fixtures import ok
+
+from selector.tests.fakes.selector import FakeSelector
 
 CONFIG_ENG2 = (
     HEADER
@@ -5167,3 +5176,209 @@ class InsideAnAgentSession(RouterArguments):
                     self.assertNotIn(refused, self.main(argv)[1])
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(self.main(["--help"]), (0, ""))
+
+
+STATE = "LEAK-STATE a session registry"
+LEAK = "LEAK-SENTINEL"
+SELECTION_ON = "[selection]\ntranslate = true\ntier = true\n"
+
+
+@dataclasses.dataclass(frozen=True)
+class Relabel(Choice):
+    """A later step's Choice: a client and a task."""
+
+    client: str
+    task: str
+
+    def apply(self, context):
+        return replace(context, client=self.client, task=self.task)
+
+    def record(self):
+        return {"client": self.client, "task": self.task}
+
+
+def claude_pick(effort="low"):
+    """A pick among claude's options: its tier-3 model with effort, and the tier it maps to."""
+    tiers = utils.read_resources(session.CONFIG_RESOURCES)["clients"]["claude"]["tiers"]
+    model = tiers["3"]
+    return f"{model} / {effort}", min(int(t) for t, m in tiers.items() if m == model)
+
+
+class ResolverChain(OuterBase):
+    """The router runs the Resolver chain before a new run (selection steps, fallbacks, start-row
+    records, reason-code-only logs); a resume reuses its start row's choice.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.gql.issue = node(description="LEAK-DESCRIPTION", comments=[USER_NOTE])
+        self.api.translation = Outcome("done", "Translated", "translated", deliverable=STATE)
+
+    def expected(self, role="engineer", **kw):
+        text = INPUT.replace("Add a session registry.", "LEAK-DESCRIPTION")
+        return super().expected(role, text=text, **kw)
+
+    def start_row(self):
+        return json.loads(self.raw_runs().splitlines()[-1])
+
+    def choices(self):
+        return [
+            {k: v for k, v in e.items() if k not in ("ts", "src", "kind", "issue")}
+            for e in logged(self.logs)
+            if e["kind"] == "choice"
+        ]
+
+    def assert_no_leak(self):
+        with open(os.path.join(self.logs, "orchestrator.jsonl"), encoding="utf-8") as f:
+            text = f.read() + self.raw_runs()
+        self.assertNotIn("LEAK", text)
+
+    def test_new_run_with_selection_off_launches_as_today(self):
+        self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n")
+        selector = FakeSelector()
+        for task, tier in (("light-build", 3), (None, None)):
+            with self.subTest(task=task):
+                self.api.detached.clear()
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(self.runs)
+                self.assertEqual(self.outer(task=task, selector=selector), 0)
+                self.assertEqual(self.detached(tier=tier), self.expected(task=task))
+                self.assertEqual(self.start_row().get("tier"), tier)
+                self.assertNotIn("effort", self.start_row())
+        self.assertEqual((selector.calls, self.api.translations, self.choices()), ([], [], []))
+
+    def test_new_run_launches_and_records_the_selected_tier_and_effort(self):
+        self.write_config(OUTER + SELECTION_ON)
+        pick, tier = claude_pick()
+        selector = FakeSelector({STATE: pick})
+        self.assertEqual(self.outer(client="claude", selector=selector), 0)
+        self.assertEqual(self.detached(tier=tier, effort="low"), self.expected(client="claude"))
+        (translated,) = self.api.translations
+        self.assertEqual(
+            (translated.input, translated.workdir, translated.task), (ID, self.rd, "translate")
+        )
+        self.assertEqual([state for state, _ in selector.calls], [STATE])
+        row = self.start_row()
+        self.assertEqual(
+            (row["kind"], row["client"], row["tier"], row["effort"]),
+            ("start", "claude", tier, "low"),
+        )
+        self.assertEqual(
+            self.choices(),
+            [{"step": "tier", "by": "selector", "choice": {"tier": tier, "effort": "low"}}],
+        )
+        self.assert_no_leak()
+
+    def test_selector_failure_still_starts_the_run(self):
+        self.write_config(OUTER + SELECTION_ON)
+        for failure in Failure:
+            with self.subTest(failure=failure):
+                self.api.detached.clear()
+                with contextlib.suppress(FileNotFoundError, TypeError):
+                    os.remove(os.path.join(self.logs, "orchestrator.jsonl"))
+                selector = FakeSelector(error=SelectorError(failure))
+                self.assertEqual(self.outer(client="claude", selector=selector), 0)
+                self.assertEqual(self.detached(), self.expected(client="claude"))
+                self.assertEqual(
+                    self.choices(),
+                    [
+                        {
+                            "step": "tier",
+                            "by": "fallback",
+                            "reason": "select",
+                            "selector": failure.value,
+                            "choice": {},
+                        }
+                    ],
+                )
+                self.assert_no_leak()
+
+    def test_translate_failure_still_starts_the_run(self):
+        self.write_config(OUTER + SELECTION_ON + "[task_tiers]\nlight-build = 2\n")
+        self.api.translation = RuntimeError(LEAK)
+        selector = FakeSelector()
+        self.assertEqual(self.outer(task="light-build", client="claude", selector=selector), 0)
+        self.assertEqual(self.detached(tier=2), self.expected(task="light-build", client="claude"))
+        self.assertEqual(selector.calls, [])
+        self.assertEqual(
+            self.choices(),
+            [
+                {"step": "translate", "by": "fallback", "reason": "translate"},
+                {"step": "tier", "by": "fallback", "reason": "no-state", "choice": {"tier": 2}},
+            ],
+        )
+        self.assert_no_leak()
+
+    def test_main_without_selector_falls_back(self):
+        self.write_config(OUTER + SELECTION_ON)
+        self.assertEqual(self.outer(client="claude"), 0)
+        self.assertEqual(self.detached(), self.expected(client="claude"))
+        self.assertEqual(
+            [(e["by"], e["reason"], e["selector"]) for e in self.choices()],
+            [("fallback", "select", "no-key")],
+        )
+        self.assert_no_leak()
+
+    def test_new_run_launches_with_the_final_context(self):
+        self.write_config(OUTER + SELECTION_ON)
+        step = chain.Step("relabel", FakeResolver(default=Relabel("b", "light-build")), on=True)
+        self.assertEqual(self.outer(steps=lambda _cfg, _selector: (step,)), 0)
+        self.assertEqual(self.detached(), self.expected(client="b", task="light-build"))
+        row = self.start_row()
+        self.assertEqual(
+            (row["role"], row["client"], row["task"]), ("engineer", "b", "light-build")
+        )
+        ((state, context),) = step.resolver.calls
+        self.assertEqual((state, context.client, context.task), (STATE, "a", None))
+
+    def test_resume_runs_no_chain(self):
+        self.write_config(OUTER + SELECTION_ON)
+        selector = FakeSelector()
+        self.assertEqual(
+            self.outer(mode="resume", started={"tier": 2, "effort": "high"}, selector=selector), 0
+        )
+        self.assertEqual(self.detached(tier=2, effort="high"), self.expected(resume=True))
+        self.assertEqual((selector.calls, self.api.translations, self.choices()), ([], [], []))
+
+    def test_start_row_holds_choice_records(self):
+        spec = Spec(
+            uuid=UUID,
+            issue=ID,
+            project=PROJECT,
+            assignee="engineer@x.com",
+            sid=SID,
+            task="build",
+            mode="new",
+            client="a",
+        )
+        cfg = self.cfg()
+        context = Context("engineer", "light-build", "b", 2, "low")
+        router.record(
+            cfg,
+            spec,
+            role="engineer",
+            now=lambda: NOW,
+            context=context,
+            choices={"tier": 2, "effort": "low", "client": "b"},
+        )
+        row = self.start_row()
+        self.assertEqual(
+            {k: row.get(k) for k in ("role", "client", "task", "tier", "effort", "key")},
+            {
+                "role": "engineer",
+                "client": "b",
+                "task": "light-build",
+                "tier": 2,
+                "effort": "low",
+                "key": cfg.roles["engineer"].key,
+            },
+        )
+        for field in ("key", "sid", "uuid"):
+            with self.subTest(field=field):
+                before = self.raw_runs()
+                with self.assertRaises(ValueError) as caught:
+                    router.record(cfg, spec, role="engineer", now=lambda: NOW, choices={field: 1})
+                self.assertEqual(
+                    str(caught.exception), f"choice record field {field} is a start-row field"
+                )
+                self.assertEqual(self.raw_runs(), before)

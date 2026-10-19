@@ -678,6 +678,8 @@ class OuterBase(TickBase):
         client="a",
         started_task=None,
         started=None,
+        selector=None,
+        steps=None,
     ):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it, its start
         row holding started_task and the fields of started (its recorded choice).
@@ -715,6 +717,8 @@ class OuterBase(TickBase):
                 run=self.run_,
                 keychain=self.keychain,
                 now=lambda: NOW,
+                selector=selector,
+                **({"steps": steps} if steps else {}),
             )
         self.err = err.getvalue()
         return rc
