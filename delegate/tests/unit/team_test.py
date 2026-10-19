@@ -1,15 +1,18 @@
 import os
 import re
 import tomllib
+from dataclasses import replace
 from importlib.resources import files
 
 from agent_pm import session
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.base import TEAM, outline
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils import unfenced
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.prompts import (
+    RUN,
     composed,
     item,
     parameters,
@@ -31,6 +34,28 @@ from delegate.tests.unit.composer.shipped import (
     team_texts,
 )
 from delegate.tests.unit.composer.teams import INTRO
+
+PUBLISHING = (
+    {"type": "pull-request"},
+    {"type": "github", "repo": "o/docs", "branch": "main", "dir": "reports/"},
+)
+
+WRITE_ONCE = (
+    "\n**Write once**: write the deliverable's text once; a later step that needs it elsewhere copies "
+    "that file (`cp`); only a Destination asking for it inline in the outcome repeats it.\n"
+)
+
+
+def destined(role, output, *, docker=False):
+    """The real core's prompt for `role` with `output`, rendered for Docker when `docker`."""
+    composition = Composer()
+    run = composition.resolve(role, overlays=[{"roles": {role: {"output": output}}}])
+    return composition.render(run, replace(RUN, docker=docker))
+
+
+def output_rules(prompt):
+    """The prompt's output.md part: from # Output up to its ## Destination."""
+    return prompt.split("\n# Output\n", 1)[1].split("\n## Destination\n", 1)[0]
 
 
 class Acceptance(Case):
@@ -121,11 +146,46 @@ class Acceptance(Case):
                 self.assertIn(
                     (
                         "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
-                        "of `deliverable`, when [Output › Destination](#destination) says so or the deliverable "
-                        "is long.\n"
+                        "of `deliverable`, when [Output › Destination](#destination) says so.\n"
                     ),
                     prompt,
                 )
+
+    def test_publishing_destinations_name_no_outcome_deliverable(self):
+        for role in roles():
+            for output in PUBLISHING:
+                for docker in (False, True):
+                    with self.subTest(role=role, output=output["type"], docker=docker):
+                        prompt = destined(role, output, docker=docker)
+                        self.assertNotIn("`deliverable`", prompt)
+                        self.assertNotIn("`deliverable_file`", prompt)
+
+    def test_a_publishing_prompts_output_rules_lack_only_the_two_deliverable_fields(self):
+        fields = (
+            "- `deliverable`: the document, when [Output › Destination](#destination) says so.\n",
+            (
+                "- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
+                "of `deliverable`, when [Output › Destination](#destination) says so.\n"
+            ),
+        )
+        returning = output_rules(destined("researcher", {"type": "local"}))
+        for field in fields:
+            self.assertEqual(returning.count(field), 1)
+            returning = returning.replace(field, "")
+        for output in PUBLISHING:
+            with self.subTest(output=output["type"]):
+                self.assertEqual(output_rules(destined("researcher", output)), returning)
+
+    def test_every_destination_has_the_write_once_rule(self):
+        for output in ({"type": "local"}, {"type": "orchestrator"}, *PUBLISHING):
+            for docker in (False, True):
+                with self.subTest(output=output["type"], docker=docker):
+                    self.assertIn(
+                        WRITE_ONCE, output_rules(destined("researcher", output, docker=docker))
+                    )
+        step = task_text("product-design").split("7. **Review.**", 1)[1].split("\n8.", 1)[0]
+        self.assertIn("`<Workdir>/tmp/prd.md`", step)
+        self.assertIn("copies that file", step)
 
     def test_each_task_file_has_one_start_mark_and_a_resume_section(self):
         for name in os.listdir(TASKS):
@@ -311,7 +371,8 @@ class Shipped(Case):
             (
                 "- **Done**, once the build converges, committing nothing more: [Engineer › Repo](#repo) step 2 "
                 "again (its `pr` now the draft PR the build may have opened), then `status: done`; "
-                "`deliverable` what changed, the input's `Links:`, how to verify, and each of this run's builds' "
+                "the deliverable (the PR description): what changed, the input's `Links:`, how to verify, and "
+                "each of this run's builds' "
                 "deferred non-blocking review items verbatim, for the manager or the user to decide on (never "
                 "fix them or start a build for them); `autopilot` the `status` and `head` of this run's last "
                 "`autopilot-result`; `title`"
@@ -319,6 +380,8 @@ class Shipped(Case):
             charter,
         )
         self.assertNotIn("leftover", charter)
+        self.assertNotIn("`deliverable`", charter)
+        self.assertIn("redo Done's deliverable and `autopilot`", charter)
         self.assertNotIn("Merge](#repo)", section(composed("engineer")[0], "Finish"))
         self.assertIn(
             '- `autopilot`: `{"status", "head"}`, when your task asks for it.\n',
@@ -693,7 +756,7 @@ class Real(RealConfig):
                 "`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                 "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                 "a new build of your task's slash command ([Engineer › Autopilot](#autopilot))",
-                "redo Done's `deliverable` and `autopilot`, then [Output › Destination](#destination) updates "
+                "redo Done's deliverable and `autopilot`, then [Output › Destination](#destination) updates "
                 "the PR, then step 1",
                 "3 fix builds",
                 "20 minutes",

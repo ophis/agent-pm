@@ -3,8 +3,10 @@
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the
 guide's default text) and {{language}} (unset → each line holding it is dropped); a destination gets
-{{deliverable}}, <Workdir>/<its path in the workdir>; on Docker, where the harness cannot read the
-agent's files, a `local` or `orchestrator` one is INLINE and no text names `deliverable_file`. Every other run value is a PARAMETERS name,
+{{deliverable}}, <Workdir>/<its path in the workdir>. Only a `local` or `orchestrator` destination
+returns the deliverable in the outcome: any other publishes it, and its prompt names neither outcome
+field; on Docker, where the harness cannot read the agent's files, a returning one is INLINE and no
+text names `deliverable_file`. Every other run value is a PARAMETERS name,
 its value given once in # Parameters. The run reports in its replies (RETURN): PROGRESS mark lines
 and one OUTCOME block, which the Delegate parses.
 
@@ -59,11 +61,10 @@ PARAMETERS = {
     "<out-dir>": "output.dir",
     "<out-host>": "output.host",
 }
-FILE = " A long deliverable goes in a file named by `deliverable_file` instead."
 RETURN = (
     "## Return\n\nYour replies carry your reports:\n\n"
     f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. `[{PROGRESS}:start] <what that line asks you to report>`.\n"
-    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), your last reply is one fenced code block whose info string is `{OUTCOME}`, with no text before or after it, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`.{FILE}\n'
+    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), your last reply is one fenced code block whose info string is `{OUTCOME}`, with no text before or after it, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`.\n'
 )
 INLINE = (
     "## Destination\n\nPut the deliverable inline in the outcome's `deliverable`; publish, post or save it "
@@ -105,12 +106,12 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     destination = fill(
         read_text(os.path.join(output, dest)), {"deliverable": f"<Workdir>/{inside}"}, dest
     )
-    ret = RETURN.replace(FILE, "") if params.docker else RETURN
-    if params.docker:
-        rules = _without(rules, "`deliverable_file`")
-        destination = INLINE if run.output["type"] in SAVES_DELIVERABLE else destination
-    texts |= {"output.md": rules, dest: destination, "Return": ret}
-    parts += [("output.md", rules + "\n" + destination), ("Return", ret)]
+    if run.output["type"] not in SAVES_DELIVERABLE:
+        rules = _without(rules, "`deliverable`")
+    elif params.docker:
+        rules, destination = _without(rules, "`deliverable_file`"), INLINE
+    texts |= {"output.md": rules, dest: destination, "Return": RETURN}
+    parts += [("output.md", rules + "\n" + destination), ("Return", RETURN)]
     joined = [part for _, part in parts]
     joined.insert(1, _parameters(run, params, texts, team))
     own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")
