@@ -11,8 +11,13 @@ from manager.tests.case import REPO, Case
 MANAGER = {"AGENT_PM_MANAGER": "mgr", "AGENT_PM_HOLDER_ID": "holder-1"}
 
 
-def _command() -> str:
-    with open(os.path.join(REPO, "manager", "hooks", "hooks.json"), encoding="utf-8") as f:
+def _command(*, manual: bool = False) -> str:
+    with open(
+        os.path.join(REPO, ".codex-plugin" if manual else ".claude-plugin", "plugin.json"),
+        encoding="utf-8",
+    ) as f:
+        config = json.load(f)["hooks"]
+    with open(os.path.join(REPO, config), encoding="utf-8") as f:
         (entry,) = json.load(f)["hooks"]["SessionStart"]
     return entry["hooks"][0]["command"]
 
@@ -22,11 +27,11 @@ def _start(source: object) -> bytes:
 
 
 class RearmHookTest(Case):
-    def run_hook(self, extra: dict[str, str], stdin: bytes, prefix: str = ""):
-        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": REPO, **extra}
+    def run_hook(self, extra: dict[str, str], stdin: bytes, prefix: str = "", *, manual=False):
+        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": REPO, "PLUGIN_ROOT": REPO, **extra}
         started = time.monotonic()
         done = subprocess.run(
-            ("sh", "-c", prefix + _command()),
+            ("sh", "-c", prefix + _command(manual=manual)),
             input=stdin,
             capture_output=True,
             env=env,
@@ -35,6 +40,29 @@ class RearmHookTest(Case):
         )
         self.assertLess(time.monotonic() - started, 1)
         return done
+
+    def test_manual_plugin_command(self):
+        root = Path(self.home, "plugin root with spaces")
+        root.symlink_to(REPO, target_is_directory=True)
+        for source in ("startup", "resume", "compact", "clear"):
+            with self.subTest(source):
+                done = self.run_hook(
+                    {**MANAGER, "PLUGIN_ROOT": str(root)}, _start(source), manual=True
+                )
+                self.assertEqual((done.returncode, done.stderr), (0, b""))
+                context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+                self.assertIn(f"`{source}` in manager `mgr`", context)
+                self.assertIn("Manual monitoring; no idle notifications", context)
+                self.assertNotIn("Monitor", context)
+        for extra, stdin in (
+            ({}, _start("startup")),
+            ({**MANAGER, "AGENT_PM_AGENT_SESSION": ""}, _start("startup")),
+            (MANAGER, _start("fork")),
+            (MANAGER, b"not JSON"),
+        ):
+            with self.subTest(extra=extra, stdin=stdin):
+                done = self.run_hook(extra, stdin, manual=True)
+                self.assertEqual((done.returncode, done.stdout, done.stderr), (0, b"", b""))
 
     def test_hooks_json_command(self):
         silent = {
@@ -95,8 +123,9 @@ class RearmHookTest(Case):
         (roster / "handled").write_text("0 1\n")
         before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in roster.iterdir()}
         tree = sorted(Path(self.home).rglob("*"))
-        done = self.run_hook(MANAGER, _start("compact"))
-        self.assertEqual(done.returncode, 0)
+        for manual in (False, True):
+            done = self.run_hook(MANAGER, _start("compact"), manual=manual)
+            self.assertEqual(done.returncode, 0)
         self.assertEqual(
             {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in roster.iterdir()}, before
         )

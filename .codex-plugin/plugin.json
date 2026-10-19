@@ -6,6 +6,7 @@
     "name": "Yinze Wang"
   },
   "license": "MIT",
+  "hooks": "./manager/hooks/manual.json",
   "skills": [
     "./delegate/skills/",
     "./linear-orchestrator/skills/",
