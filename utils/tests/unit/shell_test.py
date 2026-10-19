@@ -8,10 +8,20 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.utils import STOP_WAIT, command_path, kill_group, probe, resume_command, shell
+from agent_pm.utils import (
+    PROMPT_ARGV_MAX,
+    STOP_WAIT,
+    command_path,
+    kill_group,
+    over_argv,
+    piped_popen,
+    probe,
+    resume_command,
+    shell,
+)
 
 from utils.tests.case import Case
-from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 
 class ShellExecution(Case):
@@ -121,6 +131,60 @@ class Probe(Case):
         killpg.assert_called_once_with(4242, signal.SIGKILL)
         proc.wait.assert_called_once_with(timeout=STOP_WAIT)
         self.assertTrue(proc.stdout.closed)
+
+
+class PipedPopen(Case):
+    def popen(self, **kwargs):
+        stdin = mock.Mock(buffer=io.BytesIO())
+        stdin.buffer.close = mock.Mock()
+        proc = mock.Mock(stdin=stdin)
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            self.assertIs(piped_popen(["tool"], env={"ONLY": "1"}, cwd="/work", **kwargs), proc)
+        return popen, proc
+
+    def test_without_stdin_text_the_child_reads_devnull(self):
+        popen, _ = self.popen()
+        self.assertIs(popen.call_args.kwargs["stdin"], DEVNULL)
+
+    def test_stdin_text_is_written_whole_as_utf_8_then_closed(self):
+        text = "雪 a\n" * 50_000
+        threads = []
+
+        def thread(target, args, daemon):
+            threads.append(daemon)
+            target(*args)
+            return mock.Mock()
+
+        with mock.patch("threading.Thread", side_effect=thread):
+            popen, proc = self.popen(stdin_text=text)
+        self.assertIs(popen.call_args.kwargs["stdin"], PIPE)
+        self.assertEqual(proc.stdin.buffer.getvalue(), text.encode())
+        proc.stdin.close.assert_called_once_with()
+        self.assertEqual(threads, [True])
+
+    def test_a_child_that_stops_reading_ends_the_write_quietly(self):
+        stream = mock.Mock()
+        stream.buffer.write.side_effect = BrokenPipeError
+        shell._feed(stream, "text")
+        stream.close.assert_called_once_with()
+        stream.close.side_effect = BrokenPipeError
+        shell._feed(stream, "text")
+
+
+class OverArgv(Case):
+    def test_measures_the_json_encoded_utf_8_bytes(self):
+        for text, want in (
+            ("a" * (PROMPT_ARGV_MAX - 2), False),
+            ("a" * (PROMPT_ARGV_MAX - 1), True),
+            ("\n" * (PROMPT_ARGV_MAX // 2 - 1), False),
+            ("\n" * (PROMPT_ARGV_MAX // 2), True),
+            ('"' * 60_000, True),
+            ("雪" * 33_332, False),
+            ("雪" * 33_333, True),
+            ("", False),
+        ):
+            with self.subTest(size=len(text), head=text[:1]):
+                self.assertIs(over_argv(text), want)
 
 
 class ErrText(Case):

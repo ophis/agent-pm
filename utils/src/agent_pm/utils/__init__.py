@@ -86,6 +86,7 @@ from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
 from agent_pm.utils.shell import (
     LONG,
+    PROMPT_ARGV_MAX,
     SHORT,
     STOP_WAIT,
     Runner,
@@ -93,6 +94,7 @@ from agent_pm.utils.shell import (
     command_path,
     err_text,
     kill_group,
+    over_argv,
     piped_popen,
     probe,
     redact,
@@ -124,6 +126,7 @@ __all__ = [
     "OWNER",
     "Once",
     "OutcomeStatus",
+    "PROMPT_ARGV_MAX",
     "ProcessControl",
     "Record",
     "Repo",
@@ -164,6 +167,7 @@ __all__ = [
     "one_line",
     "open_beneath",
     "origin",
+    "over_argv",
     "overlaps",
     "parse_time",
     "piped_popen",

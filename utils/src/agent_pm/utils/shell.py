@@ -1,20 +1,24 @@
 """Subprocess runs with a timeout, their stderr shown with URL userinfo masked; process-group
 kills (kill_group), piped starts (piped_popen), timed output probes (probe) and shell resume commands.
+over_argv: whether a prompt is too long to pass as one exec argument.
 """
 
 import contextlib
+import json
 import os
 import re
 import shlex
 import shutil
 import signal
 import subprocess
+import threading
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.utils.environment import environment_ok
 
 SHORT, LONG = 60, 600
 STOP_WAIT = 5
+PROMPT_ARGV_MAX = 100_000  # bytes; Linux exec refuses one argument over 128 KiB
 USERINFO = re.compile(r"//[^@/\s]+@")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -38,20 +42,41 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
         proc.wait(timeout=wait)
 
 
+def over_argv(text: str) -> bool:
+    """Whether text, JSON-encoded as a launch plan may carry it, is over PROMPT_ARGV_MAX bytes."""
+    return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) > PROMPT_ARGV_MAX
+
+
+def _feed(stream, text: str) -> None:
+    with contextlib.suppress(OSError):  # the child stopped reading
+        stream.buffer.write(text.encode("utf-8"))
+    with contextlib.suppress(OSError):
+        stream.close()
+
+
 def piped_popen(
-    argv, *, env: Mapping[str, str], cwd: str | None = None, stderr: int = subprocess.PIPE
+    argv,
+    *,
+    env: Mapping[str, str],
+    cwd: str | None = None,
+    stderr: int = subprocess.PIPE,
+    stdin_text: str | None = None,
 ) -> subprocess.Popen:
-    return subprocess.Popen(
+    """stdin_text: written whole as UTF-8 to the child's stdin by a daemon thread, then closed."""
+    proc = subprocess.Popen(
         argv,
         cwd=cwd,
         env=env,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL if stdin_text is None else subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=stderr,
         text=True,
         errors="replace",
         process_group=0,
     )
+    if stdin_text is not None:
+        threading.Thread(target=_feed, args=(proc.stdin, stdin_text), daemon=True).start()
+    return proc
 
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
