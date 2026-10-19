@@ -26,7 +26,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude | login github agent-pm-bot | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude | login github agent-pm-bot | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -37,15 +37,16 @@ var volumePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 type step func(ctx context.Context, arg string, progress io.Writer) (any, error)
 
 type app struct {
-	build        func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error)
-	start, close step
-	refresh      func(ctx context.Context, container, manifest string) (any, error)
-	status       func(ctx context.Context) (any, error)
-	workspaceRm  func(ctx context.Context, volume string, force bool) (any, error)
-	login        func(out io.Writer) error
-	loginGitHub  func(ctx context.Context, app string, out io.Writer) error
-	loginCodex   func(context.Context, io.Writer) error
-	installCodex func(context.Context, string, bool) (any, error)
+	build         func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error)
+	start, close  step
+	refresh       func(ctx context.Context, container, manifest string) (any, error)
+	status        func(ctx context.Context) (any, error)
+	workspaceRm   func(ctx context.Context, volume string, force bool) (any, error)
+	login         func(out io.Writer) error
+	loginGitHub   func(ctx context.Context, app string, out io.Writer) error
+	loginCodex    func(context.Context, io.Writer) error
+	loginOpencode func(provider string, out io.Writer) error
+	installCodex  func(context.Context, string, bool) (any, error)
 }
 
 func main() {
@@ -91,6 +92,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 				login = func() error { return a.login(stdout) }
 			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
 				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
+			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
+				login = func() error { return a.loginOpencode(args[2], stdout) }
 			}
 			if login != nil {
 				if err := login(); err != nil {
@@ -285,6 +288,24 @@ func system() app {
 				return err
 			}
 			return tokens(home, nil).SaveUser(ctx, app, out)
+		},
+		loginOpencode: func(provider string, out io.Writer) error {
+			home, err := accountHome()
+			if err != nil {
+				return err
+			}
+			if err := broker.CheckInstalled(); err != nil {
+				return err
+			}
+			return broker.LoginOpencode(provider, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "OpenCode provider "+provider+" API key (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Login keychain password, to make the "+provider+" API key trust only the broker (hidden): ")
+				defer fmt.Fprintln(os.Stderr)
+				return broker.ReadHidden()
+			}, broker.SystemKeychain{Home: home}, out)
 		},
 		installCodex: func(ctx context.Context, version string, update bool) (any, error) {
 			if err := broker.CheckInstalled(); err != nil {

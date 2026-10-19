@@ -126,6 +126,7 @@ shows.
 | `agent-pm-tokens` | container name | — | that container's installation tokens and expiries | `<B> start`, `refresh`; removed by `close` | the broker |
 | `agent-pm-revocations` | `pending` | — | tokens awaiting revocation | `<B> close`, `refresh` failures | the broker |
 | `agent-pm-codex` | `auth` | — | the full Codex login | `<B> login codex`; renewals at `start`, `refresh` | the broker |
+| `agent-pm-opencode` | provider name | `[session.clients.opencode.providers.<name>]` | that OpenCode provider's API key | `<B> login opencode <name>` | the broker |
 | the `harness_key` value | any | `harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
 | each `roles.<role>.key` value | the role's account | `roles.<role>.key` | role Linear API key | the user | any process running as the user |
 | Claude Code's own | — | — | local Claude login | Claude Code `/login` | Claude Code; service name not documented |

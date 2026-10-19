@@ -167,6 +167,10 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login", "github", "agent-pm-docs"}},
 		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
 		{"unknown", []string{"login", "claude", "x"}},
+		{"unknown", []string{"login", "opencode"}},
+		{"unknown", []string{"login", "opencode", "ollama"}},
+		{"unknown", []string{"login", "opencode", "a/b"}},
+		{"unknown", []string{"login", "opencode", "strata", "x"}},
 	} {
 		code, out, errOut := invoke(a, tc.args...)
 		if code != 2 {
@@ -196,6 +200,22 @@ func TestLoginGitHubDispatch(t *testing.T) {
 	}
 	a := app{loginGitHub: func(context.Context, string, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
+		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+}
+
+func TestLoginOpencodeDispatch(t *testing.T) {
+	var got string
+	a := app{loginOpencode: func(provider string, out io.Writer) error {
+		got = provider
+		_, err := io.WriteString(out, "ok\n")
+		return err
+	}}
+	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 0 || got != "strata" || out != "ok\n" || errOut != "" {
+		t.Fatalf("exit %d provider %q %q %q", code, got, out, errOut)
+	}
+	a = app{loginOpencode: func(string, io.Writer) error { return errors.New("no terminal") }}
+	if code, out, errOut := invoke(a, "login", "opencode", "strata"); code != 1 || out != "" || errOut != "agent-pm-broker: no terminal\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
 }

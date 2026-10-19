@@ -32,7 +32,12 @@ var (
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	// An OpenCode provider's name: its keychain account and its key file's name, <name>.key.
+	providerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
+
+// ValidProvider is whether name can be a listed OpenCode provider; ollama needs no key.
+func ValidProvider(name string) bool { return providerPattern.MatchString(name) && name != "ollama" }
 
 func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })

@@ -66,6 +66,7 @@ var KeychainServices = []string{
 	"agent-pm-tokens",
 	"agent-pm-revocations",
 	"agent-pm-codex",
+	"agent-pm-opencode",
 }
 
 // SecretKeychain holds broker-only items: created trusting only the broker, read without a dialog.
@@ -224,13 +225,8 @@ func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Wri
 	if err != nil {
 		return fmt.Errorf("reading the setup-token failed: %w", err)
 	}
-	if len(token) == 0 || len(token) > maxToken {
-		return fmt.Errorf("setup-token must be 1 to %d bytes", maxToken)
-	}
-	for _, r := range string(token) {
-		if unicode.IsSpace(r) || unicode.IsControl(r) || r == unicode.ReplacementChar {
-			return errors.New("setup-token contains whitespace or control characters")
-		}
+	if err := checkSecret("setup-token", token); err != nil {
+		return err
 	}
 	if err := k.Put(token); err != nil {
 		return err
@@ -247,6 +243,19 @@ func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Wri
 	}
 	_, err = fmt.Fprintln(out, "Claude setup-token saved; keychain trusts only the broker")
 	return err
+}
+
+// checkSecret is nil when secret, what names it, is 1 to maxToken bytes of printable UTF-8 without whitespace.
+func checkSecret(what string, secret []byte) error {
+	if len(secret) == 0 || len(secret) > maxToken {
+		return fmt.Errorf("%s must be 1 to %d bytes", what, maxToken)
+	}
+	for _, r := range string(secret) {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == unicode.ReplacementChar {
+			return fmt.Errorf("%s contains whitespace or control characters", what)
+		}
+	}
+	return nil
 }
 
 // approveByDialog moves the one read dialog into login claude: it announces it on notice, reads with it, then
