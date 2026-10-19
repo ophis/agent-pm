@@ -1,14 +1,19 @@
-"""Linear issue nodes, as `agent-pm-linear issue read`, `move` and `comment` query them, and recording
-fake gqls; the
-lookup and list entities by edge with Routes, a fake gql answering each by its root field; IssueCase
-runs issue.main against a test configuration.
+"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment` and `archive` query them,
+and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
+by its root field; IssueCase runs issue.main against a test configuration.
 """
 
 import io
 import os
 import re
 
-from agent_pm.linear_orchestrator.engine import client, issue, issue_read, issue_write
+from agent_pm.linear_orchestrator.engine import (
+    client,
+    issue,
+    issue_archive,
+    issue_read,
+    issue_write,
+)
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import TEAM
@@ -238,6 +243,62 @@ class WriteGql:
         if self.fail is not None:
             raise self.fail
         return {"viewer": self.viewer, "issue": self.issue}
+
+    @property
+    def writes(self):
+        return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+def tree(ident="TASK-1", kind="completed", *children, archived=None):
+    """An issue as `agent-pm-linear issue archive` reads it, its unarchived sub-issues children."""
+    return {
+        "id": f"id-{ident}",
+        "identifier": ident,
+        "url": f"https://linear.app/t/issue/{ident}",
+        "archivedAt": archived,
+        "state": {"name": kind.title(), "type": kind},
+        "kids": list(children),
+    }
+
+
+class ArchiveGql:
+    """Answers the archive read with `root` (None: no such issue) and VIEWER, each children
+    connection in pages of issue_read.PAGE (cursor: the next offset), and the mutation with
+    `result`, raised when an exception. `broken` maps (issue id, offset) to an exception that page
+    raises, or None for a page missing. Records every (query, variables) call.
+    """
+
+    def __init__(self, root, *, broken=None, result=None, viewer=VIEWER):
+        self.root, self.broken, self.result, self.viewer = root, dict(broken or {}), result, viewer
+        self.nodes, self.calls, stack = {}, [], [root] if root else []
+        while stack:
+            node = stack.pop()
+            self.nodes[node["id"]] = node
+            stack += node["kids"]
+
+    def _page(self, node, offset):
+        if (node["id"], offset) in self.broken:
+            if (error := self.broken[node["id"], offset]) is not None:
+                raise error
+            return None
+        kids = node["kids"][offset : offset + issue_read.PAGE]
+        more = offset + issue_read.PAGE < len(node["kids"])
+        nodes = [{k: kid[k] for k in ("id", "identifier", "state")} for kid in kids]
+        return conn(nodes, more=more, cursor=str(offset + issue_read.PAGE) if more else None)
+
+    def __call__(self, query, **variables):
+        self.calls.append((query, variables))
+        if query.startswith("mutation"):
+            if isinstance(self.result, BaseException):
+                raise self.result
+            return {"issueArchive": {"success": True} if self.result is None else self.result}
+        if query == issue_archive.Q_CHILDREN:
+            page = self._page(self.nodes[variables["i"]], int(variables["c"] or 0))
+            return {"issue": None if page is None else {"children": page}}
+        if self.root is None:
+            return {"viewer": self.viewer, "issue": None}
+        node = {k: v for k, v in self.root.items() if k != "kids"}
+        return {"viewer": self.viewer, "issue": node | {"children": self._page(self.root, 0)}}
 
     @property
     def writes(self):

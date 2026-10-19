@@ -17,6 +17,7 @@ import tempfile
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import (
     config,
+    issue_archive,
     issue_list,
     issue_lookup,
     issue_page,
@@ -25,6 +26,7 @@ from agent_pm.linear_orchestrator.engine import (
 )
 from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
 from agent_pm.linear_orchestrator.engine.types import (
+    ArchiveRefused,
     ConfigError,
     GraphQLErrors,
     IssueError,
@@ -75,18 +77,21 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  move and comment write as that account and print a receipt instead; for\n"
-    "  them exit 1 also means the write's result is unknown (their --help).\n\n"
+    + "  move, comment and archive write as that account and print a receipt\n"
+    "  instead; for them exit 1 also means the write's result is unknown, for\n"
+    "  archive also a refusal (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
     "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
     "  agent-pm-linear issue lookup states --team TASK\n"
     "  agent-pm-linear issue move TASK-1 --state Done\n"
-    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n\n"
+    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
+    "  agent-pm-linear issue archive TASK-1 --dry-run\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
     "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
-    "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help\n"
+    "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help,\n"
+    "  agent-pm-linear issue archive --help\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _PAGES = (
@@ -211,6 +216,29 @@ _COMMENT_HELP = (
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 
+_ARCHIVE_HELP = (
+    _WRITE_RULES
+    % ""
+    + "Archives the issue only when it and every unarchived sub-issue, at any depth,\n"
+    "  are finished: state type completed or canceled (Linear archives sub-issues\n"
+    "  with their parent). It first reads every page of sub-issues at every level;\n"
+    "  a failed read writes nothing. There is no override: an unfinished one exits\n"
+    "  1 naming it. Already archived: result unchanged, nothing written. It closes\n"
+    "  no run and deletes no file.\n"
+    "--dry-run: write nothing and print, in at most 8192 bytes, {issue, operation,\n"
+    "  dry_run, result (what archive would do: changed, unchanged or refused),\n"
+    "  descendant_count, descendants (the sub-issues it would archive too: id,\n"
+    "  identifier, state), unfinished_count, unfinished, truncated}; over 8192\n"
+    "  bytes, list items drop from the end, each such list named in truncated.\n"
+    "  Exit 0 whatever result says.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue archive TASK-1 --dry-run\n"
+    "  agent-pm-linear issue archive TASK-1\n\n"
+    "Recovery and next help:\n"
+    "  An unfinished issue: agent-pm-linear issue move TASK-1 --state Done\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+
 
 class _Once(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
@@ -228,11 +256,12 @@ def encode(payload):
 def fit(payload, lists, texts, follow):
     """payload encoded within LIMIT: drop the last item of its largest list in lists, then halve its
     longest text at a dotted path in texts, naming each cut in truncated, until it fits; continue is
-    follow once anything is truncated.
+    follow once anything is truncated, absent when follow is None.
     """
     payload = copy.deepcopy(payload)
     while True:
-        payload["continue"] = follow if payload["truncated"] else None
+        if follow is not None:
+            payload["continue"] = follow if payload["truncated"] else None
         data = encode(payload)
         if len(data) <= LIMIT:
             return data
@@ -410,6 +439,17 @@ def _parser():
     comment.add_argument(
         "--body-file", required=True, action=_Once, metavar="FILE", help="UTF-8 body; -: stdin"
     )
+    archive = commands.add_parser(
+        "archive",
+        help="archive one issue once it and every sub-issue are finished",
+        description="Archive one issue once it and every unarchived sub-issue are finished.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_ARCHIVE_HELP,
+    )
+    archive.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    archive.add_argument(
+        "--dry-run", action="store_true", help="list what it would archive; write nothing"
+    )
     return parser
 
 
@@ -458,6 +498,10 @@ def _run(gql, args, team_id, body):
         return receipt(issue_write.move(gql, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
+    if args.command == "archive" and args.dry_run:
+        return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
+    if args.command == "archive":
+        return receipt(issue_archive.archive(gql, args.id))
     if args.command == "read":
         view = issue_read.view(gql, args.id, full=args.full)
         if args.full:
@@ -520,7 +564,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
-    except (LinearError, Unavailable, OverflowError) as error:
+    except (LinearError, Unavailable, OverflowError, ArchiveRefused) as error:
         diagnose(err, error)
         return FAILED
     out.write(data)

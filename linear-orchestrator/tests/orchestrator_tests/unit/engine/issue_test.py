@@ -1,5 +1,5 @@
-"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move and comment through
-main.
+"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move, comment and archive
+through main.
 """
 
 import io
@@ -16,6 +16,7 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.issue_fixtures import (
+    ArchiveGql,
     Gql,
     IssueCase,
     WriteGql,
@@ -24,6 +25,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     issue_node,
     rel,
     team,
+    tree,
     write_issue,
 )
 
@@ -94,6 +96,7 @@ class Help(Case):
         for command, phrases in (
             ("move", ("--state VALUE", "issue's own team", "unchanged")),
             ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
+            ("archive", ("--dry-run", "completed or canceled", "every page", "no override")),
         ):
             output = io.StringIO()
             with (
@@ -125,6 +128,9 @@ class Help(Case):
             ["move", "TASK-1", "--state", "Done", "--state", "Todo"],
             ["comment", "TASK-1"],
             ["comment", "TASK-1", "--body-file", "a.md", "--body-file", "b.md"],
+            ["archive"],
+            ["archive", "TASK-1", "--force"],
+            ["archive", "TASK-1", "--dry-run=yes"],
         ):
             with (
                 self.subTest(argv=argv),
@@ -356,6 +362,92 @@ class Comment(IssueCase):
         self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
         self.assertIn("result unknown", err)
         self.assertIn("agent-pm-linear issue read TASK-2", err)
+
+
+class Archive(IssueCase):
+    def test_prints_the_receipt(self):
+        gql = ArchiveGql(tree("TASK-1", "completed", tree("TASK-2", "canceled")))
+        code, out, err = self.run_main(["archive", "TASK-1"], gql)
+        self.assertEqual((code, err, len(gql.writes)), (0, "", 1))
+        receipt = json.loads(out)
+        self.assertEqual(
+            (receipt["operation"], receipt["result"], receipt["issue"]["identifier"]),
+            ("archive", "changed", "TASK-1"),
+        )
+        self.assertLessEqual(len(out), 1024)
+
+    def test_already_archived_exits_zero_unchanged(self):
+        gql = ArchiveGql(tree("TASK-1", "started", archived="2026-10-01"))
+        code, out, _ = self.run_main(["archive", "TASK-1"], gql)
+        self.assertEqual((code, json.loads(out)["result"], gql.writes), (0, "unchanged", []))
+
+    def test_failures_print_no_receipt(self):
+        unfinished = tree(
+            "TASK-1",
+            "completed",
+            *[tree(f"SUB-{i}") for i in range(250)],
+            tree("TASK-9", "started"),
+        )
+        cases = (
+            (ArchiveGql(unfinished), 1, "TASK-9 (Started)"),
+            (
+                ArchiveGql(
+                    tree("TASK-1", "completed", tree("TASK-2")),
+                    broken={("id-TASK-2", 0): LinearError("linear api error: boom")},
+                ),
+                1,
+                "boom",
+            ),
+            (
+                ArchiveGql(
+                    tree("TASK-1", "completed", tree("TASK-2")), broken={("id-TASK-2", 0): None}
+                ),
+                1,
+                "TASK-2",
+            ),
+            (ArchiveGql(None), 2, "no such issue"),
+            (
+                ArchiveGql(tree(), result=Unavailable("issueArchive", reason="timed out")),
+                1,
+                "result unknown",
+            ),
+            (ArchiveGql(tree(), result={"success": False}), 1, "success: false"),
+        )
+        for gql, want, phrase in cases:
+            with self.subTest(phrase=phrase):
+                code, out, err = self.run_main(["archive", "TASK-1"], gql)
+                self.assertEqual((code, out), (want, b""))
+                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertIn(phrase, err)
+                self.assertLessEqual(len(err.encode("utf-8")), 8192)
+        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 0, 0, 1, 1])
+
+    def test_dry_run_reports_and_writes_nothing(self):
+        for root, result in (
+            (tree("TASK-1", "completed", tree("TASK-2", "canceled")), "changed"),
+            (tree("TASK-1", "completed", tree("TASK-2", "started")), "refused"),
+        ):
+            gql = ArchiveGql(root)
+            with self.subTest(result=result):
+                code, out, err = self.run_main(["archive", "TASK-1", "--dry-run"], gql)
+                self.assertEqual((code, err, gql.writes), (0, "", []))
+                plan = json.loads(out)
+                self.assertEqual((plan["result"], plan["descendant_count"]), (result, 1))
+                self.assertEqual(plan["descendants"][0]["identifier"], "TASK-2")
+                self.assertNotIn("continue", plan)
+
+    def test_a_long_dry_run_stays_within_eight_kib_with_its_totals(self):
+        kids = [tree(f"LONGTEAM-{i}", "started") for i in range(400)]
+        code, out, _ = self.run_main(
+            ["archive", "TASK-1", "--dry-run"], ArchiveGql(tree("TASK-1", "completed", *kids))
+        )
+        self.assertEqual(code, 0)
+        self.assertLessEqual(len(out), 8192)
+        plan = json.loads(out)
+        self.assertEqual((plan["descendant_count"], plan["unfinished_count"]), (400, 400))
+        self.assertEqual(sorted(plan["truncated"]), ["descendants", "unfinished"])
+        self.assertLess(len(plan["descendants"]) + len(plan["unfinished"]), 800)
+        self.assertEqual(plan["unfinished"][0]["identifier"], "LONGTEAM-0")
 
 
 class Failures(IssueCase):
