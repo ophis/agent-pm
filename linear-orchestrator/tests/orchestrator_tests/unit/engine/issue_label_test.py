@@ -157,6 +157,20 @@ class Refused(Case):
             self.assertIn(phrase, str(cm.exception))
             self.assertEqual(gql.writes, [])
 
+    def test_two_carried_old_labels_of_one_name_list_both_and_the_lookup(self):
+        twins = (label(8, "dup"), label(9, "dup", None))
+        gql = gql_of(*twins, catalog=(*CATALOG, *twins))
+        with self.assertRaises(IssueError) as cm:
+            issue_label.swap(gql, "TASK-2", "dup", "chore")
+        text = str(cm.exception)
+        for phrase in (
+            uid(8),
+            uid(9),
+            f"list them: agent-pm-linear issue lookup labels --team {TEAM}",
+        ):
+            self.assertIn(phrase, text)
+        self.assertEqual(gql.writes, [])
+
     def test_a_write_outage_is_result_unknown_and_never_retried(self):
         gql = gql_of(BUG, result=Unavailable("issueUpdate", reason="timed out"))
         with self.assertRaises(WriteUnknown) as cm:

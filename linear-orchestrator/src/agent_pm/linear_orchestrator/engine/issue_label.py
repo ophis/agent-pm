@@ -85,6 +85,6 @@ def _old(gql, team_id, carried, value):
         listed = ", ".join(issue_refs.show(n) for n in found)
         raise IssueError(
             f"--from {value!r}: the issue carries {len(found)} labels of that name, name one by id: "
-            f"{listed}"
+            f"{listed}; list them: {issue_refs.command('labels', value, '--team', team_id)}"
         )
     return issue_refs.label(gql, team_id, value, option="--from", retired=True)
