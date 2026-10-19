@@ -56,6 +56,9 @@ STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call
 BINDING_KEYS = frozenset({"version", "cwd", "sid", "native"})
 BINDING_MAX = 4096
 OLLAMA_PORT = 11434
+OLLAMA_CONTEXT = 65536
+# Headroom below a window: OpenCode's OUTPUT_TOKEN_MAX and COMPACTION_BUFFER (docs/sessions.md).
+REPLY, BUFFER = 32000, 20000
 # Set by OpenCode for its children (a nested start's are never its own).
 IDENTITY = ("OPENCODE", "OPENCODE_PID", "OPENCODE_TERMINAL")
 # Config OpenCode merges over or beside the launch's own OPENCODE_CONFIG_CONTENT.
@@ -110,13 +113,18 @@ WORD = re.compile(r"\S+")
 URL = re.compile(r"https?://\S+")
 
 
+def _window(value) -> bool:
+    return type(value) is int and value > 0
+
+
 def _provider(name, table) -> bool:
     return (
         isinstance(name, str)
         and NAME.fullmatch(name) is not None
         and name != OLLAMA
         and isinstance(table, Mapping)
-        and set(table) == {"base_url", "models"}
+        and set(table) - {"context"} == {"base_url", "models"}
+        and _window(table.get("context", OLLAMA_CONTEXT))
         and isinstance(table["base_url"], str)
         and URL.fullmatch(table["base_url"]) is not None
         and strings(table["models"])
@@ -124,6 +132,7 @@ def _provider(name, table) -> bool:
     )
 
 
+CONTEXT = ("ollama_context", _window, "a positive integer token count")
 MODEL = (
     "model",
     lambda v: isinstance(v, str) and v.strip() != "" and v.isprintable(),
@@ -134,7 +143,7 @@ PROVIDERS = (
     lambda v: isinstance(v, Mapping) and all(_provider(k, t) for k, t in v.items()),
     "a table of OpenAI-compatible providers other than ollama, named by up to 64 letters, digits,"
     " '.', '_' or '-', each with exactly base_url (an http(s) URL) and models (a list of model"
-    " names)",
+    " names), and optionally context (its context window, a positive integer token count)",
 )
 
 
@@ -243,7 +252,9 @@ def refuse_env(env: Mapping[str, str], where: str) -> None:
 class OpenCodeCommon:
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, MODEL, PROVIDERS, *CHECKS))
+        check_config(
+            config, TABLE, (FLAGS, MODES, PORT, CONTEXT, EXECUTABLE, MODEL, PROVIDERS, *CHECKS)
+        )
         self.executable = config.get("executable") or "opencode"
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
@@ -251,6 +262,7 @@ class OpenCodeCommon:
         for permission, flags in self.modes.items():
             refuse(flags, RESERVED, f"{TABLE}.modes.{permission}")
         self.port = config.get("ollama_port", OLLAMA_PORT)
+        self.ollama_context = config.get("ollama_context", OLLAMA_CONTEXT)
         self.providers = {name: dict(t) for name, t in config.get("providers", {}).items()}
         self.tiers = dict(config.get("tiers", {}))
         self.default: str | None = config.get("model")
@@ -376,9 +388,15 @@ class OpenCodeCommon:
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
         ollama = f"http://{context.host_address}:{self.port}/v1"
         providers = {
-            OLLAMA: self._provider("Ollama", ollama, OLLAMA, ()),
+            OLLAMA: self._provider("Ollama", ollama, OLLAMA, (), self.ollama_context),
             **{
-                name: self._provider(name, table["base_url"], name, table["models"])
+                name: self._provider(
+                    name,
+                    table["base_url"],
+                    name,
+                    table["models"],
+                    table.get("context", OLLAMA_CONTEXT),
+                )
                 for name, table in sorted(self.providers.items())
             },
         }
@@ -392,22 +410,31 @@ class OpenCodeCommon:
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
+            "compaction": {"reserved": 0},  # it compacts at limit.input - reserved
             # Built-in providers (OpenCode Zen's included) off.
             "enabled_providers": list(providers),
             "provider": providers,
             "permission": permission,
         }
 
-    def _provider(self, title: str, url: str, name: str, listed) -> dict:
+    def _provider(self, title: str, url: str, name: str, listed, window: int) -> dict:
         """An OpenAI-compatible provider: its listed models, then those tiers or model name."""
         prefix = f"{name}/"
         named = (*self.tiers.values(), *((self.default,) if self.default else ()))
         mapped = (m.removeprefix(prefix) for m in named if m.startswith(prefix))
+        limit = {
+            "context": window,
+            "input": window - min(REPLY + BUFFER, window // 2),
+            "output": REPLY,
+        }
         return {
             "npm": "@ai-sdk/openai-compatible",
             "name": title,
             "options": {"baseURL": url},
-            "models": {model: {"name": model} for model in dict.fromkeys((*listed, *mapped))},
+            "models": {
+                model: {"name": model, "limit": limit}
+                for model in dict.fromkeys((*listed, *mapped))
+            },
         }
 
     def environment(

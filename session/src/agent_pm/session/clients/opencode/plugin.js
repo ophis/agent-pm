@@ -141,7 +141,6 @@ function handle(event, client) {
       call("permission.replied", { reply: p.reply ?? "" });
       return;
     case "question.asked": {
-      // The question tool's prompt: each question's header, else its text.
       if (!owned(p.sessionID)) return;
       const titles = (Array.isArray(p.questions) ? p.questions : []).map((q) => q?.header || q?.question || "");
       call("question.asked", { questions: titles.filter((t) => typeof t === "string") });

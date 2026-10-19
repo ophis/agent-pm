@@ -50,12 +50,15 @@ Each launch's OpenCode config (`OPENCODE_CONFIG_CONTENT`) enables only the `olla
 [session.clients.opencode.providers.strata]
 base_url = "http://<LAN host>:8080/v1"
 models = ["qwen3.8-flash-next-iq2_xs"]   # beside the models tiers and model map to it
+context = 204800                          # its context window in tokens; default 65536
 
 [session.clients.opencode.tiers]
 1 = "strata/qwen3.8-flash-next-iq2_xs"
 ```
 
 Its API key, on the tmux and pty Hosts, stays OpenCode's: run `opencode auth login` once, pick Other and enter the provider's name (`strata`), and OpenCode keeps the key in its `auth.json`; agent-pm never reads or passes it. On the Docker Host the broker keeps it: `agent-pm-broker login opencode strata` once, for every configured provider ([Docker host › OpenCode](docker-host.md#opencode)). A name is up to 64 letters, digits, `.`, `_` or `-`.
+
+Each model's config entry carries its server's context window (`limit`): a providers table's `context`, `[clients.opencode] ollama_context` for `ollama/` models (both default 65536, Ollama's minimum in [Docker host › OpenCode](docker-host.md#opencode)). OpenCode compacts a session once a step reaches that window less a headroom, 52000 tokens or half the window if smaller: 32000 for the compaction's reply (OpenCode's output cap) and 20000 for its summary prompt and the step that crossed the line. Without it OpenCode knows no window for these providers and compacts only after the server refuses a full context, when the compaction request itself no longer fits. Set each to the server's real window (Ollama's `OLLAMA_CONTEXT_LENGTH`): a smaller value only compacts early, a larger one lets a request overflow.
 
 A crew worker's cwd is always trusted (you pick it), so `agent-pm-crew worker NAME --client opencode --cwd DIR` starts on tmux in any `DIR`; a role run only under `trusted_dirs`; a board run never (its cwd is the workdir's `agent/`): run OpenCode board runs on the Docker Host ([Linear board › OpenCode](board.md#opencode)).
 

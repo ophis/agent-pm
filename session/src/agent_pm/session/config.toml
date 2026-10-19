@@ -99,6 +99,8 @@ max = "max"
 #   executable       the OpenCode 1.x command both modes run (a name PATH finds, or an absolute path); empty → the
 #                    client's own name on PATH; a launch whose `<executable> --version` is not 1.x is refused
 #   ollama_port      the host's Ollama port
+#   ollama_context   its context window in tokens (OLLAMA_CONTEXT_LENGTH): ollama/ models compact before it fills
+#                    (docs/sessions.md › OpenCode sessions)
 #   model            the --model of a run without a tier (ollama/<model> or <name>/<model>, as tiers'); never empty,
 #                    and without it such a run is refused
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
@@ -110,6 +112,7 @@ max = "max"
 #                    sessions), <name> up to 64 letters, digits, ., _ or -; none packaged:
 #   base_url         its http(s) URL, ending /v1 (http://<host>:8080/v1)
 #   models           model names it lists beside those tiers map to it; [] → only those
+#   context          optional: its context window in tokens, as ollama_context; absent → 65536
 #                    Its API key: on tmux/pty, `opencode auth login` (provider <name>), which agent-pm never reads;
 #                    on Docker, `agent-pm-broker login opencode <name>`, every listed one (docs/docker-host.md › OpenCode)
 # [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
@@ -118,6 +121,7 @@ implementation = "agent_pm.session.clients.opencode:OpenCodeClient"
 flags = []
 executable = ""
 ollama_port = 11434
+ollama_context = 65536
 model = "ollama/qwen3.6:35b-mlx"
 
 [clients.opencode.modes]
