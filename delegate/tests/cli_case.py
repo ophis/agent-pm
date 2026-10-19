@@ -45,6 +45,7 @@ HEADS = [
     "pm  local  built-in",
     "engineer  pull-request  built-in",
     "dummy-tester  local  built-in",
+    "choice-translator  orchestrator  built-in",
 ]
 
 

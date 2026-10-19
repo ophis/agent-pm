@@ -155,3 +155,8 @@ max_runs = 3
 gate = "agent-pm-linear router --brake researcher"
 # local: [linear_orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"
+
+[core.roles.choice-translator]
+# the issue read its translate task runs, like the gate a bin/ command on the router's PATH
+# (engine/selection.py translate)
+commands = ["agent-pm-linear issue read *"]
