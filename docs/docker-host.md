@@ -284,19 +284,21 @@ marks it ready, you approve with your own account, and revision rounds push to t
 
 ### OpenCode
 
-OpenCode sessions run the host's Ollama models ([OpenCode sessions](sessions.md#opencode-sessions)); no login, and
-the container gets no model credential ([Credentials](credentials.md#who-logs-in)). Once, on the Mac:
+OpenCode sessions run the host's Ollama models, or a configured provider's ([OpenCode sessions](sessions.md#opencode-sessions));
+no login, and the container gets no model credential ([Credentials](credentials.md#who-logs-in)), so a provider that
+needs an API key fails in a container. Once, on the Mac:
 
 1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through
    `host.docker.internal` ([Risks](#risks)).
 2. Set its context length to at least 65536, or tool calls fail: for the Ollama app,
    `launchctl setenv OLLAMA_CONTEXT_LENGTH 65536`, then quit and reopen it; for `ollama serve`, start it with
    `OLLAMA_CONTEXT_LENGTH=65536`.
-3. Pull every tier's model, `ollama pull qwen3.6:35b-mlx` by default (`[session.clients.opencode.tiers]`;
-   `ollama_port`, default 11434, is its port).
+3. Pull every `ollama/` model of the tiers and `model`, `ollama pull qwen3.6:35b-mlx` by default
+   (`[session.clients.opencode.tiers]`; `ollama_port`, default 11434, is its port).
 
 The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and the Client gives its config
-(`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, no auto-update):
+(`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, the configured
+providers and no other, no auto-update):
 none of the Mac's OpenCode install, config or plugins goes into the container (the cwd's own `opencode.json` and
 `.opencode/` still load: OpenCode has no project trust). An existing
 `~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
