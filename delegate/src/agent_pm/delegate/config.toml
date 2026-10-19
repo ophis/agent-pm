@@ -108,7 +108,8 @@ host = ""
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the Client decides how
 #                 they are approved. {{workdir}} is <workdir>/agent, {{team}} core's team/ dir, {{role_team}}
 #                 as in read; a word holding one is shell-quoted once filled, and a prompt text writing the command
-#                 with <Workdir>, <team> or <role team> gets it as approved when that quoting changed it; [] → none
+#                 with <Workdir>, <team> or <role team> gets it as approved when that quoting changed it; a prompt
+#                 text naming <commands> gets them all as approved; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the Client; "" → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, client, language, cwd, idle_timeout, show or [output], for that role

@@ -547,6 +547,7 @@ class Parameters(Fake):
                 "<team>",
                 "<role team>",
                 "<gate>",
+                "<commands>",
                 "<out-repo>",
                 "<out-branch>",
                 "<out-dir>",
@@ -589,6 +590,16 @@ class Parameters(Fake):
             parameters(self.compose(overlays=[{"gate": "make gate"}])[0])["<gate>"], "`make gate`"
         )
         self.assertNotIn("<gate>", parameters(self.compose("editor")[0]))
+
+    def test_commands_used_by_name_list_the_runs_approved_rules(self):
+        self.write({"tasks/short-note.md": "# Short Note\n\nRun a command in `<commands>`.\n"})
+        self.assertEqual(parameters(self.compose()[0])["<commands>"], "`none`")
+        overlay = {"commands": ["tool read *", "python3 -P {{team}}/tools/x.py"]}
+        self.assertEqual(
+            parameters(self.compose(overlays=[overlay])[0])["<commands>"],
+            f"`tool read *`, `python3 -P {self.root}/tools/x.py`",
+        )
+        self.assertNotIn("<commands>", parameters(self.compose("editor", overlays=[overlay])[0]))
 
     def test_gate_used_in_a_method_file_a_text_names(self):
         self.write(
