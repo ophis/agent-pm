@@ -585,7 +585,8 @@ def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
         )
     # Finished: the outcome (once ledgered, never again), the limit, then the session's end
     outcome = event.outcome
-    ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
+    written = outcome or _no_outcome(event)
+    ok = written is None or "outcome" in _done(ctx) or finish(ctx, written)
     if event.limit is not None:
         ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
     elif outcome is None:
@@ -593,6 +594,16 @@ def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
     ended = session(end=(event.returncode, outcome, event.limit is not None))
     log("writeback", "end", ctx.ident, sid=ctx.sid, exit=event.returncode)
     return ended and ok
+
+
+def _no_outcome(event) -> Outcome | None:
+    """A failed outcome for a run that ended itself (rc 0) without one or a limit; one that was
+    interrupted (rc ≠ 0) is Recover's to resume.
+    """
+    if event.returncode != 0 or event.limit is not None:
+        return None
+    error = event.error or "the agent run returned no outcome"
+    return Outcome(OutcomeStatus.FAILED, "The agent run returned no outcome", error)
 
 
 def _running(ctx, attempt) -> bool:
