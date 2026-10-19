@@ -83,6 +83,31 @@ class OrchestratorText(Sample):
         root = self.wrap_orchestrator(self.tree({path: text}))
         self.assertEqual(ownership.orchestrator_text(root), [f"{path}:2: client name codex"])
 
+    def test_client_limit_keys_in_the_packaged_config_may_name_a_client(self):
+        path = f"{OPKG}/config.toml"
+        text = (
+            "# claude = 3\n"
+            "[client_max_runs]\n"
+            "opencode = 1  # one job\n"
+            "# claude = 3\n"
+            "codex = 2  # not claude\n"
+            "# local: [linear_orchestrator.client_max_runs]\n"
+            "# local: opencode = 1\n"
+            'claude = "x"\n'
+            "[task_tiers]\n"
+            "codex = 2\n"
+        )
+        root = self.wrap_orchestrator(self.tree({path: text}))
+        self.assertEqual(
+            ownership.orchestrator_text(root),
+            [
+                f"{path}:10: client name codex",
+                f"{path}:1: client name claude",
+                f"{path}:5: client name claude",
+                f"{path}:8: client name claude",
+            ],
+        )
+
     def test_client_names_tool_strings_and_handoff_literals_name_the_file_and_line(self):
         for files, expected in (
             (

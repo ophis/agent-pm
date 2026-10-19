@@ -9,6 +9,7 @@ import tokenize
 from tests.guard_checks.common import _bindings, _dotted, _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import (
+    CLIENT_LIMIT_TABLES,
     HANDOFF_HOME,
     ORCH,
     ORCH_FILES,
@@ -38,6 +39,12 @@ TOML_IMPLEMENTATION = re.compile(
 
 
 TOML_CLIENT = re.compile(r'\s*client\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+
+
+TOML_TABLE = re.compile(r"\s*(?:#\s*local:\s*)?\[\s*([^\]\s]+)\s*\]\s*(?:#.*)?\Z")
+
+
+TOML_LIMIT_KEY = re.compile(r"\s*(?:#\s*(?:local:\s*)?)?[a-z][a-z0-9_]*\s*=\s*\d+\s*(?:#.*)?\Z")
 
 
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
@@ -359,7 +366,9 @@ def orchestrator_text(repo: str) -> list[str]:
     for rel, text in _files(os.path.join(repo, ORCH_PROJECT), (".py", ".toml"), skip="tests/"):
         lines = text.splitlines()
         grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
+        limits = _client_limit_keys(lines) if rel.endswith(".toml") else set()
         for number, line in enumerate(lines, 1):
+            line = line[line.index("=") :] if number in limits else line
             found.update(
                 f"{rel}:{number}: client name {w}"
                 for w in CLIENT.findall(line.replace("AGENTS.md", " "))
@@ -379,6 +388,17 @@ def orchestrator_text(repo: str) -> list[str]:
             f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
         )
     return sorted(found)
+
+
+def _client_limit_keys(lines):
+    """Numbers of the key lines in a CLIENT_LIMIT_TABLES table, its `# local:` header included."""
+    table, keys = None, set()
+    for number, line in enumerate(lines, 1):
+        if header := TOML_TABLE.match(line):
+            table = header[1].removeprefix(f"{ORCH}.")
+        elif table in CLIENT_LIMIT_TABLES and TOML_LIMIT_KEY.match(line):
+            keys.add(number)
+    return keys
 
 
 def _lower_files(repo, suffixes, skip=None, projects=LOWER):
