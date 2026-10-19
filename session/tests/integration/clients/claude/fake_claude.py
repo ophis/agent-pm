@@ -18,6 +18,9 @@ with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (
 Interactive {"kind": "limit", "text": S} prints S, keeps it as a rate_limit API error and ends the
 turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X};
 {"kind": "exit"} exits at once with `exit`.
+{"kind": "queued", "answer": A} runs a tool while the next stdin line arrives, which Claude Code
+queues (an enqueue record) and joins to the turn once the tool returns (PostToolUse, then a
+queued_command attachment), then answers A; {"kind": "pause", "file": F} waits for F to exist.
 - turns: interactive steps of turn 2 on.
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
@@ -97,6 +100,8 @@ TUI = {
     "dialog": {"text": _text},
     "sleep": {"seconds": lambda v: _number(v) and 0 <= v <= HANG_CAP},
     "exit": {},
+    "queued": {"answer": _text},
+    "pause": {"file": lambda v: _text(v) and v != ""},
 }
 
 
@@ -308,6 +313,7 @@ class InteractiveRequest:
     hooks: dict | None
     payload: dict
     keep: object
+    record: object
     stdin: Stdin
     prompt: str | None
     source: str
@@ -355,6 +361,12 @@ class InteractiveSession:
                 )
             elif kind == "sleep":
                 time.sleep(step["seconds"])
+            elif kind == "queued":
+                last = self.queued(k, step["answer"])
+            elif kind == "pause":
+                until = time.monotonic() + HANG_CAP
+                while not os.path.exists(step["file"]) and time.monotonic() < until:
+                    time.sleep(0.05)
             elif kind == "exit":
                 sys.exit(self.request.scenario["exit"])
             else:
@@ -378,6 +390,19 @@ class InteractiveSession:
                 "background_tasks": [{}] * self.request.scenario["background"],
             },
         )
+
+    def queued(self, k: int, answer: str) -> str:
+        request = self.request
+        request.keep("assistant", [{"type": "tool_use", "id": f"toolu_{k}", "name": "Bash"}])
+        line = request.stdin.line()
+        request.record({"type": "queue-operation", "operation": "enqueue", "content": line})
+        request.keep("user", [{"type": "tool_result", "tool_use_id": f"toolu_{k}"}])
+        self.hook("PostToolUse", {"tool_name": "Bash"})
+        attachment = {"type": "queued_command", "prompt": line, "commandMode": "prompt"}
+        request.record({"type": "attachment", "attachment": attachment})
+        print(answer, flush=True)
+        request.keep("assistant", [{"type": "text", "text": answer}])
+        return answer
 
     def answer(self) -> None:
         stdin = self.request.stdin
@@ -422,6 +447,10 @@ class Transcript:
 
     def say(self, record: dict) -> None:
         print(json.dumps({**record, "session_id": self.sid}), flush=True)
+
+    def record(self, record: dict) -> None:
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({**record, "sessionId": self.sid, "cwd": self.cwd}) + "\n")
 
     def keep(self, role: str, content, **extra) -> None:
         with open(self.path, "a", encoding="utf-8") as f:
@@ -554,6 +583,7 @@ def main(argv: list[str]) -> int:
                 hooks=a.hooks,
                 payload={"session_id": sid, "transcript_path": transcript, "cwd": cwd},
                 keep=journal.keep,
+                record=journal.record,
                 stdin=Stdin(parent, s["commands"]),
                 prompt=a.prompt,
                 source="resume" if a.resume else "startup",
