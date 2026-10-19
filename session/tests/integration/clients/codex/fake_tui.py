@@ -166,6 +166,8 @@ def emit(value):
 def parser():
     result = argparse.ArgumentParser(allow_abbrev=False)
     result.add_argument("-c", action="append", default=[])
+    result.add_argument("--enable", action="append", default=[])
+    result.add_argument("--disable", action="append", default=[])
     return result
 
 
