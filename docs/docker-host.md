@@ -244,6 +244,10 @@ Then `agent-pm-crew worker NAME --client claude` starts NAME in its own containe
 the Viewer, `--display none`, `[session.viewer]` and `ls --descendants` work as on tmux. Every docker call goes to
 `unix://<account home>/.docker/run/docker.sock`, whatever `DOCKER_HOST`, `DOCKER_CONTEXT` or `DOCKER_CONFIG` say.
 
+Text a client copies in a container's pane (Claude Code's mouse selection, for one) reaches your clipboard by OSC 52:
+the container's tmux sets `set-clipboard on` and `allow-passthrough on`. Your terminal must support OSC 52 (Ghostty
+does), and a host tmux showing the pane needs `set -g set-clipboard on` in `~/.tmux.conf`.
+
 A session's GitHub tokens are renewed 10 minutes before the first expires, by the TUI session's host run supervisor or
 the headless run's harness; a failure writes `github_refresh_failed <reason>` to the session's events or the harness's
 log, and retries every minute.
