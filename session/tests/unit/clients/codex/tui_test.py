@@ -482,12 +482,6 @@ class TuiTest(Base):
         self.assertEqual(
             run.hook_events("Stop", self.payload(last_assistant_message=None)), [TurnEnd()]
         )
-        self.assertEqual(
-            run.hook_events(
-                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1])
-            ),
-            [TurnEnd("raw", 0)],
-        )
         for fields in (
             {"agent_id": CHILD},
             {"session_id": "invalid"},
@@ -496,6 +490,18 @@ class TuiTest(Base):
         ):
             self.assertEqual(run.hook_events("Stop", self.payload(**fields)), [])
         self.assertEqual(run.hook_events("unknown", self.payload()), [])
+
+    def test_a_stop_reports_no_background_work(self):
+        run, _, _ = self.launch()
+        self.assertEqual(
+            run.hook_events(
+                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1])
+            ),
+            [ClientBound(NATIVE), TurnEnd("raw", 0)],
+        )
+        for payload in ({"background_tasks": [1, {}]}, {}, self.payload()):
+            with self.subTest(payload=payload):
+                self.assertEqual(run.pending(payload), 0)
 
     def test_interrupt_ends_its_turn_without_the_previous_turns_text(self):
         run = self.client.tui()
