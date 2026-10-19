@@ -15,7 +15,15 @@ import sys
 import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.linear_orchestrator.engine import config, issue_archive, issue_read, issue_write
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    issue_archive,
+    issue_list,
+    issue_lookup,
+    issue_page,
+    issue_read,
+    issue_write,
+)
 from agent_pm.linear_orchestrator.engine.client import linear_gql, messages
 from agent_pm.linear_orchestrator.engine.types import (
     ArchiveRefused,
@@ -24,11 +32,13 @@ from agent_pm.linear_orchestrator.engine.types import (
     IssueError,
     KeychainError,
     LinearError,
+    Resource,
     Unavailable,
 )
 
 OK, FAILED, USAGE = 0, 1, 2
 LIMIT, RECEIPT = 8192, 1024
+PAGE, MAX_PAGE = 20, 50
 PROG = "agent-pm-linear issue"
 FULL = "--full --output FILE"
 TEXTS = (
@@ -41,13 +51,29 @@ TEXTS = (
     "assignee.email",
     "state.name",
 )
+# never shortened by fit_page
+REFS = frozenset(
+    (
+        "id",
+        "identifier",
+        "url",
+        "key",
+        "type",
+        "email",
+        "team_id",
+        "group_id",
+        "project_id",
+        "parent_id",
+    )
+)
 _RULES = (
     "Prerequisites and effects:\n"
     "  Reads Linear as the configured harness_key account (Keychain); an issue\n"
     "  needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
     "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
-    "  2: usage, configuration, Keychain, or an issue that does not resolve.\n\n"
+    "  2: usage, configuration, Keychain, or an issue or option value that\n"
+    "  does not resolve.\n\n"
 )
 _HELP = (
     _RULES.removesuffix("\n")
@@ -56,13 +82,72 @@ _HELP = (
     "  archive also a refusal (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-linear issue read TASK-1\n"
+    "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
+    "  agent-pm-linear issue lookup states --team TASK\n"
     "  agent-pm-linear issue move TASK-1 --state Done\n"
     "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-linear issue archive TASK-1 --dry-run\n\n"
     "Recovery and next help:\n"
     "  Command details: agent-pm-linear issue read --help,\n"
+    "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
     "  agent-pm-linear issue move --help, agent-pm-linear issue comment --help,\n"
     "  agent-pm-linear issue archive --help\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+_PAGES = (
+    f"Pages: --limit N items, 1-{MAX_PAGE} (default {PAGE}); --cursor TOKEN, a page's\n"
+    "  next_cursor, gives the next page under the same options. stdout:\n"
+    "  {items, has_next_page, next_cursor (null on the last page), truncated}.\n"
+    "  Over 8192 bytes, items drop from the end (next_cursor then continues\n"
+    "  after the last one kept); a lone item's longest text is shortened, never\n"
+    "  an id, each named in truncated as items.<n>.<field>.\n"
+    f"  {FULL}: every page, written as indented JSON {{items, truncated}}\n"
+    "  to FILE; prints only {output: FILE's absolute path}; not with\n"
+    "  --cursor or --limit.\n"
+    "References: an id or an exact name; a team also takes its key. Without\n"
+    "  --team, the configured team. No match, several, or one outside the team\n"
+    "  exits 2 naming candidates and the lookup command listing them.\n\n"
+)
+_LIST_HELP = (
+    _RULES + "Output items: id, identifier, title, url, state {id, name}, labels\n"
+    "  [{id, name}], assignee {id, name}, project {id, name}, parent_id; empty:\n"
+    "  null or []. Only the team's issues, every given filter holding, most\n"
+    "  recently updated first; archived ones only with --include-archived.\n"
+    "  --query TEXT matches title or description in any case; --state, --label,\n"
+    "  --project in the team, --label not a group or retired; --assignee a\n"
+    "  user's id, name, email or me (the harness_key account); --parent the\n"
+    "  parent issue's identifier or id.\n"
+    + _PAGES
+    + "Examples (configured Linear access and TASK-1):\n"
+    "  agent-pm-linear issue list --query 'linear issue'\n"
+    "  agent-pm-linear issue list --team TASK --state Todo --label bug\n"
+    "  agent-pm-linear issue list --assignee me --project 'Agent PM'\n"
+    "  agent-pm-linear issue list --parent TASK-1 --include-archived --limit 50\n"
+    "  agent-pm-linear issue list --cursor <next_cursor>\n"
+    "  agent-pm-linear issue list --label bug --full --output bugs.json\n\n"
+    "Recovery and next help:\n"
+    "  Option values: agent-pm-linear issue lookup --help\n"
+    "  Configuration and command discovery: agent-pm-linear --help"
+)
+_LOOKUP_HELP = (
+    _RULES + "Output items, every same-named entity its own:\n"
+    "  teams       id, name, key (--query matches name or key)\n"
+    "  states      id, name, type: the team's workflow states\n"
+    "  labels      id, name, team_id (null: workspace), group_id: the team's and\n"
+    "              the workspace's labels an issue can carry (no groups, none retired)\n"
+    "  projects    id, name, team_ids: the team's projects\n"
+    "  milestones  id, name, project_id: needs --project, within that project\n"
+    "  users       id, name, email, active: --team's members, else the workspace's\n"
+    "              users (--query matches name or email)\n"
+    "  --query TEXT keeps names holding TEXT in any case.\n"
+    + _PAGES
+    + "Examples (configured Linear access):\n"
+    "  agent-pm-linear issue lookup teams\n"
+    "  agent-pm-linear issue lookup labels --team TASK --query bug\n"
+    "  agent-pm-linear issue lookup milestones --project 'Agent PM' --limit 50\n"
+    "  agent-pm-linear issue lookup users --cursor <next_cursor>\n"
+    "  agent-pm-linear issue lookup states --full --output states.json\n\n"
+    "Recovery and next help:\n"
     "  Configuration and command discovery: agent-pm-linear --help"
 )
 _READ_HELP = (
@@ -215,6 +300,44 @@ def _text(payload, path):
     return node if isinstance(node, str) else None
 
 
+def fit_page(rows, cursor):
+    """A page's rows [(item, cut fields, cursor), …] and the cursor after it (None: last page) as
+    {items, has_next_page, next_cursor, truncated} within LIMIT: trailing items drop, next_cursor
+    then following the last kept one; a lone item's longest text other than a reference halves;
+    each cut is items.<n>.<field>.
+    """
+    items = [copy.deepcopy(item) for item, _, _ in rows]
+    cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
+    while True:
+        page = {"items": items, "has_next_page": cursor is not None, "next_cursor": cursor}
+        data = encode({**page, "truncated": cut})
+        if len(data) <= LIMIT:
+            return data
+        if len(items) > 1:
+            items.pop()
+            cursor = rows[len(items) - 1][2]
+            cut = [m for m in cut if int(m.split(".")[1]) < len(items)]
+            continue
+        found = dict(_texts(items[0], ()))
+        if not found:
+            raise OverflowError(f"page exceeds {LIMIT} bytes: write it with {FULL}")
+        path = max(found, key=lambda p: len(encode(found[p])))
+        node = functools.reduce(lambda node, key: node[key], path[:-1], items[0])
+        node[path[-1]] = found[path][: len(found[path]) // 2]
+        if (marker := ".".join(map(str, ("items", 0, *path)))) not in cut:
+            cut.append(marker)
+
+
+def _texts(node, path):
+    # (path, text) of each non-empty string in node but a reference
+    pairs = node.items() if isinstance(node, dict) else enumerate(node)
+    for key, value in pairs:
+        if isinstance(value, (dict, list)):
+            yield from _texts(value, (*path, key))
+        elif isinstance(value, str) and value and key not in REFS:
+            yield (*path, key), value
+
+
 def write_full(path, payload):
     """payload as normalized JSON in path, through a temp file renamed over it; its absolute path."""
     path = os.path.abspath(path)
@@ -243,7 +366,7 @@ def diagnose(err, message):
 def _parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Read and write Linear issues with fixed subcommands.",
+        description="Read and write Linear issues and look up what their options name.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_HELP,
     )
@@ -258,6 +381,42 @@ def _parser():
     read.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
     read.add_argument("--full", action="store_true", help="every page and body; needs --output")
     read.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
+    found = commands.add_parser(
+        "list",
+        help="search one team's issues by text, state, label, project, assignee or parent",
+        description="List one team's issues that every given filter holds as JSON.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_LIST_HELP,
+    )
+    found.add_argument("--query", metavar="TEXT", help="title or description holds TEXT, any case")
+    found.add_argument("--team", metavar="VALUE", help="team id, name or key (default: configured)")
+    found.add_argument("--state", metavar="VALUE", help="workflow state id or name")
+    found.add_argument("--label", metavar="VALUE", help="label id or name")
+    found.add_argument("--project", metavar="VALUE", help="project id or name")
+    found.add_argument("--assignee", metavar="VALUE", help="user id, name, email or me")
+    found.add_argument("--parent", metavar="ID", help="parent issue identifier (TASK-1) or id")
+    found.add_argument("--include-archived", action="store_true", help="archived issues too")
+    _paged(found)
+    lookup = commands.add_parser(
+        "lookup",
+        help="list teams, states, labels, projects, milestones or users with their ids",
+        description="List one kind of Linear entity, with its id and fixed fields, as JSON.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_LOOKUP_HELP,
+    )
+    lookup.add_argument(
+        "resource",
+        type=Resource,
+        choices=list(Resource),
+        metavar="RESOURCE",
+        help=", ".join(Resource),
+    )
+    lookup.add_argument("--query", metavar="TEXT", help="keep names holding TEXT, any case")
+    lookup.add_argument(
+        "--team", metavar="VALUE", help="team id, name or key (default: configured)"
+    )
+    lookup.add_argument("--project", metavar="VALUE", help="milestones: the project's id or name")
+    _paged(lookup)
     move = commands.add_parser(
         "move",
         help="set one issue's workflow state by name, within its team",
@@ -294,6 +453,38 @@ def _parser():
     return parser
 
 
+def _paged(parser):
+    parser.add_argument(
+        "--limit", type=_limit, metavar="N", help=f"items per page, 1-{MAX_PAGE} (default {PAGE})"
+    )
+    parser.add_argument("--cursor", metavar="TOKEN", help="a page's next_cursor: the next page")
+    parser.add_argument("--full", action="store_true", help="every page; needs --output")
+    parser.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
+
+
+def _limit(text):
+    try:
+        found = int(text)
+    except ValueError:
+        found = 0
+    if not 1 <= found <= MAX_PAGE:
+        raise argparse.ArgumentTypeError(f"want 1-{MAX_PAGE}, got {text!r}")
+    return found
+
+
+def _usage(args):
+    """The usage error in args' page options, or None."""
+    if "full" not in args:
+        return None
+    if args.full != (args.output is not None):
+        if args.command == "read":
+            return f"--full and --output go together: read {args.id} {FULL}"
+        return f"--full and --output go together: {args.command} … {FULL}"
+    if args.command != "read" and args.full and (args.cursor, args.limit) != (None, None):
+        return "--full reads every page: drop --cursor and --limit"
+    return None
+
+
 def receipt(payload):
     """payload encoded within RECEIPT, its actor's name halved until it fits."""
     actor = payload["actor"]
@@ -302,7 +493,7 @@ def receipt(payload):
     return data
 
 
-def _run(gql, args, body):
+def _run(gql, args, team_id, body):
     if args.command == "move":
         return receipt(issue_write.move(gql, args.id, args.state))
     if args.command == "comment":
@@ -311,27 +502,41 @@ def _run(gql, args, body):
         return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
     if args.command == "archive":
         return receipt(issue_archive.archive(gql, args.id))
-    view = issue_read.view(gql, args.id, full=args.full)
-    if not args.full:
+    if args.command == "read":
+        view = issue_read.view(gql, args.id, full=args.full)
+        if args.full:
+            return _written(args.output, view, {"identifier": view["identifier"]})
         return fit(
             issue_read.compact(view),
             ("comments", "labels", "blocks", "blocked_by", "children"),
             TEXTS,
             f"agent-pm-linear issue read {view['identifier']} {FULL}",
         )
+    source = (issue_list if args.command == "list" else issue_lookup).source(gql, args, team_id)
+    if not args.full:
+        rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
+        return fit_page(rows, end if more else None)
+    rows = issue_page.walk(gql, source)
+    cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
+    payload = {"items": [item for item, _, _ in rows], "truncated": cut}
+    return _written(args.output, payload, {})
+
+
+def _written(output, payload, summary):
+    """summary and output's absolute path, once payload is written there."""
     try:
-        path = write_full(args.output, view)
+        path = write_full(output, payload)
     except OSError as error:
-        raise IssueError(f"--output {args.output}: {error.strerror or error}") from None
-    return encode({"identifier": view["identifier"], "output": path})
+        raise IssueError(f"--output {output}: {error.strerror or error}") from None
+    return encode({**summary, "output": path})
 
 
 def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
     err = sys.stderr if err is None else err
-    if args.command == "read" and args.full != (args.output is not None):
-        diagnose(err, f"--full and --output go together: read {args.id} {FULL}")
+    if usage := _usage(args):
+        diagnose(err, usage)
         return USAGE
     body = None
     if args.command == "comment":
@@ -349,7 +554,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
-        data = _run(gql, args, body)
+        data = _run(gql, args, cfg.team, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE
