@@ -102,6 +102,18 @@ class LinearError(Exception):
     pass
 
 
+class KeychainError(LinearError):
+    """The harness_key Keychain item holds no usable key."""
+
+
+class GraphQLErrors(LinearError):
+    """A response's GraphQL errors, kept as .errors (client.messages gives each one's text)."""
+
+    def __init__(self, errors):
+        super().__init__(f"linear api error: {errors}")
+        self.errors = errors
+
+
 class Unavailable(Exception):
     # its text never holds the request, headers or key
     def __init__(self, op, *, status=None, reason=None):

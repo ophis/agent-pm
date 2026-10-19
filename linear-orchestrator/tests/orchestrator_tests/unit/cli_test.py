@@ -41,11 +41,13 @@ class Commands(Case):
             "resume",
             "content",
             "writeback",
+            "issue",
+            "issue read",
         ):
             output = io.StringIO()
             with redirect_stdout(output):
                 try:
-                    cli.main(([name] if name else []) + ["--help"])
+                    cli.main([*name.split(), "--help"])
                 except SystemExit as error:
                     self.assertEqual(error.code, 0)
             published = list(examples(output.getvalue()))
@@ -84,6 +86,8 @@ class Commands(Case):
             "resume",
             "content",
             "writeback",
+            "issue",
+            "issue read",
         )
         for command in commands:
             for flag in ("--help", "-h"):
@@ -97,7 +101,7 @@ class Commands(Case):
                         mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
                     ):
                         try:
-                            result = cli.main([*([command] if command else []), flag])
+                            result = cli.main([*command.split(), flag])
                         except SystemExit as error:
                             result = error.code
                     self.assertEqual((result, errors.getvalue()), (0, ""))
@@ -204,7 +208,7 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,prune,status,show,hide,close,attach-command,resume,content,writeback}",
+            "{router,promote,prune,issue,status,show,hide,close,attach-command,resume,content,writeback}",
             output.getvalue(),
         )
 

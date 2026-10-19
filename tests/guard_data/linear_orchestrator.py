@@ -77,7 +77,7 @@ CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 
 ENTRIES = (
     f"{ORCH_SRC}cli.py",
-    *(f"{ORCH_SRC}engine/{name}.py" for name in ("promote", "prune", "router")),
+    *(f"{ORCH_SRC}engine/{name}.py" for name in ("issue", "promote", "prune", "router")),
 )
 
 
