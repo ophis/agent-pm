@@ -287,6 +287,11 @@ def scan(state: dict, *, final: str = "", budget: int) -> dict[str, Any]:
     return {"opening": opening, "claimed": sorted(claimed), "steers": steers}
 
 
+def _identity(turn: dict) -> tuple:
+    """A turn's own fields; its opening and claims grow as scans commit."""
+    return turn["turn_id"], turn["since"], turn["start"]
+
+
 def _emit(state: dict, at: int, text: str) -> None:
     """Stores the answer once per steer record, then appends its `reply <id>` line."""
     reply_id = hashlib.sha256(f"{state['native']}:{at}".encode()).hexdigest()[:32]
@@ -332,8 +337,8 @@ def settle(
     close: bool = False,
     resolve: bool = True,
 ) -> int:
-    """Scans for pending steers' answers, then, locked again, commits what the scan found for the
-    same turn (and, `close`, closes it); the pending steers left.
+    """Scans for pending steers' answers, then, locked again, merges what the scan found into the
+    same turn, still open (and, `close`, closes it); the pending steers left.
     """
     with _locked(path, deadline, clock, sleep):
         state = _load(path)
@@ -344,7 +349,7 @@ def settle(
     progress = scan(state, final=final, budget=budget) if state["rollout"] else None
     with _locked(path, deadline, clock, sleep):
         current = _load(path)
-        if current["turn"] == state["turn"]:
+        if current["turn"]["open"] and _identity(current["turn"]) == _identity(state["turn"]):
             if not current["rollout"]:
                 current.update(native=state["native"], rollout=state["rollout"])
             _commit(

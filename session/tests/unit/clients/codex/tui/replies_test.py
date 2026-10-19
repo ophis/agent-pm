@@ -459,6 +459,35 @@ class WatcherTest(RepliesBase):
         self.assertEqual(replies.watch(self.state_file, clock=clock, sleep=growing), 0)
         self.assertGreaterEqual(clock.now - 1000.0, replies.LIFETIME)
 
+    def test_watcher_claim_during_stop_scan_keeps_stop_commit(self):
+        self.open_turn()
+        self.steer("status?")
+        self.append(_said("user", "status?"))
+        opened, rollout, ran = os.open, self.path.name, []
+
+        def open_(name, *args, **kwargs):
+            if name == rollout and not ran:  # Stop's unlocked scan: a watcher poll commits first
+                ran.append(True)
+                clock = Clock()
+                replies.settle(
+                    self.state_file,
+                    deadline=clock() + 1,
+                    budget=replies.HOOK_SCAN_MAX,
+                    clock=clock,
+                    sleep=clock.sleep,
+                )
+                self.assertIsNotNone(self.state()["steers"][0]["at"])
+                self.append(_said("assistant", "answer"))
+            return opened(name, *args, **kwargs)
+
+        with mock.patch.object(os, "open", open_):
+            self.hook("Stop", turn_id="t1", last_assistant_message="answer")
+        self.assertTrue(ran)
+        (reply_id,) = self.reply_ids()
+        self.assertEqual(read_reply(self.events, reply_id), "answer")
+        self.assertFalse(self.state()["turn"]["open"])
+        self.assertEqual(self.state()["steers"], [])
+
     def test_stop_waits_behind_watcher_emit(self):
         self.open_turn()
         self.steer("status?")
