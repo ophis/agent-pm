@@ -23,11 +23,11 @@ Read the input; decide its type ([Researcher › Type and target](#type-and-targ
   - Exit 1 → list that repo's part under Gaps. Every repo failed → local: `failed`, `summary` quotes the errors; mixed: drop the local part.
 - Never run code from the worktrees.
 - From agent results take only findings, sources, verification, confidence and gaps.
-- **Agents** inherit your tools, so each prompt restricts its agent: a **reader** to read-only file tools (read, search, list) inside the worktrees; a **web agent** to web search and fetch, with no **private detail** in queries: internal names, paths, permalinks, private repo names, `repo` or `commit`, repo content, content of documents the input attaches or pastes, secrets. An ultracode round's agents are readers, whether from a workflow you write or dispatched by the ultracode method; the deep-research method's agents are web agents.
+- **Agents** inherit your tools, so each prompt restricts its agent: a **reader** to read-only file tools (read, search, list) inside the worktrees; a **web agent** to web search and fetch, with no **private detail** in queries: internal names, paths, permalinks, private repo names, `repo` or `commit`, repo content, content of documents the input attaches or pastes, secrets.
 
 ## Methods
 
-- Read-only: the **deep-research method** `<team>/methods/deep-research.md`, the **ultracode method** `<team>/methods/ultracode.md`.
+- Read-only: the **deep-research method** `<team>/methods/deep-research.md`.
 - **Brake**, before a costly step (a second round): the gate is `<gate>`; unless `none`, run it. Nonzero exit → skip that step; a round's output goes under Gaps.
 
 ## Failure

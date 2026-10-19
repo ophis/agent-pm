@@ -511,20 +511,33 @@ class Real(RealConfig):
                     if len(step.strip()) >= 30 and not step.startswith("#"):
                         self.assertNotIn(step.strip(), prompt, (role, task, t))
 
-    def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
+    def test_deep_research_falls_back_to_both_method_files(self):
         prompt, _ = composed("researcher")
         self.assertEqual(parameters(prompt)["<team>"], f"`{TEAM}`")
         for name in ("deep-research", "ultracode"):
             self.assertTrue(os.path.isfile(os.path.join(TEAM, "methods", f"{name}.md")), name)
-            self.assertIn(f"`<team>/methods/{name}.md`", prompt)
+        self.assertIn("`<team>/methods/deep-research.md`", prompt)
+        self.assertIn("`<team>/methods/ultracode.md`", task_text("deep-research"))
         for phrase in (
             "No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",
-            "per the ultracode method ([Researcher › Methods](#methods))",
+            "per the **ultracode method** `<team>/methods/ultracode.md` (read-only)",
+            "The ultracode round's agents are readers",
+            "the deep-research method's agents are web agents",
             "No Workflow tool → follow that method.",
             "Before the second, the brake ([Researcher › Methods](#methods)).",
             "No subagents with a round's tools → skip that round, under Gaps.",
         ):
             self.assertIn(phrase, task_text("deep-research"))
+
+    def test_only_the_deep_research_task_names_ultracode(self):
+        # Claude Code answers a bare ultracode with a Workflow reminder, so no prompt says it.
+        for task in (None, *catalog()["researcher"]):
+            with self.subTest(task=task):
+                self.assertNotIn("ultracode", composed("researcher", task)[0].lower())
+        for task in catalog()["researcher"]:
+            with self.subTest(task=task):
+                named = "ultracode" in task_text(task).lower()
+                self.assertEqual(named, task == "deep-research")
 
     def test_every_repo_command_takes_the_inputs_checkout(self):
         found = {}
