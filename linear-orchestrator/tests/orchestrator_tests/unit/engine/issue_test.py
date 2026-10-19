@@ -356,6 +356,22 @@ class Comment(IssueCase):
                 self.assertEqual((code, out, gql.calls), (2, b"", []))
                 self.assertTrue(err.startswith("agent-pm-linear issue: --body-file"), err)
 
+    def test_a_file_body_needs_no_stdin(self):
+        path = os.path.join(self.root, "body.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(BODY)
+        gql, out, err = WriteGql(write_issue()), io.BytesIO(), io.StringIO()
+        with mock.patch("sys.stdin", None):
+            code = issue.main(
+                ["comment", "TASK-2", "--body-file", path],
+                gql=gql,
+                config_path=self.config,
+                out=out,
+                err=err,
+            )
+        self.assertEqual((code, err.getvalue()), (0, ""))
+        self.assertEqual(gql.writes[0][1]["b"], BODY)
+
     def test_a_write_outage_exits_one_as_result_unknown(self):
         gql = WriteGql(write_issue(), result=Unavailable("commentCreate", reason="timed out"))
         code, out, err = self.run_main(["comment", "TASK-2", "--body-file", "-"], gql, b"hi")

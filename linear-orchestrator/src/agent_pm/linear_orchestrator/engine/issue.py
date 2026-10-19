@@ -541,9 +541,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     body = None
     if args.command == "comment":
         try:
-            body = issue_write.read_body(
-                args.body_file, sys.stdin.buffer if stdin is None else stdin
-            )
+            body = issue_write.read_body(args.body_file, stdin)
         except IssueError as error:
             diagnose(err, error)
             return USAGE
