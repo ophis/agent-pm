@@ -83,7 +83,7 @@ class OrchestratorText(Sample):
         root = self.wrap_orchestrator(self.tree({path: text}))
         self.assertEqual(ownership.orchestrator_text(root), [f"{path}:2: client name codex"])
 
-    def test_client_limit_keys_in_the_packaged_config_may_name_a_client(self):
+    def test_local_client_limit_keys_in_the_packaged_config_may_name_a_client(self):
         path = f"{OPKG}/config.toml"
         text = (
             "# claude = 3\n"
@@ -103,7 +103,10 @@ class OrchestratorText(Sample):
             [
                 f"{path}:10: client name codex",
                 f"{path}:1: client name claude",
+                f"{path}:3: client name opencode",
+                f"{path}:4: client name claude",
                 f"{path}:5: client name claude",
+                f"{path}:5: client name codex",
                 f"{path}:8: client name claude",
             ],
         )

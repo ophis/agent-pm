@@ -107,10 +107,11 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 
 ### Run limits
 
-A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (unset: 1), and its client fewer than its `[client_max_runs]` entry. An unlisted client is unlimited; the packaged config sets `opencode = 1`, as the host's local models run one job at a time. Set others in `~/.agent-pm/config.local.toml`:
+A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (unset: 1), and its client fewer than its `[client_max_runs]` entry. No client is limited by default: an unlisted client is unlimited. Set limits in `~/.agent-pm/config.local.toml`, e.g. `opencode = 1`, as the host's local models run one job at a time:
 
 ```toml
 [linear_orchestrator.client_max_runs]
+opencode = 1
 claude = 3
 ```
 

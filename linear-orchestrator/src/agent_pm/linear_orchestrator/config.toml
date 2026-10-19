@@ -79,15 +79,14 @@ canceled = ""
 # Client run limits; optional: board runs of a client at once, across roles, counted from runs.jsonl's live runs by
 # their recorded client; a run starts only when its role (max_runs) and its client both have room. router --issue
 # skips the check but its runs count; ad-hoc runs and crew workers are not counted.
-#   <client>  a client name as Delegate configures it: a whole number >= 1; unlisted → unlimited; the examples
-#             below cap the subscriptions, unlimited by default
+#   <client>  local: a client name as Delegate configures it: a whole number >= 1; unlisted → unlimited; empty table → no
+#             limit
 [client_max_runs]
-opencode = 1                       # the host's local models run one job at a time
-# claude = 3
-# codex = 2
 
 # local: [linear_orchestrator.client_max_runs]
-# local: opencode = 1
+# local: opencode = 1               # the host's local models run one job at a time
+# local: claude = 3
+# local: codex = 2
 
 # A role to orchestrate. Its tasks are its charter's index (delegate/src/agent_pm/delegate/team/roles/<role>.md › Tasks).
 # Only a role with an entry in TASKS (linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py) can be
