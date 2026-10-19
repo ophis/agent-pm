@@ -218,8 +218,9 @@ _CREATE_HELP = (
     "  agent-pm-linear issue list --team TEAM --query=TITLE before creating it again.\n"
     "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
     "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
-    "  with its error), recover and truncated: run only the recover commands\n"
-    "  (agent-pm-linear issue relation add …), never create again.\n\n"
+    "  with its error), recover and truncated; done and failed are cut before\n"
+    "  recover. Run only the recover commands (agent-pm-linear issue relation\n"
+    "  add …), never create again.\n\n"
     "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
     "  agent-pm-linear issue create --title 'Fix login' --body-file note.md\n"
     "  agent-pm-linear issue create --title 'Fix login' --body-file - --label bug \\\n"
@@ -338,10 +339,11 @@ def encode(payload):
     return text.encode("utf-8", "backslashreplace") + b"\n"
 
 
-def fit(payload, lists, texts, follow):
-    """payload encoded within LIMIT: drop the last item of its largest list in lists, then halve its
-    longest text at a dotted path in texts, naming each cut in truncated, until it fits; continue is
-    follow once anything is truncated, absent when follow is None.
+def fit(payload, tiers, texts, follow):
+    """payload encoded within LIMIT: drop the last item of its largest list in the first of tiers
+    (tuples of list fields) with one not empty, then halve its longest text at a dotted path in
+    texts, naming each cut in truncated, until it fits; continue is follow once anything is
+    truncated, absent when follow is None.
     """
     payload = copy.deepcopy(payload)
     while True:
@@ -350,7 +352,7 @@ def fit(payload, lists, texts, follow):
         data = encode(payload)
         if len(data) <= LIMIT:
             return data
-        if full := [f for f in lists if payload[f]]:
+        if full := next((f for f in ([f for f in t if payload[f]] for t in tiers) if f), None):
             field = max(full, key=lambda f: len(encode(payload[f])))
             payload[field].pop()
             kept = len(payload[field])
@@ -673,7 +675,7 @@ def _run(gql, args, team_id, body):
     if args.command == "label":
         return receipt(issue_label.swap(gql, args.id, args.old, args.new))
     if args.command == "archive" and args.dry_run:
-        return fit(issue_archive.dry_run(gql, args.id), ("descendants", "unfinished"), (), None)
+        return fit(issue_archive.dry_run(gql, args.id), (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
         return receipt(issue_archive.archive(gql, args.id))
     if args.command == "read":
@@ -682,7 +684,7 @@ def _run(gql, args, team_id, body):
             return _written(args.output, view, {"identifier": view["identifier"]})
         return fit(
             issue_read.compact(view),
-            ("comments", "labels", "blocks", "blocked_by", "children"),
+            (("comments", "labels", "blocks", "blocked_by", "children"),),
             TEXTS,
             f"agent-pm-linear issue read {view['identifier']} {FULL}",
         )
@@ -737,7 +739,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
     except RelationsFailed as error:
-        out.write(fit(error.report, ("done", "failed", "recover"), (), None))
+        out.write(fit(error.report, (("done", "failed"), ("recover",)), (), None))
         diagnose(err, error)
         return FAILED
     except (LinearError, Unavailable, OverflowError, ArchiveRefused, LabelRefused) as error:

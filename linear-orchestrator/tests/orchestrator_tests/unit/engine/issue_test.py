@@ -472,6 +472,23 @@ class Create(IssueCase):
         self.assertLessEqual(len(err.encode()), 8192)
         self.assertTrue(json.loads(out)["truncated"])
 
+    def test_done_and_failed_give_way_before_any_recover_command(self):
+        many = [f"TASK-{n}" for n in range(100, 220)]
+        failed = [LinearError("x" * 300)] * (len(many) - 2)
+        gql = create_gql(relations=[{"success": True}] * 2 + failed)
+        argv = ["create", "--title", "Fix", "--body-file", "-", "--blocks", *many]
+        code, out, _ = self.run_main(argv, gql, b"body")
+        self.assertEqual(code, 1)
+        self.assertLessEqual(len(out), 8192)
+        report = json.loads(out)
+        self.assertEqual(
+            report["recover"],
+            [f"agent-pm-linear issue relation add TASK-9 --blocks {n}" for n in many[2:]],
+        )
+        self.assertEqual(report["done"], [{"blocks": "TASK-100"}, {"blocks": "TASK-101"}])
+        self.assertLess(len(report["failed"]), len(failed))
+        self.assertEqual(report["truncated"], ["failed"])
+
     def test_a_create_outage_exits_one_as_result_unknown(self):
         gql = create_gql(created=Unavailable("issueCreate", reason="timed out"))
         code, out, err = self.run_main(
