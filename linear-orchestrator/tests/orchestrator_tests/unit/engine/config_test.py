@@ -648,6 +648,39 @@ class ConfigurationLoading(ConfigFile, Case):
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
 
+class RemovedSelectionKeys(Case):
+    """Local keys model selection used (docs/upgrading.md): no reader knows them any more."""
+
+    def setUp(self):
+        self.local = os.path.join(self.agent_pm, "config.local.toml")
+        self.board = HEADER + role("researcher") + role("pm") + role("engineer")
+
+    def load(self, extra):
+        write(
+            self.local, CORE_LOCAL + "\n" + local_section(self.board, "linear_orchestrator") + extra
+        )
+        return config.load()
+
+    def test_leftover_selection_local_section_is_rejected(self):
+        with self.assertRaises(config.ConfigError) as cm:
+            self.load('[linear_orchestrator.selection]\nresolvers = ["tier"]\n')
+        self.assertIn("unknown key 'selection' in [linear_orchestrator]", str(cm.exception))
+
+    def test_leftover_choice_translator_role_local_section(self):
+        for extra in (
+            '[linear_orchestrator.core.roles.choice-translator]\ncommands = ["x"]\n',
+            "[delegate.roles.choice-translator]\ntier = 4\n",
+        ):
+            with self.subTest(extra=extra), self.assertRaises(config.ConfigError) as cm:
+                self.load(extra)
+            self.assertIn("choice-translator", str(cm.exception))
+
+    def test_leftover_selector_section_is_ignored(self):
+        self.assertEqual(
+            self.load(""), self.load('[selector.jev]\nurl = "http://127.0.0.1:8000"\n')
+        )
+
+
 class CommittedConfiguration(Case):
     def test_harness_uses_the_public_delegate_export(self):
         with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as source:

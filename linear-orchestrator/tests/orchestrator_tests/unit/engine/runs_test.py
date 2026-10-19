@@ -448,6 +448,15 @@ class StartedTask(Case):
     def test_a_missing_log_has_none(self):
         self.assertIsNone(runs.started_task(self.log, "TASK-1", "s"))
 
+    def test_started_task_ignores_choice_fields_of_old_start_rows(self):
+        # model selection's start rows (docs/upgrading.md) also held tier and effort
+        plain = {**json.loads(start(SID_A)), "task": "light-build"}
+        self.write([json.dumps(plain)])
+        want = runs.claim(self.log, "TASK-1", SID_A), runs.parse_log(self.log)
+        self.write([json.dumps({**plain, "tier": 2, "effort": "high"})])
+        self.assertEqual(runs.started_task(self.log, "TASK-1", SID_A), "light-build")
+        self.assertEqual((runs.claim(self.log, "TASK-1", SID_A), runs.parse_log(self.log)), want)
+
 
 class NoteLimit(Case):
     def test_writes_the_limit_row_durably_and_limits_reads_it(self):

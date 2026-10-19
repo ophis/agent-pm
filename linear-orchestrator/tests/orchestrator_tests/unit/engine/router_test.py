@@ -2908,6 +2908,24 @@ class RunLaunching(OuterBase):
                     self.expected(task=task, resume=kw.get("mode") == "resume"),
                 )
 
+    def test_resume_of_old_choice_row_uses_task_tier(self):
+        # a start row model selection wrote (docs/upgrading.md): its tier and effort are ignored
+        self.write_config(OUTER + "[task_tiers]\nlight-build = 3\n")
+        runs.note(
+            self.runs,
+            "start",
+            issue=ID,
+            sid=SID,
+            role="engineer",
+            client="a",
+            delegate_kind="harness",
+            task="light-build",
+            tier=1,
+            effort="high",
+        )
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.detached(tier=3), self.expected(resume=True))
+
     def test_a_long_input_reaches_run_py_intact(self):
         big = "".join(
             f"Requirement {i}: keep the session registry small.\n" for i in range(500)
