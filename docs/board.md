@@ -95,6 +95,7 @@ bin/agent-pm-linear status <ID>                 # alive: its run; once that ends
 bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
 bin/agent-pm-linear close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
 bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
+bin/agent-pm-linear issue read <ID>             # the issue's fields, newest comments and relations as JSON; no run needed
 tmux ls                                         # running agent runs
 ```
 

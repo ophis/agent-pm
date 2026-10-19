@@ -1,0 +1,178 @@
+"""agent-pm-linear issue read: the query, the view's fields and directions, and the compact limits."""
+
+from agent_pm.linear_orchestrator.engine import issue_read
+from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError
+from orchestrator_tests.case import Case
+from orchestrator_tests.unit.issue_fixtures import Gql, comment, conn, issue_node, rel
+
+
+def relation(kind, field, ident):
+    return {"type": kind, field: rel(ident)}
+
+
+class View(Case):
+    def test_blocking_directions_and_family_stay_apart(self):
+        # A blocks B, B blocks C; B has parent P and child K; related links are no column
+        node = issue_node(
+            "TASK-2",
+            parent=rel("TASK-9", state="In Progress"),
+            children=conn([rel("TASK-5", state="Done")]),
+            relations=conn(
+                [
+                    relation("blocks", "relatedIssue", "TASK-3"),
+                    relation("related", "relatedIssue", "TASK-7"),
+                ]
+            ),
+            inverseRelations=conn(
+                [relation("blocks", "issue", "TASK-1"), relation("duplicate", "issue", "TASK-8")]
+            ),
+        )
+        view = issue_read.view(Gql(node), "TASK-2")
+        self.assertEqual(view["blocks"], [{**rel("TASK-3"), "state": "Todo"}])
+        self.assertEqual(view["blocked_by"], [{**rel("TASK-1"), "state": "Todo"}])
+        self.assertEqual(view["parent"], {**rel("TASK-9"), "state": "In Progress"})
+        self.assertEqual(view["children"], [{**rel("TASK-5"), "state": "Done"}])
+
+    def test_fields_and_empty_values(self):
+        view = issue_read.view(Gql(issue_node("TASK-2")), "TASK-2")
+        self.assertEqual(
+            view,
+            {
+                "id": "id-TASK-2",
+                "identifier": "TASK-2",
+                "title": "title TASK-2",
+                "url": "https://linear.app/t/issue/TASK-2",
+                "state": {"id": "s-todo", "name": "Todo", "type": "unstarted"},
+                "labels": [],
+                "project": None,
+                "milestone": None,
+                "assignee": None,
+                "description": None,
+                "comments": [],
+                "blocks": [],
+                "blocked_by": [],
+                "parent": None,
+                "children": [],
+                "truncated": [],
+                "continue": None,
+            },
+        )
+        full = issue_node(
+            "TASK-2",
+            description="Body",
+            labels=conn([{"id": "l1", "name": "Bug"}]),
+            project={"id": "p1", "name": "Agent PM"},
+            projectMilestone={"id": "m1", "name": "M1"},
+            assignee={"id": "u1", "name": "Ann", "email": "ann@x.com"},
+        )
+        view = issue_read.view(Gql(full), "TASK-2")
+        self.assertEqual(view["labels"], [{"id": "l1", "name": "Bug"}])
+        self.assertEqual(view["project"], {"id": "p1", "name": "Agent PM"})
+        self.assertEqual(view["milestone"], {"id": "m1", "name": "M1"})
+        self.assertEqual(view["assignee"], {"id": "u1", "name": "Ann", "email": "ann@x.com"})
+        self.assertEqual(view["description"], "Body")
+
+    def test_comments_newest_first_with_reply_quote_and_delegated_author(self):
+        node = issue_node(
+            comments=conn(
+                [
+                    comment(1),
+                    comment(3, parentId="c1", quotedText="quoted"),
+                    comment(2, user=None, onBehalfOf={"id": "u2", "name": "Bo"}),
+                ]
+            )
+        )
+        comments = issue_read.view(Gql(node), "TASK-2")["comments"]
+        self.assertEqual([c["id"] for c in comments], ["c3", "c2", "c1"])
+        self.assertEqual(
+            comments[0],
+            {
+                "id": "c3",
+                "author": {"id": "u-me", "name": "Me"},
+                "created_at": "2026-10-03T00:00:00.000Z",
+                "body": "comment 3",
+                "parent_id": "c1",
+                "quoted_text": "quoted",
+                "on_behalf_of": None,
+            },
+        )
+        self.assertIsNone(comments[1]["author"])
+        self.assertEqual(comments[1]["on_behalf_of"], {"id": "u2", "name": "Bo"})
+
+    def test_more_pages_are_marked(self):
+        node = issue_node(
+            comments=conn([comment(1)], more=True, cursor="x"),
+            labels=conn([], more=True, cursor="x"),
+            relations=conn([], more=True, cursor="x"),
+            inverseRelations=conn([], more=True, cursor="x"),
+            children=conn([], more=True, cursor="x"),
+        )
+        view = issue_read.view(Gql(node), "TASK-2")
+        self.assertEqual(
+            view["truncated"], ["comments", "labels", "blocks", "blocked_by", "children"]
+        )
+
+    def test_the_id_is_a_variable_and_both_forms_are_accepted(self):
+        uuid = "0b0e6b52-7f43-4c1e-9d55-3c1f1a2b3c4d"
+        for ident in ("TASK-2", uuid):
+            gql = Gql(issue_node())
+            issue_read.view(gql, ident)
+            ((query, variables),) = gql.calls
+            self.assertEqual(variables, {"i": ident})
+            self.assertNotIn(ident, query)
+            for field in ("first: 5, orderBy: createdAt", "children(first: 10)"):
+                self.assertIn(field, query)
+
+    def test_unresolved_references(self):
+        for ident in ("task-2", "TASK", "TASK-2 } x", ""):
+            with self.subTest(ident=ident), self.assertRaises(IssueError):
+                issue_read.view(Gql(issue_node()), ident)
+        with self.assertRaisesRegex(IssueError, "TASK-2: no such issue"):
+            issue_read.view(Gql(None), "TASK-2")
+        missing = LinearError("linear api error: [{'message': 'Entity not found: Issue'}]")
+        with self.assertRaisesRegex(IssueError, "TASK-2: no such issue"):
+            issue_read.view(Gql(None, fail=missing), "TASK-2")
+        other = LinearError("linear api error: [{'message': 'boom'}]")
+        with self.assertRaises(LinearError):
+            issue_read.view(Gql(None, fail=other), "TASK-2")
+
+
+class Compact(Case):
+    def test_default_limits_mark_every_cut(self):
+        node = issue_node(
+            description="d" * 601,
+            comments=conn([comment(n, body="b" * 301 if n == 6 else "ok") for n in range(1, 7)]),
+            children=conn([rel(f"TASK-{n}") for n in range(10, 21)]),
+            relations=conn(
+                [relation("blocks", "relatedIssue", f"TASK-{n}") for n in range(30, 41)]
+            ),
+            inverseRelations=conn(
+                [relation("blocks", "issue", f"TASK-{n}") for n in range(50, 61)]
+            ),
+        )
+        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
+        self.assertEqual(len(view["description"]), 600)
+        self.assertEqual([c["id"] for c in view["comments"]], ["c6", "c5", "c4", "c3", "c2"])
+        self.assertEqual(len(view["comments"][0]["body"]), 300)
+        for column in ("children", "blocks", "blocked_by"):
+            self.assertEqual(len(view[column]), 10, column)
+        self.assertEqual(
+            view["truncated"],
+            ["description", "comments", "comments.0.body", "blocks", "blocked_by", "children"],
+        )
+
+    def test_within_limits_nothing_is_cut(self):
+        node = issue_node(
+            description="d" * 600,
+            comments=conn([comment(n, body="b" * 300) for n in range(1, 6)]),
+            children=conn([rel(f"TASK-{n}") for n in range(10, 20)]),
+        )
+        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
+        self.assertEqual(view["truncated"], [])
+        self.assertEqual(len(view["description"]), 600)
+        self.assertEqual(len(view["comments"]), 5)
+
+    def test_a_page_mark_is_not_repeated(self):
+        node = issue_node(children=conn([rel(f"TASK-{n}") for n in range(10, 21)], more=True))
+        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
+        self.assertEqual(view["truncated"], ["children"])
