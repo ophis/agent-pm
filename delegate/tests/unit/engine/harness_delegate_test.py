@@ -14,7 +14,7 @@ import json
 import os
 import shutil
 import signal
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 from unittest import mock
 
@@ -319,6 +319,22 @@ class RunDirTest(HarnessCase):
             "delegate.tests.fakes.harness_session:HarnessSession",
         )
         self.assertIs(HarnessDelegate.attach(self.work).session_cls, HarnessSession)
+
+    def test_a_stored_outcome_loads_unchecked_for_recovers_replay(self):
+        # A run begun before summary's limit fell from 4000 to 300 is still written back.
+        self.make()
+        data = self.stored()
+        outcome = Outcome("done", "T", "S" * 4000)
+        data["result"] = {
+            "returncode": 0,
+            "outcome": asdict(outcome),
+            "error": "",
+            "limit": None,
+            "instruction": None,
+        }
+        with open(self.record(), "w", encoding="utf-8") as file:
+            json.dump(data, file)
+        self.assertEqual(HarnessDelegate.attach(self.work).outcome(), outcome)
 
     def corrupt(self, text):
         self.make()
