@@ -43,7 +43,7 @@ class RepliesTest(Case):
     def test_text_cut_at_utf8_boundary(self):
         text = "a" + "é" * REPLY_MAX
         self.assertTrue(save_reply(self.events, ID, text))
-        stored = read_reply(self.events, ID)
+        stored = read_reply(self.events, ID) or ""
         self.assertLessEqual(len(stored.encode()), REPLY_MAX)
         self.assertTrue(text.startswith(stored))
         self.assertEqual(len(stored.encode()), REPLY_MAX - 1)

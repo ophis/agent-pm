@@ -1,6 +1,4 @@
-"""The reply store, its layout's one home: `<events>.replies/<id>` beside an events file holds the
-text a `reply <id>` event line names, one file per id; files older than STALE_AGE are dropped.
-"""
+"""The reply store's one home: `<events>.replies/<id>` holds a `reply <id>` event's text."""
 
 import os
 import re
@@ -9,7 +7,7 @@ import stat
 from agent_pm.utils.files import drop_stale, read_beneath
 
 REPLY_ID = re.compile(r"[0-9a-f]{32}")
-REPLY_MAX = 1 << 20  # bytes of a reply's text kept
+REPLY_MAX = 1 << 20
 
 
 def _checked(reply_id: str) -> str:
@@ -28,9 +26,7 @@ def _cut(text: str) -> bytes:
 
 
 def save_reply(events: str, reply_id: str, text: str) -> bool:
-    """Stores `text` (its first REPLY_MAX bytes) as `reply_id`'s, once: False when the id has text
-    already. An existing store must be a directory of this user, not a link; OSError otherwise.
-    """
+    """Stores `text`'s first REPLY_MAX bytes once per id (else False), in this user's directory."""
     directory = _store(events)
     _checked(reply_id)
     try:

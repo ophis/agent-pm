@@ -27,7 +27,7 @@ from agent_pm.session.clients.codex.common import (
     reset_at,
 )
 from agent_pm.session.clients.codex.common.types import Snapshot
-from agent_pm.session.clients.codex.tui import records
+from agent_pm.session.clients.codex.tui import records, replies
 from agent_pm.session.clients.common import question, scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -145,6 +145,7 @@ class CodexTui(Tui):
         self.last_reply = ""
         self.native = ""
         self.store = ""
+        self.name = ""  # its session's, for its reply lines
         self.transcript, self.start, self.offset = "", 0, 0  # the native session file's cursor
         self.last = self.unseen = ""  # the turn's newest text; its Stop text not yet read
         self.retry = 0.0  # time.monotonic() before which no session file lookup runs
@@ -152,6 +153,7 @@ class CodexTui(Tui):
     def launch(self, spec: Spec, hook):
         common = self.common
         prompt, resume = spec.prompt, spec.resume
+        self.name = spec.name or ""
         self.state = common.prepare(spec)
         snapshot = self.state.snapshot
         self.native = self.state.native_id or ""
@@ -224,7 +226,7 @@ class CodexTui(Tui):
         self.state = self.common.commit(self.state)
 
     def hook_callback(self) -> HookCallback:
-        return HookCallback(__name__, {"store": self.store, "start": self.start})
+        return HookCallback(__name__, {"store": self.store, "start": self.start, "name": self.name})
 
     def restore(self, spec, state):
         """The launching CodexTui's store, recovery state and native id, from the store it named."""
@@ -498,4 +500,5 @@ def bind(label, value, workdir, sid, *, root=None):
 def on_hook(call: HookCall) -> dict | None:
     if not bind(call.label, call.payload, call.workdir, call.sid, root=call.state["store"]):
         return None
+    replies.on_hook(call, call.payload)  # a Stop's replies precede the Host hook's done
     return {**call.payload, "hook_event_name": call.label}

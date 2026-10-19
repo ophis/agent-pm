@@ -314,7 +314,8 @@ class TuiTest(Base):
         for label, command in commands.items():
             self.assertEqual(shlex.split(command), [*HOOK, label])
         self.assertEqual(
-            run.hook_callback(), HookCallback(tui.__name__, {"store": data["store"], "start": 0})
+            run.hook_callback(),
+            HookCallback(tui.__name__, {"store": data["store"], "start": 0, "name": ""}),
         )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 

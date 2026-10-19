@@ -89,6 +89,11 @@ NOQA_ALLOWED = {
         "BLE001",
         "run",
     ): "the hook must never fail the client",
+    (
+        f"{SESSION_SRC}clients/codex/tui/replies.py",
+        "BLE001",
+        "on_hook",
+    ): "steer replies must never fail the hook or keep its done line",
 }
 
 
