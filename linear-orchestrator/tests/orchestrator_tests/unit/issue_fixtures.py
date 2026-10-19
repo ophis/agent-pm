@@ -1,6 +1,8 @@
-"""Linear issue nodes, as `agent-pm-linear issue read` queries them, and a recording fake gql."""
+"""Linear issue nodes, as `agent-pm-linear issue read`, `move` and `comment` query them, and recording
+fake gqls.
+"""
 
-from agent_pm.linear_orchestrator.engine import issue_read
+from agent_pm.linear_orchestrator.engine import client, issue_read, issue_write
 
 
 def rel(ident, *, title=None, state="Todo"):
@@ -72,3 +74,56 @@ class Gql:
                     else {"issue": {name: page}}
                 )
         return {"issue": self.node}
+
+
+VIEWER = {"id": "u-me", "name": "Me"}
+STATES = (("s-todo", "Todo", "unstarted"), ("s-doing", "In Progress", "started"))
+
+
+def team(key="TASK", states=STATES, *, more=False, cursor=None):
+    nodes = [{"id": i, "name": n, "type": t} for i, n, t in states]
+    return {"id": f"t-{key}", "key": key, "states": conn(nodes, more=more, cursor=cursor)}
+
+
+def write_issue(ident="TASK-2", *, state="s-todo", team_node=None):
+    """An issue as `agent-pm-linear issue move` and `comment` read it."""
+    return {
+        "id": f"id-{ident}",
+        "identifier": ident,
+        "url": f"https://linear.app/t/issue/{ident}",
+        "state": {"id": state},
+        "team": team_node or team(ident.split("-")[0]),
+    }
+
+
+class WriteGql:
+    """Answers a write's read with `issue` (None: no such issue) and VIEWER, each later page of
+    states from `pages` (in order), and each mutation with `result`, raised when an exception;
+    an exception in `fail` is raised by the read instead. Records every (query, variables) call.
+    """
+
+    DEFAULTS = {
+        "issueUpdate": {"success": True},
+        "commentCreate": {"success": True, "comment": {"id": "c-new"}},
+    }
+
+    def __init__(self, issue, *, pages=(), result=None, fail=None, viewer=VIEWER):
+        self.issue, self.result, self.fail, self.viewer = issue, result, fail, viewer
+        self.pages, self.calls = list(pages), []
+
+    def __call__(self, query, **variables):
+        self.calls.append((query, variables))
+        if query.startswith("mutation"):
+            if isinstance(self.result, BaseException):
+                raise self.result
+            field = client.operation(query)
+            return {field: self.DEFAULTS[field] if self.result is None else self.result}
+        if query == issue_write.Q_STATES:
+            return {"team": {"states": self.pages.pop(0)}}
+        if self.fail is not None:
+            raise self.fail
+        return {"viewer": self.viewer, "issue": self.issue}
+
+    @property
+    def writes(self):
+        return [call for call in self.calls if call[0].startswith("mutation")]

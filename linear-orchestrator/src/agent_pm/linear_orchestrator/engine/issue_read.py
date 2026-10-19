@@ -65,12 +65,14 @@ MORE = {
 }
 
 
-def view(gql, ident, *, full=False):
-    """The issue's view: with full, every page of every connection and nothing truncated."""
+def lookup(gql, query, ident):
+    """query's data for ident, an issue identifier or id, as $i; IssueError unless its issue is
+    there.
+    """
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
         raise IssueError(f"{ident!r}: want an issue identifier such as TASK-1 or an issue id")
     try:
-        node = gql(Q_FULL if full else Q_READ, i=ident)["issue"]
+        data = gql(query, i=ident)
     except LinearError as error:
         if isinstance(error, GraphQLErrors):
             missing = any(m.startswith(NOT_FOUND) for m in messages(error.errors))
@@ -78,9 +80,15 @@ def view(gql, ident, *, full=False):
             missing = NOT_FOUND in str(error)
         if not missing:
             raise
-        node = None
-    if node is None:
+        data = None
+    if data is None or data["issue"] is None:
         raise IssueError(f"{ident}: no such issue")
+    return data
+
+
+def view(gql, ident, *, full=False):
+    """The issue's view: with full, every page of every connection and nothing truncated."""
+    node = lookup(gql, Q_FULL if full else Q_READ, ident)["issue"]
     nodes, more = {}, []
     for name in CONNECTIONS:
         page = node[name]
