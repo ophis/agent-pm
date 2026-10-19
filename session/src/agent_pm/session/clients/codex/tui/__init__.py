@@ -27,6 +27,7 @@ from agent_pm.session.clients.codex.common import (
     reset_at,
 )
 from agent_pm.session.clients.codex.common.types import Snapshot
+from agent_pm.session.clients.codex.tui import records
 from agent_pm.session.clients.common import question, scan, split_flags
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -268,22 +269,13 @@ class CodexTui(Tui):
         return found
 
     def _record(self, record: dict) -> list[Reply]:
-        payload = record.get("payload")
-        if record.get("type") != "response_item" or not isinstance(payload, dict):
+        found = records.message(record)
+        if found is None:
             return []
-        if payload.get("type") != "message" or payload.get("role") not in ("user", "assistant"):
-            return []
-        if payload["role"] == "user":  # a prompt: a new turn
+        role, text = found
+        if role == "user":  # a prompt: a new turn
             self.last = self.unseen = ""
             return []
-        content = payload.get("content")
-        text = "\n".join(
-            block["text"]
-            for block in (content if isinstance(content, list) else [])
-            if isinstance(block, dict)
-            and block.get("type") == "output_text"
-            and isinstance(block.get("text"), str)
-        )
         if text.strip() and text.strip() == self.unseen.strip():
             self.unseen = ""
         elif text.strip():
