@@ -15,6 +15,7 @@ from agent_pm.linear_orchestrator.engine import promote, prune, router, runs
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
+from orchestrator_tests.unit.run_fixtures import logged
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -602,3 +603,69 @@ class WritebackUsage(RunCase):
                 self.assertEqual((result, output), (2, ""))
                 self.assertIn("agent-pm-linear writeback: ", errors)
                 self.assertIn(error, errors)
+                row = logged(self.cfg.logs_dir)[-1]
+                self.assertEqual(
+                    (row["src"], row["kind"], row["issue"], row["exit"]),
+                    ("writeback", "refused", "TASK-1", 2),
+                )
+                self.assertIn(error, row["reason"])
+
+    def append_local(self, text):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "a", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_a_local_key_newer_than_its_code_is_ignored_and_logged(self):
+        self.append_local("\n[linear_orchestrator.newer_limits]\nopencode = 1\n")
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        begun = json.dumps({"v": 1, "kind": "begun", "sid": other, "attempt": 1})
+        workdir = self.cfg.issue_workdir("TASK-1")
+        result, output, errors = _call(
+            ["writeback", "--issue", "TASK-1", "--workdir", workdir], stdin=begun + "\n"
+        )
+        unknown = (
+            "~/.agent-pm/config.local.toml: unknown key 'newer_limits' in [linear_orchestrator]"
+        )
+        self.assertEqual((result, output), (2, ""))
+        self.assertEqual(
+            errors.splitlines(),
+            [
+                f"agent-pm-linear writeback: ignored: {unknown}",
+                f"agent-pm-linear writeback: TASK-1: no start row for session {other}",
+            ],
+        )
+        self.assertEqual(
+            [(r["kind"], r["reason"]) for r in logged(self.cfg.logs_dir)],
+            [
+                ("refused", f"TASK-1: no start row for session {other}"),
+                ("config-unknown", unknown),
+            ],
+        )
+        result, _, errors = _call(["status", "TASK-1"])
+        self.assertEqual(result, 2)
+        self.assertIn("unknown key 'newer_limits'", errors)
+
+    def test_a_configuration_it_cannot_load_is_logged_where_its_logs_go(self):
+        self.append_local("\n[linear_orchestrator.client_max_runs]\nopencode = 0\n")
+        result, output, errors = _call(
+            ["writeback", "--issue", "TASK-1", "--workdir", "/w"], stdin="{}\n"
+        )
+        refused = "linear-orchestrator/config.toml: [client_max_runs] opencode must be a whole number >= 1: 0"
+        self.assertEqual((result, output, errors), (2, "", f"agent-pm-linear: {refused}\n"))
+        row = logged(self.cfg.logs_dir)[-1]
+        self.assertEqual(
+            {k: v for k, v in row.items() if k != "ts"},
+            {
+                "src": "writeback",
+                "kind": "refused",
+                "issue": "TASK-1",
+                "reason": refused,
+                "exit": 2,
+            },
+        )
+
+    def test_a_configuration_refused_before_its_logs_dir_is_known_is_only_printed(self):
+        self.append_local("\nnot = [toml\n")
+        result, _, errors = _call(["writeback", "--issue", "TASK-1", "--workdir", "/w"])
+        self.assertEqual(result, 2)
+        self.assertTrue(errors.startswith("agent-pm-linear: "), errors)
+        self.assertEqual(logged(self.cfg.logs_dir), [])

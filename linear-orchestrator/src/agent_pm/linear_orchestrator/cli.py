@@ -1,6 +1,7 @@
 """The Linear orchestrator's command entry point."""
 
 import argparse
+import contextlib
 import os
 import sys
 from datetime import UTC, datetime
@@ -22,7 +23,14 @@ from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import SID_ENV, Record, answer_keys, nested_start
+from agent_pm.utils import (
+    SID_ENV,
+    Record,
+    answer_keys,
+    nested_start,
+    one_line,
+    tolerate_unknown_keys,
+)
 
 
 def _query_help(command):
@@ -178,14 +186,30 @@ def main(argv=None):
     if args.command == "resume" and (refused := nested_start()):
         print(f"agent-pm-linear: {refused}", file=sys.stderr)
         return 2
-    try:
-        cfg = load()
-    except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
-        print(f"agent-pm-linear: {error}", file=sys.stderr)
-        return 2
-    event_log.use_logs(cfg.logs_dir)
-    if args.command == "writeback":
-        return _writeback(cfg, args.issue, args.workdir)
+    ignored = []
+    # writeback ignores config keys newer than this code: a run begun before an upgrade still writes back
+    tolerated = (
+        tolerate_unknown_keys(partial(_ignored, ignored))
+        if args.command == "writeback"
+        else contextlib.nullcontext()
+    )
+    with tolerated:
+        try:
+            cfg = load()
+        except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
+            print(f"agent-pm-linear: {error}", file=sys.stderr)
+            logs = getattr(error, "logs_dir", None)
+            if args.command == "writeback" and logs:
+                event_log.use_logs(logs)
+                _refused(args.issue, error)
+                _log_ignored(args.issue, ignored)
+            return 2
+        event_log.use_logs(cfg.logs_dir)
+        if args.command == "writeback":
+            try:
+                return _writeback(cfg, args.issue, args.workdir)
+            finally:
+                _log_ignored(args.issue, ignored)
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
@@ -243,6 +267,17 @@ def main(argv=None):
     )
 
 
+def _ignored(ignored, error):
+    print(f"agent-pm-linear writeback: ignored: {error}", file=sys.stderr)
+    ignored.append(error)
+
+
+def _log_ignored(issue, ignored):
+    for error in ignored:
+        event_log.log("writeback", "config-unknown", issue, quiet=True, reason=error)
+    ignored.clear()
+
+
 def _writeback(cfg, issue, workdir):
     lines = sys.stdin.read().splitlines()
     try:
@@ -252,7 +287,13 @@ def _writeback(cfg, issue, workdir):
         return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-linear writeback: {error}", file=sys.stderr)
+        _refused(issue, error)
         return 2
+
+
+def _refused(issue, error):
+    # the harness keeps a failed callback's exit code; the log keeps why
+    event_log.log("writeback", "refused", issue, quiet=True, reason=one_line(str(error)), exit=2)
 
 
 if __name__ == "__main__":
