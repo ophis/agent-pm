@@ -3,6 +3,14 @@
 COMMAND_DOCS = ("manager/skills/",)
 
 
+ENTRY_MODULES = {
+    "manager": {"rearm.py"},
+}
+
+
+STANDALONE = frozenset({"manager/src/agent_pm/manager/rearm.py"})
+
+
 NO_COVER_ALLOWED = {
     (
         "manager/src/agent_pm/manager/engine/holder.py",
