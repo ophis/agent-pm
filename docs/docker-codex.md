@@ -121,9 +121,10 @@ The native binding comes from `thread.started`; only client events the host rece
 
 Headless runs `/opt/agent-pm/bin/codex exec` through the JSON event parser, so replies and completion events reach
 Delegate reporting; the host prepares its resume selector itself (only the terminal launcher needs the projected
-store). Both modes keep the original snapshot, native ID and `CODEX_HOME` when resuming on the same Host; missing,
-mismatched or symlinked history fails before launch. The harness renews like a terminal and cancels renewal when
-the run ends; a killed harness leaves cleanup to the next Docker sweep.
+store). Both modes keep the original snapshot (all but `[clients.codex] flags`, read at each launch), native ID
+and `CODEX_HOME` when resuming on the same Host; missing, mismatched or symlinked history fails before launch. The
+harness renews like a terminal and cancels renewal when the run ends; a killed harness leaves cleanup to the next
+Docker sweep.
 
 ### Native plugins
 

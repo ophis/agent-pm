@@ -14,7 +14,7 @@ class Snapshot:
     model: str | None
     effort: str | None
     codex_home: str
-    flags: tuple[str, ...]
+    flags: tuple[str, ...]  # the caller's Spec.flags; the config's are read at each launch
     env: Mapping[str, str]
 
     def __post_init__(self):

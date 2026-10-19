@@ -18,6 +18,7 @@ from types import MappingProxyType
 import agent_pm.utils
 from agent_pm.session.clients.codex.common import (
     LIMIT_PREFIXES,
+    TABLE,
     VALUED,
     CodexCommon,
     RecoveryError,
@@ -83,6 +84,7 @@ FIELDS = frozenset(
         "sid",
         "store",
         "permission",
+        "flags",
     }
 )
 
@@ -102,6 +104,7 @@ class LaunchPlan:
     sid: str
     store: str
     permission: tuple[str, ...]  # its permission mode's flags
+    flags: tuple[str, ...]  # the config's current flags; the caller's are in the snapshot
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -189,6 +192,7 @@ class CodexTui(Tui):
             self.state.sid,
             os.path.join(runtime.state_root, "codex-store") if runtime else store,
             common.modes[self._context.permission],
+            common.flags,
         )
         self._runtime_files = SessionStore.project(self.state, plan.store) if runtime else {}
         pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))
@@ -411,9 +415,10 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
-    permission = _strs(data["permission"])
+    permission, flags = _strs(data["permission"]), _strs(data["flags"])
     try:
         refuse_mode(permission)
+        refuse_mode(flags, f"{TABLE} flags")
     except ConfigError as exc:
         raise ValueError(f"Codex tui launch: {exc}") from None
     return LaunchPlan(
@@ -425,6 +430,7 @@ def decode(data: object) -> LaunchPlan:
         data["sid"],
         store,
         permission,
+        flags,
     )
 
 
@@ -433,6 +439,7 @@ def encode(plan: LaunchPlan) -> str:
     data["selection"] = list(plan.selection)
     data["hook"] = list(plan.hook.argv)
     data["permission"] = list(plan.permission)
+    data["flags"] = list(plan.flags)
     decode(data)
     encoded = json.dumps(data, ensure_ascii=False)
     encoded.encode("utf-8")
@@ -469,7 +476,8 @@ def passed(flags) -> list[str]:
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:
-    return [*hook_flags(plan.hook), *passed((*plan.permission, *mcp_off(snapshot.flags, snapshot)))]
+    flags = mcp_off((*plan.flags, *snapshot.flags), snapshot)
+    return [*hook_flags(plan.hook), *passed((*plan.permission, *flags))]
 
 
 def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> list[str]:
@@ -488,7 +496,7 @@ def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> 
         "-c",
         'tui.notification_method="bel"',
         *plan.permission,
-        *mcp_off(supplied, snapshot),
+        *mcp_off((*plan.flags, *supplied), snapshot),
         *launch_options(snapshot),
         *hook_flags(plan.hook),
         "-c",
