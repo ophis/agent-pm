@@ -40,7 +40,12 @@ from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
-from agent_pm.session.hosts.docker.host import KEPT_RETRY, DockerHost, DockerTerminal
+from agent_pm.session.hosts.docker.host import (
+    KEPT_RETRY,
+    PROMPT_STAGE,
+    DockerHost,
+    DockerTerminal,
+)
 from agent_pm.session.hosts.docker.relay import SOCKET
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
@@ -448,6 +453,55 @@ class StartTest(Base):
             self.assertEqual(
                 json.load(f)["mounts"], [{"path": self.home_dir + "/sessions", "rw": True}]
             )
+
+    def test_a_prompt_file_is_staged_in_the_container_before_the_tmux_launch(self):
+        path, text = "/run/agent-pm/prompt/prompt.md", "雪\n" * 50_000
+        self.start(prompt_file=path, prompt=text)
+        calls = [call for call in self.order if isinstance(call, list)]
+        staged = [i for i, call in enumerate(calls) if PROMPT_STAGE in call]
+        launched = [i for i, call in enumerate(calls) if tmux_cli.RELAUNCH in call]
+        self.assertEqual(len(staged), 1)
+        self.assertLess(staged[0], launched[0])
+        self.assertEqual(
+            calls[staged[0]],
+            ["exec", "-i", "--user", "agent", CONTAINER, PYTHON, "-I", "-c", PROMPT_STAGE, path],
+        )
+        self.assertEqual(self.docker.inputs[staged[0]], text)
+
+    def test_no_prompt_file_stages_nothing(self):
+        self.start()
+        self.assertFalse(any(PROMPT_STAGE in call for call in self.order if isinstance(call, list)))
+
+    def test_prompt_staging_errors_name_the_step(self):
+        metadata = {"prompt_file": "/run/agent-pm/prompt/prompt.md", "prompt": "private"}
+        for result, want in (
+            (done(1, "", "private"), "^staging prompt file: exit status 1$"),
+            (OSError("unavailable"), "^staging prompt file: unavailable$"),
+            (TimeoutExpired("exec", 1), "^staging prompt file: "),
+        ):
+            with (
+                self.subTest(result=type(result).__name__),
+                mock.patch.object(
+                    self.host,
+                    "run",
+                    **(
+                        {"side_effect": result}
+                        if isinstance(result, BaseException)
+                        else {"return_value": result}
+                    ),
+                ),
+                self.assertRaisesRegex(SessionError, want) as raised,
+            ):
+                self.host._stage_prompt(CONTAINER, metadata)
+            self.assertNotIn("private", str(raised.exception))
+
+    def test_a_failed_prompt_stage_rolls_the_start_back(self):
+        with (
+            mock.patch.object(self.host, "_stage_prompt", side_effect=SessionError("no room")),
+            self.assertRaisesRegex(SessionError, "no room"),
+        ):
+            self.start(prompt_file="/run/agent-pm/prompt/prompt.md", prompt="x")
+        self.assertEqual(self.broker.closed, [CONTAINER])
 
     def test_staging_failure_rolls_back_the_container(self):
         with (

@@ -118,6 +118,10 @@ PIPED = "pipe"
 READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
 STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
+PROMPT_STAGE = """import os, sys
+os.makedirs(os.path.dirname(sys.argv[1]), 0o700, exist_ok=True)
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, 'wb') as f: f.write(sys.stdin.buffer.read())"""
 LOCK_WAIT = 30
 KILL_WAIT = 5
 POLL = 0.2
@@ -902,6 +906,7 @@ class DockerHost(Host):
         try:
             stops.check()
             self._stage_files(container, metadata)
+            self._stage_prompt(container, metadata)
             if why := _stop_supervisor(name):
                 raise SessionError(why)
             lock = _take_lock(name)
@@ -1174,6 +1179,23 @@ class DockerHost(Host):
             raise SessionError(f"staging client runtime: {error}") from None
         if result.returncode:
             raise SessionError("staging client runtime failed")
+
+    def _stage_prompt(self, container: str, metadata: Mapping[str, str]) -> None:
+        """metadata's prompt written at its prompt_file in the container, as its agent user."""
+        path = metadata.get("prompt_file")
+        if path is None:
+            return
+        argv, env = docker_call(
+            self.docker,
+            *("exec", "-i", "--user", "agent", container),
+            *(IMAGE_PYTHON, "-I", "-c", PROMPT_STAGE, path),
+        )
+        try:
+            result = self.run(argv, env, input=metadata["prompt"], timeout=RUN_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SessionError(f"staging prompt file: {error}") from None
+        if result.returncode:
+            raise SessionError(f"staging prompt file: exit status {result.returncode}")
 
     def _exec_env(self, launch: Launch, started: Started) -> dict[str, str]:
         """launch's env, plus with a GitHub App its bot as PR author and git identity."""
