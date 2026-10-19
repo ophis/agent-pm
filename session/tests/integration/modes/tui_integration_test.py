@@ -14,6 +14,7 @@ from agent_pm.session.engine.types import Access, Spec
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
+from agent_pm.session.modes.base import POINTER
 
 from session.tests import fake_client
 from session.tests.case import Case
@@ -156,7 +157,7 @@ class LongPromptTest(Live):
         path = os.path.join(path, "prompt.md")
         self.assertEqual(
             argv[argv.index("--") + 1],
-            tui.POINTER.format(size=len(prompt.encode()), path=path),
+            POINTER.format(size=len(prompt.encode()), path=path),
         )
         with open(path, encoding="utf-8") as f:
             self.assertEqual(f.read(), prompt)

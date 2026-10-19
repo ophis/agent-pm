@@ -1,6 +1,5 @@
 """Tui mode behavior through nonspawning Host and InteractiveProcess boundaries."""
 
-import dataclasses
 import errno
 import fcntl
 import io
@@ -50,7 +49,8 @@ from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.modes import tui, tui_hook
-from agent_pm.utils import PROMPT_ARGV_MAX, StatusState, inode_lock
+from agent_pm.session.modes.base import POINTER
+from agent_pm.utils import StatusState, inode_lock, over_argv
 
 from session.tests import fake_client
 from session.tests.case import PLUGIN_BIN, Case
@@ -856,18 +856,6 @@ class StartTest(Base):
             self.start(events=None)
         self.assertIs(caught.exception.__cause__, failure)
         self.host.calls.validate.assert_called_once()
-        self.nothing_hosted()
-
-    def test_a_tui_launch_with_stdin_is_refused_before_anything(self):
-        class StdinTui(ScanTui):
-            def launch(self, spec, hook):
-                return dataclasses.replace(super().launch(spec, hook), stdin="text")
-
-        with self.assertRaisesRegex(
-            ConfigError, "^client 'fake' gave a tui launch stdin; its terminal is its stdin$"
-        ):
-            self.start(run=StdinTui(self.client))
-        self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
     def test_an_unsupported_tui_mode_is_refused_before_anything(self):
@@ -2375,7 +2363,7 @@ class PromptFileTest(Base):
         self.seen = Seen(self.client)
 
     def pointer(self, path):
-        return tui.POINTER.format(size=len(BIG.encode()), path=path)
+        return POINTER.format(size=len(BIG.encode()), path=path)
 
     def test_an_over_budget_prompt_becomes_a_pointer_with_its_dir_readable(self):
         self.start(run=self.seen, prompt=BIG, access=Access(cwd=self.tmp, reads=("/r",)))
@@ -2428,7 +2416,9 @@ class PromptFileTest(Base):
         self.assertFalse(os.path.lexists(os.path.dirname(self.path)))
 
     def test_a_prompt_within_the_budget_stays_in_argv(self):
-        at = "a" * (PROMPT_ARGV_MAX - 2)
+        at = "a" * 99_998  # the longest prompt over_argv keeps in argv
+        self.assertFalse(over_argv(at))
+        self.assertTrue(over_argv(at + "a"))
         self.start(run=self.seen, prompt=at)
         self.assertEqual((self.prepared.argv[1], self.seen.spec.access.reads), (at, ()))
         self.assertFalse(os.path.lexists(os.path.dirname(self.path)))

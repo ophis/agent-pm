@@ -53,7 +53,7 @@ class HeadlessMode(BaseMode):
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        prepared, _, metadata = cls._prepare(
+        prepared, _, metadata, _ = cls._prepare(
             spec, client, registry=registry, host=host, display=display
         )
         if metadata is not None:
@@ -69,8 +69,10 @@ class HeadlessMode(BaseMode):
         registry: Registry,
         host: Host,
         display: Display,
-    ) -> tuple[Prepared, Headless, Mapping[str, str] | None]:
-        """metadata: a named run's, for its Host; None: a nameless run, as before Hosts piped."""
+    ) -> tuple[Prepared, Headless, Mapping[str, str] | None, tuple[str, str] | None]:
+        """metadata: a named run's, for its Host; None: a nameless run, as before Hosts piped. Last,
+        the prompt file this mode writes.
+        """
         run = client.headless()
         if run is None:
             raise cls._unsupported(spec)
@@ -82,10 +84,14 @@ class HeadlessMode(BaseMode):
             spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name))
         spec = cls._noted(spec, client)
         run._context = host._client_context()
+        spec, prompt_file = cls._pointed(spec, run._context, spec.workdir)
+        if prompt_file and run._context.container:
+            path, text = prompt_file
+            metadata, prompt_file = {**(metadata or {}), "prompt_file": path, "prompt": text}, None
         prepared = cls._launched(spec, run.launch, drop, inherit=host._inherit_env)
         if name is not None:
             prepared = cls._host_resume(prepared, host, name)
-        return prepared, run, metadata
+        return prepared, run, metadata, prompt_file
 
     @classmethod
     def start(
@@ -99,9 +105,11 @@ class HeadlessMode(BaseMode):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        prepared, run, metadata = cls._prepare(
+        prepared, run, metadata, prompt_file = cls._prepare(
             spec, client, registry=registry, host=host, display=display
         )
+        if prompt_file:
+            cls._write_prompt(*prompt_file)
         run.commit()
         record(prepared.info)
         try:
@@ -184,10 +192,4 @@ class HeadlessMode(BaseMode):
 
 def _launch(prepared: Prepared) -> Launch:
     info = prepared.info
-    return Launch(
-        prepared.argv,
-        env=prepared.env,
-        cwd=info.cwd,
-        transcript=info.transcript,
-        stdin=prepared.stdin,
-    )
+    return Launch(prepared.argv, env=prepared.env, cwd=info.cwd, transcript=info.transcript)

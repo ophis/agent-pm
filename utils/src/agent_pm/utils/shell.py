@@ -10,14 +10,13 @@ import shlex
 import shutil
 import signal
 import subprocess
-import threading
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.utils.environment import environment_ok
 
 SHORT, LONG = 60, 600
 STOP_WAIT = 5
-PROMPT_ARGV_MAX = 100_000  # bytes; exec allows 128 KiB per argument
+PROMPT_ARGV_MAX = 100_000  # JSON bytes; exec takes 128 KiB per arg
 USERINFO = re.compile(r"//[^@/\s]+@")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -42,39 +41,23 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
 
 
 def over_argv(text: str) -> bool:
-    """Whether text JSON-encoded is over PROMPT_ARGV_MAX bytes."""
     return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) > PROMPT_ARGV_MAX
 
 
-def _feed(stream, text: str) -> None:
-    with contextlib.suppress(OSError):
-        stream.buffer.write(text.encode("utf-8"))
-    with contextlib.suppress(OSError):
-        stream.close()
-
-
 def piped_popen(
-    argv,
-    *,
-    env: Mapping[str, str],
-    cwd: str | None = None,
-    stderr: int = subprocess.PIPE,
-    stdin_text: str | None = None,
+    argv, *, env: Mapping[str, str], cwd: str | None = None, stderr: int = subprocess.PIPE
 ) -> subprocess.Popen:
-    proc = subprocess.Popen(
+    return subprocess.Popen(
         argv,
         cwd=cwd,
         env=env,
-        stdin=subprocess.DEVNULL if stdin_text is None else subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=stderr,
         text=True,
         errors="replace",
         process_group=0,
     )
-    if stdin_text is not None:
-        threading.Thread(target=_feed, args=(proc.stdin, stdin_text), daemon=True).start()
-    return proc
 
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:

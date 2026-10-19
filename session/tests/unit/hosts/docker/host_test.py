@@ -1449,16 +1449,23 @@ class PipeTest(Base):
         self.assertEqual(self.broker.closed, [CONTAINER])
         self.assertTrue(_free(os.path.join(self.state, "pipe.lock")))
 
-    def test_a_launch_s_stdin_goes_to_docker_exec_s_stdin(self):
-        self.launch = replace(self.launch, stdin="雪" * 50_000)
-        with mock.patch("threading.Thread") as thread:
-            self.pipe().close()
-        _, kw = self.popened
-        self.assertEqual(kw["stdin"], PIPE)
-        self.assertIn(
-            mock.call(target=mock.ANY, args=(self.exec.stdin, "雪" * 50_000), daemon=True),
-            thread.call_args_list,
-        )
+    def test_a_prompt_file_is_staged_before_docker_exec(self):
+        path = "/run/agent-pm/prompt/prompt.md"
+        self.pipe(prompt_file=path, prompt="雪" * 9).close()
+        calls = [call for call in self.order if isinstance(call, list) or call == "exec"]
+        staged = [i for i, call in enumerate(calls) if PROMPT_STAGE in call]
+        self.assertEqual(len(staged), 1)
+        self.assertLess(staged[0], calls.index("exec"))
+        self.assertIn("雪" * 9, self.docker.inputs)
+
+    def test_a_failed_prompt_stage_ends_the_pipe_before_docker_exec(self):
+        with (
+            mock.patch.object(self.host, "_stage_prompt", side_effect=SessionError("no room")),
+            self.assertRaisesRegex(SessionError, "no room"),
+        ):
+            self.pipe(prompt_file="/run/agent-pm/prompt/prompt.md", prompt="x")
+        self.assertNotIn("exec", self.order)
+        self.assertEqual(self.broker.closed, [CONTAINER])
 
     def test_a_github_app_reaches_the_piped_client_and_its_tokens_are_refreshed(self):
         expiries = [{"account": "ophis", "expires_at": "2000-01-01T00:00:00Z"}]

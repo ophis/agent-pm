@@ -1,6 +1,5 @@
 """The tui mode: a Client command on a Host terminal; events from its client's own record,
-then the hook records appended to its session directory, and from its terminal. A prompt too long
-for exec's argv reaches the client as a POINTER to its prompt file.
+then the hook records appended to its session directory, and from its terminal.
 """
 
 import contextlib
@@ -25,7 +24,6 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
-    ClientContext,
     ConfigError,
     HookError,
     HookKind,
@@ -65,7 +63,6 @@ from agent_pm.utils import (
     idle,
     inode_lock,
     json_records,
-    over_argv,
     read_regular,
 )
 
@@ -80,11 +77,6 @@ OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
 POLL_SCREEN = 0.5
 LOG = logging.getLogger("session")
 Cursor = tuple[int | None, int]  # inode, offset
-POINTER = (
-    "Your prompt is {size} bytes, too long for a command line, so it is in {path}. Read all of "
-    "that file now, in parts if your read tool limits size, and follow it as this message."
-)
-PROMPT_FILE = os.path.join("prompt", "prompt.md")
 
 
 def checked_name(name) -> str:
@@ -112,32 +104,6 @@ def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]
             if callback is not None
         },
     }
-
-
-def _pointed(
-    spec: Spec, context: ClientContext, store_dir: str
-) -> tuple[Spec, tuple[str, str] | None]:
-    """spec, its prompt over_argv replaced by a POINTER to its prompt file, whose dir it may read,
-    under its container's state root, else store_dir; that file's path and text.
-    """
-    if not over_argv(spec.prompt):
-        return spec, None
-    path = os.path.join(
-        context.container.state_root if context.container else store_dir, PROMPT_FILE
-    )
-    access = replace(spec.access, reads=(*spec.access.reads, os.path.dirname(path)))
-    pointer = POINTER.format(size=len(spec.prompt.encode("utf-8")), path=path)
-    return replace(spec, prompt=pointer, access=access), (path, spec.prompt)
-
-
-def _write_prompt(path: str, text: str) -> None:
-    try:
-        os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-    except OSError as error:
-        raise SessionError(f"prompt file {path}: {error.strerror}") from error
 
 
 def _bad(state: Mapping) -> str | None:
@@ -548,7 +514,7 @@ class TuiMode(BaseMode):
         )
         spec = cls._noted(spec, client)
         run._context = host._client_context()
-        spec, prompt_file = _pointed(spec, run._context, store.dir)
+        spec, prompt_file = cls._pointed(spec, run._context, store.dir)
         if prompt_file and run._context.container:
             path, text = prompt_file
             metadata, prompt_file = {**metadata, "prompt_file": path, "prompt": text}, None
@@ -556,10 +522,6 @@ class TuiMode(BaseMode):
         prepared = cls._launched(
             spec, lambda s: run.launch(s, hook), drop, inherit=host._inherit_env
         )
-        if prepared.stdin is not None:
-            raise ConfigError(
-                f"client {spec.client!r} gave a tui launch stdin; its terminal is its stdin"
-            )
         prepared = cls._host_resume(prepared, host, name)
         if run._runtime_files:
             metadata = {**metadata, "runtime_files": json.dumps(dict(run._runtime_files))}
@@ -592,7 +554,7 @@ class TuiMode(BaseMode):
         def launch() -> InteractiveProcess:
             try:
                 if pending.prompt_file:
-                    _write_prompt(*pending.prompt_file)
+                    cls._write_prompt(*pending.prompt_file)
                 return host.terminal(
                     store.name,
                     pending.launch,

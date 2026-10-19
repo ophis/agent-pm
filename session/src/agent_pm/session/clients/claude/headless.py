@@ -1,9 +1,7 @@
 """Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with
-the prompt last after "--" so a leading "-" stays the prompt, or on stdin when over_argv. parse turns init, assistant, result
+the prompt last after "--" so a leading "-" stays the prompt. parse turns init, assistant, result
 and rate-limit records into events, one LimitHit per run.
 """
-
-from dataclasses import replace
 
 from agent_pm.session.clients.claude.common import ClaudeCommon
 from agent_pm.session.engine.types import (
@@ -15,7 +13,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.modes.client_adapters.headless import JsonHeadless
-from agent_pm.utils import number, over_argv
+from agent_pm.utils import number
 
 
 class ClaudeHeadless(JsonHeadless):
@@ -29,16 +27,14 @@ class ClaudeHeadless(JsonHeadless):
     def launch(self, spec: Spec):
         common = self.common
         self.sid, self.spec = spec.sid or "", spec
-        stdin = spec.prompt if over_argv(spec.prompt) else None
-        launch = common.launch(
+        return common.launch(
             spec,
             head=("-p",),
             output=("--output-format", "stream-json", "--verbose"),
-            tail=() if stdin is not None else ("--", spec.prompt),
+            tail=("--", spec.prompt),
             env=common.ENV,
             permission=self._context.permission,
         )
-        return replace(launch, stdin=stdin)
 
     def _home(self):
         return self.common.home()

@@ -25,7 +25,6 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
-from agent_pm.utils import PROMPT_ARGV_MAX
 
 from session.tests.case import Case
 from session.tests.unit.clients.opencode.support import (
@@ -64,12 +63,7 @@ class Base(Case):
 
     def spec(self, **fields) -> Spec:
         access = fields.pop("access", Access(project=True, cwd=self.cwd))
-        fields.setdefault("prompt", "Hi there")
-        return Spec(workdir=self.home, access=access, sid="run-1", **fields)
-
-    def resumed(self, prompt: str) -> Spec:
-        self.client.common.bind(self.cwd, "run-1", SES)
-        return self.spec(prompt=prompt, resume=True)
+        return Spec(workdir=self.home, access=access, sid="run-1", prompt="Hi there", **fields)
 
     def launch(self, spec: Spec, context: ClientContext = LOCAL_CONTEXT, client=None) -> Launch:
         run = (client or self.client).headless()
@@ -110,18 +104,6 @@ class LaunchTest(Base):
         self.assertEqual((launch.cwd, launch.project, launch.resume), (self.cwd, True, ""))
         self.assertIn("OPENCODE_PERMISSION", launch.unset)
         self.assertIn("OPENCODE_PID", launch.unset)
-
-    def test_a_prompt_over_the_argv_budget_goes_to_the_launcher_on_stdin(self):
-        big = "雪" * 40_000
-        for resume in (False, True):
-            with self.subTest(resume=resume):
-                launch = self.launch(self.spec(prompt=big) if not resume else self.resumed(big))
-                head = launch.argv[: launch.argv.index("--") + 1]
-                self.assertEqual(head[3:], ("--timeout", "120", "--stdin", "--"))
-                self.assertEqual(launch.stdin, big)
-        at = "a" * (PROMPT_ARGV_MAX - 2)
-        launch = self.launch(self.spec(prompt=at))
-        self.assertEqual((launch.argv[5:8], launch.stdin), (("--prompt", at, "--"), None))
 
     def test_tier_model(self):
         self.assertTrue(holds(self.command(self.launch(self.spec(tier=3))), ("--model", MODEL)))

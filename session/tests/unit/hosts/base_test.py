@@ -206,18 +206,6 @@ class Pipe(Case):
         )
         self.assertEqual((piped.stdout, piped.stderr), (proc.stdout, proc.stderr))
 
-    def test_the_base_pipe_writes_a_launch_s_stdin_to_its_child(self):
-        launch = Launch(("cli", "-p"), cwd="/w", stdin="雪" * 50_000)
-        proc = mock.Mock()
-        with (
-            mock.patch("subprocess.Popen", return_value=proc) as popen,
-            mock.patch("threading.Thread") as thread,
-        ):
-            MinimalHost("m").pipe(None, launch)
-        self.assertEqual(popen.call_args.kwargs["stdin"], PIPE)
-        self.assertEqual(thread.call_args.kwargs["args"], (proc.stdin, "雪" * 50_000))
-        thread.return_value.start.assert_called_once_with()
-
     def test_a_local_piped_waits_within_its_timeout_and_stop_kills_its_group(self):
         proc = mock.Mock()
         proc.wait.side_effect = [TimeoutExpired("cli", 0), 3, 3]

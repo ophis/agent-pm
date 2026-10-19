@@ -1,4 +1,4 @@
-"""Runs COMMAND with TEXT (or its own stdin) on its stdin, copying its stdout and stderr; kills it, exiting 124, when
+"""Runs COMMAND with TEXT on its stdin, copying its stdout and stderr; kills it, exiting 124, when
 no stdout line is a JSON object with a string sessionID within SECONDS. Unstartable: 127; bad
 arguments: 2. Standalone: the standard library only.
 """
@@ -9,24 +9,18 @@ import subprocess
 import sys
 import threading
 
-USAGE = "usage: launcher.py --timeout SECONDS (--prompt TEXT | --stdin) -- COMMAND..."
+USAGE = "usage: launcher.py --timeout SECONDS --prompt TEXT -- COMMAND..."
 STDERR_WAIT = 2  # seconds to copy COMMAND's last stderr after it exits
 LOCK_WAIT = 1  # seconds the watch waits for a line being copied
 
 
-def _arguments(argv: list[str]) -> tuple[float, str | None, list[str]]:
-    if argv[2:4] == ["--stdin", "--"] and len(argv) > 4:
-        text, command = None, argv[4:]
-    elif argv[2:3] == ["--prompt"] and argv[4:5] == ["--"] and len(argv) > 5:
-        text, command = argv[3], argv[5:]
-    else:
-        raise ValueError
-    if argv[0] != "--timeout":
+def _arguments(argv: list[str]) -> tuple[float, str, list[str]]:
+    if len(argv) < 6 or argv[0] != "--timeout" or argv[2] != "--prompt" or argv[4] != "--":
         raise ValueError
     seconds = float(argv[1])
     if not 0 < seconds < float("inf"):
         raise ValueError
-    return seconds, text, command
+    return seconds, argv[3], argv[5:]
 
 
 def _bound(line: bytes) -> bool:
@@ -103,8 +97,6 @@ def main(argv: list[str]) -> int:
     except ValueError:
         print(USAGE, file=sys.stderr)
         return 2
-    if text is None:
-        text = sys.stdin.buffer.read().decode("utf-8")
     try:
         child = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE

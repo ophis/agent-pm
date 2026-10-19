@@ -8,7 +8,7 @@ Every session agent-pm starts, agent runs and workers, loads your user settings 
 
 In the commander's Claude Code session the plugin's mod (`manager/hooks/quiet.tsx`) always hides Monitor tool-call rows and notices (each event, the expiry, the stream's end), plus Bash tool-call rows whose command contains `agent-pm-crew next-event` or `agent-pm-crew ack`. Other tools, Bash commands and notices draw as usual; the model's content is unchanged. Ctrl+o shows Monitor notices; the hidden tool-call rows stay hidden.
 
-A prompt over 100,000 bytes (measured JSON-encoded) never goes on the client's command line, as Linux's exec refuses any one argument over 128 KiB. A headless client reads it on stdin (`claude -p`, `codex exec -`, OpenCode's launcher `--stdin`). A TUI client gets a one-line pointer to a 0600 file holding it and reads that file itself: `~/.agent-pm/tui/<name>/prompt/prompt.md`, on the Docker Host `/run/agent-pm/prompt/prompt.md` (a 1 MiB tmpfs). The Docker Host refuses any argument over 128 KiB before it starts a container.
+A prompt over 100,000 bytes (measured JSON-encoded) never goes on the client's command line, as Linux's exec refuses any one argument over 128 KiB. Every client, TUI or headless, gets a one-line pointer to a 0600 file holding it and reads that file itself: a TUI session's under `~/.agent-pm/tui/<name>/prompt/`, a headless run's under its workdir's `prompt/`, on the Docker Host `/run/agent-pm/prompt/prompt.md` (a 1 MiB tmpfs). The Docker Host refuses any argument over 128 KiB before it starts a container.
 
 ## agent-pm-session
 

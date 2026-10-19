@@ -15,7 +15,7 @@ from agent_pm.session.engine.types import (
     Reply,
     TurnEnd,
 )
-from agent_pm.utils import PROMPT_ARGV_MAX, docker_home
+from agent_pm.utils import docker_home
 
 from session.tests.case import Case
 from session.tests.unit.clients.claude.support import (
@@ -169,17 +169,6 @@ class ArgvTest(Base):
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):
         self.assertEqual(self.launch("-p --help", config={}).argv[-2:], ("--", "-p --help"))
-
-    def test_a_prompt_over_the_argv_budget_goes_on_stdin_on_start_and_resume(self):
-        big = "雪" * 40_000
-        for resume in (False, True):
-            with self.subTest(resume=resume):
-                launch = self.launch(big, config={}, resume=resume)
-                self.assertEqual(launch.stdin, big)
-                self.assertEqual(launch.argv, self.launch("x", config={}, resume=resume).argv[:-2])
-        at = "a" * (PROMPT_ARGV_MAX - 2)
-        launch = self.launch(at, config={})
-        self.assertEqual((launch.argv[-2:], launch.stdin), (("--", at), None))
 
     def test_a_project_run_loads_project_settings_and_cwds_mcp_file(self):
         cwd = os.path.join(self.tmp, "cwd")

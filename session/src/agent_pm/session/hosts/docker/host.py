@@ -119,6 +119,7 @@ READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
 STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
 _ARG_STRLEN_MAX = 131072  # Linux exec's limit on one argument, its NUL included
+# modes/tui.py _write_prompt in the container: keep the two alike
 PROMPT_STAGE = """import os, sys
 os.makedirs(os.path.dirname(sys.argv[1]), 0o700, exist_ok=True)
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -1102,6 +1103,7 @@ class DockerHost(Host):
         lock = proc = None
         try:
             stops.check()
+            self._stage_prompt(container, metadata)
             lock = os.open(os.path.join(state_dir(name), PIPE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _save_record(
@@ -1127,7 +1129,7 @@ class DockerHost(Host):
                     *launch.argv,
                 ),
             )
-            proc = piped_popen(argv, env={**docker_env, **env}, stdin_text=launch.stdin)
+            proc = piped_popen(argv, env={**docker_env, **env})
             laps("client")
             _save_result(name, created, laps.phases)
             stops.check()

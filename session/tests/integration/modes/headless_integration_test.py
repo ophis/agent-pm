@@ -3,7 +3,6 @@ kill, bounded waits, and a session running once started.
 """
 
 import contextlib
-import hashlib
 import io
 import logging
 import os
@@ -16,6 +15,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.engine.types import Access, Launch, Reply, SessionError, Spec, Stderr
+from agent_pm.session.modes.base import POINTER
 from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.fakes.terminal import MemoryHost
@@ -48,8 +48,8 @@ os.close(2)
 time.sleep(0.3)
 print(json.dumps({"text": "late"}))
 """
-DIGEST = """import hashlib, json, sys
-print(json.dumps({"text": hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}), flush=True)
+ECHO = """import json, sys
+print(json.dumps({"text": sys.argv[1]}), flush=True)
 """
 RAISING = """import time
 print('{"raise": "boom"}', flush=True)
@@ -187,12 +187,19 @@ class Streams(Base):
         self.mode.stop()
         self.assertEqual(self.mode.returncode(0), 3)
 
-    def test_a_200_kib_stdin_reaches_the_child_whole(self):
-        text = "雪 a\n" * 40_000
-        self.start(StubClient(Launch((sys.executable, "-I", "-c", DIGEST), stdin=text)))
+    def test_a_prompt_over_128_kib_starts_with_a_pointer_to_its_file(self):
+        class Echo(StubRun):
+            def launch(self, spec):
+                super().launch(spec)
+                return Launch((sys.executable, "-I", "-c", ECHO, spec.prompt))
+
+        prompt, path = "雪 a\n" * 40_000, os.path.join(self.dir, "prompt", "prompt.md")
+        self.start(StubClient(run=Echo), prompt=prompt)
         self.addCleanup(self.mode.stop)
-        self.assertEqual(self.drain(), [Reply(hashlib.sha256(text.encode()).hexdigest())])
-        self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
+        pointer = POINTER.format(size=len(prompt.encode()), path=path)
+        self.assertEqual(self.drain(), [Reply(pointer)])
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), prompt)
 
     def test_ended_only_after_stderr_then_stdout(self):
         self.begin((sys.executable, "-I", "-c", STDERR_FIRST))
