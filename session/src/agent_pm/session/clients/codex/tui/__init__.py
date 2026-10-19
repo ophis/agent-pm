@@ -315,11 +315,16 @@ class CodexTui(Tui):
         return [*early, *super().hook_events(label, payload)]
 
     def reply(self, payload):
-        if payload.get("hook_event_name") != "Interrupt":
-            message = payload.get("last_assistant_message")
-            self.last_reply = message if isinstance(message, str) else ""
-            self.unseen = self.last_reply if self.last_reply.strip() != self.last.strip() else ""
-            self.last = ""
+        """An Interrupt's turn end has no text: its turn's came as Replies, and the previous
+        turn's is never repeated. Claude Code has no interrupt hook, so its interrupted turn has no
+        turn end at all; Codex's Interrupt keeps its `done`, so the session is not left working.
+        """
+        if payload.get("hook_event_name") == "Interrupt":
+            return ""
+        message = payload.get("last_assistant_message")
+        self.last_reply = message if isinstance(message, str) else ""
+        self.unseen = self.last_reply if self.last_reply.strip() != self.last.strip() else ""
+        self.last = ""
         return self.last_reply
 
     def pending(self, payload):

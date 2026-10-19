@@ -45,7 +45,7 @@ class LinearSkill(Case):
             "never run `create` again",
             "--full --output",
             "--body-file -",
-            "completed or canceled",
+            "completed, canceled or duplicate",
         ):
             self.assertIn(phrase, text)
 

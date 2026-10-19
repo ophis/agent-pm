@@ -503,7 +503,7 @@ class TuiTest(Base):
             with self.subTest(payload=payload):
                 self.assertEqual(run.pending(payload), 0)
 
-    def test_interrupt_retains_root_reply_on_live_and_attach_replay(self):
+    def test_interrupt_ends_its_turn_without_the_previous_turns_text(self):
         run = self.client.tui()
         self.assertEqual(
             run.hook_events("Interrupt", self.payload()), [ClientBound(NATIVE), TurnEnd()]
@@ -514,15 +514,23 @@ class TuiTest(Base):
         )
         self.assertEqual(
             run.hook_events("Interrupt", self.payload(last_assistant_message="discard")),
-            [TurnEnd("kept")],
+            [TurnEnd()],
+        )
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message="after")),
+            [TurnEnd("after")],
         )
         attached = self.client.tui()
         self.assertEqual(
-            attached.hook_events("Stop", self.payload(last_assistant_message="kept")),
-            [ClientBound(NATIVE), TurnEnd("kept")],
+            attached.replay(
+                [
+                    ("Stop", self.payload(last_assistant_message="kept")),
+                    ("UserPromptSubmit", self.payload()),
+                    ("Interrupt", self.payload()),
+                ]
+            ),
+            [ClientBound(NATIVE), TurnEnd("kept"), Activity(""), TurnEnd()],
         )
-        self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd("kept")])
-        attached.hook_events("Stop", self.payload(last_assistant_message=None))
         self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd()])
 
     def test_restore_readies_a_fresh_tui_as_the_one_that_launched(self):
