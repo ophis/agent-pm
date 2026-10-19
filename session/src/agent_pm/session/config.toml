@@ -89,7 +89,9 @@ max = "max"
 #                    on the host's Ollama, which stays on 127.0.0.1. Each launch's OpenCode config (OPENCODE_CONFIG_CONTENT)
 #                    holds the ollama provider at http://<the Host's address>:<ollama_port>/v1, autoupdate off and
 #                    permission.bash = "ask" (but a run's pre-approved commands): headless refuses the shell call, the
-#                    TUI asks and the session is blocked
+#                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
+#                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
+#                    not trusted (Access.project) is refused before it starts (docs/sessions.md › OpenCode sessions)
 #   flags            opencode flags added to every launch; never a session selector, --format, --attach, --dir or a
 #                    permission flag (modes'), nor for the TUI --prompt or --pure; empty → none
 #   executable       the OpenCode 1.x command both modes run (a name PATH finds, or an absolute path); empty → the

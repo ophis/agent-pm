@@ -124,7 +124,7 @@ class TuiSessions(Case):
         self.common = self.session_cls._config().registry.client("opencode").common
         self.spec = Spec(
             workdir=str(self.work),
-            access=Access(cwd=str(self.cwd)),
+            access=Access(cwd=str(self.cwd), project=True),
             sid="run-1",
             tier=1,
             client="opencode",

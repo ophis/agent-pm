@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     ClientHome,
     ConfigError,
     Effort,
+    Permission,
     Resumable,
     SessionInfo,
     Spec,
@@ -323,7 +324,7 @@ class SelectionTest(Case):
     def setUp(self):
         self.common = common()
         self.cwd = os.path.realpath(self.home)
-        self.spec = Spec(workdir=self.home, access=Access(cwd=self.cwd), sid="run-1")
+        self.spec = Spec(workdir=self.home, access=Access(cwd=self.cwd, project=True), sid="run-1")
 
     def test_a_fresh_run_selects_nothing_and_a_resume_its_bound_session(self):
         self.assertEqual(self.common.selection(self.spec, LOCAL_CONTEXT), ())
@@ -340,6 +341,25 @@ class SelectionTest(Case):
         self.common.bind(self.cwd, "run-1", SES)
         resumed = self.common.selection(replace(self.spec, resume=True), DOCKER_CONTEXT)
         self.assertEqual(resumed, ("--session", SES))
+
+    def test_an_isolated_host_starts_in_an_untrusted_cwd(self):
+        untrusted = replace(self.spec, access=Access(cwd=self.cwd))
+        self.assertEqual(self.common.selection(untrusted, DOCKER_CONTEXT), ())
+
+    def test_a_non_isolated_host_starts_in_a_trusted_cwd(self):
+        self.assertEqual(self.common.selection(self.spec, LOCAL_CONTEXT), ())
+
+    def test_a_non_isolated_host_refuses_an_untrusted_cwd(self):
+        self.common.bind(self.cwd, "run-1", SES)
+        untrusted = replace(self.spec, access=Access(cwd=self.cwd))
+        unisolated_docker = replace(DOCKER_CONTEXT, permission=Permission.AUTO)
+        for context in (LOCAL_CONTEXT, unisolated_docker):
+            for resume in (False, True):
+                with (
+                    self.subTest(container=context.container is not None, resume=resume),
+                    self.assertRaisesRegex(ConfigError, "isolated Host.*trusted cwd"),
+                ):
+                    self.common.selection(replace(untrusted, resume=resume), context)
 
     def test_the_home_is_xdg_data_home_with_no_credential(self):
         self.assertEqual(

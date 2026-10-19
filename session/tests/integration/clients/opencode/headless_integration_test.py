@@ -58,7 +58,7 @@ class HeadlessSessions(Case):
         )
         self.spec = Spec(
             workdir=str(self.root),
-            access=Access(cwd=str(self.cwd)),
+            access=Access(cwd=str(self.cwd), project=True),
             sid="run-1",
             tier=1,
             client="opencode",
@@ -99,7 +99,6 @@ class HeadlessSessions(Case):
         self.assertEqual(provider["options"]["baseURL"], "http://127.0.0.1:11434/v1")
         self.assertEqual(call["config"]["permission"]["bash"], "ask")
         self.assertEqual(call["env"]["OPENCODE_DISABLE_AUTOUPDATE"], "1")
-        self.assertEqual(call["env"]["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
 
     def test_rejected_bash_ends_the_turn(self):
         self.scene([{"bash": "rm -rf build"}, {"text": "I could not run it."}])

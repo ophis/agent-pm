@@ -22,6 +22,7 @@ from session.tests import live_tmux
 from session.tests.integration.clients.claude import fake_claude
 from session.tests.integration.clients.codex import fake_codex
 from session.tests.integration.clients.opencode import fake_opencode
+from utils.tests.case import local_section
 from utils.tests.sandbox import reap
 
 RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")
@@ -302,7 +303,8 @@ class CodexIntegration(Runs):
 
 class OpenCodeIntegration(CodexIntegration):
     """ROLE's TASK, --client opencode over fake_opencode on PATH; HOME, its session bindings,
-    outside the temp dirs.
+    outside the temp dirs. A run's cwd is `proj`, in trusted_dirs (the tmux Host starts OpenCode
+    only in a trusted cwd), unless `trusted=False` leaves it the workdir's agent dir.
     """
 
     CLIENT = "opencode"
@@ -315,3 +317,12 @@ class OpenCodeIntegration(CodexIntegration):
                 f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_opencode.__file__)} "$@"\n'
             )
         os.chmod(opencode, 0o755)
+        self.proj = os.path.join(self.root, "project")
+        os.mkdir(self.proj)
+        os.makedirs(os.path.join(self.home, ".agent-pm"), exist_ok=True)
+        with open(os.path.join(self.home, ".agent-pm", "config.local.toml"), "w") as f:
+            f.write(local_section(f"trusted_dirs = [{json.dumps(self.proj)}]\n", "delegate"))
+
+    def drive(self, steps, *extra, trusted=True, **scenario) -> subprocess.CompletedProcess:
+        cwd = ("--cwd", self.proj) if trusted else ()
+        return super().drive(steps, *cwd, *extra, **scenario)
