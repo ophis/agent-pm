@@ -1,119 +1,136 @@
-# Spec: TASK-742 a minimal working selector layer: a state and choices in, one decision API call, the chosen option out
+# Spec: TASK-742 minimal interfaces and fakes for the selector, choice translation and the router's tier choice
 
-Requirement source: the user's 补充要求 第 1 轮 on TASK-742 (2026-10-19): "Build only the selector layer, as a working implementation, kept minimal: input is a state text plus a list of choices; it makes one call to the decision API (Jev or Kev) and returns the chosen option; plus a fake for tests." It overrides the TASK-742 interface-only scope, the TASK-511 PRD and every earlier version of this spec.
+Requirement source: the user's 补充要求 第 1 轮 on TASK-742 (2026-10-19, as corrected): this issue fixes all the interfaces plus fakes up front, each minimal; implementations come later in parallel issues. (1) selector: state text and a list of choices in, one decision API call (Jev or Kev), the chosen option out. (2) choice translation: a ticket number in, a small model reads the ticket, state text and choices out; how it reaches the small model is an implementation detail behind the interface, undecided. (3) router calling convention: a ticket number in, tier and effort out. Dropped: model attribute table, usage, pin, ranking and exclusion details, multiple input kinds. It overrides the TASK-511 PRD and every earlier version of this spec.
 
 ## Goal
 
-TASK-511 wants a model selector; this first step ships only its core: `agent_pm.selector`, a generic package that sends one `choice` question (a state text and its choices) to a decision API, Jev or Kev, and returns the choice the API picked. A `FakeSelector` lets later work test without the network. Today nothing in the repo selects or calls a decision API; no caller is added here.
+TASK-511 wants the router to choose a run's tier and effort from the ticket. This issue fixes the three interfaces that choice goes through, with a fake for each, so their implementations can be built in parallel issues. Nothing is implemented: no network call, no model call, no router change.
 
 ## Scope
 
-| In | Out (deferred) |
+| In | Out (later issues) |
 | --- | --- |
-| New project `selector/`, package `agent_pm.selector`: `Selector` ABC, `select(state, choices) -> str` | Input assembly layer (FR-33, FR-34, FR-36) |
-| `ApiSelector`: one HTTPS POST to Jev or Kev per `select` call, `Backend` `jev` / `kev` | Router calling convention, `TierTable`, tier mapping, `LinearRun` effort (FR-12, FR-31, FR-32, FR-37) |
-| `SelectorConfig` record and `check_config`; key read by an injected `read_key`, default runs `key_command` without a shell | Model attribute table, prices, capabilities (FR-1 to FR-4) |
-| `SelectorError` with reason codes | Usage, thresholds, pin (FR-7, FR-13 `usage`, FR-39) |
-| `FakeSelector`, a `SelectorContract` both run | Ranking, exclusion rules and reason codes, fallback order, `decided_by` (FR-13, FR-16, FR-18, FR-19) |
-| Import contracts and repo wiring for the new project; docs | A separate decision package, `agent-pm-select` CLI, `select-model` skill, `[selector]` config keys (FR-29, FR-10, FR-21) |
+| New project `selector/`, package `agent_pm.selector`: `Selector` ABC, `SelectorConfig`, `Backend`, `SelectorError` | `ApiSelector`, the Jev and Kev calls and their wire formats |
+| `linear_orchestrator.engine.selection`: `Translator` ABC, `Choices`; `TierChooser` ABC, `TierChoice`; `SelectionError` | The translator (small model via session or a new delegate role: undecided), the tier chooser, the router calling it, config keys |
+| Fakes: `FakeSelector`, `FakeTranslator`, `FakeTierChooser`; contract mixins each fake passes | Model attribute table, usage, pin, ranking, exclusion, multiple input kinds (dropped) |
+| Import contracts and repo wiring for the new project; vulture entries; docs | `agent-pm-select` CLI, `select-model` skill |
 
 Constraints:
 - No session or delegate change; `tests/session_interface.json` and `tests/delegate_interface.json` stay byte-identical to `main` (FR-30).
-- Tests never call the real keychain, `/usr/bin/security` or any real credential, and never reach a non-loopback host.
-- No compatibility code. No `tier` or `linear` (case-insensitive) under `selector/`, no client name (`claude`, `codex`, `opencode`) in its `src` (FR-26, `client_names`).
+- No compatibility code; no stub functions: interfaces are ABCs, so nothing behaves.
+- No `tier` or `linear` (case-insensitive) under `selector/`, no client name in its `src` (FR-26, `client_names`).
+
+## Flow
+
+```mermaid
+sequenceDiagram
+  participant R as router (later issue)
+  participant C as TierChooser
+  participant T as Translator
+  participant S as Selector
+  R->>C: choose(ticket)
+  C->>T: translate(ticket)
+  T-->>C: Choices(state, choices)
+  C->>S: select(state, choices)
+  S-->>C: one of choices
+  C-->>R: TierChoice(tier, effort)
+```
+
+How `TierChooser` composes the other two, and how a chosen option maps to tier and effort, is its implementation's; the interface fixes only `choose(ticket) -> TierChoice`.
 
 ## Acceptance criteria
 
-- AC1: `ApiSelector(config, read_key=fake).select("a docs task", ("low", "high"))` against a loopback mock Jev server answering `high` returns `"high"`; the mock received exactly one request carrying the state, the two choices and the configured `model`, with the key from `read_key` in its auth header.
-- AC2: the same with `backend=Backend.KEV` against a mock Kev server returns the mock's choice; Kev with an empty `key_command` sends no auth header and never calls `read_key`.
-- AC3: errors raise `SelectorError` with `reason`: a timeout (server delays past `timeout`) → `timeout`; connection refused, an HTTP status ≥ 400 or a redirect → `error`; `read_key` raising → `no-key`; a malformed body or an answer not among `choices` → `invalid`. `str(error)` is exactly the code; the error is raised `from None`.
-- AC4: `select` with fewer than 1 choice, a blank choice or duplicate choices raises `ValueError` before any request; with exactly one choice it returns that choice and sends no request.
-- AC5: `check_config` raises `ValueError` naming only the field (`url`, `key_command`, `timeout`) for: a scheme other than `https`, or `http` with a non-loopback host (loopback: exactly `localhost`, or a literal IP in `127.0.0.0/8` or `::1`, on the parsed hostname); userinfo or a query in `url`; a non-absolute `key_command[0]`; `timeout <= 0`. `ApiSelector(config)` calls it. No message holds the field's value.
-- AC6 (NFR-2): after AC3's cases, neither the error messages, `repr(config)` nor anything the selector writes (it writes no file or log) contains the key or `key_command`'s values.
-- AC7: `FakeSelector` and `ApiSelector` (on a mock server) both pass `SelectorContract`: the result is one of `choices`; one choice → that choice; bad choices → `ValueError`; same input → same result.
-- AC8: `FakeSelector(picks={"state": "b"})` returns `"b"` for that state; otherwise the first choice; `FakeSelector(error=SelectorError(...))` raises it; `calls` records each `(state, choices)`.
-- AC9 (FR-26): `lint-imports --no-cache` passes with `agent_pm.selector` between `agent_pm.linear_orchestrator` and `agent_pm.delegate` in the Production layers contract and a units contract allowing it only `agent_pm.utils` and the standard library; manager, delegate, session and utils are forbidden from importing it; `git grep -n -i "tier\|linear" -- selector` prints nothing.
-- AC10 (FR-30): `session_interface_snapshot` and `delegate_interface_snapshot` pass; `git diff origin/main -- tests/session_interface.json tests/delegate_interface.json session delegate` is empty.
-- AC11: every lint and suite `docs/tests.md` names passes, the coverage gate included.
+- AC1 (selector): `agent_pm.selector.Selector` is an ABC whose only abstract method is `select(state: str, choices: Sequence[str]) -> str`; `SelectorConfig(backend, url, model, timeout, key_command=())` is frozen and `repr` hides `key_command`'s values; `Backend` values are exactly `jev`, `kev`; `SelectorError(reason)` has `str()` exactly its code and `Failure` values are exactly `error`, `timeout`, `no-key`, `invalid`.
+- AC2 (selector fake): `FakeSelector` passes `SelectorContract`: the result is one of `choices`; one choice → that choice; empty, blank or duplicate choices → `ValueError`; same input → same result. `FakeSelector(picks={"s": "b"})` returns `"b"` for state `"s"`, else the first choice; `FakeSelector(error=e)` raises `e`; `calls` records each `(state, choices)`.
+- AC3 (translation): `selection.Translator` is an ABC whose only abstract method is `translate(ticket: str) -> Choices`; `Choices(state: str, choices: tuple[str, ...])` is frozen.
+- AC4 (translation fake): `FakeTranslator` passes `TranslatorContract`: a non-blank `state` and 1 or more distinct non-blank `choices`; a blank ticket → `ValueError`; a failure raises `SelectionError`. `FakeTranslator(choices={"TASK-1": Choices(...)})` returns that entry, else a default `Choices`; `FakeTranslator(error=e)` raises `e`; `calls` records each ticket.
+- AC5 (router convention): `selection.TierChooser` is an ABC whose only abstract method is `choose(ticket: str) -> TierChoice`; `TierChoice(tier: int, effort: str)` is frozen; `SelectionError(reason)` has `str()` exactly its code, reasons `translate`, `select`, `invalid`.
+- AC6 (router fake): `FakeTierChooser` passes `TierChooserContract`: `tier` in 1–4, `effort` one of `low`, `medium`, `high`, `xhigh`, `max`; a blank ticket → `ValueError`. `FakeTierChooser(choices={"TASK-1": TierChoice(3, "low")})` returns that entry, else `TierChoice(2, "high")`; `FakeTierChooser(error=e)` raises `e`; `calls` records each ticket.
+- AC7 (FR-26): `lint-imports --no-cache` passes with `agent_pm.selector` between `agent_pm.linear_orchestrator` and `agent_pm.delegate` in the Production layers contract, a units contract allowing it only `agent_pm.utils` and the standard library, and manager, delegate, session and utils forbidden from importing it; `git grep -n -i "tier\|linear" -- selector` prints nothing.
+- AC8 (FR-30): `session_interface_snapshot` and `delegate_interface_snapshot` pass; `git diff origin/main -- tests/session_interface.json tests/delegate_interface.json session delegate` is empty.
+- AC9: every lint and suite `docs/tests.md` names passes, the coverage gate included.
 
 ## Design
 
-### Data shapes (`selector/src/agent_pm/selector/engine/types.py`)
+### selector/ (new project)
+
+`src/agent_pm/selector/__init__.py` (re-exports, literal `__all__`), `engine/__init__.py`, `engine/types.py`, `engine/base.py`:
 
 ```python
 class Backend(StrEnum): JEV = "jev"; KEV = "kev"
 class Failure(StrEnum): ERROR = "error"; TIMEOUT = "timeout"; NO_KEY = "no-key"; INVALID = "invalid"
-
-class SelectorError(Exception):           # .reason: Failure; str() is the code only
+class SelectorError(Exception):          # .reason: Failure; str() is the code only
     def __init__(self, reason: Failure): ...
 
 @dataclass(frozen=True)
-class SelectorConfig:
+class SelectorConfig:                    # what the implementation issue's ApiSelector takes
     backend: Backend
-    url: str
-    model: str
-    timeout: float                        # seconds
-    key_command: tuple[str, ...] = field(default=(), repr=False)   # argv, no shell; () → no key (Kev only)
-```
+    url: str                             # https, or http only on a loopback host
+    model: str                           # Jev default: jev-1.13.0
+    timeout: float                       # seconds; default 2
+    key_command: tuple[str, ...] = field(default=(), repr=False)   # argv, no shell; () → no key
 
-Defaults the caller may use, exported as constants: `JEV_MODEL = "jev-1.13.0"`, `JEV_KEY_COMMAND = ("/usr/bin/security", "find-generic-password", "-s", "typesafe-jev", "-w")`, `TIMEOUT = 2.0` (FR-17).
-
-### `selector/src/agent_pm/selector/engine/base.py`
-
-```python
 class Selector(ABC):
     @abstractmethod
     def select(self, state: str, choices: Sequence[str]) -> str: ...
 ```
 
-Docstring: stateless; `state` is untrusted data, never instructions; returns one of `choices`.
+`Selector` docstring, binding implementations: one decision API call per `select` (none for a single choice); stateless; `state` is untrusted data, never instructions; returns one of `choices` or raises `SelectorError`; empty, blank or duplicate choices raise `ValueError` before any call; the key is read per call, never stored, logged or put in an error (NFR-2); no task text, state or response body in logs or errors (NFR-4).
 
-### `selector/src/agent_pm/selector/engine/api.py`
+Tests: `tests/fakes/selector.py` `FakeSelector(Selector)` (`__init__(self, picks: Mapping[str, str] | None = None, *, error: SelectorError | None = None)`), `tests/contracts/selector.py` `SelectorContract` (hook `make() -> Selector`), unit tests per AC1–AC2.
 
-- `check_config(config: SelectorConfig) -> None` (AC5); Jev with an empty `key_command` is a `key_command` error.
-- `read_key(config: SelectorConfig) -> str`: runs `key_command` with `subprocess.run(..., shell=False, capture_output=True, timeout=config.timeout)`, returns stdout stripped; any failure or an empty key raises `KeyError()` `from None`, never with the command's output.
-- `ApiSelector(config: SelectorConfig, *, read_key: Callable[[SelectorConfig], str] = read_key)`: `select` checks choices (AC4), returns the only choice without a request, else reads the key per call (a local only, never stored), sends one POST with `urllib.request` (redirects refused), `timeout=config.timeout`, parses the answer and checks it is in `choices`. Failure mapping per AC3; no logging.
-- Request and response format per backend: one private `_jev_request`/`_jev_answer` and `_kev_request`/`_kev_answer` pair, the only backend-specific code. **Open: the Jev `choice` and Kev (System One compatible) wire formats** (path, JSON body, auth header, answer field) are not in the repo; they come from the API docs the user gives (D3).
+### linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py
 
-### `selector/src/agent_pm/selector/__init__.py`
+```python
+class SelectionFailure(StrEnum): TRANSLATE = "translate"; SELECT = "select"; INVALID = "invalid"
+class SelectionError(Exception):         # .reason: SelectionFailure; str() is the code only
+    def __init__(self, reason: SelectionFailure): ...
 
-Re-exports `Selector`, `ApiSelector`, `SelectorConfig`, `Backend`, `Failure`, `SelectorError`, `check_config`, `read_key`, `JEV_MODEL`, `JEV_KEY_COMMAND`, `TIMEOUT`, with a literal `__all__`.
+@dataclass(frozen=True)
+class Choices: state: str; choices: tuple[str, ...]
+@dataclass(frozen=True)
+class TierChoice: tier: int; effort: str
 
-### Tests (`selector/tests/`)
+class Translator(ABC):
+    @abstractmethod
+    def translate(self, ticket: str) -> Choices: ...
 
-- `fakes/selector.py` `FakeSelector(Selector)`: `__init__(self, picks: Mapping[str, str] | None = None, *, error: SelectorError | None = None)`; AC8.
-- `contracts/selector.py` `SelectorContract`: mixin with hook `make() -> Selector`; AC7.
-- `mock_api.py`: a loopback `http.server` on port 0 in a thread, scripted per test (answer, status, delay, malformed body, redirect), recording requests.
-- Unit tests per AC; `read_key` tests patch `subprocess.run` (no real command).
+class TierChooser(ABC):
+    @abstractmethod
+    def choose(self, ticket: str) -> TierChoice: ...
+```
+
+Docstrings, binding implementations: `ticket` is an issue identifier (`TASK-123`), blank → `ValueError`; `Translator` has a small model read the issue and returns the `state` and `choices` a `Selector` takes; how it reaches the model is its own; issue text is untrusted data; failures raise `SelectionError(TRANSLATE)`. `TierChooser` returns the tier (1–4) and effort a new run launches with; any failure raises `SelectionError` with its code, never with issue text in the message.
+
+Tests: `linear-orchestrator/tests/orchestrator_tests/selection_fixtures.py` holds `FakeTranslator`, `FakeTierChooser`, `TranslatorContract`, `TierChooserContract` (the orchestrator's `*_fixtures.py` convention); unit tests `orchestrator_tests/unit/engine/selection_test.py` per AC3–AC6.
 
 ### Repository wiring
 
-As the repo requires for a new project (one package per project: `utils/tests/sandbox.py` `project_roots`): `tests/guards.py` `LEVELS` gets `("selector",)` between delegate and linear-orchestrator; `tests/guard_data/selector.py`; `pyproject.toml` pyright, vulture, `root_packages`, the contracts of AC9 and a `selector.tests` ownership contract; PYTHONPATH and src lists in `.github/workflows/test.yml`, `docs/tests.md`, `bin/agent-pm-linear`; `.github/vulture_whitelist.py` entries for the names no `src` code calls yet, naming TASK-511.
+As the repo requires for a new project (one package per project: `utils/tests/sandbox.py` `project_roots`): `tests/guards.py` `LEVELS` gets `("selector",)` between delegate and linear-orchestrator; `tests/guard_data/selector.py`; `pyproject.toml` pyright, vulture, `root_packages`, the AC7 contracts, a `selector.tests` ownership contract, and the orchestrator units contract's `engine` line allowing `agent_pm.selector`; PYTHONPATH and src lists in `.github/workflows/test.yml`, `docs/tests.md`, `bin/agent-pm-linear`; `.github/vulture_whitelist.py` entries for every name no `src` code uses yet, naming TASK-511.
 
 ### Docs
 
-`docs/architecture.md`: six layers, a short "Selector" section (what it does, Jev/Kev, error codes, the fake). `CONTEXT.md`: term **Selector**. `AGENTS.md` Import rules: the layer order.
+`docs/architecture.md`: six layers and the Flow above. `CONTEXT.md`: terms **Selector**, **Translator**, **Tier chooser**. `AGENTS.md` Import rules: the layer order.
 
 ## Verification
 
 | AC | Test or check |
 | --- | --- |
-| AC1 | `selector/tests/unit/engine/api_test.py` Jev cases on `mock_api` |
-| AC2 | `selector/tests/unit/engine/api_test.py` Kev cases |
-| AC3 | `selector/tests/unit/engine/api_test.py` failure cases, one per code |
-| AC4 | `selector/tests/unit/engine/api_test.py` choices cases |
-| AC5 | `selector/tests/unit/engine/api_test.py` `check_config` cases |
-| AC6 | `selector/tests/unit/engine/api_test.py` key-leak case (sentinel key, grep messages and repr) |
-| AC7 | `selector/tests/unit/fakes/selector_test.py`, `selector/tests/unit/engine/api_contract_test.py` |
-| AC8 | `selector/tests/unit/fakes/selector_test.py` |
-| AC9 | `lint-imports --no-cache`; `git grep` |
-| AC10 | `python3 -m tests.checks`; `git diff` |
-| AC11 | the lint commands and suites of `docs/tests.md`; CI |
+| AC1 | `selector/tests/unit/engine/types_test.py` |
+| AC2 | `selector/tests/unit/fakes/selector_test.py` (`FakeSelector` × `SelectorContract`) |
+| AC3 | `linear-orchestrator/tests/orchestrator_tests/unit/engine/selection_test.py` |
+| AC4 | the same file, `FakeTranslator` × `TranslatorContract` |
+| AC5 | the same file, types cases |
+| AC6 | the same file, `FakeTierChooser` × `TierChooserContract` |
+| AC7 | `lint-imports --no-cache`; `git grep` |
+| AC8 | `python3 -m tests.checks`; `git diff` |
+| AC9 | the lint commands and suites of `docs/tests.md`; CI |
 
 ## Decisions
 
-- D1: One package, `agent_pm.selector`, holding the Jev/Kev calls; no separate decision package: the cut scope has no other decision caller.
-- D2: Choices are plain strings and the answer one of them; no ids, probabilities or confidence returned (the user's "returns the chosen option").
-- D3: The wire formats are the one open item; building waits for them or for the user's go-ahead to build from a stated assumption, kept in the two private pairs.
-- D4: No config file keys: the caller builds `SelectorConfig`; config keys come with the first caller.
-- Left to the implementer: docstring wording, test names, mock server details.
+- D1: Translation and the tier choice live in linear_orchestrator, not a generic package: they take a ticket number and the tier, both outside FR-26's generic concepts; only the selector is generic.
+- D2: Choices are plain strings and the answer one of them (the user's "the chosen option").
+- D3: Interfaces are ABCs with no stub functions, so nothing behaves before its implementation issue.
+- D4: `TierChoice.effort` is a `str` so the orchestrator does not import session's `Effort`; the contract checks its values.
+- D5: No config keys and no router change here; they come with the implementations.
+- Left to the implementer: docstring wording, fake defaults beyond those named, test names.
