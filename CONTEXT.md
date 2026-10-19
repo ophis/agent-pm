@@ -105,7 +105,7 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Selector**:
-The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`); `JevSelector` (`selector/src/agent_pm/selector/backends/jev.py`) asks Jev.
+The generic layer that asks a decision API (Jev or Kev) one question, a state and its choices, and returns the chosen one. In code: the ABC `Selector` (`selector/src/agent_pm/selector/`).
 _Avoid_: router, chooser
 
 **Resolver chain**:

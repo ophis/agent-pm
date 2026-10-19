@@ -142,7 +142,6 @@ shows.
 | `agent-pm-opencode` | provider name | `[session.clients.opencode.providers.<name>]` | that OpenCode provider's API key | `<B> login opencode <name>` | the broker |
 | the `harness_key` value | any | `harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
 | each `roles.<role>.key` value | the role's account | `roles.<role>.key` | role Linear API key | the user | any process running as the user |
-| `typesafe-jev` | any | — | TypeSafe Jev API key | the user | `JevSelector`'s `JEV_DEFAULT` key command; any process running as the user |
 | Claude Code's own | — | — | local Claude login | Claude Code `/login` | Claude Code; service name not documented |
 | `gh`'s own | — | — | host `gh` token | `gh auth login` | `gh`; see `gh auth status` |
 | Codex's own, keyring mode only | — | — | local Codex login | `codex login` | Codex; service name not documented |
@@ -273,9 +272,6 @@ agent-pm 0.6.28.
 - [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0, with a configured provider
   logged in (`login opencode <name>`).
 - [ ] [Measured readers](#measured-readers): `agent-pm-opencode`.
-- [ ] Jev: with `typesafe-jev` in the Keychain, `JevSelector().select(<state>, (<a>, <b>))` returns `<a>` or `<b>`. It also
-  confirms two unverified wire assumptions (TASK-744): the state sent as `{"text": …}` and each criterion's text
-  being its option name.
 
 ## Risks
 
