@@ -285,8 +285,8 @@ On the Docker Host the Delegate:
 - gives the agent the image's team at `/opt/agent-pm/team` and its `python3`;
 - writes that `Repo:` line as `owner/name`, a local clone's read from its `origin`;
 - sets `AGENT_PM_USERS`: the configured `users` without any `[bot]`;
-- asks for the deliverable inline, never `deliverable_file` (`local` and `orchestrator` outputs still save it to
-  `out`);
+- asks a `local` or `orchestrator` run for the deliverable inline, never `deliverable_file` (still saved to `out`),
+  and a run that publishes its own deliverable for none;
 - drops the outcome's `files`, noting `files_dropped` in `run.jsonl`, so an engineer run posts no spec or plan to
   Linear.
 
