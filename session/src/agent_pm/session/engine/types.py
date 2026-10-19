@@ -167,9 +167,9 @@ class HookCallback:
 @dataclass(frozen=True)
 class ClientHome:
     """What a container Host needs to run a client: its per-session state dir (`field`, its name in
-    the Host's records; `dir`, the dir's last path part; `env`, the variable that points the client
-    at it), `credential`, the credential kind the Host injects, and `files`, (name, text) for a
-    fresh dir.
+    the Host's records; `dir`, its last path part; `env`, the variable naming it), `credential`,
+    the kind the Host injects, `files`, (name, text) for a fresh dir, `providers`, whose keys the
+    broker adds.
     """
 
     field: str
@@ -178,6 +178,7 @@ class ClientHome:
     credential: str
     files: tuple[tuple[str, str], ...] = ()
     persistent: tuple[str, ...] | None = None
+    providers: tuple[str, ...] = ()
 
 
 class Container(NamedTuple):

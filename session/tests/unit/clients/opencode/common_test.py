@@ -39,6 +39,8 @@ from session.tests.unit.clients.opencode.support import (
     packaged_table,
 )
 
+STRATA = {"base_url": "http://10.0.0.5:8080/v1", "models": ["m"]}
+
 
 def common(**config) -> OpenCodeCommon:
     return OpenCodeClient({**packaged_table(), **config}).common
@@ -102,6 +104,11 @@ class ConfigTest(Case):
             ):
                 common(providers=providers)
         self.assertEqual(common(providers={"strata": good}).providers, {"strata": good})
+
+    def test_a_provider_name_is_at_most_64_characters(self):
+        self.assertIn("p" * 64, common(providers={"p" * 64: STRATA}).providers)
+        with self.assertRaisesRegex(ConfigError, r"\.providers must be"):
+            common(providers={"p" * 65: STRATA})
 
     def test_a_tier_names_ollama_or_a_listed_provider(self):
         good = {"base_url": "https://strata.lan/v1", "models": []}
@@ -429,6 +436,10 @@ class SelectionTest(Case):
             transcript.database({"XDG_DATA_HOME": data}),
             os.path.join(data, "opencode", "opencode.db"),
         )
+        listed = common(providers={"strata": STRATA, "lab": STRATA}).home()
+        self.assertEqual(listed.providers, ("lab", "strata"))
+        _, metadata = BaseMode._hosted(self.spec, listed, host, "w")
+        self.assertEqual(json.loads(metadata["home_providers"]), ["lab", "strata"])
         spec, metadata = BaseMode._hosted(self.spec, self.common.home(), host, "w")
         self.assertEqual(spec.env["XDG_DATA_HOME"], data)
         self.assertEqual(
@@ -440,6 +451,7 @@ class SelectionTest(Case):
                 "resume": "0",
             },
         )
+        self.assertNotIn("home_providers", metadata)
 
     def test_extra_flags_are_refused_with_the_reserved_ones(self):
         for flags in (("-c",), ("--prompt=x",), ("--pure",)):

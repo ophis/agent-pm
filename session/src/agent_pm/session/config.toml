@@ -107,10 +107,11 @@ max = "max"
 # [clients.opencode.tiers]    tier "1".."4" → its --model: ollama/<model> or <name>/<model> of a providers table, which
 #                             lists the model; any other provider is refused
 # [clients.opencode.providers.<name>]  an OpenAI-compatible provider (e.g. a LAN server; docs/sessions.md › OpenCode
-#                    sessions); none packaged:
+#                    sessions), <name> up to 64 letters, digits, ., _ or -; none packaged:
 #   base_url         its http(s) URL, ending /v1 (http://<host>:8080/v1)
 #   models           model names it lists beside those tiers map to it; [] → only those
-#                    Its API key: `opencode auth login` (provider <name>) on the host; agent-pm never reads or passes it
+#                    Its API key: on tmux/pty, `opencode auth login` (provider <name>), which agent-pm never reads;
+#                    on Docker, `agent-pm-broker login opencode <name>`, every listed one (docs/docker-host.md › OpenCode)
 # [clients.opencode.efforts]  effort → its --variant (a model without that variant ignores it)
 [clients.opencode]
 implementation = "agent_pm.session.clients.opencode:OpenCodeClient"

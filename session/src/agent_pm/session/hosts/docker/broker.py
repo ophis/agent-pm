@@ -434,21 +434,24 @@ def write_manifest(
     home: tuple[str, str],
     hook_path: str,
     github: str,
+    providers: tuple[str, ...] = (),
 ) -> None:
     """The start manifest, 0600; home: (its manifest field, the client home's path); github: the
-    App whose tokens the container gets, "": none.
+    App whose tokens the container gets, "": none; providers: those whose API keys it gets.
     """
     field, home_path = home
+    client = field.removesuffix("_dir")
     manifest = {
         "name": name,
         "generation": generation,
         "image": image,
         "cwd": cwd,
         "workspace": workspace,
-        "client": field.removesuffix("_dir"),
+        "client": client,
         field: home_path,
         "hook_path": hook_path,
         "github": {"app": github} if github else None,
         "labels": {},
+        **({f"{client}_providers": list(providers)} if providers else {}),
     }
     save(path, json.dumps(manifest), durable=True)

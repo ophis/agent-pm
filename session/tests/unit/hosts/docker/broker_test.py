@@ -414,6 +414,28 @@ class ManifestTest(Case):
         with open(path) as f:
             self.assertEqual(json.load(f)["github"], {"app": "agent-pm-bot"})
 
+    def test_an_opencode_manifest_lists_its_providers(self):
+        path = os.path.join(self.home, "state", "g.json")
+        for providers in (("lab", "strata"), ()):
+            broker.write_manifest(
+                path,
+                name="w",
+                generation="0" * 32,
+                image="agent-pm-worker:" + "a" * 64,
+                cwd="/work",
+                workspace="agent-pm-ws-w",
+                home=("opencode_dir", "/home/opencode"),
+                hook_path="/plugin/bin/agent-pm-session",
+                github="",
+                providers=providers,
+            )
+            with open(path) as f:
+                manifest = json.load(f)
+            if providers:
+                self.assertEqual(manifest["opencode_providers"], ["lab", "strata"])
+            else:
+                self.assertNotIn("opencode_providers", manifest)
+
 
 class StreamTest(Case):
     def run_stream(self, out, err, code, **kw):
