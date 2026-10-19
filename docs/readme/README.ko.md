@@ -97,6 +97,7 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 | `ctmux <name>` | commander의 tmux session을 엽니다. iTerm2에서는 네이티브 창, 다른 터미널에서는 일반 tmux attach, tmux 안에서는 전환입니다. `ctmux --install`은 ctmux와 네 명령 `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate`, `agent-pm-linear`를 `~/.agent-pm/bin/`에 둡니다. 그 경로로 실행하거나 `PATH`에 추가하세요. 각 명령은 실행 시점에 설치된 플러그인(Claude Code 설치를 먼저, 그다음 Codex의 최신 설치)에서 실행되므로 업그레이드 후 재설치가 필요 없습니다. `--install`을 다시 실행하면 갱신됩니다. |
 | `/agent-pm:manage` | commander의 가이드라인에 따라 worker, role run, pipeline run을 시작하고 지시합니다. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | 이 대화에서 코어 role을 실행합니다. |
+| `/agent-pm:linear` | 고정된 `agent-pm-linear issue` 명령으로 Linear issue를 읽고, 찾고, 만들고, 바꿉니다. |
 | `agent-pm-delegate run --list` | 모든 role과 task를 나열합니다. |
 
 ## 빠른 시작

@@ -17,6 +17,9 @@ ORCH_PROJECT = "linear-orchestrator"
 ORCH_FILES = f"{ORCH_PROJECT}/{ORCH_SRC}"
 
 
+COMMAND_DOCS = (f"{ORCH_PROJECT}/skills/",)
+
+
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
 

@@ -125,6 +125,7 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 - As a discussion concludes, update its issues without asking: description, title, label, state, blocking relations.
 - Record each decision as a comment on its issue, marked `(the user, <YYYY-MM-DD>)`, and fold it into the descriptions and issues it changes. Mark your own proposal "proposed, not decided" until the user says yes; never record an assumption as the user's decision.
 - Manage issues yourself, not through a sub-agent.
+- **Issue operations**: read, find, create, move, comment on, relate, relabel and archive issues with the `agent-pm-linear issue` commands `/agent-pm:linear` lists, never a hand-written query; it holds their examples and failure recovery.
 - Create issues when asked, in Backlog unless told Todo. Refer to every entity by id.
 - Tag each implementation issue with the agent that builds it (the `Agent` label group: Claude, Codex, OpenCode). OpenCode runs local models: only for live-test issues (`docs/board.md` › OpenCode).
 - Before reverting a state someone else changed, read the issue's comments: the user may have ordered the move.

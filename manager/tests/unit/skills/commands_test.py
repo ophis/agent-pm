@@ -151,7 +151,10 @@ class Names(Case):
 
     def test_the_skills_it_names_are_this_plugins(self):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("manage")):
-            homes = [os.path.join(REPO, d, "skills", skill) for d in ("manager", "delegate")]
+            homes = [
+                os.path.join(REPO, d, "skills", skill)
+                for d in ("manager", "delegate", "linear-orchestrator")
+            ]
             self.assertTrue(any(os.path.isfile(os.path.join(h, "SKILL.md")) for h in homes), skill)
 
 

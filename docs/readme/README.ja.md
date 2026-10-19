@@ -97,6 +97,7 @@ agent-pm が起動する session があなたの設定をどう読み込むか�
 | `ctmux <name>` | commander の tmux session を開きます。iTerm2 ではネイティブウィンドウ、他のターミナルでは通常の tmux attach、tmux の中からは切り替えになります。`ctmux --install` は ctmux と 4 つのコマンド `agent-pm-crew`、`agent-pm-session`、`agent-pm-delegate`、`agent-pm-linear` を `~/.agent-pm/bin/` に置きます。そのパスで実行するか、`PATH` に追加してください。各コマンドは実行時にインストールされているプラグイン（Claude Code のものを優先し、次に Codex の最新版）から動くので、アップグレード後の再インストールは不要です。`--install` を再実行すると更新されます。 |
 | `/agent-pm:manage` | commander のガイドラインに沿って worker、role run、pipeline run を起動・指示します。 |
 | `/agent-pm:act-as <role>[:<task>] <input>` | この会話の中でコア role を実行します。 |
+| `/agent-pm:linear` | 固定の `agent-pm-linear issue` コマンドで Linear の issue を読み、探し、作成し、変更します。 |
 | `agent-pm-delegate run --list` | すべての role と task を一覧表示します。 |
 
 ## クイックスタート

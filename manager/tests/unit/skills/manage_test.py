@@ -121,6 +121,17 @@ class Manage(Case):
         self.assertRegex(rule("Clear small"), r"commit only, no push")
         self.assertIn(".gitignore", rule("Commit or push only when asked"))
 
+    def test_issue_operations_go_through_the_fixed_commands_skill(self):
+        board = section("manage", "The task board")
+        issues = rule("**Issue operations**")
+        self.assertIn(issues, board)
+        for literal in (
+            "`/agent-pm:linear`",
+            "`agent-pm-linear issue`",
+            "never a hand-written query",
+        ):
+            self.assertIn(literal, issues)
+
     def test_approved_board_proposals_run_after_a_state_reread(self):
         board = section("manage", "The task board")
         proposals = rule("**Board proposals**")
