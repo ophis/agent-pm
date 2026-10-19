@@ -1,7 +1,6 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, a sid's start row as its Claim, its task (`started_task`) and its recorded tier
-and effort (`started_choice`), live limit rows (`limits`), `failed` rows (a new run that failed
-before its LinearRun) as Failures, `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim and its task (`started_task`), live limit rows
+(`limits`), `failed` rows (a new run that failed before its LinearRun) as Failures, `trim` to KEEP.
 """
 
 import json
@@ -137,7 +136,10 @@ def claim(path, issue, sid) -> Claim:
     raise ValueError(f"{issue}: no start row for session {sid}")
 
 
-def _start_row(path, issue, sid) -> dict | None:
+def started_task(path, issue, sid) -> str | None:
+    """The (issue, sid) start row's task; None when it has none (no label, or a row written before
+    start rows recorded it) or there is no such row.
+    """
     for line in _lines(path):
         try:
             d = json.loads(line)
@@ -148,26 +150,8 @@ def _start_row(path, issue, sid) -> dict | None:
             issue,
             sid,
         ):
-            return d
+            return d["task"] if _text(d.get("task")) else None
     return None
-
-
-def started_task(path, issue, sid) -> str | None:
-    """The (issue, sid) start row's task; None when it has none (no label, or a row written before
-    start rows recorded it) or there is no such row.
-    """
-    d = _start_row(path, issue, sid) or {}
-    return d["task"] if _text(d.get("task")) else None
-
-
-def started_choice(path, issue, sid) -> tuple[int | None, str | None]:
-    """The (issue, sid) start row's recorded tier (1-4) and effort; each None when absent (a row
-    written before start rows recorded them), invalid, or there is no such row.
-    """
-    d = _start_row(path, issue, sid) or {}
-    tier, effort = d.get("tier"), d.get("effort")
-    valid = isinstance(tier, int) and not isinstance(tier, bool) and 1 <= tier <= 4
-    return tier if valid else None, effort if isinstance(effort, str) and effort.strip() else None
 
 
 def _limit(line, now):

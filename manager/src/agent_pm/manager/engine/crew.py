@@ -27,6 +27,7 @@ from agent_pm.manager.engine.types import (
 from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
+    REPLY_ID,
     SID_ENV,
     STATE,
     OutcomeStatus,
@@ -35,6 +36,7 @@ from agent_pm.utils import (
     StatusState,
     one_line,
     printable,
+    read_reply,
 )
 
 TIMEOUT = 30
@@ -672,7 +674,12 @@ class Crew:
                 time.sleep(0.5)
 
     def event_content(self, event: str) -> str:
-        """The owning entry's ctl content, newline-terminated, else why it is unavailable."""
+        """The owning entry's ctl content (a reply's: its stored text), newline-terminated, else why
+        it is unavailable.
+        """
+        words = event.split(maxsplit=4)
+        if len(words) > 2 and words[2] == "reply":
+            return self._reply_content(words[3] if len(words) > 3 else "")
         try:
             _, session, _ = event.split(maxsplit=3)[:3]
             entries = self.roster.entries()
@@ -683,4 +690,13 @@ class Crew:
             content = self._execute((*record.ctl, "content"), record.to_line() + "\n")
         except (OSError, RosterError, RuntimeError, ValueError) as error:
             content = f"content unavailable: {printable(one_line(str(error)))}"
+        return content if content.endswith("\n") else content + "\n"
+
+    def _reply_content(self, reply_id: str) -> str:
+        why = f"content unavailable: reply {printable(one_line(reply_id))}"
+        if not REPLY_ID.fullmatch(reply_id):
+            return f"{why}: bad id\n"
+        content = read_reply(self.roster.events_path, reply_id)
+        if content is None:
+            return f"{why}: missing\n"
         return content if content.endswith("\n") else content + "\n"

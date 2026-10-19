@@ -62,16 +62,6 @@ NOQA_ALLOWED = {
         "start_run",
     ): "A recorded launch may fail.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/chain.py",
-        "BLE001",
-        "resolve",
-    ): "A resolver breaking its contract still falls back.",
-    (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/selection.py",
-        "BLE001",
-        "translate",
-    ): "A failed translation run falls back to today's choices.",
-    (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "progress",
@@ -81,15 +71,6 @@ NOQA_ALLOWED = {
         "BLE001",
         "finish",
     ): "Report the session after failed steps.",
-}
-
-
-# A tool string (tests/guard_checks/ownership.py TOOL_STRINGS) one orchestrator file may name.
-TOOL_STRINGS_ALLOWED = {
-    (f"{ORCH_SRC}engine/selection.py", "clients"): (
-        "TierResolver reads session's merged [clients.<client>.tiers] and efforts, the single source "
-        "of tiers (TASK-742 D10)."
-    ),
 }
 
 

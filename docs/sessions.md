@@ -33,6 +33,8 @@ Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its o
 
 `start --display none` starts a worker without a pane, still opened by the caller, and hidden. Hidden (from that, `hide`, or closing its pane by hand; not from losing the manager's window or detaching its viewer) lasts through `restart` and `resume` until `show`.
 
+Text sent to a Codex tui session mid-turn joins that turn (a steer). When the session has an events file, the first answer after it appends `HH:MM:SS <name> reply <id>` before the turn's `done`, its text kept 30 days in `<events>.replies/<id>`; `agent-pm-crew pending --content` and `next-event --content` print that text. A watcher the steer's hook starts reads the session file within a few seconds, and the turn's Stop hook reads it once more. An answer Codex gives only in the next turn has no `reply`.
+
 ## Client policy
 
 Role runs' client flags are `[policy.<client>]` in `delegate/src/agent_pm/delegate/config.toml` (`[policy.claude]`, `[policy.codex]`; none packaged for OpenCode, so none unless a local `[delegate.policy.opencode]` sets them), after the session's `[clients.<client>] flags` and permission mode. Their system-prompt flag (`--append-system-prompt`, Codex's `developer_instructions`) tells a role run its final reply is the outcome block alone; OpenCode has no such flag, its config being the session's. A local list replaces the default whole: copy that flag into it.

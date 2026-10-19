@@ -590,6 +590,10 @@ class SessionStore:
         operation = _StoreOperation(root)
         return {operation.path(state.workdir, state.sid): operation.encoded(state).decode()}
 
+    def file(self, workdir: str, sid: object) -> str:
+        """Its recovery file's path for the run; nothing is read or created."""
+        return _StoreOperation(self.root).path(*session_identity(workdir, sid))
+
     def load(self, workdir: str, sid: object) -> SessionState | None:
         operation = _StoreOperation(self.root)
         workdir, sid = session_identity(workdir, sid)

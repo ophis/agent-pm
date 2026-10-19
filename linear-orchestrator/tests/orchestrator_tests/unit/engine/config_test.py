@@ -12,8 +12,7 @@ from unittest import mock
 
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import ResolverName, Selection, State
-from agent_pm.selector import JevSelector
+from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
@@ -31,7 +30,6 @@ from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, 
 from orchestrator_tests.unit.config_fixtures import GATE
 
 from delegate.tests.fakes.delegate import FakeDelegate
-from selector.tests.fakes.selector import FakeSelector
 from utils.tests.case import local_section
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
@@ -465,98 +463,6 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
-    def test_selection_defaults_off(self):
-        for text in (PIPELINE, PIPELINE + "[selection]\n"):
-            with self.subTest(text=text[-12:]):
-                cfg = self.load(text)
-                self.assertEqual(cfg.selection, Selection(selector=None, resolvers=()))
-        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
-            self.assertEqual(
-                tomllib.load(f)["selection"],
-                {"selector": "agent_pm.selector:JevSelector", "resolvers": []},
-            )
-
-    def test_selection_local_override(self):
-        self.local(
-            '[selection]\nselector = "selector.tests.fakes.selector:FakeSelector"\n'
-            'resolvers = ["tier"]\n'
-        )
-        self.assertEqual(
-            self.load(PIPELINE).selection,
-            Selection(selector=FakeSelector, resolvers=(ResolverName.TIER,)),
-        )
-        self.local('[selection]\nselector = "agent_pm.selector:JevSelector"\n')
-        self.assertEqual(
-            self.load(PIPELINE + '[selection]\nresolvers = ["tier"]\n').selection,
-            Selection(selector=JevSelector, resolvers=(ResolverName.TIER,)),
-        )
-
-    def test_selection_rejected(self):
-        cases = [
-            (
-                PIPELINE.replace("[roles.", "selection = true\n[roles.", 1),
-                "selection must be a table of selector and resolvers",
-            ),
-            (
-                PIPELINE + "[selection]\nclient = true\ntier = false\n",
-                "[selection] has unknown keys: client, tier",
-            ),
-            *[
-                (
-                    PIPELINE + f"[selection]\ntranslate = {value}\n",
-                    "[selection] has unknown keys: translate",
-                )
-                for value in ("true", "false")
-            ],
-            *[
-                (
-                    PIPELINE + f"[selection]\nresolvers = {value}\n",
-                    f"selection.resolvers must be a list of distinct resolvers (tier): {shown}",
-                )
-                for value, shown in (
-                    ('"tier"', "'tier'"),
-                    ('["tier", "tier"]', "['tier', 'tier']"),
-                    ('["client"]', "['client']"),
-                    ("[1]", "[1]"),
-                )
-            ],
-            *[
-                (
-                    PIPELINE + f"[selection]\nselector = {json.dumps(path)}\n",
-                    f"selection.selector: {path}{why}",
-                )
-                for path, why in (
-                    ("JevSelector", ": want module.path:Class"),
-                    ("agent_pm.selector:Selector", " must be a concrete Selector subclass"),
-                    ("agent_pm.selector:SelectorConfig", " must be a concrete Selector subclass"),
-                    ("agent_pm.selector:Kev", ": agent_pm.selector has no Kev"),
-                )
-            ],
-            (
-                PIPELINE + '[selection]\nresolvers = ["tier"]\n',
-                "selection.selector: required when resolvers are listed",
-            ),
-        ]
-        for text, message in cases:
-            with self.subTest(message, text=text):
-                self.fails("linear-orchestrator/config.toml: " + message, text)
-
-    def test_an_unbuildable_selector_is_refused_at_load(self):
-        """With resolvers, load builds the configured Selector once: bad [selector.jev] values
-        fail here, not at a run's start.
-        """
-        jev = PIPELINE + '[selection]\nselector = "agent_pm.selector:JevSelector"\n'
-        write(
-            os.path.join(self.agent_pm, "config.local.toml"),
-            CORE_LOCAL + '\n[selector.jev]\nurl = "http://example.com/v1/systemone"\n',
-        )
-        self.assertEqual(self.load(jev).selection.selector, JevSelector)
-        self.fails(
-            "linear-orchestrator/config.toml: selection.selector: "
-            "url: want https, or http on a loopback IP, without userinfo",
-            jev + 'resolvers = ["tier"]\n',
-        )
-
     def test_client_max_runs(self):
         for text, limits in (
             (PIPELINE, {}),
@@ -740,6 +646,39 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message):
                 e = self.fails(message, text)
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
+
+
+class RemovedSelectionKeys(Case):
+    """Local keys model selection used (docs/upgrading.md): no reader knows them any more."""
+
+    def setUp(self):
+        self.local = os.path.join(self.agent_pm, "config.local.toml")
+        self.board = HEADER + role("researcher") + role("pm") + role("engineer")
+
+    def load(self, extra):
+        write(
+            self.local, CORE_LOCAL + "\n" + local_section(self.board, "linear_orchestrator") + extra
+        )
+        return config.load()
+
+    def test_leftover_selection_local_section_is_rejected(self):
+        with self.assertRaises(config.ConfigError) as cm:
+            self.load('[linear_orchestrator.selection]\nresolvers = ["tier"]\n')
+        self.assertIn("unknown key 'selection' in [linear_orchestrator]", str(cm.exception))
+
+    def test_leftover_choice_translator_role_local_section(self):
+        for extra in (
+            '[linear_orchestrator.core.roles.choice-translator]\ncommands = ["x"]\n',
+            "[delegate.roles.choice-translator]\ntier = 4\n",
+        ):
+            with self.subTest(extra=extra), self.assertRaises(config.ConfigError) as cm:
+                self.load(extra)
+            self.assertIn("choice-translator", str(cm.exception))
+
+    def test_leftover_selector_section_is_ignored(self):
+        self.assertEqual(
+            self.load(""), self.load('[selector.jev]\nurl = "http://127.0.0.1:8000"\n')
+        )
 
 
 class CommittedConfiguration(Case):

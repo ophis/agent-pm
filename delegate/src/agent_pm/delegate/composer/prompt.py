@@ -56,7 +56,6 @@ PARAMETERS = {
     "<team>": "team",
     "<role team>": "role_team",
     "<gate>": "gate",
-    "<commands>": "commands",
     "<out-repo>": "output.repo",
     "<out-branch>": "output.branch",
     "<out-dir>": "output.dir",
@@ -264,10 +263,6 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
         "gate": _code(run.gate or "none"),
-        "commands": ", ".join(
-            _code(c.rule) for c in runs.approved(run, params.workdir, team, docker=params.docker)
-        )
-        or _code("none"),
     } | {k: _code(v) for k, v in runs.team_paths(run, team, docker=params.docker).items()}
     values |= {
         f"output.{k}": _code(str(v)) for k, v in ({"host": DEFAULT_HOST} | run.output).items()

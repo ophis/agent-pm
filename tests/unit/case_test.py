@@ -42,8 +42,7 @@ class SandboxFixtures(Case):
 
 
 RUN_WITH = os.pathsep.join(
-    f"{p}/src"
-    for p in ("delegate", "linear-orchestrator", "manager", "selector", "session", "utils")
+    f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")
 )
 
 
@@ -191,10 +190,10 @@ class Checks:
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)
 
-    def test_agent_pm_spans_exactly_this_trees_six_src_dirs(self):
+    def test_agent_pm_spans_exactly_this_trees_five_src_dirs(self):
         own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in self.case.ROOTS}
         self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
-        self.assertEqual(len(own), 6)
+        self.assertEqual(len(own), 5)
         self.assertEqual(self.case.SRC, guards_src())
         self.assertEqual(self.case.ROOTS, tuple(sorted(guards_src().values())))
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)

@@ -304,7 +304,7 @@ class PackagedDeployments(ConfigFile, Case):
         self.copy_packages(self.deployment)
 
     def copy_packages(self, deployment):
-        for project in ("linear-orchestrator", "selector", "delegate", "session", "utils"):
+        for project in ("linear-orchestrator", "delegate", "session", "utils"):
             package = project.replace("-", "_")
             shutil.copytree(
                 Path(REPO) / project / "src" / "agent_pm" / package,
@@ -318,7 +318,7 @@ class PackagedDeployments(ConfigFile, Case):
     def environment(self):
         roots = [
             str(self.deployment / project / "src")
-            for project in ("linear-orchestrator", "selector", "delegate", "session", "utils")
+            for project in ("linear-orchestrator", "delegate", "session", "utils")
         ]
         return clean_env(os.environ, *roots)
 

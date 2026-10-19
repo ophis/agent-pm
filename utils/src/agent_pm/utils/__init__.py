@@ -85,6 +85,7 @@ from agent_pm.utils.record import (
 from agent_pm.utils.registry import CONFIG_NAME
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
+from agent_pm.utils.replies import REPLY_ID, REPLY_MAX, read_reply, save_reply
 from agent_pm.utils.shell import (
     LONG,
     SHORT,
@@ -127,6 +128,8 @@ __all__ = [
     "Once",
     "OutcomeStatus",
     "ProcessControl",
+    "REPLY_ID",
+    "REPLY_MAX",
     "Record",
     "Repo",
     "Runner",
@@ -176,6 +179,7 @@ __all__ = [
     "read_beneath",
     "read_confined",
     "read_regular",
+    "read_reply",
     "read_resources",
     "real_dirs",
     "redact",
@@ -186,6 +190,7 @@ __all__ = [
     "resume_command",
     "run_git",
     "save",
+    "save_reply",
     "sh",
     "sid_error",
     "source_path",

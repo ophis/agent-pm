@@ -105,6 +105,11 @@ class Roster:
         self._lease_token: Lease | None = None
 
     @property
+    def events_path(self) -> str:
+        """Its events file's path, without a lease check or a write."""
+        return self._events.path
+
+    @property
     def events(self) -> str:
         with self._locked(create=True) as data:
             self._lease(data)

@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from agent_pm.delegate import ConfigError, SessionError, Spec
 from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
-from agent_pm.linear_orchestrator.engine.types import LinearError, Selection
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import DUPLICATE, FINISHED, TEAM, team_node
@@ -182,7 +182,6 @@ class PruneScenario(Case):
             task_label_group="",
             task_labels={},
             task_tiers={},
-            selection=Selection(None, resolvers=()),
             agent_label_group="",
             agent_labels={},
             client_max_runs={},
