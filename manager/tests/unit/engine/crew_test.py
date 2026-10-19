@@ -11,7 +11,7 @@ from unittest import mock
 
 from agent_pm.manager.engine.crew import GRACE, HEADER, START_TIMEOUT, Crew, _run_start
 from agent_pm.manager.engine.types import RosterError, Spec, State
-from agent_pm.utils import Record, Status
+from agent_pm.utils import Record, Status, save_reply
 
 from manager.tests.roster_case import RosterCase
 from manager.tests.starters import answered, finished
@@ -190,6 +190,45 @@ class ResumeInput(RosterCase):
                     Crew(self.roster).resume("x", input="answer")
                 run.assert_not_called()
                 self.assertEqual(self.roster.entries(), before)
+
+
+class ReplyContent(RosterCase):
+    ID = "0123456789abcdef0123456789abcdef"
+
+    def content(self, event):
+        with (
+            mock.patch("subprocess.run", side_effect=AssertionError("no ctl call")),
+            mock.patch("subprocess.Popen", side_effect=AssertionError("no ctl call")),
+        ):
+            return Crew(self.roster).event_content(event)
+
+    def test_reply_content_is_stored_answer_even_after_done(self):
+        self.live()
+        save_reply(self.roster.events_path, self.ID, "the answer\nin full")
+        self.assertEqual(self.content(f"10:00:00 s1 reply {self.ID}"), "the answer\nin full\n")
+
+    def test_reply_content_unavailable_missing_and_bad_id(self):
+        self.live()
+        self.assertEqual(
+            self.content(f"10:00:00 s1 reply {self.ID}"),
+            f"content unavailable: reply {self.ID}: missing\n",
+        )
+        for bad in ("x", self.ID + "/../x", "../" + self.ID, self.ID.upper()):
+            with self.subTest(bad=bad):
+                self.assertEqual(
+                    self.content(f"10:00:00 s1 reply {bad}"),
+                    f"content unavailable: reply {bad}: bad id\n",
+                )
+        self.assertEqual(self.content("10:00:00 s1 reply"), "content unavailable: reply : bad id\n")
+        self.assertFalse(os.path.lexists(self.roster.events_path + ".replies"))
+
+    def test_other_words_keep_ctl_content(self):
+        self.live()
+        with mock.patch(
+            "subprocess.run", return_value=mock.Mock(returncode=0, stdout="screen", stderr="")
+        ) as called:
+            self.assertEqual(Crew(self.roster).event_content("10:00:00 s1 done"), "screen\n")
+        self.assertEqual(called.call_args.args[0], ("agent-pm-session", "content"))
 
 
 class RecordlessStatus(RosterCase):

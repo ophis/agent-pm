@@ -333,6 +333,17 @@ class InteractiveSession:
             return True
         elif step["kind"] == "screen":
             print("\x1b[2J\x1b[H" + step["text"], flush=True)
+        elif step["kind"] == "steer":  # the next input line joins this turn; its answer follows
+            text = sys.stdin.readline().rstrip("\n")
+            self.fire("UserPromptSubmit", {"prompt": text, "turn_id": ident})
+            with self.path.open("a") as stream:
+                for role, kind, said in (
+                    ("user", "input_text", text),
+                    ("assistant", "output_text", step["answer"]),
+                ):
+                    content = [{"type": kind, "text": said}]
+                    payload = {"type": "message", "role": role, "content": content}
+                    stream.write(json.dumps({"type": "response_item", "payload": payload}) + "\n")
         elif step["kind"] == "pause":
             while not Path(step["file"]).exists():
                 time.sleep(0.02)
