@@ -1603,3 +1603,26 @@ class McpOffTest(Base):
             with self.subTest(argv=argv):
                 self.assertNotIn(OFF[1], argv)
                 self.assertIn("mcp_servers.t.enabled=false", argv)
+
+    def test_the_flag_in_the_configs_flags_is_expanded_at_each_launch(self):
+        self.client = CodexClient({**self.client.config, "flags": list(OFF)})
+        self.common = self.client.common
+        self.write(self.codex_home / "config.toml", '[mcp_servers.t]\ncommand = "t"\n')
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            first = committed_headless(self.client, replace(self.spec, prompt="hi")).argv
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        self.assertEqual(state.snapshot.flags, ())
+        self.write(self.codex_home / "config.toml", '[mcp_servers.u]\nurl = "https://u"\n')
+        resumed = committed_headless(self.client, replace(self.spec, prompt="hi", resume=True))
+        for argv, transport in (
+            (first, 't.command="t"'),
+            (resumed.argv, 'u.url="https://u"'),
+            (self.common.resume_launch(state).argv, 'u.url="https://u"'),
+        ):
+            name = transport.split(".")[0]
+            off = ["-c", f"mcp_servers.{name}.enabled=false", "-c", f"mcp_servers.{transport}"]
+            with self.subTest(argv=argv):
+                self.assertNotIn(OFF[1], argv)
+                start = argv.index(off[1]) - 1
+                self.assertEqual(list(argv[start : start + 4]), off)

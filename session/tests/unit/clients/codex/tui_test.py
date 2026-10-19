@@ -1050,6 +1050,22 @@ class SuppliedFlagsTest(Base):
                 self.assertTrue(holds(argv, off), argv)
                 self.assertNotIn("mcp_servers={}", argv)
 
+    def test_the_mcp_off_flag_in_the_configs_flags_is_expanded_too(self):
+        (self.codex_home / "config.toml").write_text('[mcp_servers.t]\ncommand = "t"\n')
+        self.client = CodexClient({**self.client.config, "flags": ["-c", "mcp_servers={}"]})
+        _, data = self.launch(self.spec)
+        plan = tui.decode(data)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        self.assertEqual((plan.flags, snapshot.flags), (("-c", "mcp_servers={}"), ()))
+        off = ["-c", "mcp_servers.t.enabled=false", "-c", 'mcp_servers.t.command="t"']
+        for argv in (
+            tui.execution_argv(plan, snapshot, "hooks.state={trusted}"),
+            tui.trust_args(plan, snapshot),
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(holds(argv, off), argv)
+                self.assertNotIn("mcp_servers={}", argv)
+
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")
         spec = dataclasses.replace(self.spec, flags=flags, env={"S": "s"})
