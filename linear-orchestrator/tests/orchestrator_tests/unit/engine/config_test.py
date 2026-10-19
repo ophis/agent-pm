@@ -144,6 +144,7 @@ DEPLOYMENT = {
     "task_tiers",
     "agent_label_group",
     "agent_labels",
+    "client_max_runs",
     "project_repos",
     "local_clones",
     "work_dir",
@@ -463,6 +464,36 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
+    def test_client_max_runs_loads(self):
+        self.assertEqual(self.load(PIPELINE).client_max_runs, {})
+        self.assertEqual(self.load(PIPELINE + "[client_max_runs]\n").client_max_runs, {})
+        cfg = self.load(PIPELINE + "[client_max_runs]\nclaude = 2\nopencode = 1\n")
+        self.assertEqual(cfg.client_max_runs, {"claude": 2, "opencode": 1})
+
+    def test_client_max_runs_rejected(self):
+        cases = [
+            (
+                PIPELINE.replace("[roles.", "client_max_runs = 3\n[roles.", 1),
+                "client_max_runs must be a table of <client> = <whole number >= 1>",
+            ),
+            *[
+                (
+                    PIPELINE + f"[client_max_runs]\nopencode = {value}\n",
+                    f"[client_max_runs] opencode must be a whole number >= 1: {shown}",
+                )
+                for value, shown in (
+                    ("0", "0"),
+                    ("-1", "-1"),
+                    ("true", "True"),
+                    ('"1"', "'1'"),
+                    ("2.0", "2.0"),
+                )
+            ],
+        ]
+        for text, message in cases:
+            with self.subTest(message, text=text):
+                self.fails("linear-orchestrator/config.toml: " + message, text)
+
     def test_agent_labels(self):
         for top, table, group, labels in (
             ("", "", "", {}),
@@ -638,7 +669,14 @@ class CommittedConfiguration(Case):
                 "states": dict.fromkeys(State, ""),
                 "human_members": [],
                 **dict.fromkeys(
-                    ("task_labels", "task_tiers", "agent_labels", "project_repos", "local_clones"),
+                    (
+                        "task_labels",
+                        "task_tiers",
+                        "agent_labels",
+                        "client_max_runs",
+                        "project_repos",
+                        "local_clones",
+                    ),
                     {},
                 ),
                 "work_dir": "~/.agent-pm",
@@ -648,6 +686,11 @@ class CommittedConfiguration(Case):
             {r: {k: p[k] for k in ("account", "key")} for r, p in committed["roles"].items()},
             dict.fromkeys(("researcher", "pm", "engineer"), {"account": "", "key": ""}),
         )
+
+    def test_committed_config_ships_an_empty_client_table(self):
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
+            committed = tomllib.load(f)
+        self.assertEqual(committed["client_max_runs"], {})
 
     def test_without_local_names_what_is_missing(self):
         with self.assertRaises(config.ConfigError) as cm:
@@ -683,6 +726,7 @@ class CommittedConfiguration(Case):
             (cfg.team, cfg.task_labels, cfg.project_repos, cfg.local_clones), (TEAM, {}, {}, {})
         )
         self.assertEqual(cfg.stages, {"researcher": 0, "pm": 1, "engineer": 2})
+        self.assertEqual(cfg.client_max_runs, {})
         self.assertEqual(
             {r: (x.run.gate, x.run.task, x.run.language) for r, x in cfg.roles.items()},
             {
@@ -1262,6 +1306,10 @@ class LocalOverlay(ConfigFile, Case):
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.assertEqual(self.load(PIPELINE).team, TEAM)
+
+    def test_the_client_cap_overlays_like_other_tables(self):
+        self.local(PIPELINE + "[client_max_runs]\nopencode = 1\n")
+        self.assertEqual(self.load("").client_max_runs, {"opencode": 1})
 
     def test_an_empty_local_role_table_adds_no_role(self):
         self.local(PIPELINE)

@@ -42,6 +42,7 @@ class Config:
     task_tiers: Mapping[str, int]
     agent_label_group: str
     agent_labels: Mapping[str, str]
+    client_max_runs: Mapping[str, int]
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]

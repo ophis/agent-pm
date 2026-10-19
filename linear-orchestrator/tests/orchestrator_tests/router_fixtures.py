@@ -518,11 +518,11 @@ class Base(run_fixtures.Base):
             )
         return "new" if run else ""
 
-    def claim(self, fake, *, full=(), dry=False, recover=False, gate=False, again=False):
+    def claim(self, fake, *, full=(), clients=(), dry=False, recover=False, gate=False, again=False):
 
         def use(b):
             recover and b.recover()
-            return b.take(full=full)
+            return b.take(full=full, clients=clients)
 
         self.taken = taken = self.board(fake, use, dry=dry, gate=gate, again=again)
         return (

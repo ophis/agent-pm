@@ -76,6 +76,16 @@ canceled = ""
 # local: [linear_orchestrator.agent_labels]
 # local: "<client>" = "00000000-0000-4000-8000-000000000102"
 
+# Client concurrency caps; optional: at most n board runs of <client> at once, where <client> is the client
+#   name runs.jsonl records. Only the router enforces it: session and delegate do not know this key, and an
+#   ad-hoc run or a crew worker, which never passes through the orchestrator, is not counted. An unlisted
+#   client is unlimited; a listed client the board never picks is fine. The user's own values go in
+#   ~/.agent-pm/config.local.toml, e.g. a local-model client at 1 and a subscribed client higher.
+#   <client>  local: its cap, a whole number >= 1; empty table → unlimited
+[client_max_runs]
+# local: [linear_orchestrator.client_max_runs]
+# local: "<client>" = 1
+
 # A role to orchestrate. Its tasks are its charter's index (delegate/src/agent_pm/delegate/team/roles/<role>.md › Tasks).
 # Only a role with an entry in TASKS (linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py) can be
 # orchestrated: researcher, pm and engineer.

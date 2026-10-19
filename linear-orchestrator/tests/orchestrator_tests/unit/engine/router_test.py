@@ -469,6 +469,100 @@ class IssueClaims(Base):
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
 
 
+class ClientCapClaims(Base):
+    def test_client_occupancy_groups_the_live_list(self):
+        self.add(kind="start", ident="TASK-1", sid="live-a", role="engineer", minutes_ago=300)
+        self.add(kind="close", ident="TASK-1", sid="live-a", role="engineer", minutes_ago=290)
+        self.add(kind="start", ident="TASK-2", sid="live-b", role="pm", minutes_ago=300)
+        self.write_runs()
+        used = router.client_counts(
+            runs.parse_log(self.runs), {"engineer": ["TASK-1"], "pm": ["TASK-2"]}
+        )
+        self.assertEqual(used, {"a": 1, "b": 1})
+        self.assertEqual(router.full_clients({"a": 1, "b": 2}, used), {"a"})
+        self.assertEqual(router.full_clients({"a": 1}, {"a": 2}), {"a"})
+        self.assertEqual(router.full_clients({"b": 2}, {"b": 1}), set())
+
+    def test_full_client_skips_to_the_next_issue(self):
+        fake = two()
+        self.assertEqual(
+            self.claim(fake, clients={"a"}),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
+        self.assertEqual(
+            self.said(),
+            [
+                "pick TASK-1 queue=2",
+                "claim-skip TASK-1 reason=a is full",
+                "pick TASK-2 queue=2",
+                "claim TASK-2 role=pm client=b client_source=default",
+            ],
+        )
+        self.assertEqual(
+            (fake.issues["TASK-1"]["state"], fake.issues["TASK-2"]["state"]),
+            ("Todo", "In Progress"),
+        )
+        self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
+
+    def test_dry_run_full_client_prints_the_claim_skip(self):
+        fake = two()
+        self.assertEqual(
+            self.claim(fake, dry=True, clients={"a"}),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
+        self.assertEqual(
+            self.said(),
+            [
+                "pick TASK-1 queue=2",
+                "preview TASK-1 client=a client_source=default",
+                "claim-skip TASK-1 reason=a is full",
+                "pick TASK-2 queue=2",
+                "preview TASK-2 client=b client_source=default",
+            ],
+        )
+        self.assertEqual((fake.mutations, fake.issues["TASK-1"]["state"]), ([], "Todo"))
+        self.assertEqual(self.taken[1:], (None, "pm", "b", "default"))
+
+    def test_full_client_skips_before_the_usage_gate(self):
+        self.api.usages = {"a": reading(95), "b": reading(50)}
+        fake = two()
+        self.assertEqual(
+            self.claim(fake, clients={"a"}, gate=True),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
+        self.assertEqual(
+            self.said(),
+            [
+                "pick TASK-1 queue=2",
+                "claim-skip TASK-1 reason=a is full",
+                "pick TASK-2 queue=2",
+                "claim TASK-2 role=pm client=b client_source=default",
+            ],
+        )
+        self.assertEqual(self.api.usage_calls, ["b"])
+
+    def test_role_full_issue_never_looks_up_its_client(self):
+        self.api.usages = {"a": reading(95), "b": reading(50)}
+        fake = two()
+        self.assertEqual(
+            self.claim(fake, full={"researcher"}, clients={"a"}, gate=True),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
+        self.assertEqual([line for line in self.said() if "is full" in line], [])
+        self.assertEqual(
+            self.said(),
+            [
+                "pick TASK-2 queue=1",
+                "claim TASK-2 role=pm client=b client_source=default",
+            ],
+        )
+        self.assertEqual(self.api.usage_calls, ["b"])
+        self.assertEqual(
+            (fake.issues["TASK-1"]["state"], fake.issues["TASK-2"]["state"]),
+            ("Todo", "In Progress"),
+        )
+
+
 class IssueBlockers(Base):
     def test_blocked_skipped_for_next_ready(self):
         fake = FakeLinear(
@@ -1512,6 +1606,63 @@ class LabelClients(TickBase):
                 )
 
 
+class ClientCapRuns(TickBase):
+    def test_issue_run_bypasses_the_client_cap_and_counts(self):
+        self.write_config(CONFIG + "[client_max_runs]\na = 1\n")
+        self.add(kind="start", ident="TASK-7", sid="live-a", role="engineer", minutes_ago=60)
+        fake = FakeLinear([issue("TASK-8", "Todo", "engineer")])
+        self.assertEqual(self.tick(fake, "--issue", "TASK-8"), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-8", "new")])
+        self.lines = self.raw_runs().splitlines()
+        self.assertEqual(
+            router.client_counts(runs.parse_log(self.runs), {"engineer": ["TASK-7", "TASK-8"]}),
+            {"a": 2},
+        )
+
+    def test_client_check_and_start_row_are_in_the_same_lock(self):
+        self.write_config(CONFIG + "[client_max_runs]\na = 2\n")
+        self.add(kind="start", ident="TASK-7", sid="live-a", role="engineer", minutes_ago=60)
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        with other_router(self.runs):
+            self.assertEqual(self.tick(fake), 0)
+            self.assertEqual(self.said(), ["skip reason=another router is running"])
+            self.assertEqual(self.start.launches, [])
+            self.assertEqual(self.state, self.before())
+
+        conflicts = []
+
+        def start(spec):
+            try:
+                with open(os.path.join(os.path.dirname(self.runs), "router.lock"), "a") as f:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                conflicts.append(error)
+            role = config.role_for(self.cfg().roles, spec.assignee)
+            runs.note(
+                self.runs,
+                "start",
+                issue=spec.issue,
+                sid=spec.sid,
+                role=role,
+                client=spec.client,
+                delegate_kind=self.cfg().delegate_kind,
+                now=NOW,
+            )
+            return 0
+
+        self.assertEqual(self.tick(fake, start=start), 0)
+        self.assertEqual(len(conflicts), 1)
+        row = json.loads(self.state.splitlines()[-1])
+        self.assertEqual(
+            (row["kind"], row["issue"], row["role"], row["client"], row["delegate_kind"]),
+            ("start", "TASK-1", "researcher", "a", "harness"),
+        )
+        self.assertIn(
+            "claim TASK-1 role=researcher client=a client_source=default",
+            self.said(),
+        )
+
+
 class RouterArguments(Base):
     def main(self, argv):
         err = io.StringIO()
@@ -1995,6 +2146,40 @@ class RunBrake(Base):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.brake("researcher"), (0, "five_hour=70% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["a"])
+
+
+class ClientCapResumes(TickBase):
+    def test_full_client_skips_a_resume(self):
+        self.write_config(CONFIG + "[client_max_runs]\na = 1\n")
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=1))
+        self.resumable("TASK-1", "saved", 60)
+        before = self.before()
+        self.assertEqual(self.tick(fake), 0)
+        self.assertEqual(self.api.usage_calls, [])
+        self.assertEqual(
+            self.said(), ["recover-skip TASK-1 sid=saved reason=a is full"]
+        )
+        self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
+
+    def test_full_client_skips_a_restart_when_the_label_selects_it(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS + "[client_max_runs]\nb = 1\n")
+        fake = self.fake(
+            issue(
+                "TASK-1",
+                "In Progress",
+                "researcher",
+                priority=1,
+                labels=[label("changed", AGENT_B, AGENT_GROUP)],
+            )
+        )
+        self.resumable("TASK-1", "saved", 60)
+        before = self.before()
+        self.assertEqual(self.tick(fake), 0)
+        self.assertEqual(self.api.usage_calls, [])
+        self.assertEqual(
+            self.said(), ["recover-skip TASK-1 sid=saved reason=b is full"]
+        )
+        self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
 
 
 class ScheduledUsageGates(TickBase):
