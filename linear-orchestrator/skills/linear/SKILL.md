@@ -57,7 +57,7 @@ agent-pm-linear issue read TASK-1 --full --output TASK-1.json
 
 ## Writing
 
-Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim but a leading byte order mark: quotes, backticks, `$` and newlines need no escaping.
+Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim, minus a leading byte order mark: quotes, backticks, `$` and newlines need no escaping.
 
 ```bash
 agent-pm-linear issue comment TASK-1 --body-file note.md
@@ -87,7 +87,7 @@ Each run adds or removes that one edge in that one direction; other relations st
 ## When a write fails
 
 - **Result unknown** (a timeout or outage mid-write, exit 1): `read` the issue before running the write again; nothing retries by itself. For `create`, first run the `list --team … --query=…` command its error prints, which searches the team it wrote to.
-- **Partial create** (exit 1, `"result": "partial"`): the issue exists; `done` and `failed` list its relations, and `recover` holds the `relation add` command for each failed one. Run only the `recover` commands; never run `create` again.
+- **Partial create** (exit 1, `"result": "partial"`): the issue exists; `done` and `failed` list its relations, and `recover` holds the `relation add` command for each failed one. A report too long for stdout cuts `done` and `failed` before `recover`, naming each cut in `truncated`. Run only the `recover` commands; never run `create` again.
 
 ## Archiving
 
