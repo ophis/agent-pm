@@ -53,7 +53,7 @@ models = ["qwen3.8-flash-next-iq2_xs"]   # beside the models tiers and model map
 1 = "strata/qwen3.8-flash-next-iq2_xs"
 ```
 
-Its API key stays OpenCode's: on the tmux and pty Hosts run `opencode auth login` once, pick Other and enter the provider's name (`strata`), and OpenCode keeps the key in its `auth.json`; agent-pm never reads or passes it. A Docker Host container has no key ([Docker host › OpenCode](docker-host.md#opencode)).
+Its API key, on the tmux and pty Hosts, stays OpenCode's: run `opencode auth login` once, pick Other and enter the provider's name (`strata`), and OpenCode keeps the key in its `auth.json`; agent-pm never reads or passes it. On the Docker Host the broker keeps it: `agent-pm-broker login opencode strata` once, for every configured provider ([Docker host › OpenCode](docker-host.md#opencode)). A name is up to 64 letters, digits, `.`, `_` or `-`.
 
 A crew worker's cwd is always trusted (you pick it), so `agent-pm-crew worker NAME --client opencode --cwd DIR` starts on tmux in any `DIR`; a role run only under `trusted_dirs`; a board run never (its cwd is the workdir's `agent/`): run OpenCode board runs on the Docker Host ([Linear board › OpenCode](board.md#opencode)).
 

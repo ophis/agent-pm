@@ -734,6 +734,16 @@ class StartTest(Base):
         with open(os.path.join(self.home_dir, "settings.json")) as f:
             self.assertEqual(f.read(), '{"model": "opus"}')
 
+    def test_the_manifest_lists_the_clients_providers(self):
+        self.start(home_providers='["lab", "strata"]')
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["agent_providers"], ["lab", "strata"])
+
+    def test_no_providers_leave_the_manifest_without_them(self):
+        self.start()
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertNotIn("agent_providers", json.load(f))
+
     def test_codex_resume_after_host_login_preserves_native_history(self):
         home = os.path.join(self.state, "codex")
         transcript = os.path.join(home, "sessions", "rollout.jsonl")

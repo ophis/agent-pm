@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -16,7 +17,8 @@ type Manifest struct {
 	Name, Generation, Image, CWD, Workspace, Client, ClaudeDir, CodexDir, OpencodeDir, HookPath string
 	HasHook                                                                                     bool
 	Labels                                                                                      map[string]string
-	GitHubApp                                                                                   string // the App whose tokens the session gets; "": github null
+	GitHubApp                                                                                   string   // the App whose tokens the session gets; "": github null
+	OpencodeProviders                                                                           []string // the providers whose API keys an opencode container gets
 }
 
 // A workspace volume's labels: its kind (always kind) and its mount point.
@@ -24,6 +26,7 @@ const (
 	kindLabel      = "agent-pm.kind"
 	kind           = "ws"
 	workspaceLabel = "agent-pm.workspace"
+	maxProviders   = 32
 )
 
 var (
@@ -32,7 +35,12 @@ var (
 	imagePattern      = regexp.MustCompile(`^agent-pm-worker:[0-9a-f]{64}$`)
 	labelKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	// An OpenCode provider's name: its keychain account and its key file's name, <name>.key.
+	providerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
+
+// ValidProvider is whether name can be a listed OpenCode provider; ollama needs no key.
+func ValidProvider(name string) bool { return providerPattern.MatchString(name) && name != "ollama" }
 
 func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
@@ -111,7 +119,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir,
 		"opencode_dir": &m.OpencodeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
-		if key == "labels" || key == "github" {
+		if key == "labels" || key == "github" || key == "opencode_providers" {
 			continue
 		}
 		target, ok := targets[key]
@@ -162,6 +170,22 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return reject("github must be null or {\"app\": <name>}")
 		}
 		m.GitHubApp = app
+	}
+
+	if raw, ok := fields["opencode_providers"]; ok {
+		if m.Client != "opencode" {
+			return reject("opencode_providers requires client opencode")
+		}
+		var providers []string
+		if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &providers) != nil || len(providers) > maxProviders {
+			return reject("opencode_providers must be an array of at most %d provider names", maxProviders)
+		}
+		for i, p := range providers {
+			if !ValidProvider(p) || slices.Contains(providers[:i], p) {
+				return reject("invalid or repeated provider %q", p)
+			}
+		}
+		m.OpencodeProviders = providers
 	}
 
 	var labels map[string]json.RawMessage

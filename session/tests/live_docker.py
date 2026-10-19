@@ -8,7 +8,8 @@ line per generation, and exits 1 at the first failed check:
       comes exactly once), restart, close and resume, `docker rm -f` and resume, each new
       generation answering a prompt; every close reclaims the generation's credentials; for
       opencode also its opencode.db in the Docker home, Ollama on 127.0.0.1 only, only GitHub
-      secrets in the container, and each resume continuing the same OpenCode session
+      secrets and the listed providers' keys in the container, and each resume continuing the
+      same OpenCode session
   python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]
       a headless engineer run on OWNER/NAME, an authorized test repo: one forced token refresh,
       then a draft PR by agent-pm-bot[bot], opened after it; the run's credentials reclaimed
@@ -57,6 +58,7 @@ GITHUB = "github-installation-token"
 CLIENT_KIND = {"claude": "claude-setup-token", "codex": "codex-access-token", "opencode": "none"}
 NO_CREDENTIAL = "none"
 OLLAMA_PORT = 11434  # [session.clients.opencode] ollama_port's default
+SECRETS = "/run/agent-pm/secrets"
 LISTENER = re.compile(r"\s(\S+):(\d+) \(LISTEN\)$")
 BOT = "app/agent-pm-bot"
 PHASES = ("checks", "image", "start", "relay", "tmux", "client")
@@ -204,6 +206,23 @@ def loopback_only(lsof: str, port: int) -> list[str]:
     if not found:
         return [f"no listener on TCP port {port}"]
     return [f"listens on {address}:{port}" for address in found if address != "127.0.0.1"]
+
+
+def held_secrets(listing: str, providers: list[str]) -> list[str]:
+    """Problems with `find SECRETS -mindepth 1 -maxdepth 2`'s paths: anything but GitHub's dir and
+    its files, and an opencode dir holding exactly each listed provider's key file.
+    """
+    found = {path.removeprefix(f"{SECRETS}/") for path in listing.split()}
+    keys = {f"opencode/{name}.key" for name in providers}
+    allowed = {"github", *(("opencode", *keys) if providers else ())}
+    problems = [] if "github" in found else ["no github dir"]
+    problems += [f"no {key}" for key in sorted(keys - found)]
+    problems += [
+        f"holds {SECRETS}/{path}"
+        for path in sorted(found - allowed)
+        if not path.startswith("github/")
+    ]
+    return problems
 
 
 def session_ids(hooks: str, since: str) -> list[str]:
@@ -619,10 +638,24 @@ class OpenCodeChecks(Checks):
         except (OSError, subprocess.SubprocessError) as error:
             raise SystemExit(f"FAIL Ollama listener: {error}") from None
         passed(loopback_only(listeners, OLLAMA_PORT), "Ollama listens on 127.0.0.1 only")
-        secrets = call([w.docker, "exec", w.container(start), "ls", "/run/agent-pm/secrets"])[0]
-        if secrets.split() != ["github"]:
-            raise SystemExit(f"FAIL container secrets: {' '.join(secrets.split()) or 'none'}")
-        print("PASS the container holds only GitHub secrets", flush=True)
+        listing = call(
+            [
+                w.docker,
+                "exec",
+                w.container(start),
+                "find",
+                SECRETS,
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "2",
+            ]
+        )[0]
+        providers = read_config().get("clients", {}).get("opencode", {}).get("providers", {})
+        passed(
+            held_secrets(listing, sorted(providers)),
+            f"the container holds only GitHub secrets and the listed providers' keys {sorted(providers)}",
+        )
 
     def after_answer(self, start: Start) -> None:
         w = self.worker

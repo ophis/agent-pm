@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,6 +75,24 @@ func TestParseManifestOpencode(t *testing.T) {
 		"codex with opencode_dir":   other("codex", "codex_dir"),
 		"unknown client":            other("other"),
 		"opencode_dir not a string": func(f map[string]any) { f["opencode_dir"] = 1 },
+		"claude with providers": func(f map[string]any) {
+			f["client"], f["claude_dir"], f["opencode_providers"] = "claude", "/x", []string{"strata"}
+			delete(f, "opencode_dir")
+		},
+		"providers not an array": func(f map[string]any) { f["opencode_providers"] = "strata" },
+		"provider not a string":  func(f map[string]any) { f["opencode_providers"] = []any{1} },
+		"provider ollama":        func(f map[string]any) { f["opencode_providers"] = []string{"ollama"} },
+		"provider path":          func(f map[string]any) { f["opencode_providers"] = []string{"../x"} },
+		"provider too long":      func(f map[string]any) { f["opencode_providers"] = []string{strings.Repeat("p", 65)} },
+		"duplicate provider":     func(f map[string]any) { f["opencode_providers"] = []string{"strata", "strata"} },
+		"providers null":         func(f map[string]any) { f["opencode_providers"] = nil },
+		"too many providers": func(f map[string]any) {
+			var many []string
+			for i := range 33 {
+				many = append(many, fmt.Sprintf("p%d", i))
+			}
+			f["opencode_providers"] = many
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(opencodeManifest(t, edit))
@@ -84,6 +103,113 @@ func TestParseManifestOpencode(t *testing.T) {
 				t.Fatalf("accepted: %v", err)
 			}
 		})
+	}
+}
+
+func withProviders(providers ...string) func(map[string]any) {
+	return func(f map[string]any) { f["opencode_providers"] = append([]string{}, providers...) }
+}
+
+func TestParseManifestOpencodeProviders(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(map[string]any)
+		want []string
+	}{
+		"absent": {},
+		"empty":  {edit: withProviders(), want: []string{}},
+		"listed": {edit: withProviders("strata", "lab.local_1", "A-2"), want: []string{"strata", "lab.local_1", "A-2"}},
+	} {
+		data, err := os.ReadFile(opencodeManifest(t, tc.edit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := ParseManifest(data)
+		if err != nil || len(m.OpencodeProviders) != len(tc.want) || !slices.Equal(m.OpencodeProviders, tc.want) && len(tc.want) > 0 {
+			t.Fatalf("%s: %q %v", name, m.OpencodeProviders, err)
+		}
+	}
+}
+
+// fakeKeys is the providers' API keys: ready and injectErr fail their calls; calls records each with its providers.
+type fakeKeys struct {
+	ready, injectErr error
+	calls            []string
+}
+
+func (k *fakeKeys) Ready(providers []string) error {
+	k.calls = append(k.calls, "ready "+strings.Join(providers, ","))
+	return k.ready
+}
+
+func (k *fakeKeys) Inject(providers []string, exec func([]string, []byte) error) error {
+	k.calls = append(k.calls, "inject "+strings.Join(providers, ","))
+	for _, p := range providers {
+		if err := exec([]string{"inject-opencode", p}, []byte(fakeToken)); err != nil {
+			return err
+		}
+	}
+	return k.injectErr
+}
+
+func TestStartOpencodeProviders(t *testing.T) {
+	h, d, _ := opencodeHost(&world{labels: goodLabels()}, &fakeTokens{})
+	keys := &fakeKeys{}
+	h.Opencode = keys
+	if _, err := h.Start(context.Background(), opencodeManifest(t, withProviders("strata", "lab"))); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(keys.calls, []string{"ready strata,lab", "inject strata,lab"}) {
+		t.Fatalf("%q", keys.calls)
+	}
+	created, injected := -1, -1
+	for i, c := range d.calls {
+		if c[0] == "run" && created < 0 {
+			created = i
+		}
+		if slices.Contains(c, "inject-opencode") && injected < 0 {
+			injected = i
+			if !slices.Equal(c, []string{"exec", "--interactive", "--user", "agent", container, "inject-opencode", "strata"}) {
+				t.Fatalf("%q", c)
+			}
+		}
+	}
+	if created < 0 || injected < created {
+		t.Fatalf("injected before create: %q", d.calls)
+	}
+	for _, edit := range []func(map[string]any){nil, withProviders()} {
+		h, _, _ := opencodeHost(&world{labels: goodLabels()}, &fakeTokens{})
+		keys := &fakeKeys{}
+		h.Opencode = keys
+		if _, err := h.Start(context.Background(), opencodeManifest(t, edit)); err != nil || len(keys.calls) != 0 {
+			t.Fatalf("no providers: %q %v", keys.calls, err)
+		}
+	}
+}
+
+func TestStartOpencodeProvidersFail(t *testing.T) {
+	missing := protocol.New(protocol.LoginRequired, "No API key for OpenCode provider lab: run agent-pm-broker login opencode lab.")
+	h, d, _ := opencodeHost(&world{labels: goodLabels()}, &fakeTokens{})
+	h.Opencode = &fakeKeys{ready: missing}
+	_, err := h.Start(context.Background(), opencodeManifest(t, withProviders("strata", "lab")))
+	if e := protoErr(t, err); e != missing || hasCall(d, "run") {
+		t.Fatalf("%+v, created: %v", e, hasCall(d, "run"))
+	}
+	for name, injectErr := range map[string]error{
+		"protocol": protocol.New(protocol.KeychainFailed, "Keychain access to the OpenCode provider lab API key failed."),
+		"opaque":   errors.New("writing an OpenCode provider API key into the container failed"),
+	} {
+		tokens := &fakeTokens{}
+		h, d, _ := opencodeHost(&world{labels: goodLabels()}, tokens)
+		h.Opencode = &fakeKeys{injectErr: injectErr}
+		_, err := h.Start(context.Background(), opencodeManifest(t, func(f map[string]any) { withGitHub(f); withProviders("lab")(f) }))
+		e := protoErr(t, err)
+		if e.Cleanup != protocol.Removed || !hasCall(d, "rm") || slices.ContainsFunc(tokens.calls, func(c string) bool { return strings.HasPrefix(c, "issue") }) {
+			t.Fatalf("%s: %+v %q", name, e, tokens.calls)
+		}
+		if want := "Injecting the OpenCode provider API keys failed."; name == "opaque" && (e.Code != protocol.StartFailed || e.Message != want) ||
+			name == "protocol" && e.Code != protocol.KeychainFailed {
+			t.Fatalf("%s: %+v", name, e)
+		}
 	}
 }
 

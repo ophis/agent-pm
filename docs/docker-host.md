@@ -39,7 +39,8 @@ Checks: [Docker checks › Install](docker-checks.md#install).
 ## Log in
 
 After every install or reinstall, run all three logins: `login claude`, `login github agent-pm-bot` and
-`login codex` ([Codex operations](docker-codex.md#commands)). The keychain trusts the broker by its code requirement
+`login codex` ([Codex operations](docker-codex.md#commands)), and `login opencode <name>` for each configured
+OpenCode provider. The keychain trusts the broker by its code requirement
 (an ad hoc signature's cdhash), not its path, so a reinstalled broker cannot read the old one's items without asking;
 `start` never asks, failing instead (`login_required`, or `keychain_failed` for an old GitHub item). Each login asks its terminal questions first, without
 echo:
@@ -49,7 +50,8 @@ echo:
 | `login claude` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
 | `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
 | `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
-| `start` | none | none: a token it cannot read without one fails with `login_required`, naming unlocking the login keychain or `login claude` | |
+| `login opencode <name>` | the provider's API key; the login keychain password only when the item's access needs a change | at most one change-access dialog (Deny / Allow), after the password | Allow |
+| `start` | none | none: a token or key it cannot read without one fails with `login_required`, naming unlocking the login keychain or the login to run | |
 
 What each login hands a container: [Credentials › Who logs in](credentials.md#who-logs-in).
 
@@ -85,6 +87,17 @@ identity. The App must be private (installable only on your account): every sess
 every installation.
 
 Checks: [Docker checks › GitHub login](docker-checks.md#github-login).
+
+**OpenCode**: for each `[session.clients.opencode.providers.<name>]` table (Ollama needs none):
+
+```sh
+"$B" login opencode strata   # paste strata's API key; nothing echoes
+```
+
+It saves the key in a new broker-only item `agent-pm-opencode` / `<name>`, replacing an earlier one, makes it trust
+only the broker (prompt `Login keychain password, to make the <name> API key trust only the broker (hidden):`) and
+reads it back. A Docker OpenCode start needs every configured provider's key: a missing one fails with
+`login_required`, naming this command.
 
 ## Build
 
@@ -164,7 +177,7 @@ Each row's source holds the exact values.
 | `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session`, `agent-pm.generation` and `agent-pm.client` labels |
 | `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or OpenCode's `XDG_DATA_HOME` with its self-update and LSP downloads off); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
 | Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude and OpenCode: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
-| Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
+| Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject`, `opencode.go` `OpencodeKeys.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential (OpenCode: each configured provider's key, `opencode/<name>.key`) and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
 | Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
 | Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
 | Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
@@ -284,9 +297,12 @@ marks it ready, you approve with your own account, and revision rounds push to t
 
 ### OpenCode
 
-OpenCode sessions run the host's Ollama models, or a configured provider's ([OpenCode sessions](sessions.md#opencode-sessions));
-no login, and the container gets no model credential ([Credentials](credentials.md#who-logs-in)), so a provider that
-needs an API key fails in a container. Once, on the Mac:
+OpenCode sessions run the host's Ollama models, or a configured provider's ([OpenCode sessions](sessions.md#opencode-sessions)).
+Ollama needs no login; each configured provider's API key comes from the broker ([Log in](#log-in)), which writes it
+to the container's `/run/agent-pm/secrets/opencode/<name>.key` at start ([Credentials](credentials.md#who-logs-in)).
+A provider is reached at its `base_url` from the container's bridge network, which Docker Desktop routes through the
+Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `localhost` is the container itself. An
+`http://` `base_url` sends the key in plaintext: anyone on the LAN can capture it ([Risks](#risks)). Once, on the Mac:
 
 1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through
    `host.docker.internal` ([Risks](#risks)).
@@ -298,7 +314,7 @@ needs an API key fails in a container. Once, on the Mac:
 
 The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and the Client gives its config
 (`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, the configured
-providers and no other, no auto-update):
+providers, each with `apiKey` `{file:/run/agent-pm/secrets/opencode/<name>.key}`, and no other, no auto-update):
 none of the Mac's OpenCode install, config or plugins goes into the container (the cwd's own `opencode.json` and
 `.opencode/` still load: OpenCode has no project trust). An existing
 `~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
@@ -372,11 +388,11 @@ docker timing NAME GENERATION: checks 0.12 s
 | Line | Phase | Covers |
 |---|---|---|
 | `docker timing NAME` | `preflight` | cwd checks, broker `version` and `build` (a rebuild lands here) |
-| `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token present |
+| `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token or OpenCode providers' keys present |
 | | `image`, `checks` | the image check; the container-name check and workspace volume (created for `agent` on first use) |
 | | `create`, `bootstrap`, `clients` | `docker run`; the client's bootstrap state (none for OpenCode) and the hook stub; every client's `--version` |
 | | `client_update` | Codex only: [version preparation](docker-codex.md#container-versions) |
-| | `credentials`, `total` | the token injection (none for OpenCode); the whole `start` |
+| | `credentials`, `total` | the token injection (OpenCode: its providers' keys); the whole `start` |
 | `docker timing NAME GENERATION` | `checks`, `image` | cwd, sweep, the container check; `version` and `build` again (cached), a new start's workspace reset and client home, manifest and plan |
 | | `start` | the broker's `start` |
 | | `relay`, `tmux`, `client` | supervisor lock and hook relay; the supervisor and the container's tmux session; until the client's pane runs |
@@ -475,7 +491,7 @@ tier model pulled and `OLLAMA_CONTEXT_LENGTH` ≥ 65536, `[session.hosts] defaul
 
 | Command | Checks |
 |---|---|
-| `python3 session/tests/live_docker.py worker --client claude\|codex\|opencode CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags (`--cap-drop ALL`, network `bridge`, no extra hosts) and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports; for OpenCode also: the first turn leaves `~/.agent-pm/docker-state/<NAME>/opencode/opencode/opencode.db`, Ollama listens on `127.0.0.1` only (`lsof`), the container holds only GitHub secrets, and each resume continues the same OpenCode session |
+| `python3 session/tests/live_docker.py worker --client claude\|codex\|opencode CWD [NAME]`, from a manager session | a second build reuses the image; with no `--host`, the worker runs in a container; its security flags (`--cap-drop ALL`, network `bridge`, no extra hosts) and mounts match the plan, and the [unreachable](credentials.md#what-a-container-cannot-reach) resources stay so; a supervisor killed mid-turn delivers its event once; restart, close then resume, and `docker rm -f` then resume each answer a prompt; every close revokes the generation's GitHub tokens and withdraws its client credential; no revocation stays pending but the removed container's, whose tokens it reports; for OpenCode also: the first turn leaves `~/.agent-pm/docker-state/<NAME>/opencode/opencode/opencode.db`, Ollama listens on `127.0.0.1` only (`lsof`), the container holds only GitHub secrets and each configured provider's key (`find /run/agent-pm/secrets`), and each resume continues the same OpenCode session |
 | `python3 session/tests/live_docker.py role --repo OWNER/NAME [--timeout S] [NAME]` | a headless engineer run on the test repo gets one forced token refresh, opens a draft PR as `agent-pm-bot[bot]` after it, and its close reclaims its credentials |
 | `python3 session/tests/live_docker.py pr URL` | the PR, such as an unattended board run's, was opened as a draft by `agent-pm-bot[bot]` |
 
@@ -488,8 +504,10 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
 
 - Container credentials are readable by every process in the container and by any process running as you
   ([Credentials](credentials.md)); each restart and resume writes them into a new container.
-- A broker reinstall needs all three logins again ([Log in](#log-in)); until then starts fail (`login_required`, or
-  `keychain_failed` for the GitHub items).
+- A broker reinstall needs all three logins and each `login opencode <name>` again ([Log in](#log-in)); until then
+  starts fail (`login_required`, or `keychain_failed` for the GitHub items).
+- An OpenCode provider at an `http://` `base_url` gets its API key and every prompt in plaintext: anyone on the LAN
+  path can capture them. Prefer `https://`, or a key that only that server accepts.
 - A GitHub token the broker could not revoke stays valid until it expires (an hour); `"$B" status` lists it.
 - Every Docker session can push to any unprotected branch of every repo the App is installed on, `private_docs`'s
   `main` included.

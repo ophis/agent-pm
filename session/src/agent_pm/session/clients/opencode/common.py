@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 from agent_pm.session.clients.common import (
     CHECKS,
@@ -103,7 +104,8 @@ PORT = (
     "an integer port 1–65535",
 )
 OLLAMA = "ollama"
-NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+SECRETS = "secrets/opencode"  # the broker's key files, under a container's state root
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 WORD = re.compile(r"\S+")
 URL = re.compile(r"https?://\S+")
 
@@ -130,8 +132,9 @@ MODEL = (
 PROVIDERS = (
     "providers",
     lambda v: isinstance(v, Mapping) and all(_provider(k, t) for k, t in v.items()),
-    "a table of OpenAI-compatible providers other than ollama, each with exactly base_url (an"
-    " http(s) URL) and models (a list of model names)",
+    "a table of OpenAI-compatible providers other than ollama, named by up to 64 letters, digits,"
+    " '.', '_' or '-', each with exactly base_url (an http(s) URL) and models (a list of model"
+    " names)",
 )
 
 
@@ -309,9 +312,8 @@ class OpenCodeCommon:
             raise ConfigError(f"no OpenCode session bound to run ID {sid!r}")
         return self.selector(native, resume=True)
 
-    @staticmethod
-    def home() -> ClientHome:
-        return HOME
+    def home(self) -> ClientHome:
+        return replace(HOME, providers=tuple(sorted(self.providers)))
 
     def executable_for(self, env: Mapping[str, str], cwd: str, context: ClientContext) -> str:
         """A container's image opencode (the broker checks its version), else program's."""
@@ -354,10 +356,11 @@ class OpenCodeCommon:
             raise ConfigError(f"opencode {found[0]} ({exe}) is not {MAJOR}.x: {fix}")
         return exe
 
-    def inline(self, spec: Spec, host_address: str, plugin: str | None = None) -> dict:
-        """The launch's OpenCode config: only ollama on `host_address` and the configured providers
-        enabled, no auto-update, shell calls asking but pre-approved commands, Access dirs and reads
-        outside the cwd, edit_rules. A provider's API key stays in OpenCode's own auth.json.
+    def inline(self, spec: Spec, context: ClientContext, plugin: str | None = None) -> dict:
+        """The launch's OpenCode config: only ollama on the context's host address and the
+        configured providers enabled, no auto-update, shell calls asking but pre-approved commands,
+        Access dirs and reads outside the cwd, edit_rules. A provider's API key: a container's
+        broker-written file, else OpenCode's auth.json.
         """
         access = spec.access
         commands = dict.fromkeys(access.commands, "allow")
@@ -371,13 +374,18 @@ class OpenCodeCommon:
                 pattern: "allow" for d in outside for pattern in (d, f"{d}/*")
             }
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
+        ollama = f"http://{context.host_address}:{self.port}/v1"
         providers = {
-            OLLAMA: self._provider("Ollama", f"http://{host_address}:{self.port}/v1", OLLAMA, ()),
+            OLLAMA: self._provider("Ollama", ollama, OLLAMA, ()),
             **{
                 name: self._provider(name, table["base_url"], name, table["models"])
                 for name, table in sorted(self.providers.items())
             },
         }
+        if (found := context.container) is not None:
+            for name in self.providers:
+                key = f"{found.state_root}/{SECRETS}/{name}.key"
+                providers[name]["options"]["apiKey"] = f"{{file:{key}}}"
         return {
             "$schema": "https://opencode.ai/config.json",
             **({"plugin": [plugin]} if plugin is not None else {}),
@@ -410,7 +418,7 @@ class OpenCodeCommon:
         supplied = {**access.env, **spec.env}
         refuse_env(supplied, "a run's env")
         env = {k: v for k, v in {**self.env, **supplied}.items() if k not in LOCAL_ENV_VARS}
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context.host_address, plugin))
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self.inline(spec, context, plugin))
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         return env
 

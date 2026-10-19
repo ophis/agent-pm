@@ -740,6 +740,40 @@ class LoopbackOnlyTest(Case):
         self.assertIn("no listener on TCP port 11434", problem)
 
 
+SECRETS = "/run/agent-pm/secrets"
+
+
+class HeldSecretsTest(Case):
+    def listing(self, *paths):
+        return "\n".join(f"{SECRETS}/{p}" for p in paths) + "\n"
+
+    def test_only_github_without_providers_passes(self):
+        found = self.listing("github", "github/ophis")
+        self.assertEqual(gate.held_secrets(found, []), [])
+
+    def test_github_and_each_listed_key_pass(self):
+        found = self.listing(
+            "github", "github/ophis", "opencode", "opencode/lab.key", "opencode/strata.key"
+        )
+        self.assertEqual(gate.held_secrets(found, ["strata", "lab"]), [])
+
+    def test_anything_else_fails(self):
+        for paths, providers, problem in (
+            (("github", "opencode"), ["strata"], "no opencode/strata.key"),
+            (
+                ("github", "opencode", "opencode/strata.key", "opencode/lab.key"),
+                ["strata"],
+                "opencode/lab.key",
+            ),
+            (("github", "claude"), [], f"{SECRETS}/claude"),
+            (("github", "opencode"), [], f"{SECRETS}/opencode"),
+            (("opencode", "opencode/strata.key"), ["strata"], "no github"),
+        ):
+            with self.subTest(paths=paths):
+                (found,) = gate.held_secrets(self.listing(*paths), providers)
+                self.assertIn(problem, found)
+
+
 def hook(ts, session="ses_one", label="session.idle"):
     return json.dumps({"ts": ts, "label": label, "payload": {"session_id": session}})
 

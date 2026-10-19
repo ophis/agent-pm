@@ -9,11 +9,11 @@ token, key or private-key value; `tests/guard_checks/credentials.py` checks it n
 state config key and every broker keychain service.
 
 **Three-way readers**: a credential the broker hands to a container (the Claude setup-token copy, GitHub installation
-tokens, the Codex access token) can be read by the broker, by every process in that container, and by any process
+tokens, the Codex access token, OpenCode provider API keys) can be read by the broker, by every process in that container, and by any process
 running as the user: `<B> start --manifest <file>` does not check its caller (`broker/main.go:118`), and the Docker
 socket is the user's (`broker/internal/docker/docker.go:102`), so such a process can start a container or
 `docker exec` into one and read `/run/agent-pm/secrets/`. Only the App private key and the Codex refresh token stay
-with the broker. The user accepted this on 2026-10-18; the broker is unchanged ([Risks](#risks)).
+with the broker; a provider API key is the same long-lived key in every container that lists it. The user accepted this on 2026-10-18; the broker is unchanged ([Risks](#risks)).
 
 ## Who logs in
 
@@ -24,7 +24,7 @@ with the broker. The user accepted this on 2026-10-18; the broker is unchanged (
 | Docker | Claude Code | the user, once per broker install: `claude setup-token`, pasted into `<B> login claude` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / `setup-token` | `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:423`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
 | `tmux`, `pty` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm never reads it | no container | — |
-| Docker | OpenCode | no one: it uses the host's Ollama through `host.docker.internal` | — | no model credential, only the GitHub tokens (`with-secrets --client opencode`) | — |
+| Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: the user, once per broker install and provider: `<B> login opencode <name>` ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv (`broker/internal/broker/opencode.go:22`, `session/src/agent_pm/session/clients/opencode/common.py:388`) | deleted with the container; never revoked |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
 ([Log in](docker-host.md#log-in)). Local Hosts use the host `gh` login below.
@@ -113,6 +113,19 @@ Docker uses the decided path A, centralized refresh ([Plan A conclusion](docker-
 | Lifetime | refreshed by Codex during use | access token renewed by the broker 10 minutes before it expires; refresh token: not documented | `broker/internal/broker/codex_refresh.go:16`; [Codex auth] |
 | Revoke | `codex logout` clears it locally | Unknown upstream: no documented route. Rerun `<B> login codex` to replace the login, or delete the `agent-pm-codex` item | [Codex auth] |
 
+### OpenCode provider API keys
+
+One per `[session.clients.opencode.providers.<name>]` table, such as a LAN Strata server.
+
+| Field | Local (`tmux`, `pty`) | Docker | Source |
+|---|---|---|---|
+| Purpose | OpenCode's requests to the provider | the same, from a container | [OpenCode sessions](sessions.md#opencode-sessions) |
+| Minimum permission | whatever the provider's key grants; issue one for agent-pm alone | the same | the provider |
+| Stored at | OpenCode's `auth.json` (`opencode auth login`); agent-pm never reads it | `agent-pm-opencode` / `<name>`; per container `/run/agent-pm/secrets/opencode/<name>.key` | `broker/internal/broker/opencode.go:17`, `broker/internal/broker/opencode.go:95` |
+| Readers | OpenCode and any process running as the user | item: the broker only, once `login opencode <name>` has made it trust only the broker; container copy: **three-way readers**; on the network: anyone between the container and an `http://` `base_url` ([Risks](#risks)) | `broker/internal/broker/opencode.go:33` |
+| Lifetime | until the provider revokes it | the same; a container's copy until the container goes | the provider |
+| Revoke | revoke it at the provider; `opencode auth logout` removes it locally | revoke it at the provider, then `<B> login opencode <name>` with a new one, which replaces the item; running containers keep the old copy until closed | `broker/internal/broker/opencode.go:33` |
+
 ## Keychain items
 
 All in the login keychain. "Readers" is by design; [Measured readers](#measured-readers) records what a live read
@@ -126,6 +139,7 @@ shows.
 | `agent-pm-tokens` | container name | — | that container's installation tokens and expiries | `<B> start`, `refresh`; removed by `close` | the broker |
 | `agent-pm-revocations` | `pending` | — | tokens awaiting revocation | `<B> close`, `refresh` failures | the broker |
 | `agent-pm-codex` | `auth` | — | the full Codex login | `<B> login codex`; renewals at `start`, `refresh` | the broker |
+| `agent-pm-opencode` | provider name | `[session.clients.opencode.providers.<name>]` | that OpenCode provider's API key | `<B> login opencode <name>` | the broker |
 | the `harness_key` value | any | `harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
 | each `roles.<role>.key` value | the role's account | `roles.<role>.key` | role Linear API key | the user | any process running as the user |
 | Claude Code's own | — | — | local Claude login | Claude Code `/login` | Claude Code; service name not documented |
@@ -146,11 +160,11 @@ the value, and `perl … alarm 10` stands for `timeout 10`, which macOS lacks. P
 column, and after `!` in the manager's Claude Code prompt for the manager column:
 
 ```sh
-for s in agent-pm-claude agent-pm-bot agent-pm-github-users agent-pm-tokens agent-pm-revocations agent-pm-codex; do security find-generic-password -s "$s" >/dev/null 2>&1; e=$?; r=$(bash -c 'perl -e "alarm 10; exec @ARGV" security find-generic-password -s "$0" -w 2>/dev/null | wc -c | tr -d " "; echo "exit=${PIPESTATUS[0]}"' "$s" | tr '\n' ' '); echo "$s exists=$e bytes/$r"; done
+for s in agent-pm-claude agent-pm-bot agent-pm-github-users agent-pm-tokens agent-pm-revocations agent-pm-codex agent-pm-opencode; do security find-generic-password -s "$s" >/dev/null 2>&1; e=$?; r=$(bash -c 'perl -e "alarm 10; exec @ARGV" security find-generic-password -s "$0" -w 2>/dev/null | wc -c | tr -d " "; echo "exit=${PIPESTATUS[0]}"' "$s" | tr '\n' ' '); echo "$s exists=$e bytes/$r"; done
 ```
 
 An item must exist to be measured (`exists=0`); `exists=44` means absent: record `absent, not measured` and make it
-first. `agent-pm-claude`, `agent-pm-github-users` and `agent-pm-codex` exist after their `login`; `agent-pm-bot` once
+first. `agent-pm-claude`, `agent-pm-github-users`, `agent-pm-codex` and `agent-pm-opencode` exist after their `login`; `agent-pm-bot` once
 the user stores the key; `agent-pm-tokens` while a Docker session runs; `agent-pm-revocations` after a `close` with the
 network off, until the next start, close or status online.
 
@@ -169,6 +183,7 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | `agent-pm-tokens` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
 | `agent-pm-revocations` | absent, not measured | absent, not measured |
 | `agent-pm-codex` | exists=0, exit=128, bytes=0 | exists=0, exit=128, bytes=0 |
+| `agent-pm-opencode` | pending | pending |
 
 ## Broker issues
 
@@ -177,7 +192,7 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | Claude setup-token copy | `/run/agent-pm/secrets/claude`, through `docker exec` stdin; the client's environment only | until its container goes; the token itself a year | deleted with the container; not revoked | TASK-545 FR-8, FR-13; TASK-548 FR-12 |
 | GitHub installation tokens | `/run/agent-pm/secrets/github/<owner>`, one per installation | 1 hour, renewed 10 minutes ahead | revoked at `close`; backlog retried | TASK-549 FR-7 to FR-12 |
 | Codex access token, no refresh token | `/run/agent-pm/secrets/codex/auth.json`; `CODEX_HOME/auth.json` links to it | renewed 10 minutes ahead | deleted with the container; not revoked | TASK-550 FR-3 to FR-7, FR-12 |
-| nothing for OpenCode: it uses the host's Ollama | — | — | — | TASK-695 NFR-2 |
+| OpenCode provider API keys, those of the manifest's `opencode_providers` (every configured provider) | `/run/agent-pm/secrets/opencode/<name>.key`, through `docker exec` stdin | until its container goes; the key itself until revoked at the provider | deleted with the container; not revoked; no audit line | TASK-714 |
 | Bot user ID (not a secret) | the session's git author and committer identity | — | — | TASK-549 FR-14, FR-26 |
 
 ## What a container reaches
@@ -187,7 +202,7 @@ A read that returns bytes fails this check unless the user accepts it: mark the 
 | its workspace volume `agent-pm-ws-<name>` at its cwd (`broker/internal/launcher/start.go:165`) | TASK-549 FR-4, FR-17 |
 | Claude: its `claude_dir` bind; Codex: `CODEX_HOME` on tmpfs and its `sessions/` bind; OpenCode: its `opencode_dir` bind (`broker/internal/launcher/start.go:168`) | TASK-549 FR-4; TASK-550 NFR-4; TASK-695 FR-18 |
 | `/run/agent-pm/secrets/` (tmpfs, 0700, `agent`) and what [Broker issues](#broker-issues) puts there (`broker/internal/launcher/start.go:176`) | TASK-545 FR-13; TASK-549 FR-8 |
-| the network, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
+| the network, LAN hosts such as a configured provider's `base_url` included, and through `host.docker.internal` Mac services listening only on `127.0.0.1` ([accepted risk](docker-host.md#risks)) | TASK-545 FR-10; TASK-695 FR-24 |
 | push to every repo of every App installation | TASK-549 FR-7 |
 
 Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user agent`
@@ -254,14 +269,19 @@ agent-pm 0.6.28.
   no config error. Deferred until there is a new Linear team (the user, 2026-10-18).
 - [x] [Live acceptance](docker-host.md#live-acceptance): `worker` for Claude and Codex, `role`, and `pr` on an unattended
   board run's PR, each exits 0.
-- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0.
+- [ ] [Live acceptance](docker-host.md#live-acceptance): `worker --client opencode` exits 0, with a configured provider
+  logged in (`login opencode <name>`).
+- [ ] [Measured readers](#measured-readers): `agent-pm-opencode`.
 
 ## Risks
 
 - **Three-way readers** of handed-out credentials: accepted by the user on 2026-10-18; the broker is unchanged.
 - The Linear key items trust `/usr/bin/security`: any process running as the user reads them without a dialog.
-- Each broker release changes its ad-hoc code identity: rerun `login claude`, `login github agent-pm-bot` and
-  `login codex` ([Log in](docker-host.md#log-in)).
+- Each broker release changes its ad-hoc code identity: rerun `login claude`, `login github agent-pm-bot`,
+  `login codex` and each `login opencode <name>` ([Log in](docker-host.md#log-in)).
+- An OpenCode provider whose `base_url` is `http://` gets its API key in plaintext: anyone on the LAN path, or on the
+  Docker Desktop VM's network, can capture it and the prompts. Prefer `https://`, or a key that reaches only that
+  server.
 - Neither the setup-token nor the Codex login has a documented upstream revocation.
 
 [Claude auth]: https://code.claude.com/docs/en/authentication#credential-management

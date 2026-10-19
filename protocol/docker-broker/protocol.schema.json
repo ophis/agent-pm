@@ -196,6 +196,18 @@
         },
         "opencode_dir": {
           "$ref": "#/$defs/path"
+        },
+        "opencode_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "not": {
+              "const": "ollama"
+            }
+          },
+          "maxItems": 32,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -230,6 +242,11 @@
                 "required": [
                   "opencode_dir"
                 ]
+              },
+              {
+                "required": [
+                  "opencode_providers"
+                ]
               }
             ]
           }
@@ -253,6 +270,11 @@
               {
                 "required": [
                   "opencode_dir"
+                ]
+              },
+              {
+                "required": [
+                  "opencode_providers"
                 ]
               }
             ]
@@ -307,7 +329,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "14"
+          "const": "15"
         }
       },
       "required": [

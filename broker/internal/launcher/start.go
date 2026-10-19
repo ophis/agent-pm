@@ -94,6 +94,12 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 		if err := h.Creds.Ready(); err != nil {
 			return StartResult{}, err
 		}
+	case "opencode":
+		if len(m.OpencodeProviders) > 0 {
+			if err := h.Opencode.Ready(m.OpencodeProviders); err != nil {
+				return StartResult{}, err
+			}
+		}
 	}
 	var userID *int64
 	if m.GitHubApp != "" {
@@ -264,6 +270,12 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 	case "claude":
 		if err := h.Creds.Inject(exec); err != nil {
 			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
+		}
+	case "opencode":
+		if len(m.OpencodeProviders) > 0 {
+			if err := h.Opencode.Inject(m.OpencodeProviders, exec); err != nil {
+				return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting the OpenCode provider API keys failed.")
+			}
 		}
 	}
 	if kind := clientKind(m.Client); kind != "" {

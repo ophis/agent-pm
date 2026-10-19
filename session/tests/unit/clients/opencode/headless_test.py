@@ -199,6 +199,17 @@ class LaunchTest(Base):
         self.assertTrue(holds(self.command(launch), ("--model", "strata/b")))
         self.assertNotIn("apiKey", json.dumps(inline))
 
+    def test_a_container_reads_each_providers_key_from_its_secret_file(self):
+        providers = {**STRATA, "lab": {"base_url": "https://lab.lan/v1", "models": []}}
+        client = OpenCodeClient({**packaged_table(), "providers": providers})
+        inline = self.inline(self.launch(self.spec(), DOCKER_CONTEXT, client=client))
+        for name in ("strata", "lab"):
+            self.assertEqual(
+                inline["provider"][name]["options"]["apiKey"],
+                f"{{file:/run/agent-pm/secrets/opencode/{name}.key}}",
+            )
+        self.assertNotIn("apiKey", inline["provider"]["ollama"]["options"])
+
     def test_auto_has_no_auto_flag(self):
         self.assertNotIn("--auto", self.command(self.launch(self.spec())))
 
