@@ -112,6 +112,13 @@ _Avoid_: router, chooser
 The router's steps that decide a new run's launch choices from its issue: each Resolver lists its options from config, asks a Selector and returns its Choice, which applies itself to the run's Context; a step off or failing falls back to today's choice. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`.
 _Avoid_: chooser
 
+**Resolver**:
+One step of the Resolver chain: lists its own options from config for the Context so far, asks a Selector and returns its Choice (`choose`), or today's choice (`fallback`); `TierResolver` picks the tier and effort. In code: the ABC `Resolver` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
+_Avoid_: chooser, selector
+
+**Choice**:
+What a Resolver returns: it writes itself into the run's Context (`apply`) and gives its runs.jsonl start-row fields (`record`); `TierChoice` holds a tier and effort. In code: the ABC `Choice` (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/selection.py`).
+
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
 

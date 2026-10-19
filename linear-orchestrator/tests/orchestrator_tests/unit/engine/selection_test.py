@@ -41,8 +41,10 @@ def session_clients() -> dict:
     return utils.read_resources(session.CONFIG_RESOURCES)["clients"]
 
 
-def provider(outcome=None, *, error=None):
-    """A FakeDelegate class whose runs end in outcome (or raise error), recording each create."""
+def provider(outcome=None, *, error=None, run_error=None):
+    """A FakeDelegate class whose runs end in outcome; error is raised by create, run_error by run;
+    each create is recorded.
+    """
 
     class Translator(FakeDelegate):
         ROLES = {"choice-translator": {"translate": "Translates an issue into a state"}}
@@ -55,6 +57,11 @@ def provider(outcome=None, *, error=None):
             if error is not None:
                 raise error
             return super().create(role, spec, display=display, callback=callback, overlays=overlays)
+
+        def run(self, on_event=None):
+            if run_error is not None:
+                raise run_error
+            return super().run(on_event)
 
     return Translator
 
@@ -90,7 +97,20 @@ class Translating(Case):
             translate(" ", self.workdir(), provider=fake)
         self.assertEqual(fake.created, [])
 
-    def test_a_failed_run_is_a_translate_error_without_its_text(self):
+    def test_a_failed_create_or_run_is_a_translate_error_without_its_text(self):
+        for fake in (
+            provider(error=RuntimeError("secret issue text")),
+            provider(done("x"), run_error=RuntimeError("secret issue text")),
+        ):
+            with self.subTest(fake=fake), self.assertRaises(SelectionError) as caught:
+                translate("TASK-1", self.workdir(), provider=fake)
+            self.assertEqual(
+                (caught.exception.reason, str(caught.exception)),
+                (SelectionFailure.TRANSLATE, "translate"),
+            )
+            self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_create_failure_text_stays_out(self):
         fake = provider(error=RuntimeError("secret issue text"))
         with self.assertRaises(SelectionError) as caught:
             translate("TASK-1", self.workdir(), provider=fake)
@@ -104,12 +124,17 @@ class Translating(Case):
         for outcome in (None, Outcome("failed", "No", "could not read the issue")):
             with self.subTest(outcome=outcome), self.assertRaises(SelectionError) as caught:
                 translate("TASK-1", self.workdir(), provider=provider(outcome))
-            self.assertEqual(caught.exception.reason, SelectionFailure.TRANSLATE)
+            self.assertEqual(
+                (caught.exception.reason, str(caught.exception)),
+                (SelectionFailure.TRANSLATE, "translate"),
+            )
 
     def test_a_blank_deliverable_is_invalid(self):
         with self.assertRaises(SelectionError) as caught:
             translate("TASK-1", self.workdir(), provider=provider(done(" \n")))
-        self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
+        self.assertEqual(
+            (caught.exception.reason, str(caught.exception)), (SelectionFailure.INVALID, "invalid")
+        )
 
 
 class Types(Case):
@@ -175,12 +200,14 @@ class TierOptions(Case):
         self.assertEqual({o.split(" / ")[0] for o in options}, {model})
 
 
-class LocalOverride(Case):
+class LocalConfig(Case):
     def write_local(self, text):
         os.makedirs(self.agent_pm, exist_ok=True)
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
+
+class LocalOverride(LocalConfig):
     def test_the_local_config_overrides_the_opencode_tiers(self):
         self.write_local(
             '[session.clients.opencode.tiers]\n1 = "big:1"\n2 = "big:1"\n3 = "small:1"\n4 = "small:1"\n'
@@ -194,10 +221,18 @@ class LocalOverride(Case):
         self.assertEqual(session_clients()["opencode"]["tiers"]["3"], "small:1")
 
 
-class TierFailures(Case):
+class TierFailures(LocalConfig):
     def test_a_blank_state_is_refused(self):
         with self.assertRaises(ValueError):
             TierResolver(FakeSelector(), task_tiers={}).choose(" ", CLAUDE)
+
+    def test_empty_or_non_table_tiers_or_efforts_are_invalid(self):
+        for local in ("efforts = []", "tiers = []", "tiers = [1]"):
+            with self.subTest(local=local):
+                self.write_local(f"[session.clients.claude]\n{local}\n")
+                with self.assertRaises(SelectionError) as caught:
+                    TierResolver(FakeSelector(), task_tiers={}).choose(STATE, CLAUDE)
+                self.assertEqual(caught.exception.reason, SelectionFailure.INVALID)
 
     def test_a_client_without_tiers_is_invalid(self):
         with self.assertRaises(SelectionError) as caught:

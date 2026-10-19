@@ -130,22 +130,28 @@ def translate(
     outcome = result.outcome
     if outcome is None or outcome.status != OutcomeStatus.DONE:
         raise SelectionError(SelectionFailure.TRANSLATE)
-    if not outcome.deliverable.strip():
+    state = outcome.deliverable.strip()
+    if not state:
         raise SelectionError(SelectionFailure.INVALID)
-    return outcome.deliverable.strip()
+    return state
 
 
 def _tier_options(client: str) -> dict[str, TierChoice]:
     try:
         table = utils.read_resources(SESSION_CONFIG)[SESSION_CLIENTS][client]
         tiers, efforts = table["tiers"], table["efforts"]
+        if not isinstance(tiers, Mapping) or not isinstance(efforts, Mapping):
+            raise TypeError
         lowest = {}
         for tier in sorted(tiers, key=int):
             lowest.setdefault(tiers[tier], int(tier))
-    except (utils.ConfigFileError, KeyError, TypeError, ValueError):
+    except (utils.ConfigFileError, LookupError, TypeError, ValueError):
         raise SelectionError(SelectionFailure.INVALID) from None
-    return {
+    options = {
         f"{model} / {effort}": TierChoice(tier, effort)
         for model, tier in lowest.items()
         for effort in efforts
     }
+    if not options:
+        raise SelectionError(SelectionFailure.INVALID)
+    return options
