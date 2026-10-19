@@ -28,7 +28,7 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, drop_files
 from agent_pm.delegate.event.outcome import read as read_outcome
-from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
+from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block, outcome_only
 from agent_pm.delegate.event.types import Autopilot, InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
@@ -382,7 +382,7 @@ class _Attempts:
         return rc or 0, last, limit, failed
 
     def reply(self, text: str) -> str:
-        for line in text.splitlines():
+        for line in outcome_only(text).splitlines():
             if line.strip():
                 say(line)
         for name, said in marks(text):

@@ -35,6 +35,7 @@ from agent_pm.delegate.engine.types import (
     Result,
     Spec,
 )
+from agent_pm.delegate.event.reply import outcome_only
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
     SIGNALS,
@@ -676,7 +677,7 @@ class HarnessDelegate(Delegate):
             and (result is None or result.outcome is None and not result.error)
             and (agent := self._answered_agent(state)) is not None
         ):
-            return agent.content()
+            return outcome_only(agent.content())
         return self.status().to_line()
 
     def status(self) -> Status:
