@@ -23,6 +23,8 @@ with the broker. The user accepted this on 2026-10-18; the broker is unchanged (
 | `tmux`, `pty` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install: `claude setup-token`, pasted into `<B> login claude` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / `setup-token` | `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:423`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
+| `tmux`, `pty` | OpenCode | no one: it uses the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)) | — | no container | — |
+| Docker | OpenCode | no one: it uses the host's Ollama through `host.docker.internal` | — | no model credential, only the GitHub tokens (`with-secrets --client opencode`) | — |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
 ([Log in](docker-host.md#log-in)). Local Hosts use the host `gh` login below.
@@ -194,14 +196,14 @@ Every container runs `--cap-drop ALL`, `--security-opt no-new-privileges`, `--us
 ## What a container cannot reach
 
 Run each with `C` a running worker container (`docker ps --filter label=agent-pm.session --format '{{.Names}}'`),
-once for a Claude and once for a Codex worker. Each prints counts only.
+once for each client's worker: Claude, Codex, OpenCode. Each prints counts only.
 
-| Resource | Command | Pass | Requirements | Claude | Codex |
-|---|---|---|---|---|---|
-| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` |
-| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` |
+| Resource | Command | Pass | Requirements | Claude | Codex | OpenCode |
+|---|---|---|---|---|---|---|
+| host keychain | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/Library/Keychains*" -print 2>/dev/null \| wc -l; command -v security \| wc -c'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Linear keys | `docker exec "$C" sh -c 'env \| grep -ci linear; find / \( -path /proc -o -path /sys \) -prune -o -name config.local.toml -print 2>/dev/null \| wc -l'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| host `gh` login | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -path "*/gh/hosts.yml" -print 2>/dev/null \| wc -l; env \| grep -c "^GH_TOKEN="'` | `0`, `0` | TASK-549 NFR-2 | `0`, `0` | `0`, `0` | pending |
+| Docker socket | `docker exec "$C" sh -c 'find / \( -path /proc -o -path /sys \) -prune -o -type s -name "*docker*" -print 2>/dev/null \| wc -l; command -v docker \| wc -c; env \| grep -c "^DOCKER_HOST="'` | `0`, `0`, `0` | TASK-545 FR-10; TASK-549 NFR-2; TASK-550 NFR-4 | `0`, `0`, `0` | `0`, `0`, `0` | pending |
 
 Each search covers every mount (the workspace volume, the binds, the tmpfs), skipping only `/proc` and `/sys`. The
 container's own tmux socket is not Docker's, so the socket search names `docker`.

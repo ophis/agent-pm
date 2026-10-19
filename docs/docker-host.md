@@ -282,6 +282,28 @@ In the container `repo.py worktree` makes a fresh blobless clone at `<Workdir>/s
 marks it ready, you approve with your own account, and revision rounds push to the same branch. Then
 [review before pulling](#review-before-pulling).
 
+### OpenCode
+
+OpenCode sessions run the host's Ollama models ([OpenCode sessions](sessions.md#opencode-sessions)); no login, and
+the container gets no model credential ([Credentials](credentials.md#who-logs-in)). Once, on the Mac:
+
+1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through
+   `host.docker.internal` ([Risks](#risks)).
+2. Set its context length to at least 65536, or tool calls fail: for the Ollama app,
+   `launchctl setenv OLLAMA_CONTEXT_LENGTH 65536`, then quit and reopen it; for `ollama serve`, start it with
+   `OLLAMA_CONTEXT_LENGTH=65536`.
+3. Pull every tier's model, `ollama pull qwen3.6:35b-mlx` by default (`[session.clients.opencode.tiers]`;
+   `ollama_port`, default 11434, is its port).
+
+The image's OpenCode is fixed at 1.19.3 ([Install](#install)) and the Client gives its config
+(`OPENCODE_CONFIG_CONTENT`: the Ollama provider at `http://host.docker.internal:<ollama_port>/v1`, no auto-update):
+none of the Mac's OpenCode install, config or plugins goes into the container (the cwd's own `opencode.json` and
+`.opencode/` still load: OpenCode has no project trust). An existing
+`~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
+image. Its session state is `~/.agent-pm/docker-state/<name>/opencode/` (`opencode_dir`). Then
+`agent-pm-crew worker NAME --client opencode` starts a worker in a container; an OpenCode board run:
+[Linear board › OpenCode](board.md#opencode).
+
 ### Lifecycle
 
 Each start, restart or resume runs a new generation in a new container from the current image. `restart` closes the
@@ -289,7 +311,7 @@ running container first; `resume` (after `close`, or once the container is gone)
 keep the client history and [workspace volume](#workspace-volumes) and continue the conversation; only a new start
 clears them. A resume whose conversation file is missing or a symlink fails before any container with
 `no native history to resume`. Resume with `agent-pm-session resume <name>`, never `client-resume`, which runs the
-client on the host. Claude and [Codex](docker-codex.md#docker-sessions) terminals and headless runs are supported;
+client on the host. Claude, [Codex](docker-codex.md#docker-sessions) and [OpenCode](#opencode) terminals and headless runs are supported;
 other clients, detached sessions and a start while a container of that name exists fail before creation.
 
 **Preflight**, before every start: client and mode supported; the cwd exists (`Session.preflight` also accepts one
@@ -486,7 +508,7 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
   before reading them.
 - A harness killed with `kill -9` leaves its headless client running, with its token, until the next Docker start or
   close.
-- Every container, Claude and Codex workers included, reaches through `host.docker.internal` the Mac's services that
+- Every container, Claude, Codex and OpenCode workers included, reaches through `host.docker.internal` the Mac's services that
   listen only on `127.0.0.1`: on 2026-10-18 a worker-like container (bridge, `--cap-drop ALL`, no mounts or
   credentials) got Ollama's `/api/version` while Ollama listened only on `127.0.0.1:11434`. The host side of such a
   connection belongs to `com.docker.backend`, running as you, so pf cannot tell container traffic apart

@@ -10,7 +10,7 @@
 
 *本文为译文，以英文 README 为准。*
 
-从 Linear 看板无人值守地运行编码 agent（Claude Code、Codex，后续支持更多）。每个 Linear project 是一个产品，issue 的 assignee（一个 role 账号）就是它所处的阶段。每个 role 同时最多处理 `max_runs` 个 issue，并把产出交回给你审阅。你批准后，下一个 role 接手。
+从 Linear 看板无人值守地运行编码 agent（Claude Code、Codex，以及用宿主 Ollama 模型的 OpenCode）。每个 Linear project 是一个产品，issue 的 assignee（一个 role 账号）就是它所处的阶段。每个 role 同时最多处理 `max_runs` 个 issue，并把产出交回给你审阅。你批准后，下一个 role 接手。
 
 开发者：[`AGENTS.md`](../../AGENTS.md)。
 
@@ -32,7 +32,7 @@ agent-pm 是分层构建的：每层只做一件事，只调用它下面的一�
 | Manager | 下面各层的驱动：一个你与之对话的 agent，它启动 worker、role run 和看板 run，监视它们并向你汇报。 | [演示](#演示一个-manager多个-worker) |
 | Linear orchestrator | 从 Linear 看板运行各 role：我自己的工作流。 | [Linear 看板](../board.md) |
 | Delegate（核心） | 通过一个 session 让某个 role 执行一个 task，并返回经过检查的结果。是一个可单独使用的 Claude Code 和 Codex 插件。 | [安装](#安装) |
-| Session | 在 tmux 或 pty 中启动、监视和恢复编码 agent（Claude Code、Codex），对每个 client 方式相同。 | [Sessions](../sessions.md) |
+| Session | 在 tmux 或 pty 中启动、监视和恢复编码 agent（Claude Code、Codex、OpenCode），对每个 client 方式相同。 | [Sessions](../sessions.md) |
 
 Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再写 PRD，再构建，每个阶段之间都有人工审阅）。role 和 task 本身也都由你编辑（[自定义 role 和 task](../customizing-roles-and-tasks.md)）。
 
@@ -85,9 +85,10 @@ Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再�
 | `claude` CLI、Python 3.11+ | 每次 agent run |
 | [`autopilot`](https://github.com/ophis/claude-autopilot) 插件，每个 client 都要装：Claude Code `/plugin marketplace add ophis/claude-autopilot`，然后 `/plugin install autopilot@claude-autopilot`；Codex `codex plugin marketplace add ophis/claude-autopilot`，然后 `codex plugin add autopilot@claude-autopilot` | engineer 的 build task（`/autopilot:build`、`/autopilot:light-build`）和 PM 的 PRD 评审（`/autopilot:review`）。其他情况不需要。 |
 | tmux 3.3+ | 在 `tmux` Host 上的 tui run |
+| [Ollama](https://ollama.com) 只听 `127.0.0.1`，上下文长度至少 65536，已拉取 tier 模型；在 `tmux` 和 `pty` 上还要 OpenCode 1.x（`npm install -g opencode-ai@1.19.3`） | 只有 OpenCode 需要（[Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)） |
 | `git`、已登录的 `gh` | 写代码（checkout、pull request）和 GitHub 目标。其他情况不需要。 |
 | 正在运行的 iTerm2 | 默认的 iTerm2 分屏 |
-| 正在运行的 Docker Desktop；broker `B`（`/usr/local/libexec/agent-pm/agent-pm-broker`），用 `sh <plugin dir>/broker/install.sh` 安装（需要 `sudo` 和已登录的 `gh`）；每项登录一次：`B login claude`（粘贴一个 `claude setup-token`）、`B login github agent-pm-bot`，Codex 先 `sudo B install-codex <version>`，再 `B login codex` | 只有 Docker Host 需要（[Docker host](../docker-host.md)）；宿主不需要 Node。每份凭据的权限、存放位置和吊销方式：[Credentials](../credentials.md)。 |
+| 正在运行的 Docker Desktop；broker `B`（`/usr/local/libexec/agent-pm/agent-pm-broker`），用 `sh <plugin dir>/broker/install.sh` 安装（需要 `sudo` 和已登录的 `gh`）；每项登录一次：`B login claude`（粘贴一个 `claude setup-token`）、`B login github agent-pm-bot`，Codex 先 `sudo B install-codex <version>`，再 `B login codex`；OpenCode 不需要 | 只有 Docker Host 需要（[Docker host](../docker-host.md)）；宿主不需要 Node。每份凭据的权限、存放位置和吊销方式：[Credentials](../credentials.md)。 |
 
 agent-pm 启动的 session 如何加载你的设置，以及为什么有些命令在其中会拒绝执行：[Session settings](../sessions.md#session-settings)。
 
@@ -121,8 +122,8 @@ agent-pm 启动的 session 如何加载你的设置，以及为什么有些命�
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | 运行设置、team 目录、role 和 task 文件、检查 |
 | [Linear board](../board.md) | 设置、issue 状态和 task 标签、运营 router、Agent 标签（每个 issue 的 client） |
-| [Sessions and client policy](../sessions.md) | session 设置、`agent-pm-session`、role run 的 client 参数 |
+| [Sessions and client policy](../sessions.md) | session 设置、`agent-pm-session`、role run 的 client 参数、OpenCode session |
 | [State root](../state-root.md) | `~/.agent-pm/` 结构、每项由谁清理、哪些可以删除 |
 | [Upgrading](../upgrading.md) | 从 v0.6.20 起的升级步骤 |
 | [Core architecture](../architecture.md) | 层和包（开发者） |
-| [Tests](../tests.md) | lint、测试套件、覆盖率（开发者） |
+| [Tests](../tests.md) | lint、测试套件、覆盖率、本地模型可作门槛的实机测试（开发者） |
