@@ -118,6 +118,7 @@ PIPED = "pipe"
 READY_WAIT = 10
 IMAGE_PYTHON = "/opt/agent-pm/venv/bin/python"
 STATE_ROOT = "/run/agent-pm"  # the client context's Container.state_root
+_ARG_STRLEN_MAX = 131072  # Linux exec's limit on one argument, its NUL included
 PROMPT_STAGE = """import os, sys
 os.makedirs(os.path.dirname(sys.argv[1]), 0o700, exist_ok=True)
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -825,6 +826,12 @@ class DockerHost(Host):
 
     def _check_cwd(self, name: str, launch: Launch, *, missing_ok: bool = False) -> None:
         super().validate(name, launch)
+        for i, arg in enumerate(launch.argv):
+            if (size := len(arg.encode("utf-8"))) + 1 > _ARG_STRLEN_MAX:
+                raise ConfigError(
+                    f"docker session {name}: argument {i} is {size} bytes, over the "
+                    f"{_ARG_STRLEN_MAX}-byte limit Linux exec allows one argument"
+                )
         cwd = os.path.realpath(launch.cwd)
         if not os.path.isdir(cwd) and not (missing_ok and not os.path.lexists(cwd)):
             raise ConfigError(f"Docker cwd {cwd}: no such directory")

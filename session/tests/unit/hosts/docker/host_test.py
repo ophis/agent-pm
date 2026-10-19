@@ -1633,6 +1633,22 @@ class PreflightTest(Base):
         self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
 
+    def test_an_argument_over_the_linux_limit_is_refused_before_any_docker_call(self):
+        fits, over = "a" * 131_071, "雪" * 43_691  # 131,073 bytes
+        self.host.validate("w", Launch(("agent", fits), cwd=self.cwd))
+        self.order.clear()
+        want = (
+            "^docker session w: argument 1 is 131073 bytes, over the 131072-byte limit Linux "
+            "exec allows one argument$"
+        )
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.validate("w", Launch(("agent", over), cwd=self.cwd))
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.terminal("w", Launch(("agent", over), cwd=self.cwd), metadata={})
+        with self.assertRaisesRegex(ConfigError, want):
+            self.host.pipe("w", Launch(("agent", over), cwd=self.cwd), metadata={})
+        self.assertEqual(self.order, [])
+
     def test_a_failed_handshake_stops_before_build(self):
         self.broker.failing["version"] = SessionError("broker: protocol '1', want '2'")
         with self.assertRaisesRegex(SessionError, "protocol '1', want '2'"):
