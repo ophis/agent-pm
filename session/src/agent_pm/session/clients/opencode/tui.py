@@ -90,7 +90,8 @@ class OpenCodeTui(Homed, Tui):
             (
                 common.executable_for(env, spec.access.cwd, context),
                 *selection,
-                *(("--model", model) if model is not None else ()),
+                "--model",
+                model,
                 *common.flags,
                 *mode,
                 *spec.flags,

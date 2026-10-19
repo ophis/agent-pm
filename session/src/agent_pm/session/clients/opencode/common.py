@@ -18,6 +18,7 @@ from agent_pm.session.clients.common import (
     check_config,
     mode_flags,
     scan,
+    strings,
 )
 from agent_pm.session.clients.opencode import probe
 from agent_pm.session.clients.opencode.transcript import NATIVE, Refused, database
@@ -65,7 +66,7 @@ OVERRIDES = (
 )
 UNSET = (*sorted(LOCAL_ENV_VARS), *IDENTITY, *OVERRIDES)
 SELECTORS = ("-s", "--session", "-c", "--continue", "--fork")
-RESERVED = (*SELECTORS, "--format", "--attach", "--dir")
+RESERVED = (*SELECTORS, "--format", "--attach", "--dir", "-m", "--model")
 PERMISSIONS = ("--auto", "--yolo", "--dangerously-skip-permissions")
 TUI_RESERVED = ("--prompt", "--pure")  # the client's prompt; --pure would skip its plugin
 VALUED = (
@@ -100,6 +101,37 @@ PORT = (
     "ollama_port",
     lambda v: type(v) is int and 0 < v < 65536,
     "an integer port 1–65535",
+)
+OLLAMA = "ollama"
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+WORD = re.compile(r"\S+")
+URL = re.compile(r"https?://\S+")
+
+
+def _provider(name, table) -> bool:
+    return (
+        isinstance(name, str)
+        and NAME.fullmatch(name) is not None
+        and name != OLLAMA
+        and isinstance(table, Mapping)
+        and set(table) == {"base_url", "models"}
+        and isinstance(table["base_url"], str)
+        and URL.fullmatch(table["base_url"]) is not None
+        and strings(table["models"])
+        and all(WORD.fullmatch(m) and m.isprintable() for m in table["models"])
+    )
+
+
+MODEL = (
+    "model",
+    lambda v: isinstance(v, str) and v.strip() != "" and v.isprintable(),
+    "a provider/model name",
+)
+PROVIDERS = (
+    "providers",
+    lambda v: isinstance(v, Mapping) and all(_provider(k, t) for k, t in v.items()),
+    "a table of OpenAI-compatible providers other than ollama, each with exactly base_url (an"
+    " http(s) URL) and models (a list of model names)",
 )
 
 
@@ -208,7 +240,7 @@ def refuse_env(env: Mapping[str, str], where: str) -> None:
 class OpenCodeCommon:
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, *CHECKS))
+        check_config(config, TABLE, (FLAGS, MODES, PORT, EXECUTABLE, MODEL, PROVIDERS, *CHECKS))
         self.executable = config.get("executable") or "opencode"
         self.flags = tuple(config.get("flags", ()))
         self.modes = {p: mode_flags(config, p) for p in Permission}
@@ -216,10 +248,24 @@ class OpenCodeCommon:
         for permission, flags in self.modes.items():
             refuse(flags, RESERVED, f"{TABLE}.modes.{permission}")
         self.port = config.get("ollama_port", OLLAMA_PORT)
+        self.providers = {name: dict(t) for name, t in config.get("providers", {}).items()}
         self.tiers = dict(config.get("tiers", {}))
+        self.default: str | None = config.get("model")
+        named = {f"tiers.{t}": m for t, m in self.tiers.items()}
+        for key, model in (*named.items(), *((("model", self.default),) if self.default else ())):
+            self._listed(key, model)
         self.efforts = dict(config.get("efforts", {}))
         self.env = dict(config.get("env", {}))
         refuse_env(self.env, f"{TABLE}.env")
+
+    def _listed(self, key: str, model: str) -> None:
+        """Refuses a model whose provider is neither ollama nor a [clients.opencode.providers] one."""
+        provider, _, name = model.partition("/")
+        if not name or (provider != OLLAMA and provider not in self.providers):
+            raise ConfigError(
+                f"{TABLE}.{key} {model!r}: not ollama/<model> or <provider>/<model> of a"
+                f" {TABLE[:-1]}.providers.<provider>] table"
+            )
 
     def _mapped(self, table: Mapping[str, str], key: str | None, missing: str) -> str | None:
         if key is None:
@@ -228,9 +274,15 @@ class OpenCodeCommon:
             raise ConfigError(f"{missing} in {TABLE}")
         return found
 
-    def model(self, tier: int | None) -> str | None:
-        tier_key = None if tier is None else str(tier)
-        return self._mapped(self.tiers, tier_key, f"no model for tier {tier}")
+    def model(self, tier: int | None) -> str:
+        """The tier's model, else `model`: never OpenCode's pick."""
+        if tier is None:
+            if self.default is None:
+                raise ConfigError(f"no model for a run without a tier: set {TABLE} model")
+            return self.default
+        if (found := self.tiers.get(str(tier))) is None:
+            raise ConfigError(f"no model for tier {tier} in {TABLE}")
+        return found
 
     def variant(self, effort: Effort | None) -> str | None:
         return self._mapped(self.efforts, effort, f"no variant for effort {str(effort)!r}")
@@ -303,15 +355,11 @@ class OpenCodeCommon:
         return exe
 
     def inline(self, spec: Spec, host_address: str, plugin: str | None = None) -> dict:
-        """The launch's OpenCode config: ollama on `host_address`, no auto-update, shell calls asking
-        but pre-approved commands, Access dirs and reads outside the cwd, edit_rules.
+        """The launch's OpenCode config: only ollama on `host_address` and the configured providers
+        enabled, no auto-update, shell calls asking but pre-approved commands, Access dirs and reads
+        outside the cwd, edit_rules. A provider's API key stays in OpenCode's own auth.json.
         """
         access = spec.access
-        models = {
-            model.removeprefix("ollama/"): {"name": model.removeprefix("ollama/")}
-            for model in self.tiers.values()
-            if model.startswith("ollama/")
-        }
         commands = dict.fromkeys(access.commands, "allow")
         permission: dict = {
             "bash": {"*": "ask", **commands} if commands else "ask",
@@ -323,21 +371,35 @@ class OpenCodeCommon:
                 pattern: "allow" for d in outside for pattern in (d, f"{d}/*")
             }
         permission["edit"] = edit_rules(os.path.realpath(access.cwd), dirs, reads)
+        providers = {
+            OLLAMA: self._provider("Ollama", f"http://{host_address}:{self.port}/v1", OLLAMA, ()),
+            **{
+                name: self._provider(name, table["base_url"], name, table["models"])
+                for name, table in sorted(self.providers.items())
+            },
+        }
         return {
             "$schema": "https://opencode.ai/config.json",
             **({"plugin": [plugin]} if plugin is not None else {}),
             "autoupdate": False,
             # A refused call ends OpenCode's turn otherwise (session/processor.ts).
             "experimental": {"continue_loop_on_deny": True},
-            "provider": {
-                "ollama": {
-                    "npm": "@ai-sdk/openai-compatible",
-                    "name": "Ollama",
-                    "options": {"baseURL": f"http://{host_address}:{self.port}/v1"},
-                    "models": models,
-                }
-            },
+            # Built-in providers (OpenCode Zen's included) off.
+            "enabled_providers": list(providers),
+            "provider": providers,
             "permission": permission,
+        }
+
+    def _provider(self, title: str, url: str, name: str, listed) -> dict:
+        """An OpenAI-compatible provider: its listed models, then those tiers or model name."""
+        prefix = f"{name}/"
+        named = (*self.tiers.values(), *((self.default,) if self.default else ()))
+        mapped = (m.removeprefix(prefix) for m in named if m.startswith(prefix))
+        return {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": title,
+            "options": {"baseURL": url},
+            "models": {model: {"name": model} for model in dict.fromkeys((*listed, *mapped))},
         }
 
     def environment(
