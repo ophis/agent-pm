@@ -62,6 +62,17 @@ class Swap(Case):
                 receipt = issue_label.swap(gql, "TASK-2", old, "chore")
                 self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
 
+    def test_a_rerun_after_old_was_retired_is_unchanged(self):
+        retired = {**BUG, "retiredAt": "2026-01-01T00:00:00.000Z"}
+        catalog = (*[n for n in CATALOG if n is not BUG], retired)
+        for old in ("bug", BUG["id"]):
+            gql = gql_of(CHORE, KEEP, catalog=catalog)
+            with self.subTest(old=old):
+                receipt = issue_label.swap(gql, "TASK-2", old, "chore")
+                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+        with self.assertRaises(LabelRefused):
+            issue_label.swap(gql_of(KEEP, catalog=catalog), "TASK-2", "bug", "chore")
+
     def test_the_same_label_carried_is_unchanged(self):
         gql = gql_of(BUG)
         self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", BUG["id"])["result"], "unchanged")

@@ -75,7 +75,9 @@ def _all(gql, ident, node):
 
 
 def _old(gql, team_id, carried, value):
-    """The carried label whose id or exact name is value, else the label value names in scope."""
+    """The carried label whose id or exact name is value, else the label value names in scope,
+    retired ones included: a label retired after the swap left the issue.
+    """
     found = [n for n in carried if value in (n["id"], n["name"])]
     if len(found) == 1:
         return found[0]
@@ -85,4 +87,4 @@ def _old(gql, team_id, carried, value):
             f"--from {value!r}: the issue carries {len(found)} labels of that name, name one by id: "
             f"{listed}"
         )
-    return issue_refs.label(gql, team_id, value, option="--from")
+    return issue_refs.label(gql, team_id, value, option="--from", retired=True)
