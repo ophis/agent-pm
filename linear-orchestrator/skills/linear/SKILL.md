@@ -57,7 +57,7 @@ agent-pm-linear issue read TASK-1 --full --output TASK-1.json
 
 ## Writing
 
-Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim: quotes, backticks, `$` and newlines need no escaping.
+Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim but a leading byte order mark: quotes, backticks, `$` and newlines need no escaping.
 
 ```bash
 agent-pm-linear issue comment TASK-1 --body-file note.md
