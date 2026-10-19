@@ -3,7 +3,7 @@
 from agent_pm.linear_orchestrator.engine import issue_page, issue_refs
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.issue_fixtures import Routes, edges, team
+from orchestrator_tests.unit.issue_fixtures import Routes, edges, team_ref
 
 
 def keep_even(node):
@@ -12,19 +12,19 @@ def keep_even(node):
 
 class Fetch(Case):
     def test_rows_carry_item_cuts_and_cursor_and_the_page_info(self):
-        gql = Routes(teams=edges([team(1, "A"), team(2, "B")], more=True, cursor="end"))
+        gql = Routes(teams=edges([team_ref(1, "A"), team_ref(2, "B")], more=True, cursor="end"))
         rows, more, end = issue_page.fetch(gql, issue_refs.teams(None), 2, "after-me")
         self.assertEqual(
-            [r[2] for r in rows], [f"cur-{team(1, 'A')['id']}", f"cur-{team(2, 'B')['id']}"]
+            [r[2] for r in rows], [f"cur-{team_ref(1, 'A')['id']}", f"cur-{team_ref(2, 'B')['id']}"]
         )
         self.assertEqual((more, end), (True, "end"))
         self.assertEqual(gql.sent("teams"), [{"first": 2, "after": "after-me", "f": None}])
 
     def test_a_node_shape_skips_is_left_out(self):
-        gql = Routes(teams=edges([team(1, "A"), team(2, "B")]))
+        gql = Routes(teams=edges([team_ref(1, "A"), team_ref(2, "B")]))
         source = issue_refs.teams(None, keep_even)
         rows, _, _ = issue_page.fetch(gql, source, 20)
-        self.assertEqual([r[0]["id"] for r in rows], [team(2, "B")["id"]])
+        self.assertEqual([r[0]["id"] for r in rows], [team_ref(2, "B")["id"]])
 
     def test_a_missing_connection_is_a_linear_failure(self):
         for answer in (None, {"edges": None, "pageInfo": {}}, {"nodes": []}):
@@ -36,9 +36,9 @@ class Walk(Case):
     def test_follows_end_cursors_to_the_last_page(self):
         gql = Routes(
             teams=[
-                edges([team(1, "A")], more=True, cursor="c1"),
-                edges([team(2, "B")], more=True, cursor="c2"),
-                edges([team(3, "C")]),
+                edges([team_ref(1, "A")], more=True, cursor="c1"),
+                edges([team_ref(2, "B")], more=True, cursor="c2"),
+                edges([team_ref(3, "C")]),
             ]
         )
         rows = issue_page.walk(gql, issue_refs.teams(None))

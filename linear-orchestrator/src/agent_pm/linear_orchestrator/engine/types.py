@@ -125,6 +125,10 @@ class GraphQLErrors(LinearError):
         self.errors = errors
 
 
+class WriteUnknown(LinearError):
+    """A write Linear never answered: it may or may not have landed."""
+
+
 class Unavailable(Exception):
     # its text never holds the request, headers or key
     def __init__(self, op, *, status=None, reason=None):

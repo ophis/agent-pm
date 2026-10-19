@@ -40,10 +40,10 @@ Q_PROJECT = (
 )
 
 
-def entity(gql, query, field, **variables):
-    """data[field] of query, or None when Linear finds no such entity."""
+def found(gql, query, **variables):
+    """query's data, or None when Linear finds no such entity."""
     try:
-        return gql(query, **variables)[field]
+        return gql(query, **variables)
     except LinearError as error:
         if isinstance(error, GraphQLErrors):
             missing = any(m.startswith(NOT_FOUND) for m in messages(error.errors))
@@ -52,6 +52,12 @@ def entity(gql, query, field, **variables):
         if not missing:
             raise
         return None
+
+
+def entity(gql, query, field, **variables):
+    """data[field] of query, or None when Linear finds no such entity."""
+    data = found(gql, query, **variables)
+    return None if data is None else data[field]
 
 
 def _node(node):

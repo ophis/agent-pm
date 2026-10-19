@@ -15,7 +15,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     milestone,
     project,
     state,
-    team,
+    team_ref,
     uid,
     user,
 )
@@ -29,7 +29,7 @@ class Resources(IssueCase):
         return json.loads(out)
 
     def test_teams_match_name_or_key_and_keep_same_named_ones_apart(self):
-        gql = Routes(teams=edges([team(1, "ENG", "Core"), team(2, "OPS", "Core")]))
+        gql = Routes(teams=edges([team_ref(1, "ENG", "Core"), team_ref(2, "OPS", "Core")]))
         page = self.lookup(["teams", "--query", "core"], gql)
         self.assertEqual(
             page["items"],
@@ -51,7 +51,7 @@ class Resources(IssueCase):
         self.assertEqual(gql.sent("workflowStates")[0]["f"], {"team": {"id": {"eq": TEAM}}})
 
     def test_states_of_a_team_given_by_key(self):
-        gql = Routes(teams=edges([team(9, "OPS")]), workflowStates=edges([]))
+        gql = Routes(teams=edges([team_ref(9, "OPS")]), workflowStates=edges([]))
         page = self.lookup(["states", "--team", "OPS", "--query", "do"], gql)
         self.assertEqual(
             page, {"items": [], "has_next_page": False, "next_cursor": None, "truncated": []}
@@ -125,7 +125,9 @@ class Resources(IssueCase):
         self.assertEqual(
             gql.sent("users")[0]["f"]["or"][1], {"email": {"containsIgnoreCase": "ann@"}}
         )
-        members = Routes(teams=edges([team(9, "OPS")]), team={"members": edges([user(2, "Bo")])})
+        members = Routes(
+            teams=edges([team_ref(9, "OPS")]), team={"members": edges([user(2, "Bo")])}
+        )
         self.lookup(["users", "--team", "OPS"], members)
         self.assertIn("members(", members.calls[1][0])
         self.assertEqual(members.sent("team")[0]["t"], uid(9))
@@ -159,8 +161,8 @@ class Usage(IssueCase):
 
 class Pages(IssueCase):
     def test_default_limit_and_the_second_page_by_cursor(self):
-        first = edges([team(1, "A")], more=True, cursor="c1")
-        gql = Routes(teams=[first, edges([team(2, "B")])])
+        first = edges([team_ref(1, "A")], more=True, cursor="c1")
+        gql = Routes(teams=[first, edges([team_ref(2, "B")])])
         code, out, _ = self.run_main(["lookup", "teams"], gql)
         page = json.loads(out)
         self.assertEqual((code, page["has_next_page"], page["next_cursor"]), (0, True, "c1"))

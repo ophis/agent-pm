@@ -99,6 +99,8 @@ bin/agent-pm-linear issue read <ID>             # the issue's fields, newest com
 bin/agent-pm-linear issue read <ID> --full --output <FILE>  # every page and body, written to FILE
 bin/agent-pm-linear issue list                  # the team's issues every filter (--query, --state, --label, --assignee me, …) holds, newest update first
 bin/agent-pm-linear issue lookup <RESOURCE>     # teams, states, labels, projects, milestones (--project) or users with ids, 20 a page (--limit, --cursor)
+bin/agent-pm-linear issue move <ID> --state <STATE>  # set its state by name or id within its own team; prints a receipt
+bin/agent-pm-linear issue comment <ID> --body-file <FILE|->  # post FILE's (or stdin's) UTF-8 body verbatim; prints a receipt
 tmux ls                                         # running agent runs
 ```
 

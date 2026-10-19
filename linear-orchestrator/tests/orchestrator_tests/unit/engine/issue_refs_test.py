@@ -14,7 +14,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     milestone,
     project,
     state,
-    team,
+    team_ref,
     uid,
     user,
 )
@@ -24,13 +24,13 @@ MISSING = GraphQLErrors([{"message": "Entity not found: Team"}])
 
 class Team(Case):
     def test_a_key_or_exact_name_matches_one_team(self):
-        gql = Routes(teams=edges([team(1, "TASK")]))
+        gql = Routes(teams=edges([team_ref(1, "TASK")]))
         self.assertEqual(issue_refs.team(gql, "task")["key"], "TASK")
         want = {"or": [{"name": {"eq": "task"}}, {"key": {"eqIgnoreCase": "task"}}]}
         self.assertEqual(gql.sent("teams")[0]["f"], want)
 
     def test_an_id_is_read_by_id(self):
-        gql = Routes(team=team(7, "ENG"))
+        gql = Routes(team=team_ref(7, "ENG"))
         self.assertEqual(issue_refs.team(gql, uid(7))["key"], "ENG")
         self.assertEqual(gql.sent("team"), [{"id": uid(7)}])
 
@@ -49,8 +49,8 @@ class Team(Case):
         # the second match is on the next page: the first is never taken alone
         gql = Routes(
             teams=[
-                edges([team(1, "ENG", "Core")], more=True, cursor="c1"),
-                edges([team(2, "CORE", "Platform")]),
+                edges([team_ref(1, "ENG", "Core")], more=True, cursor="c1"),
+                edges([team_ref(2, "CORE", "Platform")]),
             ]
         )
         with self.assertRaises(IssueError) as cm:
@@ -60,7 +60,7 @@ class Team(Case):
             self.assertIn(found, text)
 
     def test_no_match_lists_near_candidates_and_the_lookup(self):
-        gql = Routes(teams=[edges([]), edges([team(3, "COR", "Corvid")], more=True)])
+        gql = Routes(teams=[edges([]), edges([team_ref(3, "COR", "Corvid")], more=True)])
         with self.assertRaises(IssueError) as cm:
             issue_refs.team(gql, "Cor eng")
         text = str(cm.exception)

@@ -15,7 +15,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     label,
     project,
     state,
-    team,
+    team_ref,
     uid,
     user,
 )
@@ -53,7 +53,7 @@ class Filters(IssueCase):
 
     def test_another_team_by_key(self):
         nodes = [issue_row("TASK-1"), issue_row("OPS-1", OTHER_TEAM)]
-        gql = Routes(teams=edges([{**team(0, "OPS"), "id": OTHER_TEAM}]), issues=of_team(nodes))
+        gql = Routes(teams=edges([{**team_ref(0, "OPS"), "id": OTHER_TEAM}]), issues=of_team(nodes))
         page = self.run_list(["--team", "ops"], gql)
         self.assertEqual([i["identifier"] for i in page["items"]], ["OPS-1"])
 
