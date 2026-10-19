@@ -703,9 +703,11 @@ def refuse(flags) -> None:
 
 def refuse_mode(flags, owner: str = "a permission mode's flags") -> None:
     """Flags read at each launch, a permission mode's or the config's, grant no directory, hooks,
-    session or cwd: a resume's grants stay those recorded at its start.
+    session or cwd, and pass no literal argument: a resume's grants stay those recorded at its start.
     """
     refuse(flags)
+    if "--" in flags:
+        raise ConfigError(f"--: {owner} pass no literal argument")
     if any(flag.word == "--add-dir" for flag in scan(flags, VALUED)):
         raise ConfigError(f"--add-dir: {owner} grant no directory")
 

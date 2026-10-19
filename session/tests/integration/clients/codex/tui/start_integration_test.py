@@ -64,6 +64,7 @@ class ModuleRunTest(Case):
             "sid": "module",
             "store": "/uncreated-agent-pm-state/recovery/codex",
             "permission": [],
+            "flags": [],
         }
 
     def run_module(self, command, cwd=None):

@@ -472,6 +472,12 @@ class ConfiguredFlags(Base):
         ):
             CodexClient({**self.client.config, "flags": ["--add-dir", str(self.extra)]})
 
+    def test_the_configs_flags_pass_no_literal_argument(self):
+        with self.assertRaisesRegex(
+            ConfigError, r"^--: \[clients\.codex\] flags pass no literal argument"
+        ):
+            CodexClient({**self.client.config, "flags": ["-c", "x=1", "--", "extra"]})
+
     def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
         spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
         argv = committed_headless(packaged(), spec).argv

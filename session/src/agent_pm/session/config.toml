@@ -57,7 +57,7 @@ xhigh = "xhigh"
 max = "max"
 
 # [clients.codex]   Codex (session/src/agent_pm/session/clients/codex/)
-#   flags            codex flags added before a Spec's to every launch, a resume's too; no --add-dir; empty → none.
+#   flags            codex flags added before a Spec's to every launch, a resume's too; no --add-dir or --; empty → none.
 #                    Default: as [clients.claude] flags', plus Codex 0.163.0's bundled browser and computer-use
 #                    plugins, Apps and tool_suggest off (docs/sessions.md › Session settings); a plugin id stays
 #                    unquoted, or the key never matches
