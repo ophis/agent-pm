@@ -7,11 +7,12 @@ import os
 import time
 from unittest import mock
 
+from agent_pm.session.clients import replies as shared
 from agent_pm.session.clients.codex import tui
 from agent_pm.session.clients.codex.common import SessionStore
 from agent_pm.session.clients.codex.tui import replies
 from agent_pm.session.engine.types import HookCall
-from agent_pm.utils import read_reply
+from agent_pm.utils import STALE_AGE, file_lock, read_reply
 
 from session.tests.unit.clients.codex.support import NATIVE, Base
 
@@ -50,7 +51,7 @@ class RepliesBase(Base):
         self.path = self.rollout()
         self.events = str(self.root / "events")
         open(self.events, "w", encoding="utf-8").close()
-        self.spawned = self.enterContext(mock.patch.object(replies.subprocess, "Popen"))
+        self.spawned = self.enterContext(mock.patch.object(shared.subprocess, "Popen"))
         self.stderr = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.sid = str(self.spec.sid)
         self.state_file = replies.state_path(SessionStore().root, str(self.work), self.sid)
@@ -210,7 +211,7 @@ class SteerTest(RepliesBase):
             self.events,
             {"store": SessionStore().root, "name": NAME},
         )
-        with replies.file_lock(self.state_file, wait=False):
+        with file_lock(self.state_file, wait=False):
             began = time.monotonic()
             replies.on_hook(call, began=began - replies.DEADLINES["Interrupt"])
             self.assertLess(time.monotonic() - began, 0.5)
@@ -306,7 +307,7 @@ class SteerTest(RepliesBase):
         with (
             mock.patch.object(replies.time, "monotonic", clock),
             mock.patch.object(replies.time, "sleep", clock.sleep),
-            replies.file_lock(self.state_file, wait=False),
+            file_lock(self.state_file, wait=False),
         ):
             got = self.hook("Interrupt", turn_id="t1")
         self.assertEqual(got["hook_event_name"], "Interrupt")
@@ -343,7 +344,7 @@ class SteerTest(RepliesBase):
         for name in (old, old + ".lock", old + ".watch.lock"):
             with open(name, "w", encoding="utf-8") as stream:
                 stream.write("{}")
-            then = time.time() - replies.STALE_AGE - 10
+            then = time.time() - STALE_AGE - 10
             os.utime(name, (then, then))
         self.open_turn()
         self.assertEqual(
@@ -405,19 +406,19 @@ class WatcherTest(RepliesBase):
         self.assertEqual(args[0][5], self.state_file)
         self.assertTrue(kwargs["start_new_session"])
         for stream in ("stdin", "stdout", "stderr"):
-            self.assertEqual(kwargs[stream], replies.subprocess.DEVNULL)
+            self.assertEqual(kwargs[stream], shared.subprocess.DEVNULL)
         self.assertEqual(replies.WATCH, "agent_pm.session.clients.codex.tui.watch")
 
     def test_no_spawn_while_a_watcher_holds_its_lock(self):
         self.open_turn()
-        with replies.file_lock(self.state_file + ".watch", wait=False):
+        with file_lock(self.state_file + ".watch", wait=False):
             self.steer("status?")
         self.spawned.assert_not_called()
 
     def test_second_watcher_exits(self):
         self.open_turn()
         self.steer("status?")
-        with replies.file_lock(self.state_file + ".watch", wait=False):
+        with file_lock(self.state_file + ".watch", wait=False):
             clock = Clock()
             self.assertEqual(replies.watch(self.state_file, clock=clock, sleep=clock.sleep), 0)
             self.assertEqual(clock.now, 1000.0)
@@ -436,20 +437,18 @@ class WatcherTest(RepliesBase):
 
         self.assertEqual(replies.watch(self.state_file, clock=clock, sleep=sleep), 0)
         self.assertEqual(len(self.reply_ids()), 1)
-        self.assertLessEqual(
-            clock.now - 1000.0, 3 * replies.POLL + replies.IDLE_EXIT + replies.POLL
-        )
+        self.assertLessEqual(clock.now - 1000.0, 3 * shared.POLL + shared.IDLE_EXIT + shared.POLL)
 
     def test_watcher_idle_quiet_and_lifetime_exit(self):
         self.open_turn()
         clock = Clock()
         self.assertEqual(self.watch(clock), 0)
-        self.assertLessEqual(clock.now - 1000.0, replies.IDLE_EXIT + replies.POLL)
+        self.assertLessEqual(clock.now - 1000.0, shared.IDLE_EXIT + shared.POLL)
         self.steer("never answered")
         clock = Clock()
         self.assertEqual(self.watch(clock), 0)
-        self.assertGreaterEqual(clock.now - 1000.0, replies.QUIET)
-        self.assertLess(clock.now - 1000.0, replies.QUIET + 2 * replies.POLL)
+        self.assertGreaterEqual(clock.now - 1000.0, shared.QUIET)
+        self.assertLess(clock.now - 1000.0, shared.QUIET + 2 * shared.POLL)
 
         def growing(_):
             self.append({"type": "event_msg", "payload": {}})
