@@ -114,6 +114,14 @@ class ConfigTest(Case):
             ):
                 common(providers={"strata": good}, tiers={"1": model})
 
+    def test_without_model_a_run_without_a_tier_is_refused(self):
+        table = packaged_table()
+        del table["model"]
+        found = OpenCodeClient(table).common
+        self.assertEqual(found.model(1), "ollama/qwen3.6:35b-mlx")
+        with self.assertRaisesRegex(ConfigError, r"no model for a run without a tier"):
+            found.model(None)
+
     def test_a_missing_tier_or_effort_is_a_config_error(self):
         found = common(tiers={"1": "ollama/a"}, efforts={"low": "low"})
         self.assertEqual(found.model(None), "ollama/qwen3.6:35b-mlx")
@@ -138,10 +146,12 @@ class ConfigTest(Case):
             ["--dangerously-skip-permissions"],
             ["--dangerouslySkipPermissions"],
             ["--continue"],
+            ["-m", "ollama/b"],
+            ["--model=ollama/b"],
         ):
             with self.subTest(flags=flags), self.assertRaises(ConfigError):
                 common(flags=flags)
-        for mode in (["--session", SES], ["--format", "json"], ["--dir", "/tmp"]):
+        for mode in (["--session", SES], ["--format", "json"], ["--dir", "/tmp"], ["-m", "x"]):
             with self.subTest(mode=mode), self.assertRaises(ConfigError):
                 common(modes={"auto": mode})
         self.assertEqual(common(flags=["--agent", "build"]).flags, ("--agent", "build"))

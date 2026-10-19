@@ -66,7 +66,7 @@ OVERRIDES = (
 )
 UNSET = (*sorted(LOCAL_ENV_VARS), *IDENTITY, *OVERRIDES)
 SELECTORS = ("-s", "--session", "-c", "--continue", "--fork")
-RESERVED = (*SELECTORS, "--format", "--attach", "--dir")
+RESERVED = (*SELECTORS, "--format", "--attach", "--dir", "-m", "--model")
 PERMISSIONS = ("--auto", "--yolo", "--dangerously-skip-permissions")
 TUI_RESERVED = ("--prompt", "--pure")  # the client's prompt; --pure would skip its plugin
 VALUED = (
@@ -250,11 +250,9 @@ class OpenCodeCommon:
         self.port = config.get("ollama_port", OLLAMA_PORT)
         self.providers = {name: dict(t) for name, t in config.get("providers", {}).items()}
         self.tiers = dict(config.get("tiers", {}))
-        self.default = config.get("model", "")
-        for key, model in (
-            ("model", self.default),
-            *((f"tiers.{t}", m) for t, m in self.tiers.items()),
-        ):
+        self.default: str | None = config.get("model")
+        named = {f"tiers.{t}": m for t, m in self.tiers.items()}
+        for key, model in (*named.items(), *((("model", self.default),) if self.default else ())):
             self._listed(key, model)
         self.efforts = dict(config.get("efforts", {}))
         self.env = dict(config.get("env", {}))
@@ -279,6 +277,8 @@ class OpenCodeCommon:
     def model(self, tier: int | None) -> str:
         """The tier's model, else `model`: never OpenCode's pick."""
         if tier is None:
+            if self.default is None:
+                raise ConfigError(f"no model for a run without a tier: set {TABLE} model")
             return self.default
         if (found := self.tiers.get(str(tier))) is None:
             raise ConfigError(f"no model for tier {tier} in {TABLE}")
@@ -393,7 +393,7 @@ class OpenCodeCommon:
     def _provider(self, title: str, url: str, name: str, listed) -> dict:
         """An OpenAI-compatible provider: its listed models, then those tiers or model name."""
         prefix = f"{name}/"
-        named = (*self.tiers.values(), self.default)
+        named = (*self.tiers.values(), *((self.default,) if self.default else ()))
         mapped = (m.removeprefix(prefix) for m in named if m.startswith(prefix))
         return {
             "npm": "@ai-sdk/openai-compatible",

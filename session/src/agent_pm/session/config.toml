@@ -94,12 +94,13 @@ max = "max"
 #                    TUI asks and the session is blocked. OpenCode runs any cwd's .opencode plugins and opencode.json
 #                    (it has no project trust), so outside an isolated Host a launch, a resume's included, whose cwd is
 #                    not trusted (Access.project) is refused before it starts (docs/sessions.md › OpenCode sessions)
-#   flags            opencode flags added to every launch; never a session selector, --format, --attach, --dir or a
-#                    permission flag (modes'), nor for the TUI --prompt or --pure; empty → none
+#   flags            opencode flags added to every launch; never a session selector, --model, --format, --attach,
+#                    --dir or a permission flag (modes'), nor for the TUI --prompt or --pure; empty → none
 #   executable       the OpenCode 1.x command both modes run (a name PATH finds, or an absolute path); empty → the
 #                    client's own name on PATH; a launch whose `<executable> --version` is not 1.x is refused
 #   ollama_port      the host's Ollama port
-#   model            the --model of a run without a tier (ollama/<model> or <name>/<model>, as tiers'); never empty
+#   model            the --model of a run without a tier (ollama/<model> or <name>/<model>, as tiers'); never empty,
+#                    and without it such a run is refused
 #   env              variables added to every launch; never one that overrides the launch's OpenCode config
 #                    (OPENCODE_PERMISSION, OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_CONTENT); empty → none
 # [clients.opencode.modes]    auto: none (bash asks); yolo: --auto, every permission granted

@@ -127,6 +127,11 @@ class LaunchTest(Base):
         ollama = self.inline(self.launch(self.spec(), client=client))["provider"]["ollama"]
         self.assertEqual(ollama["models"], {"a": {"name": "a"}, "b": {"name": "b"}})
 
+    def test_a_runs_model_flag_is_refused(self):
+        for flags in (("-m", "ollama/b"), ("--model", "opencode/big-pickle")):
+            with self.subTest(flags=flags), self.assertRaisesRegex(ConfigError, "opencode client"):
+                self.launch(self.spec(flags=flags))
+
     def test_variant(self):
         command = self.command(self.launch(self.spec(effort=Effort.HIGH)))
         self.assertTrue(holds(command, ("--variant", "high")))
