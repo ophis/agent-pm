@@ -33,7 +33,7 @@ from agent_pm.linear_orchestrator.engine import (
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.selection import Choice
 from agent_pm.linear_orchestrator.engine.types import Context, LinearError, Spec, Unavailable
-from agent_pm.selector import Failure, SelectorError
+from agent_pm.selector import JEV_DEFAULT, Failure, JevSelector, SelectorError
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
@@ -5309,15 +5309,20 @@ class ResolverChain(OuterBase):
         )
         self.assert_no_leak()
 
-    def test_main_without_selector_falls_back(self):
-        self.write_config(OUTER + SELECTION_ON)
-        self.assertEqual(self.outer(client="claude"), 0)
-        self.assertEqual(self.detached(), self.expected(client="claude"))
-        self.assertEqual(
-            [(e["by"], e["reason"], e["selector"]) for e in self.choices()],
-            [("fallback", "select", "no-key")],
-        )
-        self.assert_no_leak()
+    def test_without_a_selector_the_chain_asks_jev(self):
+        """Its steps get a JevSelector with JEV_DEFAULT; the step is off, so nothing asks it."""
+        self.write_config(OUTER)
+        given = []
+
+        def steps(cfg, selector):
+            given.append(selector)
+            return chain.steps(cfg, selector)
+
+        self.assertEqual(self.outer(steps=steps), 0)
+        self.assertEqual(self.detached(), self.expected())
+        (selector,) = given
+        self.assertIsInstance(selector, JevSelector)
+        self.assertEqual(selector.config, JEV_DEFAULT)
 
     def test_new_run_launches_with_the_final_context(self):
         self.write_config(OUTER + SELECTION_ON)

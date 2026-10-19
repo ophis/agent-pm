@@ -16,7 +16,7 @@ from agent_pm.linear_orchestrator.engine.selection import (
     translate,
 )
 from agent_pm.linear_orchestrator.engine.types import Config, Context, SelectionStep
-from agent_pm.selector import Failure, Selector, SelectorError
+from agent_pm.selector import Selector
 
 
 @dataclass(frozen=True)
@@ -24,13 +24,6 @@ class Step:
     name: str  # its [selection] key and log name
     resolver: Resolver
     on: bool
-
-
-class NoSelector(Selector):
-    """The Selector until a decision API is wired (Jev, Kev): every select fails with no-key."""
-
-    def select(self, state, choices):
-        raise SelectorError(Failure.NO_KEY)
 
 
 def steps(cfg: Config, selector: Selector) -> tuple[Step, ...]:

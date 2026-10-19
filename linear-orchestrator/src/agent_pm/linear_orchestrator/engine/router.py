@@ -128,6 +128,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
+from agent_pm.selector import JevSelector
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -748,15 +749,15 @@ def outer(
     steps=chain.steps,
 ):
     """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given; a
-    new run's launch choices come from the Resolver chain steps(cfg, selector), selector
-    NoSelector when none.
+    new run's launch choices come from the Resolver chain steps(cfg, selector), selector a
+    JevSelector (JEV_DEFAULT) when none.
 
     Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
     first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new
     run failing before then leaves a `failed` row, an attempt that Recover cannot read back.
     """
     rc = None
-    selector = selector or chain.NoSelector()
+    selector = selector or JevSelector()
     try:
         rc = _outer(
             a,

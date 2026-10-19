@@ -1,5 +1,5 @@
 """engine/chain.py: resolve over FakeResolvers and a fake translator Delegate (switches, fallbacks,
-order, records, reason-code-only logs), steps over a FakeSelector, NoSelector.
+order, records, reason-code-only logs), steps over a FakeSelector.
 """
 
 import os
@@ -16,7 +16,7 @@ from agent_pm.linear_orchestrator.engine.selection import (
     TierResolver,
 )
 from agent_pm.linear_orchestrator.engine.types import Context
-from agent_pm.selector import Failure, SelectorError
+from agent_pm.selector import Failure
 from orchestrator_tests.case import Case
 from orchestrator_tests.selection_fixtures import FakeResolver
 from orchestrator_tests.unit.clock import logs_at
@@ -255,11 +255,6 @@ class Resolving(Case):
         with self.assertRaises(ValueError) as caught:
             self.resolve((tier(), tier()))
         self.assertEqual(str(caught.exception), "choice record field tier recorded twice")
-
-    def test_no_selector_fails_with_no_key(self):
-        with self.assertRaises(SelectorError) as caught:
-            chain.NoSelector().select("a state", ("x / low", "y / low"))
-        self.assertEqual(caught.exception.reason, Failure.NO_KEY)
 
     def test_steps_are_the_tier_step_switched_by_config(self):
         selector = FakeSelector()

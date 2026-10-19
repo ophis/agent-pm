@@ -73,8 +73,8 @@ canceled = ""
 # launch choices from its issue; a resume keeps its start row's.
 #   translate  true → before a new run with a step on, the choice-translator role turns the issue into state text for
 #              the steps; false → every step uses its fallback
-#   tier       true → a decision API picks the run's tier and effort among its client's tiers and efforts; false, or
-#              when it fails → [task_tiers]'s tier and the role's effort. No decision API is wired yet: it falls back
+#   tier       true → Jev (its key: Keychain item typesafe-jev) picks the run's tier and effort among its client's
+#              tiers and efforts; false, or when it fails → [task_tiers]'s tier and the role's effort
 [selection]
 translate = false
 tier = false
