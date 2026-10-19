@@ -73,6 +73,14 @@ class InProcess(Base):
         self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
         self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
 
+    def test_a_reply_with_an_outcome_block_prints_only_the_block(self):
+        r = self.go(said(START, "Built X, then reviewed it.", block(DONE), "Done."))
+        self.assertEqual(r.outcome.status, "done")
+        self.assertIn(block(DONE), self.err)
+        self.assertIn("Progress (start): go", self.err)
+        for prose in ("Built X", "Done.", START):
+            self.assertNotIn(prose, self.err)
+
     def test_a_pull_request_run_passes_the_ready_gate_before_it_finishes(self):
         url, head = "https://github.com/o/n/pull/7", "a" * 40
         view = {"state": "OPEN", "isDraft": True, "headRefOid": head, "statusCheckRollup": []}

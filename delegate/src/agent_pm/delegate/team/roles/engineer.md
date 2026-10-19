@@ -56,7 +56,7 @@ After <your task's push points>, run exactly `git -C <worktree> push -u origin <
 
 ## Finish
 
-- **Done**, once the build converges, committing nothing more: [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, and each of this run's builds' deferred non-blocking review items verbatim, for the manager or the user to decide on (never fix them or start a build for them); `autopilot` the `status` and `head` of this run's last `autopilot-result`; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
+- **Done**, once the build converges, committing nothing more: [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, and each of this run's builds' deferred non-blocking review items verbatim, for the manager or the user to decide on (never fix them or start a build for them); `autopilot` the `status` and `head` of this run's last `autopilot-result`; `title` the input's `Title:`, else a short PR title; `summary` what changed, in one line. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
   1. `gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`.
      - `no checks reported` → rerun it once a minute later (a just-pushed commit may have none yet); again → no checks.
   2. All pass, or no checks → done.

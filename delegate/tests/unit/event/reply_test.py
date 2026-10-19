@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_pm.delegate.event.reply import marks, outcome_block
+from agent_pm.delegate.event.reply import marks, outcome_block, outcome_only
 
 from delegate.tests.case import Case
 
@@ -62,6 +62,32 @@ class Marks(Case):
             with self.subTest(text=text):
                 self.assertEqual(marks(text), [])
         self.assertEqual(marks("[agent-pm-progress:plan-ready_2] ok"), [("plan-ready_2", "ok")])
+
+
+class OutcomeOnly(Case):
+    def test_a_reply_with_outcome_blocks_is_its_last_block_alone(self):
+        body = '{"status": "done", "title": "T", "summary": "S"}'
+        for text in (
+            f"Built X.\n```agent-pm-outcome\n{body}\n```\nDone.",
+            f"```agent-pm-outcome\n{{}}\n```\n```agent-pm-outcome\n{body}\n```",
+            f"```agent-pm-outcome\n{body}\n```",
+        ):
+            with self.subTest(text=text):
+                only = outcome_only(text)
+                self.assertEqual(only, f"```agent-pm-outcome\n{body}\n```")
+                self.assertEqual(outcome_block(only), body)
+
+    def test_a_reply_without_an_outcome_block_is_unchanged(self):
+        for text in ("", "Working.", "```json\n{}\n```", "[agent-pm-progress:start] go"):
+            with self.subTest(text=text):
+                self.assertEqual(outcome_only(text), text)
+
+    def test_a_body_holding_backticks_gets_a_longer_fence(self):
+        body = '{"deliverable": "a"}\n````\n'
+        text = f"Prose.\n`````agent-pm-outcome\n{body}`````"
+        only = outcome_only(text)
+        self.assertTrue(only.startswith("`````agent-pm-outcome\n"), only)
+        self.assertEqual(outcome_block(only), outcome_block(text))
 
 
 class OutcomeBlock(Case):

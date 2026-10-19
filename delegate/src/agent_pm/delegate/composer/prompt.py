@@ -63,7 +63,7 @@ FILE = " A long deliverable goes in a file named by `deliverable_file` instead."
 RETURN = (
     "## Return\n\nYour replies carry your reports:\n\n"
     f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. `[{PROGRESS}:start] <what that line asks you to report>`.\n"
-    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), your last reply is one fenced code block whose info string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`.{FILE}\n'
+    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), your last reply is one fenced code block whose info string is `{OUTCOME}`, with no text before or after it, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`.{FILE}\n'
 )
 INLINE = (
     "## Destination\n\nPut the deliverable inline in the outcome's `deliverable`; publish, post or save it "

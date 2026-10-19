@@ -87,7 +87,8 @@ class Callbacks(Base):
             ([type(e) for e in self.events], r.outcome.status),
             ([Begun, Progress, Finished], "done"),
         )
-        self.assertEqual((self.kinds().count("progress"), self.err.count(START)), (1, 1))
+        self.assertEqual((self.kinds().count("progress"), self.err.count(START)), (1, 0))
+        self.assertEqual(self.err.count(f"{block(DONE)}\n"), 1)
 
     def test_a_differing_turn_end_is_a_reply(self):
         r = self.go(said(START), ended("[agent-pm-progress:round] two\n" + block(DONE)))
@@ -327,8 +328,8 @@ class Terminal(Base):
                 "",
                 "[agent-pm-progress:round] x\x1b[2J",
                 START,
-                block(DONE),
             ),
+            said(block(DONE)),
         )
         lines = self.err.splitlines()
         for want in (

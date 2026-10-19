@@ -18,6 +18,7 @@ from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome
 from agent_pm.utils import SHORT, OutcomeStatus, Runner, err_text, one_line, printable, sh
 
 REASON_MAX = 300
+GATE = "ready gate: "
 HOST_KEY = re.compile(r"""["']?([A-Za-z0-9.-]+)["']?:\s*""")
 
 
@@ -105,9 +106,9 @@ def _refuse(outcome: Outcome, reason: str, *, done: bool) -> Gated:
 
 
 def _failed(outcome: Outcome, reason: str) -> Gated:
-    reason = _line(reason)
-    line = f"ready gate: {reason}"
-    kept = outcome.summary[: summary_max() - len(line) - 1].rstrip()
+    reason = _line(reason)[: summary_max() - len(GATE)]
+    line = f"{GATE}{reason}"
+    kept = outcome.summary[: max(0, summary_max() - len(line) - 1)].rstrip()
     summary = f"{kept}\n{line}" if kept else line
     return Gated(
         replace(outcome, status=OutcomeStatus.FAILED, summary=summary), GateStatus.FAILED, reason

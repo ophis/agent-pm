@@ -126,6 +126,7 @@ class Manage(Case):
         proposals = rule("**Board proposals**")
         self.assertIn(proposals, board)
         for literal in (
+            "lines `<candidate id>: <action>: <reason>` in the deliverable's final `Board proposal` section",
             "once the user approves",
             "without asking again",
             "Before a cancel or split residue, re-read the old issue's state",

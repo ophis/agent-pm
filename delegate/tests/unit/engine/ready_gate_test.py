@@ -169,11 +169,11 @@ class Done(Base):
         self.assert_safe_calls()
 
     def test_the_gate_line_ends_a_summary_capped_at_the_schemas_length(self):
-        for summary in ("", "short", "x" * 4000, "y" * 3990 + "\n" + "z" * 9):
+        for summary in ("", "short", "x" * 300, "y" * 290 + "\n" + "z" * 9):
             with self.subTest(length=len(summary)):
                 gated = self.go(Gh(view([run_("unit", "FAILURE")])), out=outcome(summary=summary))
                 text = gated.outcome.summary
-                self.assertLessEqual(len(text), 4000)
+                self.assertLessEqual(len(text), 300)
                 self.assertTrue(
                     text.endswith("\nready gate: G3: check unit FAILURE") or not summary
                 )
@@ -186,8 +186,9 @@ class Done(Base):
         self.assertTrue(last.isprintable(), last)
         self.assertIn("G3: check x [2Jevil FAILURE", last)
         self.assertEqual(gated.reason, last.removeprefix("ready gate: "))
-        long = self.go(Gh(view([run_("n" * 1000, "FAILURE")]))).reason
-        self.assertLessEqual(len(long), 300)
+        long = self.go(Gh(view([run_("n" * 1000, "FAILURE")])), out=outcome(summary="x" * 300))
+        self.assertEqual(long.outcome.summary, f"ready gate: {long.reason}")
+        self.assertLessEqual(len(long.outcome.summary), 300)
 
 
 class Errors(Base):

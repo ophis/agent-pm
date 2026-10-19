@@ -490,9 +490,13 @@ class Policy(Base):
     replacing the core's.
     """
 
+    RULE = (
+        f"When you return your outcome, that reply is the `{OUTCOME}` fenced block alone: write no "
+        "summary or other text before or after it."
+    )
     SHIPPED = {
-        "claude": (("--strict-mcp-config",), {}),
-        "codex": ((), {}),
+        "claude": (("--strict-mcp-config", f"--append-system-prompt={RULE}"), {}),
+        "codex": (("-c", f"developer_instructions={json.dumps(RULE)}"), {}),
         "fake": ((), {}),
     }
 
@@ -518,6 +522,9 @@ class Policy(Base):
                 self.assertEqual(argv.count(value), 1)
                 self.assertEqual(argv[argv.index(value) - 1], flag)
         self.assertEqual(argv.count("-s"), 1)
+        rule = self.SHIPPED["codex"][0][1]
+        self.assertEqual(argv.count(rule), 1)
+        self.assertEqual(argv[argv.index(rule) - 1], "-c")
 
     def test_a_local_policy_replaces_the_shipped_one(self):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
