@@ -1,15 +1,18 @@
 import os
 import re
 import tomllib
+from dataclasses import replace
 from importlib.resources import files
 
 from agent_pm import session
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.base import TEAM, outline
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils import unfenced
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.prompts import (
+    RUN,
     composed,
     item,
     parameters,
@@ -31,6 +34,23 @@ from delegate.tests.unit.composer.shipped import (
     team_texts,
 )
 from delegate.tests.unit.composer.teams import INTRO
+
+PUBLISHING = (
+    {"type": "pull-request"},
+    {"type": "github", "repo": "o/docs", "branch": "main", "dir": "reports/"},
+)
+
+
+def destined(role, output, *, docker=False):
+    """The real core's prompt for `role` with `output`, rendered for Docker when `docker`."""
+    composition = Composer()
+    run = composition.resolve(role, overlays=[{"roles": {role: {"output": output}}}])
+    return composition.render(run, replace(RUN, docker=docker))
+
+
+def output_rules(prompt):
+    """The prompt's output.md part: from # Output up to its ## Destination."""
+    return prompt.split("\n# Output\n", 1)[1].split("\n## Destination\n", 1)[0]
 
 
 class Acceptance(Case):
@@ -121,11 +141,35 @@ class Acceptance(Case):
                 self.assertIn(
                     (
                         "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
-                        "of `deliverable`, when [Output › Destination](#destination) says so or the deliverable "
-                        "is long.\n"
+                        "of `deliverable`, when [Output › Destination](#destination) says so.\n"
                     ),
                     prompt,
                 )
+
+    def test_publishing_destinations_name_no_outcome_deliverable(self):
+        for role in roles():
+            for output in PUBLISHING:
+                for docker in (False, True):
+                    with self.subTest(role=role, output=output["type"], docker=docker):
+                        prompt = destined(role, output, docker=docker)
+                        self.assertNotIn("`deliverable`", prompt)
+                        self.assertNotIn("`deliverable_file`", prompt)
+
+    def test_a_publishing_prompts_output_rules_lack_only_the_two_deliverable_fields(self):
+        fields = (
+            "- `deliverable`: the document, when [Output › Destination](#destination) says so.\n",
+            (
+                "- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
+                "of `deliverable`, when [Output › Destination](#destination) says so.\n"
+            ),
+        )
+        returning = output_rules(destined("researcher", {"type": "local"}))
+        for field in fields:
+            self.assertEqual(returning.count(field), 1)
+            returning = returning.replace(field, "")
+        for output in PUBLISHING:
+            with self.subTest(output=output["type"]):
+                self.assertEqual(output_rules(destined("researcher", output)), returning)
 
     def test_each_task_file_has_one_start_mark_and_a_resume_section(self):
         for name in os.listdir(TASKS):

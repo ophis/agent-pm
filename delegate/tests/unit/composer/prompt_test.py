@@ -448,9 +448,9 @@ class Prompt(Fake):
                 "text before or after it"
             ),
             "one JSON object of the fields in [Output](#output)",
-            "`deliverable_file`",
         ):
             self.assertIn(literal, RETURN)
+        self.assertNotIn("deliverable", RETURN)
         self.assertNotRegex(RETURN, re.compile("claude|codex", re.I))
         for word in ("report.py", "report progress"):
             self.assertNotIn(word, RETURN)
