@@ -9,6 +9,7 @@ from agent_pm.linear_orchestrator.engine import issue
 from orchestrator_tests.case import Case
 from orchestrator_tests.skills.linear import body, examples, front, rules
 
+
 def _commands(parser):
     """Every leaf command of parser, as its words after `issue`."""
     found = []
