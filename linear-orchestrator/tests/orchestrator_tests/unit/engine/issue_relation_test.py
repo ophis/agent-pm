@@ -19,6 +19,19 @@ SAME_EDGE = (("TASK-1", "blocks", "TASK-2"), ("TASK-2", "blocked_by", "TASK-1"))
 OTHERS = (["r-back", "blocks", "TASK-2", "TASK-1"], ["r-rel", "related", "TASK-1", "TASK-2"])
 
 
+class StuckRelations(RelationGql):
+    """Every relation page claims another after it, at cursor (None: no cursor)."""
+
+    def __init__(self, *given, cursor, **options):
+        super().__init__(*given, **options)
+        self.cursor = cursor
+
+    def _side(self, ident, direction, offset):
+        name, page = super()._side(ident, direction, 0)
+        page["pageInfo"] = {"hasNextPage": True, "endCursor": self.cursor}
+        return name, page
+
+
 class Add(Case):
     def test_either_end_creates_the_one_edge_and_prints_the_receipt(self):
         for ident, direction, other in SAME_EDGE:
@@ -66,6 +79,13 @@ class Add(Case):
             (issue_relation.Q_MORE["blocks"], {"i": "id-TASK-1", "c": str(issue_read.PAGE)}),
             gql.calls,
         )
+
+    def test_a_next_page_without_a_new_cursor_fails_and_writes_nothing(self):
+        for cursor in (None, "0"):
+            gql = StuckRelations(BOARD, OTHERS, cursor=cursor)
+            with self.subTest(cursor=cursor), self.assertRaisesRegex(LinearError, "endCursor"):
+                issue_relation.relation(gql, "add", "TASK-1", "blocks", "TASK-2")
+            self.assertEqual(gql.writes, [])
 
 
 class Remove(Case):

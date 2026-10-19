@@ -25,6 +25,19 @@ def gql_of(*carried, catalog=CATALOG, **options):
     return LabelGql(catalog, [n["id"] for n in carried], **options)
 
 
+class StuckLabels(LabelGql):
+    """Every label page claims another after it, at cursor (None: no cursor)."""
+
+    def __init__(self, *given, cursor, **options):
+        super().__init__(*given, **options)
+        self.cursor = cursor
+
+    def _labels(self, offset):
+        page = super()._labels(0)
+        page["pageInfo"] = {"hasNextPage": True, "endCursor": self.cursor}
+        return page
+
+
 class Swap(Case):
     def test_replaces_only_the_old_label_and_prints_the_receipt(self):
         gql = gql_of(KEEP, BUG)
@@ -80,6 +93,13 @@ class Swap(Case):
             (issue_label.Q_MORE, {"i": "id-TASK-2", "c": str(issue_read.PAGE)}), gql.calls
         )
         self.assertEqual(gql.writes[0][1]["r"], [BUG["id"]])
+
+    def test_a_next_page_without_a_new_cursor_fails_and_writes_nothing(self):
+        for cursor in (None, "0"):
+            gql = StuckLabels(CATALOG, [BUG["id"]], cursor=cursor)
+            with self.subTest(cursor=cursor), self.assertRaisesRegex(LinearError, "endCursor"):
+                issue_label.swap(gql, "TASK-2", "bug", "chore")
+            self.assertEqual(gql.writes, [])
 
     def test_the_old_label_is_looked_for_on_the_issue_first(self):
         # a workspace and a team label share the name; only the workspace one is carried
