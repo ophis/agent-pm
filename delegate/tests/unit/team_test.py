@@ -194,7 +194,8 @@ class Shipped(Case):
             "`doc=` the PRD's file",
             "`requirement=` the brief and the user's later words, verbatim, with the documents they name",
             "asking no more rigor or scope than the brief does",
-            "`capped` or `needs-author` → the PRD still ships; the outcome's `summary` lists the open blockers",
+            "`capped` or `needs-author` → the PRD still ships; its open blockers and `needs-author`'s "
+            "questions go under Open questions, and the outcome's `summary` gives the blockers' count.",
         ):
             self.assertIn(literal, step)
         self.assertNotIn("cap=", step)
@@ -529,6 +530,32 @@ class Real(RealConfig):
         ):
             self.assertIn(phrase, task_text("deep-research"))
 
+    def test_the_summary_is_short_and_details_go_in_the_deliverable(self):
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                prompt = composed(role, task)[0]
+                self.assertIn(
+                    "- `summary`: 1–2 short lines (≤ 300 characters); every detail goes in the "
+                    "deliverable.",
+                    prompt,
+                )
+        for path, text in team_texts().items():
+            for stale in ("3–5 lines", "to `summary`", "`summary` with", "`summary`'s final line"):
+                with self.subTest(path=path, stale=stale):
+                    self.assertNotIn(stale, text)
+        overlap = section(composed("researcher")[0], "Overlap")
+        self.assertIn(
+            "- **Board proposal**: a final `Board proposal` section of the deliverable, one line per "
+            "action: ",
+            overlap,
+        )
+        standards = section(composed("researcher")[0], "Standards")
+        self.assertIn(
+            "- `summary`: line 1 the answer and the type; line 2, only when there are any, the **status "
+            "items** (upgrade advice, SVG status, length check, in that order) joined by `; `.",
+            standards,
+        )
+
     def test_only_the_deep_research_task_names_ultracode(self):
         # Claude Code answers a bare ultracode with a Workflow reminder, so no prompt says it.
         for task in (None, *catalog()["researcher"]):
@@ -591,7 +618,7 @@ class Real(RealConfig):
             (
                 "echo's summary overrides Output's length",
                 task_text("echo"),
-                "`summary` the input's first line, not [Output](#output)'s 3–5 lines.",
+                "`summary` the input's first line, cut to 300 characters.",
             ),
             (
                 "a build's files are its spec and plan doc",
