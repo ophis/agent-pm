@@ -289,45 +289,45 @@ class TileTest(TileFixture):
             self.tile(FakeTmux(fail=("display-message",)), "@3")
 
 
-def _pty_host(rows=()):
-    pty = mock.create_autospec(Host, instance=True)
-    pty.name, pty.attachable = "pty", False
-    pty.attach_target.return_value = None
-    pty.rows.return_value = list(rows)
-    pty.list.return_value = [row.name for row in rows]
-    return pty
+def _plain_host(rows=()):
+    plain = mock.create_autospec(Host, instance=True)
+    plain.name, plain.attachable = "plain", False
+    plain.attach_target.return_value = None
+    plain.rows.return_value = list(rows)
+    plain.list.return_value = [row.name for row in rows]
+    return plain
 
 
 def _row(name, display):
     return SessionRow(name, None, None, StatusState.WORKING, display, None, None, own=False)
 
 
-class PtyTest(Base):
-    def test_pty_display_is_kept(self):
-        pty = _pty_host()
+class PlainHostTest(Base):
+    def test_a_plain_hosts_display_is_kept(self):
+        plain = _plain_host()
         for value in (None, "x", "mgr", "none", "a b;"):
             with self.subTest(value=value):
-                self.assertEqual(displays.display(self.viewer, value, pty), value)
+                self.assertEqual(displays.display(self.viewer, value, plain), value)
         with self.assertRaisesRegex(ConfigError, "^display 5: want text$"):
-            displays.display(self.viewer, 5, pty)
-        self.assertIsNone(displays.layout(self.viewer, pty, "/below"))
-        self.assertEqual(displays.display_help(pty), "")
+            displays.display(self.viewer, 5, plain)
+        self.assertIsNone(displays.layout(self.viewer, plain, "/below"))
+        self.assertEqual(displays.display_help(plain), "")
         self.assertEqual(self.runner.calls, [])
 
-    def test_a_pty_display_lists_only_its_equal_rows_as_they_are(self):
+    def test_a_plain_hosts_display_lists_only_its_equal_rows_as_they_are(self):
         rows = [_row("p1", "mgr"), _row("p2", "mgr/right"), _row("p3", None)]
-        pty = _pty_host(rows)
-        self.assertEqual(displays.rows(self.viewer, pty, "mgr"), rows[:1])
-        self.assertEqual(displays.rows(self.viewer, pty, None), rows)
-        self.assertEqual(displays.rows(self.viewer, pty, ""), [])
-        self.assertEqual(displays.names(self.viewer, pty, "mgr", descendants=True), ["p1"])
+        plain = _plain_host(rows)
+        self.assertEqual(displays.rows(self.viewer, plain, "mgr"), rows[:1])
+        self.assertEqual(displays.rows(self.viewer, plain, None), rows)
+        self.assertEqual(displays.rows(self.viewer, plain, ""), [])
+        self.assertEqual(displays.names(self.viewer, plain, "mgr", descendants=True), ["p1"])
         self.tmux.listing.assert_not_called()
 
 
 class HostFailureTest(Base):
     def test_a_filtered_listing_fails_when_its_host_does_though_its_rows_only_warn(self):
         for attachable in (False, True):
-            host = _pty_host()
+            host = _plain_host()
             host.attachable = attachable
             host.list.side_effect = SessionError("docker failed")
             for descendants in (False, True):
@@ -351,7 +351,7 @@ class OpenerTest(Base):
         )
 
     def test_a_view_sessions_live_opener_and_shown_fill_its_row(self):
-        docker = _pty_host([_row("d1", "other"), _row("d2", "x")])
+        docker = _plain_host([_row("d1", "other"), _row("d2", "x")])
         docker.attachable = True
         self.tmux.listing.side_effect = lambda *_match, views=False: (
             [listed("d1", opener="mgr", shown="m")] if views else []
@@ -397,7 +397,7 @@ class StatusTest(Base):
                 got = displays.status(self.viewer, self.host, process)
                 self.assertEqual(got, found if want is None else want)
         process.status.return_value = self.status()
-        self.assertIsNone(displays.status(self.viewer, _pty_host(), process).attach)
+        self.assertIsNone(displays.status(self.viewer, _plain_host(), process).attach)
 
     def test_a_session_error_is_the_unknown_status(self):
         process = mock.Mock()
@@ -426,9 +426,9 @@ class StartedTest(Base):
         displays.started(self.viewer, "t1", self.host, "mgr///hidden")
         self.assertFalse(hidden.read("t1", SID))
 
-    def test_a_shown_display_a_sidless_session_or_a_pty_writes_no_entry(self):
+    def test_a_shown_display_a_sidless_session_or_a_plain_host_writes_no_entry(self):
         displays.started(self.viewer, "t1", self.host, "mgr")
-        displays.started(self.viewer, "t1", _pty_host(), "none")
+        displays.started(self.viewer, "t1", _plain_host(), "none")
         self.sid = None
         displays.started(self.viewer, "t1", self.host, "mgr///hidden")
         self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "hidden")))

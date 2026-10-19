@@ -110,18 +110,6 @@ OPTION_TUPLES_ALLOWED = {
 COMMAND_SRC = (SESSION_SRC,)
 
 
-NO_COVER_ALLOWED = {
-    (
-        f"{SESSION_SRC}hosts/pty/supervisor.py",
-        "main",
-    ): "The pty supervisor process: opens the pty, binds the input socket, spawns the runner.",
-    (
-        f"{SESSION_SRC}hosts/pty/host.py",
-        "PtyTerminal._input",
-    ): "Connects to the live supervisor's input socket.",
-}
-
-
 PYTHON_CODE_ALLOWED = {
     (
         "session/tests/integration/engine/base_integration_test.py",

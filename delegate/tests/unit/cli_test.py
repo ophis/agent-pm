@@ -782,7 +782,7 @@ class Configures(Base):
         for text, want in (
             (
                 '[delegates]\nharness_host = "nope"\n',
-                "delegate: [delegates] harness_host: want one of docker, pty, tmux",
+                "delegate: [delegates] harness_host: want one of docker, tmux",
             ),
             (
                 "[delegates]\nkind = 1\n",

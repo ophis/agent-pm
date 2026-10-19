@@ -1,4 +1,4 @@
-"""ReclaimedGroup: a process group either host reclaims by its ProcessControl token."""
+"""ReclaimedGroup: a process group a Host reclaims by its ProcessControl token."""
 
 from __future__ import annotations
 

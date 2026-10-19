@@ -165,7 +165,7 @@ class ConfigureTest(Base):
             (found.clients, "other"),
             (found.clients["fake"], "scenario"),
             (found.clients["fake"]["log"], "b"),
-            (found.hosts, "pty"),
+            (found.hosts, "ghost"),
             (found.hosts["tmux"], "status_line"),
         ):
             with self.subTest(key=key), self.assertRaises(TypeError):
@@ -215,7 +215,7 @@ class ConfigureTest(Base):
                 {"hosts": {"tmux": {"implementation": "agent_pm.TmuxHost"}}},
                 "[hosts.tmux].implementation: want module.path:Class",
             ),
-            ({"default_host": "pty"}, "[hosts] default: want one of tmux"),
+            ({"default_host": "ghost"}, "[hosts] default: want one of tmux"),
             ({"default_host": None}, "[hosts] default: want one of tmux"),
         ):
             with self.subTest(kw=kw):

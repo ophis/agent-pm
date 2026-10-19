@@ -108,7 +108,7 @@ class RecordControl(HostedTuiBase):
             )
         code, out, err = self.invoke("start", "w2", "--client", "fake", "--host", "nowhere")
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("--host nowhere: want one of docker, other, pty, tmux", err)
+        self.assertIn("--host nowhere: want one of docker, other, tmux", err)
         code, out, err = self.invoke(
             "start", "w2", "--client", "fake", "--host", "other", "--display", "none"
         )
@@ -321,7 +321,7 @@ class HelpTest(Case):
             cli._parser(hosts)
             .format_help()
             .endswith(
-                f"  tmux: {displays.display_help(TmuxHost('tmux'))}\n  pty: as given\n"
+                f"  tmux: {displays.display_help(TmuxHost('tmux'))}\n"
                 f"  docker: {displays.display_help(TmuxHost('docker'))}\n"
             )
         )

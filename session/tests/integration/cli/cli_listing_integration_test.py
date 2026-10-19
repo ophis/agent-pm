@@ -111,9 +111,9 @@ class ListingTest(ListingCase):
         self.assertEqual(self.ls("--here", "--records", "--descendants"), lines(w1, w2))
         self.assertEqual(self.ls("--here", "--records", inside="w1"), lines(w2))
 
-    def test_here_still_lists_the_tmux_sessions_once_pty_is_the_default(self):
+    def test_here_still_lists_the_tmux_sessions_once_another_host_is_the_default(self):
         w1 = self.done("w1")
-        self.local_config('[session.hosts]\ndefault = "pty"\n')
+        self.fake_host(default="fake")
         self.assertEqual(self.ls("--here", "--records"), lines(w1))
         self.assertEqual(self.ls("--records"), lines(w1))
 

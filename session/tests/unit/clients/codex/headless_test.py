@@ -504,9 +504,7 @@ class ConfiguredFlags(Base):
         self,
     ):
         hosts = packaged_hosts()
-        self.assertEqual(
-            hosts, {"tmux": Permission.AUTO, "pty": Permission.AUTO, "docker": Permission.YOLO}
-        )
+        self.assertEqual(hosts, {"tmux": Permission.AUTO, "docker": Permission.YOLO})
         words = {Permission.AUTO: ("-s", *AUTO[1::2]), Permission.YOLO: (BYPASS,)}
         for name, permission in hosts.items():
             with self.subTest(host=name):
