@@ -13,6 +13,7 @@ from typing import Generic, TypeVar
 
 import agent_pm.utils as utils
 from agent_pm.delegate import Delegate, Spec
+from agent_pm.linear_orchestrator.engine.types import Context
 from agent_pm.selector import Failure, Selector, SelectorError
 from agent_pm.utils import OutcomeStatus
 
@@ -38,17 +39,6 @@ class SelectionError(Exception):
         super().__init__(reason.value)
         self.reason = reason
         self.selector_reason = selector_reason
-
-
-@dataclass(frozen=True)
-class Context:
-    """What the run launches with so far; tier or effort None: the role's configured one."""
-
-    role: str
-    task: str | None
-    client: str
-    tier: int | None = None
-    effort: str | None = None
 
 
 class Choice(ABC):
