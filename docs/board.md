@@ -95,24 +95,22 @@ bin/agent-pm-linear status <ID>                 # alive: its run; once that ends
 bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
 bin/agent-pm-linear close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
 bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
-bin/agent-pm-linear issue read <ID>             # the issue's fields, newest comments and relations as JSON; no run needed
-bin/agent-pm-linear issue read <ID> --full --output <FILE>  # every page and body, written to FILE
-bin/agent-pm-linear issue list                  # the team's issues every filter (--query, --state, --label, --assignee me, …) holds, newest update first
-bin/agent-pm-linear issue lookup <RESOURCE>     # teams, states, labels, projects, milestones (--project) or users with ids, 20 a page (--limit, --cursor)
-bin/agent-pm-linear issue create --title <TEXT> --body-file <FILE|->  # one issue with --label, --project, --milestone, --parent, --assignee, --state (default Backlog), --blocks and --blocked-by; a failed relation exits 1 printing only the commands that add it
-bin/agent-pm-linear issue move <ID> --state <STATE>  # set its state by name or id within its own team; prints a receipt
-bin/agent-pm-linear issue comment <ID> --body-file <FILE|->  # post FILE's (or stdin's) UTF-8 body verbatim; prints a receipt
-bin/agent-pm-linear issue archive <ID> [--dry-run]  # archive it only when it and every unarchived sub-issue are completed or canceled; --dry-run lists what goes with it
-bin/agent-pm-linear issue relation add|remove <ID> --blocks|--blocked-by <OTHER>  # add or remove the one blocking edge in that direction; A --blocks B is B --blocked-by A
-bin/agent-pm-linear issue label swap <ID> --from <OLD> --to <NEW>  # replace one label, keeping the rest; refused when it carries neither or NEW's group already has one
 tmux ls                                         # running agent runs
 ```
 
-Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-linear issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([linear-orchestrator/skills/linear/SKILL.md](../linear-orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
 
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
+
+### Linear MCP off
+
+The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace its tools. Turn it off in the project you run the commander from, and only there:
+
+1. Open Claude Code in that project's directory and run `/mcp`.
+2. Select the Linear entry and choose **Disable**. Claude Code records this for that project only ([Disable a server without removing it](https://code.claude.com/docs/en/mcp#disable-a-server-without-removing-it)); other servers and projects keep their settings. Never remove the server or edit its config by hand.
+3. Start a new session there and check: `/mcp` shows the Linear entry disabled, no Linear MCP tool is offered, and `bin/agent-pm-linear issue read <ID>` still prints the issue. Another project's `/mcp` still shows it enabled.
 
 ### Agent label
 
