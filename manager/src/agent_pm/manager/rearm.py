@@ -2,6 +2,7 @@
 `agent-pm-crew hold`, prints the event-monitor re-arm prompt as additionalContext for the
 startup, resume, compact and clear sources; anything else prints nothing. Always exits 0.
 Standalone: the standard library only, run by path.
+`--mode manual` replaces the monitoring tail with turn-based reads and a notifying-tool fallback.
 """
 
 import json
@@ -19,7 +20,7 @@ agent-pm: SessionStart `{source}` in manager `{name}`'s session (under \
 work. These steps are complete without /agent-pm:manage; they follow its Start step 3, Events \
 and Recover.
 
-1. Stop your own listener if one is still running (a Monitor or background task running \
+1. Stop your own listener if one is still running (an event listener or background task running \
 `agent-pm-crew next-event`).
 2. Run `agent-pm-crew attach`. Its last line `N=<N> GEN=<GEN>` is the handled cursor; the \
 backlog is every event line after N.
@@ -32,12 +33,26 @@ handled, ack at once; otherwise handle it, then ack. Ack: \
 `agent-pm-crew ack --through <line> --gen <GEN>`, GEN from your most recent `attach`. Leave an \
 unresolved event and everything after it pending.
 4. Run `agent-pm-crew attach` again.
+{monitoring}"""
+
+AUTOMATIC = """\
 5. Arm only with the `monitor:` command this second `attach` printed (its N and GEN). Never arm \
 from a line number you remember or from the last line printed.
    Monitor may be a deferred tool: if its schema is not loaded, load it first (ToolSearch \
 `select:Monitor`). Run the `monitor:` command with Monitor, `timeout_ms` 1800000. Never run \
 `--follow` with Bash `run_in_background`.
 6. When that Monitor ends or expires, repeat from step 1.
+"""
+
+MANUAL = """\
+5. Manual monitoring; no idle notifications. Read: agent-pm-crew pending --content. \
+Recovery: agent-pm-crew attach. Run `agent-pm-crew pending --content` at the beginning of every \
+active turn before status reports or new launches. Handle and ack as in step 3.
+6. Only if a background tool's runtime contract guarantees a notification to this conversation, \
+run the `next-event:` command this second `attach` printed (its N and GEN) as that tool's task, \
+without `--follow`. After handling each event, rerun that command. Never arm from a line number \
+you remember or from the last line printed. On reader exit, notification failure or expiration, \
+repeat from step 1; without a notifying tool, keep Manual monitoring.
 """
 
 
@@ -48,11 +63,13 @@ def manager(environ: Mapping[str, str]) -> str | None:
     return None if "AGENT_PM_AGENT_SESSION" in environ else name
 
 
-def prompt(name: str, source: str) -> str:
-    return PROMPT.format(name=name, source=source)
+def prompt(name: str, source: str, *, manual: bool = False) -> str:
+    return PROMPT.format(name=name, source=source, monitoring=MANUAL if manual else AUTOMATIC)
 
 
-def main() -> int:
+def main(argv: tuple[str, ...] = ()) -> int:
+    if argv not in ((), ("--mode", "manual")):
+        return 0
     name = manager(os.environ)
     if name is None:
         return 0
@@ -65,7 +82,10 @@ def main() -> int:
         source = event.get("source") if isinstance(event, dict) else None
         if not isinstance(source, str) or source not in SOURCES:
             return 0
-        context = {"hookEventName": "SessionStart", "additionalContext": prompt(name, source)}
+        context = {
+            "hookEventName": "SessionStart",
+            "additionalContext": prompt(name, source, manual=bool(argv)),
+        }
         data = (json.dumps({"hookSpecificOutput": context}) + "\n").encode()
         while data:
             data = data[os.write(1, data) :]
@@ -75,4 +95,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(tuple(sys.argv[1:])))

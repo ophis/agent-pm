@@ -16,7 +16,7 @@ MANAGER = {"AGENT_PM_MANAGER": "mgr", "AGENT_PM_HOLDER_ID": "holder-1"}
 SKILL = os.path.join(REPO, "manager", "skills", "manage", "SKILL.md")
 
 
-def _run(environ: dict[str, str], stdin: bytes, written=None) -> tuple[int, str, str]:
+def _run(environ: dict[str, str], stdin: bytes, written=None, argv=()) -> tuple[int, str, str]:
     """main() with fd 0 reading stdin, fd 1 into the returned text (or the given os.write fake)."""
     source, out, err = io.BytesIO(stdin), bytearray(), io.StringIO()
 
@@ -35,7 +35,7 @@ def _run(environ: dict[str, str], stdin: bytes, written=None) -> tuple[int, str,
         mock.patch("os.write", side_effect=written or write),
         mock.patch("sys.stderr", err),
     ):
-        code = rearm.main()
+        code = rearm.main(argv)
     return code, out.decode(), err.getvalue()
 
 
@@ -44,6 +44,33 @@ def _start(source: object) -> bytes:
 
 
 class MainTest(Case):
+    def test_manual_mode_context_and_invalid_arguments(self):
+        for source in ("startup", "resume", "compact", "clear"):
+            with self.subTest(source):
+                code, out, err = _run(MANAGER, _start(source), argv=("--mode", "manual"))
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(
+                    json.loads(out)["hookSpecificOutput"]["additionalContext"],
+                    rearm.prompt("mgr", source, manual=True),
+                )
+        for argv in (("--mode", "unknown"), ("--mode",), ("extra",)):
+            with self.subTest(argv):
+                self.assertEqual(_run(MANAGER, _start("startup"), argv=argv), (0, "", ""))
+
+    def test_manual_mode_keeps_session_and_source_guards(self):
+        for environ, source in (
+            ({}, "startup"),
+            ({"AGENT_PM_MANAGER": "mgr"}, "startup"),
+            ({**MANAGER, "AGENT_PM_MANAGER": "bad`name"}, "startup"),
+            ({**MANAGER, "AGENT_PM_AGENT_SESSION": ""}, "startup"),
+            (MANAGER, "fork"),
+            (MANAGER, "unknown"),
+        ):
+            with self.subTest(environ=environ, source=source):
+                self.assertEqual(
+                    _run(environ, _start(source), argv=("--mode", "manual")), (0, "", "")
+                )
+
     def test_non_manager_sessions_print_nothing(self):
         cases = {
             "no manager": {"AGENT_PM_HOLDER_ID": "holder-1"},
@@ -216,6 +243,23 @@ class PromptTest(Case):
 
 
 class HooksJsonTest(Case):
+    def test_manual_hook_is_packaged_separately(self):
+        with open(os.path.join(REPO, ".codex-plugin", "plugin.json"), encoding="utf-8") as f:
+            config = json.load(f)["hooks"]
+        self.assertEqual(config, "./manager/hooks/manual.json")
+        with open(os.path.join(REPO, config), encoding="utf-8") as f:
+            hooks = json.load(f)
+        self.assertNotIn("modules", hooks)
+        (entry,) = hooks["hooks"]["SessionStart"]
+        self.assertEqual(set(entry["matcher"].split("|")), rearm.SOURCES)
+        (command,) = entry["hooks"]
+        self.assertEqual(command["type"], "command")
+        self.assertEqual(
+            command["command"],
+            'python3 -I "${PLUGIN_ROOT}/manager/src/agent_pm/manager/rearm.py" --mode manual',
+        )
+        self.assertEqual(command["timeout"], 5)
+
     def test_session_start_entry(self):
         with open(os.path.join(REPO, "manager", "hooks", "hooks.json"), encoding="utf-8") as f:
             hooks = json.load(f)
@@ -229,3 +273,69 @@ class HooksJsonTest(Case):
         self.assertEqual(os.path.join(REPO, script[1]), os.path.abspath(rearm.__file__))
         with open(os.path.join(REPO, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["hooks"], "./manager/hooks/hooks.json")
+
+
+class ManualPromptTest(PromptTest):
+    def setUp(self):
+        self.text = rearm.prompt("mgr", "resume", manual=True)
+        self.steps = re.split(r"^(?=\d+\. )", self.text, flags=re.M)[1:]
+
+    # Common recovery rules are inherited; the mode-specific expectations replace these four.
+    def test_claude_monitor_rules(self):
+        self.assertIn("Manual monitoring; no idle notifications", self.text)
+        self.assertIn(
+            "beginning of every active turn before status reports or new launches", self.text
+        )
+        self.assertNotIn("Monitor", self.text)
+        self.assertNotIn("ToolSearch", self.text)
+        self.assertNotIn("timeout_ms", self.text)
+        self.assertIn("Only if", self.text)
+        self.assertIn("guarantees a notification to this conversation", self.text)
+        self.assertIn(
+            "`next-event:` command this second `attach` printed (its N and GEN)", self.text
+        )
+        self.assertIn("without `--follow`", self.text)
+        self.assertIn("After handling each event, rerun", self.text)
+
+    def test_steps_in_order(self):
+        order = (
+            "Stop your own listener",
+            "agent-pm-crew attach",
+            "agent-pm-crew pending --content",
+            "agent-pm-crew ack --through <line> --gen <GEN>",
+            "Run `agent-pm-crew attach` again",
+            "Manual monitoring",
+            "Only if",
+            "`next-event:` command",
+        )
+        positions = [self.text.index(phrase) for phrase in order]
+        self.assertEqual(positions, sorted(positions))
+        for phrase in (
+            "event line after N",
+            "ack at once",
+            "handle it, then ack",
+            "GEN from your most recent `attach`",
+            "Leave an unresolved event and everything after it pending",
+        ):
+            self.assertIn(phrase, self.text)
+
+    def test_matches_manage_skill(self):
+        with open(SKILL, encoding="utf-8") as f:
+            skill = f.read()
+        for phrase in (
+            "Manual monitoring; no idle notifications",
+            "agent-pm-crew pending --content",
+            "beginning of every active turn before status reports or new launches",
+            "`next-event:`",
+            "stale holder generation",
+            "holder no longer alive",
+            "hold --force",
+        ):
+            self.assertIn(phrase, self.text)
+            self.assertIn(phrase, skill)
+        for section in ("Start step 3", "Events", "Recover"):
+            self.assertIn(section, self.text)
+
+    def test_replay_2026_10_19(self):
+        self.assertLess(self.text.index("ack --through"), self.text.index("attach` again"))
+        self.assertLess(self.text.index("attach` again"), self.text.index("`next-event:` command"))
