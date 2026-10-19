@@ -5,7 +5,7 @@ cut to the default limits by compact, or with every page for --full.
 import re
 from typing import TypeGuard
 
-from agent_pm.linear_orchestrator.engine import issue_refs
+from agent_pm.linear_orchestrator.engine import issue_page, issue_refs
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, IssueError, LinearError
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
@@ -76,10 +76,10 @@ def view(gql, ident, *, full=False):
     node = lookup(gql, Q_FULL if full else Q_READ, ident)["issue"]
     nodes, more = {}, []
     for name in CONNECTIONS:
-        page = node[name]
+        page, seen = node[name], set()
         nodes[name] = list(page["nodes"])
         while full and page["pageInfo"]["hasNextPage"]:
-            after = page["pageInfo"]["endCursor"]
+            after = issue_page.advance(f"{ident} {name}", page["pageInfo"]["endCursor"], seen)
             page = _later(gql, ident, node["id"], name, after)
             nodes[name] += page["nodes"]
         if page["pageInfo"]["hasNextPage"]:

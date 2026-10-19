@@ -3,7 +3,7 @@ issue and every unarchived descendant are finished, read over every children pag
 first; a failed read raises before anything is written.
 """
 
-from agent_pm.linear_orchestrator.engine import issue_read, issue_write
+from agent_pm.linear_orchestrator.engine import issue_page, issue_read, issue_write
 from agent_pm.linear_orchestrator.engine.prune import M_ARCHIVE
 from agent_pm.linear_orchestrator.engine.types import ArchiveRefused, LinearError
 
@@ -79,10 +79,13 @@ def _plan(gql, ident):
 
 def _all_children(gql, ident, parent):
     first = parent["children"] if "children" in parent else _page(gql, parent, None)
-    page = _checked(ident, parent, first)
+    page, seen = _checked(ident, parent, first), set()
     nodes = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        page = _checked(ident, parent, _page(gql, parent, page["pageInfo"]["endCursor"]))
+        after = issue_page.advance(
+            f"{parent['identifier']} children", page["pageInfo"]["endCursor"], seen
+        )
+        page = _checked(ident, parent, _page(gql, parent, after))
         nodes += page["nodes"]
     return nodes
 

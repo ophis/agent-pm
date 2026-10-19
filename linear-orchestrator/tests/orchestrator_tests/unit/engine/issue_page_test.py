@@ -47,3 +47,13 @@ class Walk(Case):
         self.assertEqual(
             [(v["first"], v["after"]) for v in sent], [(250, None), (250, "c1"), (250, "c2")]
         )
+
+    def test_a_next_page_without_a_new_cursor_is_a_linear_failure(self):
+        # hasNextPage with no endCursor, or one already read, would loop forever
+        for pages in (
+            [edges([team_ref(1, "A")], more=True)],
+            [edges([team_ref(1, "A")], more=True, cursor="c1")] * 2,
+        ):
+            gql = Routes(teams=pages)
+            with self.subTest(pages=pages), self.assertRaisesRegex(LinearError, "endCursor"):
+                issue_page.walk(gql, issue_refs.teams(None))

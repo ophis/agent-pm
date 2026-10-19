@@ -244,3 +244,13 @@ class Full(Case):
                 self.assertRaisesRegex(LinearError, "TASK-2: children page missing"),
             ):
                 issue_read.view(Gql(node, pages), "TASK-2", full=True)
+
+    def test_a_next_page_without_a_new_cursor_is_a_linear_failure(self):
+        node, pages = self.node_and_pages()
+        for children, later in (
+            (conn([rel("TASK-10")], more=True), []),
+            (conn([rel("TASK-10")], more=True, cursor="k-1"), [conn([], more=True, cursor="k-1")]),
+        ):
+            node["children"], pages["children"] = children, later
+            with self.subTest(later=later), self.assertRaisesRegex(LinearError, "endCursor"):
+                issue_read.view(Gql(node, pages), "TASK-2", full=True)

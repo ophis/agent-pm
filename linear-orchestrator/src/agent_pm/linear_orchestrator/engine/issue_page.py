@@ -40,9 +40,20 @@ def fetch(gql, source, first, after=None):
 
 def walk(gql, source):
     """Every page's rows, as fetch gives them."""
-    rows, after = [], None
+    rows, after, seen = [], None, set()
     while True:
-        page, more, after = fetch(gql, source, PAGE, after)
+        page, more, end = fetch(gql, source, PAGE, after)
         rows += page
         if not more:
             return rows
+        after = advance(source[1], end, seen)
+
+
+def advance(where, end, seen):
+    """end, the cursor of the page after one claiming more, added to seen; LinearError when it is
+    empty or already read, which would read the same page forever.
+    """
+    if not end or end in seen:
+        raise LinearError(f"{where}: hasNextPage without a new endCursor ({end!r})")
+    seen.add(end)
+    return end

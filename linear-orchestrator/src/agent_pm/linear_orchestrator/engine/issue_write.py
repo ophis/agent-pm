@@ -3,7 +3,7 @@ body verbatim, write once and answer with a receipt; a write Linear never answer
 never retried.
 """
 
-from agent_pm.linear_orchestrator.engine import issue_read, ops
+from agent_pm.linear_orchestrator.engine import issue_page, issue_read, ops
 from agent_pm.linear_orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
 
 
@@ -64,10 +64,13 @@ def comment(gql, ident, body):
 
 
 def _states(gql, team):
-    page = team["states"]
+    page, seen = team["states"], set()
     states = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        page = gql(Q_STATES, t=team["id"], c=page["pageInfo"]["endCursor"])["team"]["states"]
+        after = issue_page.advance(
+            f"team {team['key']} states", page["pageInfo"]["endCursor"], seen
+        )
+        page = gql(Q_STATES, t=team["id"], c=after)["team"]["states"]
         states += page["nodes"]
     return states
 

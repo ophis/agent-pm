@@ -94,6 +94,17 @@ class Move(Case):
         self.assertIn((issue_write.Q_STATES, {"t": "t-TASK", "c": "p-1"}), gql.calls)
         self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": "s-done"})])
 
+    def test_a_next_states_page_without_a_new_cursor_fails_and_writes_nothing(self):
+        todo = (("s-todo", "Todo", "unstarted"),)
+        for first, pages in (
+            (team("TASK", todo, more=True), []),
+            (team("TASK", todo, more=True, cursor="p-1"), [conn([], more=True, cursor="p-1")]),
+        ):
+            gql = WriteGql(write_issue(team_node=first), pages=pages)
+            with self.subTest(pages=pages), self.assertRaisesRegex(LinearError, "endCursor"):
+                issue_write.move(gql, "TASK-2", "Done")
+            self.assertEqual(gql.writes, [])
+
     def test_no_such_issue_writes_nothing(self):
         gql = WriteGql(None)
         with self.assertRaises(IssueError) as cm:
