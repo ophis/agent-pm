@@ -37,8 +37,11 @@ CLIENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.py")
 
 
 class FakeClient(Client):
-    keys = frozenset({"scenario", "log", "tui"})
+    keys = frozenset({"scenario", "log", "tui", "accounts"})
     client_note = "FAKE NOTE"
+
+    def _accounts(self):
+        return frozenset(self.config["accounts"]) if "accounts" in self.config else None
 
     def headless(self):
         return FakeHeadless(self)
