@@ -11,7 +11,13 @@ from agent_pm.orchestrator.engine import promote
 from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from orchestrator_tests.unit import run_fixtures
-from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, team_node
+from orchestrator_tests.unit.board_ids import (
+    ACCOUNTS,
+    HEADER,
+    PACKAGED_FLOW,
+    team_node,
+    workflow_line,
+)
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.run_fixtures import logged, show
@@ -40,17 +46,20 @@ MANAGER = {"email": "manager@x.com", "name": "Manager"}
 
 OTHER = {"email": "other@x.com", "name": "Other"}
 
+# pm is the last stage: only the researcher's handoffs promote
+PM_LAST = workflow_line(PACKAGED_FLOW.replace('next = "engineer"\n', ""))
+
 CONFIG = (
     HEADER
+    + PM_LAST
     + 'linear.human_members = ["me@x.com"]\n'
-    + role_table("researcher", 'next = "pm"')
+    + role_table("researcher")
     + role_table("pm")
     + role_table("engineer")
 )
 
-PM_NEXT = CONFIG.replace(
-    role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false")
-)
+# the packaged workflow: pm hands off to engineer, needing no instructions
+PM_NEXT = CONFIG.replace(PM_LAST, "")
 
 
 def ago(minutes):

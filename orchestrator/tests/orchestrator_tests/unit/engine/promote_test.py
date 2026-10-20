@@ -8,7 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.orchestrator.engine import config, promote
-from agent_pm.orchestrator.engine.flow.types import Task
+from agent_pm.orchestrator.engine.flow import workflow
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import FINISHED, TEAM
@@ -194,7 +194,7 @@ class ConfigurationFailures(Base):
             ("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
             (
                 CONFIG + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
+                "orchestrator/config.toml: [roles.bogus] names no stage of the workflow",
             ),
         )
         for text, reason in cases:
@@ -211,7 +211,7 @@ class ConfigurationFailures(Base):
                             config_path=self.config_path,
                             pruner=FakePruner,
                         )
-                    self.assertEqual((rc, err.getvalue(), out.getvalue()), (1, printed, ""))
+                    self.assertEqual((rc, err.getvalue(), out.getvalue()), (2, printed, ""))
                 events = logged(self.logs)[before:]
                 self.assertEqual(
                     [(e["src"], show(e)) for e in events],
@@ -221,7 +221,7 @@ class ConfigurationFailures(Base):
 
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write_local('work_dir = "w"\n')
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(), 2)
         self.assertEqual(
             self.err,
             ("orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n"),
@@ -460,7 +460,7 @@ class HandoffPromotion(Base):
     def test_bad_state_id_stops_before_changes(self):
         self.ready()
         self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(), 2)
         self.assertIn("[linear.states] not workflow states of team 'Team': done", self.out)
         self.assertEqual(self.fake.mutations, [])
 
@@ -694,6 +694,16 @@ class ChildTitles(Case):
             with self.subTest(src_prefix=src_prefix, src=src):
                 self.assertEqual(promote.child_title(prefix, src_prefix, src), want)
 
+    def test_child_title_without_prefix(self):
+        # a next stage with no title_prefix keeps the bare title
+        for src_prefix, src, want in (
+            ("PRD", "PRD: Session Registry", "Session Registry"),
+            (None, "Session Registry", "Session Registry"),
+            ("PRD", "PRD:\nX", "X"),
+        ):
+            with self.subTest(src_prefix=src_prefix, src=src):
+                self.assertEqual(promote.child_title("", src_prefix, src), want)
+
 
 class PromotionScope(Base):
     def test_role_without_next_untouched(self):
@@ -704,8 +714,12 @@ class PromotionScope(Base):
 
     def test_config_only_extension(self):
         custom = {
-            "pm": Task("design", prefix="DES"),
-            "engineer": Task("build", prefix="BLD"),
+            "pm": workflow.stage(
+                {"role": "pm", "input": "design", "title_prefix": "DES", "next": "engineer"}
+            ),
+            "engineer": workflow.stage(
+                {"role": "engineer", "input": "build", "title_prefix": "BLD"}
+            ),
         }
         for tasks, title, want in (
             (config.TASKS, "PRD: Title DR-1", "ENG: Title DR-1"),

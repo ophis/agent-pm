@@ -20,8 +20,6 @@ class Role:
     key: str
     tasks: tuple[str, ...]
     max_runs: int
-    next: str | None
-    require_instructions: bool
     run: delegate.RunConfig
 
 

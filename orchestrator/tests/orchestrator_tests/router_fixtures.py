@@ -103,13 +103,7 @@ CLIENTS = {"researcher": "a", "pm": "b", "engineer": "a"}
 OVERLAY = '[core]\nclient = "a"\n\n[core.roles.pm]\nclient = "b"\n'
 
 
-CONFIG = (
-    HEADER
-    + role_table("researcher", 'next = "pm"')
-    + role_table("pm", 'next = "engineer"')
-    + role_table("engineer")
-    + OVERLAY
-)
+CONFIG = HEADER + role_table("researcher") + role_table("pm") + role_table("engineer") + OVERLAY
 
 
 LIGHT, DEEP, STRAY, ORPHAN_LABEL = (

@@ -75,7 +75,7 @@ def doc_path(url, docs) -> str | None:
 
 
 def _design_dirs(docs):
-    return tuple(d.rstrip("/") + "/" for r, d in docs.dirs.items() if TASKS[r].kind == "design")
+    return tuple(d.rstrip("/") + "/" for r, d in docs.dirs.items() if TASKS[r].input == "design")
 
 
 def _links(issue, docs):
@@ -136,7 +136,7 @@ def _listed(run, docs, ident, dir_):
 
 def gather(issue, role, docs, *, run=None) -> Sources:
     run = run or config.shell
-    kind = TASKS[role].kind
+    kind = TASKS[role].input
     links = _links(issue, docs)
     path = None
     if kind != "build":
@@ -346,5 +346,5 @@ def render(
     docs,
     related: Related | None = None,
 ) -> str:
-    layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
+    layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].input]
     return _join([layout(issue, sources, target, docs), _related(related or Related())])

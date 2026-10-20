@@ -99,8 +99,8 @@ from orchestrator_tests.unit.target_fixtures import ok
 
 CONFIG_ENG2 = (
     HEADER
-    + role_table("researcher", 'next = "pm"')
-    + role_table("pm", 'next = "engineer"')
+    + role_table("researcher")
+    + role_table("pm")
     + role_table("engineer", "max_runs = 2")
     + OVERLAY
 )
@@ -1083,12 +1083,12 @@ class RouterEntry(OuterBase):
         self.assertEqual(self.todo["state"], "In Progress")
         self.assertFalse(os.path.lexists(self.rd))
 
-    def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
+    def test_a_config_error_exits_2_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
             ("bogus = 1\n" + OUTER, "orchestrator/config.toml: unknown keys: bogus"),
             (
                 OUTER + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
+                "orchestrator/config.toml: [roles.bogus] names no stage of the workflow",
             ),
         ):
             self.write_config(text)
@@ -1096,21 +1096,21 @@ class RouterEntry(OuterBase):
             for argv in ([], ["--issue", ID]):
                 for tty, err in ((False, ""), (True, f"router.py: {reason}\n")):
                     with self.subTest(reason=reason, argv=argv, tty=tty):
-                        self.assertEqual(self.entry(*argv, tty=tty), 1)
+                        self.assertEqual(self.entry(*argv, tty=tty), 2)
                         self.assertEqual(self.err, err)
             self.assertEqual(
                 [show(e) for e in logged(self.logs)], [f"config-error reason={reason}"]
             )
         self.write_config('"bad\\nkey" = 1\n' + OUTER)
         self.logs = None
-        self.assertEqual(self.entry(), 1)
+        self.assertEqual(self.entry(), 2)
         self.assertEqual(
             self.said(),
             ["config-error reason=orchestrator/config.toml: unknown keys: bad key"],
         )
         self.logs = None
         self.write_local('work_dir = "w"\n')
-        self.assertEqual(self.entry(), 1)
+        self.assertEqual(self.entry(), 2)
         self.assertEqual(
             (self.err, self.said()),
             (
@@ -1688,7 +1688,7 @@ class RouterOutages(TickBase):
         for argv in ((), ("--issue", "TASK-1")):
             with self.subTest(argv=argv):
                 for again in (False, True):
-                    self.assertEqual(self.tick(failing(unauthorized), *argv, again=again), 1)
+                    self.assertEqual(self.tick(failing(unauthorized), *argv, again=again), 2)
                     said = [] if again else [logged]
                     self.assertEqual((self.said(), self.raw), (said, ""))
                     self.assertEqual((self.start.launches, self.state), ([], ""))
@@ -2080,8 +2080,8 @@ class ClientLimits(TickBase):
     def test_client_limit_counted_under_router_lock(self):
         self.write_config(
             HEADER
-            + role_table("researcher", 'next = "pm"', "max_runs = 2")
-            + role_table("pm", 'next = "engineer"')
+            + role_table("researcher", "max_runs = 2")
+            + role_table("pm")
             + role_table("engineer")
             + OVERLAY
             + A_LIMIT
@@ -2727,7 +2727,7 @@ class ScheduledTaskSelection(TickBase):
         self.assertEqual([v for q, v in fake.queries if q == ops.Q_TASK_GROUP], [{"i": TASK_GROUP}])
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.group = {"isGroup": False}
-        self.assertEqual(self.tick(fake), 1)
+        self.assertEqual(self.tick(fake), 2)
         self.assertIn(
             f"config-error reason=orchestrator/config.toml: linear.task_label_group {TASK_GROUP} is not a label group",
             self.said(),

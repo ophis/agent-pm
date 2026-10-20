@@ -111,8 +111,9 @@ Prerequisites and effects:
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
   Events go to orchestrator.jsonl (src prune); preview JSON lines go to stderr.
-  Exit 0: completed; 1: config/Linear failure (logged once a day), unknown
-  inventory or failed step after remaining steps; 2: bad arguments.
+  Exit 0: completed; 1: Linear unavailable (logged once a day), unknown
+  inventory or failed step after remaining steps; 2: configuration error
+  (logged once a day) or bad arguments.
   Promote also runs this cleanup after each tick.
 
 Example (configured Linear access and finished issues):
@@ -439,7 +440,7 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
         cfg = config.load(path=config_path)
     except ConfigError as error:
         config.report_error("prune", error, dry=dry)
-        return 1
+        return 2
     event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
