@@ -11,7 +11,7 @@ from agent_pm.linear_orchestrator.engine.ops import (
     task_group,
     team,
 )
-from agent_pm.linear_orchestrator.engine.types import State
+from agent_pm.linear_orchestrator.engine.types import LinearError, State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
@@ -20,7 +20,7 @@ from agent_pm.linear_orchestrator.flow.types import (
     Snapshot,
     SubIssue,
 )
-from agent_pm.utils import parse_time
+from agent_pm.utils import one_line, parse_time
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
@@ -116,9 +116,9 @@ class LinearTracker(Tracker):
         return self.roles[issue["assignee"]["id"]]
 
     def assigned(self, state):
-        return self.listed(state)
+        return self._listed(state)
 
-    def listed(self, state, fields=""):
+    def _listed(self, state, fields=""):
         """state's issues with a project, assigned to a role account; the first 100."""
         if state not in LISTED:
             raise ValueError(f"no list of {state} issues")
@@ -129,6 +129,21 @@ class LinearTracker(Tracker):
             "state": {"id": {"eq": self.team.states[LISTED[state]]}},
         }
         return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
+
+    def ready(self):
+        """Relations come with the list; when that read fails, a logged todo-error, the plain list
+        and one read per issue, an unreadable one blocked by UNREADABLE."""
+        try:
+            issues = self._listed(IssueState.READY, RELATIONS)
+        except LinearError as e:
+            self.say("todo-error", error=one_line(e))
+            issues = self._listed(IssueState.READY)
+            for i in issues:
+                try:
+                    i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
+                except LinearError:
+                    i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
+        return [(i, tuple(blockers(i))) for i in issues]
 
     def read(self, ident):
         issue = self.gql(Q_ISSUE, i=ident)["issue"]

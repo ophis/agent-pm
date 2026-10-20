@@ -105,7 +105,7 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HISTORY as Q_HI
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RECHECK as Q_RECHECK
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RELATIONS as Q_RELATIONS
 from agent_pm.linear_orchestrator.engine.linear_tracker import RELATIONS as RELATIONS
-from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, blockers
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.linear_tracker import q_issues as q_issues
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.runs import (
@@ -280,20 +280,11 @@ class Board:
 
     def todo(self):
         if self.ready is None:
-            try:
-                issues = self.tracker.listed(IssueState.READY, RELATIONS)
-            except LinearError as e:
-                self.say("todo-error", error=one_line(e))
-                issues = self.tracker.assigned(IssueState.READY)
-                for i in issues:
-                    try:
-                        i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
-                    except LinearError:
-                        i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
-            self.blocked = {i["identifier"]: b for i in issues if (b := blockers(i))}
+            found = self.tracker.ready()
+            self.blocked = {i["identifier"]: list(b) for i, b in found if b}
             for ident, b in self.blocked.items():
                 self.say("blocked", ident, once=True, by=b)
-            self.ready = [i for i in issues if i["identifier"] not in self.blocked]
+            self.ready = [i for i, _ in found if i["identifier"] not in self.blocked]
         return self.ready
 
     def is_blocked(self, ident):

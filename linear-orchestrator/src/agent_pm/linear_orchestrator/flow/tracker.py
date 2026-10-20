@@ -31,3 +31,6 @@ class Tracker(ABC):
 
     @abstractmethod
     def assigned(self, state: Listed) -> list[Record]: ...
+
+    @abstractmethod
+    def ready(self) -> list[tuple[Record, tuple[str, ...]]]: ...
