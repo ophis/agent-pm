@@ -1,7 +1,7 @@
 """Linear issue nodes, as `agent-pm-orchestrator issue read`, `move`, `comment`, `archive`, `relation`,
 `label swap` and `edit` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
 by its root field; IssueCase runs issue.main against a test configuration, names_cfg is its
-abstract names' part.
+abstract names' part; list_query, new_issue and issue_change build the backends' requests.
 """
 
 import io
@@ -9,10 +9,10 @@ import os
 import re
 from types import SimpleNamespace
 
-from agent_pm.orchestrator.engine.types import GraphQLErrors
+from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueEdit, ListQuery, NewIssue
+from agent_pm.orchestrator.issue import command as issue
 from agent_pm.orchestrator.trackers.linear import (
     client,
-    issue,
     issue_edit,
     issue_label,
     issue_read,
@@ -62,6 +62,25 @@ def names_cfg(**fields):
         "agent_labels": dict(CLIENT_LABELS),
     }
     return SimpleNamespace(**{**cfg, **fields})
+
+
+def list_query(**given):
+    """A ListQuery of only the given filters."""
+    none = ("query", "state", "role", "task", "client", "priority", "parent", "label", "project")
+    return ListQuery(**{**dict.fromkeys(none), "include_archived": False, **given})
+
+
+def new_issue(**given):
+    """A NewIssue titled t, body b, with only the given fields and relations."""
+    none = ("state", "role", "task", "client", "priority", "parent", "project", "milestone")
+    empty = {"labels": (), "blocks": (), "blocked_by": ()}
+    return NewIssue(**{"title": "t", "body": "b", **dict.fromkeys(none), **empty, **given})
+
+
+def issue_change(ident, **given):
+    """An IssueEdit of ident changing only the given fields."""
+    none = ("title", "body", "task", "client", "priority")
+    return IssueEdit(**{"id": ident, **dict.fromkeys(none), **given})
 
 
 def role_users(variables):

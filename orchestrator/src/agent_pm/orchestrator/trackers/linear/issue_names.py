@@ -2,17 +2,10 @@
 configured Linear ids; IssueError for a name the configuration lacks, before anything is written.
 """
 
-from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
+from agent_pm.orchestrator.engine.flow.types import IssueState
 from agent_pm.orchestrator.engine.types import MOVES, IssueError
 from agent_pm.orchestrator.trackers.linear import ops
 
-PRIORITIES = {
-    Priority.NONE: 0,
-    Priority.URGENT: 1,
-    Priority.HIGH: 2,
-    Priority.MEDIUM: 3,
-    Priority.LOW: 4,
-}
 Q_VIEWER = "query { viewer { id } }"
 _KEYS = {state: key for key, state in MOVES.items()}
 

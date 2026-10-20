@@ -1,10 +1,11 @@
-"""agent-pm-orchestrator issue read: one issue's fields, newest comments and relations as a view (view),
-cut to the default limits by compact, or with every page for --full.
-"""
+"""agent-pm-orchestrator issue read: one issue's fields, comments and relations, every page with full."""
 
 import re
 
 from agent_pm.orchestrator.engine.flow.types import (
+    COLUMN,
+    COMMENTS,
+    IDENT_ERROR,
     ISSUE_ID,
 )
 from agent_pm.orchestrator.engine.types import (
@@ -14,7 +15,6 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear import issue_refs, ops
 
-COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250
 _REL = "id identifier title state { name }"
 CONNECTIONS = {
@@ -70,7 +70,7 @@ def lookup(gql, query, ident):
     there.
     """
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
-        raise IssueError(f"{ident!r}: want an issue identifier such as TASK-1 or an issue id")
+        raise IssueError(IDENT_ERROR.format(ident=ident))
     data = issue_refs.found(gql, query, i=ident)
     if data is None or data["issue"] is None:
         raise IssueError(f"{ident}: no such issue")
@@ -144,26 +144,3 @@ def _rel(node):
         "title": node["title"],
         "state": node["state"]["name"],
     }
-
-
-def compact(full):
-    """full cut to the default limits; truncated names each cut field, or one with more pages."""
-    out, pages, cuts = dict(full), set(full["truncated"]), []
-    if full["description"] is not None and len(full["description"]) > DESCRIPTION_CHARS:
-        out["description"] = full["description"][:DESCRIPTION_CHARS]
-        cuts.append("description")
-    if "comments" in pages or len(full["comments"]) > COMMENTS:
-        cuts.append("comments")
-    out["comments"] = [dict(c) for c in full["comments"][:COMMENTS]]
-    for i, c in enumerate(out["comments"]):
-        if len(c["body"]) > COMMENT_CHARS:
-            c["body"] = c["body"][:COMMENT_CHARS]
-            cuts.append(f"comments.{i}.body")
-    if "labels" in pages:
-        cuts.append("labels")
-    for column in ("blocks", "blocked_by", "children"):
-        out[column] = full[column][:COLUMN]
-        if column in pages or len(full[column]) > COLUMN:
-            cuts.append(column)
-    out["truncated"] = cuts
-    return out

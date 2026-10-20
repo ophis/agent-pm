@@ -1,108 +1,94 @@
-"""agent-pm-orchestrator issue: fixed issue subcommands and the rules they share. stdout holds one JSON
-object of at most LIMIT UTF-8 bytes, a write's receipt at most RECEIPT; diagnostics go to stderr, as
-bounded; exit OK, FAILED (Linear failed, a write's result is unknown, a refusal, or create's
-relations partly failed, its report on stdout) or USAGE (usage, configuration or an unresolved
-reference).
+"""agent-pm-orchestrator issue: the fixed issue subcommands, parsed and checked here, then run over
+the configured tracker's backend; output.py holds the stdout, stderr and exit rules they share.
 """
 
 import argparse
-import contextlib
-import copy
 import functools
-import json
-import os
-import subprocess
 import sys
-import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.orchestrator.engine import (
-    config,
+from agent_pm.orchestrator.engine import config
+from agent_pm.orchestrator.engine.flow.types import (
+    PRIORITY_NUMBERS,
+    ArchiveRefused,
+    IssueState,
+    Priority,
 )
-from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
     GraphQLErrors,
+    IssueEdit,
     IssueError,
-    KeychainError,
     LabelRefused,
     LinearError,
+    ListQuery,
+    LookupQuery,
+    NewIssue,
     RelationsFailed,
     Resource,
+    TrackerFileError,
+    TrackerKind,
     Unavailable,
 )
-from agent_pm.orchestrator.trackers.linear import (
-    issue_archive,
-    issue_create,
-    issue_edit,
-    issue_label,
-    issue_list,
-    issue_lookup,
-    issue_names,
-    issue_page,
-    issue_read,
-    issue_relation,
-    issue_write,
+from agent_pm.orchestrator.issue.backend import Backend
+from agent_pm.orchestrator.issue.output import (
+    FAILED,
+    FULL,
+    MAX_PAGE,
+    OK,
+    PAGE,
+    PROG,
+    TEXTS,
+    USAGE,
+    compact,
+    diagnose,
+    dry_run,
+    encode,
+    fit,
+    fit_page,
+    partial_message,
+    partial_report,
+    receipt,
+    receipt_payload,
+    refusal,
+    write_full,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.linear.issues import LinearIssues
+from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 
-OK, FAILED, USAGE = 0, 1, 2
-LIMIT, RECEIPT = 8192, 1024
-PAGE, MAX_PAGE = 20, 50
-PROG = "agent-pm-orchestrator issue"
-FULL = "--full --output FILE"
 STATES = [str(state) for state in IssueState]
-PRIORITIES = [str(priority) for priority in issue_names.PRIORITIES]
-TEXTS = (
-    "title",
-    "description",
-    "parent.title",
-    "project.name",
-    "milestone.name",
-    "assignee.name",
-    "assignee.email",
-    "state.name",
-)
-# never shortened by fit_page
-REFS = frozenset(
-    (
-        "id",
-        "identifier",
-        "url",
-        "key",
-        "type",
-        "email",
-        "team_id",
-        "group_id",
-        "project_id",
-        "parent_id",
-    )
-)
+PRIORITIES = [str(priority) for priority in PRIORITY_NUMBERS]
+_LINEAR_ONLY = '{}: Linear only, not on a local board ([orchestrator] tracker = "local")'
 _RULES = (
     "Prerequisites and effects:\n"
-    "  Reads Linear as the configured linear.manager_key account (Keychain); an\n"
-    "  issue needs no recorded run. Help needs no credentials or services.\n"
+    "  Reads the configured board: Linear as the linear.manager_key account\n"
+    "  (Keychain); a local board ($AGENT_PM_BOARD_DIR) directly, writing as other.\n"
+    "  An issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
-    "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
-    "  2: usage, configuration, Keychain, or an issue or option value that\n"
-    "  does not resolve.\n\n"
+    "  Exit 0: success; 1: the board failed (Linear: GraphQL errors, HTTP,\n"
+    "  timeout); 2: usage, configuration, Keychain, a board that cannot be\n"
+    "  scanned, or an issue or option value that does not resolve.\n\n"
 )
 _HELP = (
     _RULES.removesuffix("\n")
     + "  create, edit, move, comment, archive, relation and label swap write as that\n"
-    "  account and print a receipt instead; for them exit 1 also means the\n"
-    "  write's result is unknown, for create also a relation that failed, for\n"
-    "  archive and label swap also a refusal (their --help).\n\n"
-    "Values: abstract names, each the configured team's id.\n"
+    "  account (a local board: other) and print a receipt instead; for them exit\n"
+    "  1 also means the write failed or its result is unknown, for create also a\n"
+    "  relation that failed, for archive and label swap also a refusal (their\n"
+    "  --help).\n\n"
+    "Values: abstract names; on Linear each the configured team's id.\n"
     "  States: backlog, ready, running, review, approved, done, canceled.\n"
     "  --role SPEC: a role of [orchestrator.linear.roles], me (the\n"
-    "  linear.manager_key account) or unassigned. --task NAME / --client NAME: a\n"
-    "  key of [orchestrator.linear.task_labels] / agent_labels.\n"
+    "  linear.manager_key account) or unassigned; a local board: that directory.\n"
+    "  --task NAME / --client NAME: on Linear a key of\n"
+    "  [orchestrator.linear.task_labels] / agent_labels; a local board: a\n"
+    "  configured role's task / any client name.\n"
     "  --priority NAME: none, urgent, high, medium, low.\n"
     "  Splitting an issue: create --parent ID.\n"
-    "  Linear only: lookup, label swap, --label, --project, --milestone.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "  Linear only (a local board exits 2): lookup, label swap, --label, --project,\n"
+    "  --milestone.\n\n"
+    "Example (a configured board holding TASK-1; lookup and label swap: Linear):\n"
     "  agent-pm-orchestrator issue read TASK-1\n"
     "  agent-pm-orchestrator issue list --state running --role me\n"
     "  agent-pm-orchestrator issue lookup labels --query bug\n"
@@ -146,13 +132,14 @@ _LIST_HELP = (
     "  a configured role, me (the linear.manager_key account) or\n"
     "  unassigned (no assignee); --task NAME, --client NAME: a configured task or\n"
     "  client name; --priority NAME: none, urgent, high, medium or low; --parent\n"
-    "  ID: the parent issue's identifier or id. Linear only: --label (not a group\n"
-    "  or retired) and --project, each an id or exact name in the team.\n"
+    "  ID: the parent issue's identifier or id. Linear only (a local board exits\n"
+    "  2): --label (not a group or retired) and --project, each an id or exact\n"
+    "  name in the team.\n"
     + _PAGES
     + "References: no match, several, or one outside the team exits 2 naming\n"
     "  candidates and the lookup command listing them; a name the configuration\n"
     "  lacks exits 2 naming the configured ones.\n\n"
-    "Examples (configured Linear access and TASK-1):\n"
+    "Examples (a configured board holding TASK-1; --label and --project: Linear):\n"
     "  agent-pm-orchestrator issue list --query 'linear issue'\n"
     "  agent-pm-orchestrator issue list --state ready --task build --priority high\n"
     "  agent-pm-orchestrator issue list --role me --project 'Agent PM'\n"
@@ -178,7 +165,8 @@ _LOOKUP_HELP = (
     + _PAGES
     + "References: an id or an exact name; a team also takes its key. Without\n"
     "  --team, the configured team. No match, several, or one outside the team\n"
-    "  exits 2 naming candidates and the lookup command listing them.\n\n"
+    "  exits 2 naming candidates and the lookup command listing them.\n"
+    "  Linear only: a local board exits 2.\n\n"
     "Examples (configured Linear access):\n"
     "  agent-pm-orchestrator issue lookup teams\n"
     "  agent-pm-orchestrator issue lookup labels --team TASK --query bug\n"
@@ -201,7 +189,7 @@ _READ_HELP = (
     f"  {FULL}: read every page, keep every body, write the view as indented\n"
     "  JSON to FILE and print only {identifier, output: FILE's absolute path};\n"
     "  either option alone is a usage error. A failed read writes no file.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue read TASK-1\n"
     "  agent-pm-orchestrator issue read TASK-1 --full --output TASK-1.json\n\n"
     "Recovery and next help:\n"
@@ -211,24 +199,25 @@ _READ_HELP = (
 
 _WRITE_RULES = (
     "Prerequisites and effects:\n"
-    "  Writes Linear as the configured linear.manager_key account (Keychain); an\n"
+    "  Writes the configured board: Linear as the linear.manager_key account\n"
+    "  (Keychain); a local board ($AGENT_PM_BOARD_DIR) directly, as other. An\n"
     "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
     "  operation, result (changed or unchanged), actor {id, name}%s.\n"
-    "  It never echoes what was written or Linear's response. Diagnostics go to\n"
-    "  stderr.\n"
-    "  Exit 0: changed or unchanged; 1: Linear failed (GraphQL errors, success\n"
-    "  false, HTTP) or the result is unknown; 2: usage, configuration, Keychain,\n"
-    "  or an issue or value that does not resolve: nothing was written.\n"
+    "  It never echoes what was written or the board's response. Diagnostics go\n"
+    "  to stderr.\n"
+    "  Exit 0: changed or unchanged; 1: the board failed (Linear: GraphQL errors,\n"
+    "  success false, HTTP; a local board: a file write) or the result is\n"
+    "  unknown; 2: usage, configuration, Keychain, a board that cannot be\n"
+    "  scanned, or an issue or value that does not resolve: nothing was written.\n"
     "  A timeout or outage during the write leaves the result unknown: check with\n"
     "  agent-pm-orchestrator issue read ID before running it again; nothing retries.\n\n"
 )
 _CREATE_HELP = (
-    _WRITE_RULES
-    % ""
-    + "Creates one issue in the configured team (linear.team), then its blocking\n"
-    "  relations. Every value resolves first, as agent-pm-orchestrator issue list --help\n"
-    "  describes; one that does not exits 2 with nothing created.\n"
+    _WRITE_RULES % "" + "Creates one issue in the configured team (linear.team; a local board:\n"
+    "  <assignee>/<state>/<ID> <title>.md), then its blocking relations. Every\n"
+    "  value resolves first, as agent-pm-orchestrator issue list --help describes;\n"
+    "  one that does not exits 2 with nothing created.\n"
     "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
     "  sent verbatim, minus a leading byte order mark; - reads stdin; blank or\n"
     "  unreadable exits 2.\n"
@@ -239,8 +228,9 @@ _CREATE_HELP = (
     "--task NAME / --client NAME: the configured task / client label.\n"
     "--priority NAME: none, urgent, high, medium or low.\n"
     "--parent ID: an issue, the new one its sub-issue: this splits an issue.\n"
-    "Linear only: --label VALUE, repeatable: not a group or retired. --project\n"
-    "  VALUE: the team's. --milestone VALUE: --project's, which it needs.\n"
+    "Linear only (a local board exits 2): --label VALUE, repeatable: not a group\n"
+    "  or retired. --project VALUE: the team's. --milestone VALUE: --project's,\n"
+    "  which it needs.\n"
     "Any other option not given stays unset.\n"
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
     "  repeatable, repeats count once; one issue given to both exits 2.\n"
@@ -251,7 +241,7 @@ _CREATE_HELP = (
     "  with its error), recover and truncated; done and failed are cut before\n"
     "  recover. Run only the recover commands\n"
     "  (agent-pm-orchestrator issue relation add …), never create again.\n\n"
-    "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
+    "Example (TASK-1, TASK-2 and TASK-3 on the configured board; the last: Linear):\n"
     "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md\n"
     "  agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
     "    --parent TASK-1 --task build --role engineer --priority high\n"
@@ -264,13 +254,14 @@ _CREATE_HELP = (
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _MOVE_HELP = (
-    _WRITE_RULES % "" + "STATE: backlog, ready, running, review, approved, done or canceled, the\n"
-    "  state [orchestrator.linear.states] backlog, todo, in_progress, in_review,\n"
-    "  handoff, done or canceled names, in that order; any other exits 2 listing\n"
-    "  them. Only an issue of the configured team (linear.team) moves: another\n"
-    "  team's exits 2 naming its team. Already in that state: result unchanged,\n"
-    "  nothing written.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    _WRITE_RULES % "" + "STATE: backlog, ready, running, review, approved, done or canceled: on\n"
+    "  Linear the state [orchestrator.linear.states] backlog, todo, in_progress,\n"
+    "  in_review, handoff, done or canceled names, in that order, and only an\n"
+    "  issue of the configured team (linear.team) moves: another team's exits 2\n"
+    "  naming its team; on a local board the file moves to <assignee>/<STATE>/,\n"
+    "  an archived issue exits 2. Any other STATE is a usage error. Already in\n"
+    "  that state: result unchanged, nothing written.\n\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue move TASK-1 approved\n"
     "  agent-pm-orchestrator issue move TASK-1 running\n\n"
     "Recovery and next help:\n"
@@ -286,11 +277,13 @@ _EDIT_HELP = (
     "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
     "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
     "  blank or unreadable exits 2.\n"
-    "--task NAME / --client NAME: a configured task / client name; its label\n"
-    "  replaces the issue's labels of that group: every other label stays. Only\n"
-    "  on an issue of the configured team (linear.team): another team's exits 2.\n"
+    "--task NAME / --client NAME: a configured task / client name (a local\n"
+    "  board: a configured role's task / any client name). On Linear its label\n"
+    "  replaces the issue's labels of that group: every other label stays, and\n"
+    "  only on an issue of the configured team (linear.team): another team's\n"
+    "  exits 2.\n"
     "--priority NAME: none, urgent, high, medium or low.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n\n"
@@ -307,7 +300,7 @@ _COMMENT_HELP = (
     "  leading byte order mark is dropped.\n"
     "  - reads stdin. Blank, unreadable or non-UTF-8, or --body-file given twice:\n"
     "  exit 2 before anything is written. Each run posts a new top-level comment.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md\n\n"
     "Recovery and next help:\n"
@@ -330,7 +323,7 @@ _ARCHIVE_HELP = (
     "  identifier, state), unfinished_count, unfinished, truncated}; over 8192\n"
     "  bytes, list items drop from the end, each such list named in truncated.\n"
     "  Exit 0 whatever result says.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
     "  agent-pm-orchestrator issue archive TASK-1\n\n"
     "Recovery and next help:\n"
@@ -350,7 +343,7 @@ _RELATION_HELP = (
     "  the two stay as they are. remove deletes every record of the edge; one\n"
     "  failing after others went exits 1 naming the deleted ids: check with\n"
     "  agent-pm-orchestrator issue read ID before running it again.\n\n"
-    "Example (configured Linear access, TASK-1 and TASK-2):\n"
+    "Example (a configured board holding TASK-1 and TASK-2):\n"
     "  agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2\n"
     "  agent-pm-orchestrator issue relation remove TASK-1 --blocks TASK-2\n"
     "  agent-pm-orchestrator issue relation add TASK-2 --blocked-by TASK-1\n\n"
@@ -387,128 +380,10 @@ class _Once(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
-def encode(payload):
-    # backslashreplace: a lone surrogate becomes its JSON escape
-    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return text.encode("utf-8", "backslashreplace") + b"\n"
-
-
-def fit(payload, tiers, texts, follow):
-    """payload encoded within LIMIT: drop the last item of its largest list in the first of tiers
-    (tuples of list fields) with one not empty, then halve its longest text at a dotted path in
-    texts, naming each cut in truncated, until it fits; continue is follow once anything is
-    truncated, absent when follow is None.
-    """
-    payload = copy.deepcopy(payload)
-    payload.setdefault("truncated", [])
-    while True:
-        if follow is not None:
-            payload["continue"] = follow if payload["truncated"] else None
-        data = encode(payload)
-        if len(data) <= LIMIT:
-            return data
-        if full := next((f for f in ([f for f in t if payload[f]] for t in tiers) if f), None):
-            field = max(full, key=lambda f: len(encode(payload[f])))
-            payload[field].pop()
-            kept = len(payload[field])
-            payload["truncated"] = [m for m in payload["truncated"] if not _gone(m, field, kept)]
-            _mark(payload, field)
-            continue
-        found = {path: text for path in texts if (text := _text(payload, path))}
-        if not found:
-            raise OverflowError(f"result exceeds {LIMIT} bytes: read it with {FULL}")
-        path = max(found, key=lambda p: len(encode(found[p])))
-        *parents, leaf = path.split(".")
-        node = functools.reduce(lambda d, k: d[k], parents, payload)
-        node[leaf] = found[path][: len(found[path]) // 2]
-        _mark(payload, path)
-
-
-def _gone(marker, field, kept):
-    # a marker inside an item fit dropped, such as comments.4.body once 4 comments remain
-    parts = marker.split(".")
-    return len(parts) > 2 and parts[0] == field and parts[1].isdigit() and int(parts[1]) >= kept
-
-
-def _mark(payload, field):
-    if field not in payload["truncated"]:
-        payload["truncated"].append(field)
-
-
-def _text(payload, path):
-    node = payload
-    for key in path.split("."):
-        node = node.get(key) if isinstance(node, dict) else None
-    return node if isinstance(node, str) else None
-
-
-def fit_page(rows, cursor):
-    """A page's rows [(item, cut fields, cursor), …] and the cursor after it (None: last page) as
-    {items, has_next_page, next_cursor, truncated} within LIMIT: trailing items drop, next_cursor
-    then following the last kept one; a lone item's longest text other than a reference halves;
-    each cut is items.<n>.<field>.
-    """
-    items = [copy.deepcopy(item) for item, _, _ in rows]
-    cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
-    while True:
-        page = {"items": items, "has_next_page": cursor is not None, "next_cursor": cursor}
-        data = encode({**page, "truncated": cut})
-        if len(data) <= LIMIT:
-            return data
-        if len(items) > 1:
-            items.pop()
-            cursor = rows[len(items) - 1][2]
-            cut = [m for m in cut if int(m.split(".")[1]) < len(items)]
-            continue
-        found = dict(_texts(items[0], ()))
-        if not found:
-            raise OverflowError(f"page exceeds {LIMIT} bytes: write it with {FULL}")
-        path = max(found, key=lambda p: len(encode(found[p])))
-        node = functools.reduce(lambda node, key: node[key], path[:-1], items[0])
-        node[path[-1]] = found[path][: len(found[path]) // 2]
-        if (marker := ".".join(map(str, ("items", 0, *path)))) not in cut:
-            cut.append(marker)
-
-
-def _texts(node, path):
-    # (path, text) of each non-empty string in node but a reference
-    pairs = node.items() if isinstance(node, dict) else enumerate(node)
-    for key, value in pairs:
-        if isinstance(value, (dict, list)):
-            yield from _texts(value, (*path, key))
-        elif isinstance(value, str) and value and key not in REFS:
-            yield (*path, key), value
-
-
-def write_full(path, payload):
-    """payload as normalized JSON in path, through a temp file renamed over it; its absolute path."""
-    path = os.path.abspath(path)
-    fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".issue-", suffix=".tmp")
-    try:
-        with open(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp, path)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp)
-        raise
-    return path
-
-
-def diagnose(err, message):
-    data = f"{PROG}: {message}".encode("utf-8", "backslashreplace")
-    if len(data) > LIMIT - 1:
-        kept = data[: LIMIT // 2].decode("utf-8", "ignore").encode()
-        data = kept + f" … ({len(data) - len(kept)} bytes omitted)".encode()
-    print(data.decode(), file=err)
-
-
 def _parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Read and write Linear issues and look up what their options name.",
+        description="Read and write board issues and look up what their options name.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_HELP,
     )
@@ -744,52 +619,127 @@ def _usage(args):
     return None
 
 
-def receipt(payload):
-    """payload encoded within RECEIPT, its actor's name halved until it fits."""
-    actor = payload["actor"]
-    while len(data := encode(payload)) > RECEIPT and actor["name"]:
-        actor["name"] = actor["name"][: len(actor["name"]) // 2]
-    return data
+def read_body(path, stdin=None):
+    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim but for a
+    leading byte order mark; IssueError when it cannot be read or holds only whitespace and byte
+    order marks.
+    """
+    try:
+        if path != "-":
+            with open(path, "rb") as f:
+                raw = f.read()
+        elif (stream := getattr(sys.stdin, "buffer", None) if stdin is None else stdin) is None:
+            raise IssueError("--body-file -: no stdin to read")
+        else:
+            raw = stream.read()
+        body = raw.decode("utf-8-sig")
+    except OSError as error:
+        raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
+    except UnicodeDecodeError:
+        raise IssueError(f"--body-file {path}: not UTF-8") from None
+    if not body.replace("﻿", "").strip():
+        raise IssueError(f"--body-file {path}: empty body")
+    return body
 
 
-def _run(gql, args, linear, body):
-    if args.command == "move":
-        return receipt(issue_write.move(gql, linear, args.id, args.state))
-    if args.command == "comment":
-        return receipt(issue_write.comment(gql, args.id, body))
-    if args.command == "edit":
-        return receipt(issue_edit.edit(gql, linear, args, body))
+def _request(args, body):
+    """The typed request of list, lookup, create or edit from args (body: the read --body-file);
+    None for the other commands.
+    """
+    if args.command == "list":
+        return ListQuery(
+            query=args.query,
+            state=_state(args.state),
+            role=args.role,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+            parent=args.parent,
+            include_archived=args.include_archived,
+            label=args.label,
+            project=args.project,
+        )
+    if args.command == "lookup":
+        return LookupQuery(
+            resource=args.resource, query=args.query, team=args.team, project=args.project
+        )
     if args.command == "create":
-        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, linear, body)))
+        return NewIssue(
+            title=args.title,
+            body=body,
+            state=_state(args.state),
+            role=args.role,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+            parent=args.parent,
+            labels=tuple(args.label),
+            project=args.project,
+            milestone=args.milestone,
+            blocks=tuple(args.blocks),
+            blocked_by=tuple(args.blocked_by),
+        )
+    if args.command == "edit":
+        return IssueEdit(
+            id=args.id,
+            title=args.title,
+            body=body,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+        )
+    return None
+
+
+def _state(name):
+    return None if name is None else IssueState(name)
+
+
+def _priority(name):
+    return None if name is None else Priority(name)
+
+
+def _run(
+    board: Backend, args, request: ListQuery | LookupQuery | NewIssue | IssueEdit | None, body
+):
+    if args.command == "move":
+        return receipt(receipt_payload(board.move(args.id, args.state)))
+    if args.command == "comment":
+        return receipt(receipt_payload(board.comment(args.id, body)))
+    if isinstance(request, IssueEdit):
+        return receipt(receipt_payload(board.edit(request)))
+    if isinstance(request, NewIssue):
+        return receipt(receipt_payload(board.create(request)))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
-        return receipt(issue_relation.relation(gql, args.op, args.id, direction, other))
-    if args.command == "label":
-        return receipt(issue_label.swap(gql, args.id, args.old, args.new))
+        return receipt(receipt_payload(board.relation(args.op, args.id, direction, other)))
     if args.command == "archive" and args.dry_run:
-        plan = issue_archive.dry_run(LinearTracker(gql), gql, args.id)
+        plan = dry_run(board.archive_plan(args.id))
         return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
-        return receipt(issue_archive.archive(LinearTracker(gql), gql, args.id))
-    if args.command == "read":
-        view = issue_read.view(gql, args.id, full=args.full)
-        if args.full:
-            return _written(args.output, view, {"identifier": view["identifier"]})
-        return fit(
-            issue_read.compact(view),
-            (("comments", "labels", "blocks", "blocked_by", "children"),),
-            TEXTS,
-            f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
-        )
-    if args.command == "list":
-        source = issue_list.source(gql, args, linear)
-    else:
-        source = issue_lookup.source(gql, args, linear.team)
+        return receipt(receipt_payload(board.archive(args.id)))
+    if isinstance(request, ListQuery):
+        return _listed(board.page, board.walk, request, args)
+    view = board.view(args.id, full=args.full)
+    if args.full:
+        return _written(args.output, view, {"identifier": view["identifier"]})
+    return fit(
+        compact(view),
+        (("comments", "labels", "blocks", "blocked_by", "children"),),
+        TEXTS,
+        f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
+    )
+
+
+def _listed(page, walk, query, args):
+    """list or lookup: page(query, …)'s page under args' --limit and --cursor, or with --full
+    walk(query)'s every row written to --output.
+    """
     if not args.full:
-        rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
+        rows, more, end = page(query, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
-    rows = issue_page.walk(gql, source)
+    rows = walk(query)
     cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
     payload = {"items": [item for item, _, _ in rows], "truncated": cut}
     return _written(args.output, payload, {})
@@ -804,6 +754,33 @@ def _written(output, payload, summary):
     return encode({**summary, "output": path})
 
 
+def _linear_only(command, request):
+    """What command and its request ask of a local board that only Linear has, or None."""
+    if command == "lookup":
+        return "lookup"
+    if command == "label":
+        return "label swap"
+    if isinstance(request, ListQuery):
+        given = {"--label": request.label is not None, "--project": request.project is not None}
+    elif isinstance(request, NewIssue):
+        given = {
+            "--label": bool(request.labels),
+            "--project": request.project is not None,
+            "--milestone": request.milestone is not None,
+        }
+    else:
+        return None
+    return next((option for option, is_set in given.items() if is_set), None)
+
+
+def _linear(cfg, gql):
+    """cfg's LinearIssues, as linear.manager_key."""
+    linear = config.linear_settings(cfg, "issue")
+    if not linear.manager_key:
+        raise ConfigError("orchestrator/config.toml: linear.manager_key is unset")
+    return LinearIssues(functools.partial(gql, service=linear.manager_key), linear)
+
+
 def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
@@ -814,7 +791,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     body = None
     if getattr(args, "body_file", None) is not None:
         try:
-            body = issue_write.read_body(args.body_file, stdin)
+            body = read_body(args.body_file, stdin)
         except IssueError as error:
             diagnose(err, error)
             return USAGE
@@ -823,34 +800,47 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    try:
-        linear = config.linear_settings(cfg, "issue")
-    except ConfigError as refused:
-        diagnose(err, refused)
+    request = _request(args, body)
+    if cfg.tracker is TrackerKind.LOCAL and (what := _linear_only(args.command, request)):
+        diagnose(err, _LINEAR_ONLY.format(what))
         return USAGE
-    if not linear.manager_key:
-        diagnose(err, "orchestrator/config.toml: linear.manager_key is unset")
-        return USAGE
-    gql = functools.partial(gql, service=linear.manager_key)
     try:
-        data = _run(gql, args, linear, body)
-    except IssueError as error:
+        board = (
+            LocalIssues(cfg.board, cfg.roles)
+            if cfg.tracker is TrackerKind.LOCAL
+            else _linear(cfg, gql)
+        )
+    except (ConfigError, TrackerFileError) as error:
         diagnose(err, error)
         return USAGE
-    except (subprocess.SubprocessError, OSError, KeychainError) as error:
-        diagnose(
-            err,
-            f"linear.manager_key Keychain service {linear.manager_key!r}: {type(error).__name__}",
-        )
+    try:
+        if isinstance(board, LinearIssues) and args.command == "label":
+            data = receipt(receipt_payload(board.swap(args.id, args.old, args.new)))
+        elif isinstance(board, LinearIssues) and isinstance(request, LookupQuery):
+            data = _listed(board.lookup_page, board.lookup_walk, request, args)
+        else:
+            data = _run(board, args, request, body)
+    except IssueError as error:
+        diagnose(err, error)
         return USAGE
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
     except RelationsFailed as error:
-        out.write(fit(error.report, (("done", "failed"), ("recover",)), (), None))
-        diagnose(err, error)
+        out.write(fit(partial_report(error), (("done", "failed"), ("recover",)), (), None))
+        diagnose(err, partial_message(error))
         return FAILED
-    except (LinearError, Unavailable, OverflowError, ArchiveRefused, LabelRefused) as error:
+    except ArchiveRefused as refused:
+        diagnose(err, refusal(args.id, refused.plan))
+        return FAILED
+    except (
+        LinearError,
+        Unavailable,
+        OverflowError,
+        LabelRefused,
+        TrackerFileError,
+        OSError,
+    ) as error:
         diagnose(err, error)
         return FAILED
     out.write(data)

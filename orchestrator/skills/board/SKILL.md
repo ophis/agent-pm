@@ -99,6 +99,10 @@ agent-pm-orchestrator issue archive TASK-1
 
 Archiving takes every sub-issue with it. `archive` reads all of them, at every depth, and archives only when the issue and each unarchived sub-issue are finished (`done` or `canceled`); prune follows the same rule. Otherwise it exits 1 naming the unfinished ones; there is no override. `--dry-run` lists what would go, writing nothing, and exits 0 whatever it finds: read its `result` (`refused` when anything blocks) and `unfinished`. It closes no run and deletes no file.
 
+## Local board
+
+On a local board (`$AGENT_PM_BOARD_DIR`), the commands write as `other`, a person, so your comments and moves count as the user's. `me` is the board's `me/` directory and a role its `<role>/` directory; ids are the board's (`LOC-1`); a task or client is the issue file's `task` or `client` (`--client` takes any name without whitespace). `lookup`, `label swap`, `--label`, `--project` and `--milestone` exit 2.
+
 ## Linear
 
 On Linear (`[orchestrator.linear]`), the commands act as the `manager_key` account (Keychain), neither the harness nor a role account, so your comments and moves count as the user's; `me` is that account, a role is its `[orchestrator.linear.roles.<role>]` account, a task or client is its label in `task_labels` or `agent_labels`, and a state is its `[orchestrator.linear.states]` id. `read` and `list` show Linear's state names; finished means a state of type completed, canceled or duplicate. These exist only on Linear:

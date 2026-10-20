@@ -1,6 +1,7 @@
 """fake_linear.py, the orchestrator's Linear fake: its op table and seeding, then its answers over HTTP
 through linear_gql (the AGENT_PM_LINEAR seam): projection, isMe, failures, the router's board reads,
-the promote, prune and write-back ops, comments by client id (FR-54, FR-55)."""
+the promote, prune and write-back ops, comments by client id (FR-54, FR-55), and the issue command's
+queries and mutations, alone and through LinearIssues."""
 
 import functools
 import os
@@ -17,18 +18,37 @@ from unittest import mock
 from agent_pm.orchestrator.engine import (
     types,
 )
-from agent_pm.orchestrator.engine.flow.types import Linked
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState, Linked, Priority
 from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import (
     client,
+    issue_archive,
+    issue_create,
+    issue_edit,
+    issue_label,
+    issue_list,
+    issue_names,
+    issue_read,
+    issue_refs,
+    issue_relation,
+    issue_write,
     linear_tracker,
     ops,
 )
+from agent_pm.orchestrator.trackers.linear.issues import LinearIssues
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.fake_transport import install, refuse_keychain
 from orchestrator_tests.unit.board_ids import STATES, TASK_GROUP, TEAM
+from orchestrator_tests.unit.issue_fixtures import (
+    CLIENT_GROUP,
+    CLIENT_LABELS,
+    TASK_LABELS,
+    issue_change,
+    list_query,
+    names_cfg,
+)
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 
@@ -491,7 +511,36 @@ class FixtureOperations(Case):
             if key[:2] in ("Q_", "M_") and isinstance(value, str)
         ]
         want += [linear_tracker.q_issues(), linear_tracker.q_issues(linear_tracker.RELATIONS)]
-        self.assertCountEqual(fake_linear.texts().values(), want)
+        want += [
+            issue_read.Q_READ,
+            issue_read.Q_FULL,
+            *issue_read.MORE.values(),
+            issue_list.Q_LIST,
+            issue_create.M_CREATE,
+            issue_create.M_RELATE,
+            issue_create.Q_VIEWER,
+            issue_names.Q_VIEWER,
+            issue_refs.Q_ISSUE,
+            issue_edit.Q_READ,
+            issue_edit.M_EDIT,
+            issue_label.Q_MORE,
+            issue_write.Q_MOVE,
+            issue_write.Q_COMMENT,
+            issue_write.M_COMMENT,
+            issue_archive.Q_ISSUE,
+            *issue_relation.Q_READ.values(),
+            *issue_relation.Q_MORE.values(),
+            issue_relation.M_ADD,
+            issue_relation.M_REMOVE,
+        ]
+        self.assertCountEqual(fake_linear.texts().values(), dict.fromkeys(want))
+
+    def test_a_dict_constant_names_its_key(self):
+        texts = fake_linear.texts()
+        self.assertEqual(texts["issue_read.MORE[comments]"], issue_read.MORE["comments"])
+        self.assertEqual(
+            texts["issue_relation.Q_READ[blocked_by]"], issue_relation.Q_READ["blocked_by"]
+        )
 
     def test_two_names_for_one_text_are_refused(self):
         with self.assertRaisesRegex(ValueError, "a.X, b.Y"):
@@ -519,6 +568,15 @@ class FixtureOperations(Case):
         for kw in ({"identifier": "TASK-7"}, {"id": uid}, {"identifier": "OTHER-1"}):
             with self.subTest(**kw), self.assertRaises(ValueError):
                 fake.issue(**kw)
+
+    def test_seeding_a_parent_takes_a_seeded_issue(self):
+        fake = fake_linear.FakeLinear()
+        parent = fake.issue("Parent", identifier="TASK-1")
+        self.assertEqual(fake.issue("Child", parent="TASK-1")["parent"], parent["id"])
+        self.assertIsNone(fake.find("TASK-1")["parent"])
+        with self.assertRaises(ValueError):
+            fake.issue("Orphan", parent="TASK-9")
+        self.assertIsNone(fake.find("TASK-3"))
 
     def test_backlog_is_a_configured_state(self):
         self.assertEqual(fake_linear.BACKLOG, STATES["backlog"])
@@ -782,6 +840,429 @@ class GraphQLQueries(ServerCase):
             ops.last_move(finished["history"]["nodes"], {STATES["done"]}),
             parse_time(done),
         )
+
+
+def pages(page):
+    return {"hasNextPage": False, "endCursor": page[-1]["id"] if page else None}
+
+
+class IssueOps(ServerCase):
+    """The issue command's texts, each alone, then through LinearIssues as the command runs them."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake.label_group(TASK_GROUP, "Tasks", {i: n for n, i in TASK_LABELS.items()})
+        self.fake.label_group(CLIENT_GROUP, "Clients", {i: n for n, i in CLIENT_LABELS.items()})
+        self.task7 = self.fake.find("TASK-7")
+        self.issues = LinearIssues(self.gql, names_cfg())
+        self.me = {"id": self.harness, "name": "Harness"}
+
+    def ops(self):
+        return [r.op for r in self.fake.requests]
+
+    def listed(self, **given):
+        return sorted(row[0]["identifier"] for row in self.issues.walk(list_query(**given)))
+
+    def test_the_viewer(self):
+        self.assertEqual(self.gql(issue_create.Q_VIEWER), {"viewer": self.me})
+        self.assertEqual(self.eng(issue_names.Q_VIEWER), {"viewer": {"id": self.engineer}})
+        self.assertEqual(self.ops(), ["issue_create.Q_VIEWER", "issue_names.Q_VIEWER"])
+
+    def test_an_issue_by_identifier_or_id(self):
+        want = {"issue": {"id": self.task7["id"], "identifier": "TASK-7"}}
+        for ref in ("TASK-7", self.task7["id"]):
+            self.assertEqual(self.gql(issue_refs.Q_ISSUE, id=ref), want)
+        with self.assertRaisesRegex(LinearError, "Entity not found: Issue"):
+            self.gql(issue_refs.Q_ISSUE, id="TASK-99")
+
+    def test_create_takes_parent_labels_assignee_priority_and_state(self):
+        new = {
+            "teamId": TEAM,
+            "title": "Child",
+            "description": "Body",
+            "stateId": STATES["backlog"],
+            "labelIds": [TASK_LABELS["build"], CLIENT_LABELS["codex"]],
+            "parentId": self.task7["id"],
+            "assigneeId": self.engineer,
+            "priority": 2,
+        }
+        made = ops.call(self.gql, issue_create.M_CREATE, "issueCreate", **{"in": new})
+        child = self.fake.find("TASK-8")
+        self.assertEqual(
+            made,
+            {
+                "success": True,
+                "issue": {"id": child["id"], "identifier": "TASK-8", "url": child["url"]},
+            },
+        )
+        self.assertEqual(
+            {
+                k: child[k]
+                for k in ("parent", "labels", "assignee", "priority", "state", "description")
+            },
+            {
+                "parent": self.task7["id"],
+                "labels": new["labelIds"],
+                "assignee": self.engineer,
+                "priority": 2,
+                "state": STATES["backlog"],
+                "description": "Body",
+            },
+        )
+        for name, bad, error in (
+            ("an unknown input", {"cycleId": TEAM}, "fake: issueCreate has no input cycleId"),
+            ("a label group", {"labelIds": [TASK_GROUP]}, "Entity not found: IssueLabel"),
+            ("an unknown label", {"labelIds": [PROJECT["id"]]}, "Entity not found: IssueLabel"),
+            (
+                "two labels of a group",
+                {"labelIds": list(TASK_LABELS.values())},
+                f"fake: two labels of group {TASK_GROUP}",
+            ),
+            ("an unknown parent", {"parentId": PROJECT["id"]}, "Entity not found: Issue"),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(LinearError, error):
+                ops.call(self.gql, issue_create.M_CREATE, "issueCreate", **{"in": new | bad})
+        self.assertIsNone(self.fake.find("TASK-9"))
+
+    def test_read_shows_parent_children_and_comment_fields(self):
+        child = self.fake.issue("Child", parent="TASK-7")
+        said = "2026-10-09T07:00:00.000Z"
+        cid = self.fake.comment("TASK-7", self.human, "Split it.", at=said)
+        parent = self.gql(issue_read.Q_READ, i="TASK-7")["issue"]
+        brief = {
+            "id": child["id"],
+            "identifier": "TASK-8",
+            "title": "Child",
+            "state": {"name": "Todo"},
+        }
+        self.assertEqual(parent["children"], {"nodes": [brief], "pageInfo": pages([brief])})
+        self.assertIsNone(parent["parent"])
+        self.assertIsNone(parent["projectMilestone"])
+        self.assertEqual(
+            parent["comments"]["nodes"],
+            [
+                {
+                    "id": cid,
+                    "body": "Split it.",
+                    "createdAt": said,
+                    "parentId": None,
+                    "quotedText": None,
+                    "user": {"id": self.human, "name": "Me"},
+                    "onBehalfOf": None,
+                }
+            ],
+        )
+        self.assertEqual(
+            self.gql(issue_read.Q_READ, i=child["id"])["issue"]["parent"],
+            {
+                "id": self.task7["id"],
+                "identifier": "TASK-7",
+                "title": "Session registry",
+                "state": {"name": "In Progress"},
+            },
+        )
+        ops.call(self.gql, linear_tracker.M_ARCHIVE, "issueArchive", i=child["id"])
+        self.assertEqual(self.gql(issue_read.Q_READ, i="TASK-7")["issue"]["children"]["nodes"], [])
+
+    def test_read_cuts_each_connection_to_its_first_and_more_reads_on(self):
+        at = datetime(2026, 10, 9, tzinfo=UTC)
+        ids = [
+            self.fake.comment("TASK-7", self.human, f"#{n}", at=at + timedelta(minutes=n))
+            for n in range(6)
+        ]
+        page = self.gql(issue_read.Q_READ, i="TASK-7")["issue"]["comments"]
+        self.assertEqual([n["id"] for n in page["nodes"]], ids[:0:-1])
+        self.assertEqual(page["pageInfo"], {"hasNextPage": True, "endCursor": ids[1]})
+        rest = self.gql(issue_read.MORE["comments"], i=self.task7["id"], c=ids[1])
+        self.assertEqual([n["id"] for n in rest["issue"]["comments"]["nodes"]], [ids[0]])
+        self.assertEqual(
+            rest["issue"]["comments"]["pageInfo"], {"hasNextPage": False, "endCursor": ids[0]}
+        )
+        full = self.gql(issue_read.Q_FULL, i="TASK-7")["issue"]["comments"]
+        self.assertEqual(
+            ([n["id"] for n in full["nodes"]], full["pageInfo"]["hasNextPage"]), (ids[::-1], False)
+        )
+        self.assertEqual(
+            (
+                self.issues.view("TASK-7", full=False)["truncated"],
+                len(self.issues.view("TASK-7", full=True)["comments"]),
+            ),
+            (["comments"], 6),
+        )
+        with self.assertRaisesRegex(LinearError, f"fake: no cursor {PROJECT['id']}"):
+            self.gql(issue_read.MORE["comments"], i="TASK-7", c=PROJECT["id"])
+        for name in ("labels", "relations", "inverseRelations", "children"):
+            with self.subTest(name):
+                self.assertEqual(
+                    self.gql(issue_read.MORE[name], i="TASK-7", c=None),
+                    {"issue": {name: {"nodes": [], "pageInfo": pages([])}}},
+                )
+
+    def test_list_pages_by_cursor_most_recently_updated_first(self):
+        eight, nine = self.fake.issue("Eight"), self.fake.issue("Nine")
+        self.fake.comment("TASK-8", self.human, "Touched.")
+        team = {"team": {"id": {"eq": TEAM}}}
+        first = self.gql(issue_list.Q_LIST, f=team, a=False, first=2, after=None)["issues"]
+        self.assertEqual(
+            first["edges"][0],
+            {
+                "cursor": eight["id"],
+                "node": {
+                    "id": eight["id"],
+                    "identifier": "TASK-8",
+                    "title": "Eight",
+                    "url": eight["url"],
+                    "state": {"id": STATES["todo"], "name": "Todo"},
+                    "assignee": None,
+                    "project": None,
+                    "parent": None,
+                    "labels": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                },
+            },
+        )
+        self.assertEqual([e["cursor"] for e in first["edges"]], [eight["id"], nine["id"]])
+        self.assertEqual(first["pageInfo"], {"hasNextPage": True, "endCursor": nine["id"]})
+        rest = self.gql(issue_list.Q_LIST, f=team, a=False, first=2, after=nine["id"])["issues"]
+        self.assertEqual(
+            ([e["node"]["identifier"] for e in rest["edges"]], rest["pageInfo"]),
+            (["TASK-7"], {"hasNextPage": False, "endCursor": self.task7["id"]}),
+        )
+        rows, more, end = self.issues.page(list_query(), 1, eight["id"])
+        self.assertEqual(
+            ([r[0]["identifier"] for r in rows], more, end), (["TASK-9"], True, nine["id"])
+        )
+
+    def test_list_filters(self):
+        self.fake.issue(
+            "Widget parser",
+            assignee=self.engineer,
+            priority=2,
+            labels=[TASK_LABELS["build"]],
+        )
+        self.fake.issue(
+            "Other",
+            description="Mentions WIDGET here.",
+            parent="TASK-7",
+            priority=1,
+            labels=[CLIENT_LABELS["codex"]],
+        )
+        gone = self.fake.issue("Archived widget", assignee=self.engineer)
+        ops.call(self.gql, linear_tracker.M_ARCHIVE, "issueArchive", i=gone["id"])
+        for given, want in (
+            ({}, ["TASK-7", "TASK-8", "TASK-9"]),
+            ({"include_archived": True}, ["TASK-10", "TASK-7", "TASK-8", "TASK-9"]),
+            ({"query": "widget"}, ["TASK-8", "TASK-9"]),
+            ({"query": "widget", "include_archived": True}, ["TASK-10", "TASK-8", "TASK-9"]),
+            ({"state": IssueState.READY}, ["TASK-8", "TASK-9"]),
+            ({"state": IssueState.RUNNING}, ["TASK-7"]),
+            ({"role": "engineer"}, ["TASK-7", "TASK-8"]),
+            ({"role": "unassigned"}, ["TASK-9"]),
+            ({"task": "build"}, ["TASK-8"]),
+            ({"client": "codex"}, ["TASK-9"]),
+            ({"priority": Priority.HIGH}, ["TASK-8"]),
+            ({"priority": Priority.URGENT}, ["TASK-9"]),
+            ({"parent": "TASK-7"}, ["TASK-9"]),
+            ({"state": IssueState.READY, "role": "engineer"}, ["TASK-8"]),
+        ):
+            with self.subTest(given):
+                self.assertEqual(self.listed(**given), want)
+
+    def test_edit_reads_labels_and_updates_fields_and_labels(self):
+        build, codex = TASK_LABELS["build"], CLIENT_LABELS["codex"]
+        rec = self.fake.issue("Edit me", description="Old", labels=[build, codex])
+        labels = [
+            {"id": build, "name": "build", "parent": {"id": TASK_GROUP}},
+            {"id": codex, "name": "codex", "parent": {"id": CLIENT_GROUP}},
+        ]
+        self.assertEqual(
+            self.gql(issue_edit.Q_READ, i="TASK-8"),
+            {
+                "viewer": self.me,
+                "issue": {
+                    "id": rec["id"],
+                    "identifier": "TASK-8",
+                    "url": rec["url"],
+                    "title": "Edit me",
+                    "description": "Old",
+                    "priority": 0,
+                    "team": {"id": TEAM, "key": "TASK"},
+                    "labels": {"nodes": labels, "pageInfo": pages(labels)},
+                },
+            },
+        )
+        change = issue_change(
+            "TASK-8",
+            title="Edited",
+            body="New",
+            task="light-build",
+            client="claude",
+            priority=Priority.HIGH,
+        )
+        receipt = self.issues.edit(change)
+        self.assertEqual(
+            (receipt.result, receipt.actor_id, receipt.actor_name),
+            ("changed", self.harness, "Harness"),
+        )
+        self.assertEqual(
+            self.fake.requests[-1].variables["in"],
+            {
+                "title": "Edited",
+                "description": "New",
+                "priority": 2,
+                "addedLabelIds": [TASK_LABELS["light-build"], CLIENT_LABELS["claude"]],
+                "removedLabelIds": [build, codex],
+            },
+        )
+        self.assertEqual(
+            {k: rec[k] for k in ("title", "description", "priority", "labels")},
+            {
+                "title": "Edited",
+                "description": "New",
+                "priority": 2,
+                "labels": [TASK_LABELS["light-build"], CLIENT_LABELS["claude"]],
+            },
+        )
+        ops.call(
+            self.gql,
+            issue_edit.M_EDIT,
+            "issueUpdate",
+            i="TASK-8",
+            **{"in": {"stateId": STATES["done"]}},
+        )
+        self.assertEqual(
+            (rec["state"], rec["history"][-1]["actorId"]), (STATES["done"], self.harness)
+        )
+        for name, bad, error in (
+            ("an unknown input", {"cycleId": TEAM}, "fake: issueUpdate has no input cycleId"),
+            ("a label group", {"addedLabelIds": [TASK_GROUP]}, "Entity not found: IssueLabel"),
+            (
+                "two labels of a group",
+                {"addedLabelIds": [build]},
+                f"fake: two labels of group {TASK_GROUP}",
+            ),
+            ("an unknown state", {"stateId": TEAM}, "Entity not found: WorkflowState"),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(LinearError, error):
+                ops.call(self.gql, issue_edit.M_EDIT, "issueUpdate", i="TASK-8", **{"in": bad})
+        self.assertEqual(rec["labels"], [TASK_LABELS["light-build"], CLIENT_LABELS["claude"]])
+
+    def test_label_more_reads_after_the_cursor(self):
+        build, codex = TASK_LABELS["build"], CLIENT_LABELS["codex"]
+        rec = self.fake.issue("Labelled", labels=[build, codex])
+        node = {"id": codex, "name": "codex", "parent": {"id": CLIENT_GROUP}}
+        self.assertEqual(
+            self.gql(issue_label.Q_MORE, i=rec["id"], c=build),
+            {"issue": {"labels": {"nodes": [node], "pageInfo": pages([node])}}},
+        )
+
+    def test_move_and_comment(self):
+        issue = {"id": self.task7["id"], "identifier": "TASK-7", "url": self.task7["url"]}
+        self.assertEqual(
+            self.gql(issue_write.Q_MOVE, i="TASK-7"),
+            {
+                "viewer": self.me,
+                "issue": {
+                    **issue,
+                    "state": {"id": STATES["in_progress"]},
+                    "team": {"id": TEAM, "key": "TASK"},
+                },
+            },
+        )
+        self.assertEqual(
+            self.gql(issue_write.Q_COMMENT, i="TASK-7"), {"viewer": self.me, "issue": issue}
+        )
+        made = self.gql(issue_write.M_COMMENT, i=self.task7["id"], b="Raw.")
+        self.assertEqual(
+            made,
+            {
+                "commentCreate": {
+                    "success": True,
+                    "comment": {"id": self.task7["comments"][-1]["id"]},
+                }
+            },
+        )
+        self.fake.requests.clear()
+        self.assertEqual(self.issues.move("TASK-7", IssueState.DONE).result, "changed")
+        receipt = self.issues.comment("TASK-7", "Done.")
+        last = self.task7["comments"][-1]
+        self.assertEqual(
+            (receipt.comment_id, last["body"], last["user"], self.task7["state"]),
+            (last["id"], "Done.", self.harness, STATES["done"]),
+        )
+        self.assertEqual(
+            self.ops(),
+            [
+                "issue_write.Q_MOVE",
+                "linear.M_STATE",
+                "issue_write.Q_COMMENT",
+                "issue_write.M_COMMENT",
+            ],
+        )
+
+    def test_relation_add_and_remove_both_directions(self):
+        eight = self.fake.issue("Eight")
+        self.assertEqual(
+            self.gql(issue_relation.M_ADD, i=eight["id"], r=self.task7["id"]),
+            {"issueRelationCreate": {"success": True}},
+        )
+        self.assertEqual(self.fake.relations, [("blocks", eight["id"], self.task7["id"])])
+        blocks = self.gql(issue_relation.Q_READ["blocks"], i="TASK-8")
+        [edge] = blocks["issue"]["relations"]["nodes"]
+        self.assertEqual(
+            edge, {"id": edge["id"], "type": "blocks", "relatedIssue": {"id": self.task7["id"]}}
+        )
+        self.assertEqual(blocks["viewer"], self.me)
+        self.assertEqual(
+            self.gql(issue_relation.Q_READ["blocked_by"], i="TASK-7")["issue"]["inverseRelations"],
+            {
+                "nodes": [{"id": edge["id"], "type": "blocks", "issue": {"id": eight["id"]}}],
+                "pageInfo": pages([edge]),
+            },
+        )
+        self.assertEqual(
+            self.gql(issue_relation.Q_MORE["blocks"], i=eight["id"], c=edge["id"]),
+            {"issue": {"relations": {"nodes": [], "pageInfo": pages([])}}},
+        )
+        self.assertEqual(
+            len(
+                self.gql(issue_relation.Q_MORE["blocked_by"], i="TASK-7", c=None)["issue"][
+                    "inverseRelations"
+                ]["nodes"]
+            ),
+            1,
+        )
+        self.assertEqual(
+            self.gql(issue_relation.M_REMOVE, i=edge["id"]),
+            {"issueRelationDelete": {"success": True}},
+        )
+        self.assertEqual(self.fake.relations, [])
+        with self.assertRaisesRegex(LinearError, "Entity not found: IssueRelation"):
+            self.gql(issue_relation.M_REMOVE, i=edge["id"])
+        for op, ident, direction, other, result, left in (
+            ("add", "TASK-7", "blocked_by", "TASK-8", "changed", 1),
+            ("add", "TASK-8", "blocks", "TASK-7", "unchanged", 1),
+            ("remove", "TASK-8", "blocks", "TASK-7", "changed", 0),
+            ("remove", "TASK-7", "blocked_by", "TASK-8", "unchanged", 0),
+        ):
+            with self.subTest(op=op, ident=ident):
+                receipt = self.issues.relation(op, ident, direction, other)
+                self.assertEqual((receipt.result, len(self.fake.relations)), (result, left))
+
+    def test_archive_is_refused_with_an_unfinished_child_then_takes_it(self):
+        child = self.fake.issue("Child", parent="TASK-7")
+        plan = self.issues.archive_plan("TASK-7")
+        self.assertEqual(
+            (plan.outcome, [s.ident for s in plan.unfinished]), ("refused", ["TASK-7", "TASK-8"])
+        )
+        with self.assertRaises(ArchiveRefused):
+            self.issues.archive("TASK-7")
+        for ident in ("TASK-8", "TASK-7"):
+            self.fake.move(ident, "done", actor=self.human)
+        self.assertEqual(self.issues.archive_plan("TASK-7").outcome, "changed")
+        self.assertEqual(self.issues.archive("TASK-7").result, "changed")
+        self.assertEqual((self.task7["archived"], child["archived"]), (True, True))
+        self.assertEqual(self.issues.archive("TASK-7").result, "unchanged")
+        self.assertIn("issue_write.Q_COMMENT", self.ops())
 
 
 class RefusedKeychain(Case):

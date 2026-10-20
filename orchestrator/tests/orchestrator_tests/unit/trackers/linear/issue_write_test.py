@@ -2,10 +2,6 @@
 the body read verbatim, one write, the receipt.
 """
 
-import io
-import os
-from unittest import mock
-
 from agent_pm.orchestrator.engine.flow.types import IssueState
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
@@ -14,6 +10,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_write, ops
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import STATES
@@ -49,7 +46,7 @@ class Move(Case):
                 receipt = move(gql, state)
                 self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": STATES[key]})])
                 self.assertEqual(
-                    receipt,
+                    receipt_payload(receipt),
                     {
                         "issue": {
                             "id": "id-TASK-2",
@@ -65,8 +62,8 @@ class Move(Case):
     def test_already_in_the_state_is_unchanged_and_writes_nothing(self):
         gql = WriteGql(write_issue(state=STATES["handoff"]))
         receipt = move(gql, IssueState.APPROVED)
-        self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
-        self.assertEqual(receipt["actor"], VIEWER)
+        self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
+        self.assertEqual(receipt_payload(receipt)["actor"], VIEWER)
 
     def test_an_issue_of_another_team_writes_nothing(self):
         gql = WriteGql(write_issue("OPS-3", team_id=OTHER_TEAM))
@@ -111,71 +108,13 @@ class Move(Case):
             self.assertEqual(len(gql.writes), 1)
 
 
-class ReadBody(Case):
-    def test_a_file_or_stdin_reads_verbatim(self):
-        path = os.path.join(self.home, "body.md")
-        with open(path, "wb") as f:
-            f.write(BODY.encode("utf-8"))
-        self.assertEqual(issue_write.read_body(path, io.BytesIO()), BODY)
-        self.assertEqual(issue_write.read_body("-", io.BytesIO(BODY.encode("utf-8"))), BODY)
-
-    def test_only_a_leading_byte_order_mark_is_dropped(self):
-        path = os.path.join(self.home, "bom-body.md")
-        data = b"\xef\xbb\xbf" + (BODY + "﻿").encode("utf-8")
-        with open(path, "wb") as f:
-            f.write(data)
-        self.assertEqual(issue_write.read_body(path, io.BytesIO()), BODY + "﻿")
-        self.assertEqual(issue_write.read_body("-", io.BytesIO(data)), BODY + "﻿")
-
-    def test_an_unusable_body_is_refused(self):
-        blank, latin = os.path.join(self.home, "blank.md"), os.path.join(self.home, "latin.md")
-        with open(blank, "w", encoding="utf-8") as f:
-            f.write(" \n\t\n")
-        bom, bom_blank = os.path.join(self.home, "bom.md"), os.path.join(self.home, "bom-blank.md")
-        with open(bom, "wb") as f:
-            f.write(b"\xef\xbb\xbf")
-        with open(bom_blank, "wb") as f:
-            f.write(b"\xef\xbb\xbf \n")
-        with open(latin, "wb") as f:
-            f.write("café".encode("latin-1"))
-        cases = (
-            (os.path.join(self.home, "missing.md"), b"", "No such file"),
-            (self.home, b"", "directory"),
-            (latin, b"", "not UTF-8"),
-            (blank, b"", "empty"),
-            (bom, b"", "empty"),
-            (bom_blank, b"", "empty"),
-            ("-", b"\xef\xbb\xbf", "empty"),
-            ("-", b"", "empty"),
-            ("-", b"\xff", "not UTF-8"),
-        )
-        for path, stdin, phrase in cases:
-            with self.subTest(phrase=phrase, path=path), self.assertRaises(IssueError) as cm:
-                issue_write.read_body(path, io.BytesIO(stdin))
-            self.assertIn(f"--body-file {path}", str(cm.exception))
-            self.assertIn(phrase, str(cm.exception))
-
-    def test_stdin_is_read_only_for_dash(self):
-        path = os.path.join(self.home, "body.md")
-        with open(path, "wb") as f:
-            f.write(BODY.encode("utf-8"))
-        # no stdin at all: fd 0 closed (None) or a text layer without a byte stream
-        for stdin in (None, io.StringIO(BODY)):
-            with self.subTest(stdin=stdin), mock.patch("sys.stdin", stdin):
-                self.assertEqual(issue_write.read_body(path), BODY)
-                with self.assertRaisesRegex(IssueError, "--body-file -: no stdin"):
-                    issue_write.read_body("-")
-        with mock.patch("sys.stdin", mock.Mock(buffer=io.BytesIO(BODY.encode("utf-8")))):
-            self.assertEqual(issue_write.read_body("-"), BODY)
-
-
 class Comment(Case):
     def test_posts_the_body_verbatim_as_a_variable(self):
         gql = WriteGql(write_issue())
         receipt = issue_write.comment(gql, "TASK-2", BODY)
         self.assertEqual(gql.writes, [(issue_write.M_COMMENT, {"i": "id-TASK-2", "b": BODY})])
         self.assertEqual(
-            receipt,
+            receipt_payload(receipt),
             {
                 "issue": {
                     "id": "id-TASK-2",

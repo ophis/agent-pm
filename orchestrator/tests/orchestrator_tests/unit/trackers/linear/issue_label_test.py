@@ -10,6 +10,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_label, issue_read
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM
@@ -36,7 +37,7 @@ class Swap(Case):
         self.assertNotIn("labelIds:", issue_label.M_SWAP)
         self.assertEqual(gql.carried, [KEEP["id"], CHORE["id"]])
         self.assertEqual(
-            receipt,
+            receipt_payload(receipt),
             {
                 "issue": {
                     "id": "id-TASK-2",
@@ -51,7 +52,7 @@ class Swap(Case):
 
     def test_a_new_label_already_carried_is_not_added_twice(self):
         gql = gql_of(BUG, CHORE, KEEP)
-        self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", "chore")["result"], "changed")
+        self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", "chore").result, "changed")
         self.assertEqual(gql.writes[0][1], {"i": "id-TASK-2", "a": [], "r": [BUG["id"]]})
         self.assertEqual(gql.carried, [CHORE["id"], KEEP["id"]])
 
@@ -60,7 +61,7 @@ class Swap(Case):
             gql = gql_of(CHORE, KEEP)
             with self.subTest(old=old):
                 receipt = issue_label.swap(gql, "TASK-2", old, "chore")
-                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+                self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
 
     def test_a_rerun_after_old_was_retired_is_unchanged(self):
         retired = {**BUG, "retiredAt": "2026-01-01T00:00:00.000Z"}
@@ -69,18 +70,18 @@ class Swap(Case):
             gql = gql_of(CHORE, KEEP, catalog=catalog)
             with self.subTest(old=old):
                 receipt = issue_label.swap(gql, "TASK-2", old, "chore")
-                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+                self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
         with self.assertRaises(LabelRefused):
             issue_label.swap(gql_of(KEEP, catalog=catalog), "TASK-2", "bug", "chore")
 
     def test_the_same_label_carried_is_unchanged(self):
         gql = gql_of(BUG)
-        self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", BUG["id"])["result"], "unchanged")
+        self.assertEqual(issue_label.swap(gql, "TASK-2", "bug", BUG["id"]).result, "unchanged")
         self.assertEqual(gql.writes, [])
 
     def test_within_one_group_the_old_label_makes_way(self):
         gql = gql_of(TODO, KEEP)
-        self.assertEqual(issue_label.swap(gql, "TASK-2", "todo", "doing")["result"], "changed")
+        self.assertEqual(issue_label.swap(gql, "TASK-2", "todo", "doing").result, "changed")
         self.assertEqual(gql.carried, [KEEP["id"], DOING["id"]])
 
     def test_ids_name_labels_and_later_label_pages_are_read(self):

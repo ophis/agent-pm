@@ -6,7 +6,7 @@ section names Linear.
 import contextlib
 import io
 
-from agent_pm.orchestrator.trackers.linear import issue
+from agent_pm.orchestrator.issue import command as issue
 from orchestrator_tests.case import Case
 from orchestrator_tests.skills.board import body, examples, front, rules
 

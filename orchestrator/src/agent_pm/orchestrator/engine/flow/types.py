@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
+from types import MappingProxyType
 from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
@@ -28,6 +29,13 @@ class Priority(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+# a priority as an issue stores it
+PRIORITY_NUMBERS = MappingProxyType(
+    {Priority.NONE: 0, Priority.URGENT: 1, Priority.HIGH: 2, Priority.MEDIUM: 3, Priority.LOW: 4}
+)
+COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 
 
 @dataclass(frozen=True)
@@ -70,8 +78,8 @@ class ArchivePlan:
 
 
 class ArchiveRefused(Exception):
-    def __init__(self, plan: ArchivePlan, message: str = ""):
-        super().__init__(message)
+    def __init__(self, plan: ArchivePlan):
+        super().__init__()
         self.plan = plan
 
 
@@ -183,6 +191,13 @@ class Stage:
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
+
+
+IDENT_ERROR = "{ident!r}: want an issue identifier such as TASK-1 or an issue id"
+BOTH_DIRECTIONS = (
+    "{identifier}: given to both --blocks and --blocked-by; "
+    "an issue cannot both block the new one and be blocked by it"
+)
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@ task, client and priority; a task or client replaces the issue's labels of that 
 label staying. Every given value already so: unchanged, nothing written.
 """
 
+from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS
 from agent_pm.orchestrator.trackers.linear import issue_label, issue_names, issue_read, issue_write
 
 Q_READ = (
@@ -14,32 +15,32 @@ M_EDIT = (
 )
 
 
-def edit(gql, linear, args, body):
-    """Change args.id's title, description (body), task, client and priority as given."""
+def edit(gql, linear, change):
+    """Change change.id's title, description, task, client and priority as given."""
     groups = {}
-    if args.task is not None:
-        groups["--task"] = (issue_names.task_label(linear, args.task), linear.task_label_group)
-    if args.client is not None:
+    if change.task is not None:
+        groups["--task"] = (issue_names.task_label(linear, change.task), linear.task_label_group)
+    if change.client is not None:
         groups["--client"] = (
-            issue_names.client_label(linear, args.client),
+            issue_names.client_label(linear, change.client),
             linear.agent_label_group,
         )
-    data = issue_read.lookup(gql, Q_READ, args.id)
+    data = issue_read.lookup(gql, Q_READ, change.id)
     node = data["issue"]
-    change = {}
-    if args.title is not None and args.title != node["title"]:
-        change["title"] = args.title
-    if body is not None and body != node["description"]:
-        change["description"] = body
-    priority = None if args.priority is None else issue_names.PRIORITIES[args.priority]
+    update = {}
+    if change.title is not None and change.title != node["title"]:
+        update["title"] = change.title
+    if change.body is not None and change.body != node["description"]:
+        update["description"] = change.body
+    priority = None if change.priority is None else PRIORITY_NUMBERS[change.priority]
     if priority is not None and priority != node["priority"]:
-        change["priority"] = priority
+        update["priority"] = priority
     if groups:
         issue_names.in_team(linear, node, " and ".join(groups))
-        change.update(_labels(issue_label.carried_labels(gql, args.id, node), groups.values()))
-    if not change:
+        update.update(_labels(issue_label.carried_labels(gql, change.id, node), groups.values()))
+    if not update:
         return issue_write.receipt(node, "edit", "unchanged", data["viewer"])
-    issue_write.write(gql, "edit", args.id, M_EDIT, "issueUpdate", i=node["id"], **{"in": change})
+    issue_write.write(gql, "edit", change.id, M_EDIT, "issueUpdate", i=node["id"], **{"in": update})
     return issue_write.receipt(node, "edit", "changed", data["viewer"])
 
 

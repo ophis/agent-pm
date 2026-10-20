@@ -6,12 +6,12 @@ from agent_pm.orchestrator.engine.types import IssueError, Resource
 from agent_pm.orchestrator.trackers.linear import issue_refs
 
 
-def source(gql, args, team_id):
-    """The source of args.resource matching args.query, in args.team (resolved) else team_id."""
-    resource, text = args.resource, args.query
-    if args.team is not None and resource is Resource.TEAMS:
+def source(gql, query, team_id):
+    """The source of query.resource matching query.query, in query.team (resolved) else team_id."""
+    resource, text = query.resource, query.query
+    if query.team is not None and resource is Resource.TEAMS:
         raise IssueError(f"lookup {resource} takes no --team")
-    if (args.project is None) == (resource is Resource.MILESTONES):
+    if (query.project is None) == (resource is Resource.MILESTONES):
         raise IssueError(
             "lookup milestones needs --project VALUE"
             if resource is Resource.MILESTONES
@@ -19,7 +19,7 @@ def source(gql, args, team_id):
         )
     if resource is Resource.TEAMS:
         return issue_refs.teams(issue_refs.team_text(text), _team)
-    team = issue_refs.team(gql, args.team)["id"] if args.team is not None else None
+    team = issue_refs.team(gql, query.team)["id"] if query.team is not None else None
     if resource is Resource.USERS:
         return issue_refs.users(team, issue_refs.user_text(text), _user)
     team = team or team_id
@@ -31,7 +31,7 @@ def source(gql, args, team_id):
         return issue_refs.labels(team, applicable, _label)
     if resource is Resource.PROJECTS:
         return issue_refs.projects(team, named, _project)
-    project = issue_refs.project(gql, team, args.project)["id"]
+    project = issue_refs.project(gql, team, query.project)["id"]
     return issue_refs.milestones(project, named, _milestone)
 
 

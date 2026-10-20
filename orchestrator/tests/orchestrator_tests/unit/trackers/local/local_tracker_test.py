@@ -551,6 +551,10 @@ class Written(Board):
         with open(path, encoding="utf-8") as file:
             return file.read()
 
+    def next_id(self, number):
+        with open(os.path.join(self.board, ".next-id"), "w", encoding="utf-8") as file:
+            file.write(f"{number}\n")
+
     def unchanged(self, path, call):
         before = (self.read(path), os.stat(path).st_mtime_ns)
         result = call()
@@ -840,10 +844,6 @@ class Create(Written):
         fields = {"owner": "engineer", "priority": 2, "description": "Handoff from LOC-1: u\n\nGo."}
         return self.tracker.create(once, home=home, title=title, **(fields | given))
 
-    def next_id(self, number):
-        with open(os.path.join(self.board, ".next-id"), "w", encoding="utf-8") as file:
-            file.write(f"{number}\n")
-
     def test_writes_the_next_issue(self):
         self.write("pm/approved", "LOC-1")
         self.next_id(10)
@@ -955,6 +955,67 @@ class Create(Written):
                 path = os.path.join(self.board, "engineer/ready", f"{made.ident} {name}.md")
                 self.assertTrue(os.path.isfile(path), os.listdir(os.path.dirname(path)))
                 self.assertEqual(self.tracker.issue(made.key).title, title)
+
+
+class Add(Written):
+    def test_writes_the_rendered_issue_with_the_next_id(self):
+        self.write("pm/approved", "AB-3")
+        self.next_id(12)
+        self.assertEqual(list(self.tracker.files()), ["AB-3"])
+        self.write("pm/done", "LOC-12")  # meanwhile: add rescans
+        rendered = []
+
+        def render(ident):
+            rendered.append(ident)
+            return text(ident, description="Go.")
+
+        made = self.tracker.add("engineer", LocalState.BACKLOG, "a/b: Queue", render)
+        self.assertEqual((made, rendered), (Ref("LOC-13", "LOC-13"), ["LOC-13"]))
+        path = os.path.join(self.board, "engineer/backlog/LOC-13 a-b: Queue.md")
+        self.assertEqual(self.read(path), text("LOC-13", description="Go."))
+        self.assertEqual(self.read(os.path.join(self.board, ".next-id")), "14\n")
+        found = self.tracker.files()["LOC-13"]
+        self.assertEqual(
+            (found.path, found.assignee, found.state, found.description),
+            (path, "engineer", LocalState.BACKLOG, "Go."),
+        )
+
+    def test_skips_a_taken_id_or_name(self):
+        self.write("pm/approved", "LOC-3")
+        taken = self.write("unassigned/ready", "LOC-1")
+        os.rename(taken, taken := os.path.join(self.board, "unassigned/ready/LOC-4 Queue.md"))
+        kept = self.read(taken)
+        self.next_id(3)
+        made = self.tracker.add("unassigned", LocalState.READY, "Queue", text)
+        self.assertEqual(made, Ref("LOC-5", "LOC-5"))  # LOC-3 on the board, LOC-4's name taken
+        self.assertEqual(self.read(taken), kept)
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.board, "unassigned/ready"))),
+            ["LOC-4 Queue.md", "LOC-5 Queue.md"],
+        )
+
+    def test_a_board_with_no_issue_has_no_prefix(self):
+        os.mkdir(os.path.join(self.board, "engineer"))
+        with self.assertRaises(IssueError) as caught:
+            self.tracker.add("pm", LocalState.READY, "Queue", text)
+        self.assertEqual(str(caught.exception), "no issue on the board to take an id prefix from")
+        self.assertEqual(sorted(os.listdir(self.board)), [".lock", "engineer"])
+
+    def test_writes_under_the_board_lock(self):
+        self.write("pm/approved", "LOC-1")
+
+        def render(ident):
+            fd = os.open(os.path.join(self.board, ".lock"), os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+            return text(ident)
+
+        self.assertEqual(
+            self.tracker.add("pm", LocalState.READY, "Queue", render), Ref("LOC-2", "LOC-2")
+        )
 
 
 class Stamped(Written):

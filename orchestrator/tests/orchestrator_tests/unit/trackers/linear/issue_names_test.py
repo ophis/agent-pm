@@ -2,7 +2,7 @@
 a name the configuration lacks is IssueError naming the configured ones.
 """
 
-from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
+from agent_pm.orchestrator.engine.flow.types import IssueState
 from agent_pm.orchestrator.engine.types import IssueError
 from agent_pm.orchestrator.trackers.linear import issue_names, ops
 from orchestrator_tests.case import Case
@@ -35,20 +35,6 @@ class StateId(Case):
         for state, key in keys.items():
             with self.subTest(state=state):
                 self.assertEqual(issue_names.state_id(names_cfg(), state), STATES[key])
-
-
-class Priorities(Case):
-    def test_linear_numbers_by_name(self):
-        self.assertEqual(
-            issue_names.PRIORITIES,
-            {
-                Priority.NONE: 0,
-                Priority.URGENT: 1,
-                Priority.HIGH: 2,
-                Priority.MEDIUM: 3,
-                Priority.LOW: 4,
-            },
-        )
 
 
 class Assignee(Case):

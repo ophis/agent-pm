@@ -30,10 +30,8 @@ from agent_pm.orchestrator.engine.types import (
     TrackerKind,
     Wiring,
 )
-from agent_pm.orchestrator.trackers.linear import (
-    client,
-    issue,
-)
+from agent_pm.orchestrator.issue import command as issue_command
+from agent_pm.orchestrator.trackers.linear import client
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.orchestrator.trackers.local.board import scan
 from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
@@ -122,7 +120,7 @@ def main(argv=None):
             "close finished issues' runs, delete their agent dirs, then archive",
         ),
         "issue": (
-            issue.main,
+            issue_command.main,
             "read, list, create, edit, move, comment on, archive, relate or relabel issues; "
             "look up Linear references",
         ),
@@ -138,11 +136,10 @@ def main(argv=None):
             "Prerequisites and effects:\n"
             "  Operational commands require configured orchestrator and Delegate\n"
             '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
-            "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
-            '  issue does not run yet; "linear" reaches Linear through\n'
-            "  the linear.harness_key Keychain service (the issue commands:\n"
-            "  linear.manager_key), role keys identifying the accounts used for issue\n"
-            "  work. Python 3.11+ is needed.\n"
+            "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board);\n"
+            '  "linear" reaches Linear through the linear.harness_key Keychain service\n'
+            "  (the issue commands: linear.manager_key), role keys identifying the\n"
+            "  accounts used for issue work. Python 3.11+ is needed.\n"
             "  Router launches need the configured client/Delegate and its Host tools.\n"
             "  Router/promote/prune prepend AGENT_PM_PATH, then this installation's bin,\n"
             "  then default executable directories. Logs: STATE/logs/orchestrator.jsonl;\n"

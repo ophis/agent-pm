@@ -9,6 +9,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_read, issue_relation
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import TimeoutExpired
@@ -31,7 +32,7 @@ class Add(Case):
                     [(issue_relation.M_ADD, {"i": "id-TASK-1", "r": "id-TASK-2"})],
                 )
                 self.assertEqual(
-                    receipt,
+                    receipt_payload(receipt),
                     {
                         "issue": {
                             "id": f"id-{ident}",
@@ -49,7 +50,7 @@ class Add(Case):
             gql = RelationGql(BOARD, [["r-1", "blocks", "TASK-1", "TASK-2"]])
             with self.subTest(direction=direction):
                 receipt = issue_relation.relation(gql, "add", ident, direction, other)
-                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+                self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
 
     def test_the_reverse_edge_or_another_type_is_not_this_edge(self):
         gql = RelationGql(BOARD, OTHERS)
@@ -62,7 +63,7 @@ class Add(Case):
         filler = [[f"r-{n}", "related", "TASK-1", "TASK-3"] for n in range(issue_read.PAGE)]
         gql = RelationGql(BOARD, [*filler, ["r-last", "blocks", "TASK-1", "TASK-2"]])
         receipt = issue_relation.relation(gql, "add", "TASK-1", "blocks", "TASK-2")
-        self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+        self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
         self.assertIn(
             (issue_relation.Q_MORE["blocks"], {"i": "id-TASK-1", "c": str(issue_read.PAGE)}),
             gql.calls,
@@ -78,7 +79,7 @@ class Remove(Case):
                 self.assertEqual(gql.writes, [(issue_relation.M_REMOVE, {"i": "r-1"})])
                 self.assertEqual(gql.relations, [list(r) for r in OTHERS])
                 self.assertEqual(
-                    (receipt["operation"], receipt["result"]), ("relation remove", "changed")
+                    (receipt.operation, receipt.result), ("relation remove", "changed")
                 )
 
     def test_a_missing_edge_is_unchanged_and_the_reverse_one_stays(self):
@@ -86,7 +87,7 @@ class Remove(Case):
             gql = RelationGql(BOARD, OTHERS)
             with self.subTest(direction=direction):
                 receipt = issue_relation.relation(gql, "remove", ident, direction, other)
-                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+                self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
                 self.assertEqual(gql.relations, [list(r) for r in OTHERS])
 
     def test_every_record_of_the_edge_goes(self):

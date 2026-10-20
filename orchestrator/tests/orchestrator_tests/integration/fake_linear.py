@@ -1,10 +1,13 @@
 """Linear's GraphQL API as the orchestrator's queries use it, in memory, served over HTTP through the
 integration transport: each exact query text is an op (OPS; BUILT: the router's issue lists, built
-by router.q_issues), its answer projected to the query's selection."""
+by router.q_issues; module.NAME[key]: a dict constant's text), its answer projected to the query's
+selection. Issues list most recently written first; the issue command's connections are cut to the
+query's first, its cursors node ids."""
 
 import functools
 import hashlib
 import io
+import itertools
 import json
 import os
 import re
@@ -24,6 +27,15 @@ from agent_pm.orchestrator.engine import (
 from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import (
     client,
+    issue_create,
+    issue_edit,
+    issue_label,
+    issue_list,
+    issue_names,
+    issue_read,
+    issue_refs,
+    issue_relation,
+    issue_write,
     linear_tracker,
     ops,
 )
@@ -86,6 +98,15 @@ MODULES = {
     "prune": linear_tracker,
     "router": linear_tracker,
     "related": linear_tracker,
+    "issue_read": issue_read,
+    "issue_list": issue_list,
+    "issue_create": issue_create,
+    "issue_names": issue_names,
+    "issue_refs": issue_refs,
+    "issue_edit": issue_edit,
+    "issue_label": issue_label,
+    "issue_write": issue_write,
+    "issue_relation": issue_relation,
 }
 
 BUILT = {
@@ -96,10 +117,17 @@ BUILT = {
 
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}
 
+ISSUE_CREATE = CREATE | {"labelIds", "parentId"}
+
+UPDATE = {"title", "description", "priority", "addedLabelIds", "removedLabelIds", "stateId"}
+
+ONE_PAGE = {"hasNextPage": False, "endCursor": None}
+
 COMPARATORS = {
     "eq": lambda x, a: x == a,
     "in": lambda x, a: x in a,
     "null": lambda x, a: (x is None) == a,
+    "containsIgnoreCase": lambda x, a: x is not None and a.lower() in x.lower(),
 }
 
 
@@ -164,11 +192,46 @@ def project(value, sel, op):
     return {f: project(value[f], s, op) for f, s in sel.items()}
 
 
+def _text(op):
+    if op in BUILT:
+        return BUILT[op]
+    module, name = op.split(".")
+    name, _, key = name.partition("[")
+    value = getattr(MODULES[module], name)
+    return value[key.removesuffix("]")] if key else value
+
+
 def texts():
+    return {op: _text(op) for op in OPS}
+
+
+def _page(nodes, first, after=None):
+    ids = [n["id"] for n in nodes]
+    if after is not None and after not in ids:
+        raise Problem(f"fake: no cursor {after}")
+    start = 0 if after is None else ids.index(after) + 1
+    page = nodes[start : start + first]
     return {
-        op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1])
-        for op in OPS
+        "nodes": page,
+        "pageInfo": {
+            "hasNextPage": start + first < len(nodes),
+            "endCursor": page[-1]["id"] if page else None,
+        },
     }
+
+
+@functools.cache
+def _firsts(query):
+    """Each connection's literal first, and whether it reads after $c."""
+    return re.findall(r"(\w+)\(first: (\d+)(, after: \$c)?", query)
+
+
+def _relation_id(type, issue, related):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"fake-linear/{type}/{issue}/{related}"))
+
+
+def _paged_op(query, *, viewer=False):
+    return lambda fake, caller, v: fake._paged(caller, v, query, viewer=viewer)
 
 
 def index(named):
@@ -186,6 +249,7 @@ class FakeLinear:
         self.ops = dict(TABLE)
         self.requests, self.failures = [], []
         self.users, self.issues, self.labels, self.projects, self.relations = {}, {}, {}, {}, []
+        self.clock = itertools.count()
 
     def user(self, email, name, service=None):
         with self.lock:
@@ -221,14 +285,17 @@ class FakeLinear:
         priority=0,
         labels=(),
         created=None,
+        parent=None,
     ):
         with self.lock:
             if (
                 assignee is not None
                 and assignee not in self.users
                 or any(i not in self.labels for i in labels)
+                or parent is not None
+                and self.find(parent) is None
             ):
-                raise ValueError("assignee or a label not seeded")
+                raise ValueError("assignee, a label or the parent not seeded")
             if project:
                 self.projects[project["id"]] = project["name"]
             try:
@@ -243,6 +310,7 @@ class FakeLinear:
                     project=project and dict(project),
                     labels=list(labels),
                     createdAt=stamp(created),
+                    parent=parent and self.find(parent)["id"],
                 )
             except Problem as e:
                 raise ValueError(str(e)) from None
@@ -419,6 +487,8 @@ class FakeLinear:
             "id": id,
             "identifier": identifier,
             "url": f"https://linear.app/fake/issue/{identifier}",
+            "parent": None,
+            "touched": next(self.clock),
             **fields,
             "comments": [],
             "attachments": [],
@@ -434,7 +504,24 @@ class FakeLinear:
         elif self._comment_of(cid) is not None:
             raise Problem(f"fake: comment id {cid} in use")
         rec["comments"].append({"id": cid, "body": body, "createdAt": at, "user": user})
+        self._touch(rec)
         return cid
+
+    def _touch(self, *recs):
+        for rec in recs:
+            rec["touched"] = next(self.clock)
+
+    def _children(self, rec):
+        return [i for i in self.issues.values() if i["parent"] == rec["id"] and not i["archived"]]
+
+    def _labelled(self, lids):
+        """lids, each a seeded label, no label group and no two of one group."""
+        if any(i not in self.labels or self.labels[i]["isGroup"] for i in lids):
+            raise Problem(f"Entity not found: {'IssueLabel'}")
+        groups = [self.labels[i]["parent"] for i in lids if self.labels[i]["parent"]]
+        if dup := next((g for g in groups if groups.count(g) > 1), None):
+            raise Problem(f"fake: two labels of group {dup}")
+        return list(lids)
 
     def _move(self, rec, state, actor, at, *, bot=False):
         if state != rec["state"]:
@@ -446,6 +533,7 @@ class FakeLinear:
             }
             rec["history"].append(move | ({"bot": True} if bot else {}))
             rec["state"] = state
+            self._touch(rec)
 
     def _entered(self, rec, kind):
         """When rec last moved into its state, if that state is of type kind (Linear clears it on
@@ -504,21 +592,27 @@ class FakeLinear:
                 "project",
             )
         }
+        comments = [
+            {
+                **c,
+                "user": self._person(c["user"], caller),
+                **dict.fromkeys(("parentId", "quotedText", "onBehalfOf")),
+            }
+            for c in rec["comments"]
+        ]
         return {
             **out,
             "state": self._state(rec["state"]),
             "team": self._team(),
             "assignee": self._person(rec["assignee"], caller),
-            "labels": {"nodes": [self._label(i) for i in rec["labels"]]},
-            "comments": {
-                "nodes": _newest(
-                    [{**c, "user": self._person(c["user"], caller)} for c in rec["comments"]]
-                )
-            },
+            "parent": rec["parent"] and self._brief(rec["parent"]),
+            "projectMilestone": None,
+            "labels": {"nodes": [self._label(i) for i in rec["labels"]], "pageInfo": ONE_PAGE},
+            "comments": {"nodes": _newest(comments), "pageInfo": ONE_PAGE},
             "attachments": {"nodes": rec["attachments"]},
-            "children": {  # the fake has no sub-issues
-                "nodes": [],
-                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "children": {
+                "nodes": [self._view(c, caller) for c in self._children(rec)],
+                "pageInfo": ONE_PAGE,
             },
             "archivedAt": stamp() if rec["archived"] else None,
             "updatedAt": max([rec["createdAt"], *(h["createdAt"] for h in rec["history"])]),
@@ -528,21 +622,23 @@ class FakeLinear:
             },
             "canceledAt": self._entered(rec, "canceled"),
             "completedAt": self._entered(rec, "completed"),
-            "relations": {
-                "nodes": [
-                    {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
-                    for t, a, b in self.relations
-                    if a == rec["id"]
-                ]
-            },
-            "inverseRelations": {
-                "nodes": [
-                    {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
-                    for t, a, b in self.relations
-                    if b == rec["id"]
-                ]
-            },
+            "relations": self._relations(rec, 1),
+            "inverseRelations": self._relations(rec, 2),
         }
+
+    def _relations(self, rec, end):
+        """The relations whose end (1: issue, 2: relatedIssue) rec is."""
+        nodes = [
+            {
+                "id": _relation_id(*r),
+                "type": r[0],
+                "issue": self._brief(r[1]),
+                "relatedIssue": self._brief(r[2]),
+            }
+            for r in self.relations
+            if r[end] == rec["id"]
+        ]
+        return {"nodes": nodes, "pageInfo": ONE_PAGE}
 
     def _list(self, caller, flt, first, after=None, *, archived=False):
         found = [
@@ -570,10 +666,21 @@ class FakeLinear:
             "state": rec["state"],
             "assignee": rec["assignee"],
             "project": rec["project"] and rec["project"]["id"],
+            "parent": rec["parent"],
+            "priority": rec["priority"],
+            "title": rec["title"],
+            "description": rec["description"],
         }
         for field, cond in flt.items():
-            if field == "or":
-                if not any(self._match(rec, f) for f in cond):
+            if field in ("or", "and"):
+                if not (any if field == "or" else all)(self._match(rec, f) for f in cond):
+                    return False
+                continue
+            if field == "labels":
+                if list(cond) != ["some"] or list(cond["some"]) != ["id"]:
+                    raise Problem(f"fake: no label filter {cond}")
+                some = cond["some"]["id"].items()
+                if not any(all(COMPARATORS[c](i, a) for c, a in some) for i in rec["labels"]):
                     return False
                 continue
             if field not in values:
@@ -592,6 +699,38 @@ class FakeLinear:
 
     def _issue(self, caller, v):
         return {"issue": self._view(self._get(v["i"]), caller)}
+
+    def _paged(self, caller, v, query, *, viewer):
+        """v["i"]'s view, each connection query names cut to its first, after $c if it says so."""
+        view = self._view(self._get(v["i"]), caller)
+        for name, first, after in _firsts(query):
+            view[name] = _page(view[name]["nodes"], int(first), v.get("c") if after else None)
+        return {"issue": view} | ({"viewer": self._viewer(caller, v)["viewer"]} if viewer else {})
+
+    def _viewer(self, caller, v):
+        return {"viewer": self._person(caller["id"], caller)}
+
+    def _issue_ref(self, caller, v):
+        return {"issue": self._brief(self._get(v["id"])["id"])}
+
+    def _issue_list(self, caller, v):
+        found = sorted(
+            (
+                i
+                for i in self.issues.values()
+                if (v.get("a") or not i["archived"]) and self._match(i, v.get("f") or {})
+            ),
+            key=lambda i: i["touched"],
+            reverse=True,
+        )
+        page = _page(found, v["first"], v.get("after"))
+        edges = []
+        for rec in page["nodes"]:
+            node = self._view(rec, caller)
+            for name, first, _ in _firsts(issue_list.Q_LIST):
+                node[name] = _page(node[name]["nodes"], int(first))
+            edges.append({"cursor": rec["id"], "node": node})
+        return {"issues": {"edges": edges, "pageInfo": page["pageInfo"]}}
 
     def _users(self, caller, v):
         return {
@@ -712,7 +851,32 @@ class FakeLinear:
     def _set_title(self, caller, v):
         rec = self._get(v["i"])
         rec["title"] = v["t"]
+        self._touch(rec)
         return {"issueUpdate": {"success": True}}
+
+    def _update(self, caller, v):
+        rec, new = self._get(v["i"]), v["in"]
+        if extra := sorted(set(new) - UPDATE):
+            raise Problem(f"fake: issueUpdate has no input {extra[0]}")
+        if "stateId" in new and new["stateId"] not in NAMES:
+            raise Problem(f"Entity not found: {'WorkflowState'}")
+        removed = set(new.get("removedLabelIds", ()))
+        labels = [i for i in rec["labels"] if i not in removed]
+        labels = self._labelled(
+            labels + [i for i in new.get("addedLabelIds", ()) if i not in labels]
+        )
+        for key in ("title", "description", "priority"):
+            if key in new:
+                rec[key] = new[key]
+        rec["labels"] = labels
+        if "stateId" in new:
+            self._move(rec, new["stateId"], caller["id"], stamp())
+        self._touch(rec)
+        return {"issueUpdate": {"success": True}}
+
+    def _comment_with_id(self, caller, v):
+        cid = self._comment(self._get(v["i"]), caller["id"], v["b"], stamp())
+        return {"commentCreate": {"success": True, "comment": {"id": cid}}}
 
     def _subscribe(self, caller, v):
         rec = self._get(v["i"])
@@ -730,21 +894,32 @@ class FakeLinear:
         return {"attachmentLinkURL": {"success": True}}
 
     def _archive(self, caller, v):
-        self._get(v["i"])["archived"] = True
+        """With its sub-issues, as Linear archives them."""
+        level = [self._get(v["i"])]
+        while level:
+            for rec in level:
+                rec["archived"] = True
+                self._touch(rec)
+            level = [c for rec in level for c in self._children(rec)]
         return {"issueArchive": {"success": True}}
 
     def _unarchive(self, caller, v):
-        self._get(v["i"])["archived"] = False
+        rec = self._get(v["i"])
+        rec["archived"] = False
+        self._touch(rec)
         return {"issueUnarchive": {"success": True}}
 
-    def _create(self, caller, v):
+    def _issue_create(self, caller, v):
+        return self._create(caller, v, ISSUE_CREATE)
+
+    def _create(self, caller, v, inputs=CREATE):
         new, now = v["in"], stamp()
         pid, uid, sid = (
             new.get("projectId"),
             new.get("assigneeId"),
             new.get("stateId", STATES["todo"]),
         )
-        if extra := sorted(set(new) - CREATE):
+        if extra := sorted(set(new) - inputs):
             raise Problem(f"fake: issueCreate has no input {extra[0]}")
         if (
             new.get("teamId") != TEAM
@@ -755,6 +930,8 @@ class FakeLinear:
             raise Problem(
                 f"Entity not found: {', '.join(('Team', 'Project', 'User', 'WorkflowState')[:-1])} or {('Team', 'Project', 'User', 'WorkflowState')[-1]}"
             )
+        labels = self._labelled(new.get("labelIds", []))
+        parent = new.get("parentId") and self._get(new["parentId"])["id"]
         rec = self._add(
             new.get("id") or str(uuid.uuid4()),
             None,
@@ -764,17 +941,33 @@ class FakeLinear:
             state=sid,
             assignee=uid,
             project=pid and {"id": pid, "name": self.projects[pid]},
-            labels=[],
+            labels=labels,
             createdAt=now,
+            parent=parent,
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
     def _relate(self, caller, v):
         new = v["in"]
-        self.relations.append(
-            (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])
-        )
+        self._add_relation(new["type"], new["issueId"], new["relatedIssueId"])
         return {"issueRelationCreate": {"success": True}}
+
+    def _relate_blocks(self, caller, v):
+        self._add_relation("blocks", v["i"], v["r"])
+        return {"issueRelationCreate": {"success": True}}
+
+    def _add_relation(self, type, issue, related):
+        a, b = self._get(issue), self._get(related)
+        self.relations.append((type, a["id"], b["id"]))
+        self._touch(a, b)
+
+    def _unrelate(self, caller, v):
+        found = next((r for r in self.relations if _relation_id(*r) == v["i"]), None)
+        if found is None:
+            raise Problem(f"Entity not found: {'IssueRelation'}")
+        self.relations.remove(found)
+        self._touch(self.issues[found[1]], self.issues[found[2]])
+        return {"issueRelationDelete": {"success": True}}
 
 
 OPS = {
@@ -815,6 +1008,28 @@ OPS = {
     "related.Q_SEARCH_IDS": FakeLinear._related,
     "related.Q_IDS": FakeLinear._related,
     "related.Q_UPSTREAM": FakeLinear._issue,
+    "issue_read.Q_READ": _paged_op(issue_read.Q_READ),
+    "issue_read.Q_FULL": _paged_op(issue_read.Q_FULL),
+    **{f"issue_read.MORE[{n}]": _paged_op(q) for n, q in issue_read.MORE.items()},
+    "issue_list.Q_LIST": FakeLinear._issue_list,
+    "issue_create.M_CREATE": FakeLinear._issue_create,
+    "issue_create.Q_VIEWER": FakeLinear._viewer,
+    "issue_names.Q_VIEWER": FakeLinear._viewer,
+    "issue_refs.Q_ISSUE": FakeLinear._issue_ref,
+    "issue_edit.Q_READ": _paged_op(issue_edit.Q_READ, viewer=True),
+    "issue_edit.M_EDIT": FakeLinear._update,
+    "issue_label.Q_MORE": _paged_op(issue_label.Q_MORE),
+    "issue_write.Q_MOVE": _paged_op(issue_write.Q_MOVE, viewer=True),
+    # issue_archive.Q_ISSUE is the same text
+    "issue_write.Q_COMMENT": _paged_op(issue_write.Q_COMMENT, viewer=True),
+    "issue_write.M_COMMENT": FakeLinear._comment_with_id,
+    **{
+        f"issue_relation.Q_READ[{d}]": _paged_op(q, viewer=True)
+        for d, q in issue_relation.Q_READ.items()
+    },
+    **{f"issue_relation.Q_MORE[{d}]": _paged_op(q) for d, q in issue_relation.Q_MORE.items()},
+    "issue_relation.M_ADD": FakeLinear._relate_blocks,
+    "issue_relation.M_REMOVE": FakeLinear._unrelate,
 }
 
 TABLE = index(texts())

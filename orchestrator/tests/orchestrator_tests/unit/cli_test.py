@@ -678,7 +678,8 @@ class Queries(RunCase):
 
 
 class OnALocalBoard(RunCase):
-    """router, writeback, resume, promote and prune reach the local board; issue needs Linear."""
+    """router, writeback, resume, promote and prune reach the local board; issue reads it too, its
+    Linear-only forms exiting 2."""
 
     def configure(self, default="fake"):
         self.board = os.path.join(os.path.realpath(self.home), "board")

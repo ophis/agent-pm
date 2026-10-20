@@ -1,5 +1,5 @@
 """agent-pm-orchestrator issue: help, the shared stdout/stderr/exit rules, and read, move, edit, comment,
-archive, relation and label swap through main.
+archive, relation and label swap through main; on a local board, its backend choice and refusals.
 """
 
 import io
@@ -7,12 +7,30 @@ import json
 import os
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config
-from agent_pm.orchestrator.engine.types import GraphQLErrors, LinearError, Unavailable
-from agent_pm.orchestrator.trackers.linear import client, issue
+from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
+from agent_pm.orchestrator.engine.types import (
+    Blocking,
+    GraphQLErrors,
+    IssueEdit,
+    IssueError,
+    LinearError,
+    ListQuery,
+    LookupQuery,
+    NewIssue,
+    Receipt,
+    RelationsFailed,
+    Resource,
+    Unavailable,
+)
+from agent_pm.orchestrator.issue import command as issue
+from agent_pm.orchestrator.issue.output import partial_message, refusal
+from agent_pm.orchestrator.trackers.linear import client
+from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -44,6 +62,7 @@ from orchestrator_tests.unit.issue_fixtures import (
 )
 
 KEY = "lin_api_TESTSECRET0123456789"
+RAW_BODY = 'say "hi", `ls`, $HOME and ${x} \\n\nline two\n中文正文\n'
 
 
 class Help(Case):
@@ -118,7 +137,9 @@ class Help(Case):
             "backlog, ready, running, review, approved, done, canceled",
             "me (the\n  linear.manager_key account) or unassigned",
             "none, urgent, high, medium, low",
-            "Linear only: lookup, label swap, --label, --project, --milestone.",
+            "Linear only (a local board exits 2): lookup, label swap, --label, --project,\n"
+            "  --milestone.",
+            "a local board ($AGENT_PM_BOARD_DIR) directly",
             "create, edit, move, comment, archive, relation and label swap write",
             "agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build",
             "agent-pm-orchestrator issue edit --help",
@@ -933,22 +954,6 @@ class LabelSwap(IssueCase):
 
 
 class Failures(IssueCase):
-    def test_a_local_board_is_refused_after_config(self):
-        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
-        with open(self.config, "w", encoding="utf-8") as f:
-            f.write(tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
-        gql = Gql(None)
-        code, out, err = self.run_main(["read", "TASK-2"], gql)
-        self.assertEqual(
-            (code, out, err),
-            (
-                2,
-                b"",
-                'agent-pm-orchestrator issue: issue needs [orchestrator] tracker = "linear"\n',
-            ),
-        )
-        self.assertEqual(gql.calls, [])
-
     def test_exit_codes_and_stderr(self):
         cases = (
             (["read", "task-2"], Gql(None), 2, "task-2"),
@@ -1042,6 +1047,320 @@ class Failures(IssueCase):
         self.assertEqual(code, 1)
         self.assertIn("HTTP 401", err)
         self.assertNotIn(KEY, out.decode() + err)
+
+
+LOCAL = CONFIG.replace('tracker = "linear"\n', 'tracker = "local"\n')
+LINEAR_ONLY = 'Linear only, not on a local board ([orchestrator] tracker = "local")'
+
+
+class LocalCase(IssueCase):
+    """IssueCase on a local board in a temp $AGENT_PM_BOARD_DIR; its issue files by put."""
+
+    def setUp(self):
+        super().setUp()
+        self.board = os.path.join(os.path.realpath(self.home), "board")
+        os.environ[config.BOARD_ENV] = self.board
+        with open(self.config, "w", encoding="utf-8") as f:
+            f.write(LOCAL)
+
+    def put(self, rel_dir, ident, *, mtime=1_790_000_000, description="", comments="", parent=None):
+        path = os.path.join(self.board, rel_dir, f"{ident} x.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        body = f"### Description\n{description}\n" if description else ""
+        body += f"### Comments\n{comments}" if comments else ""
+        parent_line = f"parent: {parent}\n" if parent else ""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"---\nid: {ident}\ntitle: {ident} title\n{parent_line}"
+                f"created: 2026-10-19T14:02:00-04:00\n---\n{body}"
+            )
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def snapshot(self):
+        found = {}
+        for top, _, names in os.walk(self.board):
+            for name in names:
+                if name == ".lock":
+                    continue
+                with open(os.path.join(top, name), "rb") as f:
+                    found[os.path.join(top, name)] = f.read()
+        return found
+
+    def run_local(self, argv, stdin=b""):
+        return self.run_main(argv, Gql(None), stdin)
+
+
+class LinearOnlyOnLocal(LocalCase):
+    FORMS = (
+        (["lookup", "teams"], "lookup"),
+        (["lookup", "milestones", "--project", "P"], "lookup"),
+        (["label", "swap", "LOC-1", "--from", "a", "--to", "b"], "label swap"),
+        (["list", "--label", "bug"], "--label"),
+        (["list", "--project", "P"], "--project"),
+        (["list", "--project", "P", "--label", "bug"], "--label"),
+        (["list", "--label", "", "--full", "--output", "out.json"], "--label"),
+        (["create", "--title", "t", "--body-file", "-", "--label", "bug"], "--label"),
+        (["create", "--title", "t", "--body-file", "-", "--project", "P"], "--project"),
+        (["create", "--title", "t", "--body-file", "-", "--milestone", "M"], "--milestone"),
+        (
+            ["create", "--title", "t", "--body-file", "-", "--milestone", "M", "--label", "a"],
+            "--label",
+        ),
+    )
+
+    def test_each_linear_only_form_exits_two_writing_nothing(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        for argv, what in self.FORMS:
+            with self.subTest(argv=argv):
+                gql = Gql(None)
+                code, out, err = self.run_main(argv, gql, b"body")
+                self.assertEqual(
+                    (code, out, err),
+                    (2, b"", f"agent-pm-orchestrator issue: {what}: {LINEAR_ONLY}\n"),
+                )
+                self.assertEqual(gql.calls, [])
+                self.assertEqual(self.snapshot(), before)
+
+    def test_the_board_is_never_read(self):
+        for argv, what in self.FORMS:
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv, b"body")
+                self.assertEqual(
+                    (code, out, err),
+                    (2, b"", f"agent-pm-orchestrator issue: {what}: {LINEAR_ONLY}\n"),
+                )
+        self.assertFalse(os.path.exists(self.board))
+
+    def test_the_local_options_still_run(self):
+        self.put("pm/ready", "LOC-1")
+        code, out, err = self.run_local(["list", "--state", "ready", "--role", "pm"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual([item["id"] for item in json.loads(out)["items"]], ["LOC-1"])
+
+
+class LocalRead(LocalCase):
+    def test_a_read_is_cut_like_linears(self):
+        notes = "".join(f"#### other · 2026-10-19 14:0{n}\nnote {n}\n\n" for n in range(6))
+        self.put("pm/ready", "LOC-1", description="d" * 700, comments=notes)
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual((code, err), (0, ""))
+        view = json.loads(out)
+        self.assertEqual(view["identifier"], "LOC-1")
+        self.assertEqual(view["state"], {"id": "ready", "name": "ready", "type": "unstarted"})
+        self.assertEqual(sorted(view["truncated"]), ["comments", "description"])
+        self.assertEqual(len(view["comments"]), 5)
+        self.assertEqual(view["comments"][0]["body"], "note 5")
+        self.assertEqual(
+            view["continue"], "agent-pm-orchestrator issue read LOC-1 --full --output FILE"
+        )
+
+    def test_full_writes_the_uncut_view(self):
+        notes = "".join(f"#### other · 2026-10-19 14:0{n}\nnote {n}\n\n" for n in range(6))
+        self.put("pm/ready", "LOC-1", description="d" * 700, comments=notes)
+        path = os.path.join(self.root, "LOC-1.json")
+        code, out, err = self.run_local(["read", "LOC-1", "--full", "--output", path])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"identifier": "LOC-1", "output": path})
+        with open(path, encoding="utf-8") as f:
+            view = json.load(f)
+        self.assertEqual((view["description"], len(view["comments"])), ("d" * 700, 6))
+
+
+class LocalList(LocalCase):
+    def test_pages_most_recently_modified_first(self):
+        for n in range(1, 4):
+            self.put("pm/ready", f"LOC-{n}", mtime=1_790_000_000 + n)
+        code, out, err = self.run_local(["list", "--limit", "2"])
+        self.assertEqual((code, err), (0, ""))
+        page = json.loads(out)
+        self.assertEqual([item["id"] for item in page["items"]], ["LOC-3", "LOC-2"])
+        self.assertEqual((page["has_next_page"], page["next_cursor"]), (True, "LOC-2"))
+        code, out, err = self.run_local(["list", "--limit", "2", "--cursor", "LOC-2"])
+        self.assertEqual((code, err), (0, ""))
+        page = json.loads(out)
+        self.assertEqual([item["id"] for item in page["items"]], ["LOC-1"])
+        self.assertEqual((page["has_next_page"], page["next_cursor"]), (False, None))
+
+
+class LocalErrors(LocalCase):
+    def test_a_board_that_cannot_be_scanned_exits_two(self):
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual(
+            (code, out, err),
+            (2, b"", f"agent-pm-orchestrator issue: {self.board}: no such board directory\n"),
+        )
+        path = self.put("pm/ready", "LOC-1")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("no front matter\n")
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual(
+            (code, out, err), (2, b"", f"agent-pm-orchestrator issue: {path}: no front matter\n")
+        )
+
+    def test_an_unresolved_value_exits_two(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        for argv, message in (
+            (["read", "LOC-9"], "LOC-9: no such issue"),
+            (["move", "LOC-9", "done"], "LOC-9: no such issue"),
+            (["list", "--role", "ghost"], "--role ghost: not a role"),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv)
+                self.assertEqual((code, out), (2, b""))
+                self.assertTrue(err.startswith(f"agent-pm-orchestrator issue: {message}"), err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_failed_write_exits_one_with_its_own_message(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        with mock.patch("os.replace", side_effect=PermissionError(13, "Permission denied")):
+            code, out, err = self.run_local(["comment", "LOC-1", "--body-file", "-"], b"hi")
+        self.assertEqual(
+            (code, out, err),
+            (1, b"", "agent-pm-orchestrator issue: [Errno 13] Permission denied\n"),
+        )
+        self.assertNotIn("Keychain", err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_file_changed_while_writing_exits_one(self):
+        path = self.put("pm/ready", "LOC-1", description="Do it.")
+        real = os.fstat
+
+        def edited(fd):
+            """os.fstat, which reading an issue file calls once it has its text, then a person's
+            edit, every time."""
+            found = real(fd)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("More.\n")
+            return found
+
+        with mock.patch("os.fstat", side_effect=edited):
+            code, out, err = self.run_local(["move", "LOC-1", "done"])
+        self.assertEqual(
+            (code, out, err),
+            (1, b"", f"agent-pm-orchestrator issue: {path}: changed while writing\n"),
+        )
+
+    def test_a_state_outside_the_seven_is_a_usage_error(self):
+        self.put("pm/ready", "LOC-1")
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            self.run_local(["move", "LOC-1", "Ready"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("invalid choice: 'Ready'", err.getvalue())
+
+    def test_a_bad_cursor_task_or_client_exits_two_writing_nothing(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        create = ["create", "--title", "T", "--body-file", "-"]
+        client = (
+            "--client 'a b': want a client name: no whitespace, control character or leading quote"
+        )
+        for argv, message in (
+            (["list", "--cursor", "LOC-999"], "--cursor LOC-999: not a cursor of this list\n"),
+            (["list", "--task", "nope"], "--task nope: not a configured task: "),
+            ([*create, "--task", "nope"], "--task nope: not a configured task: "),
+            (["list", "--client", "a b"], client + "\n"),
+            ([*create, "--client", "a b"], client + "\n"),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv, b"body")
+                self.assertEqual((code, out), (2, b""))
+                self.assertTrue(err.startswith(f"agent-pm-orchestrator issue: {message}"), err)
+        self.assertEqual(self.snapshot(), before)
+
+
+class LocalCreatePartial(LocalCase):
+    def test_a_failed_blocks_write_exits_one_with_the_report_and_the_issue_made(self):
+        failing = self.put("pm/ready", "LOC-1")
+        self.put("pm/ready", "LOC-2")
+        self.put("pm/ready", "LOC-3")
+        before = self.snapshot()
+        real = os.replace
+
+        def replace(src, dst):
+            if dst == failing:
+                raise PermissionError(13, "Permission denied")
+            return real(src, dst)
+
+        argv = ["create", "--title", "T", "--body-file", "-", "--blocks", "LOC-1"]
+        argv += ["--blocks", "LOC-2", "--blocked-by", "LOC-3"]
+        with mock.patch("os.replace", side_effect=replace):
+            code, out, err = self.run_local(argv, b"body")
+        self.assertEqual(code, 1)
+        made = [p for p in self.snapshot() if os.path.basename(p).startswith("LOC-4 ")]
+        self.assertEqual(len(made), 1)
+        receipt = Receipt(
+            "LOC-4", "LOC-4", Path(made[0]).as_uri(), "create", "changed", "other", "other"
+        )
+        error = "[Errno 13] Permission denied"
+        self.assertEqual(
+            json.loads(out),
+            {
+                "issue": {"id": "LOC-4", "identifier": "LOC-4", "url": receipt.url},
+                "operation": "create",
+                "result": "partial",
+                "actor": {"id": "other", "name": "other"},
+                "done": [{"blocks": "LOC-2"}, {"blocked_by": "LOC-3"}],
+                "failed": [{"blocks": "LOC-1", "error": error}],
+                "recover": ["agent-pm-orchestrator issue relation add LOC-4 --blocks LOC-1"],
+                "truncated": [],
+            },
+        )
+        partial = RelationsFailed(
+            receipt,
+            (Blocking("blocks", "LOC-2"), Blocking("blocked_by", "LOC-3")),
+            ((Blocking("blocks", "LOC-1"), error),),
+        )
+        self.assertEqual(err, f"agent-pm-orchestrator issue: {partial_message(partial)}\n")
+        self.assertEqual(self.snapshot()[failing], before[failing])
+
+
+class LocalArchiveRefused(LocalCase):
+    def test_a_refusal_prints_the_same_text_as_linears(self):
+        self.put("pm/done", "LOC-1")
+        self.put("pm/ready", "LOC-2", parent="LOC-1")
+        before = self.snapshot()
+        plan = LocalIssues(self.board, config.load(path=self.config).roles).archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "refused")
+        code, out, err = self.run_local(["archive", "LOC-1"])
+        self.assertEqual(
+            (code, out, err), (1, b"", f"agent-pm-orchestrator issue: {refusal('LOC-1', plan)}\n")
+        )
+        self.assertEqual(self.snapshot(), before)
+
+
+class HelpOnBothTrackers(LocalCase):
+    def test_help_is_the_same_text_on_a_local_and_a_linear_board(self):
+        for command in (
+            "",
+            "read",
+            "list",
+            "lookup",
+            "create",
+            "edit",
+            "move",
+            "comment",
+            "archive",
+            "relation add",
+            "relation remove",
+            "label swap",
+        ):
+            texts = []
+            for text in (LOCAL, CONFIG):
+                with open(self.config, "w", encoding="utf-8") as f:
+                    f.write(text)
+                output = io.StringIO()
+                with redirect_stdout(output), self.assertRaises(SystemExit) as cm:
+                    issue.main([*command.split(), "--help"], config_path=self.config)
+                self.assertEqual(cm.exception.code, 0)
+                texts.append(output.getvalue())
+            with self.subTest(command=command):
+                self.assertEqual(texts[0], texts[1])
+                self.assertIn("--help", texts[0])
 
 
 class Full(IssueCase):
@@ -1156,43 +1475,157 @@ class Full(IssueCase):
         self.assertFalse(os.path.exists(path))
 
 
-def row(n, name="x", cut=()):
-    return {"id": f"id-{n}", "name": name}, list(cut), f"cur-{n}"
+class ReadBody(Case):
+    def test_a_file_or_stdin_reads_verbatim(self):
+        path = os.path.join(self.home, "body.md")
+        with open(path, "wb") as f:
+            f.write(RAW_BODY.encode("utf-8"))
+        self.assertEqual(issue.read_body(path, io.BytesIO()), RAW_BODY)
+        self.assertEqual(issue.read_body("-", io.BytesIO(RAW_BODY.encode("utf-8"))), RAW_BODY)
+
+    def test_only_a_leading_byte_order_mark_is_dropped(self):
+        path = os.path.join(self.home, "bom-body.md")
+        data = b"\xef\xbb\xbf" + (RAW_BODY + "﻿").encode("utf-8")
+        with open(path, "wb") as f:
+            f.write(data)
+        self.assertEqual(issue.read_body(path, io.BytesIO()), RAW_BODY + "﻿")
+        self.assertEqual(issue.read_body("-", io.BytesIO(data)), RAW_BODY + "﻿")
+
+    def test_an_unusable_body_is_refused(self):
+        blank, latin = os.path.join(self.home, "blank.md"), os.path.join(self.home, "latin.md")
+        with open(blank, "w", encoding="utf-8") as f:
+            f.write(" \n\t\n")
+        bom, bom_blank = os.path.join(self.home, "bom.md"), os.path.join(self.home, "bom-blank.md")
+        with open(bom, "wb") as f:
+            f.write(b"\xef\xbb\xbf")
+        with open(bom_blank, "wb") as f:
+            f.write(b"\xef\xbb\xbf \n")
+        with open(latin, "wb") as f:
+            f.write("café".encode("latin-1"))
+        cases = (
+            (os.path.join(self.home, "missing.md"), b"", "No such file"),
+            (self.home, b"", "directory"),
+            (latin, b"", "not UTF-8"),
+            (blank, b"", "empty"),
+            (bom, b"", "empty"),
+            (bom_blank, b"", "empty"),
+            ("-", b"\xef\xbb\xbf", "empty"),
+            ("-", b"", "empty"),
+            ("-", b"\xff", "not UTF-8"),
+        )
+        for path, stdin, phrase in cases:
+            with self.subTest(phrase=phrase, path=path), self.assertRaises(IssueError) as cm:
+                issue.read_body(path, io.BytesIO(stdin))
+            self.assertIn(f"--body-file {path}", str(cm.exception))
+            self.assertIn(phrase, str(cm.exception))
+
+    def test_stdin_is_read_only_for_dash(self):
+        path = os.path.join(self.home, "body.md")
+        with open(path, "wb") as f:
+            f.write(RAW_BODY.encode("utf-8"))
+        # no stdin at all: fd 0 closed (None) or a text layer without a byte stream
+        for stdin in (None, io.StringIO(RAW_BODY)):
+            with self.subTest(stdin=stdin), mock.patch("sys.stdin", stdin):
+                self.assertEqual(issue.read_body(path), RAW_BODY)
+                with self.assertRaisesRegex(IssueError, "--body-file -: no stdin"):
+                    issue.read_body("-")
+        with mock.patch("sys.stdin", mock.Mock(buffer=io.BytesIO(RAW_BODY.encode("utf-8")))):
+            self.assertEqual(issue.read_body("-"), RAW_BODY)
 
 
-class FitPage(Case):
-    def test_within_the_limit_nothing_is_cut(self):
-        page = json.loads(issue.fit_page([row(1), row(2, cut=["team_ids"])], "end"))
-        self.assertEqual(page["next_cursor"], "end")
-        self.assertTrue(page["has_next_page"])
-        self.assertEqual(page["truncated"], ["items.1.team_ids"])
-        last = json.loads(issue.fit_page([], None))
+class Requests(Case):
+    """The frame's typed requests: one parse of list, lookup, create or edit, every option in place."""
+
+    def request(self, *argv, body=None):
+        return issue._request(issue._parser().parse_args(argv), body)
+
+    def test_list(self):
+        argv = ("list", "--query", "q", "--state", "ready", "--role", "me", "--task", "build")
+        argv += ("--client", "c", "--priority", "high", "--label", "bug", "--project", "P")
+        got = self.request(*argv, "--parent", "TASK-1", "--include-archived")
+        want = ListQuery(
+            query="q",
+            state=IssueState.READY,
+            role="me",
+            task="build",
+            client="c",
+            priority=Priority.HIGH,
+            parent="TASK-1",
+            include_archived=True,
+            label="bug",
+            project="P",
+        )
+        self.assertEqual(got, want)
+        self.assertEqual((type(got.state), type(got.priority)), (IssueState, Priority))
+        none = dict.fromkeys(("query", "state", "role", "task", "client", "priority", "parent"))
         self.assertEqual(
-            last, {"items": [], "truncated": [], "has_next_page": False, "next_cursor": None}
+            self.request("list"),
+            ListQuery(**none, include_archived=False, label=None, project=None),
         )
 
-    def test_over_the_limit_trailing_items_drop_and_the_cursor_follows_the_last_kept(self):
-        rows = [row(n, "名" * 400, cut=["team_ids"]) for n in range(50)]
-        data = issue.fit_page(rows, None)
-        self.assertLessEqual(len(data), 8192)
-        page = json.loads(data)
-        kept = len(page["items"])
-        self.assertLess(kept, 50)
-        self.assertEqual((page["has_next_page"], page["next_cursor"]), (True, f"cur-{kept - 1}"))
-        self.assertEqual(page["truncated"], [f"items.{n}.team_ids" for n in range(kept)])
-        self.assertEqual(page["items"][-1]["name"], "名" * 400)
+    def test_lookup(self):
+        argv = ("lookup", "milestones", "--query", "m", "--team", "TASK", "--project", "P")
+        self.assertEqual(
+            self.request(*argv, "--limit", "5"),
+            LookupQuery(resource=Resource.MILESTONES, query="m", team="TASK", project="P"),
+        )
+        self.assertEqual(
+            self.request("lookup", "teams"),
+            LookupQuery(resource=Resource.TEAMS, query=None, team=None, project=None),
+        )
 
-    def test_a_lone_item_shortens_its_text_but_keeps_its_references(self):
-        item = {"id": "i" * 3000, "name": "n" * 9000, "labels": [{"id": "l1", "name": "m" * 3000}]}
-        page = json.loads(issue.fit_page([(item, [], "c")], None))
-        got = page["items"][0]
-        self.assertEqual((got["id"], got["labels"][0]["id"]), ("i" * 3000, "l1"))
-        self.assertLess(len(got["name"]), 9000)
-        self.assertTrue(("n" * 9000).startswith(got["name"]))
-        self.assertIn("items.0.name", page["truncated"])
-        self.assertIsNone(page["next_cursor"])
+    def test_create(self):
+        argv = ("create", "--title", "T", "--body-file", "f", "--state", "running")
+        argv += ("--role", "engineer", "--task", "build", "--client", "c", "--priority", "urgent")
+        argv += ("--parent", "TASK-1", "--label", "a", "--label", "b", "--project", "P")
+        argv += ("--milestone", "M", "--blocks", "TASK-2", "TASK-3", "--blocked-by", "TASK-4")
+        got = self.request(*argv, body="B")
+        want = NewIssue(
+            title="T",
+            body="B",
+            state=IssueState.RUNNING,
+            role="engineer",
+            task="build",
+            client="c",
+            priority=Priority.URGENT,
+            parent="TASK-1",
+            labels=("a", "b"),
+            project="P",
+            milestone="M",
+            blocks=("TASK-2", "TASK-3"),
+            blocked_by=("TASK-4",),
+        )
+        self.assertEqual(got, want)
+        self.assertEqual((type(got.state), type(got.priority)), (IssueState, Priority))
+        none = dict.fromkeys(("state", "role", "task", "client", "priority", "parent"))
+        self.assertEqual(
+            self.request("create", "--title", "T", "--body-file", "f", body="B"),
+            NewIssue(
+                title="T",
+                body="B",
+                **none,
+                labels=(),
+                project=None,
+                milestone=None,
+                blocks=(),
+                blocked_by=(),
+            ),
+        )
 
-    def test_references_alone_over_the_limit_fail(self):
-        item = {"id": "i" * 9000, "name": ""}
-        with self.assertRaises(OverflowError):
-            issue.fit_page([(item, [], "c")], None)
+    def test_edit(self):
+        argv = ("edit", "TASK-1", "--title", "T", "--body-file", "f", "--task", "build")
+        got = self.request(*argv, "--client", "c", "--priority", "low", body="B")
+        want = IssueEdit(
+            id="TASK-1", title="T", body="B", task="build", client="c", priority=Priority.LOW
+        )
+        self.assertEqual(got, want)
+        self.assertIs(type(got.priority), Priority)
+        self.assertEqual(
+            self.request("edit", "TASK-1", "--task", "build"),
+            IssueEdit(id="TASK-1", title=None, body=None, task="build", client=None, priority=None),
+        )
+
+    def test_the_other_commands_carry_none(self):
+        for argv in (("read", "TASK-1"), ("move", "TASK-1", "done"), ("archive", "TASK-1")):
+            with self.subTest(argv=argv):
+                self.assertIsNone(self.request(*argv))
