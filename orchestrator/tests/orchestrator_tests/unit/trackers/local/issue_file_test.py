@@ -410,6 +410,16 @@ class Edits(Zoned):
         self.assertTrue(text.isascii())
         self.assertEqual(len(text.splitlines()), len(FRONT.splitlines()) + 3)
 
+    def test_drop_comment(self):
+        text = issue_file.add_comment(FRONT, at=at(9, 0), body="a\nlines", ref_key="s:a")
+        text = issue_file.add_comment(text, at=at(9, 1), body="b", ref_key="s:b")
+        dropped = issue_file.drop_comment(text, "s:a")
+        self.assertEqual([(n.key, n.body) for n in parse(dropped).comments], [("s:b", "b")])
+        self.assertEqual(issue_file.drop_comment(dropped, "s:b"), FRONT + "### Comments\n\n")
+        self.assertIsNone(issue_file.drop_comment(text, "s:none"))
+        other = FRONT + "### Comments\n#### other · 2026-10-19 09:00 <!-- id=c1 key=s:o -->\nx\n"
+        self.assertIsNone(issue_file.drop_comment(other, "s:o"))
+
     def test_add_related(self):
         text = issue_file.add_related(FRONT, "LOC-3")
         self.assertEqual(text, FRONT.replace("\n---\n", "\nrelated: [LOC-3]\n---\n"))

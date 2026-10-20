@@ -367,9 +367,8 @@ class LocalTracker(Tracker):
                 return None
             ref = issue_file.ref_key((ARCHIVED, found.assignee))
             body = f"Archived from {found.assignee}/{found.state}/."
-            text = issue_file.edit_comment(text, ref, body) or issue_file.add_comment(
-                text, at=self.now(), body=body, ref_key=ref
-            )
+            text = issue_file.drop_comment(text, ref) or text
+            text = issue_file.add_comment(text, at=self.now(), body=body, ref_key=ref)
             return text, (None, None)
 
         with store.locked(self.board):

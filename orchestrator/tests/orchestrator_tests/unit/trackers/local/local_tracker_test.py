@@ -1107,7 +1107,21 @@ class Archive(Written):
         self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
         self.assertTrue(os.path.exists(path))
 
-    def test_note_edited_in_place(self):
+    def test_unarchive_follows_the_latest_archive(self):
+        path = self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        for owner in ("pm", "engineer", "pm"):
+            with self.subTest(owner=owner):
+                if not path.startswith(os.path.join(self.board, owner, "")):  # a person's move
+                    os.makedirs(os.path.join(self.board, owner, "done"), exist_ok=True)
+                    os.rename(path, path := os.path.join(self.board, owner, "done/LOC-1 x.md"))
+                self.tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
+                self.assertTrue(self.tracker.archive("LOC-1"))
+                self.tracker.unarchive("LOC-1")
+                self.assertTrue(os.path.exists(path), os.listdir(self.board))
+        notes = [c.body for c in LocalTracker(self.board, ()).detail("LOC-1").comments]
+        self.assertEqual(notes, ["Archived from engineer/done/.", "Archived from pm/done/."])
+
+    def test_one_note_per_assignee(self):
         self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
         self.tracker.archive("LOC-1")
         self.tracker.unarchive("LOC-1")

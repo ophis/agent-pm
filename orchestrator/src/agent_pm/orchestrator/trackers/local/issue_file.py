@@ -302,6 +302,23 @@ def edit_comment(text: str, ref_key: str, body: str) -> str | None:
     """The engine's comment with ref_key holding body, the blank lines after it kept; None: there
     is none."""
     lines, end = _split(text)
+    if found := _comment(lines, end, ref_key):
+        i, after = found
+        filled = max((j for j in range(i + 1, after) if lines[j].strip()), default=i)
+        return _join([*lines[: i + 1], *_body(body), *lines[filled + 1 :]])
+    return None
+
+
+def drop_comment(text: str, ref_key: str) -> str | None:
+    """Without the engine's comment with ref_key; None: there is none."""
+    lines, end = _split(text)
+    if found := _comment(lines, end, ref_key):
+        return _join([*lines[: found[0]], *lines[found[1] :]])
+    return None
+
+
+def _comment(lines, end, ref_key):
+    """The engine's comment ref_key: its header index, then the next comment's or section's."""
     first, last = _spans(lines, end).get(_Section.COMMENTS, (0, 0))
     for i in range(first, last):
         header = _HEADER.fullmatch(lines[i])
@@ -310,8 +327,7 @@ def edit_comment(text: str, ref_key: str, body: str) -> str | None:
                 (j for j in range(i + 1, last) if lines[j] == _BARE or _HEADED.match(lines[j])),
                 last,
             )
-            filled = max((j for j in range(i + 1, after) if lines[j].strip()), default=i)
-            return _join([*lines[: i + 1], *_body(body), *lines[filled + 1 :]])
+            return i, after
     return None
 
 
