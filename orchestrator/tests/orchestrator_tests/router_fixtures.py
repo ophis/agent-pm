@@ -22,7 +22,7 @@ from agent_pm.orchestrator.engine import (
 from agent_pm.orchestrator.engine import (
     gate as quota,
 )
-from agent_pm.orchestrator.engine.types import LinearError, Spec
+from agent_pm.orchestrator.engine.types import LinearError, Spec, TrackerKind
 from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
     ops,
@@ -37,7 +37,6 @@ from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.run_fixtures import (
-    ENGINEER,
     ID,
     PROJECT,
     SID,
@@ -374,6 +373,8 @@ class FakeLinear:
 
 
 class Base(run_fixtures.Base):
+    wiring = cli.TRACKERS[TrackerKind.LINEAR]
+
     def setUp(self):
         super().setUp()
         self.missing, self.keychain_calls = set(), []
@@ -507,7 +508,7 @@ class Base(run_fixtures.Base):
                     now=NOW,
                     dry=dry,
                     keychain=self.keychain,
-                    connect=linear_tracker.LinearTracker.connect,
+                    wiring=self.wiring,
                     gate=quota.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
@@ -643,8 +644,13 @@ class TickBase(Base):
     def launched_run(self):
         """The run the tick handed to its start, as last_run's row would show it."""
         a = self.start.launches[-1]
-        role = config.role_for(self.cfg().linear.roles, a.assignee)
-        return "start" if a.mode == "new" else "resume", a.issue, self.unmap(a.sid), role, a.client
+        return (
+            "start" if a.mode == "new" else "resume",
+            a.issue,
+            self.unmap(a.sid),
+            a.role,
+            a.client,
+        )
 
     def launched(self):
         (launch,) = self.start.launches
@@ -665,7 +671,7 @@ class OuterBase(TickBase):
     def outer(
         self,
         *,
-        assignee=ENGINEER,
+        role="engineer",
         task=None,
         mode="new",
         ident=ID,
@@ -677,13 +683,12 @@ class OuterBase(TickBase):
         row holding started_task.
         """
         if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
-            role = config.role_for(self.cfg().linear.roles, assignee) or "engineer"
             runs.note(
                 self.runs,
                 "start",
                 issue=ident,
                 sid=sid,
-                role=role,
+                role=role or "engineer",
                 client=client,
                 delegate_kind="harness",
                 **({"task": started_task} if started_task else {}),
@@ -692,7 +697,7 @@ class OuterBase(TickBase):
             uuid=UUID,
             issue=ident,
             project=PROJECT,
-            assignee=assignee,
+            role=role,
             sid=sid,
             task=task,
             mode=mode,
@@ -707,6 +712,7 @@ class OuterBase(TickBase):
                 gql=self.gql,
                 run=self.run_,
                 keychain=self.keychain,
+                wiring=self.wiring,
                 now=lambda: NOW,
             )
         self.err = err.getvalue()

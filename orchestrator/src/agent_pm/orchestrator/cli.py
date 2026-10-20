@@ -15,19 +15,27 @@ from agent_pm.orchestrator.engine import (
     promote,
     prune,
     router,
+    run_comments,
     runs,
     writeback,
 )
-from agent_pm.orchestrator.engine.config import linear_settings, load
+from agent_pm.orchestrator.engine.config import load
 from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
-from agent_pm.orchestrator.engine.types import ConfigError, TrackerKind
+from agent_pm.orchestrator.engine.types import (
+    MOVES,
+    UUID_RE,
+    Accounts,
+    ConfigError,
+    TrackerKind,
+    Wiring,
+)
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
 )
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
-from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
 from agent_pm.utils import (
     SID_ENV,
     Record,
@@ -68,7 +76,6 @@ def _query_help(command):
             "--input is rejected: put pipeline answers on the issue board, then resume.\n"
             "Run outside an agent session. AGENT_PM_SID, if supplied, must match\n"
             "the recorded session and is read once and removed.\n"
-            'Needs [orchestrator] tracker = "linear"; a local board refuses it.\n'
             "For a new board-driven attempt: agent-pm-orchestrator router --help"
         ),
         "content": "To inspect liveness and outcome: agent-pm-orchestrator status TASK-1",
@@ -125,7 +132,7 @@ def main(argv=None):
             "  Operational commands require configured orchestrator and Delegate\n"
             '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
             "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
-            '  only router --dry-run and --brake run yet; "linear" reaches Linear through\n'
+            '  promote, prune and issue do not run yet; "linear" reaches Linear through\n'
             "  the linear.harness_key Keychain service (the issue commands:\n"
             "  linear.manager_key), role keys identifying the accounts used for issue\n"
             "  work. Python 3.11+ is needed.\n"
@@ -173,7 +180,7 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Prerequisites and effects:\n"
-            '  Requires tracker = "linear", configured Linear access, the run\'s existing\n'
+            "  Requires the configured board (Linear: its access), the run's existing\n"
             "  start row and matching issue/workdir/session identity. Read exactly one\n"
             "  DelegateEvent JSON line from stdin through EOF, not a Record or an event\n"
             "  stream. The Delegate harness supplies this callback; it may post comments,\n"
@@ -220,20 +227,11 @@ def main(argv=None):
                 _log_ignored(args.issue, ignored)
             return 2
         event_log.use_logs(cfg.logs_dir)
-        if args.command in {"writeback", "resume"}:
+        if args.command == "writeback":
             try:
-                linear = linear_settings(cfg, args.command)
-            except ConfigError as refused:
-                print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
-                if args.command == "writeback":
-                    _refused(args.issue, refused)
-                    _log_ignored(args.issue, ignored)
-                return 2
-            if args.command == "writeback":
-                try:
-                    return _writeback(cfg, linear, args.issue, args.workdir)
-                finally:
-                    _log_ignored(args.issue, ignored)
+                return _writeback(cfg, args.issue, args.workdir)
+            finally:
+                _log_ignored(args.issue, ignored)
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
@@ -291,14 +289,78 @@ def main(argv=None):
     )
 
 
-def _local_board(transport, cfg, *, say):
-    """The Connect for tracker = "local": a board read needs no transport and logs nothing."""
+def _linear_reader(gql, cfg):
+    return LinearTracker.reader(gql, cfg.linear)
+
+
+def _linear_accounts(gql, cfg, key):
+    """key's tracker and the harness_key's, for the session comment."""
+    linear = cfg.linear
+    return Accounts(
+        LinearTracker(
+            gql, states=linear.states, team_id=linear.team, humans=linear.human_members, service=key
+        ),
+        LinearTracker(gql, service=linear.harness_key, timeout=run_comments.LIMIT),
+        linear.states,
+        tuple(e.lower() for e in linear.human_members),
+        linear.project_repos,
+    )
+
+
+def _linear_claimed(gql, cfg, claim):
+    _start_row(claim, "key", claim.key is not None)
+    _start_row(claim, "uuid", UUID_RE.fullmatch(claim.uuid) is not None)
+    return _linear_accounts(gql, cfg, claim.key)
+
+
+def _linear_key(cfg, role):
+    return cfg.linear.roles[role].key
+
+
+def _local_board(transport, cfg, *, say=None):
+    """A local board's tracker, the router's and a run's: it needs no transport and logs nothing."""
     del transport, say
     return LocalTracker(cfg.board, cfg.roles)
 
 
+def _local_accounts(transport, cfg, key):
+    """One board writes everything; it notifies no one and maps no project repos."""
+    del key
+    board = _local_board(transport, cfg)
+    return Accounts(board, board, {s: LOCAL_STATES[MOVES[s]].value for s in MOVES}, (), {})
+
+
+def _local_claimed(transport, cfg, claim):
+    """A local board's row: no key, its issue id as the uuid."""
+    _start_row(claim, "key", claim.key is None)
+    _start_row(claim, "uuid", claim.uuid == claim.issue)
+    return _local_accounts(transport, cfg, None)
+
+
+def _start_row(claim, field, valid):
+    if not valid:
+        raise ConfigError(
+            f"{claim.issue}: session {claim.sid}'s start row {field}: {getattr(claim, field)!r}"
+        )
+
+
 TRACKERS = MappingProxyType(
-    {TrackerKind.LINEAR: LinearTracker.connect, TrackerKind.LOCAL: _local_board}
+    {
+        TrackerKind.LINEAR: Wiring(
+            connect=LinearTracker.connect,
+            reader=_linear_reader,
+            accounts=_linear_accounts,
+            claimed=_linear_claimed,
+            key=_linear_key,
+        ),
+        TrackerKind.LOCAL: Wiring(
+            connect=_local_board,
+            reader=_local_board,
+            accounts=_local_accounts,
+            claimed=_local_claimed,
+            key=lambda *_: None,
+        ),
+    }
 )
 
 
@@ -313,15 +375,14 @@ def _log_ignored(issue, ignored):
     ignored.clear()
 
 
-def _writeback(cfg, linear, issue, workdir):
+def _writeback(cfg, issue, workdir):
     lines = sys.stdin.read().splitlines()
     try:
         if len(lines) != 1:
             raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
         event = DelegateEvent.parse(lines[0])
-        return (
-            0 if writeback.deliver(cfg, linear, issue, workdir, event, gql=client.linear_gql) else 1
-        )
+        accounts = partial(TRACKERS[cfg.tracker].claimed, client.linear_gql, cfg)
+        return 0 if writeback.deliver(cfg, issue, workdir, event, accounts=accounts) else 1
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)
         _refused(issue, error)

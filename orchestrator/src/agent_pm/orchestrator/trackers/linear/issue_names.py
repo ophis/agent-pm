@@ -3,9 +3,8 @@ configured Linear ids; IssueError for a name the configuration lacks, before any
 """
 
 from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
-from agent_pm.orchestrator.engine.types import IssueError
+from agent_pm.orchestrator.engine.types import MOVES, IssueError
 from agent_pm.orchestrator.trackers.linear import ops
-from agent_pm.orchestrator.trackers.linear.linear_tracker import MOVES
 
 PRIORITIES = {
     Priority.NONE: 0,

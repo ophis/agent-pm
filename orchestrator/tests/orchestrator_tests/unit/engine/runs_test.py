@@ -583,6 +583,11 @@ class ClaimOf(Case):
         found = runs.claim(self.log, "TASK-1", SID_A)
         self.assertEqual((found.project, found.target), (None, None))
 
+    def test_a_local_boards_start_row_has_its_issue_id_and_no_key(self):
+        self.write([start(SID_A, uuid="LOC-1", key=None)])
+        found = runs.claim(self.log, "TASK-1", SID_A)
+        self.assertEqual((found.uuid, found.key), ("LOC-1", None))
+
     def test_no_start_row_for_the_issue_and_sid_raises(self):
         self.write(
             [
@@ -601,11 +606,12 @@ class ClaimOf(Case):
         for field, value in (
             ("role", None),
             ("role", ""),
-            ("uuid", "TASK-1"),
+            ("uuid", ""),
+            ("uuid", None),
             ("project", 7),
             ("target", "not a slug"),
             ("key", ""),
-            ("key", None),
+            ("key", 7),
             ("client", ""),
             ("delegate_kind", None),
         ):

@@ -11,23 +11,110 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import config, promote, prune, router, runs
-from agent_pm.orchestrator.engine.types import TrackerKind
+from agent_pm.orchestrator.engine import config, promote, prune, router, run_comments, runs
+from agent_pm.orchestrator.engine.types import Claim, ConfigError, State, TrackerKind
+from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
+from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.run_fixtures import logged
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.cli_help import examples, parse_only
 
+ISSUE = "11111111-2222-4333-8444-555555555555"
+
 
 class Commands(Case):
     def test_trackers_cover_every_kind(self):
         self.assertEqual(set(cli.TRACKERS), set(TrackerKind))
-        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR], LinearTracker.connect)
+        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR].connect, LinearTracker.connect)
+
+
+class Wirings(run_fixtures.Base):
+    """Each tracker kind's engine wiring: its run reader, role keys and write-back accounts."""
+
+    def test_linear_writes_as_the_role_key_and_the_harness_key(self):
+        cfg = config.load()
+        gql = mock.Mock(return_value={})
+        linear = cli.TRACKERS[TrackerKind.LINEAR]
+        key = linear.key(cfg, "engineer")
+        self.assertEqual(key, run_fixtures.KEY)
+        accounts = linear.accounts(gql, cfg, key)
+        self.assertEqual(
+            (accounts.states, accounts.humans, accounts.repos),
+            (cfg.linear.states, ("me@x.com",), {run_fixtures.PROJECT: "ophis/agent-pm"}),
+        )
+        self.assertEqual(
+            (accounts.tracker.state_ids, accounts.tracker.team_id),
+            (cfg.linear.states, cfg.linear.team),
+        )
+        gql.return_value = {"comment": None}
+        accounts.tracker.find_comment(ISSUE, (SID, "start"))
+        gql.assert_called_with(ops.Q_COMMENT, service=key, c=ops.client_id(SID, "start"))
+        accounts.harness.find_comment(ISSUE, (SID, "session"))
+        gql.assert_called_with(
+            ops.Q_COMMENT,
+            service=run_fixtures.HARNESS,
+            timeout=run_comments.LIMIT,
+            c=ops.client_id(SID, "session"),
+        )
+
+    def test_linear_reads_a_run_as_the_harness_key(self):
+        cfg = config.load()
+        reader = cli.TRACKERS[TrackerKind.LINEAR].reader(mock.Mock(), cfg)
+        self.assertEqual(
+            (reader.gql.keywords, reader.state_ids, reader.team_id),
+            ({"service": run_fixtures.HARNESS}, cfg.linear.states, cfg.linear.team),
+        )
+
+    def test_a_local_board_writes_as_one_tracker_with_no_keys(self):
+        board = os.path.realpath(os.path.join(self.work, "board"))
+        cfg = replace(config.load(), tracker=TrackerKind.LOCAL, linear=None, board=board)
+        local = cli.TRACKERS[TrackerKind.LOCAL]
+        self.assertIsNone(local.key(cfg, "engineer"))
+        accounts = local.accounts(None, cfg, None)
+        self.assertIs(accounts.tracker, accounts.harness)
+        self.assertIsInstance(accounts.tracker, LocalTracker)
+        self.assertEqual(accounts.tracker.board, board)
+        self.assertEqual(
+            (accounts.humans, accounts.repos, set(accounts.states)), ((), {}, set(State))
+        )
+        self.assertEqual(
+            (accounts.states["in_progress"], accounts.states["handoff"]), ("running", "approved")
+        )
+        for made in (local.connect(None, cfg, say=None), local.reader(None, cfg)):
+            self.assertIsInstance(made, LocalTracker)
+
+    def test_each_tracker_checks_its_start_rows(self):
+        board = os.path.realpath(os.path.join(self.work, "board"))
+        linear_cfg = config.load()
+        local_cfg = replace(linear_cfg, tracker=TrackerKind.LOCAL, linear=None, board=board)
+        row = Claim("TASK-1", SID, "engineer", ISSUE, None, None, run_fixtures.KEY, "a", "fake")
+        local_row = replace(row, issue="LOC-1", uuid="LOC-1", key=None)
+        linear, local = cli.TRACKERS[TrackerKind.LINEAR], cli.TRACKERS[TrackerKind.LOCAL]
+        writes = linear.claimed(mock.Mock(), linear_cfg, row).tracker
+        self.assertEqual(writes.gql.keywords, {"service": run_fixtures.KEY})
+        self.assertIsInstance(local.claimed(None, local_cfg, local_row).tracker, LocalTracker)
+        for wiring, cfg, claim, field, value in (
+            (linear, linear_cfg, replace(row, key=None), "key", None),
+            (linear, linear_cfg, replace(row, uuid="TASK-1"), "uuid", "TASK-1"),
+            (local, local_cfg, replace(local_row, key="k"), "key", "k"),
+            (local, local_cfg, replace(local_row, uuid="LOC-2"), "uuid", "LOC-2"),
+            (local, local_cfg, replace(local_row, uuid=ISSUE), "uuid", ISSUE),
+        ):
+            with (
+                self.subTest(tracker=cfg.tracker, field=field),
+                self.assertRaises(ConfigError) as cm,
+            ):
+                wiring.claimed(None, cfg, claim)
+            self.assertEqual(
+                str(cm.exception), f"{claim.issue}: session {SID}'s start row {field}: {value!r}"
+            )
 
     def test_prune_prose_fits_eighty_columns(self):
         for line in prune.HELP.splitlines():
@@ -591,7 +678,7 @@ class Queries(RunCase):
 
 
 class OnALocalBoard(RunCase):
-    """Spec AC11 in cli: router reaches the local board; writeback and resume need Linear."""
+    """router, writeback and resume reach the local board; promote and prune need Linear."""
 
     def configure(self, default="fake"):
         self.board = os.path.join(os.path.realpath(self.home), "board")
@@ -602,31 +689,18 @@ class OnALocalBoard(RunCase):
         local.write_text(text.replace('tracker = "linear"', 'tracker = "local"'), encoding="utf-8")
         self.cfg = config.load()
 
-    def test_local_refuses_linear_commands(self):
+    def test_local_runs_writeback_and_resume_and_refuses_the_rest(self):
         self.assertEqual(self.cfg.tracker, "local")
-        for command, argv in (
-            ("writeback", ["--issue", "TASK-1", "--workdir", "/w"]),
-            ("resume", ["TASK-1"]),
-        ):
+        for argv in (["writeback", "--issue", "TASK-1", "--workdir", "/w"], ["resume", "TASK-1"]):
+            with self.subTest(argv[0]):
+                self.assertNotIn("needs [orchestrator]", _call(argv, stdin="{}\n")[2])
+        for command, argv in (("promote", []), ("prune", [])):
             with self.subTest(command):
-                refused = f'{command} needs [orchestrator] tracker = "linear"'
-                result, output, errors = _call([command, *argv], stdin="{}\n")
-                self.assertEqual(
-                    (result, output, errors), (2, "", f"agent-pm-orchestrator: {refused}\n")
+                result, output, errors = _call([command, *argv])
+                self.assertEqual((result, output), (2, ""))
+                self.assertTrue(
+                    errors.endswith(f'{command} needs [orchestrator] tracker = "linear"\n'), errors
                 )
-        self.assertEqual(
-            [{k: v for k, v in row.items() if k != "ts"} for row in logged(self.cfg.logs_dir)],
-            [
-                {
-                    "src": "writeback",
-                    "kind": "refused",
-                    "issue": "TASK-1",
-                    "reason": 'writeback needs [orchestrator] tracker = "linear"',
-                    "exit": 2,
-                }
-            ],
-        )
-        self.assertNotIn("needs [orchestrator]", _call(["status", "TASK-1"])[2])
 
     def test_router_dry_run_reads_the_local_board(self):
         missing = _call(["router", "--dry-run"])

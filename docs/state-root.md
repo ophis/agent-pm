@@ -48,7 +48,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 | `logs/router.lock` | nobody | while no router runs |
 | `board/` (or `$AGENT_PM_BOARD_DIR`): issue files, `.next-id` | nobody | never: your issues and the next issue number |
 | `board/.lock` | nobody | while no program writes the board |
-| `board/.state/` | as `work/` and `logs/` once runs start on a local board; only `router --dry-run` runs there yet, writing nothing | as `work/` and `logs/` |
+| `board/.state/` | as `work/` and `logs/`, for a local board's runs | as `work/` and `logs/` |
 | `sessions/` | saving a client session's state: an entry not saved or resumed for 30 days | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session; the tui sweep; its hook writer: at 1 MiB `hooks.jsonl` becomes `hooks.jsonl.1`, replacing the old `.1` | no: closing the session removes it |
 | `tui/<name>.lock` | closing or stopping the session; the tui sweep | while no session of that name starts or closes |

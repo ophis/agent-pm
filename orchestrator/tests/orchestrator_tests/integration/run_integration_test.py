@@ -99,7 +99,7 @@ class Run(TmuxFlow):
         res = self.script(
             *LAUNCH,
             *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
-            *("--assignee", ACCOUNTS[self.role], "--client", "claude", "--mode", mode),
+            *("--role", self.role, "--client", "claude", "--mode", mode),
         )
         self.assertEqual((res.returncode, res.stdout), (0, ""), (res.stderr, self.said()))
         self.ends += 1

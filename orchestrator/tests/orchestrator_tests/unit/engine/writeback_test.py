@@ -1,5 +1,6 @@
 """Shared writeback output expectations."""
 
+import functools
 import hashlib
 import json
 import os
@@ -14,10 +15,10 @@ from unittest import mock
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.types import Begun, Finished, Result
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     log,
-    run_comments,
     runs,
     writeback,
 )
@@ -27,11 +28,15 @@ from agent_pm.orchestrator.engine.flow.types import (
 )
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.types import (
+    Accounts,
     Claim,
     ConfigError,
     Invalid,
+    IssueError,
     LinearError,
     Stopped,
+    TrackerFileError,
+    TrackerKind,
 )
 from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
@@ -256,6 +261,22 @@ def tracker(gql):
     return LinearTracker(gql, states=STATES, team_id=board_ids.TEAM)
 
 
+FILE_ERROR = TrackerFileError("/board/engineer/running/ENG-7.md", "changed while writing")
+
+
+class Refusing:
+    """A tracker whose comment and links read raise error."""
+
+    def __init__(self, error):
+        self.error = error
+
+    def comment(self, *_):
+        raise self.error
+
+    def links(self, _key):
+        raise self.error
+
+
 class Base(Case):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -375,6 +396,20 @@ class ProgressReporting(Base):
         writeback.progress(replace(ctx, tracker=tracker(ok)), START)
         self.assertEqual(ok.calls, [post("start", "Build started: x")])
 
+    def test_a_tracker_file_or_issue_error_fails_the_step(self):
+        for error, text in (
+            (
+                FILE_ERROR,
+                "TrackerFileError: /board/engineer/running/ENG-7.md: changed while writing",
+            ),
+            (IssueError("ENG-7: archived"), "IssueError: ENG-7: archived"),
+        ):
+            with self.subTest(text=text):
+                ctx = replace(self.ctx(), tracker=Refusing(error))
+                self.assertFalse(writeback.progress(ctx, START))
+                self.assertEqual(self.lines()[-1], f"step-error {ID} step=start error={text}")
+                self.no_ledger(ctx)
+
     def test_signal_exit_passes_through(self):
         gql = Gql(fail=lambda _name, _v: Stopped(129))
         ctx = self.ctx(gql=gql)
@@ -397,6 +432,21 @@ class ProgressReporting(Base):
 
 
 class CompletionFailures(Base):
+    def test_a_tracker_file_error_reading_links_fails_the_finish(self):
+        ctx = replace(self.ctx(), tracker=Refusing(FILE_ERROR))
+        self.assertFalse(
+            writeback.finish(
+                ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
+            )
+        )
+        self.assertEqual(
+            self.lines(),
+            [
+                f"step-error {ID} step=read "
+                "error=TrackerFileError: /board/engineer/running/ENG-7.md: changed while writing"
+            ],
+        )
+
     def test_unknown_role_logged(self):
         self.assertFalse(
             writeback.finish(
@@ -597,17 +647,20 @@ class IssueBounce(Base):
             writeback.bounce(self.ctx(gql=gql), issue("x"), Invalid("r"))
 
 
+ACCOUNTS = Accounts(
+    tracker(Gql()), LinearTracker(Gql()), STATES, HUMANS, {PROJECT: "ophis/agent-pm"}
+)
+
+
 class WritebackContext(run_fixtures.Base):
-    def test_the_one_context_of_a_role_from_the_config(self):
+    def test_the_one_context_of_a_role_from_its_accounts(self):
         cfg = config.load()
-        gql = mock.Mock(return_value={})
         for resume, target in ((False, TARGET), (True, None)):
             with self.subTest(resume=resume):
                 ctx = writeback.context(
                     cfg,
-                    cfg.linear,
                     "engineer",
-                    **writeback.accounts(cfg.linear, gql, cfg.linear.roles["engineer"].key),
+                    ACCOUNTS,
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -623,38 +676,21 @@ class WritebackContext(run_fixtures.Base):
                     resume=resume,
                     project=PROJECT,
                     workdir=os.path.join(self.work, "work", ID),
-                    tracker=ctx.tracker,
-                    humans=("me@x.com",),
-                    states=cfg.linear.states,
+                    tracker=ACCOUNTS.tracker,
+                    humans=HUMANS,
+                    states=STATES,
                     repos={PROJECT: "ophis/agent-pm"},
                     target=target,
-                    harness=ctx.harness,
+                    harness=ACCOUNTS.harness,
                 )
                 self.assertEqual(ctx, want)
-                self.assertEqual(
-                    (ctx.tracker.state_ids, ctx.tracker.team_id),
-                    (cfg.linear.states, cfg.linear.team),
-                )
-                gql.return_value = {"comment": None}
-                ctx.tracker.find_comment(UUID, (SID, "start"))
-                gql.assert_called_with(
-                    ops.Q_COMMENT, service=run_fixtures.KEY, c=ops.client_id(SID, "start")
-                )
-                ctx.harness.find_comment(UUID, (SID, "session"))
-                gql.assert_called_with(
-                    ops.Q_COMMENT,
-                    service=run_fixtures.HARNESS,
-                    timeout=run_comments.LIMIT,
-                    c=ops.client_id(SID, "session"),
-                )
 
-    def test_a_run_writes_with_the_trackers_it_is_given(self):
+    def test_a_run_writes_with_the_accounts_it_is_given(self):
         cfg = config.load()
-        tracker, harness = object(), object()
         spec = SimpleNamespace(issue=ID, uuid=UUID, sid=SID, mode="resume", project=PROJECT)
-        ctx = writeback.for_run(cfg, cfg.linear, "engineer", spec, tracker=tracker, harness=harness)
-        self.assertIs(ctx.tracker, tracker)
-        self.assertIs(ctx.harness, harness)
+        ctx = writeback.for_run(cfg, "engineer", spec, ACCOUNTS)
+        self.assertIs(ctx.tracker, ACCOUNTS.tracker)
+        self.assertIs(ctx.harness, ACCOUNTS.harness)
         self.assertEqual(
             (ctx.ident, ctx.issue_id, ctx.sid, ctx.resume, ctx.project, ctx.target),
             (ID, UUID, SID, True, PROJECT, None),
@@ -1595,18 +1631,19 @@ class Events(RunCase):
             uuid=UUID,
             project="p1",
             target="ophis/agent-pm",
-            key=CLAIM_KEY,
-            **fields,
+            **{"key": CLAIM_KEY, **fields},
         )
+
+    def accounts(self):
+        return functools.partial(cli.TRACKERS[TrackerKind.LINEAR].claimed, self.linear, self.cfg)
 
     def deliver(self, e, *, workdir=None, issue=RUN_ISSUE):
         return writeback.deliver(
             self.cfg,
-            self.cfg.linear,
             issue,
             workdir or self.workdir,
             e,
-            gql=self.linear,
+            accounts=self.accounts(),
             now=lambda: next(self.now),
         )
 
@@ -1649,17 +1686,10 @@ class Events(RunCase):
 
 
 class ForClaim(RunCase):
-    def test_writes_as_the_claims_key_not_the_configured_one(self):
-        calls = []
-
-        def services(query, *, service, **variables):
-            calls.append((service, query, variables))
-            return {}
-
-        self.assertNotEqual(self.cfg.linear.roles["engineer"].key, CLAIM_KEY)
-        ctx = writeback.for_claim(self.cfg, self.cfg.linear, CLAIM, services, attempt=1)
-        ctx.tracker.gql("query", i=UUID)
-        self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
+    def test_writes_as_the_accounts_it_is_given(self):
+        ctx = writeback.for_claim(self.cfg, CLAIM, ACCOUNTS, attempt=1)
+        self.assertEqual((ctx.tracker, ctx.harness), (ACCOUNTS.tracker, ACCOUNTS.harness))
+        self.assertTrue(ctx.redelivered)
         self.assertEqual(
             (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target),
             (RUN_ISSUE, UUID, RUN_SID, "engineer", "p1", ("ophis", "agent-pm")),
@@ -1669,9 +1699,7 @@ class ForClaim(RunCase):
     def test_a_later_attempt_is_a_resume(self):
         for attempt, resume in ((1, False), (2, True), (3, True)):
             with self.subTest(attempt=attempt):
-                ctx = writeback.for_claim(
-                    self.cfg, self.cfg.linear, CLAIM, Linear(""), attempt=attempt
-                )
+                ctx = writeback.for_claim(self.cfg, CLAIM, ACCOUNTS, attempt=attempt)
                 self.assertIs(ctx.resume, resume)
 
 
@@ -1904,6 +1932,33 @@ class RefusedEvents(Events):
         ):
             with self.subTest(name), self.assertRaises(error):
                 self.deliver(e, **kwargs)
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+    def test_a_start_row_key_that_does_not_fit_the_tracker_raises_before_any_write(self):
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        self.claim(sid=other, key=None)
+        local = replace(self.cfg, tracker=TrackerKind.LOCAL, linear=None, board=self.dir)
+        done = Outcome(status="done", summary="x", title="x")
+
+        def accounts(cfg):
+            return functools.partial(cli.TRACKERS[cfg.tracker].claimed, self.linear, cfg)
+
+        def deliver(cfg, sid):
+            event = delegate_event("begun", sid=sid)
+            return writeback.deliver(cfg, RUN_ISSUE, self.workdir, event, accounts=accounts(cfg))
+
+        def replay(cfg, sid):
+            return writeback.replay(cfg, RUN_ISSUE, sid, done, accounts=accounts(cfg))
+
+        for cfg, sid, key in ((self.cfg, other, None), (local, RUN_SID, CLAIM_KEY)):
+            for call in (deliver, replay):
+                with self.subTest(call.__name__, tracker=cfg.tracker):
+                    with self.assertRaises(ConfigError) as cm:
+                        call(cfg, sid)
+                    self.assertEqual(
+                        str(cm.exception), f"{RUN_ISSUE}: session {sid}'s start row key: {key!r}"
+                    )
         self.assertEqual(self.linear.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
 
@@ -2429,11 +2484,10 @@ class RecoverReplay(Events):
     def replay(self):
         return writeback.replay(
             self.cfg,
-            self.cfg.linear,
             RUN_ISSUE,
             RUN_SID,
             self.outcome(),
-            gql=self.linear,
+            accounts=self.accounts(),
             now=lambda: next(self.now),
         )
 

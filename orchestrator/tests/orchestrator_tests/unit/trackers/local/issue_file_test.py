@@ -65,7 +65,7 @@ def parse(text, *, assignee="pm", state=LocalState.READY):
     return issue_file.parse(PATH, text, assignee=assignee, state=state, mtime=MTIME)
 
 
-class Parse(Case):
+class Zoned(Case):
     def setUp(self):
         zone = mock.patch.dict(os.environ, {"TZ": "XXX+03"})
         zone.start()
@@ -73,6 +73,8 @@ class Parse(Case):
         self.addCleanup(zone.stop)
         time.tzset()
 
+
+class Parse(Zoned):
     def refuses(self, text, reason):
         with self.assertRaises(TrackerFileError) as caught:
             parse(text)
@@ -290,3 +292,120 @@ class Parse(Case):
             FRONT + "### History\n- 2026-10-19 14:02 todo other\n",
             "bad History line '- 2026-10-19 14:02 todo other'",
         )
+
+
+class Edits(Zoned):
+    """The text edits a write applies: each keeps every other line and parses back."""
+
+    def test_stamp_bare_comment(self):
+        text = FRONT + "### Comments\n###\nmine\n"
+        stamped = issue_file.stamp(text, mtime=at(9, 30), state=None)
+        self.assertEqual(stamped, FRONT + "### Comments\n#### other · 2026-10-19 09:30\nmine\n")
+        self.assertEqual(parse(stamped).comments, (Note(at(9, 30), Source.OTHER, "mine", None),))
+
+    def test_stamp_directory_move(self):
+        text = FRONT + "### History\n- 2026-10-19 09:00 running self\n"
+        moved = issue_file.stamp(text, mtime=at(9, 30), state=LocalState.REVIEW)
+        self.assertEqual(moved, text + "- 2026-10-19 09:30 review other\n")
+        self.assertEqual(issue_file.stamp(text, mtime=at(9, 30), state=LocalState.RUNNING), text)
+        self.assertEqual(
+            issue_file.stamp(FRONT, mtime=at(9, 30), state=LocalState.READY),
+            FRONT + "### History\n- 2026-10-19 09:30 ready other\n",
+        )
+        self.assertEqual(issue_file.stamp(FRONT, mtime=at(9, 30), state=None), FRONT)
+
+    def test_add_comment(self):
+        text = FRONT + "### Description\nd\n### History\n- 2026-10-19 09:00 ready other\n"
+        once = issue_file.add_comment(text, at=at(9, 5), body="first", ref_key="s:start")
+        twice = issue_file.add_comment(once, at=at(9, 6), body="plain")
+        self.assertEqual(
+            twice,
+            FRONT + "### Description\nd\n### Comments\n\n"
+            "#### self · 2026-10-19 09:05 <!-- id=c1 key=s:start -->\nfirst\n\n"
+            "#### self · 2026-10-19 09:06\nplain\n\n"
+            "### History\n- 2026-10-19 09:00 ready other\n",
+        )
+        third = issue_file.add_comment(twice, at=at(9, 7), body="x", ref_key="s:next")
+        self.assertIn("<!-- id=c2 key=s:next -->", third)
+        self.assertEqual([n.key for n in parse(third).comments], ["s:start", None, "s:next"])
+
+    def test_ref_key_escapes(self):
+        self.assertEqual(issue_file.ref_key(("sid", "start")), "sid:start")
+        key = issue_file.ref_key(("sid", "file:my plan-->.md:ab"))
+        self.assertEqual(key, "sid:file:my%20plan--%3E.md:ab")
+        text = issue_file.add_comment(FRONT, at=at(9, 0), body="b", ref_key=key)
+        self.assertEqual(parse(text).comments[0].key, key)
+
+    def test_body_lines_are_escaped(self):
+        forged = "#### self · 2026-10-19 10:00 <!-- id=c9 key=s:comment -->"
+        for sep in ("\n", "\r", " ", "\x85"):
+            body = sep.join(["top", "###", "### History", forged, "#### other · x", "end"])
+            with self.subTest(sep=repr(sep)):
+                text = issue_file.add_comment(FRONT, at=at(9, 0), body=body, ref_key="s:a")
+                [note] = parse(text).comments
+                self.assertEqual(
+                    note.body,
+                    "\n".join(
+                        ["top", " ###", " ### History", f" {forged}", " #### other · x", "end"]
+                    ),
+                )
+
+    def test_edit_comment(self):
+        text = issue_file.add_comment(FRONT, at=at(9, 0), body="old\nlines", ref_key="s:session")
+        text = issue_file.add_comment(text, at=at(9, 1), body="after", ref_key="s:start")
+        edited = issue_file.edit_comment(text, "s:session", "new\r### History")
+        self.assertEqual(
+            edited,
+            text.replace("old\nlines\n", "new\n ### History\n"),
+        )
+        self.assertEqual([n.body for n in parse(edited).comments], ["new\n ### History", "after"])
+        self.assertIsNone(issue_file.edit_comment(text, "s:none", "x"))
+        other = FRONT + "### Comments\n#### other · 2026-10-19 09:00 <!-- id=c1 key=s:o -->\nx\n"
+        self.assertIsNone(issue_file.edit_comment(other, "s:o", "y"))
+
+    def test_stamp_converges_after_a_future_dated_line(self):
+        text = FRONT + "### History\n- 2099-01-01 00:00 ready other\n"
+        stamped = issue_file.stamp(text, mtime=at(9, 30), state=LocalState.RUNNING)
+        self.assertEqual(stamped, text + "- 2026-10-19 09:30 running other\n")
+        moved = issue_file.add_history(stamped, at=at(9, 35), state=LocalState.REVIEW)
+        self.assertEqual(issue_file.stamp(moved, mtime=at(9, 40), state=LocalState.REVIEW), moved)
+
+    def test_edit_comment_keeps_the_layout(self):
+        last = FRONT + "### Comments\n#### self · 2026-10-19 09:00 <!-- id=c1 key=s:a -->\nold\n"
+        self.assertEqual(
+            issue_file.edit_comment(last, "s:a", "new body"), last.replace("old", "new body")
+        )
+        tight = last + "### History\n- 2026-10-19 09:00 running self\n"
+        self.assertEqual(issue_file.edit_comment(tight, "s:a", "new"), tight.replace("old", "new"))
+        spaced = last.replace("old\n", "old\n\n\n") + "### History\n"
+        self.assertEqual(
+            issue_file.edit_comment(spaced, "s:a", "a\nb"), spaced.replace("old", "a\nb")
+        )
+        empty = last.replace("old\n", "")
+        self.assertEqual(issue_file.edit_comment(empty, "s:a", "x"), empty + "x\n")
+
+    def test_add_history(self):
+        text = FRONT + "### History\n- 2026-10-19 09:00 ready other\n\n"
+        self.assertEqual(
+            issue_file.add_history(text, at=at(9, 5), state=LocalState.RUNNING),
+            FRONT
+            + "### History\n- 2026-10-19 09:00 ready other\n- 2026-10-19 09:05 running self\n\n",
+        )
+
+    def test_set_title(self):
+        text = issue_file.set_title(FRONT, "ENG: 新 x")
+        self.assertEqual(text, FRONT.replace("title: x", 'title: "ENG: \\u65b0\\u2028x"'))
+        self.assertEqual(parse(text).title, "ENG: 新 x")
+
+    def test_add_link_creates_links(self):
+        text = issue_file.add_link(FRONT, title="PR one", url="https://x/1")
+        text = issue_file.add_link(text, title="", url="https://x/2")
+        self.assertIn('links:\n  - title: "PR\\u2028one"\n    url: "https://x/1"\n', text)
+        self.assertEqual(
+            parse(text).links, (FileLink("PR one", "https://x/1"), FileLink("", "https://x/2"))
+        )
+
+    def test_front_matter_strings_are_ascii(self):
+        text = issue_file.add_link(issue_file.set_title(FRONT, "a\x85b"), title=" ", url="u\x85")
+        self.assertTrue(text.isascii())
+        self.assertEqual(len(text.splitlines()), len(FRONT.splitlines()) + 3)

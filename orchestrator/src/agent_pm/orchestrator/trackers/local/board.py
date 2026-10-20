@@ -109,13 +109,19 @@ def _archive(path):
     return found
 
 
-def _read(path, assignee, state):
+def read_text(path: str) -> tuple[str, datetime]:
+    """An issue file's text and modification time."""
     try:
         with open(path, encoding="utf-8") as file:
-            text = file.read()
-            mtime = datetime.fromtimestamp(os.fstat(file.fileno()).st_mtime).astimezone()
+            return file.read(), datetime.fromtimestamp(
+                os.fstat(file.fileno()).st_mtime
+            ).astimezone()
     except UnicodeDecodeError:
         raise TrackerFileError(path, "not UTF-8 text") from None
     except OSError as error:
         raise TrackerFileError(path, error.strerror or str(error)) from None
+
+
+def _read(path, assignee, state):
+    text, mtime = read_text(path)
     return issue_file.parse(path, text, assignee=assignee, state=state, mtime=mtime)
