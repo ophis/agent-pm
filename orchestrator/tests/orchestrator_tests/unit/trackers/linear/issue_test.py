@@ -721,7 +721,7 @@ class Failures(IssueCase):
                 ["read", "TASK-2"],
                 Gql(None, fail=CalledProcessError(44, ["security"])),
                 2,
-                "Keychain",
+                "linear.harness_key Keychain service 'linear-api-key': CalledProcessError",
             ),
             (["read", "TASK-2"], Gql(None, fail=FileNotFoundError("security")), 2, "Keychain"),
             (["read", "TASK-2"], Gql(None, fail=TimeoutExpired("security", 30)), 2, "Keychain"),
@@ -735,10 +735,10 @@ class Failures(IssueCase):
 
     def test_configuration_errors_exit_two(self):
         with open(self.config, "w") as f:
-            f.write(tp.CONFIG.replace('harness_key = "linear-api-key"\n', ""))
+            f.write(tp.CONFIG.replace('linear.harness_key = "linear-api-key"\n', ""))
         code, out, err = self.run_main(["read", "TASK-2"], Gql(issue_node()))
         self.assertEqual((code, out), (2, b""))
-        self.assertIn("harness_key", err)
+        self.assertIn("required, unset: linear.harness_key:", err)
 
     def test_diagnostics_stay_within_eight_kib(self):
         gql = Gql(None, fail=LinearError("linear api error: " + "错" * 9000))

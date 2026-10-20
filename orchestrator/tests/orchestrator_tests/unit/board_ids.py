@@ -19,20 +19,23 @@ TYPES = {
 }
 FINISHED = frozenset({STATES["done"], STATES["canceled"], DUPLICATE})
 TASK_GROUP = "00000000-0000-4000-8000-000000000002"
-# Inline tables: fixtures may append top-level keys or tables after it.
+# Dotted keys and inline tables: fixtures may append top-level keys (a Linear one as linear.<key>)
+# or tables ([linear.<table>] included) after it.
 HEADER = (
-    'team = "{}"\nharness_key = "linear-api-key"\nstates = {{ {} }}\n'.format(
+    'linear.team = "{}"\nlinear.harness_key = "linear-api-key"\nlinear.states = {{ {} }}\n'.format(
         TEAM, ", ".join(f'{k} = "{v}"' for k, v in STATES.items())
     )
-    + f'task_label_group = "{TASK_GROUP}"\n'
+    + f'linear.task_label_group = "{TASK_GROUP}"\n'
     + 'delegates = { default = "harness", harness = { implementation = "agent_pm.delegate:HarnessDelegate" } }\n'
 )
 ACCOUNTS = {r: f"{r}@agents.test" for r in ("researcher", "pm", "engineer")}
 
 
 def role(name, *lines):
+    """[linear.roles.<name>]'s account and key, then [roles.<name>] holding `lines`."""
     return (
-        f'[roles.{name}]\naccount = "{name}@agents.test"\nkey = "linear-api-key-{name}"\n'
+        f'[linear.roles.{name}]\naccount = "{name}@agents.test"\nkey = "linear-api-key-{name}"\n'
+        + f"[roles.{name}]\n"
         + "".join(f"{x}\n" for x in lines)
     )
 

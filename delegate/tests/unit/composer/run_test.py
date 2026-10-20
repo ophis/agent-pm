@@ -802,7 +802,7 @@ class Real(RealConfig):
     def test_a_local_files_other_layers_keys_are_left_alone(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as stream:
             stream.write(
-                '[delegate]\nusers = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nlanguage = "French"\n[session.viewer]\nworkers_per_column = 2\ngrid_retile = "off"\n[orchestrator]\nteam = "T"\n[orchestrator.roles.pm]\naccount = "pm@x"\n'
+                '[delegate]\nusers = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nlanguage = "French"\n[session.viewer]\nworkers_per_column = 2\ngrid_retile = "off"\n[orchestrator.linear]\nteam = "T"\n[orchestrator.linear.roles.pm]\naccount = "pm@x"\n'
             )
         for role, task in role_tasks():
             run = resolve(role, task)

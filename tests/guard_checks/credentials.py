@@ -1,5 +1,5 @@
-"""The credentials inventory names every credential, label and state config key and every broker keychain
-service, and holds no secret-like value. .github/ci_scope.py's CHECKED_DOCS names INVENTORY too.
+"""The credentials inventory names every credential, label and state config key of [linear] and every broker
+keychain service, and holds no secret-like value. .github/ci_scope.py's CHECKED_DOCS names INVENTORY too.
 """
 
 import os
@@ -55,8 +55,9 @@ def _services(go):
 
 
 def _required_keys(config):
+    """The credential, label and state keys of config's [linear], each as linear.<key>."""
     keys = []
-    for key, value in config.items():
+    for key, value in config.get("linear", {}).items():
         if not isinstance(value, dict):
             keys += [key] if key.endswith(("_key", "_label_group")) else []
         elif key == "states":
@@ -70,7 +71,7 @@ def _required_keys(config):
                 for field in ("key", "account")
                 if field in fields
             ]
-    return keys
+    return [f"linear.{key}" for key in keys]
 
 
 def _violations(config, services, text):

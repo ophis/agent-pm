@@ -621,7 +621,11 @@ def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
         text = (
             f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
             "`Repo: <owner>/<name>` naming the target repo."
-        ) + (f" Or fix {LOCAL}'s [project_repos] entry." if invalid.mapped else "")
+        ) + (
+            f" Or fix {LOCAL}'s [orchestrator.linear.project_repos] entry."
+            if invalid.mapped
+            else ""
+        )
         with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
             tracker.unarchive(src)
         notes = tracker.notify(src, ctx.humans)

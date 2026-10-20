@@ -29,7 +29,7 @@ Arguments and options:
   Valued options occur at most once; boolean flags may repeat with no change.
 
 Prerequisites and effects:
-  Requires configured team/states/roles, harness/role Keychain credentials,
+  Requires configured [linear] and roles, harness/role Keychain credentials,
   Linear access and the selected Delegate/client executable. See
   agent-pm-orchestrator --help for configuration, executable lookup and Record schema.
   Execution can claim/move issues, post comments or write back ended outcomes.
@@ -226,7 +226,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
         return (
             None,
             (
-                f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+                f'Task label "{name}" is not in {config.LOCAL}\'s [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo.'
             ),
         )
     if task not in role_tasks:
@@ -256,7 +256,7 @@ def client_for(
             None,
             "label",
             (
-                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [agent_labels]. '
+                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [orchestrator.linear.agent_labels]. '
                 "Fix the label, then move the issue back to Todo."
             ),
         )
@@ -811,7 +811,7 @@ def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
     return (
         f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
-        "Fix [agent_labels] or the client configuration, then move this issue back to Todo."
+        "Fix [orchestrator.linear.agent_labels] or the client configuration, then move this issue back to Todo."
     )
 
 

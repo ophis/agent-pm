@@ -83,8 +83,9 @@ Arguments and options:
   --dry-run may repeat with no further effect; other arguments exit 2.
 
 Prerequisites and effects:
-  Requires configured Linear/Delegate settings, Linear access, harness_key
-  Keychain credentials and access to the configured work_dir/local clones.
+  Requires configured Linear/Delegate settings, Linear access,
+  linear.harness_key Keychain credentials and access to the configured
+  work_dir/local clones.
   Configuration and executable lookup: agent-pm-orchestrator --help
   For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
   hours (the latest of their move into one and Linear's canceledAt and

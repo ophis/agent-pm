@@ -116,8 +116,9 @@ def main(argv=None):
         epilog=(
             "Prerequisites and effects:\n"
             "  Operational commands require configured orchestrator and Delegate\n"
-            "  settings. Board access uses the configured harness_key Keychain service;\n"
-            "  role keys identify the accounts used for issue work. Python 3.11+ is needed.\n"
+            "  settings. Board access uses the configured linear.harness_key Keychain\n"
+            "  service; role keys identify the accounts used for issue work. Python 3.11+\n"
+            "  is needed.\n"
             "  Router launches need the configured client/Delegate and its Host tools.\n"
             "  Router/promote/prune prepend AGENT_PM_PATH, then this installation's bin,\n"
             "  then default executable directories. Logs: work_dir/logs/orchestrator.jsonl;\n"

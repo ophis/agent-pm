@@ -76,8 +76,8 @@ REFS = frozenset(
 )
 _RULES = (
     "Prerequisites and effects:\n"
-    "  Reads Linear as the configured harness_key account (Keychain); an issue\n"
-    "  needs no recorded run. Help needs no credentials or services.\n"
+    "  Reads Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
     "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
     "  2: usage, configuration, Keychain, or an issue or option value that\n"
@@ -129,7 +129,7 @@ _LIST_HELP = (
     "  recently updated first; archived ones only with --include-archived.\n"
     "  --query TEXT matches title or description in any case; --state, --label,\n"
     "  --project in the team, --label not a group or retired; --assignee a\n"
-    "  user's id, name, email or me (the harness_key account); --parent the\n"
+    "  user's id, name, email or me (the linear.harness_key account); --parent the\n"
     "  parent issue's identifier or id.\n"
     + _PAGES
     + "Examples (configured Linear access and TASK-1):\n"
@@ -187,8 +187,8 @@ _READ_HELP = (
 
 _WRITE_RULES = (
     "Prerequisites and effects:\n"
-    "  Writes Linear as the configured harness_key account (Keychain); an issue\n"
-    "  needs no recorded run. Help needs no credentials or services.\n"
+    "  Writes Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
     "  operation, result (changed or unchanged), actor {id, name}%s.\n"
     "  It never echoes what was written or Linear's response. Diagnostics go to\n"
@@ -210,8 +210,8 @@ _CREATE_HELP = (
     "  unreadable exits 2.\n"
     "--label VALUE, repeatable: not a group or retired. --project VALUE: the\n"
     "  team's. --milestone VALUE: --project's, which it needs. --parent ID: an issue.\n"
-    "  --assignee VALUE: a user's id, name, email or me (the harness_key account).\n"
-    "  Each one not given stays unset.\n"
+    "  --assignee VALUE: a user's id, name, email or me (the linear.harness_key\n"
+    "  account). Each one not given stays unset.\n"
     f"--state VALUE: a workflow state of the team; default {issue_create.BACKLOG}. A team\n"
     f"  without a state named {issue_create.BACKLOG} exits 2: no other state is taken.\n"
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
@@ -737,7 +737,9 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, error)
         return USAGE
     except (subprocess.SubprocessError, OSError, KeychainError) as error:
-        diagnose(err, f"harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}")
+        diagnose(
+            err, f"linear.harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}"
+        )
         return USAGE
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))

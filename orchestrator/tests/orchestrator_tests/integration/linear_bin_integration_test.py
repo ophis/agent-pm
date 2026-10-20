@@ -8,6 +8,10 @@ import sys
 import tempfile
 
 from orchestrator_tests.case import REPO, Case
+from orchestrator_tests.config_fixtures import CORE_LOCAL, PIPELINE
+from orchestrator_tests.unit.board_ids import TEAM
+
+from utils.tests.case import local_section
 
 BIN = os.path.join(REPO, "bin", "agent-pm-orchestrator")
 MINIMAL = "/usr/bin:/bin"
@@ -98,3 +102,35 @@ class Command(Case):
             done.stdout.splitlines(),
             [f"{bin_dir}:{MINIMAL}", roots, "-P -m agent_pm.orchestrator.cli status TASK-1"],
         )
+
+
+class ConfigLayout(Command):
+    """A temp HOME whose config.local.toml sets every required Linear key under
+    [orchestrator.linear], with no Keychain item: config loading passes, the Keychain read stops.
+    """
+
+    def write_local(self, orchestrator):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write(CORE_LOCAL + "\n" + local_section(orchestrator, "orchestrator"))
+
+    def test_router_dry_run_and_issue_read_stop_at_the_harness_keychain_item(self):
+        self.write_local(PIPELINE)
+        router = self.run_bin(self.minimal(), "router", "--dry-run")
+        issue = self.run_bin(self.minimal(), "issue", "read", "TASK-1")
+        for done in (router, issue):
+            with self.subTest(argv=done.args[1:]):
+                self.assertNotEqual(done.returncode, 0)
+                self.assertNotIn("orchestrator/config.toml:", done.stdout + done.stderr)
+                self.assertNotIn("config.local.toml:", done.stdout + done.stderr)
+        # the Keychain read: /usr/bin/security missing (Linux) or finding no item (macOS)
+        self.assertIn("/usr/bin/security", router.stderr)
+        self.assertEqual((issue.returncode, issue.stdout), (2, ""))
+        self.assertIn("linear.harness_key Keychain service 'linear-api-key'", issue.stderr)
+
+    def test_a_linear_key_left_flat_is_refused(self):
+        self.write_local(f'team = "{TEAM}"\n' + PIPELINE)
+        for argv in (("router", "--dry-run"), ("issue", "read", "TASK-1")):
+            with self.subTest(argv=argv):
+                done = self.run_bin(self.minimal(), *argv)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("unknown key 'team' in [orchestrator]", done.stderr)

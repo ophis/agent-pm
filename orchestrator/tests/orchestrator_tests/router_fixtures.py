@@ -198,9 +198,9 @@ ENG_RUN = [
 
 OUTER = (
     HEADER
-    + 'human_members = ["Me@X.com"]\n'
+    + 'linear.human_members = ["Me@X.com"]\n'
     + CONFIG.removeprefix(HEADER)
-    + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
+    + f'[linear.project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
 )
 
 

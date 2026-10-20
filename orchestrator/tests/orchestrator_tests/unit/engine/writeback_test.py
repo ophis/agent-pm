@@ -489,7 +489,7 @@ class IssueBounce(Base):
             comment(
                 self.text(
                     reason,
-                    " Or fix ~/.agent-pm/config.local.toml's [project_repos] entry.",
+                    " Or fix ~/.agent-pm/config.local.toml's [orchestrator.linear.project_repos] entry.",
                 )
             ),
             gql.calls,

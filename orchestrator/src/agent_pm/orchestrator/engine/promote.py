@@ -44,7 +44,8 @@ Arguments and options:
 
 Prerequisites and effects:
   Requires Python 3.11+, configured Linear/Delegate settings, Linear access and
-  the harness_key Keychain service. Configuration: agent-pm-orchestrator --help
+  the linear.harness_key Keychain service.
+  Configuration: agent-pm-orchestrator --help
   For each Handoff issue in a project, assigned to a configured role with next:
   create that next role's issue in the same project, assigned to its account,
   in Todo with source links and human instructions; relate the issues and move

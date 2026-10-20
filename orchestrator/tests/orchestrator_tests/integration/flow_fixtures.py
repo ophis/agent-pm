@@ -1,4 +1,4 @@
-"""The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
+"""The orchestrator's integration flows: the test's HOME with both local files ([linear.task_labels]
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
 accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
 router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
@@ -42,23 +42,25 @@ LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 
-TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
+TASK_LABELS = f'[linear.task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
 
 _CFG = tomllib.loads(run_fixtures.local("/") + TASK_LABELS)
 
+_LINEAR = _CFG["linear"]
+
 ROLES = tuple(_CFG["roles"])
 
-ACCOUNTS = {r: _CFG["roles"][r]["account"] for r in ROLES}
+ACCOUNTS = {r: _LINEAR["roles"][r]["account"] for r in ROLES}
 
-KEYS = {r: _CFG["roles"][r]["key"] for r in ROLES}
+KEYS = {r: _LINEAR["roles"][r]["key"] for r in ROLES}
 
-[HUMAN] = _CFG["human_members"]
+[HUMAN] = _LINEAR["human_members"]
 
-HARNESS, HARNESS_EMAIL = _CFG["harness_key"], "harness@agents.test"
+HARNESS, HARNESS_EMAIL = _LINEAR["harness_key"], "harness@agents.test"
 
 PROJECT = {"id": run_fixtures.PROJECT, "name": "Widgets"}
 
-REPO = _CFG["project_repos"][PROJECT["id"]]
+REPO = _LINEAR["project_repos"][PROJECT["id"]]
 
 _OUTPUTS = {
     r: o["output"] for r, o in tomllib.loads(run_fixtures.CORE_LOCAL)["delegate"]["roles"].items()
