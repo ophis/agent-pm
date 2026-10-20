@@ -95,7 +95,9 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         resume=resume,
         project=project,
         workdir=cfg.issue_workdir(ident),
-        tracker=LinearTracker(gql, states=cfg.states, team_id=cfg.team, service=key),
+        tracker=LinearTracker(
+            gql, states=cfg.states, team_id=cfg.team, humans=cfg.human_members, service=key
+        ),
         states=cfg.states,
         humans=tuple(e.lower() for e in cfg.human_members),
         repos=cfg.project_repos,

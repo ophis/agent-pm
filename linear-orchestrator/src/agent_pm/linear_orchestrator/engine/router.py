@@ -90,7 +90,6 @@ from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
     issues,
-    ops,
     related,
     target,
     writeback,
@@ -795,8 +794,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             )
         except delegate.ConfigError as error:
             if a.mode == "new" and a.client_source == "label":
-                writer = functools.partial(gql, service=cfg.roles[role].key)
-                return _label_client_error(a, cfg, writer, error)
+                return _label_client_error(a, ctx, error)
             raise
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)
@@ -817,16 +815,15 @@ def _label_client_message(client, error):
     )
 
 
-def _label_client_error(spec, cfg, gql, error):
+def _label_client_error(spec, ctx, error):
     log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
     try:
-        ops.comment_and_move(
-            gql,
-            spec.uuid,
+        ctx.tracker.comment_and_move(
+            ctx.issue_id,
             _label_client_message(spec.client, error),
-            to=cfg.states["in_review"],
-            frm=cfg.states["in_progress"],
-            emails=cfg.human_members,
+            to=IssueState.REVIEW,
+            frm=IssueState.RUNNING,
+            notify=True,
         )
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as write_error:
         return fail(spec.issue, "transient", f"client error write-back: {one_line(write_error)}", 3)
