@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import UTC, datetime
 from functools import partial
+from types import MappingProxyType
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DelegateEvent, SessionError
@@ -25,6 +26,7 @@ from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
 )
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from agent_pm.utils import (
     SID_ENV,
@@ -100,7 +102,7 @@ def main(argv=None):
     # each parses its own options and --help
     entries = {
         "router": (
-            partial(router.main, trackers={TrackerKind.LOCAL: _local_board}),
+            partial(router.main, trackers=TRACKERS),
             "claim or resume an issue's agent run: a tick, --issue or --brake",
         ),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
@@ -288,10 +290,15 @@ def main(argv=None):
     )
 
 
-def _local_board(gql, cfg, *, say):
-    """router's Connect for tracker = "local": a board read needs no gql and logs nothing."""
-    del gql, say
+def _local_board(transport, cfg, *, say):
+    """The Connect for tracker = "local": a board read needs no transport and logs nothing."""
+    del transport, say
     return LocalTracker(cfg.board, cfg.roles)
+
+
+TRACKERS = MappingProxyType(
+    {TrackerKind.LINEAR: LinearTracker.connect, TrackerKind.LOCAL: _local_board}
+)
 
 
 def _ignored(ignored, error):

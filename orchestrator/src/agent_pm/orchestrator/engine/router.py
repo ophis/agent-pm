@@ -676,7 +676,9 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].input == "build"
-    reader = LinearTracker(gql, states=linear.states, team_id=linear.team)
+    reader = LinearTracker(
+        gql, states=linear.states, team_id=linear.team, service=linear.harness_key
+    )
     try:
         issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
@@ -1086,6 +1088,7 @@ def _help_text():
 def main(
     argv,
     *,
+    trackers: Mapping[TrackerKind, Connect],
     now=datetime.now,
     config_path=None,
     gql=None,
@@ -1093,7 +1096,6 @@ def main(
     keychain=None,
     start=None,
     delegate_cls=None,
-    trackers: Mapping[TrackerKind, Connect] | None = None,
 ):
     gql = gql or linear_gql
     run = run or config.shell
@@ -1125,10 +1127,7 @@ def main(
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
-    connect = {TrackerKind.LINEAR: LinearTracker.connect, **(trackers or {})}.get(cfg.tracker)
-    if connect is None:
-        print(f'router.py: no tracker "{cfg.tracker}"', file=sys.stderr)
-        return 2
+    connect = trackers[cfg.tracker]
     if cfg.tracker == TrackerKind.LOCAL and starts:
         print(
             f'router.py: tracker "{cfg.tracker}" runs only --dry-run and --brake', file=sys.stderr
@@ -1145,7 +1144,6 @@ def main(
     except ConfigError as error:
         print(f"router.py: {error}", file=sys.stderr)
         return 2
-    gql = functools.partial(gql, service=cfg.linear.harness_key if cfg.linear else None)
     if start is None:
         start = functools.partial(
             outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended

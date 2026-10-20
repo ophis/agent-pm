@@ -633,22 +633,25 @@ def board_linear():
         agent_label_group="agents",
         agent_labels={"b": "label-b"},
         human_members=("human@x.test",),
+        harness_key="linear-api-key",
         roles={"pm": SimpleNamespace(account="pm@agents.test")},
     )
 
 
 def connected(**replies):
+    """The connected tracker and its raw transport."""
     group = {"issueLabel": {"isGroup": True, "children": {"nodes": [{"id": "label-1"}]}}}
     replies = {"Q_TEAM": {"teams": {"nodes": [team_node()]}}, "Q_TASK_GROUP": group} | replies
-    return LinearTracker.connect(Gql(**replies), SimpleNamespace(linear=board_linear()), say=None)
+    gql = Gql(**replies)
+    return LinearTracker.connect(gql, SimpleNamespace(linear=board_linear()), say=None), gql
 
 
 class Connect(Case):
     def test_reads_in_order(self):
-        found = connected(Q_USER=users("u-human", "u-pm"))
-        self.assertEqual(found.gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER", "Q_USER"])
+        found, gql = connected(Q_USER=users("u-human", "u-pm"))
+        self.assertEqual(gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER", "Q_USER"])
         self.assertEqual(
-            [v for _, v in found.gql.calls],
+            [{k: x for k, x in v.items() if k != "service"} for _, v in gql.calls],
             [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "human@x.test"}, {"e": "pm@agents.test"}],
         )
         self.assertEqual((found.team_id, found.state_ids), (TEAM, STATES))
@@ -670,6 +673,14 @@ class Connect(Case):
         ):
             with self.subTest(message=message), self.assertRaisesRegex(LinearError, message):
                 connected(**replies)
+
+    def test_connect_binds_harness_service(self):
+        found, gql = connected(
+            Q_USER=users("u-human", "u-pm"), Q_CHILDREN={"issue": {"children": {"nodes": []}}}
+        )
+        found.sub_issues("id-TASK-1")
+        self.assertEqual(gql.names()[-1], "Q_CHILDREN")
+        self.assertEqual([v.get("service") for _, v in gql.calls], ["linear-api-key"] * 5)
 
 
 class TeamAndRoles(Case):

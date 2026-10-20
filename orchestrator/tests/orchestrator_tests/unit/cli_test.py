@@ -12,6 +12,8 @@ from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config, promote, prune, router, runs
+from agent_pm.orchestrator.engine.types import TrackerKind
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
@@ -23,6 +25,10 @@ from utils.tests.cli_help import examples, parse_only
 
 
 class Commands(Case):
+    def test_trackers_cover_every_kind(self):
+        self.assertEqual(set(cli.TRACKERS), set(TrackerKind))
+        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR], LinearTracker.connect)
+
     def test_prune_prose_fits_eighty_columns(self):
         for line in prune.HELP.splitlines():
             if not line.strip().startswith("agent-pm-"):

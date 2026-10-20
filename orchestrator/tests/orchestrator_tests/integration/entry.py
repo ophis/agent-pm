@@ -27,7 +27,7 @@ def launch(argv):
     return router.outer(
         Spec(**vars(parser.parse_args(argv))),
         cfg,
-        gql=functools.partial(client.linear_gql, service=cfg.linear.harness_key),
+        gql=client.linear_gql,
         run=config.shell,
         keychain=client.has_key,
     )
@@ -54,7 +54,12 @@ def main(argv):
     entry, *arguments = argv
     sys.addaudithook(refuse_keychain)
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
-        entries = {"launch": launch, "tui": tui, "promote": promote.main, "router": router.main}
+        entries = {
+            "launch": launch,
+            "tui": tui,
+            "promote": promote.main,
+            "router": functools.partial(router.main, trackers=cli.TRACKERS),
+        }
         if entry in entries:
             return entries[entry](arguments)
         return cli.main([entry, *arguments])

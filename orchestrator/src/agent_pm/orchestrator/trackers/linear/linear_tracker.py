@@ -261,8 +261,9 @@ class LinearTracker(Tracker):
     @classmethod
     def connect(cls, gql, cfg, *, say):
         """Checks the team and task label group, then reads the human and role accounts; keeps
-        the task and Agent label maps."""
+        the task and Agent label maps. Calls gql as the harness_key service."""
         linear = config.linear_settings(cfg, "router")
+        gql = functools.partial(gql, service=linear.harness_key)
         found = ops.team(gql, linear)
         ops.task_group(gql, linear)
         people = frozenset(ops.humans(gql, linear))

@@ -1,6 +1,5 @@
 """Shared orchestrator scenario fixtures for unit and sandboxed integration contracts."""
 
-import functools
 import io
 import json
 import os
@@ -13,6 +12,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.delegate import Spec as DelegateSpec
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     inputs,
@@ -38,7 +38,6 @@ from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.run_fixtures import (
     ENGINEER,
-    HARNESS,
     ID,
     PROJECT,
     SID,
@@ -486,7 +485,7 @@ class Base(run_fixtures.Base):
         with redirect_stderr(err), self.log_dir(again=again):
             out = use(
                 router.Board(
-                    functools.partial(fake, service=HARNESS),
+                    fake,
                     runs.parse_log(self.runs),
                     cfg,
                     now=NOW,
@@ -562,7 +561,7 @@ class TickBase(Base):
         outer=None,
         clock=None,
         env=None,
-        trackers=None,
+        trackers=cli.TRACKERS,
     ):
         # outer: main's run and keychain; main then starts through its own outer
         # env: the caller's variables over PATH; a launcher's events file and sid only from env
@@ -689,7 +688,7 @@ class OuterBase(TickBase):
             rc = router.outer(
                 a,
                 cfg,
-                gql=functools.partial(self.gql, service=HARNESS),
+                gql=self.gql,
                 run=self.run_,
                 keychain=self.keychain,
                 now=lambda: NOW,

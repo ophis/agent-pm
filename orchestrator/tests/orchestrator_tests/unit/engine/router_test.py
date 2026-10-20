@@ -18,6 +18,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import Outcome
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     inputs,
@@ -1068,6 +1069,7 @@ class RouterEntry(OuterBase):
                 ["--issue", ID],
                 now=lambda: NOW,
                 config_path=self.config_path,
+                trackers=cli.TRACKERS,
                 gql=self.fake,
                 run=self.run_,
                 keychain=self.keychain,
@@ -1547,6 +1549,7 @@ class RouterArguments(Base):
             rc = router.main(
                 argv,
                 config_path=os.path.join(self.tmp, "absent.toml"),
+                trackers=cli.TRACKERS,
                 gql=None,
             )
         return rc, err.getvalue()
@@ -1653,6 +1656,7 @@ class RouterLocking(TickBase):
                 rc = router.main(
                     ["--brake", "researcher"],
                     config_path=self.config_path,
+                    trackers=cli.TRACKERS,
                     delegate_cls=self.cfg().delegate_cls,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
@@ -2141,6 +2145,7 @@ class RunBrake(Base):
             rc = router.main(
                 ["--brake", role],
                 config_path=self.config_path,
+                trackers=cli.TRACKERS,
                 delegate_cls=self.cfg().delegate_cls,
             )
             self.path = os.environ["PATH"]
@@ -2247,13 +2252,21 @@ class LocalBoard(TickBase):
                 )
                 self.assertEqual(self.connects, [TrackerKind.LOCAL])
 
-    def test_no_tracker_kind(self):
-        for argv in (["--dry-run"], []):
-            with self.subTest(argv=argv):
-                fake = self.fake()
-                self.assertEqual(self.tick(fake, *argv), 2)
-                self.assertEqual(self.err, 'router.py: no tracker "local"\n')
-                self.assertEqual(fake.queries, [])
+    def test_local_dry_run_reads_no_linear_settings(self):
+        """Spec AC7: main hands cli's local Connect its transport raw; a dry run never calls it."""
+        ready = os.path.join(self.tmp, "board", "researcher", "ready")
+        os.makedirs(ready)
+        with open(os.path.join(ready, "LOC-1 One.md"), "w", encoding="utf-8") as f:
+            f.write(
+                '---\nid: LOC-1\ntitle: "One"\npriority: 0\ncreated: 2026-09-01T00:00:00+00:00\n'
+                "---\n### Description\nOne.\n"
+            )
+
+        def transport(*_, **__):
+            raise AssertionError("the transport was called")
+
+        self.assertEqual(self.tick(transport, "--dry-run"), 0, self.err)
+        self.assertIn("preview LOC-1 client=a client_source=default", self.said())
 
 
 class ScheduledUsageGates(TickBase):
