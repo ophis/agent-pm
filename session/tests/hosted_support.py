@@ -107,6 +107,27 @@ class ProbeClient(fake_client.FakeClient):
         return engine_types.SessionStatus("yes", 1.5, f"probe {info.sid} {info.cwd}")
 
 
+class PoolClient(ProbeClient):
+    """accounts: {name: identity}; each account's probe is ("probe-cmd", identity), whose output
+    "<five>,<week>" it reads.
+    """
+
+    keys = ProbeClient.keys | {"accounts"}
+
+    def _accounts(self):
+        return frozenset(self.config["accounts"])
+
+    def _usage_probes(self):
+        return {
+            name: (identity, Launch(("probe-cmd", identity)))
+            for name, identity in self.config["accounts"].items()
+        }
+
+    def usage(self, output):
+        five, week = map(float, output.split(","))
+        return engine_types.Usage(engine_types.Window(five, None), engine_types.Window(week, None))
+
+
 class InnerClient(fake_client.FakeClient):
     """Records requests and injects INNER_SESSION into tui children."""
 
@@ -161,6 +182,7 @@ PACKAGES = {
         for name, cls in (
             ("quiet", QuietClient),
             ("probe", ProbeClient),
+            ("pool", PoolClient),
             ("checked", CheckedClient),
             ("inner", InnerClient),
             ("env", EnvClient),

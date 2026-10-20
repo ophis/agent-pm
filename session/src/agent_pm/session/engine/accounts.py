@@ -46,7 +46,7 @@ def readings(
             for name in names:
                 found[name] = results[identity]
                 cached[name] = (at, identity, results[identity])
-                print(f"{client} usage: account {name}: {_summary(found[name])}", file=sys.stderr)
+                print(f"{client} usage: account {name}: {summary(found[name])}", file=sys.stderr)
         _store(path, {name: cached[name] for name in probes})
     return {name: found[name] for name in probes}
 
@@ -70,7 +70,7 @@ def _left(usage: Usage) -> float:
     return 100 - max((w.used_percent for w in windows if w is not None), default=0)
 
 
-def _summary(usage: Usage | None) -> str:
+def summary(usage: Usage | None) -> str:
     if usage is None:
         return "unknown"
     return " ".join(

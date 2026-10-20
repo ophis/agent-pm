@@ -18,6 +18,7 @@ from typing import Any, ClassVar, cast
 
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.registry import Registry, settings
+from agent_pm.session.engine import accounts
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -28,6 +29,7 @@ from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     KeyPress,
+    Launch,
     Liveness,
     Mode,
     NoRecordedSession,
@@ -51,6 +53,7 @@ from agent_pm.session.modes.base import BaseMode, child_env
 from agent_pm.session.viewer import display as displays
 from agent_pm.session.viewer.viewer import Viewer
 from agent_pm.utils import (
+    ACCOUNT_ENV,
     STATE,
     Display,
     Record,
@@ -141,6 +144,43 @@ def _probe_dir() -> str | None:
     except OSError:
         return None
     return path
+
+
+def _read_usage(setup: _Setup, client: Client, launch: Launch | None) -> Usage | None:
+    if launch is None or not launch.argv:
+        return None
+    cwd = launch.cwd or _probe_dir()
+    if cwd is None:
+        return None
+    output = setup.probe(launch.argv, cwd=cwd, env=child_env(launch, cwd), timeout=PROBE_TIMEOUT)
+    if output is None:
+        return None
+    try:
+        return client.usage(output)
+    except ValueError:
+        return None
+
+
+def _pooled(
+    setup: _Setup, name: str, client: Client, host: Callable[[], Host]
+) -> dict[str, Usage | None] | None:
+    """Each account's reading when `client` has two or more and `host` runs containers, which
+    take a selected account's token; else None.
+    """
+    probes = client._usage_probes()
+    if probes is None or len(probes) < 2 or host()._client_context().container is None:
+        return None
+    return accounts.readings(name, probes, lambda launch: _read_usage(setup, client, launch))
+
+
+def _picked(setup: _Setup, spec: Spec, name: str, client: Client, host: Host) -> Spec:
+    """spec, selecting the pool's best account when it selects none."""
+    if spec.env.get(ACCOUNT_ENV) or (pool := _pooled(setup, name, client, lambda: host)) is None:
+        return spec
+    if (account := accounts.best(pool)) is None:
+        return spec
+    print(f"{name} account {account}: picked ({accounts.summary(pool[account])})", file=sys.stderr)
+    return replace(spec, env={**spec.env, ACCOUNT_ENV: account})
 
 
 def _host_class(setup: _Setup, name: str) -> tuple[type[Host], dict]:
@@ -280,6 +320,7 @@ class HostedSession(Session):
         on = cls.host(host)
         viewer = cls.viewer()
         displays.validate_display(display, on)
+        spec = _picked(setup, spec, client_name, client, on)
         name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
@@ -400,23 +441,12 @@ class HostedSession(Session):
 
     @classmethod
     def usage(cls, client: str) -> Usage | None:
+        """On a pool, the reading of the account a start with none selected picks."""
         setup = cls._config()
         found = setup.registry.client(client)
-        launch = found.usage_probe()
-        if launch is None or not launch.argv:
-            return None
-        cwd = launch.cwd or _probe_dir()
-        if cwd is None:
-            return None
-        output = setup.probe(
-            launch.argv, cwd=cwd, env=child_env(launch, cwd), timeout=PROBE_TIMEOUT
-        )
-        if output is None:
-            return None
-        try:
-            return found.usage(output)
-        except ValueError:
-            return None
+        if (pool := _pooled(setup, client, found, cls.host)) is None:
+            return _read_usage(setup, found, found.usage_probe())
+        return None if (name := accounts.best(pool)) is None else pool[name]
 
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
