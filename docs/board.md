@@ -17,6 +17,8 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    max_runs = 1
    ```
 
+   The board role's `account` is its Linear user; the Claude account a role runs on is its `[delegate.roles.<role>.accounts]` table ([Claude accounts](docker-host.md#claude-accounts)).
+
 2. Create the Linear presets, accounts and Keychain items, and fill their keys: [Linear presets](credentials.md#linear-presets).
 3. Dry-run each job:
    ```bash
