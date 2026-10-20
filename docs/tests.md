@@ -22,6 +22,15 @@ actionlint -shellcheck= -pyflakes=
 typos --config pyproject.toml
 ```
 
+Pre-commit hook, enabled once per clone with `git config core.hooksPath .githooks`: `.githooks/pre-commit`
+runs `ruff check --fix`, then `ruff format`, on the staged version of each staged `.py` file, re-stages
+the result and fails the commit on lint ruff cannot fix. Unstaged edits stay out of the commit and in the
+working tree. Its ruff is CI's: the `ruff==` pin in `.github/workflows/test.yml` (keep every pin there
+equal); `ruff` on `PATH` at that version, else `uvx ruff@<version>` (or `uv tool run`); with neither,
+it prints a hint and commits.
+Agent checkouts: a tmux Host worktree of a `[local_clones]` clone shares the clone's setting; a fresh
+clone (an unlisted repo, every Docker Host run) has none, and CI's Ruff step still catches it.
+
 | Suite | Command |
 |---|---|
 | one project's unit tests | `python3 .github/run_tests.py "Session unit" session/tests/unit` |
