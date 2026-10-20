@@ -17,8 +17,8 @@ from agent_pm.linear_orchestrator.engine.types import (
     Docs,
     Role,
     State,
-    Task,
 )
+from agent_pm.linear_orchestrator.flow.types import Task
 from agent_pm.utils import GUARD, STATE, temp_dirs, under
 
 LOCAL = utils.LOCAL
