@@ -1,4 +1,4 @@
-"""LocalTracker: the Tracker on a temp board, its reads and writes; prune's archive write refused."""
+"""LocalTracker: the Tracker on a temp board, its reads and writes."""
 
 import os
 import shutil
@@ -11,6 +11,7 @@ from agent_pm.orchestrator.engine.flow.handoff import handoff, parse_handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
+    ArchiveRefused,
     Comment,
     Detail,
     Finished,
@@ -28,6 +29,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     SubIssue,
 )
 from agent_pm.orchestrator.engine.types import IssueError, TrackerFileError
+from agent_pm.orchestrator.trackers.local import store
 from agent_pm.orchestrator.trackers.local.local_tracker import ISSUE_STATES, LocalTracker
 from agent_pm.orchestrator.trackers.local.types import LocalState
 from orchestrator_tests.case import Case
@@ -697,13 +699,9 @@ class Writes(Written):
         self.write("pm/review", "LOC-1")
         self.assertEqual(self.tracker.notify("LOC-1", ("a@example.com",)), "")
 
-    def test_unarchive(self):
+    def test_unarchive_a_live_issue(self):
         path = self.write("pm/review", "LOC-1")
-        self.write("archive", "LOC-2", history="- 2026-10-19 14:30 done self\n")
         self.unchanged(path, lambda: self.tracker.unarchive("LOC-1"))
-        with self.assertRaises(IssueError) as caught:
-            self.tracker.unarchive("LOC-2")
-        self.assertEqual(str(caught.exception), "LOC-2: archived")
 
     def test_missing_and_archived_issues(self):
         self.write("pm/done", "LOC-1")
@@ -830,13 +828,6 @@ class Writes(Written):
         with mock.patch("os.fstat", side_effect=fstat), self.assertRaises(IssueError) as caught:
             self.tracker.comment("LOC-1", "Seen.")
         self.assertEqual(str(caught.exception), "LOC-1: issue not found")
-
-    def test_archive_not_supported(self):
-        plan = ArchivePlan("LOC-1", "LOC-1", "u", archived=False, descendants=(), unfinished=())
-        with self.assertRaises(NotImplementedError) as caught:
-            self.tracker.archive("LOC-1", plan)
-        self.assertEqual(str(caught.exception), "local board: archive is not supported yet")
-        self.assertEqual(os.listdir(self.board), [])
 
 
 ONCE = ("LOC-1", "engineer", "2026-10-19T16:10:00.000Z")
@@ -979,3 +970,157 @@ class Relate(Written):
         for other in ("LOC-2", "LOC-3", "LOC-7"):
             with self.subTest(other):
                 self.unchanged(path, lambda o=other: self.tracker.relate("LOC-1", o))
+
+
+def archived_by(assignee, minute=10):
+    return f"#### self · 2026-10-19 16:{minute} <!-- id=c1 key=archived:{assignee} -->\nArchived.\n"
+
+
+class Archive(Written):
+    def locks(self):
+        """store.locked, counted."""
+        real, taken = store.locked, []
+
+        def counted(board):
+            taken.append(board)
+            return real(board)
+
+        return mock.patch.object(store, "locked", side_effect=counted), taken
+
+    def test_moves_issue_and_descendants_flat(self):
+        self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        self.write("engineer/canceled", "LOC-2", front="parent: LOC-1\n")
+        self.write(
+            "engineer/done",
+            "LOC-3",
+            front="parent: LOC-2\n",
+            history="- 2026-10-19 15:00 done self\n",
+        )
+        old = self.write(
+            "archive", "LOC-4", front="parent: LOC-1\n", history="- 2026-10-19 15:00 done self\n"
+        )
+        before = self.read(old)
+        patched, taken = self.locks()
+        with patched:
+            self.assertTrue(self.tracker.archive("LOC-1"))
+        self.assertEqual(taken, [self.board])
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.board, "archive"))),
+            ["LOC-1 x.md", "LOC-2 x.md", "LOC-3 x.md", "LOC-4 x.md"],
+        )
+        self.assertEqual(self.read(old), before)
+        self.assertEqual(os.listdir(os.path.join(self.board, "pm/done")), [])
+        two = self.read(os.path.join(self.board, "archive/LOC-2 x.md"))
+        self.assertEqual(
+            two,
+            text(
+                "LOC-2",
+                front="parent: LOC-1\n",
+                comments="\n#### self · 2026-10-20 09:30 <!-- id=c1 key=archived:engineer -->\n"
+                "Archived from engineer/canceled/.\n\n",
+                history=STAMPED.format("canceled"),
+            ),
+        )
+        fresh = LocalTracker(self.board, ("pm", "engineer"))
+        self.assertEqual(
+            [fresh.read(i).state for i in ("LOC-1", "LOC-2", "LOC-3")],
+            [IssueState.DONE, IssueState.CANCELED, IssueState.DONE],
+        )
+        self.assertEqual(fresh.detail("LOC-1").comments[-1].body, "Archived from pm/done/.")
+        self.assertFalse(self.tracker.archive("LOC-1"))
+
+    def test_refuses_unfinished_descendant(self):
+        path = self.write("pm/done", "LOC-1")
+        self.write("engineer/ready", "LOC-2", front="parent: LOC-1\n")
+        with self.assertRaises(ArchiveRefused) as caught:
+            self.unchanged(path, lambda: self.tracker.archive("LOC-1"))
+        self.assertEqual([s.ident for s in caught.exception.plan.unfinished], ["LOC-2"])
+        self.assertFalse(os.path.exists(os.path.join(self.board, "archive")))
+
+    def test_rechecks_under_the_lock(self):
+        path = self.write("pm/done", "LOC-1")
+        sub = self.write("engineer/done", "LOC-2", front="parent: LOC-1\n")
+        plan = self.tracker.archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "changed")
+        os.makedirs(os.path.join(self.board, "engineer/ready"))
+        os.rename(sub, os.path.join(self.board, "engineer/ready/LOC-2 x.md"))  # reopened meanwhile
+        with self.assertRaises(ArchiveRefused):
+            self.unchanged(path, lambda: self.tracker.archive("LOC-1", plan))
+        self.assertFalse(os.path.exists(os.path.join(self.board, "archive")))
+
+    def test_occupied_archive_target(self):
+        path = self.write("pm/done", "LOC-1")
+        taken = self.write("archive", "LOC-9", history="- 2026-10-19 15:00 done self\n")
+        os.rename(taken, taken := os.path.join(self.board, "archive/LOC-1 x.md"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.archive("LOC-1")
+        self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
+        self.assertTrue(os.path.exists(path))
+
+    def test_note_edited_in_place(self):
+        self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        self.tracker.archive("LOC-1")
+        self.tracker.unarchive("LOC-1")
+        self.tracker.archive("LOC-1")
+        notes = [c.body for c in LocalTracker(self.board, ()).detail("LOC-1").comments]
+        self.assertEqual(notes, ["Archived from pm/done/."])
+
+
+class Unarchive(Written):
+    def setUp(self):
+        super().setUp()
+        os.mkdir(os.path.join(self.board, "pm"))  # a board holds an assignee dir
+
+    def test_restores_recorded_assignee(self):
+        notes = archived_by("pm", 10) + "\n" + archived_by("engineer", 20).replace("c1", "c2")
+        path = self.write(
+            "archive", "LOC-1", comments=notes, history="- 2026-10-19 16:00 done self\n"
+        )
+        before = self.read(path)
+        self.tracker.unarchive("LOC-1")
+        restored = os.path.join(self.board, "engineer/done/LOC-1 x.md")
+        self.assertEqual(self.read(restored), before)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.tracker.read("LOC-1").state, IssueState.DONE)
+        self.assertIsNone(self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.DONE))
+        self.assertTrue(os.path.exists(os.path.join(self.board, "engineer/review/LOC-1 x.md")))
+
+    def test_hand_archived_goes_to_unassigned(self):
+        self.write("archive", "LOC-1", history="- 2026-10-19 16:00 review other\n")
+        self.write("archive", "LOC-2")
+        self.tracker.unarchive("LOC-1")
+        self.tracker.unarchive("LOC-2")
+        self.assertTrue(os.path.exists(os.path.join(self.board, "unassigned/review/LOC-1 x.md")))
+        self.assertTrue(os.path.exists(os.path.join(self.board, "unassigned/backlog/LOC-2 x.md")))
+
+    def test_bad_recorded_assignee(self):
+        outside = os.listdir(self.home)
+        for assignee in ("../..", "a/b", ".state", "archive", "%2E%2E", "a%2Fb", "a%00b", ""):
+            with self.subTest(assignee=assignee):
+                path = self.write(
+                    "archive",
+                    "LOC-1",
+                    comments=archived_by(assignee),
+                    history="- 2026-10-19 16:00 done self\n",
+                )
+                self.tracker = LocalTracker(self.board, ("pm",), now=lambda: NOW)
+                self.tracker.unarchive("LOC-1")
+                restored = os.path.join(self.board, "unassigned/done/LOC-1 x.md")
+                self.assertTrue(os.path.exists(restored))
+                os.unlink(restored)
+                self.assertFalse(os.path.exists(path))
+                self.assertEqual(
+                    sorted(os.listdir(self.board)), [".lock", "archive", "pm", "unassigned"]
+                )
+                self.assertEqual(os.listdir(self.home), outside)
+
+    def test_occupied_target(self):
+        path = self.write(
+            "archive", "LOC-1", comments=archived_by("pm"), history="- 2026-10-19 16:00 done self\n"
+        )
+        taken = self.write("pm/done", "LOC-9")
+        os.rename(taken, taken := os.path.join(self.board, "pm/done/LOC-1 x.md"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.unarchive("LOC-1")
+        self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
+        self.assertTrue(os.path.exists(path))
