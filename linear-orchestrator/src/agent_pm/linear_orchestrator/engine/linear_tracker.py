@@ -1,14 +1,25 @@
 """The flow Tracker on Linear, from a gql callable: its states mapped to IssueState, its reads and
-writes in Linear's query text."""
+writes in Linear's query text, and which of its comments and attachments are a run's."""
 
 import functools
+import re
 from typing import TypeVar
 
 from agent_pm.linear_orchestrator.engine import ops
-from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move
-from agent_pm.linear_orchestrator.engine.types import LinearError, State
+from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, client_id, last_move
+from agent_pm.linear_orchestrator.engine.types import UUID_RE, LinearError, State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
-from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
+from agent_pm.linear_orchestrator.flow.types import (
+    Approved,
+    Comment,
+    Detail,
+    Finished,
+    IssueState,
+    Move,
+    Ref,
+    Snapshot,
+    SubIssue,
+)
 from agent_pm.utils import parse_time
 
 T = TypeVar("T")
@@ -22,6 +33,8 @@ STATES = {
 }
 
 MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
+
+RUN_URL = "https://agent-pm.invalid/run/"
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
@@ -47,6 +60,23 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
+Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
+  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
+  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
+Q_DETAIL = (
+    """query($i: String!, $after: String) { issue(id: $i) { state { id }
+  """
+    + HISTORY
+    + """
+  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
+  relations(first: 250) { nodes { relatedIssue { id } } }
+  inverseRelations(first: 250) { nodes { issue { id } } } } }"""
+)
+Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
+M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
+M_RELATE = (
+    "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
+)
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
 )
@@ -60,6 +90,19 @@ M_UPDATE = (
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 
 
+def is_record(attachment):
+    # the URL alone identifies one: a source may be titled "Run rate analysis"
+    return attachment["url"].startswith(RUN_URL)
+
+
+def is_comment(comment):
+    # isMe means the harness account because callers query with its key
+    return (
+        bool((comment["user"] or {}).get("isMe"))
+        and re.match(f"Run {UUID_RE.pattern} · ", comment["body"]) is not None
+    )
+
+
 def finished_at(issue, finished):
     """The latest of issue's move into finished and its canceledAt and completedAt (the history
     read can lack a move into Duplicate that canceledAt holds); None: unknown."""
@@ -70,9 +113,10 @@ def finished_at(issue, finished):
 
 
 class LinearTracker(Tracker):
-    """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role}.
-    A method needing one not given raises TypeError. service: the key each call is made as, with
-    timeout when given; None: gql as given. A comment's ref is its client id's seed."""
+    """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
+    humans: human_members emails (comments' other, subscribed on notify). A method needing one not
+    given raises TypeError. service: the key each call is made as, with timeout when given; None:
+    gql as given. A comment's ref: its client id's parts."""
 
     def __init__(
         self,
@@ -82,32 +126,40 @@ class LinearTracker(Tracker):
         team_id=None,
         finished=None,
         roles=None,
+        humans=(),
         service=None,
         timeout=None,
     ):
         if service is not None:
             bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
             gql = functools.partial(gql, **bound)
-        self.gql, self.ids, self.team_id, self.roles = gql, states, team_id, roles
-        self.ended = finished
+        self.gql, self.config, self.team_id, self.roles = gql, states, team_id, roles
+        self.ended, self.humans = finished, humans
+        self.others = {e.lower() for e in humans}
+        self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
+        self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
+
+    def _state(self, sid):
+        found = self.states.get(sid)
+        if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.ended:
+            return IssueState.DONE if sid == self.ids[IssueState.DONE] else IssueState.CANCELED
+        return found
 
     def read(self, ident):
-        ids, ended = _need("states", self.ids), _need("finished", self.ended)
+        _need("states", self.config)
+        ended = _need("finished", self.ended)
         issue = self.gql(Q_ISSUE, i=ident)["issue"]
         if not issue:
             return None
         state = issue["state"]["id"]
-        found = self.states.get(state)
-        if found not in (IssueState.READY, IssueState.RUNNING) and state in ended:
-            done = state == ids[State.DONE]
-            return Snapshot(
-                IssueState.DONE if done else IssueState.CANCELED, finished_at(issue, ended)
-            )
+        found = self._state(state)
+        if found in (IssueState.DONE, IssueState.CANCELED):
+            return Snapshot(found, finished_at(issue, ended))
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
 
     def finished(self, owners):
-        states, team = _need("states", self.ids), _need("team_id", self.team_id)
+        states, team = _need("states", self.config), _need("team_id", self.team_id)
         roles, ended = _need("roles", self.roles), _need("finished", self.ended)
         ids = [uid for uid, role in roles.items() if role in owners]
         done = sorted(ended & {states[State.DONE]})
@@ -142,20 +194,111 @@ class LinearTracker(Tracker):
     def archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
 
-    def find_comment(self, key, ref):
-        return ops.find_comment(self.gql, ops.client_id(ref), key)
+    def approved(self, owners):
+        _need("states", self.config)
+        roles = _need("roles", self.roles)
+        nodes = self.gql(
+            Q_HANDOFF,
+            t=_need("team_id", self.team_id),
+            s=self.ids[IssueState.APPROVED],
+            a=[uid for uid, role in roles.items() if role in owners],
+        )["issues"]["nodes"]
+        return [
+            Approved(
+                n["id"],
+                n["identifier"],
+                n["url"],
+                n["title"],
+                n["priority"],
+                n["createdAt"],
+                n["project"]["id"],
+                n["project"]["name"],
+                roles[n["assignee"]["id"]],
+                tuple(
+                    (a["title"], a["url"]) for a in n["attachments"]["nodes"] if not is_record(a)
+                ),
+            )
+            for n in nodes
+        ]
 
-    def move(self, key, to, frm=None):
-        ids = {v: _need("states", self.ids)[k] for k, v in MOVES.items()}
-        if frm is not None:
-            now = ops.move(self.gql, key, ids[to], ids[frm])
-            return None if now in (None, ids[to]) else now
-        if self.gql(ops.Q_ISSUE_STATE, i=key)["issue"]["state"]["id"] != ids[to]:
-            call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=ids[to])
-        return None
+    def detail(self, key):
+        _need("states", self.config)
+        _need("finished", self.ended)
+        issue = self.gql(Q_DETAIL, i=key)["issue"]
+        return Detail(
+            self._state(issue["state"]["id"]),
+            tuple(
+                Move(h["createdAt"], self._state(h["toStateId"]), self._state(h["fromStateId"]))
+                for h in issue["history"]["nodes"]
+            ),
+            tuple(
+                Comment(
+                    c["createdAt"],
+                    c["body"],
+                    (c["user"] or {}).get("name", "integration"),
+                    other=bool(c["user"]) and (c["user"].get("email") or "").lower() in self.others,
+                    run=is_comment(c),
+                )
+                for c in issue["comments"]["nodes"]
+            ),
+            frozenset(r["relatedIssue"]["id"] for r in issue["relations"]["nodes"])
+            | {r["issue"]["id"] for r in issue["inverseRelations"]["nodes"]},
+        )
+
+    def created(self, once):
+        nodes = self.gql(Q_CHILD, c=client_id(*once))["issues"]["nodes"]
+        return Ref(nodes[0]["id"], nodes[0]["identifier"]) if nodes else None
+
+    def create(self, once, *, project, owner, priority, title, description):
+        _need("states", self.config)
+        made = call(
+            self.gql,
+            M_CREATE,
+            "issueCreate",
+            **{
+                "in": {
+                    "id": client_id(*once),
+                    "teamId": _need("team_id", self.team_id),
+                    "projectId": project,
+                    "assigneeId": self.users[owner],
+                    "stateId": self.ids[IssueState.READY],
+                    "priority": priority,
+                    "title": title,
+                    "description": description,
+                }
+            },
+        )["issue"]
+        return Ref(made["id"], made["identifier"])
+
+    def relate(self, key, other):
+        call(
+            self.gql,
+            M_RELATE,
+            "issueRelationCreate",
+            **{"in": {"type": "related", "issueId": key, "relatedIssueId": other}},
+        )
 
     def comment(self, key, body, ref=None):
-        ops.comment(self.gql, key, body, None if ref is None else ops.client_id(ref))
+        ops.comment(self.gql, key, body, None if ref is None else client_id(*ref))
+
+    def move(self, key, to, *, frm=None):
+        _need("states", self.config)
+        if frm is not None:
+            return ops.move(self.gql, key, self.ids[to], self.ids[frm])
+        if self.gql(ops.Q_ISSUE_STATE, i=key)["issue"]["state"]["id"] != self.ids[to]:
+            call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=self.ids[to])
+        return None
+
+    def comment_and_move(self, key, body, *, to, frm, notify):
+        _need("states", self.config)
+        return ops.comment_and_move(
+            self.gql,
+            key,
+            body,
+            to=self.ids[to],
+            frm=self.ids[frm],
+            emails=self.humans if notify else (),
+        )
 
     def notify(self, key, people):
         return ops.subscribe(self.gql, key, people)
@@ -180,8 +323,11 @@ class LinearTracker(Tracker):
     def unarchive(self, key):
         call(self.gql, M_UNARCHIVE, "issueUnarchive", i=key)
 
+    def find_comment(self, key, ref):
+        return ops.find_comment(self.gql, client_id(*ref), key)
+
     def put_comment(self, key, body, ref):
-        cid = ops.client_id(ref)
+        cid = client_id(*ref)
         try:
             done = self.gql(M_UPDATE, c=cid, b=body)["commentUpdate"]
         except LinearError as e:

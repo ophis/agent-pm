@@ -1,9 +1,17 @@
-"""How the engine reads and writes issues; errors are the adapter's own."""
+"""Issue reads and writes; the adapter's errors."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 
-from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
+from agent_pm.linear_orchestrator.flow.types import (
+    Approved,
+    Detail,
+    Finished,
+    IssueState,
+    Ref,
+    Snapshot,
+    SubIssue,
+)
 
 
 class Tracker(ABC):
@@ -13,29 +21,55 @@ class Tracker(ABC):
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:
-        """Owners' done issues and every canceled one, all pages read first (archiving shifts them)."""
+        """Owners' done issues and all canceled ones; all pages read first (archiving shifts them)."""
 
     @abstractmethod
     def sub_issues(self, key: str) -> tuple[SubIssue, ...]:
-        """Direct ones, archived ones left out."""
+        """Direct ones, not archived."""
 
     @abstractmethod
     def archive(self, key: str) -> None:
         """Its sub-issues too, as the tracker does."""
 
     @abstractmethod
-    def find_comment(self, key: str, ref: str) -> str | None: ...
+    def approved(self, owners: Collection[str]) -> list[Approved]:
+        """In a project."""
 
     @abstractmethod
-    def put_comment(self, key: str, body: str, ref: str) -> bool:
-        """False: refused."""
+    def detail(self, key: str) -> Detail: ...
 
     @abstractmethod
-    def move(self, key: str, to: IssueState, frm: IssueState | None = None) -> str | None:
-        """Only from frm if given; None: in to, else its state."""
+    def created(self, once: tuple[str, ...]) -> Ref | None:
+        """Archived too."""
 
     @abstractmethod
-    def comment(self, key: str, body: str, ref: str | None = None) -> None: ...
+    def create(
+        self,
+        once: tuple[str, ...],
+        *,
+        project: str,
+        owner: str,
+        priority: int,
+        title: str,
+        description: str,
+    ) -> Ref:
+        """READY."""
+
+    @abstractmethod
+    def relate(self, key: str, other: str) -> None: ...
+
+    @abstractmethod
+    def comment(self, key: str, body: str, ref: tuple[str, ...] | None = None) -> None: ...
+
+    @abstractmethod
+    def move(self, key: str, to: IssueState, *, frm: IssueState | None = None) -> str | None:
+        """Without frm, from any state; None: moved, else its state id."""
+
+    @abstractmethod
+    def comment_and_move(
+        self, key: str, body: str, *, to: IssueState, frm: IssueState, notify: bool
+    ) -> str | None:
+        """notify: subscribe others first."""
 
     @abstractmethod
     def notify(self, key: str, people: Collection[str]) -> str:
@@ -56,3 +90,10 @@ class Tracker(ABC):
 
     @abstractmethod
     def unarchive(self, key: str) -> None: ...
+
+    @abstractmethod
+    def find_comment(self, key: str, ref: tuple[str, ...]) -> str | None: ...
+
+    @abstractmethod
+    def put_comment(self, key: str, body: str, ref: tuple[str, ...]) -> bool:
+        """False: refused."""

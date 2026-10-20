@@ -269,6 +269,7 @@ class Base(Case):
             workdir=workdir,
             tracker=tracker(gql),
             humans=HUMANS,
+            states=STATES,
             repos=REPOS,
             target=TARGET,
             harness=LinearTracker(gql),
@@ -620,18 +621,19 @@ class WritebackContext(run_fixtures.Base):
                     workdir=os.path.join(self.work, "work", ID),
                     tracker=ctx.tracker,
                     humans=("me@x.com",),
+                    states=cfg.states,
                     repos={PROJECT: "ophis/agent-pm"},
                     target=target,
                     harness=ctx.harness,
                 )
                 self.assertEqual(ctx, want)
-                self.assertEqual((ctx.tracker.ids, ctx.tracker.team_id), (cfg.states, cfg.team))
+                self.assertEqual((ctx.tracker.config, ctx.tracker.team_id), (cfg.states, cfg.team))
                 gql.return_value = {"comment": None}
-                ctx.tracker.find_comment(UUID, f"{SID}/start")
+                ctx.tracker.find_comment(UUID, (SID, "start"))
                 gql.assert_called_with(
                     ops.Q_COMMENT, service=run_fixtures.KEY, c=ops.client_id(SID, "start")
                 )
-                ctx.harness.find_comment(UUID, f"{SID}/session")
+                ctx.harness.find_comment(UUID, (SID, "session"))
                 gql.assert_called_with(
                     ops.Q_COMMENT,
                     service=run_fixtures.HARNESS,

@@ -1,5 +1,5 @@
 """Session comments: an agent run's one tracker comment (`Run <sid> · …`), posted by the harness
-account through the flow Tracker under the ref `<sid>/session`, numbered `#<seq>`; repair rewrites
+account through the flow Tracker under the ref (sid, "session"), numbered `#<seq>`; repair rewrites
 it when a late write left an older one. Resume commands come from the owned run view.
 """
 
@@ -11,26 +11,11 @@ from agent_pm.delegate import ConfigError, Resumable, SessionError
 # Kept only for tests reading run_comments.<query>; 第 2 阶段删除.
 from agent_pm.linear_orchestrator.engine.linear_tracker import M_UPDATE as M_UPDATE
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.types import UUID_RE
 from agent_pm.linear_orchestrator.engine.types import ConfigError as RunConfigError
 from agent_pm.utils import one_line, timestamp
 
-URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
 SEQ = re.compile(r" · #(\d+) · (\S+)")
-
-
-def is_record(attachment):
-    # the URL alone identifies one: a source may be titled "Run rate analysis"
-    return attachment["url"].startswith(URL)
-
-
-def is_comment(comment):
-    # isMe means the harness account because callers query with its key
-    return (
-        bool((comment["user"] or {}).get("isMe"))
-        and re.match(f"Run {UUID_RE.pattern} · ", comment["body"]) is not None
-    )
 
 
 def base(*, sid, workdir, client, started_at, info, seq=0):
@@ -98,7 +83,7 @@ def _bounded(work, limit):
 
 
 def _ref(sid):
-    return f"{sid}/session"
+    return (sid, "session")
 
 
 def _write(tracker, sid, issue, text, limit):

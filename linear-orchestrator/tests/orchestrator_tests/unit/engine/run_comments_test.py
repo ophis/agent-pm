@@ -8,7 +8,7 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome
-from agent_pm.linear_orchestrator.engine import ops, run_comments
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, run_comments
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.session import SessionStatus
@@ -274,7 +274,7 @@ class Record(Case):
 
     def test_is_comment(self):
         body = run_comments.body(self.record())
-        self.assertTrue(run_comments.is_comment({"user": {"isMe": True}, "body": body}))
+        self.assertTrue(linear_tracker.is_comment({"user": {"isMe": True}, "body": body}))
         for name, c in (
             ("human, same body", {"user": {"isMe": False}, "body": body}),
             (
@@ -286,14 +286,14 @@ class Record(Case):
             ("prefix not at the start", {"user": {"isMe": True}, "body": "see " + body}),
         ):
             with self.subTest(name):
-                self.assertFalse(run_comments.is_comment(c))
+                self.assertFalse(linear_tracker.is_comment(c))
 
     def test_is_record_by_url(self):
         self.assertTrue(
-            run_comments.is_record({"title": f"Run {SID}", "url": run_comments.URL + SID})
+            linear_tracker.is_record({"title": f"Run {SID}", "url": linear_tracker.RUN_URL + SID})
         )
         self.assertFalse(
-            run_comments.is_record({"title": "Run rate analysis", "url": "https://gh/x"})
+            linear_tracker.is_record({"title": "Run rate analysis", "url": "https://gh/x"})
         )
 
     def test_limit_and_no_default_identity(self):

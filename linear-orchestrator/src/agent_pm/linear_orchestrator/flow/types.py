@@ -34,9 +34,57 @@ class SubIssue:
 
 @dataclass(frozen=True)
 class Finished:
-    """key and ident as SubIssue's; since: None when unknown."""
+    """key, ident: as SubIssue's; since: None when unknown."""
 
     key: str
     ident: str
     since: datetime | None
     children: tuple[SubIssue, ...]
+
+
+@dataclass(frozen=True)
+class Ref:
+    key: str
+    ident: str
+
+
+@dataclass(frozen=True)
+class Approved:
+    """Times: tracker text, kept verbatim; sources omit run records."""
+
+    key: str
+    ident: str
+    url: str
+    title: str
+    priority: int
+    created: str
+    project_key: str
+    project_name: str
+    owner: str
+    sources: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class Move:
+    at: str
+    to: IssueState | None
+    frm: IssueState | None
+
+
+@dataclass(frozen=True)
+class Comment:
+    """other: a human's; run: a run's."""
+
+    at: str
+    body: str
+    author: str | None
+    other: bool
+    run: bool
+
+
+@dataclass(frozen=True)
+class Detail:
+    state: IssueState | None
+    moves: tuple[Move, ...]
+    comments: tuple[Comment, ...]
+    related: frozenset[str]

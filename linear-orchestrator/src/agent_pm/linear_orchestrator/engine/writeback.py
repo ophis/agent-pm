@@ -1,6 +1,6 @@
 """Write-back: an agent run's progress, outcome and usage limit as tracker comments, links and
 moves through the flow Tracker (its Linear adapter), each step once per session id (the ledger;
-comment steps by ref `<sid>/<step>`, found again on resume); `deliver`, one DelegateEvent's
+comment steps by ref (sid, step), found again on resume); `deliver`, one DelegateEvent's
 write-back; `replay`, Recover's of an ended run's outcome; bounce, the router's repo-check report.
 """
 
@@ -65,6 +65,7 @@ class Context:
     workdir: str
     tracker: Tracker  # the claim's or role's account
     humans: tuple[str, ...]
+    states: Mapping[str, str]
     repos: Mapping[str, str]
     target: tuple[str, str] | None
     harness: Tracker  # the session comment's account
@@ -95,6 +96,7 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         project=project,
         workdir=cfg.issue_workdir(ident),
         tracker=LinearTracker(gql, states=cfg.states, team_id=cfg.team, service=key),
+        states=cfg.states,
         humans=tuple(e.lower() for e in cfg.human_members),
         repos=cfg.project_repos,
         target=target,
@@ -173,8 +175,8 @@ def _error(ctx, step, e):
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
-    now = ctx.tracker.move(issue, MOVES[to], MOVES[frm])
-    if now is not None:
+    now = ctx.tracker.move(issue, MOVES[to], frm=MOVES[frm])
+    if now not in (None, ctx.states[to]):
         log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
 
@@ -268,7 +270,7 @@ def _step(ctx, step, write, ref=None):
 
 
 def _post(ctx, step, body):
-    ref = f"{ctx.sid}/{step}"
+    ref = (ctx.sid, step)
     return _step(ctx, step, lambda: ctx.tracker.comment(ctx.issue_id, body, ref), ref)
 
 

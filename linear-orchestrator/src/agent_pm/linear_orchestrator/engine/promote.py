@@ -5,28 +5,36 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
-from typing import Any
 
-from agent_pm.linear_orchestrator.engine import config, issues, ops, run_comments
+from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
+
+# Kept only for tests reading promote.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_CREATE as M_CREATE
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_RELATE as M_RELATE
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILD as Q_CHILD
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_DETAIL as Q_DETAIL
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HANDOFF as Q_HANDOFF
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.prune import Pruner
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
+from agent_pm.linear_orchestrator.flow.types import Approved, Detail, IssueState, Ref
 from agent_pm.utils import one_line, parse_time
 
 
 @dataclass
 class Promotion:
-    source: dict[str, Any]
-    detail: dict[str, Any]
+    source: Approved
+    detail: Detail
     role: str
     next: str
     cutoff: str | None
     first: str
     latest: str
-    child: dict[str, Any] | None = None
+    child: Ref | None = None
 
 
 HELP = """Promote Handoff issues to their configured next role, then prune finished work.
@@ -75,24 +83,6 @@ GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 
-Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
-  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
-  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
-Q_DETAIL = (
-    """query($i: String!, $after: String) { issue(id: $i) { state { id }
-  """
-    + ops.HISTORY
-    + """
-  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
-  relations(first: 250) { nodes { relatedIssue { id } } }
-  inverseRelations(first: 250) { nodes { issue { id } } } } }"""
-)
-Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
-M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
-M_RELATE = (
-    "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
-)
-
 
 def child_title(prefix, src_prefix, title):
     title = one_line(
@@ -105,27 +95,29 @@ def child_title(prefix, src_prefix, title):
 
 class Promoter:
     def __init__(self, gql, cfg, now, dry, *, tasks, wait=True):
-        self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
+        self.cfg, self.now, self.dry, self.wait = cfg, now, dry, wait
         self.tasks = tasks
         self.team = team(gql, cfg)
-        self.states = self.team.states
-        self.humans = {e.lower() for e in cfg.human_members}
         self.roles = role_ids(gql, cfg.roles)
-        self.ids = {r: i for i, r in self.roles.items()}
+        self.tracker = LinearTracker(
+            gql,
+            states=self.team.states,
+            team_id=self.team.id,
+            finished=self.team.finished,
+            roles=self.roles,
+            humans=cfg.human_members,
+        )
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):
-        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))[
-            "issues"
-        ]["nodes"]
         work = []
-        for src in issues:
-            role = self.roles[src["assignee"]["id"]]
+        for src in self.tracker.approved(self.cfg.roles):
+            role = src.owner
             nxt = self.cfg.roles[role].next
             if nxt:
                 try:
-                    detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
-                    if detail["state"]["id"] != self.states["handoff"]:
+                    detail = self.tracker.detail(src.key)
+                    if detail.state is not IssueState.APPROVED:
                         continue
                     cutoff, first, latest = self.moves(src, detail)
                     work.append(Promotion(src, detail, role, nxt, cutoff, first, latest))
@@ -134,7 +126,7 @@ class Promoter:
                 except Exception as e:  # noqa: BLE001  # Keep reading the other handoffs.
                     self.say(
                         "handoff-error",
-                        src["identifier"],
+                        src.ident,
                         error=one_line(e),
                         traceback="".join(format_exception(e)),
                     )
@@ -146,7 +138,7 @@ class Promoter:
             if self.wait and self.now - parse_time(latest) < MATURE:
                 self.say(
                     "handoff-wait",
-                    src["identifier"],
+                    src.ident,
                     once=True,
                     reason=f"in Handoff under {MATURE.seconds // 60} min",
                 )
@@ -158,7 +150,7 @@ class Promoter:
             except Exception as e:  # noqa: BLE001  # Keep processing other handoffs.
                 self.say(
                     "handoff-error",
-                    src["identifier"],
+                    src.ident,
                     error=one_line(e),
                     traceback="".join(format_exception(e)),
                 )
@@ -166,36 +158,29 @@ class Promoter:
                     self.bounce_failed(src, e, handoff.child)
 
     def moves(self, src, detail):
-        hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
+        hist = sorted(detail.moves, key=lambda m: parse_time(m.at))
         cutoff = max(
-            (
-                h["createdAt"]
-                for h in hist
-                if h["toStateId"] == self.states["in_review"]
-                and h["fromStateId"] != self.states["handoff"]
-            ),
+            (m.at for m in hist if m.to is IssueState.REVIEW and m.frm is not IssueState.APPROVED),
             key=parse_time,
             default=None,
         )
         handoffs = [
-            h["createdAt"]
-            for h in hist
-            if h["toStateId"] == self.states["handoff"]
-            and (cutoff is None or parse_time(h["createdAt"]) > parse_time(cutoff))
+            m.at
+            for m in hist
+            if m.to is IssueState.APPROVED
+            and (cutoff is None or parse_time(m.at) > parse_time(cutoff))
         ]
-        first = handoffs[0] if handoffs else src["createdAt"]
+        first = handoffs[0] if handoffs else src.created
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
         return sorted(
             (
                 c
-                for c in detail["comments"]["nodes"]
-                if c["user"]
-                and (c["user"].get("email") or "").lower() in self.humans
-                and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))
+                for c in detail.comments
+                if c.other and (cutoff is None or parse_time(c.at) > parse_time(cutoff))
             ),
-            key=lambda c: parse_time(c["createdAt"]),
+            key=lambda c: parse_time(c.at),
         )
 
     def promote(self, handoff: Promotion):
@@ -203,124 +188,93 @@ class Promoter:
         comments = self.instructions(detail, handoff.cutoff)
         if not comments and self.cfg.roles[role].require_instructions:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
-                self.say(
-                    "handoff-bounce", src["identifier"], to="in_review", reason="no instructions"
-                )
+                self.say("handoff-bounce", src.ident, to="in_review", reason="no instructions")
             return
-        cid = ops.client_id(src["id"], nxt, handoff.first)
-        existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
+        once = (src.key, nxt, handoff.first)
+        existing = self.tracker.created(once)
         if existing:
-            child = handoff.child = existing[0]
+            child = handoff.child = existing
         elif self.dry:
-            self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
+            self.say("promote", src.ident, role=nxt, project=src.project_name)
             return
         else:
-            child = handoff.child = ops.call(
-                self.gql,
-                M_CREATE,
-                "issueCreate",
-                **{
-                    "in": {
-                        "id": cid,
-                        "teamId": self.team.id,
-                        "projectId": src["project"]["id"],
-                        "assigneeId": self.ids[nxt],
-                        "stateId": self.states["todo"],
-                        "priority": src["priority"],
-                        "title": child_title(
-                            self.tasks[nxt].prefix,
-                            self.tasks[role].prefix or None,
-                            src["title"],
-                        ),
-                        "description": self.description(src, comments, detail),
-                    }
-                },
-            )["issue"]
-        related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
-        related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
-        if child["id"] not in related and not self.dry:
-            ops.call(
-                self.gql,
-                M_RELATE,
-                "issueRelationCreate",
-                **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}},
+            child = handoff.child = self.tracker.create(
+                once,
+                project=src.project_key,
+                owner=nxt,
+                priority=src.priority,
+                title=child_title(
+                    self.tasks[nxt].prefix,
+                    self.tasks[role].prefix or None,
+                    src.title,
+                ),
+                description=self.description(src, comments, detail),
             )
-        if not self.move(src, "done", "promote"):
+        if child.key not in detail.related and not self.dry:
+            self.tracker.relate(src.key, child.key)
+        if not self.move(src, IssueState.DONE, "promote"):
             return
-        self.say("promote", src["identifier"], to=child["identifier"])
+        self.say("promote", src.ident, to=child.ident)
         try:  # the source is Done now; a lost comment must not bounce it
-            self.comment(src, f"Promoted to {child['identifier']}.")
+            self.comment(src, f"Promoted to {child.ident}.")
         except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
-                src["identifier"],
+                src.ident,
                 reason="promoted, but the comment failed",
                 error=one_line(e),
             )
 
     def description(self, src, comments, detail):
         everything = sorted(
-            (c for c in detail["comments"]["nodes"] if not run_comments.is_comment(c)),
-            key=lambda c: parse_time(c["createdAt"]),
+            (c for c in detail.comments if not c.run), key=lambda c: parse_time(c.at)
         )
         return issues.handoff(
-            src["identifier"],
-            src["url"],
-            sources=[
-                (a["title"], a["url"])
-                for a in src["attachments"]["nodes"]
-                if not run_comments.is_record(a)
-            ],
-            instructions=[(c["user"]["name"], c["createdAt"], c["body"]) for c in comments],
-            comments=[
-                ((c["user"] or {}).get("name", "integration"), c["createdAt"], c["body"])
-                for c in everything
-            ],
+            src.ident,
+            src.url,
+            sources=list(src.sources),
+            instructions=[(c.author, c.at, c.body) for c in comments],
+            comments=[(c.author, c.at, c.body) for c in everything],
         )
 
     def bounce_failed(self, src, error, child):
         body = f"Handoff failed: {str(error)[:300]}" + (
-            f" The next-stage issue {child['identifier']} already exists." if child else ""
+            f" The next-stage issue {child.ident} already exists." if child else ""
         )
         try:
             if self.comment_and_move(src, body, "handoff-failed"):
-                self.say("handoff-failed", src["identifier"], to="in_review")
+                self.say("handoff-failed", src.ident, to="in_review")
         except Unavailable:
             raise
         except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
-                src["identifier"],
+                src.ident,
                 reason="could not move to In Review",
                 error=one_line(e),
             )
 
     def comment(self, src, body):
         if not self.dry:
-            ops.comment(self.gql, src["id"], body)
+            self.tracker.comment(src.key, body)
 
     def move(self, src, state, step):
         return self.dry or self.moved(
-            src, step, ops.move(self.gql, src["id"], self.states[state], self.states["handoff"])
+            src, step, self.tracker.move(src.key, state, frm=IssueState.APPROVED)
         )
 
     def comment_and_move(self, src, body, step):
         return self.dry or self.moved(
             src,
             step,
-            ops.comment_and_move(
-                self.gql,
-                src["id"],
-                body,
-                to=self.states["in_review"],
-                frm=self.states["handoff"],
-                emails=self.cfg.human_members,
+            self.tracker.comment_and_move(
+                src.key, body, to=IssueState.REVIEW, frm=IssueState.APPROVED, notify=True
             ),
         )
 
     def moved(self, src, step, left):
         if left is not None:
-            self.say("move-skip", src["identifier"], step=step, state=left)
+            self.say("move-skip", src.ident, step=step, state=left)
         return left is None
 
 
