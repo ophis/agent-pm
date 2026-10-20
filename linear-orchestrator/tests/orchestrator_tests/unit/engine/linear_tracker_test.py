@@ -63,8 +63,10 @@ class Gql:
         return reply
 
 
-def tracker(gql):
-    return LinearTracker(gql, TEAM_OBJ, ROLES)
+def tracker(gql, team=TEAM_OBJ):
+    return LinearTracker(
+        gql, states=team.states, team_id=team.id, finished=team.finished, roles=ROLES
+    )
 
 
 class Queries(Case):
@@ -130,8 +132,14 @@ class Read(Case):
             with self.subTest(shared=(key, active)):
                 team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, key: STATES[active]})
                 gql = Gql(Q_ISSUE={"issue": issue(STATES[active], (3, STATES[active]))})
-                found = LinearTracker(gql, team, ROLES).read("TASK-1")
+                found = tracker(gql, team).read("TASK-1")
                 self.assertEqual(found, Snapshot(abstract, ago(3)))
+
+    def test_without_finished_raises(self):
+        gql = Gql()
+        with self.assertRaisesRegex(TypeError, "^LinearTracker needs finished$"):
+            LinearTracker(gql, states=TEAM_OBJ.states).read("TASK-1")
+        self.assertEqual(gql.calls, [])
 
     def test_missing_issue_is_none(self):
         self.assertIsNone(self.read(None))
@@ -202,6 +210,18 @@ class FinishedIssues(Case):
                 self.assertEqual(len(tracker(gql).finished(("pm",))), len(pages))
                 self.assertEqual(len(gql.calls), len(pages))
 
+    def test_without_team_or_roles_raises(self):
+        for kw, missing in (
+            ({"finished": TEAM_OBJ.finished, "roles": ROLES}, "team_id"),
+            ({"team_id": TEAM, "finished": TEAM_OBJ.finished}, "roles"),
+            ({"team_id": TEAM, "roles": ROLES}, "finished"),
+        ):
+            with self.subTest(missing=missing):
+                gql = Gql()
+                with self.assertRaisesRegex(TypeError, f"^LinearTracker needs {missing}$"):
+                    LinearTracker(gql, states=TEAM_OBJ.states, **kw).finished(("pm",))
+                self.assertEqual(gql.calls, [])
+
     def test_owners_map_to_user_ids(self):
         for owners, ids in (
             (("pm", "engineer"), ["u-pm", "u-engineer"]),
@@ -246,7 +266,7 @@ class Archive(Case):
 class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(Tracker.__abstractmethods__, {"read", "finished", "sub_issues", "archive"})
-        self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES), Tracker)
+        self.assertIsInstance(LinearTracker(None), Tracker)
 
 
 class PruneSeam(Case):

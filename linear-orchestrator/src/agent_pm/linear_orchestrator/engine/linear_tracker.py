@@ -1,11 +1,15 @@
-"""The flow Tracker on Linear, from a gql callable, the team (ops.Team) and {user id: role}: its
-states mapped to IssueState, its reads and writes in Linear's query text."""
+"""The flow Tracker on Linear, from a gql callable: its states mapped to IssueState, its reads and
+writes in Linear's query text."""
+
+from typing import TypeVar
 
 from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
 from agent_pm.utils import parse_time
+
+T = TypeVar("T")
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
@@ -62,34 +66,40 @@ def finished_at(issue, finished):
 
 
 class LinearTracker(Tracker):
-    def __init__(self, gql, team, roles):
-        self.gql, self.team, self.roles = gql, team, roles
-        self.states = {team.states[k]: v for k, v in STATES.items()}
+    """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role}.
+    A method needing one not given raises TypeError."""
+
+    def __init__(self, gql, *, states=None, team_id=None, finished=None, roles=None):
+        self.gql, self.ids, self.team_id, self.roles = gql, states, team_id, roles
+        self.ended = finished
+        self.states = {states[k]: v for k, v in STATES.items()} if states else {}
 
     def read(self, ident):
+        ids, ended = _need("states", self.ids), _need("finished", self.ended)
         issue = self.gql(Q_ISSUE, i=ident)["issue"]
         if not issue:
             return None
         state = issue["state"]["id"]
         found = self.states.get(state)
-        if found not in (IssueState.READY, IssueState.RUNNING) and state in self.team.finished:
-            done = state == self.team.states[State.DONE]
+        if found not in (IssueState.READY, IssueState.RUNNING) and state in ended:
+            done = state == ids[State.DONE]
             return Snapshot(
-                IssueState.DONE if done else IssueState.CANCELED,
-                finished_at(issue, self.team.finished),
+                IssueState.DONE if done else IssueState.CANCELED, finished_at(issue, ended)
             )
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
 
     def finished(self, owners):
-        ids = [uid for uid, role in self.roles.items() if role in owners]
-        done = sorted(self.team.finished & {self.team.states[State.DONE]})
+        states, team = _need("states", self.ids), _need("team_id", self.team_id)
+        roles, ended = _need("roles", self.roles), _need("finished", self.ended)
+        ids = [uid for uid, role in roles.items() if role in owners]
+        done = sorted(ended & {states[State.DONE]})
         nodes, cursor = [], None
         while True:
             page = self.gql(
                 Q_FINISHED,
-                t=self.team.id,
+                t=team,
                 d=done,
-                s=sorted(self.team.finished.difference(done)),
+                s=sorted(ended.difference(done)),
                 a=ids,
                 c=cursor,
             )["issues"]
@@ -102,7 +112,7 @@ class LinearTracker(Tracker):
             Finished(
                 n["id"],
                 n["identifier"],
-                finished_at(n, self.team.finished),
+                finished_at(n, ended),
                 _sub_issues(n["children"]["nodes"]),
             )
             for n in nodes
@@ -113,6 +123,12 @@ class LinearTracker(Tracker):
 
     def archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
+
+
+def _need(name: str, value: T | None) -> T:
+    if value is None:
+        raise TypeError(f"LinearTracker needs {name}")
+    return value
 
 
 def _sub_issues(nodes):
