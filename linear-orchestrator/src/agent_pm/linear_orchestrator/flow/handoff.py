@@ -1,5 +1,4 @@
-"""The one Handoff grammar: a promoted issue's description, written by handoff, read by
-parse_handoff and head."""
+"""The one Handoff grammar."""
 
 import re
 
@@ -20,9 +19,8 @@ def _lines(description):
 
 
 def _starts(lines):
-    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
-    # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
-    # last after Instructions.
+    # Only Instructions hold unquoted user text: Source is the first header (if before Instructions'
+    # first), Instructions the first after it, Comments the last after Instructions.
     source, instructions, comments = SECTIONS
 
     def find(header, after, *, last=False):
@@ -83,7 +81,7 @@ def handoff(identifier, url, *, sources, instructions, comments) -> str:
             f"{said}\n" + "\n\n".join(f"{n}, {at}:\n{body}" for n, at, body in instructions)
         )
     if comments:
-        # Quoted so agent-written text cannot pose as a section of this description.
+        # Quoted: agent text cannot pose as a section.
         parts.append(
             f"{quoted}\n"
             + "\n".join(

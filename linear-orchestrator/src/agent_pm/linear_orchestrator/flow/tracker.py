@@ -9,6 +9,7 @@ from agent_pm.linear_orchestrator.flow.types import (
     Approved,
     Detail,
     Finished,
+    Issue,
     IssueRecord,
     IssueState,
     Recheck,
@@ -24,6 +25,10 @@ class Tracker(ABC):
     @abstractmethod
     def read(self, ident: str) -> Snapshot | None:
         """None: no such issue."""
+
+    @abstractmethod
+    def issue(self, ident: str) -> Issue:
+        """Raises the adapter's error: none, or another's."""
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:

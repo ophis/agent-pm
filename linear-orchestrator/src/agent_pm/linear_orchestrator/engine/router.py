@@ -89,7 +89,6 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
-    issues,
     related,
     target,
     writeback,
@@ -709,8 +708,9 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].kind == "build"
+    reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
     try:
-        issue = issues.read_issue(gql, a.issue)
+        issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)

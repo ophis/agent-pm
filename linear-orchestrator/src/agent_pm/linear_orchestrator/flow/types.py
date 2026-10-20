@@ -174,7 +174,7 @@ class Issue:
 
 
 class Group(IntEnum):
-    """A Related work issue's rank: its state's place in the section's order."""
+    """Related work's rank: its state's place in the section."""
 
     DONE = 0
     IN_REVIEW = 1
@@ -186,7 +186,7 @@ class Group(IntEnum):
 
 @dataclass(frozen=True)
 class Found:
-    """A first-claim search's issue candidate; last_comment only for a Canceled one."""
+    """A first-claim search's candidate; last_comment only when Canceled."""
 
     identifier: str
     title: str

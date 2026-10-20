@@ -9,6 +9,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import (
+    issues,
     linear_tracker,
     ops,
     promote,
@@ -18,7 +19,7 @@ from agent_pm.linear_orchestrator.engine import (
     writeback,
 )
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
@@ -26,9 +27,14 @@ from agent_pm.linear_orchestrator.flow.types import (
     Comment,
     Detail,
     Finished,
+    Handoff,
+    Issue,
     IssueState,
     Label,
+    Link,
+    Linked,
     Move,
+    Note,
     Recheck,
     Ref,
     Snapshot,
@@ -56,6 +62,7 @@ BASE = {
     "Q_CHILD": "4fa2b83d88ba5fc7dd9a33223140644eb8647521ac24c8c19ba044602dbca7a1",
     "M_CREATE": "a67ba5a98ce64a1689f6842fca53f944e76ab2437837d95c7c5ce1940911b430",
     "M_RELATE": "6672d8a892ce59d43f46f25990e6867358dff5cf5e8f79438d77d09bb1e587d5",
+    "Q_READ": "a94647460768537b760c88ed1ac21bbfb27f3bcd1f6c52280e6a04fd90a03173",
 }
 REEXPORTS = {
     prune: ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE"),
@@ -165,6 +172,9 @@ class Queries(Case):
         for name, text in texts.items():
             with self.subTest(query=name):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
+
+    def test_the_run_issue_read_is_issues_q_issue(self):
+        self.assertIs(issues.Q_ISSUE, linear_tracker.Q_READ)
 
     def test_router_reexports_are_the_adapter_strings(self):
         for name in (*ROUTER, "q_issues", "blockers"):
@@ -861,6 +871,7 @@ class Interface(Case):
                 "ready",
                 "moved_at",
                 "recheck",
+                "issue",
             },
         )
         self.assertIsInstance(LinearTracker(None), Tracker)
@@ -1189,3 +1200,95 @@ class WritebackSeam(Case):
                     and n.name == "ops"
                 ]
                 self.assertEqual(found, [])
+
+
+def run_issue(**over):
+    node = {
+        "id": "uuid-7",
+        "identifier": "TASK-7",
+        "url": "https://linear.app/t/issue/TASK-7",
+        "title": "Build it",
+        "description": "Handoff from TASK-3: https://linear.app/t/issue/TASK-3\n\n## Instructions\nGo.",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "project": {"id": "p-1"},
+        "comments": {
+            "nodes": [
+                {"body": "later", "createdAt": "2026-09-03T00:00:00.000Z", "user": None},
+                {
+                    "body": f"Run {SID} · started",
+                    "createdAt": "2026-09-02T00:00:00.000Z",
+                    "user": {"email": "h@x.com", "name": "H", "isMe": True},
+                },
+                {
+                    "body": "first",
+                    "createdAt": "2026-09-01T12:00:00.000Z",
+                    "user": {"email": "ann@x.com", "name": "Ann", "isMe": False},
+                },
+            ]
+        },
+        "attachments": {"nodes": [{"url": "https://github.com/o/r/pull/1"}]},
+        "labels": {"nodes": [{"id": "l-1"}]},
+        "relations": {
+            "nodes": [
+                {
+                    "relatedIssue": {
+                        "identifier": "TASK-2",
+                        "title": "Two",
+                        "state": {"name": "Done"},
+                    }
+                }
+            ]
+        },
+        "inverseRelations": {
+            "nodes": [
+                {"issue": {"identifier": "TASK-2", "title": "Two", "state": {"name": "Done"}}},
+                {"issue": {"identifier": "TASK-4", "title": "Four", "state": {"name": "Todo"}}},
+            ]
+        },
+    }
+    return {"issue": node | over}
+
+
+class RunIssue(Case):
+    def test_one_read_by_identifier_parsed(self):
+        gql = Gql(Q_READ=run_issue())
+        got = LinearTracker(gql).issue("TASK-7")
+        self.assertEqual(gql.calls, [(linear_tracker.Q_READ, {"i": "TASK-7"})])
+        self.assertEqual(
+            got,
+            Issue(
+                "uuid-7",
+                "TASK-7",
+                "https://linear.app/t/issue/TASK-7",
+                "Build it",
+                run_issue()["issue"]["description"],
+                "2026-09-01T00:00:00.000Z",
+                "p-1",
+                (
+                    Note("first", "2026-09-01T12:00:00.000Z", "ann@x.com", "Ann"),
+                    Note("later", "2026-09-03T00:00:00.000Z", None, None),
+                ),
+                (Link("https://github.com/o/r/pull/1"),),
+                (Linked("TASK-2", "Two", "Done"), Linked("TASK-4", "Four", "Todo")),
+                handoff=Handoff("TASK-3", "Go.", ""),
+                labels=("l-1",),
+            ),
+        )
+
+    def test_null_description_and_project(self):
+        got = LinearTracker(Gql(Q_READ=run_issue(description=None, project=None))).issue("TASK-7")
+        self.assertEqual((got.description, got.project_id, got.handoff), ("", None, None))
+
+    def test_no_such_issue_or_another_raises(self):
+        cases = (
+            ({"issue": None}, "TASK-7: issue not found"),
+            (run_issue(identifier="TASK-8"), "Linear returned 'TASK-8' for TASK-7"),
+        )
+        for reply, message in cases:
+            with self.subTest(message=message), self.assertRaises(IssueError) as caught:
+                LinearTracker(Gql(Q_READ=reply)).issue("TASK-7")
+            self.assertEqual(str(caught.exception), message)
+
+    def test_issues_read_issue_is_the_adapters(self):
+        gql = Gql(Q_READ=run_issue())
+        self.assertEqual(issues.read_issue(gql, "TASK-7"), LinearTracker(gql).issue("TASK-7"))

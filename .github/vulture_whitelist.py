@@ -5,6 +5,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
 from agent_pm.linear_orchestrator.engine import (
+    issues,
     promote,
     prune,
     router,
@@ -51,6 +52,9 @@ _ = (
     writeback.Q_ATTACHED,
     writeback.Q_ID,
 )
+# issues re-exports the run issue read, now linear_tracker's, and the Handoff parser, now
+# flow.handoff's, only for tests; 第 2 阶段删除.
+_ = issues.Q_ISSUE, issues.read_issue, issues.parse_handoff
 # engine.types re-exports Linked, now flow.types', only for tests; 第 2 阶段删除.
 _ = types.Linked
 # Record checks ctl[0] against LayerCommand's values.
