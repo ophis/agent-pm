@@ -8,6 +8,7 @@ from agent_pm.linear_orchestrator.engine import (
     issues,
     promote,
     prune,
+    related,
     router,
     run_comments,
     types,
@@ -55,6 +56,8 @@ _ = (
 # issues re-exports the run issue read, now linear_tracker's, and the Handoff parser, now
 # flow.handoff's, only for tests; 第 2 阶段删除.
 _ = issues.Q_ISSUE, issues.read_issue, issues.parse_handoff
+# related re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
+_ = related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS, related.Q_UPSTREAM
 # engine.types re-exports Linked, now flow.types', only for tests; 第 2 阶段删除.
 _ = types.Linked
 # Record checks ctl[0] against LayerCommand's values.

@@ -69,7 +69,7 @@ def head(description) -> str:
 
 
 def handoff(identifier, url, *, sources, instructions, comments) -> str:
-    """sources: (title, url) pairs; instructions and comments: (name, at, body) triples."""
+    """sources: (title, url); instructions, comments: (name, at, body)."""
     parts = [f"Handoff from {identifier}: {url}"]
     source, said, quoted = SECTIONS
     if sources:

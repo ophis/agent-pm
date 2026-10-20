@@ -1,25 +1,23 @@
-"""An issue's first-claim search: the team's issues, docs and merged PRs its title words or the ids
-its description names match, minus its upstream chain; inputs.render lists them as Related work.
+"""An issue's first-claim search: the board's issues (through the flow Tracker), docs and merged PRs
+its title words or the ids its description names match, minus its upstream chain; inputs.render
+lists them as Related work.
 """
 
 import json
 import re
+from dataclasses import replace
 from functools import cache
 
-from agent_pm.linear_orchestrator.engine import inputs, ops
+from agent_pm.linear_orchestrator.engine import inputs, linear_tracker
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
     InputError,
-    LinearError,
     Ref,
     Related,
-    State,
 )
 from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     ISSUE_ID,
-    Found,
-    Group,
 )
 from agent_pm.utils import SHORT, err_text
 
@@ -66,29 +64,13 @@ STOPWORDS = frozenset(
     }
 )
 MAX_WORDS, MAX_HOPS = 5, 5
-_NODES = (
-    "nodes { identifier title description state { id name type } "
-    "attachments(first: 20) { nodes { url } } comments(first: 1, orderBy: createdAt) { nodes { body } } }"
+# Q_* kept only for tests reading related.<name>; 第 2 阶段删除.
+Q_SEARCH, Q_SEARCH_IDS, Q_IDS, Q_UPSTREAM = (
+    linear_tracker.Q_SEARCH,
+    linear_tracker.Q_SEARCH_IDS,
+    linear_tracker.Q_IDS,
+    linear_tracker.Q_UPSTREAM,
 )
-_FOUND = f"searchIssues(term: $t, filter: $f, first: 10, includeArchived: true) {{ {_NODES} }}"
-_NAMED = f"issues(filter: $n, first: 50, includeArchived: true) {{ {_NODES} }}"
-Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
-Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
-Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
-Q_UPSTREAM = "query($i: String!) { issue(id: $i) { identifier description } }"
-GROUP_BY_STATE = {
-    State.DONE: Group.DONE,
-    State.IN_REVIEW: Group.IN_REVIEW,
-    State.IN_PROGRESS: Group.IN_PROGRESS,
-    State.TODO: Group.TODO,
-    State.CANCELED: Group.CANCELED,
-}
-GROUP_BY_TYPE = {
-    "completed": Group.DONE,
-    "started": Group.IN_PROGRESS,
-    "unstarted": Group.TODO,
-    "canceled": Group.CANCELED,
-}
 
 
 @cache
@@ -112,51 +94,16 @@ def _mentioned(issue):
     return list(dict.fromkeys(i for i in found if i.startswith(key) and i != issue.identifier))
 
 
-def _nodes(gql, team, words, ids):
-    f = {"team": {"id": {"eq": team}}}
-    n = {**f, "number": {"in": [int(i.rsplit("-", 1)[1]) for i in ids]}}
-    if words and ids:
-        data = gql(Q_SEARCH_IDS, t=" ".join(words), f=f, n=n)
-    elif words:
-        data = gql(Q_SEARCH, t=" ".join(words), f=f)
-    else:
-        data = gql(Q_IDS, n=n)
-    return [
-        *data.get("searchIssues", {"nodes": []})["nodes"],
-        *data.get("issues", {"nodes": []})["nodes"],
-    ]
-
-
-def _chain(gql, issue):
+def _chain(tracker, issue):
     chain, src = [], issue.handoff and issue.handoff.source
     while src and src != issue.identifier and src not in chain:
         chain.append(src)
         if len(chain) == MAX_HOPS:
             break
-        try:
-            node = gql(Q_UPSTREAM, i=src)["issue"]
-        except LinearError as e:
-            if not ops.not_found(e):
-                raise
-            node = None
-        h = node and handoff.parse_handoff(node["description"] or "")
+        described = tracker.description(src)
+        h = described is not None and handoff.parse_handoff(described)
         src = h.source if h else None
     return chain
-
-
-def _found(n, states):
-    st, comments = n["state"], n["comments"]["nodes"]
-    by_id = {states[k]: g for k, g in GROUP_BY_STATE.items()}
-    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], Group.BACKLOG))
-    return Found(
-        n["identifier"],
-        n["title"],
-        st["name"],
-        group,
-        tuple(u for a in n["attachments"]["nodes"] if not inputs.CONTROL.search(u := a["url"])),
-        n["description"] or "",
-        comments[0]["body"] if group == Group.CANCELED and comments else "",
-    )
 
 
 def _owner(text, names, excluded):
@@ -201,19 +148,20 @@ def _pr_refs(run, target, words, names, excluded):
     ]
 
 
-def search(gql, issue, cfg, *, target, run) -> Related:
+def search(tracker, issue, cfg, *, target, run) -> Related:
     words, ids = keywords(issue.title), _mentioned(issue)
     if not words and not ids:
         return Related()
-    nodes = _nodes(gql, cfg.team, words, ids)
-    chain = _chain(gql, issue)
+    nodes = tracker.search(words, ids)
+    chain = _chain(tracker, issue)
     excluded, found = {issue.identifier, *chain}, {}
     for n in nodes:
-        ident, h = n["identifier"], handoff.parse_handoff(n["description"] or "")
+        ident, h = n.identifier, handoff.parse_handoff(n.description)
         if h and h.source in chain:
             excluded.add(ident)
         elif ident not in excluded and ident not in found:
-            found[ident] = _found(n, cfg.states)
+            urls = tuple(u for u in n.urls if not inputs.CONTROL.search(u))
+            found[ident] = replace(n, urls=urls)
     refs = _doc_refs(run, cfg.docs, words, found, excluded)
     if target and words:
         refs += _pr_refs(run, target, words, found, excluded)

@@ -757,7 +757,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     found = None
     if a.mode == "new" and latest(parse_log(cfg.runs_log)).get(a.issue) is None:
         try:
-            found = related.search(gql, issue, cfg, target=repo, run=run)
+            found = related.search(reader, issue, cfg, target=repo, run=run)
         except (LinearError, Unavailable, InputError, OSError, subprocess.SubprocessError) as e:
             log("router", "related-skip", a.issue, reason=one_line(e))
     text = inputs.render(

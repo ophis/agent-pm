@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import related
 from agent_pm.linear_orchestrator.engine.config import Docs
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.ops import NOT_FOUND
 from agent_pm.linear_orchestrator.engine.types import (
     InputError,
@@ -24,7 +25,7 @@ from orchestrator_tests.unit.board_ids import STATES, TEAM
 from orchestrator_tests.unit.target_fixtures import FakeRun, ok
 
 DOCS = Docs("ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"})
-CFG = SimpleNamespace(team=TEAM, states=STATES, docs=DOCS)
+CFG = SimpleNamespace(docs=DOCS)
 BASE = "https://github.com/ophis/private_docs/blob/main/"
 TARGET = Target("ophis", "agent-pm")
 TEAM_F = {"team": {"id": {"eq": TEAM}}}
@@ -94,8 +95,12 @@ def run(*extra, research=None, design=None):
     return FakeRun([(RESEARCH, research or listing()), (DESIGN, design or listing()), *extra])
 
 
+def board(gql):
+    return LinearTracker(gql, states=STATES, team_id=TEAM)
+
+
 def search(iss, gql, gh, target=None):
-    return related.search(gql, iss, CFG, target=target, run=gh)
+    return related.search(board(gql), iss, CFG, target=target, run=gh)
 
 
 class Keywords(Case):
@@ -266,12 +271,10 @@ class Search(Case):
 
     def test_each_docs_directory_is_listed_once(self):
         cfg = SimpleNamespace(
-            team=TEAM,
-            states=STATES,
             docs=Docs("ophis/private_docs", "main", {"a": "Research/", "b": "Research"}),
         )
         gh = run()
-        related.search(Gql(), issue(), cfg, target=None, run=gh)
+        related.search(board(Gql()), issue(), cfg, target=None, run=gh)
         self.assertEqual(gh.calls, [(RESEARCH, SHORT)])
 
     def test_merged_prs_only_with_a_target(self):

@@ -17,6 +17,8 @@ from agent_pm.linear_orchestrator.flow.types import (
     Comment,
     Detail,
     Finished,
+    Found,
+    Group,
     Issue,
     IssueState,
     Label,
@@ -106,6 +108,29 @@ Q_RECHECK = (
     "labels { nodes { id name parent { id } } } } }"
 )
 Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + HISTORY + " } }"
+_NODES = (
+    "nodes { identifier title description state { id name type } "
+    "attachments(first: 20) { nodes { url } } comments(first: 1, orderBy: createdAt) { nodes { body } } }"
+)
+_FOUND = f"searchIssues(term: $t, filter: $f, first: 10, includeArchived: true) {{ {_NODES} }}"
+_NAMED = f"issues(filter: $n, first: 50, includeArchived: true) {{ {_NODES} }}"
+Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
+Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
+Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
+Q_UPSTREAM = "query($i: String!) { issue(id: $i) { identifier description } }"
+GROUP_BY_STATE = {
+    State.DONE: Group.DONE,
+    State.IN_REVIEW: Group.IN_REVIEW,
+    State.IN_PROGRESS: Group.IN_PROGRESS,
+    State.TODO: Group.TODO,
+    State.CANCELED: Group.CANCELED,
+}
+GROUP_BY_TYPE = {
+    "completed": Group.DONE,
+    "started": Group.IN_PROGRESS,
+    "unstarted": Group.TODO,
+    "canceled": Group.CANCELED,
+}
 Q_READ = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
@@ -320,6 +345,33 @@ class LinearTracker(Tracker):
             labels=tuple(n["id"] for n in node["labels"]["nodes"]),
         )
 
+    def search(self, words, idents):
+        if not words and not idents:
+            return ()
+        f = {"team": {"id": {"eq": _need("team_id", self.team_id)}}}
+        n = {**f, "number": {"in": [int(i.rsplit("-", 1)[1]) for i in idents]}}
+        if words and idents:
+            data = self.gql(Q_SEARCH_IDS, t=" ".join(words), f=f, n=n)
+        elif words:
+            data = self.gql(Q_SEARCH, t=" ".join(words), f=f)
+        else:
+            data = self.gql(Q_IDS, n=n)
+        nodes = [
+            *data.get("searchIssues", {"nodes": []})["nodes"],
+            *data.get("issues", {"nodes": []})["nodes"],
+        ]
+        by_id = {_need("states", self.state_ids)[k]: g for k, g in GROUP_BY_STATE.items()}
+        return tuple(_found(n, by_id) for n in nodes)
+
+    def description(self, ident):
+        try:
+            node = self.gql(Q_UPSTREAM, i=ident)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            return None
+        return None if node is None else node["description"] or ""
+
     def finished(self, owners):
         states, team = _need("states", self.state_ids), _need("team_id", self.team_id)
         roles, ended = _need("roles", self.roles), _need("finished", self.finished_ids)
@@ -513,3 +565,17 @@ def _need(name: str, value: T | None) -> T:
 
 def _sub_issues(nodes):
     return tuple(SubIssue(n["id"], n["identifier"], n["state"]["type"] in DONE) for n in nodes)
+
+
+def _found(n, by_id):
+    st, comments = n["state"], n["comments"]["nodes"]
+    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], Group.BACKLOG))
+    return Found(
+        n["identifier"],
+        n["title"],
+        st["name"],
+        group,
+        tuple(a["url"] for a in n["attachments"]["nodes"]),
+        n["description"] or "",
+        comments[0]["body"] if group == Group.CANCELED and comments else "",
+    )
