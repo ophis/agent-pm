@@ -16,9 +16,8 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import M_RELATE as M_REL
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILD as Q_CHILD
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_DETAIL as Q_DETAIL
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HANDOFF as Q_HANDOFF
-from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.prune import Pruner
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.handoff import handoff as handoff_text
@@ -98,16 +97,8 @@ class Promoter:
     def __init__(self, gql, cfg, now, dry, *, tasks, wait=True):
         self.cfg, self.now, self.dry, self.wait = cfg, now, dry, wait
         self.tasks = tasks
-        self.team = team(gql, cfg)
-        self.roles = role_ids(gql, cfg.roles)
-        self.tracker = LinearTracker(
-            gql,
-            states=self.team.states,
-            team_id=self.team.id,
-            finished=self.team.finished,
-            roles=self.roles,
-            humans=cfg.human_members,
-        )
+        self.team, self.roles = team_and_roles(gql, cfg)
+        self.tracker = LinearTracker.of_team(gql, self.team, self.roles, humans=cfg.human_members)
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):

@@ -48,9 +48,8 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import M_ARCHIVE as M_AR
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILDREN as Q_CHILDREN
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_FINISHED as Q_FINISHED
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ISSUE as Q_ISSUE
-from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
     LinearError,
@@ -136,9 +135,7 @@ Recovery and next help:
 class Pruner:
     def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, writable=None):
         self.now, self.dry, self.work, self.roles = now, dry, work, roles
-        self.tracker = LinearTracker(
-            gql, states=team.states, team_id=team.id, finished=team.finished, roles=roles
-        )
+        self.tracker = LinearTracker.of_team(gql, team, roles)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
@@ -451,13 +448,14 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
     event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
+        team, roles = team_and_roles(gql, cfg)
         code = pruner(
             gql,
             now or datetime.now(UTC),
             dry=dry,
             work=cfg.workdirs,
-            team=team(gql, cfg),
-            roles=role_ids(gql, cfg.roles),
+            team=team,
+            roles=roles,
             cfg=cfg,
         ).run()
     except LinearError as e:

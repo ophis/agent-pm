@@ -190,6 +190,12 @@ def _quiet(*_, **__):
     pass
 
 
+def team_and_roles(gql, cfg):
+    """The team (states, finished) and the role accounts' user ids promote and prune build their
+    tracker from: the team read first."""
+    return ops.team(gql, cfg), ops.role_ids(gql, cfg.roles)
+
+
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
     humans: human_members emails (comments' other, subscribed on notify); people: their user ids,
@@ -243,6 +249,18 @@ class LinearTracker(Tracker):
             humans=cfg.human_members,
             people=people,
             say=say,
+        )
+
+    @classmethod
+    def of_team(cls, gql, team, roles, *, humans=()):
+        """From team_and_roles' reads."""
+        return cls(
+            gql,
+            states=team.states,
+            team_id=team.id,
+            finished=team.finished,
+            roles=roles,
+            humans=humans,
         )
 
     def role(self, issue):

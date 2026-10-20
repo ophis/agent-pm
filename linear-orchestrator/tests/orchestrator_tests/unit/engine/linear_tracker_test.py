@@ -9,7 +9,10 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import (
+    gate,
+    inputs,
     issues,
+    linear_run,
     linear_tracker,
     ops,
     promote,
@@ -17,6 +20,8 @@ from agent_pm.linear_orchestrator.engine import (
     related,
     router,
     run_comments,
+    runs,
+    target,
     writeback,
 )
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
@@ -97,6 +102,20 @@ BACKLOG = "00000000-0000-4000-8000-000000000019"
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
+RULES = (
+    gate,
+    inputs,
+    issues,
+    linear_run,
+    promote,
+    prune,
+    related,
+    router,
+    run_comments,
+    runs,
+    target,
+    writeback,
+)
 
 
 def ago(hours):
@@ -658,6 +677,22 @@ class Connect(Case):
                 connected(**replies)
 
 
+class TeamAndRoles(Case):
+    def test_reads_the_team_then_the_role_accounts(self):
+        gql = Gql(Q_TEAM={"teams": {"nodes": [team_node()]}}, Q_USER=users("u-pm"))
+        found, roles = linear_tracker.team_and_roles(gql, board_cfg())
+        self.assertEqual(gql.names(), ["Q_TEAM", "Q_USER"])
+        self.assertEqual((found.id, found.states, roles), (TEAM, STATES, {"u-pm": "pm"}))
+
+    def test_of_team_builds_from_the_team(self):
+        found = LinearTracker.of_team(Gql(), TEAM_OBJ, ROLES, humans=HUMANS)
+        self.assertEqual(
+            (found.team_id, found.state_ids, found.finished_ids, found.roles, found.humans),
+            (TEAM_OBJ.id, TEAM_OBJ.states, TEAM_OBJ.finished, ROLES, HUMANS),
+        )
+        self.assertEqual(LinearTracker.of_team(Gql(), TEAM_OBJ, ROLES).humans, ())
+
+
 def listed(state):
     return {
         "team": {"id": {"eq": TEAM}},
@@ -1126,92 +1161,6 @@ class Writes(Case):
                 )
 
 
-class PruneSeam(Case):
-    def test_prune_module_builds_no_graphql(self):
-        tree = ast.parse(inspect.getsource(prune))
-        texts = [
-            n.value
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Constant) and isinstance(n.value, str)
-        ]
-        self.assertEqual([t for t in texts if "query(" in t or "mutation(" in t], [])
-        self.assertEqual(
-            [
-                ast.unparse(n)
-                for n in ast.walk(tree)
-                if isinstance(n, ast.Attribute) and ast.unparse(n) in ("self.gql", "self.team")
-            ],
-            [],
-        )
-        from_ops = {
-            a.name
-            for n in ast.walk(tree)
-            if isinstance(n, ast.ImportFrom)
-            and n.module == "agent_pm.linear_orchestrator.engine.ops"
-            for a in n.names
-        }
-        self.assertEqual(from_ops, {"role_ids", "team"})
-
-
-class PromoteSeam(Case):
-    def test_promote_module_builds_no_graphql(self):
-        tree = ast.parse(inspect.getsource(promote))
-        texts = [
-            n.value
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Constant) and isinstance(n.value, str)
-        ]
-        self.assertEqual([t for t in texts if "query(" in t or "mutation(" in t], [])
-        self.assertEqual(
-            [
-                ast.unparse(n)
-                for n in ast.walk(tree)
-                if isinstance(n, ast.Attribute)
-                and (ast.unparse(n) == "self.gql" or ast.unparse(n).startswith("ops."))
-            ],
-            [],
-        )
-        imported = [
-            (n.module, a.name)
-            for n in ast.walk(tree)
-            if isinstance(n, ast.ImportFrom)
-            for a in n.names
-            if n.module == "agent_pm.linear_orchestrator.engine.ops" or a.name == "ops"
-        ]
-        self.assertEqual(
-            sorted(imported),
-            [
-                ("agent_pm.linear_orchestrator.engine.ops", "role_ids"),
-                ("agent_pm.linear_orchestrator.engine.ops", "team"),
-            ],
-        )
-
-
-class WritebackSeam(Case):
-    def test_writeback_and_run_comments_reach_linear_only_through_the_tracker(self):
-        for module in (writeback, run_comments):
-            with self.subTest(module=module.__name__):
-                tree = ast.parse(inspect.getsource(module))
-                found = [
-                    ast.unparse(n)
-                    for n in ast.walk(tree)
-                    if isinstance(n, ast.Constant)
-                    and isinstance(n.value, str)
-                    and ("query(" in n.value or "mutation(" in n.value)
-                    or isinstance(n, ast.Call)
-                    and isinstance(n.func, ast.Name)
-                    and n.func.id in ("gql", "call")
-                    or isinstance(n, ast.Attribute)
-                    and isinstance(n.value, ast.Name)
-                    and n.value.id == "ops"
-                    or isinstance(n, ast.ImportFrom)
-                    and (n.module or "").endswith(".ops")
-                    or isinstance(n, ast.alias)
-                    and n.name == "ops"
-                ]
-                self.assertEqual(found, [])
-
-
 def run_issue(**over):
     node = {
         "id": "uuid-7",
@@ -1396,9 +1345,9 @@ class Description(Case):
             self.describe(LinearError("linear api error: boom"))
 
 
-class RouterSeam(Case):
-    def test_the_router_and_its_start_path_build_no_linear_query(self):
-        for module in (router, related, issues):
+class RuleSeam(Case):
+    def test_rule_modules_build_no_linear_query(self):
+        for module in RULES:
             with self.subTest(module=module.__name__):
                 tree = ast.parse(inspect.getsource(module))
                 found = [
