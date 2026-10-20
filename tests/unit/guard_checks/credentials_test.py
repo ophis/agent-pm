@@ -137,7 +137,7 @@ class CredentialsInventory(Sample):
         root = self.tree(
             {
                 "docs/credentials.md": inventory(),
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+                "orchestrator/src/agent_pm/orchestrator/config.toml": CONFIG,
                 "broker/internal/broker/keychain.go": go,
             }
         )
@@ -153,7 +153,7 @@ class CredentialsInventory(Sample):
     def test_missing_files_and_list_are_violations(self):
         files = {
             "docs/credentials.md": inventory(),
-            "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": CONFIG,
+            "orchestrator/src/agent_pm/orchestrator/config.toml": CONFIG,
             "broker/internal/broker/keychain.go": GO,
         }
         self.assertEqual(credentials.credentials_inventory(self.tree(files)), [])
@@ -168,13 +168,7 @@ class CredentialsInventory(Sample):
                     credentials.credentials_inventory(root),
                     ["broker/internal/broker/keychain.go: no KeychainServices list"],
                 )
-        root = self.tree(
-            {**files, "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml": "team ="}
-        )
+        root = self.tree({**files, "orchestrator/src/agent_pm/orchestrator/config.toml": "team ="})
         found = credentials.credentials_inventory(root)
         self.assertEqual(len(found), 1)
-        self.assertTrue(
-            found[0].startswith(
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml: "
-            )
-        )
+        self.assertTrue(found[0].startswith("orchestrator/src/agent_pm/orchestrator/config.toml: "))

@@ -9,7 +9,7 @@
   "hooks": "./manager/hooks/manual.json",
   "skills": [
     "./delegate/skills/",
-    "./linear-orchestrator/skills/",
+    "./orchestrator/skills/",
     "./manager/skills/"
   ],
   "interface": {

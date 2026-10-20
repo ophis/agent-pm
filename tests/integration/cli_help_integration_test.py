@@ -66,7 +66,7 @@ SURFACES = {
         ],
     ),
     "linear": (
-        "linear_orchestrator",
+        "orchestrator",
         [
             "router",
             "promote",

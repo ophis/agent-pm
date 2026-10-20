@@ -97,7 +97,7 @@ The Markdown an agent run delivers to its destination (report, PRD, PR descripti
 _Avoid_: document, result, report
 
 **Linear orchestrator**:
-The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/`.
+The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `orchestrator/src/agent_pm/orchestrator/`.
 _Avoid_: orchestration layer, runner
 
 **Issue**:
@@ -105,18 +105,18 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Tracker**:
-The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`linear-orchestrator/src/agent_pm/linear_orchestrator/flow/tracker.py`); its Linear adapter, `LinearTracker` (`engine/linear_tracker.py`). Prune, promote, the router (its run's issue read and Related work search included) and write-back (session comments included) go through it; `flow/` imports no Linear module (a `pyproject.toml` contract) and names no Linear concept.
+The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`orchestrator/src/agent_pm/orchestrator/engine/tracker.py`); its Linear adapter, `LinearTracker` (`trackers/linear/linear_tracker.py`). Prune, promote, the router (its run's issue read and Related work search included) and write-back (session comments included) go through it; `engine/` imports nothing under `trackers/` (a `pyproject.toml` contract) and names no Linear concept.
 _Avoid_: backend
 
 **Workflow**:
-Each orchestrated role's stage data: the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: the default workflow, `linear-orchestrator/src/agent_pm/linear_orchestrator/flow/workflow.toml`, read by `flow/workflow.py` on first use (`config.TASKS`).
+Each orchestrated role's stage data: the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: the default workflow, `orchestrator/src/agent_pm/orchestrator/engine/workflow.toml`, read by `engine/workflow.py` on first use (`config.TASKS`).
 _Avoid_: pipeline, TASKS
 
 **Write-back**:
-The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
+The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `orchestrator/src/agent_pm/orchestrator/trackers/linear/writeback.py`.
 
 **Overlay**:
-The core run keys the Linear orchestrator adds to its own agent runs, in `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml`'s `[core]` table (its comment).
+The core run keys the Linear orchestrator adds to its own agent runs, in `orchestrator/src/agent_pm/orchestrator/config.toml`'s `[core]` table (its comment).
 
 **Manager**:
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.

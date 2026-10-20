@@ -9,7 +9,7 @@
   "license": "MIT",
   "skills": [
     "./delegate/skills/",
-    "./linear-orchestrator/skills/",
+    "./orchestrator/skills/",
     "./manager/skills/"
   ],
   "hooks": "./manager/hooks/hooks.json"

@@ -15,12 +15,12 @@ from tests.guard_checks.credentials import INVENTORY
 
 MODULES = [
     "agent_pm.manager",
-    "agent_pm.linear_orchestrator",
+    "agent_pm.orchestrator",
     "agent_pm.delegate",
     "agent_pm.session",
     "agent_pm.utils",
 ]
-PROJECTS = ["manager", "linear-orchestrator", "delegate", "session", "utils"]
+PROJECTS = ["manager", "orchestrator", "delegate", "session", "utils"]
 
 
 class Repository(unittest.TestCase):
@@ -45,14 +45,14 @@ class Repository(unittest.TestCase):
             list(scope.layer_map(self.root).items()),
             list(
                 zip(
-                    ["linear-orchestrator", "control-panel", *PROJECTS[2:]],
+                    ["orchestrator", "control-panel", *PROJECTS[2:]],
                     [MODULES[1], MODULES[0], *MODULES[2:]],
                     strict=True,
                 )
             ),
         )
         result = scope.classify(self.root, ["control-panel/skills/task/SKILL.md"], "pull_request")
-        self.assertEqual(result["projects"], ["linear-orchestrator", "control-panel"])
+        self.assertEqual(result["projects"], ["orchestrator", "control-panel"])
         self.assertFalse(result["full"])
 
     def test_upper_source_docs_skills_and_tests_select_the_entire_upper_group(self):
@@ -60,9 +60,9 @@ class Repository(unittest.TestCase):
             "manager/src/agent_pm/manager/main.py",
             "manager/docs/guide.md",
             "manager/skills/task/SKILL.md",
-            "linear-orchestrator/src/agent_pm/linear_orchestrator/main.py",
-            "linear-orchestrator/docs/guide.md",
-            "linear-orchestrator/skills/task/SKILL.md",
+            "orchestrator/src/agent_pm/orchestrator/main.py",
+            "orchestrator/docs/guide.md",
+            "orchestrator/skills/task/SKILL.md",
             "manager/tests/unit/main_test.py",
         ):
             with self.subTest(path=path):
@@ -201,11 +201,11 @@ class Repository(unittest.TestCase):
             "tests/unit",
             ".github",
             "renamed/tests/unit",
-            "linear-orchestrator/tests/orchestrator_tests/integration",
+            "orchestrator/tests/orchestrator_tests/integration",
             "delegate/tests/unit",
             "renamed-other/tests/unit",
         ]
-        with mock.patch.dict(os.environ, {"TEST_PROJECTS": '["renamed", "linear-orchestrator"]'}):
+        with mock.patch.dict(os.environ, {"TEST_PROJECTS": '["renamed", "orchestrator"]'}):
             self.assertEqual(scope.selected(self.root, directories), directories[2:4])
         with mock.patch.dict(os.environ, {"TEST_PROJECTS": json.dumps(["renamed", *PROJECTS[1:]])}):
             self.assertEqual(scope.selected(self.root, directories), directories)
@@ -276,7 +276,7 @@ class Repository(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["projects"], PROJECTS[:2])
         self.assertEqual(
             destination.read_text(),
-            'existing=value\nfull=false\ndocs=false\nprojects=["manager", "linear-orchestrator"]\n',
+            'existing=value\nfull=false\ndocs=false\nprojects=["manager", "orchestrator"]\n',
         )
 
     def test_cli_pr_uses_diff_but_push_needs_no_diff(self):

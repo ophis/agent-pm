@@ -4,7 +4,7 @@ The Linear orchestrator runs the core from a Linear board: set it up once, then 
 
 ## Setup
 
-Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator runs this checkout's scripts, not the plugin. `<work_dir>` is `linear_orchestrator.work_dir`.
+Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator runs this checkout's scripts, not the plugin. `<work_dir>` is `orchestrator.work_dir`.
 
 1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. A required key left `""` stops every `agent-pm-linear` command.
 
@@ -12,7 +12,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    [delegate.roles.engineer]              # run settings
    tier = 2
 
-   [linear_orchestrator.roles.engineer]   # board settings
+   [orchestrator.roles.engineer]   # board settings
    account = "engineer@example.com"
    max_runs = 1
    ```
@@ -28,7 +28,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
      launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job 2>/dev/null   # fails harmlessly if none is loaded
-     cp linear-orchestrator/launchd/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
+     cp orchestrator/launchd/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
      launchctl enable gui/$(id -u)/com.ophis.agent-pm.$job
      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
    done
@@ -40,7 +40,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
 | router | :00 and :30, with `--now` (drop it to run only 01:00–06:59) |
 | promote | every 5 min |
 
-The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `linear-orchestrator/launchd/` and rerun step 4. To uninstall a job:
+The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `orchestrator/launchd/` and rerun step 4. To uninstall a job:
 
 ```bash
 launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>
@@ -80,7 +80,7 @@ flowchart LR
 
 A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`. No label: the agent picks (unsure: the researcher runs Research, which has no label; the engineer Build) and says why in its start comment. A bad label (unmapped, another role's, or several): the issue goes to In Review with a comment. To upgrade a report (Light Research → Research → Deep Research), set the next task's label (to Research: remove the label), comment the claims to verify, and move it back to Todo.
 
-`[linear_orchestrator.task_tiers]` sets a task's model tier, e.g. `light-build = 3` (1 = strongest): the router overlays it on the role's run, a resume taking its start's task; an issue with an unlisted task or no label keeps its role's or global tier.
+`[orchestrator.task_tiers]` sets a task's model tier, e.g. `light-build = 3` (1 = strongest): the router overlays it on the role's run, a resume taking its start's task; an issue with an unlisted task or no label keeps its role's or global tier.
 
 ## Operating
 
@@ -102,7 +102,7 @@ bin/agent-pm-linear resume <ID>                 # resume an attended run where i
 tmux ls                                         # running agent runs
 ```
 
-Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-linear issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([linear-orchestrator/skills/linear/SKILL.md](../linear-orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-linear issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([orchestrator/skills/linear/SKILL.md](../orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
 
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
@@ -113,7 +113,7 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (unset: 3), and its client fewer than its `[client_max_runs]` entry. No client is limited by default: an unlisted client is unlimited. Set limits in `~/.agent-pm/config.local.toml`, e.g. `opencode = 1`, as the host's local models run one job at a time:
 
 ```toml
-[linear_orchestrator.client_max_runs]
+[orchestrator.client_max_runs]
 opencode = 1
 claude = 3
 ```
@@ -130,7 +130,7 @@ The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace 
 
 ### Agent label
 
-Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [linear-orchestrator/config.toml](../linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, with one line per client in place of the `"<client>"` line, and the Agent group's and its child labels' ids in place of the example ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
+Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [orchestrator/config.toml](../orchestrator/src/agent_pm/orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, with one line per client in place of the `"<client>"` line, and the Agent group's and its child labels' ids in place of the example ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
 
 | Agent-group labels at claim recheck | New run |
 |---|---|
@@ -138,13 +138,13 @@ Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [l
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [`router.py` `client_for`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([`router.py` `_label_client_error`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py)); fix it → move back to Todo.
+Selection: [`router.py` `client_for`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([`router.py` `_label_client_error`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py)); fix it → move back to Todo.
 
-Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([`router.py` `Board.plan`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py)); a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
+Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([`router.py` `Board.plan`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py)); a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([`gate.py` `Gate.blocked`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([`modes/base.py` `child_env`](../session/src/agent_pm/session/modes/base.py), [`router.py` `brake`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([`gate.py` `Gate.blocked`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/gate.py)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([`modes/base.py` `child_env`](../session/src/agent_pm/session/modes/base.py), [`router.py` `brake`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py)).
 
-`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([`router.py` `Board.claim`](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py)).
+`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([`router.py` `Board.claim`](../orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py)).
 
 Rollout:
 
@@ -163,6 +163,6 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 
 1. Ollama and its model: [Docker host › OpenCode](docker-host.md#opencode).
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
-3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[linear_orchestrator.agent_labels]`.
+3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.agent_labels]`.
 
 The usage gate lets an OpenCode run start while the host's Ollama answers on `127.0.0.1:<ollama_port>`, else logs `usage-skip` with reason `usage unknown`. Every tier maps to the same model by default, so `[task_tiers]` changes nothing for OpenCode unless `[session.clients.opencode.tiers]` maps tiers to different models.

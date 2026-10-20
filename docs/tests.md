@@ -1,7 +1,7 @@
 # Tests
 
 ```bash
-export PYTHONPATH=.:.github:delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
+export PYTHONPATH=.:.github:delegate/src:session/src:utils/src:manager/src:orchestrator/src:orchestrator/tests   # from the repo root
 ```
 
 Lint (tool versions pinned in `.github/workflows/test.yml`):
@@ -13,7 +13,7 @@ ruff format --check --no-cache
 python3 -m tests.unit_imports
 pyright
 lint-imports --no-cache
-pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+pylint --disable=all --enable=cyclic-import,duplicate-code manager/src orchestrator/src delegate/src session/src utils/src
 vulture
 python3 -m tests.checks
 python3 .github/run_tests.py "Repository integration" tests/integration
@@ -117,7 +117,7 @@ occurs exactly once. Coverage applies to pull requests; `CI` requires every appl
 
 | Change/event | Unit and integration tests | Repository tests |
 |---|---|---|
-| PR touching only `manager/` and/or `linear-orchestrator/`, including their docs/skills | both upper layers | intentionally skipped |
+| PR touching only `manager/` and/or `orchestrator/`, including their docs/skills | both upper layers | intentionally skipped |
 | PR touching only root `*.md` files and/or `docs/` | upper-layer unit tests (they check the docs skills cite); integration, type and design lints skipped | intentionally skipped |
 | PR touching a lower layer, `tests/`, `.github/`, shared config, an unknown path, or an empty diff | all layers, plus shared unit tests | run |
 | push to `main` | all layers, plus shared unit tests | run |

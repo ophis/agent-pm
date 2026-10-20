@@ -80,8 +80,8 @@ class UnitTestModules(Sample):
             ),
             (
                 {
-                    "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "",
-                    "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py": "",
+                    "orchestrator/tests/orchestrator_tests/unit/trackers/linear/router_test.py": "",
+                    "orchestrator/src/agent_pm/orchestrator/trackers/linear/router.py": "",
                 },
                 [],
             ),

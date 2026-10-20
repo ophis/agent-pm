@@ -5,7 +5,7 @@ import os
 
 from tests.guard_checks.common import _bindings, _dotted, _files
 from tests.guard_data import ENTRY_MODULES, SUBPACKAGES
-from tests.guard_data.linear_orchestrator import ORCH_ABSENT, ORCH_PROJECT, ORCH_SRC
+from tests.guard_data.orchestrator import ORCH_ABSENT, ORCH_PROJECT, ORCH_SRC
 from tests.guards import PKG, PROJECTS
 
 LEFTOVERS = {"__pycache__", ".DS_Store"}

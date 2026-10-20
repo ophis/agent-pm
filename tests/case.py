@@ -20,7 +20,7 @@ ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-S")
-ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
+ORCH_ROOT = os.path.join(REPO, "orchestrator", "src")
 
 
 class Case(unittest.TestCase):

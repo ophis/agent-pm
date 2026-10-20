@@ -1,13 +1,13 @@
 from tests.guard_checks import commands
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT
+from tests.guard_data.orchestrator import ORCH_PROJECT
 from tests.guard_samples import PKG, Sample
 
-OPKG = "src/agent_pm/linear_orchestrator"
+OPKG = "src/agent_pm/orchestrator"
 
 
 class LayerCommands(Sample):
     SESSION, DELEGATE = (f"{layer}/{PKG}/{layer}" for layer in ("session", "delegate"))
-    LINEAR = f"linear-orchestrator/{OPKG}"
+    LINEAR = f"orchestrator/{OPKG}"
 
     def test_a_layer_command_in_a_spawn_argv_and_only_there(self):
         for files, expected in (
@@ -62,7 +62,7 @@ class PythonCommands(Sample):
                     "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                     "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
                     f"{team}/roles/r.md": (
-                        "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.linear_orchestrator.engine.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n7. `python3 -P <role team>/tools/x.py`\n"
+                        "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.orchestrator.trackers.linear.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n7. `python3 -P <role team>/tools/x.py`\n"
                     ),
                 },
                 [
@@ -74,8 +74,8 @@ class PythonCommands(Sample):
                     f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
                     f'{team}/roles/r.md:5: python command "python3 -P <team>/tools/../repo.py"',
                     f'{team}/roles/r.md:6: python command "python3 -P <team>/tools/repo.pyc"',
-                    f'{ORCH_PROJECT}/{OPKG}/config.toml:1: python command "python3 -P -m agent_pmx.y"',
                     'manager/skills/b/SKILL.md:1: python command "python3 y.py"',
+                    f'{ORCH_PROJECT}/{OPKG}/config.toml:1: python command "python3 -P -m agent_pmx.y"',
                 ],
             ),
             (
@@ -83,7 +83,7 @@ class PythonCommands(Sample):
                     f"{team}/a.md": "pythonic, my_python3 x.py, Python 3.11\n",
                     "delegate/skills/a/notes.txt": "python3 x.py\n",
                     "delegate/README.md": "python3 x.py\n",
-                    "linear-orchestrator/other.toml": 'x = "python3 x.py"\n',
+                    "orchestrator/other.toml": 'x = "python3 x.py"\n',
                     "tests/a.md": "python3 x.py\n",
                 },
                 [],

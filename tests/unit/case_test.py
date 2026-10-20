@@ -22,7 +22,7 @@ CASES = (
     "utils/tests",
     "session/tests",
     "delegate/tests",
-    "linear-orchestrator/tests",
+    "orchestrator/tests",
     "manager/tests",
 )
 
@@ -42,7 +42,7 @@ class SandboxFixtures(Case):
 
 
 RUN_WITH = os.pathsep.join(
-    f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")
+    f"{p}/src" for p in ("delegate", "manager", "orchestrator", "session", "utils")
 )
 
 
@@ -64,7 +64,7 @@ class Checks:
     def setUp(self):
         self.case = importlib.import_module(
             "orchestrator_tests.case"
-            if self.tree == "linear-orchestrator/tests"
+            if self.tree == "orchestrator/tests"
             else f"{self.tree.replace('/', '.')}.case"
         )
 
@@ -178,10 +178,10 @@ class Checks:
             self.assert_fails_before_set_up(f"agent_pm.__path__ lacks {manager}")
 
     def test_the_orchestrator_absent_or_this_trees_passes(self):
-        orch = self.case.SRC["linear_orchestrator"]
-        self.assertEqual(orch, os.path.join(self.case.REPO, "linear-orchestrator", "src"))
+        orch = self.case.SRC["orchestrator"]
+        self.assertEqual(orch, os.path.join(self.case.REPO, "orchestrator", "src"))
         self.assertEqual(getattr(self.case, "ORCH_ROOT", orch), orch)
-        name = "agent_pm.linear_orchestrator"
+        name = "agent_pm.orchestrator"
         self.assertTrue(os.path.isfile(self.module(name, orch).__file__))
         for found in (None, self.module(name, orch)):
             ran = []

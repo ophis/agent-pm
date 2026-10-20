@@ -17,7 +17,7 @@ from tests.guard_checks.common import (
     _tree_files,
 )
 from tests.guard_data import OPTION_TUPLES_ALLOWED, STANDALONE
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT, ORCH_SRC
+from tests.guard_data.orchestrator import ORCH_PROJECT, ORCH_SRC
 from tests.guards import PROJECTS
 
 OPTION_NAME = re.compile(r"_?[A-Z][A-Z0-9_]*")
@@ -179,7 +179,7 @@ def _type_methods(project, rel, node, kind, bound):
         }
         if (
             project == ORCH_PROJECT
-            and rel == ORCH_SRC.removeprefix("src/") + "engine/types.py"
+            and rel == ORCH_SRC.removeprefix("src/") + "trackers/linear/types.py"
             and node.name == "Spec"
             and method.name == "to_argv"
             and kind == "dataclass"

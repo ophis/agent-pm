@@ -2,11 +2,11 @@ import os
 
 from tests import guards
 from tests.guard_checks import imports, placement
-from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_PROJECT
+from tests.guard_data.orchestrator import ORCH_PKG, ORCH_PROJECT
 from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
-OPKG = "src/agent_pm/linear_orchestrator"
+OPKG = "src/agent_pm/orchestrator"
 
 
 UNLISTED = (
@@ -38,7 +38,7 @@ class PackageClimbs(Sample):
             "from pathlib import Path as P\nf = P(__file__)\np = f.parent.parent\nx = p.parent\n",
             "import os as o\np = o.path.dirname(__file__)\nx = o.path.join(p, '..', '..')\n",
             "from pathlib import Path\np = Path(__file__).parent.parent.parent / 'session' / 'config.toml'\n",
-            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'linear-orchestrator/config.toml')\n",
+            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'orchestrator/config.toml')\n",
             "import os\nfrom agent_pm.utils.paths import ROOT\nx = os.listdir(ROOT)\n",
             "from agent_pm.utils import ROOT\n",
             "from agent_pm.utils.paths import import_roots\n",
@@ -62,11 +62,11 @@ class PackageClimbs(Sample):
                 sample,
             ),
             (
-                "import os\nx = os.path.join(os.path.dirname(__file__), 'linear-orchestrator/config.toml')\n",
+                "import os\nx = os.path.join(os.path.dirname(__file__), 'orchestrator/config.toml')\n",
                 sample,
             ),
             (
-                "import os\nx = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'linear-orchestrator/config.toml')\n",
+                "import os\nx = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'orchestrator/config.toml')\n",
                 sample,
             ),
             (
@@ -128,17 +128,17 @@ class NamespacePackage(Sample):
             ),
             (
                 (
-                    f"delegate/{PKG}/linear_orchestrator/__init__.py",
+                    f"delegate/{PKG}/orchestrator/__init__.py",
                     f"delegate/{PKG}/config.py",
                     "utils/src/repo.py",
-                    f"linear-orchestrator/{PKG}/session/__init__.py",
-                    "linear-orchestrator/src/other/__init__.py",
+                    f"orchestrator/{PKG}/session/__init__.py",
+                    "orchestrator/src/other/__init__.py",
                 ),
                 [
                     f"delegate/{PKG}/config.py: not delegate's",
-                    f"delegate/{PKG}/linear_orchestrator: not delegate's",
-                    f"linear-orchestrator/{PKG}/session: not linear-orchestrator's",
-                    "linear-orchestrator/src/other: not linear-orchestrator's",
+                    f"delegate/{PKG}/orchestrator: not delegate's",
+                    f"orchestrator/{PKG}/session: not orchestrator's",
+                    "orchestrator/src/other: not orchestrator's",
                     "utils/src/repo.py: not utils's",
                 ],
             ),
@@ -159,17 +159,17 @@ class OrchestratorLayout(Sample):
             (
                 {
                     f"{ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
-                    f"{ORCH_PROJECT}/{OPKG}/engine/router.py": 'if __name__ == "__main__": pass\n',
+                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/router.py": 'if __name__ == "__main__": pass\n',
                 },
-                [f"{ORCH_PROJECT}/{OPKG}/engine/router.py:1: entry outside cli.py"],
+                [f"{ORCH_PROJECT}/{OPKG}/trackers/linear/router.py:1: entry outside cli.py"],
             ),
             (
                 {
                     f"{ORCH_PROJECT}/{OPKG}/cli.py": "",
-                    f"{ORCH_PROJECT}/{OPKG}/engine/run.py": "from agent_pm import delegate\n",
+                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/run.py": "from agent_pm import delegate\n",
                 },
                 [
-                    f"{ORCH_PROJECT}/{OPKG}/engine/run.py: no such module: a run is its Delegate's"
+                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/run.py: no such module: a run is its Delegate's"
                     " harness (FR-25)"
                 ],
             ),

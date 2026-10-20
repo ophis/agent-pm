@@ -23,7 +23,7 @@ class Configuration(Case):
     def test_only_the_session_section_overlays_session_defaults(self):
         local = Path(self.home, "config.local.toml")
         local.write_text(
-            "[session.hosts.tmux]\nstatus_line = true\n[delegate]\nunknown = 1\n[linear_orchestrator]\nunknown = 2\n"
+            "[session.hosts.tmux]\nstatus_line = true\n[delegate]\nunknown = 1\n[orchestrator]\nunknown = 2\n"
         )
         found = read_config(local=str(local))
         self.assertTrue(found["hosts"]["tmux"]["status_line"])

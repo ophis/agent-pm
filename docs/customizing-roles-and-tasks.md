@@ -28,7 +28,7 @@ dir = "Research/"
 - **Client:** `client` picks it; `agent-pm-delegate run --client` overrides it for one run. The flags a role run passes its client: [Client policy](sessions.md#client-policy).
 - **Destination:** `[output]` (`local`, `github`, `pull-request` or `orchestrator`); a lower level's `[output]` replaces the whole table.
 - **Access:** `read`, `write` and `commands` widen what the agent run may read, write and run; `templates` inlines templates into its prompt.
-- **Board runs:** the same keys under `[linear_orchestrator.core]` (e.g. `[linear_orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.
+- **Board runs:** the same keys under `[orchestrator.core]` (e.g. `[orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.
 
 ## Add roles, tasks and templates
 
@@ -83,4 +83,4 @@ It starts with a `# ` heading, has exactly one `[agent-pm-progress:start] <what 
 
 ## On the board
 
-The board's per-role behavior (stage order, title prefix, comment leads, whether a Handoff needs instructions) is the default workflow, `linear-orchestrator/src/agent_pm/linear_orchestrator/flow/workflow.toml`: it has researcher, pm and engineer. A `[linear_orchestrator.roles.<role>]` table for any other role stops every `agent-pm-linear` command with `has no entry in config.TASKS`, and a `[linear_orchestrator.task_labels]` or `[linear_orchestrator.task_tiers]` entry must name a task of an orchestrated role. Board runs' run keys: `[linear_orchestrator.core]`, above.
+The board's per-role behavior (stage order, title prefix, comment leads, whether a Handoff needs instructions) is the default workflow, `orchestrator/src/agent_pm/orchestrator/engine/workflow.toml`: it has researcher, pm and engineer. A `[orchestrator.roles.<role>]` table for any other role stops every `agent-pm-linear` command with `has no entry in config.TASKS`, and a `[orchestrator.task_labels]` or `[orchestrator.task_tiers]` entry must name a task of an orchestrated role. Board runs' run keys: `[orchestrator.core]`, above.

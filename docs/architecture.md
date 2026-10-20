@@ -1,6 +1,6 @@
 # Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Import rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < orchestrator < manager. Import rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -13,15 +13,15 @@ flowchart TB
     MC["cli.py<br>agent-pm-crew"] --> W["engine/crew.py"] --> RS["engine/roster.py"]
     MC --> HO["engine/holder.py<br>lease while a command runs"] --> RS
   end
-  subgraph LO[agent_pm.linear_orchestrator]
+  subgraph LO[agent_pm.orchestrator]
     LCLI["cli.py<br>agent-pm-linear"]
-    R["engine/router.py<br>pick · usage gate · trigger"]
-    LR["engine/linear_run.py<br>Delegate ownership · queries"]
-    WB["engine/writeback.py<br>one event's write-back"]
-    PP["engine/promote.py → prune.py"]
-    LT["engine/linear_tracker.py<br>LinearTracker"]
-    FL["flow/<br>Tracker · IssueState · Handoff grammar · workflow"]
-    LC["engine/config.py<br>[core] overlay"]
+    R["trackers/linear/router.py<br>pick · usage gate · trigger"]
+    LR["trackers/linear/linear_run.py<br>Delegate ownership · queries"]
+    WB["trackers/linear/writeback.py<br>one event's write-back"]
+    PP["trackers/linear/promote.py → prune.py"]
+    LT["trackers/linear/linear_tracker.py<br>LinearTracker"]
+    FL["engine/<br>Tracker · IssueState · Handoff grammar · workflow"]
+    LC["trackers/linear/config.py<br>[core] overlay"]
   end
   subgraph DL[agent_pm.delegate]
     D["cli.py<br>agent-pm-delegate"]
