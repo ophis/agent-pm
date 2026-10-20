@@ -30,6 +30,14 @@
 # [clients.claude.tiers]    tier "1".."4" → its --model
 # [clients.claude.efforts]  effort (low, medium, high, xhigh, max) → its --effort
 #                            starting a run whose tier or effort has no entry here is a config error
+# [clients.claude.accounts.<name>]  a Claude account a worker or role may select (AGENT_PM_ACCOUNT); only the Docker
+#                    Host uses it, injecting that account's setup-token alone (agent-pm-broker login claude <name>;
+#                    docs/docker-host.md); <name> 1–64 lowercase letters, digits, ., _ or -, never setup-token. default,
+#                    the account of no selection, is always registered; selecting an unregistered name is a config error.
+#                    None packaged; no secret:
+#   dir              its CLAUDE_CONFIG_DIR on the host, ~ expanded, absolute; absent → ~/.claude; never on default.
+#                    Nothing reads it yet (TASK-804's per-account usage probe)
+#   account          a display string, e.g. its login email
 [clients.claude]
 implementation = "agent_pm.session.clients.claude:ClaudeClient"
 flags = ["--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}']
@@ -42,6 +50,8 @@ auto = ["--permission-mode", "auto"]
 yolo = ["--dangerously-skip-permissions", "--settings", '{"skipDangerousModePermissionPrompt": true}']
 
 [clients.claude.env]
+
+[clients.claude.accounts]
 
 [clients.claude.tiers]
 1 = "fable"
