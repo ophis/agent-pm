@@ -80,7 +80,7 @@ import sys
 import textwrap
 import uuid
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
@@ -94,6 +94,7 @@ from agent_pm.orchestrator.engine import (
     writeback,
 )
 from agent_pm.orchestrator.engine import log as event_log
+from agent_pm.orchestrator.engine.flow.tracker import Connect
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
     IssueState,
@@ -126,6 +127,8 @@ from agent_pm.orchestrator.engine.types import (
     IssueError,
     LinearError,
     Spec,
+    TrackerFileError,
+    TrackerKind,
     Transient,
     Unavailable,
 )
@@ -209,71 +212,38 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
-def task_for(labels, group, role, role_tasks, label_tasks):
-    found = [n for n in labels if n.group is not None and n.group == group]
-    if not found:
+def task_for(pick, role, role_tasks):
+    if pick.error is not None:
+        return None, pick.error
+    if pick.name is None:
         return None, None
-    if len(found) > 1:
-        return (
-            None,
-            (
-                f"Several task labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
-            ),
-        )
-    name = found[0].name
-    task = label_tasks.get(found[0].key)
-    if task is None:
-        return (
-            None,
-            (
-                f'Task label "{name}" is not in {config.LOCAL}\'s [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo.'
-            ),
-        )
-    if task not in role_tasks:
+    if pick.name not in role_tasks:
         return None, (
-            f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
-            "Fix the label or the assignee, then move the issue back to Todo."
+            f'Task "{pick.name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
+            "Fix the task or the assignee, then move the issue back to Todo."
         )
-    return task, None
+    return pick.name, None
 
 
-def client_for(
-    labels, group, label_clients, default
-) -> tuple[str | None, ClientSource, str | None]:
-    found = [n for n in labels if group and n.group is not None and n.group == group]
-    if not found:
+def client_for(pick, default) -> tuple[str | None, ClientSource, str | None]:
+    if pick.error is not None:
+        return None, "label", pick.error
+    if pick.name is None:
         return default, "default", None
-    if len(found) > 1:
-        return (
-            None,
-            "label",
-            (
-                f"Several Agent labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
-            ),
-        )
-    if (client := label_clients.get(found[0].key)) is None:
-        return (
-            None,
-            "label",
-            (
-                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [orchestrator.linear.agent_labels]. '
-                "Fix the label, then move the issue back to Todo."
-            ),
-        )
-    return client, "label", None
+    return pick.name, "label", None
 
 
 class Board:
-    def __init__(self, gql, entries, cfg, *, now, dry, keychain, gate=None, say=None):
+    def __init__(
+        self, gql, entries, cfg, *, now, dry, keychain, connect: Connect, gate=None, say=None
+    ):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.keychain, self.gate = cfg, keychain, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
-        self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
-        self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
-        self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
+        self.tracker = connect(gql, cfg, say=self.say)
 
     def todo(self):
         if self.ready is None:
@@ -296,11 +266,6 @@ class Board:
 
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
-
-    def select_client(self, labels, role):
-        return client_for(
-            labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
-        )
 
     def attempts(self, issue):
         tried = [*self.entries, *self.failures]
@@ -391,6 +356,8 @@ class Board:
         a resume (FR-41): None when there is none; else whether its write-back is now complete.
         """
         ident = issue["identifier"]
+        if self.cfg.linear is None:
+            return None  # a local board has no write-back
         try:
             outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.outcome()
         except (ConfigError, delegate.ConfigError, delegate.SessionError):
@@ -398,7 +365,9 @@ class Board:
         if outcome is None:
             return None
         try:
-            done = writeback.replay(self.cfg, ident, sid, outcome, gql=self.gql, dry=self.dry)
+            done = writeback.replay(
+                self.cfg, self.cfg.linear, ident, sid, outcome, gql=self.gql, dry=self.dry
+            )
         except (ConfigError, ValueError) as error:
             self.say("recover-skip", ident, once=True, sid=sid, reason=one_line(error))
             return False
@@ -489,7 +458,7 @@ class Board:
         )
 
     def gated(self, issue, role, client, source, frm=IssueState.READY):
-        """Whether the usage gate blocks a new run of client; a label-selected client's quota
+        """Whether the usage gate blocks a new run of client; an issue-chosen client's quota
         configuration error bounces the issue from frm instead.
         """
         ident = issue["identifier"]
@@ -504,15 +473,13 @@ class Board:
 
     def resumption(self, issue, sid, new_sid):
         """The run that continues the issue's session sid: its resume, or a new session (new_sid) on
-        the client the Agent label selects when that differs, as a session resumes only in its own
-        client. Invalid Agent or task labels keep the resume.
+        the client the issue chooses when that differs, as a session resumes only in its own
+        client. An invalid task or client choice keeps the resume.
         """
         ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
-        labels = self.tracker.recheck(issue["id"]).labels
-        client, source, client_error = self.select_client(labels, role)
-        task, task_error = task_for(
-            labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
-        )
+        current = self.tracker.recheck(issue["id"])
+        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if client_error or task_error or client == resumed:
             if self.dry:
                 self.say("preview", ident, client=resumed, mode="resume", sid=sid)
@@ -569,31 +536,24 @@ class Board:
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
         current = self.tracker.recheck(issue["id"])
-        role = config.role_for(self.cfg.roles, (current.assignee or {}).get("email"))
+        role, linear = current.role, self.cfg.linear
         if not current.ready:
             skip = "no longer Todo"
         elif role is None:
             skip = "not assigned to a role"
         elif role in full:
             skip = f"{role} is full"
-        elif current.home is None:
-            skip = "no project"
-        elif not self.keychain(key := self.cfg.roles[role].key):
+        elif current.refused:
+            skip = current.refused
+        elif linear and (key := linear.roles[role].key) and not self.keychain(key):
             skip = f"no Keychain item for role key {key}"
         else:
             skip = None
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        labels = current.labels
-        task, task_error = task_for(
-            labels,
-            self.cfg.task_label_group,
-            role,
-            self.cfg.roles[role].tasks,
-            self.label_tasks,
-        )
-        client, source, client_error = self.select_client(labels, role)
+        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if self.dry:
             self.say(
                 "preview",
@@ -640,7 +600,7 @@ def begin(cfg, spec: Spec) -> Spec:
     return spec
 
 
-def record(cfg, spec: Spec, *, role, now, target=None) -> str:
+def record(cfg, spec: Spec, *, role, key, now, target=None) -> str:
     """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
     uuid, project, target, the role's key), which its write-back reads, and its task, which picks
     a resume's tier; returns its Delegate kind.
@@ -652,7 +612,7 @@ def record(cfg, spec: Spec, *, role, now, target=None) -> str:
                 "uuid": spec.uuid,
                 "project": spec.project,
                 "target": target,
-                "key": cfg.roles[role].key,
+                "key": key,
                 "task": spec.task,
             },
         )
@@ -697,13 +657,14 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
         return 2
-    role = config.role_for(cfg.roles, a.assignee)
+    linear = config.linear_settings(cfg, "router")
+    role = config.role_for(linear.roles, a.assignee)
     tasks = cfg.roles[role].tasks if role is not None else ()
     reason = a.role_error(role, tasks)
     if role is None or reason:
         return fail(a.issue, "config-error", reason, 2)
-    key = cfg.roles[role].key
-    kind = record(cfg, a, role=role, now=now) if a.mode == "resume" else cfg.delegate_kind
+    key = linear.roles[role].key
+    kind = record(cfg, a, role=role, key=key, now=now) if a.mode == "resume" else cfg.delegate_kind
     if not keychain(key):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
@@ -715,20 +676,20 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].input == "build"
-    reader = LinearTracker.reader(gql, cfg)
+    reader = LinearTracker.reader(gql, linear)
     try:
         issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
-    ctx = writeback.for_run(cfg, role, a, **writeback.accounts(cfg, gql, key))
+    ctx = writeback.for_run(cfg, linear, role, a, **writeback.accounts(linear, gql, key))
     workdir = cfg.issue_workdir(a.issue)
     delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
                 issue,
-                cfg.project_repos,
+                linear.project_repos,
                 run=run,
                 delegate=delegate_cls,
                 workdir=workdir,
@@ -746,7 +707,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
-        repo = target.research_repo(issue, cfg.project_repos)
+        repo = target.research_repo(issue, linear.project_repos)
     slug = f"{repo.owner}/{repo.name}" if build and repo else None
     if repo is not None:
         repo = target.with_clone(
@@ -805,7 +766,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 return _label_client_error(a, ctx, error)
             raise
         if a.mode == "new":
-            record(cfg, a, role=role, target=slug, now=now)
+            record(cfg, a, role=role, key=key, target=slug, now=now)
         detached = linear_run.detach()
     except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -818,8 +779,8 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
 def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
     return (
-        f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
-        "Fix [orchestrator.linear.agent_labels] or the client configuration, then move this issue back to Todo."
+        f'Client "{client}" chosen on the issue, but the run could not be built: {first}\n\n'
+        "Fix the issue's client or the client configuration, then move this issue back to Todo."
     )
 
 
@@ -957,7 +918,7 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
     return spec
 
 
-def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, launch_sid=None):
+def tick(opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
@@ -987,7 +948,15 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, launch_sid=None
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, cfg=cfg)
             board = Board(
-                gql, entries, cfg, now=now, dry=dry, keychain=keychain, gate=gate, say=walk
+                gql,
+                entries,
+                cfg,
+                now=now,
+                dry=dry,
+                keychain=keychain,
+                connect=connect,
+                gate=gate,
+                say=walk,
             )
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
@@ -1000,7 +969,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, launch_sid=None
             return start_run(start, begin(cfg, spec), walk)
 
 
-def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid=None):
+def run_issue(opts, cfg, gql, start, *, keychain, connect, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 2
@@ -1025,7 +994,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)
+        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain, connect=connect)
         if issue := next(
             (i for i in board.tracker.assigned(IssueState.RUNNING) if i["identifier"] == ident),
             None,
@@ -1116,6 +1085,7 @@ def _help_text():
 def main(
     argv,
     *,
+    trackers: Mapping[TrackerKind, Connect],
     now=datetime.now,
     config_path=None,
     gql=None,
@@ -1154,6 +1124,12 @@ def main(
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
+    connect = trackers[cfg.tracker]
+    if cfg.tracker == TrackerKind.LOCAL and starts:
+        print(
+            f'router.py: tracker "{cfg.tracker}" runs only --dry-run and --brake', file=sys.stderr
+        )
+        return 2
     if opts["brake"] is not None:
         role = opts["brake"]
         if role not in cfg.roles:
@@ -1165,7 +1141,6 @@ def main(
     except ConfigError as error:
         print(f"router.py: {error}", file=sys.stderr)
         return 2
-    gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
         start = functools.partial(
             outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended
@@ -1173,13 +1148,30 @@ def main(
     try:
         if opts["issue"]:
             return run_issue(
-                opts, cfg, gql, start, keychain=keychain, clock=now, launch_sid=launch_sid
+                opts,
+                cfg,
+                gql,
+                start,
+                keychain=keychain,
+                connect=connect,
+                clock=now,
+                launch_sid=launch_sid,
             )
         return tick(
-            opts, cfg, gql, start=start, keychain=keychain, clock=now, launch_sid=launch_sid
+            opts,
+            cfg,
+            gql,
+            start=start,
+            keychain=keychain,
+            connect=connect,
+            clock=now,
+            launch_sid=launch_sid,
         )
     except LinearError as e:
         return event_log.config_error("router", e, dry=opts["dry"])
+    except TrackerFileError as e:
+        print(f"router.py: {e}", file=sys.stderr)
+        return 2
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
 

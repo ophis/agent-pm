@@ -51,7 +51,7 @@ CONFIG = f'linear.manager_key = "{MANAGER_KEY}"\n' + tp.CONFIG.replace(
 
 
 def names_cfg(**fields):
-    """The Config fields issue_names reads, as CONFIG loads them."""
+    """The LinearSettings fields issue_names reads, as CONFIG loads them."""
     cfg = {
         "team": TEAM,
         "states": dict(STATES),

@@ -17,7 +17,7 @@ from agent_pm.orchestrator.engine import (
     prune,
     runs,
 )
-from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.engine.types import LinearError, TrackerKind
 from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
     ops,
@@ -241,7 +241,7 @@ class PruneScenario(Case):
         self.sessions = {}
         self.closed_runs = set()
         self.unknown = False
-        self.cfg = config.Config(
+        linear = config.LinearSettings(
             team=TEAM,
             states=dict(IDS_BY_KEY),
             human_members=(),
@@ -249,13 +249,19 @@ class PruneScenario(Case):
             manager_key="",
             task_label_group="",
             task_labels={},
-            task_tiers={},
             agent_label_group="",
             agent_labels={},
+            project_repos={},
+            roles={},
+        )
+        self.cfg = config.Config(
+            task_tiers={},
             client_max_runs={},
             roles={},
-            project_repos={},
             local_clones={},
+            tracker=TrackerKind.LINEAR,
+            linear=linear,
+            board=None,
             work_dir=self.root,
             docs=config.Docs("", "", {}),
             stages={},
@@ -335,6 +341,7 @@ class PruneScenario(Case):
                 run=git or Git(),
                 work=self.work,
                 cfg=self.cfg,
+                linear=self.cfg.linear,
                 team=TEAM_OBJ,
                 roles=ROLES,
                 writable=writable,

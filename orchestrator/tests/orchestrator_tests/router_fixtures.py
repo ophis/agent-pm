@@ -1,6 +1,5 @@
 """Shared orchestrator scenario fixtures for unit and sandboxed integration contracts."""
 
-import functools
 import io
 import json
 import os
@@ -13,6 +12,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.delegate import Spec as DelegateSpec
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     inputs,
@@ -38,7 +38,6 @@ from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.run_fixtures import (
     ENGINEER,
-    HARNESS,
     ID,
     PROJECT,
     SID,
@@ -502,12 +501,13 @@ class Base(run_fixtures.Base):
         with redirect_stderr(err), self.log_dir(again=again):
             out = use(
                 router.Board(
-                    functools.partial(fake, service=HARNESS),
+                    fake,
                     runs.parse_log(self.runs),
                     cfg,
                     now=NOW,
                     dry=dry,
                     keychain=self.keychain,
+                    connect=linear_tracker.LinearTracker.connect,
                     gate=quota.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
@@ -577,6 +577,7 @@ class TickBase(Base):
         outer=None,
         clock=None,
         env=None,
+        trackers=cli.TRACKERS,
     ):
         # outer: main's run and keychain; main then starts through its own outer
         # env: the caller's variables over PATH; a launcher's events file and sid only from env
@@ -616,6 +617,7 @@ class TickBase(Base):
                 gql=fake,
                 delegate_cls=delegate_cls,
                 start=self.start,
+                trackers=trackers,
                 **{"keychain": self.keychain, **(outer or {})},
             )
             self.path = os.environ["PATH"]
@@ -641,7 +643,7 @@ class TickBase(Base):
     def launched_run(self):
         """The run the tick handed to its start, as last_run's row would show it."""
         a = self.start.launches[-1]
-        role = config.role_for(self.cfg().roles, a.assignee)
+        role = config.role_for(self.cfg().linear.roles, a.assignee)
         return "start" if a.mode == "new" else "resume", a.issue, self.unmap(a.sid), role, a.client
 
     def launched(self):
@@ -675,7 +677,7 @@ class OuterBase(TickBase):
         row holding started_task.
         """
         if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
-            role = config.role_for(self.cfg().roles, assignee) or "engineer"
+            role = config.role_for(self.cfg().linear.roles, assignee) or "engineer"
             runs.note(
                 self.runs,
                 "start",
@@ -702,7 +704,7 @@ class OuterBase(TickBase):
             rc = router.outer(
                 a,
                 cfg,
-                gql=functools.partial(self.gql, service=HARNESS),
+                gql=self.gql,
                 run=self.run_,
                 keychain=self.keychain,
                 now=lambda: NOW,

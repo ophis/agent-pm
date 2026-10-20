@@ -14,13 +14,16 @@ M_EDIT = (
 )
 
 
-def edit(gql, cfg, args, body):
+def edit(gql, linear, args, body):
     """Change args.id's title, description (body), task, client and priority as given."""
     groups = {}
     if args.task is not None:
-        groups["--task"] = (issue_names.task_label(cfg, args.task), cfg.task_label_group)
+        groups["--task"] = (issue_names.task_label(linear, args.task), linear.task_label_group)
     if args.client is not None:
-        groups["--client"] = (issue_names.client_label(cfg, args.client), cfg.agent_label_group)
+        groups["--client"] = (
+            issue_names.client_label(linear, args.client),
+            linear.agent_label_group,
+        )
     data = issue_read.lookup(gql, Q_READ, args.id)
     node = data["issue"]
     change = {}
@@ -32,7 +35,7 @@ def edit(gql, cfg, args, body):
     if priority is not None and priority != node["priority"]:
         change["priority"] = priority
     if groups:
-        issue_names.in_team(cfg, node, " and ".join(groups))
+        issue_names.in_team(linear, node, " and ".join(groups))
         change.update(_labels(issue_label.carried_labels(gql, args.id, node), groups.values()))
     if not change:
         return issue_write.receipt(node, "edit", "unchanged", data["viewer"])

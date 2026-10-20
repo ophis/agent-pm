@@ -752,15 +752,15 @@ def receipt(payload):
     return data
 
 
-def _run(gql, args, cfg, body):
+def _run(gql, args, linear, body):
     if args.command == "move":
-        return receipt(issue_write.move(gql, cfg, args.id, args.state))
+        return receipt(issue_write.move(gql, linear, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
     if args.command == "edit":
-        return receipt(issue_edit.edit(gql, cfg, args, body))
+        return receipt(issue_edit.edit(gql, linear, args, body))
     if args.command == "create":
-        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, cfg, body)))
+        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, linear, body)))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
@@ -783,9 +783,9 @@ def _run(gql, args, cfg, body):
             f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
         )
     if args.command == "list":
-        source = issue_list.source(gql, args, cfg)
+        source = issue_list.source(gql, args, linear)
     else:
-        source = issue_lookup.source(gql, args, cfg.team)
+        source = issue_lookup.source(gql, args, linear.team)
     if not args.full:
         rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
@@ -823,18 +823,24 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    if not cfg.manager_key:
+    try:
+        linear = config.linear_settings(cfg, "issue")
+    except ConfigError as refused:
+        diagnose(err, refused)
+        return USAGE
+    if not linear.manager_key:
         diagnose(err, "orchestrator/config.toml: linear.manager_key is unset")
         return USAGE
-    gql = functools.partial(gql, service=cfg.manager_key)
+    gql = functools.partial(gql, service=linear.manager_key)
     try:
-        data = _run(gql, args, cfg, body)
+        data = _run(gql, args, linear, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE
     except (subprocess.SubprocessError, OSError, KeychainError) as error:
         diagnose(
-            err, f"linear.manager_key Keychain service {cfg.manager_key!r}: {type(error).__name__}"
+            err,
+            f"linear.manager_key Keychain service {linear.manager_key!r}: {type(error).__name__}",
         )
         return USAGE
     except GraphQLErrors as error:

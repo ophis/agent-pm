@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import agent_pm.utils as utils
@@ -16,8 +17,11 @@ from agent_pm.orchestrator.engine.types import (
     Config,
     ConfigError,
     Docs,
+    LinearRole,
+    LinearSettings,
     Role,
     State,
+    TrackerKind,
 )
 from agent_pm.utils import GUARD, STATE, temp_dirs, under
 
@@ -26,7 +30,10 @@ LOCAL = utils.LOCAL
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 _ROLE_ISSUE = r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)"
 
+BOARD_ENV = "AGENT_PM_BOARD_DIR"
+
 TOP_KEYS = {
+    "tracker",
     "workflow",
     "task_tiers",
     "client_max_runs",
@@ -72,6 +79,13 @@ def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
         config_error(src, error, dry=dry)
 
 
+def linear_settings(cfg: Config, command: str) -> LinearSettings:
+    """cfg's Linear settings; raises ConfigError, command's refusal, on another tracker."""
+    if cfg.linear is None:
+        raise ConfigError(f'{command} needs [orchestrator] tracker = "linear"')
+    return cfg.linear
+
+
 def load(*, path: str | None = None) -> Config:
     try:
         cfg = utils.read_resources(
@@ -80,13 +94,15 @@ def load(*, path: str | None = None) -> Config:
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"orchestrator/config.toml: {e}") from None
-    work = _work_dir(cfg)
+    cfg["tracker"] = _tracker(cfg)
+    board = _board() if cfg["tracker"] is TrackerKind.LOCAL else None
+    work = _work_dir(cfg, board=board)
     try:
         _workflow(cfg)
         kind, delegates = _delegates(cfg)
         index = _index(delegates[kind])
-        _load_config(cfg, LOCAL)
-        return _load(cfg, work, kind, delegates, index)
+        _load_config(cfg, LOCAL, board)
+        return _load(cfg, work, kind, delegates, index, board=board)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -146,7 +162,7 @@ def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     return utils.sh(argv, timeout, env={**os.environ, "PATH": path()})
 
 
-def role_for(roles, email):
+def role_for(roles: Mapping[str, LinearRole], email):
     return next(
         (r for r, role in roles.items() if email and role.account.lower() == email.lower()), None
     )
@@ -179,8 +195,28 @@ def clone_error(clone, slug, *, run=None):
     return None
 
 
-def _work_dir(cfg, clones=None):
-    v = cfg.get("work_dir", STATE)
+def _tracker(cfg):
+    v = cfg.get("tracker", TrackerKind.LOCAL)
+    if v not in tuple(TrackerKind):
+        raise ConfigError(
+            f"orchestrator/config.toml: tracker: want one of {', '.join(TrackerKind)}: {v!r}"
+        )
+    return TrackerKind(v)
+
+
+def _board():
+    v = os.environ.get(BOARD_ENV) or os.path.join(STATE, "board")
+    path = os.path.expanduser(v) if v.isprintable() else ""
+    if not os.path.isabs(path):
+        raise ConfigError(f"{BOARD_ENV} must be a printable absolute or ~ path: {v!r}")
+    return os.path.realpath(path)
+
+
+def _work_dir(cfg, clones=None, *, board=None):
+    """The state root: work_dir, or a local board's <board>/.state."""
+    name, v = "work_dir", cfg.get("work_dir", STATE)
+    if board is not None:
+        name, v = "the board's .state", os.path.join(board, ".state")
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
         raise ConfigError(
@@ -191,46 +227,52 @@ def _work_dir(cfg, clones=None):
         for k, clone in (clones or {}).items():
             if utils.overlaps(path, clone):
                 raise ConfigError(
-                    f"orchestrator/config.toml: work_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}"
+                    f"orchestrator/config.toml: {name} must neither lie in nor contain local_clones.{k} {clone}: {v!r}"
                 )
     except OSError as error:
-        raise ConfigError(f"orchestrator/config.toml: work_dir: {error}") from None
+        raise ConfigError(f"orchestrator/config.toml: {name}: {error}") from None
     return path
 
 
-def _load(cfg, work, kind, delegates, index):
+def _load(cfg, work, kind, delegates, index, *, board):
     roles = _runnable(cfg, work, delegates[kind], index)
     docs = _docs(roles, LOCAL)
-    linear = cfg["linear"]
     frozen = {
-        k: MappingProxyType(dict(table[k]))
-        for table, keys in (
-            (linear, ("states", "task_labels", "agent_labels", "project_repos")),
-            (cfg, ("task_tiers", "client_max_runs", "local_clones")),
-        )
-        for k in keys
+        k: MappingProxyType(dict(cfg[k])) for k in ("task_tiers", "client_max_runs", "local_clones")
     }
     return Config(
+        roles=MappingProxyType(roles),
+        tracker=cfg["tracker"],
+        linear=_linear_settings(cfg["linear"]) if cfg["tracker"] is TrackerKind.LINEAR else None,
+        board=board,
+        work_dir=work,
+        docs=docs,
+        stages=MappingProxyType(_stage_order()),
+        task_tiers=frozen["task_tiers"],
+        client_max_runs=frozen["client_max_runs"],
+        local_clones=frozen["local_clones"],
+        delegate_kind=kind,
+        delegates=MappingProxyType(delegates),
+        core=utils.freeze(cfg.get("core", {})),
+    )
+
+
+def _linear_settings(linear):
+    frozen = {
+        k: MappingProxyType(dict(linear[k]))
+        for k in ("states", "task_labels", "agent_labels", "project_repos")
+    }
+    return LinearSettings(
         team=linear["team"],
         human_members=tuple(linear.get("human_members") or ()),
         harness_key=linear["harness_key"],
         manager_key=linear.get("manager_key", ""),
         task_label_group=linear["task_label_group"],
-        roles=MappingProxyType(roles),
-        work_dir=work,
-        docs=docs,
-        stages=MappingProxyType(_stage_order()),
-        states=frozen["states"],
-        task_labels=frozen["task_labels"],
-        task_tiers=frozen["task_tiers"],
         agent_label_group=linear["agent_label_group"],
-        agent_labels=frozen["agent_labels"],
-        client_max_runs=frozen["client_max_runs"],
-        project_repos=frozen["project_repos"],
-        local_clones=frozen["local_clones"],
-        delegate_kind=kind,
-        delegates=MappingProxyType(delegates),
-        core=utils.freeze(cfg.get("core", {})),
+        roles=MappingProxyType(
+            {name: LinearRole(p["account"], p["key"]) for name, p in linear["roles"].items()}
+        ),
+        **frozen,
     )
 
 
@@ -283,7 +325,7 @@ def _check_ids(linear):
         )
 
 
-def _load_config(cfg, local):
+def _load_config(cfg, local, board):
     linear = cfg.setdefault("linear", {})
     if not isinstance(linear, dict):
         raise ConfigError("orchestrator/config.toml: [linear] must be a table")
@@ -291,30 +333,36 @@ def _load_config(cfg, local):
     if not isinstance(accounts, dict):
         raise ConfigError("orchestrator/config.toml: [linear.roles] must be a table")
     roles = _stage_roles(cfg, linear)
+    if extra := sorted(set(cfg) - TOP_KEYS):
+        raise ConfigError(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
+    if extra := sorted(set(linear) - LINEAR_KEYS):
+        raise ConfigError(f"orchestrator/config.toml: unknown keys in [linear]: {', '.join(extra)}")
+    if cfg["tracker"] is TrackerKind.LINEAR:
+        _linear(cfg, local)
+    _role_fields(roles)
+    _local_clones(cfg)
+    _work_dir(cfg, cfg["local_clones"], board=board)
+    _task_tiers(cfg)
+    _client_max_runs(cfg)
+
+
+def _linear(cfg, local):
     if missing := utils.unset(cfg, REQUIRED):
         raise ConfigError(
             f"orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} (orchestrator/config.toml's `# local:` lines)"
         )
+    linear = cfg["linear"]
     _check_ids(linear)
     hk = linear.get("harness_key")
     if not isinstance(hk, str) or not hk:
         raise ConfigError(
             f"orchestrator/config.toml: linear.harness_key must be a Keychain service name: {hk!r}"
         )
-    if extra := sorted(set(cfg) - TOP_KEYS):
-        raise ConfigError(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
-    if extra := sorted(set(linear) - LINEAR_KEYS):
-        raise ConfigError(f"orchestrator/config.toml: unknown keys in [linear]: {', '.join(extra)}")
     _linear_roles(linear)
     _manager_key(linear)
-    _role_fields(roles)
     _project_repos(linear)
-    _local_clones(cfg)
-    _work_dir(cfg, cfg["local_clones"])
     _task_labels(linear)
-    _task_tiers(cfg)
     _agent_labels(linear)
-    _client_max_runs(cfg)
 
 
 def _manager_key(linear):
@@ -528,29 +576,23 @@ def _runnable(cfg, work, delegate_cls, index):
 
 
 def _resolve_roles(cfg, overlay, delegate_cls, index):
-    out, accounts = {}, cfg["linear"]["roles"]
+    out = {}
     for name, p in cfg["roles"].items():
         try:
             run = delegate_cls.resolve(name, overlays=(overlay,))
             tasks = tuple(index[name])
         except delegate.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
-        out[name] = Role(
-            accounts[name]["account"],
-            accounts[name]["key"],
-            tasks,
-            p.get("max_runs", 1),
-            run,
-        )
+        out[name] = Role(tasks, p.get("max_runs", 1), run)
     return out
 
 
 def _runnable_inputs(cfg, roles):
     tasks = {t for r in roles.values() for t in r.tasks}
-    for table, entries in (
-        ("linear.task_labels", cfg["linear"]["task_labels"]),
-        ("task_tiers", cfg["task_tiers"]),
-    ):
+    tables = {"task_tiers": cfg["task_tiers"]}
+    if cfg["tracker"] is TrackerKind.LINEAR:
+        tables = {"linear.task_labels": cfg["linear"]["task_labels"], **tables}
+    for table, entries in tables.items():
         for task in entries:
             if task not in tasks:
                 raise ConfigError(

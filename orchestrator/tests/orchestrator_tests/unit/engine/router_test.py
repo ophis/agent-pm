@@ -18,6 +18,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import Outcome
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     inputs,
@@ -26,8 +27,14 @@ from agent_pm.orchestrator.engine import (
     runs,
 )
 from agent_pm.orchestrator.engine import gate as quota
-from agent_pm.orchestrator.engine.flow.types import IssueState
-from agent_pm.orchestrator.engine.types import LinearError, Spec, Unavailable
+from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
+from agent_pm.orchestrator.engine.types import (
+    LinearError,
+    Spec,
+    TrackerFileError,
+    TrackerKind,
+    Unavailable,
+)
 from agent_pm.orchestrator.trackers.linear import (
     client,
     linear_tracker,
@@ -238,8 +245,8 @@ def two():
 
 class TaskLabelsScenario(Base):
     ORPHAN = (
-        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, research, light-research). '
-        "Fix the label or the assignee, then move the issue back to Todo."
+        'Task "product-design" is not one of researcher\'s tasks (deep-research, research, light-research). '
+        "Fix the task or the assignee, then move the issue back to Todo."
     )
 
     def setUp(self):
@@ -1070,6 +1077,7 @@ class RouterEntry(OuterBase):
                 ["--issue", ID],
                 now=lambda: NOW,
                 config_path=self.config_path,
+                trackers=cli.TRACKERS,
                 gql=self.fake,
                 run=self.run_,
                 keychain=self.keychain,
@@ -1510,9 +1518,11 @@ class LabelClients(TickBase):
         found = fake.issues["TASK-1"]
         self.assertEqual(found["state"], "In Review")
         (comment,) = found["comments"]
-        self.assertIn('Agent label selected client "a"', comment)
-        self.assertIn("a: not installed", comment)
-        self.assertIn("Fix [orchestrator.linear.agent_labels] or the client", comment)
+        self.assertEqual(
+            comment,
+            'Client "a" chosen on the issue, but the run could not be built: a: not installed\n\n'
+            "Fix the issue's client or the client configuration, then move this issue back to Todo.",
+        )
         self.assertNotIn("hidden details", comment)
         self.assertEqual(self.start.launches, [])
 
@@ -1547,6 +1557,7 @@ class RouterArguments(Base):
             rc = router.main(
                 argv,
                 config_path=os.path.join(self.tmp, "absent.toml"),
+                trackers=cli.TRACKERS,
                 gql=None,
             )
         return rc, err.getvalue()
@@ -1653,6 +1664,7 @@ class RouterLocking(TickBase):
                 rc = router.main(
                     ["--brake", "researcher"],
                     config_path=self.config_path,
+                    trackers=cli.TRACKERS,
                     delegate_cls=self.cfg().delegate_cls,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
@@ -2141,6 +2153,7 @@ class RunBrake(Base):
             rc = router.main(
                 ["--brake", role],
                 config_path=self.config_path,
+                trackers=cli.TRACKERS,
                 delegate_cls=self.cfg().delegate_cls,
             )
             self.path = os.environ["PATH"]
@@ -2189,6 +2202,79 @@ class RunBrake(Base):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.brake("researcher"), (0, "five_hour=70% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["a"])
+
+
+LOCAL = CONFIG.replace('tracker = "linear"\n', 'tracker = "local"\n')
+
+
+class BrokenBoard:
+    """A tracker whose board holds an issue file it cannot parse."""
+
+    def assigned(self, state):
+        return []
+
+    def ready(self):
+        raise TrackerFileError("/board/researcher/ready/x.md", "no front matter")
+
+
+class LocalBoard(TickBase):
+    """Spec AC9 and AC11 in the router: the tracker comes from main's Connect map by kind."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ[config.BOARD_ENV] = os.path.join(self.tmp, "board")
+        self.write_config(LOCAL)
+        self.connects = []
+
+    def connect(self, gql, cfg, *, say):
+        self.connects.append(cfg.tracker)
+        return BrokenBoard()
+
+    def on_local(self, fake, *argv, **kw):
+        return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: self.connect}, **kw)
+
+    def test_local_refuses_non_dry(self):
+        for argv in ([], ["--issue", "TASK-1"], ["--tui", "--events", "e"]):
+            with self.subTest(argv=argv):
+                fake = self.fake(issue("TASK-1", "Todo", "researcher"))
+                self.assertEqual(self.on_local(fake, *argv), 2)
+                self.assertEqual(
+                    self.err, 'router.py: tracker "local" runs only --dry-run and --brake\n'
+                )
+                self.assertEqual((self.connects, fake.queries, self.start.launches), ([], [], []))
+
+    def test_brake_on_local(self):
+        self.api.usages = {"a": reading(70)}
+        self.assertEqual(self.on_local(self.fake(), "--brake", "researcher"), 0)
+        self.assertEqual((self.out, self.err), ("five_hour=70% weekly=10%\n", ""))
+        self.assertEqual(self.connects, [])
+
+    def test_tracker_file_error_exit_2(self):
+        for argv in (["--dry-run"], ["--dry-run", "--issue", "TASK-1"]):
+            with self.subTest(argv=argv):
+                self.connects = []
+                self.assertEqual(self.on_local(self.fake(), *argv), 2)
+                self.assertEqual(
+                    self.err.splitlines()[-1],
+                    "router.py: /board/researcher/ready/x.md: no front matter",
+                )
+                self.assertEqual(self.connects, [TrackerKind.LOCAL])
+
+    def test_local_dry_run_reads_no_linear_settings(self):
+        """Spec AC7: main hands cli's local Connect its transport raw; a dry run never calls it."""
+        ready = os.path.join(self.tmp, "board", "researcher", "ready")
+        os.makedirs(ready)
+        with open(os.path.join(ready, "LOC-1 One.md"), "w", encoding="utf-8") as f:
+            f.write(
+                '---\nid: LOC-1\ntitle: "One"\npriority: 0\ncreated: 2026-09-01T00:00:00+00:00\n'
+                "---\n### Description\nOne.\n"
+            )
+
+        def transport(*_, **__):
+            raise AssertionError("the transport was called")
+
+        self.assertEqual(self.tick(transport, "--dry-run"), 0, self.err)
+        self.assertIn("preview LOC-1 client=a client_source=default", self.said())
 
 
 class ScheduledUsageGates(TickBase):
@@ -2478,54 +2564,35 @@ class ScheduledUsageGates(TickBase):
 
 class TaskSelection(TaskLabelsScenario):
     def test_task_for(self):
-        outside = [
-            label("Urgent", STRAY, None),
-            label("Light Research", LIGHT, "00000000-0000-4000-8000-000000000003"),
-        ]
-        role_tasks = ["deep-research", "light-research"]
-        label_tasks = {
-            LIGHT: "light-research",
-            DEEP: "deep-research",
-            ORPHAN_LABEL: "product-design",
-        }
-        fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/config.local.toml's [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo."
-        cases = (
-            ([], (None, None)),
-            (outside, (None, None)),
-            ([label("Light Research", LIGHT)], ("light-research", None)),
-            ([label("Renamed in Linear", LIGHT)], ("light-research", None)),
-            (outside + [label("Light Research", LIGHT)], ("light-research", None)),
-            ([label("Whatever", DEEP)], ("deep-research", None)),
-            ([label("Light Research", STRAY)], (None, f'Task label "Light Research" {absent}')),
-            ([label("light-research", STRAY)], (None, f'Task label "light-research" {absent}')),
+        role_tasks = ("deep-research", "light-research")
+        error = "Several task labels (A, B); keep one, then move the issue back to Todo."
+        for pick, want in (
+            (Pick(), (None, None)),
+            (Pick("light-research"), ("light-research", None)),
+            (Pick(error=error), (None, error)),
+            (Pick("light-research", error), (None, error)),
             (
-                [label("Orphan", ORPHAN_LABEL)],
+                Pick("product-design"),
                 (
                     None,
-                    (
-                        f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}'
-                    ),
+                    'Task "product-design" is not one of researcher\'s tasks '
+                    "(deep-research, light-research). "
+                    "Fix the task or the assignee, then move the issue back to Todo.",
                 ),
             ),
-            (
-                [label("Light Research", LIGHT), outside[0], label("Deep Research", DEEP)],
-                (
-                    None,
-                    (
-                        "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo."
-                    ),
-                ),
-            ),
-        )
-        for labels, want in cases:
-            self.assertEqual(
-                router.task_for(
-                    linear_tracker.labels(labels), TASK_GROUP, "researcher", role_tasks, label_tasks
-                ),
-                want,
-                labels,
-            )
+        ):
+            with self.subTest(pick=pick):
+                self.assertEqual(router.task_for(pick, "researcher", role_tasks), want)
+
+    def test_client_for(self):
+        for pick, want in (
+            (Pick(), ("a", "default", None)),
+            (Pick("b"), ("b", "label", None)),
+            (Pick("a"), ("a", "label", None)),
+            (Pick(error="bad"), (None, "label", "bad")),
+        ):
+            with self.subTest(pick=pick):
+                self.assertEqual(router.client_for(pick, "a"), want)
 
     def test_fr7_invalid_label_goes_to_review(self):
         fake = FakeLinear(
@@ -2664,7 +2731,7 @@ class TaskSelection(TaskLabelsScenario):
             )
             self.assertTrue(
                 any(
-                    line.startswith("would comment TASK-1") and "Orphan" in line
+                    line.startswith("would comment TASK-1") and "product-design" in line
                     for line in self.said()
                 )
             )
@@ -3310,6 +3377,7 @@ class RunStartRecords(Base):
                     Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"), uuid=UUID
                 ),
                 role="researcher",
+                key=cfg.linear.roles["researcher"].key,
                 target=None,
                 now=lambda: datetime.fromisoformat(stamp),
             )
@@ -3322,7 +3390,7 @@ class RunStartRecords(Base):
         )
         claim = (
             f'"uuid": "{UUID}", "project": "{IDS[DR]}", "target": null, '
-            f'"key": "{cfg.roles["researcher"].key}", "task": "light-research"'
+            f'"key": "{cfg.linear.roles["researcher"].key}", "task": "light-research"'
         )
         with open(cfg.runs_log) as f:
             self.assertEqual(
@@ -3331,7 +3399,9 @@ class RunStartRecords(Base):
                 f'{{"ts": "{stamp}", "kind": "resume", {common}}}\n',
             )
         self.assertEqual([e.kind for e in runs.parse_log(cfg.runs_log)], ["start", "resume"])
-        self.assertEqual(runs.claim(cfg.runs_log, "TASK-1", "s1").key, cfg.roles["researcher"].key)
+        self.assertEqual(
+            runs.claim(cfg.runs_log, "TASK-1", "s1").key, cfg.linear.roles["researcher"].key
+        )
 
 
 class ExplicitIssueRuns(TickBase):
@@ -4503,8 +4573,8 @@ class ClaimRechecks(Base):
             (
                 "In Review",
                 [
-                    'Task label "Light Research" is not one of pm\'s tasks (product-design). '
-                    "Fix the label or the assignee, then move the issue back to Todo."
+                    'Task "light-research" is not one of pm\'s tasks (product-design). '
+                    "Fix the task or the assignee, then move the issue back to Todo."
                 ],
             ),
         )
@@ -4538,6 +4608,54 @@ class ClaimRechecks(Base):
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
         )
         self.assertEqual(a.project, IDS[PD])
+
+
+class Picks(Base):
+    """AC8: the recheck's task and client picks choose the run's task and client."""
+
+    def test_claim_picks_task_and_client(self):
+        self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
+        for labels, want in (
+            ([], (None, "researcher", "a", "default")),
+            (
+                [label("Light", LIGHT), label("B", AGENT_B, AGENT_GROUP)],
+                ("light-research", "researcher", "b", "label"),
+            ),
+        ):
+            with self.subTest(labels=labels):
+                self.assertTrue(
+                    self.claim(self.fake(issue("TASK-1", "Todo", "researcher", labels=labels)))
+                )
+                self.assertEqual(self.taken[1:], want)
+
+    def test_role_task_error_text(self):
+        self.write_config(HUMANS + CONFIG + TASK_LABELS)
+        fake = self.fake(issue("TASK-1", "Todo", "pm", labels=[label("Light", LIGHT)]))
+        self.assertEqual(self.claim(fake), "")
+        self.assertIn("claim-skip TASK-1 to=in_review reason=bad task label", self.said())
+        self.assertEqual(
+            fake.issues["TASK-1"]["comments"],
+            [
+                'Task "light-research" is not one of pm\'s tasks (product-design). '
+                "Fix the task or the assignee, then move the issue back to Todo."
+            ],
+        )
+
+
+class RoleKeys(Base):
+    """A role with no key needs no Keychain item; pm's key here is empty."""
+
+    def cfg(self):
+        cfg = super().cfg()
+        roles = {**cfg.linear.roles, "pm": replace(cfg.linear.roles["pm"], key="")}
+        return replace(cfg, linear=replace(cfg.linear, roles=roles))
+
+    def test_the_keychain_is_checked_only_for_a_role_key(self):
+        key = self.cfg().linear.roles["researcher"].key
+        self.missing = {key, ""}
+        self.assertEqual(self.claim(two()), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
+        self.assertEqual(self.keychain_calls, [key])
+        self.assertIn(f"claim-skip TASK-1 reason=no Keychain item for role key {key}", self.said())
 
 
 class LiveLimits(Base):
@@ -5090,7 +5208,7 @@ class RecoverWriteBack(TickBase):
         super().setUp()
         self.moved("TASK-1", 61)
         start = json.loads(self.row("start", "TASK-1", "a", "researcher", minutes=60))
-        key = self.cfg().roles["researcher"].key
+        key = self.cfg().linear.roles["researcher"].key
         self.lines.append(
             json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
         )
@@ -5138,6 +5256,18 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_local_board_replays_nothing(self):
+        self.ended()
+        self.write_runs()
+        cfg = replace(self.cfg(), tracker=TrackerKind.LOCAL, linear=None, board=self.tmp)
+        sid = self.sid("a")
+        self.assertIsNotNone(router.LinearRun.attach("TASK-1", cfg=cfg, sid=sid).delegate.outcome())
+        board = router.Board(
+            None, [], cfg, now=NOW, dry=True, keychain=None, connect=lambda *_, **__: None
+        )
+        self.assertIsNone(board.replay({"identifier": "TASK-1"}, sid))
+        self.assertEqual(self.steps(), ["comment"])
 
     def test_a_dry_run_writes_nothing(self):
         self.ended()

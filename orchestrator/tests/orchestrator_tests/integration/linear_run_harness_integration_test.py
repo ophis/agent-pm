@@ -5,7 +5,7 @@ import os
 from agent_pm.delegate import Delegate
 from agent_pm.orchestrator.engine import runs
 from agent_pm.orchestrator.engine.linear_run import LinearRun
-from agent_pm.orchestrator.engine.types import Config, Docs
+from agent_pm.orchestrator.engine.types import Config, Docs, LinearSettings, TrackerKind
 from agent_pm.utils import load_class
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
@@ -24,7 +24,7 @@ class HarnessProvider(HARNESS_DELEGATE):
 class HarnessRun(HarnessCase):
     def setUp(self):
         super().setUp()
-        self.cfg = Config(
+        linear = LinearSettings(
             team="",
             states={},
             human_members=(),
@@ -32,13 +32,19 @@ class HarnessRun(HarnessCase):
             manager_key="",
             task_label_group="",
             task_labels={},
-            task_tiers={},
             agent_label_group="",
             agent_labels={},
+            project_repos={},
+            roles={},
+        )
+        self.cfg = Config(
+            task_tiers={},
             client_max_runs={},
             roles={},
-            project_repos={},
             local_clones={},
+            tracker=TrackerKind.LINEAR,
+            linear=linear,
+            board=None,
             work_dir=os.path.join(self.home, "pipeline"),
             docs=Docs("", "", {}),
             stages={},

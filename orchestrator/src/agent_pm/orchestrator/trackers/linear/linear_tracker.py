@@ -6,6 +6,7 @@ import functools
 import re
 from typing import TypeVar
 
+from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
@@ -19,12 +20,12 @@ from agent_pm.orchestrator.engine.flow.types import (
     Group,
     Issue,
     IssueState,
-    Label,
     Link,
     Linked,
     Move,
     Note,
     Origin,
+    Pick,
     Recheck,
     Ref,
     Snapshot,
@@ -33,7 +34,7 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.engine.types import UUID_RE, IssueError, LinearError, State
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.ops import DONE, HISTORY, call, client_id, last_move
-from agent_pm.utils import one_line, parse_time
+from agent_pm.utils import LOCAL, one_line, parse_time
 
 T = TypeVar("T")
 
@@ -166,8 +167,23 @@ def q_issues(fields=""):
     )
 
 
-def labels(nodes):
-    return tuple(Label(n["id"], n["name"], (n["parent"] or {}).get("id")) for n in nodes)
+def pick(nodes, group, chosen, kind):
+    """The choice of the issue's labels in group (none when group is empty): chosen maps a label id
+    to its name; kind names the labels, "task" or "Agent"."""
+    found = [n for n in nodes if group and (n["parent"] or {}).get("id") == group]
+    if not found:
+        return Pick()
+    if len(found) > 1:
+        names = ", ".join(n["name"] for n in found)
+        return Pick(
+            error=f"Several {kind} labels ({names}); keep one, then move the issue back to Todo."
+        )
+    if (name := chosen.get(found[0]["id"])) is None:
+        return Pick(
+            error=f'{kind[0].upper()}{kind[1:]} label "{found[0]["name"]}" is not in {LOCAL}\'s '
+            f"[orchestrator.linear.{kind.lower()}_labels]. Fix the label, then move the issue back to Todo."
+        )
+    return Pick(name)
 
 
 def blockers(issue):
@@ -220,10 +236,10 @@ def _move_origin(node, selves) -> Origin:
     return _origin(node["actor"], selves)
 
 
-def team_and_roles(gql, cfg):
+def team_and_roles(gql, linear):
     """The team (states, finished) and the role accounts' user ids promote and prune build their
-    tracker from: the team read first."""
-    return ops.team(gql, cfg), ops.role_ids(gql, cfg.roles)
+    tracker from, by the LinearSettings linear: the team read first."""
+    return ops.team(gql, linear), ops.role_ids(gql, linear.roles)
 
 
 class LinearTracker(Tracker):
@@ -234,7 +250,8 @@ class LinearTracker(Tracker):
     project; a note's account its user's email. Origin self: the harness account (isMe: router,
     promote and the run reader query with linear.harness_key), a role account or Linear automation;
     other: any other user. A comment with no user (an integration's, such as GitHub's) is not
-    returned."""
+    returned. task_group, agent_group: the task and Agent label groups; label_tasks,
+    label_clients: {label id: task or client}, which recheck's picks read."""
 
     def __init__(
         self,
@@ -249,6 +266,10 @@ class LinearTracker(Tracker):
         say=_quiet,
         service=None,
         timeout=None,
+        task_group=None,
+        label_tasks=None,
+        agent_group=None,
+        label_clients=None,
     ):
         if service is not None:
             bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
@@ -256,6 +277,8 @@ class LinearTracker(Tracker):
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
         self.finished_ids, self.humans, self.selves = finished, humans, selves
         self.say, self.hist = say, {}
+        self.task_group, self.label_tasks = task_group, label_tasks or {}
+        self.agent_group, self.label_clients = agent_group, label_clients or {}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
         self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
@@ -268,22 +291,29 @@ class LinearTracker(Tracker):
 
     @classmethod
     def connect(cls, gql, cfg, *, say):
-        """Checks the team and task label group, then reads the role accounts."""
-        found = ops.team(gql, cfg)
-        ops.task_group(gql, cfg)
+        """Checks the team and task label group, then reads the role accounts; keeps the task and
+        Agent label maps. Calls gql as the harness_key service."""
+        linear = config.linear_settings(cfg, "router")
+        gql = functools.partial(gql, service=linear.harness_key)
+        found = ops.team(gql, linear)
+        ops.task_group(gql, linear)
         return cls(
             gql,
             states=found.states,
             team_id=found.id,
             finished=found.finished,
-            roles=ops.role_ids(gql, cfg.roles),
-            humans=cfg.human_members,
-            selves=_selves(cfg.roles),
+            roles=ops.role_ids(gql, linear.roles),
+            humans=linear.human_members,
+            selves=_selves(linear.roles),
             say=say,
+            task_group=linear.task_label_group,
+            label_tasks={i: task for task, i in linear.task_labels.items()},
+            agent_group=linear.agent_label_group,
+            label_clients={i: client for client, i in linear.agent_labels.items()},
         )
 
     @classmethod
-    def of_team(cls, gql, cfg, team, roles):
+    def of_team(cls, gql, linear, team, roles):
         """From team_and_roles' reads."""
         return cls(
             gql,
@@ -291,14 +321,20 @@ class LinearTracker(Tracker):
             team_id=team.id,
             finished=team.finished,
             roles=roles,
-            humans=cfg.human_members,
-            selves=_selves(cfg.roles),
+            humans=linear.human_members,
+            selves=_selves(linear.roles),
         )
 
     @classmethod
-    def reader(cls, gql, cfg):
-        """A run's issue read."""
-        return cls(gql, states=cfg.states, team_id=cfg.team, selves=_selves(cfg.roles))
+    def reader(cls, gql, linear):
+        """A run's issue read, as the harness_key service."""
+        return cls(
+            gql,
+            states=linear.states,
+            team_id=linear.team,
+            selves=_selves(linear.roles),
+            service=linear.harness_key,
+        )
 
     def role(self, issue):
         return _need("roles", self.roles)[issue["assignee"]["id"]]
@@ -334,10 +370,20 @@ class LinearTracker(Tracker):
         return [(i, tuple(blockers(i))) for i in issues]
 
     def recheck(self, key):
-        """ready: in the configured Todo state id, whatever other key shares it."""
+        """ready: in the configured Todo state id, whatever other key shares it; refused without
+        a project."""
         found = self.gql(Q_RECHECK, i=key)["issue"]
         ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
-        return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
+        nodes = found["labels"]["nodes"]
+        return Recheck(
+            ready,
+            role=_need("roles", self.roles).get((found["assignee"] or {}).get("id")),
+            refused=None if found["project"] else "no project",
+            assignee=found["assignee"],
+            home=found["project"],
+            task=pick(nodes, self.task_group, self.label_tasks, "task"),
+            client=pick(nodes, self.agent_group, self.label_clients, "Agent"),
+        )
 
     def moved_at(self, key, state, *, by=None):
         """History read once per key."""

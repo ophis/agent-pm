@@ -1,4 +1,4 @@
-"""The Linear orchestrator's command entry point."""
+"""The orchestrator's command entry point."""
 
 import argparse
 import contextlib
@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import UTC, datetime
 from functools import partial
+from types import MappingProxyType
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DelegateEvent, SessionError
@@ -17,14 +18,16 @@ from agent_pm.orchestrator.engine import (
     runs,
     writeback,
 )
-from agent_pm.orchestrator.engine.config import load
+from agent_pm.orchestrator.engine.config import linear_settings, load
 from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
-from agent_pm.orchestrator.engine.types import ConfigError
+from agent_pm.orchestrator.engine.types import ConfigError, TrackerKind
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
 )
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from agent_pm.utils import (
     SID_ENV,
     Record,
@@ -65,6 +68,7 @@ def _query_help(command):
             "--input is rejected: put pipeline answers on the issue board, then resume.\n"
             "Run outside an agent session. AGENT_PM_SID, if supplied, must match\n"
             "the recorded session and is read once and removed.\n"
+            'Needs [orchestrator] tracker = "linear"; a local board refuses it.\n'
             "For a new board-driven attempt: agent-pm-orchestrator router --help"
         ),
         "content": "To inspect liveness and outcome: agent-pm-orchestrator status TASK-1",
@@ -76,7 +80,7 @@ def _query_help(command):
     )
     return purposes[command], (
         "Prerequisites and effects:\n"
-        "  Requires configured Linear/Delegate settings and an existing recorded run.\n"
+        "  Requires configured tracker/Delegate settings and an existing recorded run.\n"
         "  ISSUE selects its latest run; a Record also verifies its recorded session.\n"
         "  Explicit ISSUE arguments leave stdin unread; otherwise read one Record\n"
         "  JSON line per stdin line. Session names and workdirs are not issue keys.\n"
@@ -97,7 +101,10 @@ def main(argv=None):
     arguments = sys.argv[1:] if argv is None else argv
     # each parses its own options and --help
     entries = {
-        "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
+        "router": (
+            partial(router.main, trackers=TRACKERS),
+            "claim or resume an issue's agent run: a tick, --issue or --brake",
+        ),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
         "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
         "issue": (
@@ -116,16 +123,20 @@ def main(argv=None):
         epilog=(
             "Prerequisites and effects:\n"
             "  Operational commands require configured orchestrator and Delegate\n"
-            "  settings. Board access uses the configured linear.harness_key Keychain\n"
-            "  service (the issue commands: linear.manager_key); role keys identify the\n"
-            "  accounts used for issue work. Python 3.11+ is needed.\n"
+            '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
+            "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
+            '  only router --dry-run and --brake run yet; "linear" reaches Linear through\n'
+            "  the linear.harness_key Keychain service (the issue commands:\n"
+            "  linear.manager_key), role keys identifying the accounts used for issue\n"
+            "  work. Python 3.11+ is needed.\n"
             "  Router launches need the configured client/Delegate and its Host tools.\n"
             "  Router/promote/prune prepend AGENT_PM_PATH, then this installation's bin,\n"
-            "  then default executable directories. Logs: work_dir/logs/orchestrator.jsonl;\n"
-            "  run identities: work_dir/logs/runs.jsonl. Help needs no credentials/services.\n"
+            "  then default executable directories. Logs: STATE/logs/orchestrator.jsonl;\n"
+            "  run identities: STATE/logs/runs.jsonl; STATE is work_dir on Linear and\n"
+            "  <board>/.state on a local board. Help needs no credentials/services.\n"
             "  Query ISSUE values are identifiers such as TASK-1, not session names.\n"
             "  Omit them to read Records from stdin; Record schema: agent-pm-session --help\n\n"
-            "Example (configured Linear access and TASK-1):\n"
+            "Example (a configured tracker holding TASK-1):\n"
             "  agent-pm-orchestrator router --issue TASK-1 --dry-run\n"
             "  Prints a plan without claiming or launching the issue.\n\n"
             "Recovery and next help:\n"
@@ -162,11 +173,12 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Prerequisites and effects:\n"
-            "  Requires configured Linear access, the run's existing start row and matching\n"
-            "  issue/workdir/session identity. Read exactly one DelegateEvent JSON line\n"
-            "  from stdin through EOF, not a Record or an event stream. The Delegate harness\n"
-            "  supplies this callback; it may post comments, publish outcomes, move issue\n"
-            "  state and update local delivery records. No normal stdout output.\n"
+            '  Requires tracker = "linear", configured Linear access, the run\'s existing\n'
+            "  start row and matching issue/workdir/session identity. Read exactly one\n"
+            "  DelegateEvent JSON line from stdin through EOF, not a Record or an event\n"
+            "  stream. The Delegate harness supplies this callback; it may post comments,\n"
+            "  publish outcomes, move issue state and update local delivery records. No\n"
+            "  normal stdout output.\n"
             "  --issue and --workdir are required; repeated values use the last value.\n"
             "  Exit 0: delivered/already handled; 1: delivery incomplete; 2: invalid event,\n"
             "  identity or configuration. Errors go to stderr. Let the harness retry an\n"
@@ -208,11 +220,20 @@ def main(argv=None):
                 _log_ignored(args.issue, ignored)
             return 2
         event_log.use_logs(cfg.logs_dir)
-        if args.command == "writeback":
+        if args.command in {"writeback", "resume"}:
             try:
-                return _writeback(cfg, args.issue, args.workdir)
-            finally:
-                _log_ignored(args.issue, ignored)
+                linear = linear_settings(cfg, args.command)
+            except ConfigError as refused:
+                print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
+                if args.command == "writeback":
+                    _refused(args.issue, refused)
+                    _log_ignored(args.issue, ignored)
+                return 2
+            if args.command == "writeback":
+                try:
+                    return _writeback(cfg, linear, args.issue, args.workdir)
+                finally:
+                    _log_ignored(args.issue, ignored)
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
@@ -270,6 +291,17 @@ def main(argv=None):
     )
 
 
+def _local_board(transport, cfg, *, say):
+    """The Connect for tracker = "local": a board read needs no transport and logs nothing."""
+    del transport, say
+    return LocalTracker(cfg.board, cfg.roles)
+
+
+TRACKERS = MappingProxyType(
+    {TrackerKind.LINEAR: LinearTracker.connect, TrackerKind.LOCAL: _local_board}
+)
+
+
 def _ignored(ignored, error):
     print(f"agent-pm-orchestrator writeback: ignored: {error}", file=sys.stderr)
     ignored.append(error)
@@ -281,13 +313,15 @@ def _log_ignored(issue, ignored):
     ignored.clear()
 
 
-def _writeback(cfg, issue, workdir):
+def _writeback(cfg, linear, issue, workdir):
     lines = sys.stdin.read().splitlines()
     try:
         if len(lines) != 1:
             raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
         event = DelegateEvent.parse(lines[0])
-        return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
+        return (
+            0 if writeback.deliver(cfg, linear, issue, workdir, event, gql=client.linear_gql) else 1
+        )
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)
         _refused(issue, error)

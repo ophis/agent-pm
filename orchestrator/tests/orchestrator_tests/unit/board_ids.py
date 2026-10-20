@@ -26,10 +26,11 @@ TYPES = {
 }
 FINISHED = frozenset({STATES["done"], STATES["canceled"], DUPLICATE})
 TASK_GROUP = "00000000-0000-4000-8000-000000000002"
-# Dotted keys and inline tables: fixtures may append top-level keys (a Linear one as linear.<key>)
-# or tables ([linear.<table>] included) after it.
+# The Linear tracker, then dotted keys and inline tables: fixtures may append top-level keys (a
+# Linear one as linear.<key>) or tables ([linear.<table>] included) after it.
 HEADER = (
-    'linear.team = "{}"\nlinear.harness_key = "linear-api-key"\nlinear.states = {{ {} }}\n'.format(
+    'tracker = "linear"\n'
+    + 'linear.team = "{}"\nlinear.harness_key = "linear-api-key"\nlinear.states = {{ {} }}\n'.format(
         TEAM, ", ".join(f'{k} = "{v}"' for k, v in STATES.items())
     )
     + f'linear.task_label_group = "{TASK_GROUP}"\n'

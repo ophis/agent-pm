@@ -10,6 +10,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.orchestrator import cli
+from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.types import GraphQLErrors, LinearError, Unavailable
 from agent_pm.orchestrator.trackers.linear import client, issue
 from orchestrator_tests.case import Case
@@ -932,6 +933,22 @@ class LabelSwap(IssueCase):
 
 
 class Failures(IssueCase):
+    def test_a_local_board_is_refused_after_config(self):
+        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
+        with open(self.config, "w", encoding="utf-8") as f:
+            f.write(tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+        gql = Gql(None)
+        code, out, err = self.run_main(["read", "TASK-2"], gql)
+        self.assertEqual(
+            (code, out, err),
+            (
+                2,
+                b"",
+                'agent-pm-orchestrator issue: issue needs [orchestrator] tracker = "linear"\n',
+            ),
+        )
+        self.assertEqual(gql.calls, [])
+
     def test_exit_codes_and_stderr(self):
         cases = (
             (["read", "task-2"], Gql(None), 2, "task-2"),

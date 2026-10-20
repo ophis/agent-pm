@@ -342,7 +342,7 @@ class Refusals(Parity):
         self.tick()
         self.assert_nothing_started()
         for ident, said in (
-            (ID, 'Task label "Light Research" is not one of engineer\'s tasks ('),
+            (ID, 'Task "light-research" is not one of engineer\'s tasks ('),
             (OTHER, 'Task label "Mystery" is not in '),
         ):
             with self.subTest(ident):

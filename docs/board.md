@@ -1,14 +1,17 @@
-# Linear board
+# Board
 
-The Linear orchestrator runs the core from a Linear board: set it up once, then work through issue states.
+The orchestrator runs the core from a board, chosen by `[orchestrator] tracker`: a Linear board (`tracker = "linear"`; set it up once, then work through issue states) or a [local board](#local-board) of Markdown files (the default).
 
 ## Setup
 
 Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator runs this checkout's scripts, not the plugin. `<work_dir>` is `orchestrator.work_dir`.
 
-1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. A required key left `""` stops every `agent-pm-orchestrator` command.
+1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. Set `tracker = "linear"` under `[orchestrator]`: unset, the orchestrator reads a [local board](#local-board) instead. The `[orchestrator.linear]` keys are needed only with `tracker = "linear"`; there, a required key left `""` stops every `agent-pm-orchestrator` command.
 
    ```toml
+   [orchestrator]                         # the tracker
+   tracker = "linear"
+
    [delegate.roles.engineer]              # run settings
    tier = 2
 
@@ -169,3 +172,70 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
 The usage gate lets an OpenCode run start while the host's Ollama answers on `127.0.0.1:<ollama_port>`, else logs `usage-skip` with reason `usage unknown`. Every tier maps to the same model by default, so `[task_tiers]` changes nothing for OpenCode unless `[session.clients.opencode.tiers]` maps tiers to different models.
+
+## Local board
+
+`[orchestrator] tracker` picks where issues live: `"local"` (the default) a local board, `"linear"` Linear (everything above). A local board is a directory of Markdown issue files, `$AGENT_PM_BOARD_DIR` (an absolute or `~` path), default `~/.agent-pm/board/`; no config key names it. One directory is one board: boards never sync, and a machine may keep several, each command reading the one its `$AGENT_PM_BOARD_DIR` names.
+
+Only `router --dry-run` reads a local board yet: it lists the queue and its blockers by the Linear board's rules ([Order work](#using-the-board), [Task labels](#task-labels), [Agent label](#agent-label)) and writes nothing. `router --brake`, `status`, `show`, `hide`, `close`, `attach-command` and `content` work too. A router tick or `--issue` without `--dry-run` exits 2 with `router.py: tracker "local" runs only --dry-run and --brake`; `promote`, `prune`, `issue`, `writeback` and `resume` exit 2 with `<command> needs [orchestrator] tracker = "linear"`.
+
+```text
+<board>/
+├── .next-id                 the next issue number, decimal, one line
+├── .lock                    the board lock: programs take it to write; reads take none
+├── .state/                  the board's runtime state, in place of <work_dir>: logs/ (runs.jsonl, router.lock,
+│                            orchestrator.jsonl) and work/<ID>/ (State root)
+├── unassigned/<state>/      assigned to no one: never listed
+├── me/<state>/              assigned to you: never listed
+├── <role>/<state>/          assigned to a role, one dir per [orchestrator.roles.<role>] role
+└── archive/                 archived issue files, flat: archive/<ID> <title>.md
+```
+
+`<state>` is one of `backlog`, `ready`, `running`, `review`, `approved`, `done`, `canceled`. The directory an issue file sits in is its assignee and state: no front-matter key holds either, so moving a file from `review/` to `approved/` approves it, back to `ready/` revises it. Only role dirs' `ready/` issues are queued and only their `running/` ones recovered; `unassigned/`, `me/`, a dir named after no configured role, `archive/` and `.state/` are never listed. An archived issue's state is its last History entry's. Files not ending `.md`, and entries starting with `.` (an atomic write's temp file), are skipped.
+
+An issue file, e.g. `engineer/review/LOC-12 Session registry.md`:
+
+```markdown
+---
+id: LOC-12
+title: "ENG: Session registry"
+task: light-build
+client: claude
+priority: 2
+created: 2026-10-19T14:02:00-04:00
+blocked_by: [LOC-10]
+related: [LOC-7]
+parent: LOC-5
+links:
+  - title: Session registry PRD
+    url: https://github.com/<owner>/<docs>/blob/main/Product%20Design/session-registry.md
+---
+
+### Description
+Repo: <owner>/<name>
+Add a session registry.
+
+### Comments
+
+#### other · 2026-10-19 14:05
+Read LOC-7 first.
+
+#### self · 2026-10-19 16:10 <!-- id=c3 key=result:ab12 -->
+Build ready: https://github.com/<owner>/<name>/pull/1
+
+###
+Approved; hand it to the next stage.
+
+### History
+- 2026-10-19 14:02 ready other
+- 2026-10-19 14:30 running self
+- 2026-10-19 16:10 review self
+```
+
+- **Front matter:** one `key: value` line each, at most once. `id` (required) is the issue's identifier, e.g. `LOC-12`; the file name is only for you, so renaming a file changes nothing. `title` (required): plain text or a JSON string. `created` (required): ISO 8601 with an offset or `Z`. `priority`: 0 none (the default), 1 urgent … 4 low. `task` and `client` choose the run's task and client as the Tasks and Agent labels do: unset, the role picks its task and runs its default client; a task not among the role's bounces the issue as a bad Tasks label does. `blocked_by` and `related`: `[ID, …]`, `[]` for none. `parent`: one id. `links`: `  - title:` / `    url:` pairs. An empty value means none.
+- **Blockers:** a ready issue waits while a `blocked_by` issue is not in `done/` or `canceled/` (an archived one by its last History state); an id with no issue file blocks too.
+- **Sections:** `### Description`, `### Comments`, `### History`, each optional, at most once, in that order; nothing but blank lines before the first.
+- **Comments:** each starts with `#### <self|other> · YYYY-MM-DD HH:MM`; `self` is the engine (its hidden `id` and `key` let it edit a comment in place and never post one twice), `other` a person. To comment, add a line `###` at the end of Comments and your text below it: it counts as yours (`other`) at the file's modification time.
+- **History:** one `- YYYY-MM-DD HH:MM <state> <self|other>` line per move, `self` the engine's. A file whose directory differs from its last History entry (or that has none) was moved by a person: it counts as an `other` move there at the file's modification time, as when a person moves a Linear issue. Times without an offset are local time.
+- **Errors:** a board file that cannot be read stops `router --dry-run` before any pick with `router.py: <absolute path>: <reason>`, exit 2, e.g. `no front matter`, `unknown key 'owner'`, `bad priority '7'`, `unknown state dir 'doing'`, `duplicate id LOC-12, also in <path>`. No board directory: `router.py: <board>: no such board directory`; one holding no assignee dir: `router.py: <board>: empty board: no assignee directory`.
+- **Writes:** a program takes `.lock` before it changes the board, and writes a file to a temp file beside it, then replaces it whole; a new issue's number comes from `.next-id`, under the lock. Nothing writes the board yet.

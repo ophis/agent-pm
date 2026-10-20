@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import promote, prune, router, runs
+from agent_pm.orchestrator.engine import config, promote, prune, router, runs
+from agent_pm.orchestrator.engine.types import TrackerKind
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
@@ -23,6 +25,10 @@ from utils.tests.cli_help import examples, parse_only
 
 
 class Commands(Case):
+    def test_trackers_cover_every_kind(self):
+        self.assertEqual(set(cli.TRACKERS), set(TrackerKind))
+        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR], LinearTracker.connect)
+
     def test_prune_prose_fits_eighty_columns(self):
         for line in prune.HELP.splitlines():
             if not line.strip().startswith("agent-pm-"):
@@ -228,7 +234,7 @@ class Commands(Case):
         with redirect_stdout(output), self.assertRaises(SystemExit):
             cli.main(["--help"])
         self.assertIn(
-            "Board access uses the configured linear.harness_key Keychain service (the issue"
+            "reaches Linear through the linear.harness_key Keychain service (the issue"
             " commands: linear.manager_key)",
             " ".join(output.getvalue().split()),
         )
@@ -277,6 +283,8 @@ class Commands(Case):
 
 class InsideAnAgentSession(Case):
     def test_resume_exits_2_before_config_and_status_still_runs(self):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write('[orchestrator]\ntracker = "linear"\n')
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
             for command, first in (
                 ("resume", "agent-pm-orchestrator: refused inside an agent session"),
@@ -580,6 +588,59 @@ class Queries(RunCase):
         self.assertEqual(result, 2)
         self.assertEqual(Status.parse(output).name, "TASK-1")
         self.assertEqual(errors, "agent-pm-orchestrator: TASK-8: TASK-8: no recorded run\n")
+
+
+class OnALocalBoard(RunCase):
+    """Spec AC11 in cli: router reaches the local board; writeback and resume need Linear."""
+
+    def configure(self, default="fake"):
+        self.board = os.path.join(os.path.realpath(self.home), "board")
+        os.environ[config.BOARD_ENV] = self.board
+        super().configure(default)
+        local = Path(self.agent_pm, "config.local.toml")
+        text = local.read_text(encoding="utf-8")
+        local.write_text(text.replace('tracker = "linear"', 'tracker = "local"'), encoding="utf-8")
+        self.cfg = config.load()
+
+    def test_local_refuses_linear_commands(self):
+        self.assertEqual(self.cfg.tracker, "local")
+        for command, argv in (
+            ("writeback", ["--issue", "TASK-1", "--workdir", "/w"]),
+            ("resume", ["TASK-1"]),
+        ):
+            with self.subTest(command):
+                refused = f'{command} needs [orchestrator] tracker = "linear"'
+                result, output, errors = _call([command, *argv], stdin="{}\n")
+                self.assertEqual(
+                    (result, output, errors), (2, "", f"agent-pm-orchestrator: {refused}\n")
+                )
+        self.assertEqual(
+            [{k: v for k, v in row.items() if k != "ts"} for row in logged(self.cfg.logs_dir)],
+            [
+                {
+                    "src": "writeback",
+                    "kind": "refused",
+                    "issue": "TASK-1",
+                    "reason": 'writeback needs [orchestrator] tracker = "linear"',
+                    "exit": 2,
+                }
+            ],
+        )
+        self.assertNotIn("needs [orchestrator]", _call(["status", "TASK-1"])[2])
+
+    def test_router_dry_run_reads_the_local_board(self):
+        missing = _call(["router", "--dry-run"])
+        self.assertEqual(missing[0], 2)
+        self.assertEqual(
+            missing[2].splitlines()[-1], f"router.py: {self.board}: no such board directory"
+        )
+        os.makedirs(self.board)
+        empty = _call(["router", "--dry-run"])
+        self.assertEqual(empty[0], 2)
+        self.assertEqual(
+            empty[2].splitlines()[-1],
+            f"router.py: {self.board}: empty board: no assignee directory",
+        )
 
 
 class WritebackUsage(RunCase):

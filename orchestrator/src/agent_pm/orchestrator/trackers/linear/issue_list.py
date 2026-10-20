@@ -15,22 +15,22 @@ _SELECTION = issue_page.connection(
 Q_LIST = f"query($f: IssueFilter, $a: Boolean, $first: Int!, $after: String) {{ {_SELECTION} }}"
 
 
-def source(gql, args, cfg):
+def source(gql, args, linear):
     """The source of the configured team's issues that args' filters select."""
-    team = cfg.team
+    team = linear.team
     match: list[dict] = [{"team": {"id": {"eq": team}}}]
     if args.query:
         text = {"containsIgnoreCase": args.query}
         match.append({"or": [{"title": text}, {"description": text}]})
     if args.state is not None:
-        match.append({"state": _id(issue_names.state_id(cfg, args.state))})
+        match.append({"state": _id(issue_names.state_id(linear, args.state))})
     if args.role is not None:
-        who = issue_names.assignee(gql, cfg, args.role)
+        who = issue_names.assignee(gql, linear, args.role)
         match.append({"assignee": {"null": True} if who is None else _id(who)})
     if args.task is not None:
-        match.append({"labels": {"some": _id(issue_names.task_label(cfg, args.task))}})
+        match.append({"labels": {"some": _id(issue_names.task_label(linear, args.task))}})
     if args.client is not None:
-        match.append({"labels": {"some": _id(issue_names.client_label(cfg, args.client))}})
+        match.append({"labels": {"some": _id(issue_names.client_label(linear, args.client))}})
     if args.priority is not None:
         match.append({"priority": {"eq": issue_names.PRIORITIES[args.priority]}})
     if args.label is not None:

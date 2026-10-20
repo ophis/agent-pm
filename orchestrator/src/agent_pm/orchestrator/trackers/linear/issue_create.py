@@ -33,18 +33,18 @@ Q_VIEWER = "query { viewer { id name } }"
 DIRECTIONS = (("--blocks", "blocks"), ("--blocked-by", "blocked_by"))
 
 
-def plan(gql, args, cfg, body):
+def plan(gql, args, linear, body):
     """args resolved as (IssueCreateInput, [(option, {id, identifier}) of each relation], viewer);
     IssueError for any value that does not resolve, before anything is written; abstract names
     first.
     """
-    team = cfg.team
+    team = linear.team
     fields = {"teamId": team, "title": args.title, "description": body}
-    fields["stateId"] = issue_names.state_id(cfg, args.state or IssueState.BACKLOG)
-    labels = [] if args.task is None else [issue_names.task_label(cfg, args.task)]
+    fields["stateId"] = issue_names.state_id(linear, args.state or IssueState.BACKLOG)
+    labels = [] if args.task is None else [issue_names.task_label(linear, args.task)]
     if args.client is not None:
-        labels.append(issue_names.client_label(cfg, args.client))
-    who = None if args.role is None else issue_names.assignee(gql, cfg, args.role)
+        labels.append(issue_names.client_label(linear, args.client))
+    who = None if args.role is None else issue_names.assignee(gql, linear, args.role)
     labels += (issue_refs.label(gql, team, value)["id"] for value in dict.fromkeys(args.label))
     if labels:
         fields["labelIds"] = list(dict.fromkeys(labels))

@@ -1,4 +1,4 @@
-"""Abstract issue states, a Tracker's reads and a workflow's per-role Stage."""
+"""Tracker and workflow types."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,8 +31,8 @@ class Priority(StrEnum):
 
 @dataclass(frozen=True)
 class Snapshot:
-    """state None: outside the machine; since: when it finished, else its latest move into its
-    tracker state; None: unknown."""
+    """state None: outside the machine; since: finished at, else last moved into its tracker state;
+    None: unknown."""
 
     state: IssueState | None
     since: datetime | None
@@ -89,7 +89,7 @@ class Ref:
 
 @dataclass(frozen=True)
 class Approved:
-    """Times: tracker text, kept verbatim; sources omit run records."""
+    """Times: tracker text, verbatim; sources omit run records."""
 
     key: str
     ident: str
@@ -130,23 +130,31 @@ class Detail:
 
 
 @dataclass(frozen=True)
-class Label:
-    key: str
-    name: str
-    group: str | None
+class Pick:
+    """None, None: no choice; error: unusable, its bounce comment; beats name."""
+
+    name: str | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)
 class Recheck:
+    """ready: still READY; role: the assignee's, None if unassigned or not a role's; refused: None,
+    or why not claimable, a skip reason shown as-is; assignee, home: opaque, for the claim; task,
+    client: the picks."""
+
     ready: bool
+    role: str | None
+    refused: str | None
     assignee: IssueRecord | None
     home: IssueRecord | None
-    labels: tuple[Label, ...]
+    task: Pick
+    client: Pick
 
 
 @dataclass(frozen=True)
 class Stage:
-    """A workflow stage (workflow.toml's header says each field)."""
+    """See workflow.toml's header."""
 
     role: str
     input: Literal["research", "design", "build"]
@@ -225,7 +233,7 @@ class Group(IntEnum):
 
 @dataclass(frozen=True)
 class Found:
-    """A first-claim search's candidate; last_comment only when Canceled."""
+    """A first-claim search hit; last_comment only when Canceled."""
 
     identifier: str
     title: str

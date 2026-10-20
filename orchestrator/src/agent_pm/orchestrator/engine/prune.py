@@ -131,9 +131,9 @@ Recovery and next help:
 
 
 class Pruner:
-    def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, writable=None):
+    def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, linear, writable=None):
         self.now, self.dry, self.work, self.roles = now, dry, work, roles
-        self.tracker = LinearTracker.of_team(gql, cfg, team, roles)
+        self.tracker = LinearTracker.of_team(gql, linear, team, roles)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
@@ -439,10 +439,15 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
     except ConfigError as error:
         config.report_error("prune", error, dry=dry)
         return 2
-    event_log.use_logs(cfg.logs_dir)
-    gql = functools.partial(gql, service=cfg.harness_key)
     try:
-        team, roles = team_and_roles(gql, cfg)
+        linear = config.linear_settings(cfg, "prune")
+    except ConfigError as refused:
+        print(f"prune.py: {refused}", file=sys.stderr)
+        return 2
+    event_log.use_logs(cfg.logs_dir)
+    gql = functools.partial(gql, service=linear.harness_key)
+    try:
+        team, roles = team_and_roles(gql, linear)
         code = pruner(
             gql,
             now or datetime.now(UTC),
@@ -451,6 +456,7 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
             team=team,
             roles=roles,
             cfg=cfg,
+            linear=linear,
         ).run()
     except LinearError as e:
         return event_log.config_error("prune", e, dry=dry)

@@ -1,6 +1,6 @@
 # State root
 
-agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default.
+agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "linear"`, `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default; on a [local board](board.md#local-board) they are in `<board>/.state/`.
 
 ```text
 ~/.agent-pm/
@@ -20,6 +20,10 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   ├── orchestrator.jsonl.1      the event log before its last rotation
 │   ├── orchestrator.jsonl.lock   one rotation at a time
 │   └── router.lock               one router at a time
+├── board/                        the local board when $AGENT_PM_BOARD_DIR is unset: issue files in <assignee>/<state>/ and archive/
+│   ├── .next-id                  the next issue number
+│   ├── .lock                     the board lock, held while a program writes the board
+│   └── .state/                   the board's runtime state: work/<ID>/ and logs/, laid out as above
 ├── sessions/<client>/            what a client session's resume command replays: claude/, codex/, opencode/
 ├── tui/<name>/                   a running tui session's state and hook log (hooks.jsonl, .1)
 ├── tui/<name>.lock               that name's start and close lock
@@ -42,6 +46,9 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](board.md#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 4) |
 | `logs/router.lock` | nobody | while no router runs |
+| `board/` (or `$AGENT_PM_BOARD_DIR`): issue files, `.next-id` | nobody | never: your issues and the next issue number |
+| `board/.lock` | nobody | while no program writes the board |
+| `board/.state/` | as `work/` and `logs/` once runs start on a local board; only `router --dry-run` runs there yet, writing nothing | as `work/` and `logs/` |
 | `sessions/` | saving a client session's state: an entry not saved or resumed for 30 days | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session; the tui sweep; its hook writer: at 1 MiB `hooks.jsonl` becomes `hooks.jsonl.1`, replacing the old `.1` | no: closing the session removes it |
 | `tui/<name>.lock` | closing or stopping the session; the tui sweep | while no session of that name starts or closes |

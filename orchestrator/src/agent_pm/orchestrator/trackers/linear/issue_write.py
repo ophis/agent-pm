@@ -19,12 +19,12 @@ M_COMMENT = (
 )
 
 
-def move(gql, cfg, ident, state):
+def move(gql, linear, ident, state):
     """Move ident, an issue of the configured team, to the abstract state's configured id."""
     data = issue_read.lookup(gql, Q_MOVE, ident)
     node = data["issue"]
-    issue_names.in_team(cfg, node, "move")
-    target = issue_names.state_id(cfg, state)
+    issue_names.in_team(linear, node, "move")
+    target = issue_names.state_id(linear, state)
     if node["state"]["id"] == target:
         return receipt(node, "move", "unchanged", data["viewer"])
     write(gql, "move", ident, ops.M_STATE, "issueUpdate", i=node["id"], s=target)

@@ -199,7 +199,7 @@ class FakeLinear:
 class FakePruner:
     calls = []
 
-    def __init__(self, gql, now, *, dry, work, team, roles, cfg):
+    def __init__(self, gql, now, *, dry, work, team, roles, cfg, linear):
         self.cfg = cfg
         FakePruner.calls.append((gql, now, dry, work, team, roles))
 

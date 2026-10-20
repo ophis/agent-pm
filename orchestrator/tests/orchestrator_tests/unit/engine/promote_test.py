@@ -219,6 +219,13 @@ class ConfigurationFailures(Base):
                 )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
 
+    def test_a_local_board_is_refused_after_config(self):
+        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
+        self.write_config(CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+        self.assertEqual(self.run_main(), 2)
+        self.assertEqual(self.err, 'promote.py: promote needs [orchestrator] tracker = "linear"\n')
+        self.assertEqual((self.fake.calls, FakePruner.calls, self.out), ([], [], ""))
+
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write_local('work_dir = "w"\n')
         self.assertEqual(self.run_main(), 2)
@@ -730,8 +737,8 @@ class PromotionScope(Base):
                 self.write_config(PM_NEXT)
                 self.ready(role="pm", title=title)
                 cfg = config.load(path=self.config_path)
-                gql = functools.partial(self.fake, service=cfg.harness_key)
-                promote.Promoter(gql, cfg, NOW, dry=False, tasks=tasks).run()
+                gql = functools.partial(self.fake, service=cfg.linear.harness_key)
+                promote.Promoter(gql, cfg, cfg.linear, NOW, dry=False, tasks=tasks).run()
                 (child,) = self.fake.children.values()
                 self.assertEqual(
                     (child["projectId"], child["assigneeId"], child["title"]),

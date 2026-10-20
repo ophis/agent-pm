@@ -1,9 +1,9 @@
-"""Issue reads and writes; the adapter's errors."""
+"""The engine's board port."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
@@ -147,3 +147,9 @@ class Tracker(ABC):
 
     @abstractmethod
     def recheck(self, key: str) -> Recheck: ...
+
+
+class Connect(Protocol):
+    """transport: its calls' client; say: a logger."""
+
+    def __call__(self, transport, cfg, /, *, say: Callable[..., None]) -> Tracker: ...
