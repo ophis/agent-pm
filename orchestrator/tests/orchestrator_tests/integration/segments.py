@@ -297,7 +297,7 @@ class Segment(TmuxFlow):
         return Script(outcome, [*steps, block(report)], report, {text: TEXT_KINDS[outcome]})
 
     def launch(self, ident, role, script, *, resumed, tui=False, tick=False, after_stop=False):
-        """router.py --issue ident (tick: a --now tick) with script behind a new gate, until its
+        """router.py --issue ident (tick: a scheduled tick) with script behind a new gate, until its
         fake_claude waits there and write-back has its session comment saying running; returns the
         runs.jsonl line, fake_claude's call and the events since. tui: --tui from MANAGER's pane,
         its pipeline Record (self.printed) on stdout; else nothing there.
@@ -314,7 +314,7 @@ class Segment(TmuxFlow):
             row["issue"] == ident and row["kind"] in ("start", "resume") for row in self.runs()
         )
         calls, events, lines = len(agent_calls(self.calls())), len(self.logged()), len(self.runs())
-        argv = ("--now",) if tick else ("--issue", ident)
+        argv = () if tick else ("--issue", ident)
         attended = {"AGENT_PM_EVENTS": self.events, **self.in_manager()} if tui else {}
         res = self.router(*argv, *(["--tui"] if tui else []), **attended)
         if res.returncode != 0:

@@ -121,8 +121,8 @@ class Router(TmuxFlow):
             description="Add a session registry.",
         )
 
-    def claim(self, mode="start", *argv):
-        res = self.router(*(argv or ("--issue", ID)))
+    def claim(self, mode="start", argv=("--issue", ID)):
+        res = self.router(*argv)
         self.assertEqual(res.returncode, 0, res.stderr)
         last = self.runs()[-1]
         self.assertEqual(
@@ -299,7 +299,7 @@ class Router(TmuxFlow):
         self.assertEqual(self.state(ID), "todo")
 
     def test_a_linear_outage_stops_the_tick(self):
-        self.outage("--now")
+        self.outage()
 
     def test_a_linear_outage_stops_issue_and_the_rerun_claims_it(self):
         self.outage("--issue", ID)
@@ -311,7 +311,7 @@ class Router(TmuxFlow):
 
     def test_a_tick_at_95_percent_usage_skips_the_claim(self):
         self.scene([START, DONE], usage=usage(0.95))
-        res = self.router("--now")
+        res = self.router()
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
         self.assertEqual(
             self.said(),
@@ -324,7 +324,7 @@ class Router(TmuxFlow):
 
     def test_a_tick_at_50_percent_usage_claims_and_finishes(self):
         self.scene([START, DONE], usage=usage(0.5))
-        sid = self.claim("start", "--now")
+        sid = self.claim("start", ())
         self.wait_end(sid, ID)
         self.assert_built(sid)
         self.assertEqual(

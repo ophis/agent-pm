@@ -1,17 +1,15 @@
 """Claim or resume issue work with one scheduler tick or an explicit issue.
 
-Usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID]
+Usage: agent-pm-orchestrator router [--dry-run] [--issue ID]
                              [--tui [--display D] [--events FILE]]
        agent-pm-orchestrator router --brake ROLE
 
 Arguments and options:
-  (no mode)     One scheduled tick: local 01:00-06:59 hours, role max_runs,
-                client_max_runs and usage gates; starts at most one run
-                assigned to a role account.
-  --now         Skip the tick's hours check.
-  --issue ID    Only this issue identifier, e.g. TASK-1; bypass hours, max_runs,
+  (no mode)     One scheduled tick: role max_runs, client_max_runs and usage
+                gates; starts at most one run assigned to a role account.
+  --issue ID    Only this issue identifier, e.g. TASK-1; bypass max_runs,
                 client_max_runs and usage gates (its run still counts toward
-                them). --issue and --now cannot be combined.
+                them).
   --dry-run     Print the plan without claiming issues or launching work;
                 a tick still performs usage checks. Not an offline preview:
                 read configuration, run inventory, credentials and Linear data.
@@ -141,10 +139,10 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
 USAGE = (
-    "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
+    "usage: agent-pm-orchestrator router [--dry-run] [--issue ID] "
     "[--tui [--display D] [--events FILE]] | --brake ROLE"
 )
-FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
+FLAGS = {"--dry-run": "dry", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
 
 
@@ -949,15 +947,10 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
     return spec
 
 
-def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, launch_sid=None):
+def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
-    hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
-    if not opts["now"] and not 1 <= hour <= 6:
-        if not dry:
-            return 0
-        say("skip", reason="outside hours")
     with lock(runs, dry) as free:
         if not free:
             say("skip", reason=BUSY)
@@ -1058,7 +1051,7 @@ def brake(role, cfg):
 
 
 def options(argv):
-    opts = {"brake": None, "dry": False, "now": False, "tui": False}
+    opts = {"brake": None, "dry": False, "tui": False}
     opts.update(dict.fromkeys(VALUED.values()))
     if "--brake" in argv:
         ok = len(argv) == 2 and argv[0] == "--brake" and not argv[1].startswith("-")
@@ -1074,8 +1067,6 @@ def options(argv):
         else:
             return None
         i += 1
-    if opts["issue"] is not None and opts["now"]:
-        return None
     if not opts["tui"] and (opts["display"] is not None or opts["events"] is not None):
         return None
     return opts
@@ -1117,7 +1108,6 @@ def main(
     *,
     now=datetime.now,
     config_path=None,
-    hour=None,
     gql=None,
     run=None,
     keychain=None,
@@ -1176,14 +1166,7 @@ def main(
                 opts, cfg, gql, start, keychain=keychain, clock=now, launch_sid=launch_sid
             )
         return tick(
-            opts,
-            cfg,
-            gql,
-            hour=hour,
-            start=start,
-            keychain=keychain,
-            clock=now,
-            launch_sid=launch_sid,
+            opts, cfg, gql, start=start, keychain=keychain, clock=now, launch_sid=launch_sid
         )
     except LinearError as e:
         return event_log.config_error("router", e, dry=opts["dry"])

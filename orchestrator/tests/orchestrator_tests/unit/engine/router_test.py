@@ -705,7 +705,7 @@ class RouterEntry(OuterBase):
     def test_claims_then_detaches_its_linear_run_after_its_start_row(self):
         for argv, said in (
             (("--issue", ID), []),
-            (("--now",), ["launch TASK-7 exit=0"]),
+            ((), ["launch TASK-7 exit=0"]),
         ):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
@@ -827,7 +827,7 @@ class RouterEntry(OuterBase):
 
     def test_agent_label_client_reaches_the_delegate_and_start_row(self):
         self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
-        for argv in (("--issue", ID), ("--now",)):
+        for argv in (("--issue", ID), ()):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"] = [], "Todo"
                 self.todo["labels"] = [label("Renamed client", AGENT_B, AGENT_GROUP)]
@@ -949,7 +949,7 @@ class RouterEntry(OuterBase):
         self.todo["state"] = "In Progress"
         self.todo["labels"] = [label("changed", AGENT_A, AGENT_GROUP)]
         self.add(kind="start", ident=ID, sid="old", role="engineer", minutes_ago=60, client="b")
-        self.assertEqual(self.entry("--now"), 0)
+        self.assertEqual(self.entry(), 0)
         retry = runs.parse_log(self.runs)[-1]
         self.assertEqual((retry.kind, retry.client), ("start", "a"))
         self.assertNotEqual(retry.sid, self.sid("old"))
@@ -976,7 +976,7 @@ class RouterEntry(OuterBase):
 
     def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
         self.missing.add(KEY)
-        for argv, rc in ((("--issue", ID), 2), (("--now",), 0)):
+        for argv, rc in ((("--issue", ID), 2), ((), 0)):
             with self.subTest(argv=argv):
                 self.assertEqual(self.entry(*argv), rc)
                 self.assertIn(
@@ -1083,7 +1083,7 @@ class RouterEntry(OuterBase):
         ):
             self.write_config(text)
             self.logs = None
-            for argv in (["--now"], ["--issue", ID]):
+            for argv in ([], ["--issue", ID]):
                 for tty, err in ((False, ""), (True, f"router.py: {reason}\n")):
                     with self.subTest(reason=reason, argv=argv, tty=tty):
                         self.assertEqual(self.entry(*argv, tty=tty), 1)
@@ -1143,10 +1143,10 @@ class AttendedEntry(OuterBase):
         return Record.parse(lines[0])
 
     def test_tui_takes_display_and_events_and_they_need_it(self):
-        base = {"brake": None, "dry": False, "now": False, "tui": True, "issue": None}
+        base = {"brake": None, "dry": False, "tui": True, "issue": None}
         for argv, want in (
             (["--issue", ID, "--tui"], {**base, "issue": ID, "display": None, "events": None}),
-            (["--now", "--tui"], {**base, "now": True, "display": None, "events": None}),
+            (["--tui"], {**base, "display": None, "events": None}),
             (
                 ["--tui", "--issue", ID, "--display", "a/right", "--events", "e"],
                 {**base, "issue": ID, "display": "a/right", "events": "e"},
@@ -1176,7 +1176,7 @@ class AttendedEntry(OuterBase):
                 self.assertEqual(self.launched()[0].events, path)
 
     def test_without_events_or_agent_pm_events_it_exits_2_before_any_linear_call(self):
-        for argv in (("--issue", ID, "--tui"), ("--now", "--tui"), ("--dry-run", "--tui")):
+        for argv in (("--issue", ID, "--tui"), ("--tui",), ("--dry-run", "--tui")):
             with self.subTest(argv=argv):
                 self.assertEqual(self.entry(*argv), 2)
                 self.assertEqual(
@@ -1193,7 +1193,7 @@ class AttendedEntry(OuterBase):
             f"events file {self.events}: Permission denied",
         ):
             self.api.tui_error = DelegateConfigError(error)
-            for argv in (("--issue", ID), ("--now",), ("--dry-run", "--issue", ID)):
+            for argv in (("--issue", ID), (), ("--dry-run", "--issue", ID)):
                 with self.subTest(error=error, argv=argv):
                     self.api.tui_checks = []
                     rc = self.entry(*argv, "--tui", "--display", "x", "--events", self.events)
@@ -1215,7 +1215,7 @@ class AttendedEntry(OuterBase):
         self.assertFalse(os.path.exists(self.events))
 
     def test_claims_then_starts_the_run_attended_and_prints_its_pipeline_record(self):
-        for argv in (("--issue", ID), ("--now",)):
+        for argv in (("--issue", ID), ()):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
                 rc = self.entry(*argv, "--tui", "--display", self.DISPLAY, "--events", self.events)
@@ -1265,7 +1265,7 @@ class AttendedEntry(OuterBase):
         self.assertEqual(self.record().display, "none")
 
     def test_without_tui_a_run_is_headless_without_display_events_or_record(self):
-        for argv, env in ((("--issue", ID), None), (("--now",), {EVENTS_ENV: self.events})):
+        for argv, env in ((("--issue", ID), None), ((), {EVENTS_ENV: self.events})):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"] = [], "Todo"
                 self.assertEqual(self.entry(*argv, env=env), 0, self.err)
@@ -1277,12 +1277,12 @@ class AttendedEntry(OuterBase):
 
     def test_a_tick_that_starts_or_resumes_nothing_prints_no_record(self):
         self.todo["state"] = "In Review"
-        self.assertEqual(self.entry("--now", "--tui", "--events", self.events), 0, self.err)
+        self.assertEqual(self.entry("--tui", "--events", self.events), 0, self.err)
         self.assertEqual((self.api.detached, self.out), ([], ""))
 
     def test_a_new_run_takes_the_launchers_session_id(self):
         launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
-        for argv in (("--issue", ID), ("--now",)):
+        for argv in (("--issue", ID), ()):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"] = [], "Todo"
                 env = {SID_ENV: launch}
@@ -1295,7 +1295,7 @@ class AttendedEntry(OuterBase):
         launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
         self.todo["state"] = "In Progress"
         self.resumable(ID, SID, 60, role="engineer")
-        for argv in (("--issue", ID), ("--now",)):
+        for argv in (("--issue", ID), ()):
             with self.subTest(argv=argv):
                 env = {SID_ENV: launch}
                 rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
@@ -1311,7 +1311,7 @@ class AttendedEntry(OuterBase):
         self.todo["state"] = "In Progress"
         self.resumable(ID, SID, 60, role="engineer")
         env = {SID_ENV: "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"}
-        for argv in (("--dry-run", "--issue", ID), ("--dry-run", "--now")):
+        for argv in (("--dry-run", "--issue", ID), ("--dry-run",)):
             with self.subTest(argv=argv):
                 rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
                 self.assertEqual(rc, 0, self.err)
@@ -1407,7 +1407,7 @@ class AgentLabels(Base):
 class LabelClients(TickBase):
     def test_a_todo_run_after_a_start_on_another_client_follows_the_label(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             for labels, source in (
                 ([label("changed", AGENT_A, AGENT_GROUP)], "label"),
                 ([], "default"),
@@ -1437,7 +1437,7 @@ class LabelClients(TickBase):
 
     def test_a_resume_whose_label_selects_another_client_starts_a_fresh_session(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             for labels, source in (
                 ([label("changed", AGENT_A, AGENT_GROUP)], "label"),
                 ([], "default"),
@@ -1478,7 +1478,7 @@ class LabelClients(TickBase):
 
     def test_a_resume_keeps_its_session_when_the_label_agrees_or_is_invalid(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             for labels in (
                 [label("same", AGENT_B, AGENT_GROUP)],
                 [label("unmapped", STRAY, AGENT_GROUP)],
@@ -1508,7 +1508,7 @@ class LabelClients(TickBase):
 
     def test_a_launcher_sid_naming_the_old_session_is_refused_not_reused(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             with self.subTest(argv=argv):
                 old_sid, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
                 self.assertEqual(self.tick(fake, *argv, env={SID_ENV: old_sid}), 2)
@@ -1516,7 +1516,7 @@ class LabelClients(TickBase):
 
     def test_a_dry_run_previews_the_fresh_session_and_changes_nothing(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             with self.subTest(argv=argv):
                 old_sid, fake = self.interrupted("b", [label("changed", AGENT_A, AGENT_GROUP)])
                 before = self.before()
@@ -1543,16 +1543,13 @@ class RouterArguments(Base):
 
     def test_unknown_flags_rejected(self):
         for argv in (
-            ["--help", "--now"],
+            ["--help", "--dry-run"],
             ["--prune", "x"],
             ["--gate", "new"],
-            ["--now", "--issue", "TASK-1"],
-            ["--issue", "TASK-1", "--now"],
             ["--brake"],
             ["--brake", "--dry-run"],
             ["--brake", "--brake"],
             ["--dry-run", "--brake", "researcher"],
-            ["--brake", "researcher", "--now"],
             ["--brake", "researcher", "pm"],
             ["--brake=researcher"],
             ["--issue", "TASK-1", "--brake", "researcher"],
@@ -1562,12 +1559,11 @@ class RouterArguments(Base):
             ["--split-from", "dev"],
             ["--events", "x"],
             ["--manager", "m1"],
-            ["--now=x"],
+            ["--dry-run=x"],
             ["--issue=TASK-1"],
-            ["--now", "--issue=TASK-1"],
             ["--issue", "TASK-1", "--issue", "TASK-2"],
             ["--issue"],
-            ["--now", "--issue", "--dry-run"],
+            ["--issue", "--dry-run"],
             *([f, "x"] for f in ("--uuid", "--target", "--project", "--assignee", "--sid")),
             *([f, "x"] for f in ("--task", "--mode", "--client", "--input", "--runner")),
             ["--issue", "TASK-1", "--client", "a"],
@@ -1577,11 +1573,17 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
+            "usage: agent-pm-orchestrator router [--dry-run] [--issue ID] "
             "[--tui [--display D] [--events FILE]] | --brake ROLE",
         )
-        for flag in ("--gate", "--split", "--manager"):
+        for flag in ("--gate", "--split", "--manager", "--now"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
+
+    def test_now_is_refused(self):
+        for argv in (["--now"], ["--now", "--dry-run"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.main(argv), (2, router.USAGE + "\n"))
+        self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
 
     def test_bad_issue_id(self):
         for argv in (
@@ -1605,10 +1607,6 @@ class RouterLocking(TickBase):
             self.assertEqual(
                 (fake.queries, self.api.order, self.state, fake.issues["TASK-1"]["state"]),
                 ([], [], before, "Todo"),
-            )
-            self.assertEqual(
-                (self.tick(fake, hour=12), self.said(), self.api.order),
-                (0, [], []),
             )
         self.assertEqual(self.tick(fake), 0)
         self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
@@ -1655,7 +1653,7 @@ class RouterOutages(TickBase):
     SAID = {name: f"linear-error op=teams {fields}" for name, fields in FIELDS.items()}
 
     def test_a_failure_at_board_setup_is_one_linear_error_a_day(self):
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             for name, error in FAILURES.items():
                 with self.subTest(argv=argv, failure=name):
                     for again in (False, True):
@@ -1677,7 +1675,7 @@ class RouterOutages(TickBase):
             return urllib.error.HTTPError(client.URL, 401, "Unauthorized", {}, io.BytesIO())
 
         logged = "config-error reason=linear api error: teams: HTTP 401"
-        for argv in (("--now",), ("--issue", "TASK-1")):
+        for argv in ((), ("--issue", "TASK-1")):
             with self.subTest(argv=argv):
                 for again in (False, True):
                     self.assertEqual(self.tick(failing(unauthorized), *argv, again=again), 1)
@@ -1686,7 +1684,7 @@ class RouterOutages(TickBase):
                     self.assertEqual((self.start.launches, self.state), ([], ""))
 
     def test_a_dry_run_prints_it_and_writes_nothing(self):
-        for argv in (("--now", "--dry-run"), ("--issue", "TASK-1", "--dry-run")):
+        for argv in (("--dry-run",), ("--issue", "TASK-1", "--dry-run")):
             for name, error in FAILURES.items():
                 with self.subTest(argv=argv, failure=name):
                     self.assertEqual(self.tick(failing(error), *argv), 1)
@@ -1696,7 +1694,7 @@ class RouterOutages(TickBase):
                     self.assertEqual((os.listdir(self.logs), self.state), (["runs.jsonl"], ""))
 
     def test_a_claim_applied_with_its_answer_lost_is_recovered_once_stale(self):
-        for argv, plan in ((("--now",), ["plan mode=new queue=1"]), (("--issue", "TASK-1"), [])):
+        for argv, plan in (((), ["plan mode=new queue=1"]), (("--issue", "TASK-1"), [])):
             with self.subTest(argv=argv):
                 fake = LostClaim([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv), 1)
@@ -1716,7 +1714,6 @@ class RouterOutages(TickBase):
                 self.assertEqual(
                     self.tick(
                         fake,
-                        "--now",
                         now=NOW + router.STALE + timedelta(minutes=1),
                     ),
                     0,
@@ -2115,9 +2112,7 @@ class ClientLimits(TickBase):
 
     def test_dry_run_shows_full_client_skip(self):
         fake = self.fake(issue("TASK-1", "Todo", "researcher"))
-        self.assertEqual(
-            self.tick(fake, "--dry-run", "--now", live=["agent-pm-engineer-TASK-7"]), 0
-        )
+        self.assertEqual(self.tick(fake, "--dry-run", live=["agent-pm-engineer-TASK-7"]), 0)
         self.assertIn("claim-skip TASK-1 reason=a is full", self.said())
         self.assertEqual((fake.mutations, self.start.launches), ([], []))
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -3396,7 +3391,7 @@ class ExplicitIssueRuns(TickBase):
             issue("TASK-4", "Todo", "engineer", priority=3, project=PD),
         )
         self.resumable("TASK-2", "b", 60)
-        self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, live=FULL), 0)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-4", live=FULL), 0)
         self.assertEqual(
             self.said(),
             ["pick TASK-4 queue=1", "claim TASK-4 role=engineer client=a client_source=default"],
@@ -3517,7 +3512,7 @@ class ExplicitIssueRuns(TickBase):
         self.resumable("TASK-1", "a", 20)
         self.touch("a", 5)
         self.assertEqual(self.plan(fake), "")
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1", hour=12), 0)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 0)
         self.assertEqual(self.said(), ["plan TASK-1 mode=resume sid=a"])
         (launch,) = self.start.launches
         self.assertEqual(
@@ -4648,50 +4643,46 @@ class RetainedLiveRuns(TickBase):
 
 
 class ScheduledRuns(TickScenario):
-    def test_hours_boundaries(self):
-        for hour, ran in ((0, False), (1, True), (6, True), (7, False), (12, False), (23, False)):
+    def test_tick_runs_at_any_hour(self):
+        for hour in (0, 2, 7, 12, 23):
             with self.subTest(hour=hour):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, hour=hour), 0)
-                self.assertEqual(len(self.start.launches), int(ran))
-                self.assertEqual(self.said() == [], not ran)
-                self.assertEqual(self.api.order, [])
+                self.lines = []
+                self.assertEqual(self.tick(fake, now=NOW.astimezone().replace(hour=hour)), 0)
+                (launch,) = self.start.launches
+                self.assertEqual(
+                    launch,
+                    Spec(
+                        uuid="TASK-1",
+                        issue="TASK-1",
+                        project=IDS[DR],
+                        assignee=ROLE["researcher"],
+                        sid=launch.sid,
+                        task=None,
+                        mode="new",
+                        client="a",
+                    ),
+                )
+                self.assertRegex(launch.sid, config.UUID_RE)
+                self.assertEqual(
+                    self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a")
+                )
+                self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+                self.assertNotIn("skip reason=outside hours", self.said())
 
     def test_launchd_path_replaced(self):
         self.tick(FakeLinear([]))
         self.assertEqual(self.path, config.path())
         self.assertIn("/opt/homebrew/bin", self.path)
 
-    def test_now_skips_hours_and_starts(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.tick(fake, "--now", hour=12)
-        (launch,) = self.start.launches
-        self.assertEqual(
-            launch,
-            Spec(
-                uuid="TASK-1",
-                issue="TASK-1",
-                project=IDS[DR],
-                assignee=ROLE["researcher"],
-                sid=launch.sid,
-                task=None,
-                mode="new",
-                client="a",
-            ),
-        )
-        self.assertRegex(launch.sid, config.UUID_RE)
-        self.assertEqual(self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
-        self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
-
     def test_an_idle_tick_writes_no_line(self):
         cases = [
-            (12, [], [issue("TASK-1", "Todo", "researcher")]),
-            (2, FULL, [issue("TASK-1", "Todo", "researcher")]),
-            (2, ["agent-pm-engineer-TASK-2"], [issue("TASK-2", "In Progress", "engineer")]),
+            (FULL, [issue("TASK-1", "Todo", "researcher")]),
+            (["agent-pm-engineer-TASK-2"], [issue("TASK-2", "In Progress", "engineer")]),
         ]
-        for hour, live, listed in cases:
-            with self.subTest(hour=hour, live=live):
-                self.assertEqual(self.tick(FakeLinear(listed), hour=hour, live=live), 0)
+        for live, listed in cases:
+            with self.subTest(live=live):
+                self.assertEqual(self.tick(FakeLinear(listed), live=live), 0)
                 self.assertEqual((self.said(), self.err), ([], ""))
         self.assertFalse(os.path.exists(os.path.join(self.logs, "orchestrator.jsonl")))
         blocked = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])]
@@ -4703,7 +4694,7 @@ class ScheduledRuns(TickScenario):
     def test_unknown_agent_runs_change_nothing(self):
         self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         before = self.before()
-        for argv in ((), ("--dry-run",), ("--now",)):
+        for argv in ((), ("--dry-run",)):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, live=None), 0)
@@ -4723,7 +4714,7 @@ class ScheduledRuns(TickScenario):
                     for r, n in (("engineer", len(live) - 2), ("pm", 1), ("researcher", 1))
                 }
             )
-            for argv in ((), ("--dry-run",), ("--now",)):
+            for argv in ((), ("--dry-run",)):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, live=live), 0)
                 self.assertEqual(
@@ -4987,13 +4978,11 @@ class ScheduledRuns(TickScenario):
         self.tick(
             fake,
             "--dry-run",
-            hour=12,
             live=["agent-pm-pm-TASK-5", "agent-pm-engineer-TASK-6"],
         )
         self.assertEqual(
             self.said(),
             [
-                "skip reason=outside hours",
                 'plan mode=new queue=1 live={"engineer": "1/1", "pm": "1/1"}',
                 "pick TASK-2 queue=1",
                 "preview TASK-2 client=a client_source=default",
@@ -5100,7 +5089,7 @@ class RecoverWriteBack(TickBase):
 
     def test_an_outcome_is_written_back_without_an_agent_or_a_second_comment(self):
         self.ended()
-        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.tick(self.linear), 0)
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
         self.assertIsNone(self.linear.issues["TASK-1"].get("comments"))
@@ -5108,26 +5097,26 @@ class RecoverWriteBack(TickBase):
         recovered = [show(e) for e in logged(self.logs) if e["kind"] == "recover"]
         self.assertEqual(self.unmap("\n".join(recovered)), "recover TASK-1 to=writeback sid=a")
         mutations = list(self.linear.mutations)
-        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual(self.tick(self.linear, again=True), 0)
         self.assertEqual((self.start.launches, self.linear.mutations), ([], mutations))
         self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
 
     def test_a_failed_write_back_is_left_for_the_next_tick(self):
         self.ended()
         self.linear.refuse.add(self.ISSUE)
-        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.tick(self.linear), 0)
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Progress")
         self.assertEqual(self.steps(), ["comment"])
         self.linear.refuse.clear()
-        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual(self.tick(self.linear, again=True), 0)
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
 
     def test_a_dry_run_writes_nothing(self):
         self.ended()
-        self.assertEqual(self.tick(self.linear, "--now", "--dry-run"), 0)
+        self.assertEqual(self.tick(self.linear, "--dry-run"), 0)
         self.assertEqual(self.linear.mutations, [])
         self.assertEqual(self.steps(), ["comment"])
         self.assertEqual(sorted(os.listdir(self.workdir)), ["writeback.json"])
@@ -5140,7 +5129,7 @@ class RecoverWriteBack(TickBase):
 
     def test_a_live_run_is_not_written_back(self):
         self.ended()
-        self.assertEqual(self.tick(self.linear, "--now", live=["agent-pm-researcher-TASK-1"]), 0)
+        self.assertEqual(self.tick(self.linear, live=["agent-pm-researcher-TASK-1"]), 0)
         self.assertEqual((self.start.launches, self.linear.mutations), ([], []))
         self.assertEqual(self.steps(), ["comment"])
 
@@ -5152,13 +5141,13 @@ class RecoverWriteBack(TickBase):
             json.dumps({self.sid("a"): {"steps": done}}),
         )
         self.touch("a", 40)
-        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.tick(self.linear), 0)
         self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
         self.assertEqual(self.steps(), done)
 
     def test_without_an_outcome_the_run_resumes(self):
         self.touch("a", 40)
-        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.tick(self.linear), 0)
         self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
         self.assertEqual(self.steps(), ["comment"])
         self.assertEqual(self.linear.mutations, [])
@@ -5168,7 +5157,7 @@ class InsideAnAgentSession(RouterArguments):
     def test_a_tick_or_an_issue_is_refused_and_help_brake_and_dry_run_still_run(self):
         refused = "router.py: refused inside an agent session"
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
-            for argv in ([], ["--now"], ["--issue", "TASK-1"]):
+            for argv in ([], ["--issue", "TASK-1"]):
                 with self.subTest(argv=argv):
                     rc, err = self.main(argv)
                     self.assertEqual(rc, 2)
