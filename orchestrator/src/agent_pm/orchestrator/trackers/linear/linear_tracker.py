@@ -18,11 +18,11 @@ from agent_pm.orchestrator.engine.flow.types import (
     Group,
     Issue,
     IssueState,
-    Label,
     Link,
     Linked,
     Move,
     Note,
+    Pick,
     Recheck,
     Ref,
     Snapshot,
@@ -31,7 +31,7 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.engine.types import UUID_RE, IssueError, LinearError, State
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.ops import DONE, HISTORY, call, client_id, last_move
-from agent_pm.utils import one_line, parse_time
+from agent_pm.utils import LOCAL, one_line, parse_time
 
 T = TypeVar("T")
 
@@ -151,8 +151,23 @@ def q_issues(fields=""):
     )
 
 
-def labels(nodes):
-    return tuple(Label(n["id"], n["name"], (n["parent"] or {}).get("id")) for n in nodes)
+def pick(nodes, group, chosen, kind):
+    """The choice of the issue's labels in group (none when group is empty): chosen maps a label id
+    to its name; kind names the labels, "task" or "Agent"."""
+    found = [n for n in nodes if group and (n["parent"] or {}).get("id") == group]
+    if not found:
+        return Pick()
+    if len(found) > 1:
+        names = ", ".join(n["name"] for n in found)
+        return Pick(
+            error=f"Several {kind} labels ({names}); keep one, then move the issue back to Todo."
+        )
+    if (name := chosen.get(found[0]["id"])) is None:
+        return Pick(
+            error=f'{kind[0].upper()}{kind[1:]} label "{found[0]["name"]}" is not in {LOCAL}\'s '
+            f"[orchestrator.linear.{kind.lower()}_labels]. Fix the label, then move the issue back to Todo."
+        )
+    return Pick(name)
 
 
 def blockers(issue):
@@ -202,7 +217,8 @@ class LinearTracker(Tracker):
     which connect reads and moved_at's by_people needs; say: the caller's logger. A method needing
     one not given raises TypeError. service: the key each call is made as, with timeout when given; None:
     gql as given. A comment's ref: its client id's parts. A home is a Linear project; a note's account
-    its user's email."""
+    its user's email. task_group, agent_group: the task and Agent label groups; label_tasks,
+    label_clients: {label id: task or client}, which recheck's picks read."""
 
     def __init__(
         self,
@@ -217,6 +233,10 @@ class LinearTracker(Tracker):
         say=_quiet,
         service=None,
         timeout=None,
+        task_group=None,
+        label_tasks=None,
+        agent_group=None,
+        label_clients=None,
     ):
         if service is not None:
             bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
@@ -224,6 +244,8 @@ class LinearTracker(Tracker):
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
         self.finished_ids, self.humans = finished, humans
         self.people, self.say, self.hist = people, say, {}
+        self.task_group, self.label_tasks = task_group, label_tasks or {}
+        self.agent_group, self.label_clients = agent_group, label_clients or {}
         self.others = {e.lower() for e in humans}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
@@ -237,7 +259,8 @@ class LinearTracker(Tracker):
 
     @classmethod
     def connect(cls, gql, cfg, *, say):
-        """Checks the team and task label group, then reads the human and role accounts."""
+        """Checks the team and task label group, then reads the human and role accounts; keeps
+        the task and Agent label maps."""
         found = ops.team(gql, cfg)
         ops.task_group(gql, cfg)
         people = frozenset(ops.humans(gql, cfg))
@@ -250,6 +273,10 @@ class LinearTracker(Tracker):
             humans=cfg.human_members,
             people=people,
             say=say,
+            task_group=cfg.task_label_group,
+            label_tasks={i: task for task, i in cfg.task_labels.items()},
+            agent_group=cfg.agent_label_group,
+            label_clients={i: client for client, i in cfg.agent_labels.items()},
         )
 
     @classmethod
@@ -298,10 +325,20 @@ class LinearTracker(Tracker):
         return [(i, tuple(blockers(i))) for i in issues]
 
     def recheck(self, key):
-        """ready: in the configured Todo state id, whatever other key shares it."""
+        """ready: in the configured Todo state id, whatever other key shares it; refused without
+        a project."""
         found = self.gql(Q_RECHECK, i=key)["issue"]
         ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
-        return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
+        nodes = found["labels"]["nodes"]
+        return Recheck(
+            ready,
+            role=_need("roles", self.roles).get((found["assignee"] or {}).get("id")),
+            refused=None if found["project"] else "no project",
+            assignee=found["assignee"],
+            home=found["project"],
+            task=pick(nodes, self.task_group, self.label_tasks, "task"),
+            client=pick(nodes, self.agent_group, self.label_clients, "Agent"),
+        )
 
     def moved_at(self, key, state, *, by_people=False):
         """History read once per key; by_people: moves by the human members only."""

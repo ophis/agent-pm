@@ -26,7 +26,7 @@ from agent_pm.orchestrator.engine import (
     runs,
 )
 from agent_pm.orchestrator.engine import gate as quota
-from agent_pm.orchestrator.engine.flow.types import IssueState
+from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
 from agent_pm.orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.orchestrator.trackers.linear import (
     client,
@@ -228,8 +228,8 @@ def two():
 
 class TaskLabelsScenario(Base):
     ORPHAN = (
-        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, research, light-research). '
-        "Fix the label or the assignee, then move the issue back to Todo."
+        'Task "product-design" is not one of researcher\'s tasks (deep-research, research, light-research). '
+        "Fix the task or the assignee, then move the issue back to Todo."
     )
 
     def setUp(self):
@@ -1500,9 +1500,11 @@ class LabelClients(TickBase):
         found = fake.issues["TASK-1"]
         self.assertEqual(found["state"], "In Review")
         (comment,) = found["comments"]
-        self.assertIn('Agent label selected client "a"', comment)
-        self.assertIn("a: not installed", comment)
-        self.assertIn("Fix [orchestrator.linear.agent_labels] or the client", comment)
+        self.assertEqual(
+            comment,
+            'Client "a" chosen on the issue, but the run could not be built: a: not installed\n\n'
+            "Fix the issue's client or the client configuration, then move this issue back to Todo.",
+        )
         self.assertNotIn("hidden details", comment)
         self.assertEqual(self.start.launches, [])
 
@@ -2473,54 +2475,35 @@ class ScheduledUsageGates(TickBase):
 
 class TaskSelection(TaskLabelsScenario):
     def test_task_for(self):
-        outside = [
-            label("Urgent", STRAY, None),
-            label("Light Research", LIGHT, "00000000-0000-4000-8000-000000000003"),
-        ]
-        role_tasks = ["deep-research", "light-research"]
-        label_tasks = {
-            LIGHT: "light-research",
-            DEEP: "deep-research",
-            ORPHAN_LABEL: "product-design",
-        }
-        fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/config.local.toml's [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo."
-        cases = (
-            ([], (None, None)),
-            (outside, (None, None)),
-            ([label("Light Research", LIGHT)], ("light-research", None)),
-            ([label("Renamed in Linear", LIGHT)], ("light-research", None)),
-            (outside + [label("Light Research", LIGHT)], ("light-research", None)),
-            ([label("Whatever", DEEP)], ("deep-research", None)),
-            ([label("Light Research", STRAY)], (None, f'Task label "Light Research" {absent}')),
-            ([label("light-research", STRAY)], (None, f'Task label "light-research" {absent}')),
+        role_tasks = ("deep-research", "light-research")
+        error = "Several task labels (A, B); keep one, then move the issue back to Todo."
+        for pick, want in (
+            (Pick(), (None, None)),
+            (Pick("light-research"), ("light-research", None)),
+            (Pick(error=error), (None, error)),
+            (Pick("light-research", error), (None, error)),
             (
-                [label("Orphan", ORPHAN_LABEL)],
+                Pick("product-design"),
                 (
                     None,
-                    (
-                        f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}'
-                    ),
+                    'Task "product-design" is not one of researcher\'s tasks '
+                    "(deep-research, light-research). "
+                    "Fix the task or the assignee, then move the issue back to Todo.",
                 ),
             ),
-            (
-                [label("Light Research", LIGHT), outside[0], label("Deep Research", DEEP)],
-                (
-                    None,
-                    (
-                        "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo."
-                    ),
-                ),
-            ),
-        )
-        for labels, want in cases:
-            self.assertEqual(
-                router.task_for(
-                    linear_tracker.labels(labels), TASK_GROUP, "researcher", role_tasks, label_tasks
-                ),
-                want,
-                labels,
-            )
+        ):
+            with self.subTest(pick=pick):
+                self.assertEqual(router.task_for(pick, "researcher", role_tasks), want)
+
+    def test_client_for(self):
+        for pick, want in (
+            (Pick(), ("a", "default", None)),
+            (Pick("b"), ("b", "label", None)),
+            (Pick("a"), ("a", "label", None)),
+            (Pick(error="bad"), (None, "label", "bad")),
+        ):
+            with self.subTest(pick=pick):
+                self.assertEqual(router.client_for(pick, "a"), want)
 
     def test_fr7_invalid_label_goes_to_review(self):
         fake = FakeLinear(
@@ -2659,7 +2642,7 @@ class TaskSelection(TaskLabelsScenario):
             )
             self.assertTrue(
                 any(
-                    line.startswith("would comment TASK-1") and "Orphan" in line
+                    line.startswith("would comment TASK-1") and "product-design" in line
                     for line in self.said()
                 )
             )
@@ -4478,8 +4461,8 @@ class ClaimRechecks(Base):
             (
                 "In Review",
                 [
-                    'Task label "Light Research" is not one of pm\'s tasks (product-design). '
-                    "Fix the label or the assignee, then move the issue back to Todo."
+                    'Task "light-research" is not one of pm\'s tasks (product-design). '
+                    "Fix the task or the assignee, then move the issue back to Todo."
                 ],
             ),
         )
@@ -4513,6 +4496,53 @@ class ClaimRechecks(Base):
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
         )
         self.assertEqual(a.project, IDS[PD])
+
+
+class Picks(Base):
+    """AC8: the recheck's task and client picks choose the run's task and client."""
+
+    def test_claim_picks_task_and_client(self):
+        self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
+        for labels, want in (
+            ([], (None, "researcher", "a", "default")),
+            (
+                [label("Light", LIGHT), label("B", AGENT_B, AGENT_GROUP)],
+                ("light-research", "researcher", "b", "label"),
+            ),
+        ):
+            with self.subTest(labels=labels):
+                self.assertTrue(
+                    self.claim(self.fake(issue("TASK-1", "Todo", "researcher", labels=labels)))
+                )
+                self.assertEqual(self.taken[1:], want)
+
+    def test_role_task_error_text(self):
+        self.write_config(HUMANS + CONFIG + TASK_LABELS)
+        fake = self.fake(issue("TASK-1", "Todo", "pm", labels=[label("Light", LIGHT)]))
+        self.assertEqual(self.claim(fake), "")
+        self.assertIn("claim-skip TASK-1 to=in_review reason=bad task label", self.said())
+        self.assertEqual(
+            fake.issues["TASK-1"]["comments"],
+            [
+                'Task "light-research" is not one of pm\'s tasks (product-design). '
+                "Fix the task or the assignee, then move the issue back to Todo."
+            ],
+        )
+
+
+class RoleKeys(Base):
+    """A role with no key needs no Keychain item; pm's key here is empty."""
+
+    def cfg(self):
+        cfg = super().cfg()
+        return replace(cfg, roles={**cfg.roles, "pm": replace(cfg.roles["pm"], key="")})
+
+    def test_the_keychain_is_checked_only_for_a_role_key(self):
+        key = self.cfg().roles["researcher"].key
+        self.missing = {key, ""}
+        self.assertEqual(self.claim(two()), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
+        self.assertEqual(self.keychain_calls, [key])
+        self.assertIn(f"claim-skip TASK-1 reason=no Keychain item for role key {key}", self.said())
 
 
 class LiveLimits(Base):

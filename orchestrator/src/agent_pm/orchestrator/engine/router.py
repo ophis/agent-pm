@@ -209,58 +209,25 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
-def task_for(labels, group, role, role_tasks, label_tasks):
-    found = [n for n in labels if n.group is not None and n.group == group]
-    if not found:
+def task_for(pick, role, role_tasks):
+    if pick.error is not None:
+        return None, pick.error
+    if pick.name is None:
         return None, None
-    if len(found) > 1:
-        return (
-            None,
-            (
-                f"Several task labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
-            ),
-        )
-    name = found[0].name
-    task = label_tasks.get(found[0].key)
-    if task is None:
-        return (
-            None,
-            (
-                f'Task label "{name}" is not in {config.LOCAL}\'s [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo.'
-            ),
-        )
-    if task not in role_tasks:
+    if pick.name not in role_tasks:
         return None, (
-            f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
-            "Fix the label or the assignee, then move the issue back to Todo."
+            f'Task "{pick.name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
+            "Fix the task or the assignee, then move the issue back to Todo."
         )
-    return task, None
+    return pick.name, None
 
 
-def client_for(
-    labels, group, label_clients, default
-) -> tuple[str | None, ClientSource, str | None]:
-    found = [n for n in labels if group and n.group is not None and n.group == group]
-    if not found:
+def client_for(pick, default) -> tuple[str | None, ClientSource, str | None]:
+    if pick.error is not None:
+        return None, "label", pick.error
+    if pick.name is None:
         return default, "default", None
-    if len(found) > 1:
-        return (
-            None,
-            "label",
-            (
-                f"Several Agent labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
-            ),
-        )
-    if (client := label_clients.get(found[0].key)) is None:
-        return (
-            None,
-            "label",
-            (
-                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [orchestrator.linear.agent_labels]. '
-                "Fix the label, then move the issue back to Todo."
-            ),
-        )
-    return client, "label", None
+    return pick.name, "label", None
 
 
 class Board:
@@ -271,8 +238,6 @@ class Board:
         self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
-        self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
-        self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
         self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
 
     def todo(self):
@@ -296,11 +261,6 @@ class Board:
 
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
-
-    def select_client(self, labels, role):
-        return client_for(
-            labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
-        )
 
     def attempts(self, issue):
         tried = [*self.entries, *self.failures]
@@ -480,7 +440,7 @@ class Board:
         )
 
     def gated(self, issue, role, client, source, frm=IssueState.READY):
-        """Whether the usage gate blocks a new run of client; a label-selected client's quota
+        """Whether the usage gate blocks a new run of client; an issue-chosen client's quota
         configuration error bounces the issue from frm instead.
         """
         ident = issue["identifier"]
@@ -495,15 +455,13 @@ class Board:
 
     def resumption(self, issue, sid, new_sid):
         """The run that continues the issue's session sid: its resume, or a new session (new_sid) on
-        the client the Agent label selects when that differs, as a session resumes only in its own
-        client. Invalid Agent or task labels keep the resume.
+        the client the issue chooses when that differs, as a session resumes only in its own
+        client. An invalid task or client choice keeps the resume.
         """
         ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
-        labels = self.tracker.recheck(issue["id"]).labels
-        client, source, client_error = self.select_client(labels, role)
-        task, task_error = task_for(
-            labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
-        )
+        current = self.tracker.recheck(issue["id"])
+        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if client_error or task_error or client == resumed:
             if self.dry:
                 self.say("preview", ident, client=resumed, mode="resume", sid=sid)
@@ -560,31 +518,24 @@ class Board:
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
         current = self.tracker.recheck(issue["id"])
-        role = config.role_for(self.cfg.roles, (current.assignee or {}).get("email"))
+        role = current.role
         if not current.ready:
             skip = "no longer Todo"
         elif role is None:
             skip = "not assigned to a role"
         elif role in full:
             skip = f"{role} is full"
-        elif current.home is None:
-            skip = "no project"
-        elif not self.keychain(key := self.cfg.roles[role].key):
+        elif current.refused:
+            skip = current.refused
+        elif (key := self.cfg.roles[role].key) and not self.keychain(key):
             skip = f"no Keychain item for role key {key}"
         else:
             skip = None
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        labels = current.labels
-        task, task_error = task_for(
-            labels,
-            self.cfg.task_label_group,
-            role,
-            self.cfg.roles[role].tasks,
-            self.label_tasks,
-        )
-        client, source, client_error = self.select_client(labels, role)
+        task, task_error = task_for(current.task, role, self.cfg.roles[role].tasks)
+        client, source, client_error = client_for(current.client, self.cfg.roles[role].run.client)
         if self.dry:
             self.say(
                 "preview",
@@ -810,8 +761,8 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
 def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
     return (
-        f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
-        "Fix [orchestrator.linear.agent_labels] or the client configuration, then move this issue back to Todo."
+        f'Client "{client}" chosen on the issue, but the run could not be built: {first}\n\n'
+        "Fix the issue's client or the client configuration, then move this issue back to Todo."
     )
 
 

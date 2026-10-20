@@ -239,8 +239,8 @@ class Spec:
 
     uuid: str
     issue: str
-    project: str
-    assignee: str
+    project: str | None
+    assignee: str | None
     sid: str
     task: str | None = None
     mode: str
@@ -252,8 +252,8 @@ class Spec:
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
-            project=issue["project"]["id"],
-            assignee=issue["assignee"]["email"],
+            project=(issue.get("project") or {}).get("id"),
+            assignee=(issue.get("assignee") or {}).get("email"),
             sid=sid,
             task=task,
             mode=mode,

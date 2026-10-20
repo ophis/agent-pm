@@ -34,11 +34,11 @@ from agent_pm.orchestrator.engine.flow.types import (
     Handoff,
     Issue,
     IssueState,
-    Label,
     Link,
     Linked,
     Move,
     Note,
+    Pick,
     Recheck,
     Ref,
     Snapshot,
@@ -625,6 +625,8 @@ def board_cfg():
         states=STATES,
         task_label_group=TASK_GROUP,
         task_labels={"light-research": "label-1"},
+        agent_label_group="agents",
+        agent_labels={"b": "label-b"},
         human_members=("human@x.test",),
         roles={"pm": SimpleNamespace(account="pm@agents.test")},
     )
@@ -647,6 +649,10 @@ class Connect(Case):
         self.assertEqual((found.team_id, found.state_ids), (TEAM, STATES))
         self.assertEqual((found.roles, found.people), ({"u-pm": "pm"}, frozenset({"u-human"})))
         self.assertEqual(found.humans, ("human@x.test",))
+        self.assertEqual(
+            (found.task_group, found.label_tasks, found.agent_group, found.label_clients),
+            (TASK_GROUP, {"label-1": "light-research"}, "agents", {"label-b": "b"}),
+        )
 
     def test_errors_propagate(self):
         for replies, message in (
@@ -826,24 +832,43 @@ def rechecked(state, *, assignee=None, project=None, labels=()):
     return {"issue": issue | {"labels": {"nodes": list(labels)}}}
 
 
+PM, PROJECT = {"id": "u-pm", "email": "pm@agents.test"}, {"id": "p-1", "name": "Deep Research"}
+AGENTS = "00000000-0000-4000-8000-000000000081"
+CONFIGURED = "~/.agent-pm/config.local.toml's [orchestrator.linear"
+
+
+def labelled(ident, name, group=TASK_GROUP):
+    return {"id": ident, "name": name, "parent": group and {"id": group}}
+
+
 class Rechecks(Case):
-    def test_maps_state_labels_and_parts(self):
-        pm, project = (
-            {"id": "u-pm", "email": "pm@agents.test"},
-            {"id": "p-1", "name": "Deep Research"},
+    def picker(self, *nodes):
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=PM, project=PROJECT, labels=nodes))
+        found = LinearTracker(
+            gql,
+            states=TEAM_OBJ.states,
+            roles=ROLES,
+            task_group=TASK_GROUP,
+            label_tasks={"l-light": "light-research", "l-deep": "deep-research"},
+            agent_group=AGENTS,
+            label_clients={"l-a": "a", "l-b": "b"},
         )
-        nodes = [
-            {"id": "l-1", "name": "Light Research", "parent": {"id": TASK_GROUP}},
-            {"id": "l-2", "name": "Urgent", "parent": None},
-        ]
-        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=pm, project=project, labels=nodes))
+        return found.recheck("id-TASK-1")
+
+    def test_maps_state_role_and_parts(self):
+        # no label maps: no picks
+        nodes = [labelled("l-1", "Light Research"), labelled("l-2", "Urgent", None)]
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=PM, project=PROJECT, labels=nodes))
         self.assertEqual(
             tracker(gql).recheck("id-TASK-1"),
             Recheck(
                 ready=True,
-                assignee=pm,
-                home=project,
-                labels=(Label("l-1", "Light Research", TASK_GROUP), Label("l-2", "Urgent", None)),
+                role="pm",
+                refused=None,
+                assignee=PM,
+                home=PROJECT,
+                task=Pick(),
+                client=Pick(),
             ),
         )
         self.assertEqual(gql.calls, [(linear_tracker.Q_RECHECK, {"i": "id-TASK-1"})])
@@ -852,12 +877,72 @@ class Rechecks(Case):
         for key in ("in_progress", "in_review", "handoff", "done", "canceled"):
             with self.subTest(state=key):
                 found = tracker(Gql(Q_RECHECK=rechecked(STATES[key]))).recheck("id-TASK-1")
-                self.assertEqual(found, Recheck(ready=False, assignee=None, home=None, labels=()))
+                self.assertEqual(
+                    found,
+                    Recheck(
+                        ready=False,
+                        role=None,
+                        refused="no project",
+                        assignee=None,
+                        home=None,
+                        task=Pick(),
+                        client=Pick(),
+                    ),
+                )
 
     def test_a_todo_id_shared_with_another_key_stays_ready(self):
         team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
         gql = Gql(Q_RECHECK=rechecked(STATES["todo"]))
         self.assertTrue(tracker(gql, team).recheck("id-TASK-1").ready)
+
+    def test_a_non_role_assignee_has_no_role(self):
+        other = {"id": "u-other", "email": "other@x.test"}
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=other, project=PROJECT))
+        found = tracker(gql).recheck("id-TASK-1")
+        self.assertEqual((found.role, found.refused), (None, None))
+
+    def test_picks(self):
+        light, deep = labelled("l-light", "Light Research"), labelled("l-deep", "Deep Research")
+        agent_a, agent_b = labelled("l-a", "Agent A", AGENTS), labelled("l-b", "Agent B", AGENTS)
+        outside = (
+            labelled("l-a", "Grouped elsewhere", "g-other"),
+            labelled("l-b", "Ungrouped", None),
+        )
+        keep = "keep one, then move the issue back to Todo."
+        fix = "Fix the label, then move the issue back to Todo."
+        for nodes, task, client in (
+            ((), Pick(), Pick()),
+            (outside, Pick(), Pick()),
+            ((light, agent_b, *outside), Pick("light-research"), Pick("b")),
+            (
+                (light, deep),
+                Pick(error=f"Several task labels (Light Research, Deep Research); {keep}"),
+                Pick(),
+            ),
+            (
+                (agent_a, agent_b),
+                Pick(),
+                Pick(error=f"Several Agent labels (Agent A, Agent B); {keep}"),
+            ),
+            (
+                (labelled("l-x", "Mystery"), labelled("l-y", "Robot", AGENTS)),
+                Pick(error=f'Task label "Mystery" is not in {CONFIGURED}.task_labels]. {fix}'),
+                Pick(error=f'Agent label "Robot" is not in {CONFIGURED}.agent_labels]. {fix}'),
+            ),
+        ):
+            with self.subTest(nodes=nodes):
+                found = self.picker(*nodes)
+                self.assertEqual((found.task, found.client), (task, client))
+
+    def test_no_agent_group_picks_no_client(self):
+        found = LinearTracker(
+            Gql(Q_RECHECK=rechecked(STATES["todo"], labels=[labelled("l-b", "Agent B", "")])),
+            states=TEAM_OBJ.states,
+            roles=ROLES,
+            agent_group="",
+            label_clients={"l-b": "b"},
+        ).recheck("id-TASK-1")
+        self.assertEqual(found.client, Pick())
 
 
 class Role(Case):

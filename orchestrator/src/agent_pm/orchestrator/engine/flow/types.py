@@ -95,18 +95,20 @@ class Detail:
 
 
 @dataclass(frozen=True)
-class Label:
-    key: str
-    name: str
-    group: str | None
+class Pick:
+    name: str | None = None
+    error: str | None = None  # the bounce comment
 
 
 @dataclass(frozen=True)
 class Recheck:
     ready: bool
+    role: str | None
+    refused: str | None
     assignee: IssueRecord | None
     home: IssueRecord | None
-    labels: tuple[Label, ...]
+    task: Pick
+    client: Pick
 
 
 @dataclass(frozen=True)
