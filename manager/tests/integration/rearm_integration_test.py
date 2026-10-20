@@ -1,12 +1,16 @@
-"""The SessionStart hook run as manager/hooks/hooks.json runs it: real sh and python3, a temp HOME."""
+"""The SessionStart hook run as manager/hooks/hooks.json runs it: real sh and python3, a temp HOME.
+RearmHookTest's hook runs under this test process, its stand-in hold; HoldTreeTest's under a real
+agent-pm-crew hold.
+"""
 
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
-from manager.tests.case import REPO, Case
+from manager.tests.case import PY, REPO, Case, child_env
 
 MANAGER = {"AGENT_PM_MANAGER": "mgr", "AGENT_PM_HOLDER_ID": "holder-1"}
 
@@ -28,7 +32,13 @@ def _start(source: object) -> bytes:
 
 class RearmHookTest(Case):
     def run_hook(self, extra: dict[str, str], stdin: bytes, prefix: str = "", *, manual=False):
-        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": REPO, "PLUGIN_ROOT": REPO, **extra}
+        env = {
+            **os.environ,
+            "CLAUDE_PLUGIN_ROOT": REPO,
+            "PLUGIN_ROOT": REPO,
+            "AGENT_PM_HOLDER_PID": str(os.getpid()),
+            **extra,
+        }
         started = time.monotonic()
         done = subprocess.run(
             ("sh", "-c", prefix + _command(manual=manual)),
@@ -57,6 +67,7 @@ class RearmHookTest(Case):
         for extra, stdin in (
             ({}, _start("startup")),
             ({**MANAGER, "AGENT_PM_AGENT_SESSION": ""}, _start("startup")),
+            ({**MANAGER, "AGENT_PM_HOLDER_PID": "1"}, _start("startup")),
             (MANAGER, _start("fork")),
             (MANAGER, b"not JSON"),
         ):
@@ -69,6 +80,8 @@ class RearmHookTest(Case):
             "no manager": ({"AGENT_PM_HOLDER_ID": "h"}, _start("startup")),
             "no holder": ({"AGENT_PM_MANAGER": "mgr"}, _start("startup")),
             "agent session": ({**MANAGER, "AGENT_PM_AGENT_SESSION": "1"}, _start("startup")),
+            "no hold pid": ({**MANAGER, "AGENT_PM_HOLDER_PID": ""}, _start("startup")),
+            "hold not an ancestor": ({**MANAGER, "AGENT_PM_HOLDER_PID": "1"}, _start("startup")),
             "backtick name": ({**MANAGER, "AGENT_PM_MANAGER": "m`gr"}, _start("startup")),
             "newline name": ({**MANAGER, "AGENT_PM_MANAGER": "m\ngr"}, _start("startup")),
             "instruction name": (
@@ -108,7 +121,12 @@ class RearmHookTest(Case):
                 input=_start("clear"),
                 stdout=write,
                 stderr=subprocess.PIPE,
-                env={**os.environ, "CLAUDE_PLUGIN_ROOT": REPO, **MANAGER},
+                env={
+                    **os.environ,
+                    "CLAUDE_PLUGIN_ROOT": REPO,
+                    "AGENT_PM_HOLDER_PID": str(os.getpid()),
+                    **MANAGER,
+                },
                 timeout=10,
                 check=False,
             )
@@ -130,3 +148,93 @@ class RearmHookTest(Case):
             {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in roster.iterdir()}, before
         )
         self.assertEqual(sorted(Path(self.home).rglob("*")), tree)
+
+
+# argv: a file to write this process's environment to, then one that ends the wait
+WAIT = (
+    "import json,os,pathlib,sys,time\n"
+    "env,done=map(pathlib.Path,sys.argv[1:])\n"
+    "env.with_suffix('.tmp').write_text(json.dumps(dict(os.environ)))\n"
+    "env.with_suffix('.tmp').rename(env)\n"
+    "while not done.exists(): time.sleep(.01)"
+)
+
+
+class HoldTreeTest(Case):
+    """Mode `hold -- <client argv>` (the hold runs the hook's sh itself) and mode ctmux (the hold
+    runs a shell that starts the hook, again after it exits); a sibling has the hold's environment
+    but runs outside its process tree.
+    """
+
+    def hold(self, *argv: str, **options) -> subprocess.Popen:
+        env = {**child_env(), "CLAUDE_PLUGIN_ROOT": REPO, "PLUGIN_ROOT": REPO}
+        env.pop("AGENT_PM_AGENT_SESSION", None)
+        return subprocess.Popen(
+            (*PY, "-m", "agent_pm.manager.cli", "hold", "--manager", "mgr", "--", *argv),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **options,
+        )
+
+    def contexts(self, out: bytes) -> list[str]:
+        return [
+            json.loads(line)["hookSpecificOutput"]["additionalContext"]
+            for line in out.decode().splitlines()
+        ]
+
+    def test_a_client_hold_runs_gets_the_prompt(self):
+        for manual in (False, True):
+            for source in ("startup", "resume", "compact", "clear"):
+                with self.subTest(manual=manual, source=source):
+                    process = self.hold("sh", "-c", _command(manual=manual), stdin=subprocess.PIPE)
+                    out, err = process.communicate(_start(source), timeout=10)
+                    self.assertEqual((process.returncode, err), (0, b""))
+                    (context,) = self.contexts(out)
+                    self.assertIn(f"`{source}` in manager `mgr`", context)
+                    self.assertEqual("Manual monitoring" in context, manual)
+
+    def test_a_client_the_hold_shell_starts_again_gets_the_prompt(self):
+        for source in ("startup", "resume", "compact"):
+            Path(self.home, source).write_bytes(_start(source))
+        hook = _command()
+        shell = (
+            f"cd {self.home} && sh -c '{hook} < startup' && sh -c '{hook} < compact'"
+            f" && sh -c '{hook} < resume'"
+        )
+        process = self.hold("sh", "-c", shell, stdin=subprocess.DEVNULL)
+        out, err = process.communicate(timeout=10)
+        self.assertEqual((process.returncode, err), (0, b""))
+        contexts = self.contexts(out)
+        self.assertEqual(len(contexts), 3)
+        for context, source in zip(contexts, ("startup", "compact", "resume"), strict=True):
+            self.assertIn(f"`{source}` in manager `mgr`", context)
+
+    def test_a_sibling_with_the_holds_environment_gets_nothing(self):
+        env, done = Path(self.home, "env.json"), Path(self.home, "done")
+        process = self.hold(sys.executable, "-I", "-S", "-c", WAIT, str(env), str(done))
+        self.addCleanup(process.wait, 10)
+        self.addCleanup(done.touch)
+        deadline = time.monotonic() + 10
+        while not env.exists():
+            if process.poll() is not None:
+                self.fail(process.communicate()[1])
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        held = json.loads(env.read_text())
+        self.assertEqual(held["AGENT_PM_HOLDER_PID"], str(process.pid))
+        for manual in (False, True):
+            for source in ("startup", "resume", "compact", "clear"):
+                with self.subTest(manual=manual, source=source):
+                    sibling = subprocess.run(
+                        ("sh", "-c", _command(manual=manual)),
+                        input=_start(source),
+                        capture_output=True,
+                        env=held,
+                        timeout=10,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        (sibling.returncode, sibling.stdout, sibling.stderr), (0, b"", b"")
+                    )
+        self.assertIsNone(process.poll())

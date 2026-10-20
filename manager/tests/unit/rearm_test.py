@@ -1,23 +1,43 @@
 """rearm.py, the SessionStart hook: which sessions it prompts, what it prints, and the prompt's
-steps against manager/skills/manage/SKILL.md.
+steps against manager/skills/manage/SKILL.md. The process table is faked: this process is pid 100,
+its parent 50, its grandparent the hold, 4242.
 """
 
 import io
 import json
 import os
 import re
+import subprocess
 from unittest import mock
 
 from agent_pm.manager import rearm
 
 from manager.tests.case import REPO, Case
 
-MANAGER = {"AGENT_PM_MANAGER": "mgr", "AGENT_PM_HOLDER_ID": "holder-1"}
+MANAGER = {
+    "AGENT_PM_MANAGER": "mgr",
+    "AGENT_PM_HOLDER_ID": "holder-1",
+    "AGENT_PM_HOLDER_PID": "4242",
+}
+TABLE = b" 100 50\n  50 4242\n4242     1\n 777   1\n"
 SKILL = os.path.join(REPO, "manager", "skills", "manage", "SKILL.md")
 
 
-def _run(environ: dict[str, str], stdin: bytes, written=None, argv=()) -> tuple[int, str, str]:
-    """main() with fd 0 reading stdin, fd 1 into the returned text (or the given os.write fake)."""
+def _ps(stdout: bytes = TABLE, returncode: int = 0) -> mock.Mock:
+    return mock.Mock(return_value=subprocess.CompletedProcess((), returncode, stdout, b""))
+
+
+def _no_proc(path):
+    assert path == "/proc/self"
+    return False
+
+
+def _run(
+    environ: dict[str, str], stdin: bytes, written=None, argv=(), ps=None
+) -> tuple[int, str, str]:
+    """main() with fd 0 reading stdin, fd 1 into the returned text (or the given os.write fake),
+    no /proc and `ps` printing TABLE (or the given subprocess.run fake).
+    """
     source, out, err = io.BytesIO(stdin), bytearray(), io.StringIO()
 
     def read(fd, size):
@@ -34,6 +54,9 @@ def _run(environ: dict[str, str], stdin: bytes, written=None, argv=()) -> tuple[
         mock.patch("os.read", side_effect=read),
         mock.patch("os.write", side_effect=written or write),
         mock.patch("sys.stderr", err),
+        mock.patch("os.getpid", return_value=100),
+        mock.patch("os.path.isdir", side_effect=_no_proc),
+        mock.patch("subprocess.run", ps or _ps()),
     ):
         code = rearm.main(argv)
     return code, out.decode(), err.getvalue()
@@ -63,6 +86,7 @@ class MainTest(Case):
             ({"AGENT_PM_MANAGER": "mgr"}, "startup"),
             ({**MANAGER, "AGENT_PM_MANAGER": "bad`name"}, "startup"),
             ({**MANAGER, "AGENT_PM_AGENT_SESSION": ""}, "startup"),
+            ({**MANAGER, "AGENT_PM_HOLDER_PID": "777"}, "startup"),
             (MANAGER, "fork"),
             (MANAGER, "unknown"),
         ):
@@ -79,6 +103,17 @@ class MainTest(Case):
             "empty holder": {**MANAGER, "AGENT_PM_HOLDER_ID": ""},
             "agent session": {**MANAGER, "AGENT_PM_AGENT_SESSION": "1"},
             "empty agent session": {**MANAGER, "AGENT_PM_AGENT_SESSION": ""},
+            "no hold pid": {k: v for k, v in MANAGER.items() if k != "AGENT_PM_HOLDER_PID"},
+            "empty hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": ""},
+            "zero-padded hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": "04242"},
+            "signed hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": "+4242"},
+            "spaced hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": " 4242"},
+            "text hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": "hold"},
+            "zero hold pid": {**MANAGER, "AGENT_PM_HOLDER_PID": "0"},
+            "init as hold": {**MANAGER, "AGENT_PM_HOLDER_PID": "1"},
+            "own pid as hold": {**MANAGER, "AGENT_PM_HOLDER_PID": "100"},
+            "sibling of the hold": {**MANAGER, "AGENT_PM_HOLDER_PID": "777"},
+            "dead hold": {**MANAGER, "AGENT_PM_HOLDER_PID": "9999"},
             "backtick name": {**MANAGER, "AGENT_PM_MANAGER": "m`gr"},
             "space name": {**MANAGER, "AGENT_PM_MANAGER": "m gr"},
             "newline name": {**MANAGER, "AGENT_PM_MANAGER": "mgr\n"},
@@ -132,20 +167,109 @@ class MainTest(Case):
                 write.assert_called_once()
 
     def test_non_manager_reads_no_stdin(self):
-        with (
-            mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch("os.read") as read,
-            mock.patch("os.write") as write,
+        for environ in ({}, {**MANAGER, "AGENT_PM_HOLDER_PID": "777"}):
+            with (
+                self.subTest(environ=environ),
+                mock.patch.dict(os.environ, environ, clear=True),
+                mock.patch("os.getpid", return_value=100),
+                mock.patch("os.path.isdir", side_effect=_no_proc),
+                mock.patch("subprocess.run", _ps()),
+                mock.patch("os.read") as read,
+                mock.patch("os.write") as write,
+            ):
+                self.assertEqual(rearm.main(), 0)
+            read.assert_not_called()
+            write.assert_not_called()
+
+    def test_env_guards_run_before_the_process_table(self):
+        ps = _ps()
+        for environ in (
+            {},
+            {**MANAGER, "AGENT_PM_AGENT_SESSION": "1"},
+            {**MANAGER, "AGENT_PM_HOLDER_PID": "x"},
         ):
-            self.assertEqual(rearm.main(), 0)
-        read.assert_not_called()
-        write.assert_not_called()
+            with self.subTest(environ=environ):
+                self.assertEqual(_run(environ, _start("startup"), ps=ps), (0, "", ""))
+        ps.assert_not_called()
+
+    def test_reads_ps_once_with_separate_keywords(self):
+        ps = _ps()
+        _run(MANAGER, _start("startup"), ps=ps)
+        ps.assert_called_once()
+        self.assertEqual(ps.call_args.args[0], ("ps", "-A", "-o", "pid=", "-o", "ppid="))
+        self.assertTrue(ps.call_args.kwargs["capture_output"])
+        self.assertGreater(ps.call_args.kwargs["timeout"], 0)
+
+    def test_failed_process_table_prints_nothing(self):
+        cases = {
+            "no ps": mock.Mock(side_effect=FileNotFoundError("ps")),
+            "timeout": mock.Mock(side_effect=subprocess.TimeoutExpired("ps", 2)),
+            "nonzero exit": _ps(returncode=1),
+            "garbage line": _ps(TABLE + b"pid ppid\n"),
+            "one column": _ps(b"100\n50 4242\n"),
+            "three columns": _ps(b"100 50 9\n50 4242\n"),
+            "not UTF-8": _ps(b"100 50\xff\n50 4242\n"),
+            "empty": _ps(b""),
+            "cycle": _ps(b"100 50\n50 60\n60 50\n"),
+            "own entry missing": _ps(b"50 4242\n4242 1\n"),
+        }
+        for label, ps in cases.items():
+            with self.subTest(label):
+                self.assertEqual(_run(MANAGER, _start("startup"), ps=ps), (0, "", ""))
 
     def test_opens_nothing(self):
         with mock.patch("builtins.open", side_effect=AssertionError("opened a file")):
             code, out, err = _run(MANAGER, _start("compact"))
         self.assertEqual((code, err), (0, ""))
         self.assertIn("compact", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+
+
+class AncestorsTest(Case):
+    """/proc/<pid>/stat where /proc exists (Linux)."""
+
+    def stat(self, stats: dict[int, bytes]):
+        def fake_open(path, mode="r"):
+            self.assertEqual(mode, "rb")
+            match = re.fullmatch(r"/proc/(\d+)/stat", path)
+            assert match is not None, path
+            if int(match[1]) not in stats:
+                raise FileNotFoundError(path)
+            return io.BytesIO(stats[int(match[1])])
+
+        return mock.patch("builtins.open", side_effect=fake_open)
+
+    def test_walks_proc_parents(self):
+        stats = {
+            100: b"100 (python3) S 50 1 1",
+            50: b"50 (a) b) (c) S 4242 1 1",  # a command name may hold ") "
+            4242: b"4242 (python3) S 1 1 1",
+        }
+        with self.stat(stats), mock.patch("os.path.isdir", return_value=True):
+            self.assertEqual(rearm.ancestors(100), {50, 4242})
+
+    def test_stops_at_an_unreadable_parent_or_a_cycle(self):
+        cases = {
+            "gone": ({100: b"100 (x) S 50"}, {50}),
+            "unparseable": ({100: b"100 (x) S 50", 50: b"50 (x) S"}, {50}),
+            "cycle": ({100: b"100 (x) S 50", 50: b"50 (x) S 60", 60: b"60 (x) S 50"}, {50, 60}),
+            "no parent": ({100: b"100 (x) S 0"}, set()),
+        }
+        for label, (stats, expected) in cases.items():
+            with (
+                self.subTest(label),
+                self.stat(stats),
+                mock.patch("os.path.isdir", return_value=True),
+            ):
+                self.assertEqual(rearm.ancestors(100), expected)
+
+    def test_proc_lookup_runs_no_ps(self):
+        with (
+            self.stat({100: b"100 (x) S 1"}),
+            mock.patch("os.path.isdir", return_value=True),
+            mock.patch("subprocess.run") as ps,
+        ):
+            self.assertEqual(rearm.ancestors(100), set())
+        ps.assert_not_called()
 
 
 class PromptTest(Case):
