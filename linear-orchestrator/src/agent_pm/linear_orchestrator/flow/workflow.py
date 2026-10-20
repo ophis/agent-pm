@@ -20,7 +20,7 @@ class Workflow(Mapping[str, Task]):
     _tasks: Mapping[str, Task] | None = None
 
     def load(self) -> Mapping[str, Task]:
-        """Read the file again; a ValueError, its message starting with REL, keeps the last read."""
+        """Reread; a ValueError (message starting with REL) keeps the last read."""
         try:
             text = (
                 resources.files("agent_pm.linear_orchestrator.flow")
@@ -28,7 +28,7 @@ class Workflow(Mapping[str, Task]):
                 .read_text(encoding="utf-8")
             )
             data = tomllib.loads(text)
-        except (OSError, ValueError) as e:  # TOMLDecodeError and UnicodeDecodeError are ValueErrors
+        except (OSError, ValueError) as e:  # TOMLDecodeError is a ValueError
             raise ValueError(f"{REL}: {e}") from None
         self._tasks = _parse(data)
         return self._tasks
