@@ -118,6 +118,10 @@ class EngineTrackerContract(Sample):
                 contract(ignore=f"{ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops"),
                 f"{ENGINE_CONTRACT!r} must not ignore {ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops",
             ),
+            (
+                contract(ignore=f"{ORCH_PKG}.engine.promote -> {ORCH_PKG}.trackers.linear.client"),
+                f"{ENGINE_CONTRACT!r} must not ignore {ORCH_PKG}.engine.promote -> {ORCH_PKG}.trackers.linear.client",
+            ),
         ):
             with self.subTest(error=error):
                 self.assertEqual(self.check(config), [f"pyproject.toml: {error}"])

@@ -12,9 +12,12 @@ from agent_pm.orchestrator.engine.flow.handoff import handoff as handoff_text
 from agent_pm.orchestrator.engine.flow.types import Approved, Detail, IssueState, Ref
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.prune import Pruner
-from agent_pm.orchestrator.engine.types import ConfigError, LinearError, Unavailable
-from agent_pm.orchestrator.trackers.linear.client import linear_gql
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
+from agent_pm.orchestrator.engine.types import (
+    ConfigError,
+    LinearError,
+    TrackerFileError,
+    Unavailable,
+)
 from agent_pm.utils import one_line, parse_time
 
 
@@ -36,15 +39,19 @@ Usage: agent-pm-orchestrator promote [--dry-run] [--now]
 
 Arguments and options:
   --dry-run   Print the plan; no board changes, session closes or file deletion.
-              Still read Linear, configuration, local run/checkout inventory and
-              Delegate status; requires access to those resources.
+              Still read the board, configuration, local run/checkout inventory
+              and Delegate status; requires access to those resources.
   --now       Skip the default 10-minute wait in Handoff for a manual run.
   -h, --help  Print this help alone; exit 0.
   Boolean flags may repeat; repeating them has no further effect.
 
 Prerequisites and effects:
-  Requires Python 3.11+, configured Linear/Delegate settings, Linear access and
-  the linear.harness_key Keychain service.
+  Requires Python 3.11+ and configured Delegate settings; on Linear
+  ([orchestrator] tracker = "linear") also Linear access and the
+  linear.harness_key Keychain service. On a local board ($AGENT_PM_BOARD_DIR)
+  no job runs it on a timer: run it on demand. There the next issue is a
+  file in <next role>/ready/ with the source's parent in place of a project,
+  and an unreadable board exits 2 (promote.py: <path>: <reason>).
   Configuration: agent-pm-orchestrator --help
   For each Handoff issue in a project, assigned to a configured role with next:
   create that next role's issue in the same project, assigned to its account,
@@ -90,11 +97,9 @@ def child_title(prefix, src_prefix, title):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, linear, now, dry, *, tasks, wait=True):
-        self.cfg, self.linear, self.now, self.dry, self.wait = cfg, linear, now, dry, wait
+    def __init__(self, cfg, tracker, now, dry, *, tasks, wait=True):
+        self.cfg, self.tracker, self.now, self.dry, self.wait = cfg, tracker, now, dry, wait
         self.tasks = tasks
-        self.team, self.roles = team_and_roles(gql, linear)
-        self.tracker = LinearTracker.of_team(gql, linear, self.team, self.roles)
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):
@@ -183,7 +188,7 @@ class Promoter:
         if existing:
             child = handoff.child = existing
         elif self.dry:
-            self.say("promote", src.ident, role=nxt, project=src.home_name)
+            self.say("promote", src.ident, role=nxt, home=src.home_name)
             return
         else:
             child = handoff.child = self.tracker.create(
@@ -266,19 +271,12 @@ class Promoter:
         return left is None
 
 
-def run_prune(gql, now, promoter, pruner=None):
+def run_prune(board, gql, now, promoter, pruner=None):
     try:
         if pruner is None:
             pruner = Pruner
         pruner(
-            gql,
-            now,
-            dry=promoter.dry,
-            work=promoter.cfg.workdirs,
-            team=promoter.team,
-            roles=promoter.roles,
-            cfg=promoter.cfg,
-            linear=promoter.linear,
+            board, gql, now, dry=promoter.dry, work=promoter.cfg.workdirs, cfg=promoter.cfg
         ).run()
     except Unavailable as e:
         linear_error("prune", e, dry=promoter.dry)
@@ -292,7 +290,7 @@ def run_prune(gql, now, promoter, pruner=None):
         )
 
 
-def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
+def main(argv, *, trackers, gql, now=None, config_path=None, pruner=None):
     if argv in (["--help"], ["-h"]):
         print(HELP.strip())
         return 0
@@ -306,22 +304,18 @@ def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
         return 2
-    try:
-        linear = config.linear_settings(cfg, "promote")
-    except ConfigError as refused:
-        print(f"promote.py: {refused}", file=sys.stderr)
-        return 2
     event_log.use_logs(cfg.logs_dir)
-    gql = functools.partial(gql, service=linear.harness_key)
     now = now or datetime.now(UTC)
     try:
-        promoter = Promoter(
-            gql, cfg, linear, now, dry, tasks=config.TASKS, wait="--now" not in argv
-        )
+        board = trackers[cfg.tracker].board(gql, cfg)
+        promoter = Promoter(cfg, board(gql), now, dry, tasks=config.TASKS, wait="--now" not in argv)
         promoter.run()
+    except TrackerFileError as e:
+        print(f"promote.py: {e}", file=sys.stderr)
+        return 2
     except LinearError as e:
         return event_log.config_error("promote", e, dry=dry)
     except Unavailable as e:
         return linear_error("promote", e, dry=dry)
-    run_prune(gql, now, promoter, pruner)
+    run_prune(board, gql, now, promoter, pruner)
     return 0

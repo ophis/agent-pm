@@ -100,7 +100,7 @@ container = "agent_pm.orchestrator"
 units = ["agent_pm.orchestrator", "agent_pm.orchestrator.cli", "agent_pm.orchestrator.engine", "agent_pm.orchestrator.engine.log", "agent_pm.orchestrator.engine.issues", "agent_pm.orchestrator.engine.run_comments", "agent_pm.orchestrator.engine.types", "agent_pm.orchestrator.engine.flow", "agent_pm.orchestrator.engine.flow.handoff", "agent_pm.orchestrator.engine.flow.tracker", "agent_pm.orchestrator.engine.flow.types", "agent_pm.orchestrator.engine.flow.workflow", "agent_pm.orchestrator.trackers", "agent_pm.orchestrator.trackers.linear", "agent_pm.orchestrator.trackers.linear.client", "agent_pm.orchestrator.trackers.linear.ops", "agent_pm.orchestrator.trackers.linear.linear_tracker", "agent_pm.orchestrator.trackers.local"]
 dependencies = [
     "agent_pm.orchestrator -> agent_pm.orchestrator.engine",
-    "agent_pm.orchestrator.engine -> agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.engine -> agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.orchestrator.trackers.linear.client agent_pm.delegate agent_pm.utils",
     "agent_pm.orchestrator.engine.flow.handoff -> agent_pm.orchestrator.engine.flow.types agent_pm.utils",
     "agent_pm.orchestrator.engine.flow.tracker -> agent_pm.orchestrator.engine.flow.types",
     "agent_pm.orchestrator.engine.flow.workflow -> agent_pm.orchestrator.engine.flow.types",
@@ -121,12 +121,8 @@ name = "engine imports no tracker"
 type = "forbidden"
 source_modules = ["agent_pm.orchestrator.engine"]
 forbidden_modules = ["agent_pm.orchestrator.trackers"]
-# the board rules' Linear wiring, until cli.py hands promote and prune their tracker (TASK-795)
+# the router's Linear transport
 ignore_imports = [
-    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.client",
-    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.linear_tracker",
-    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.client",
-    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.linear_tracker",
     "agent_pm.orchestrator.engine.router -> agent_pm.orchestrator.trackers.linear.client",
 ]
 

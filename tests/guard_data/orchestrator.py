@@ -134,19 +134,11 @@ PYTHON_CODE_ALLOWED = {
 }
 
 
-# engine/ imports nothing under trackers/, directly or indirectly, but the board rules' Linear wiring
+# engine/ imports nothing under trackers/, directly or indirectly, but the router's Linear transport
 ENGINE_CONTRACT = "engine imports no tracker"
 
 
-ENGINE_WIRING = frozenset(
-    f"{ORCH_PKG}.engine.{rule} -> {ORCH_PKG}.trackers.linear.{binding}"
-    for rule, bindings in (
-        ("promote", ("client", "linear_tracker")),
-        ("prune", ("client", "linear_tracker")),
-        ("router", ("client",)),
-    )
-    for binding in bindings
-)
+ENGINE_WIRING = frozenset({f"{ORCH_PKG}.engine.router -> {ORCH_PKG}.trackers.linear.client"})
 
 
 GRAPHQL = re.compile(r"\b(?:query|mutation)\s*(?:\w+\s*)?(?:\(\s*\$|\{)")

@@ -7,6 +7,7 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import promote
 from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
@@ -199,9 +200,9 @@ class FakeLinear:
 class FakePruner:
     calls = []
 
-    def __init__(self, gql, now, *, dry, work, team, roles, cfg, linear):
+    def __init__(self, board, gql, now, *, dry, work, cfg):
         self.cfg = cfg
-        FakePruner.calls.append((gql, now, dry, work, team, roles))
+        FakePruner.calls.append((board, gql, now, dry, work))
 
     def run(self):
         return 0
@@ -226,6 +227,7 @@ class Base(run_fixtures.Base):
         with redirect_stderr(err), redirect_stdout(out):
             rc = promote.main(
                 list(argv),
+                trackers=cli.TRACKERS,
                 gql=gql or self.fake,
                 now=NOW,
                 config_path=self.config_path,

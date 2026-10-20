@@ -26,6 +26,8 @@ Listed = Literal[IssueState.READY, IssueState.RUNNING]
 
 
 class Tracker(ABC):
+    batch = 1  # snapshots' idents per call
+
     @abstractmethod
     def read(self, ident: str) -> Snapshot | None:
         """None: no such issue."""
@@ -71,7 +73,7 @@ class Tracker(ABC):
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:
-        """Filed in a home."""
+        """Filed in a home, the adapter's grouping."""
 
     @abstractmethod
     def detail(self, key: str) -> Detail: ...

@@ -146,6 +146,7 @@ class Wiring:
     accounts: Callable[[Any, Config, str | None], Accounts]  # a role key's write-back accounts
     claimed: Callable[[Any, Config, Claim], Accounts]
     key: Callable[[Config, str], str | None]  # a role's account key; None: none to check
+    board: Callable[[Any, Config], Callable[[Any], Tracker]]
 
 
 class State(StrEnum):

@@ -264,6 +264,8 @@ class LinearTracker(Tracker):
     returned. task_group, agent_group: the task and Agent label groups; label_tasks,
     label_clients: {label id: task or client}, which recheck's picks read."""
 
+    batch = SNAPSHOT_BATCH
+
     def __init__(
         self,
         gql,

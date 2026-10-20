@@ -58,7 +58,9 @@ def main(argv):
         entries = {
             "launch": launch,
             "tui": tui,
-            "promote": promote.main,
+            "promote": functools.partial(
+                promote.main, trackers=cli.TRACKERS, gql=client.linear_gql
+            ),
             "router": functools.partial(router.main, trackers=cli.TRACKERS),
         }
         if entry in entries:
