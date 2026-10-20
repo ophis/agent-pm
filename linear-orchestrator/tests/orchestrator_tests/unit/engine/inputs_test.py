@@ -6,11 +6,12 @@ import re
 from types import SimpleNamespace
 
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine import config, inputs, issues, target
+from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.types import (
     Ref,
     Related,
 )
+from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     Found,
     Issue,
@@ -82,7 +83,7 @@ def issue(
         tuple(notes),
         tuple(links),
         tuple(linked),
-        handoff=issues.parse_handoff(description),
+        handoff=handoff.parse_handoff(description),
     )
 
 
@@ -385,7 +386,7 @@ class HandoffComments(Case):
             ]
         )
         iss = issue(d, ident="ENG-7", title="ENG: Registry")
-        instructions = issues.parse_handoff(d).instructions
+        instructions = handoff.parse_handoff(d).instructions
         self.assertTrue(instructions.endswith(f"\nRepo: ophis/agent-pm\nPRD: {prd}"))
         self.assertEqual(target.parse_repo(d), ("ophis", "agent-pm"))
         gh = Gh({endpoint("Product%20Design/2026-09-05-PM-9-q.md"): ok("# PRD\n")})

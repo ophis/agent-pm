@@ -15,7 +15,6 @@ from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.types import Begun, Finished, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
-    issues,
     log,
     ops,
     run_comments,
@@ -31,6 +30,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     LinearError,
     Stopped,
 )
+from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     Issue,
 )
@@ -195,7 +195,7 @@ def issue(description):
         (),
         (),
         (),
-        handoff=issues.parse_handoff(description),
+        handoff=handoff.parse_handoff(description),
     )
 
 

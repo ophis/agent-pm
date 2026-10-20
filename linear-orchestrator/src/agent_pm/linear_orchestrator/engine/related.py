@@ -6,7 +6,7 @@ import json
 import re
 from functools import cache
 
-from agent_pm.linear_orchestrator.engine import inputs, issues, ops
+from agent_pm.linear_orchestrator.engine import inputs, ops
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
     InputError,
@@ -15,6 +15,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Related,
     State,
 )
+from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     ISSUE_ID,
     Found,
@@ -138,7 +139,7 @@ def _chain(gql, issue):
             if not ops.not_found(e):
                 raise
             node = None
-        h = node and issues.parse_handoff(node["description"] or "")
+        h = node and handoff.parse_handoff(node["description"] or "")
         src = h.source if h else None
     return chain
 
@@ -208,7 +209,7 @@ def search(gql, issue, cfg, *, target, run) -> Related:
     chain = _chain(gql, issue)
     excluded, found = {issue.identifier, *chain}, {}
     for n in nodes:
-        ident, h = n["identifier"], issues.parse_handoff(n["description"] or "")
+        ident, h = n["identifier"], handoff.parse_handoff(n["description"] or "")
         if h and h.source in chain:
             excluded.add(ident)
         elif ident not in excluded and ident not in found:

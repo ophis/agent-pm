@@ -8,9 +8,10 @@ import os
 import re
 from dataclasses import replace
 
-from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import REF, TASKS
 from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
+from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.utils import GUARD, SHORT, Repo, common_dir, err_text, repo_slug, under
 from agent_pm.utils import Invalid as RepoInvalid
 from agent_pm.utils import checkout as clone_checkout
@@ -36,7 +37,7 @@ def _one(value):
 
 def parse_repo(description) -> tuple[str, str] | Invalid:
     found = []
-    for line in issues.head(description).splitlines():
+    for line in handoff.head(description).splitlines():
         m = re.match(
             r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I
         )
@@ -47,7 +48,7 @@ def parse_repo(description) -> tuple[str, str] | Invalid:
             found.append(one)
     distinct = {(o.lower(), n.lower()) for o, n in found}
     if not found:
-        return Invalid(f"no Repo: line in the description or its {issues.SECTIONS[1]}")
+        return Invalid(f"no Repo: line in the description or its {handoff.SECTIONS[1]}")
     if len(distinct) > 1:
         return Invalid("several different Repo: values")
     return found[0]

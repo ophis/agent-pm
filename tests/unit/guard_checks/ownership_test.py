@@ -140,7 +140,7 @@ class OrchestratorText(Sample):
             ),
             (
                 {
-                    f"{OPKG}/engine/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                    f"{OPKG}/flow/handoff.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
                     f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
                     f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
                     "src/issues.py": 'H = "Handoff from"\n',

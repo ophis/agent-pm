@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import issues, related
+from agent_pm.linear_orchestrator.engine import related
 from agent_pm.linear_orchestrator.engine.config import Docs
 from agent_pm.linear_orchestrator.engine.ops import NOT_FOUND
 from agent_pm.linear_orchestrator.engine.types import (
@@ -13,6 +13,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Related,
     Target,
 )
+from agent_pm.linear_orchestrator.flow.handoff import parse_handoff
 from agent_pm.linear_orchestrator.flow.types import (
     Found,
     Issue,
@@ -48,7 +49,7 @@ def issue(title="Queue backends", description="", ident="TASK-9"):
         (),
         (),
         (),
-        handoff=issues.parse_handoff(description),
+        handoff=parse_handoff(description),
     )
 
 

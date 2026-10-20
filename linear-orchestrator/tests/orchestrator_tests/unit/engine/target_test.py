@@ -7,7 +7,8 @@ import tempfile
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, issues, target
+from agent_pm.linear_orchestrator.engine import config, target
+from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     Issue,
 )
@@ -43,7 +44,7 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
         notes=(),
         links=(),
         linked=(),
-        handoff=issues.parse_handoff(description),
+        handoff=handoff.parse_handoff(description),
     )
 
 
