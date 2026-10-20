@@ -3,7 +3,13 @@
 import dataclasses
 
 from agent_pm.linear_orchestrator.engine import config, issues
-from agent_pm.linear_orchestrator.engine.types import Handoff, Issue, Link, Linked, Note
+from agent_pm.linear_orchestrator.flow.types import (
+    Handoff,
+    Issue,
+    Link,
+    Linked,
+    Note,
+)
 from orchestrator_tests.case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

@@ -9,14 +9,16 @@ from functools import cache
 from agent_pm.linear_orchestrator.engine import inputs, issues, ops
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
-    Found,
-    Group,
     InputError,
     LinearError,
     Ref,
     Related,
     State,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+    Found,
+    Group,
 )
 from agent_pm.utils import SHORT, err_text
 

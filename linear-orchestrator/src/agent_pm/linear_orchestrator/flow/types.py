@@ -1,8 +1,8 @@
 """Abstract issue states, a Tracker's reads and a workflow's per-role Task."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
@@ -124,3 +124,74 @@ class Task:
     hint: str = ""
     next: str = ""
     require_instructions: bool = True
+
+
+ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
+
+
+@dataclass(frozen=True)
+class Note:
+    body: str
+    at: str
+    email: str | None
+    name: str | None
+
+
+@dataclass(frozen=True)
+class Link:
+    url: str
+
+
+@dataclass(frozen=True)
+class Linked:
+    identifier: str
+    title: str
+    state: str
+
+
+@dataclass(frozen=True)
+class Handoff:
+    source: str
+    instructions: str
+    comments: str
+
+
+@dataclass(frozen=True)
+class Issue:
+    id: str
+    identifier: str
+    url: str
+    title: str
+    description: str
+    created_at: str
+    project_id: str | None
+    notes: tuple[Note, ...]
+    links: tuple[Link, ...]
+    linked: tuple[Linked, ...]
+
+    handoff: Handoff | None = field(kw_only=True)
+    labels: tuple[str, ...] = field(default=(), kw_only=True)
+
+
+class Group(IntEnum):
+    """A Related work issue's rank: its state's place in the section's order."""
+
+    DONE = 0
+    IN_REVIEW = 1
+    IN_PROGRESS = 2
+    TODO = 3
+    BACKLOG = 4
+    CANCELED = 5
+
+
+@dataclass(frozen=True)
+class Found:
+    """A first-claim search's issue candidate; last_comment only for a Canceled one."""
+
+    identifier: str
+    title: str
+    state: str
+    group: Group
+    urls: tuple[str, ...]
+    description: str
+    last_comment: str

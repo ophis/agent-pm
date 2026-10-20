@@ -7,15 +7,17 @@ from functools import cache
 
 from agent_pm.linear_orchestrator.engine import run_comments
 from agent_pm.linear_orchestrator.engine.types import (
+    IssueError,
+)
+from agent_pm.linear_orchestrator.flow import workflow
+from agent_pm.linear_orchestrator.flow.types import (
     ISSUE_ID,
     Handoff,
     Issue,
-    IssueError,
     Link,
     Linked,
     Note,
 )
-from agent_pm.linear_orchestrator.flow import workflow
 from agent_pm.utils import one_line, parse_time
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt

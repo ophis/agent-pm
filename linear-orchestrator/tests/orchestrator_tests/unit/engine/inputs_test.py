@@ -7,7 +7,17 @@ from types import SimpleNamespace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, target
-from agent_pm.linear_orchestrator.engine.types import Found, Issue, Link, Linked, Note, Ref, Related
+from agent_pm.linear_orchestrator.engine.types import (
+    Ref,
+    Related,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    Found,
+    Issue,
+    Link,
+    Linked,
+    Note,
+)
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE

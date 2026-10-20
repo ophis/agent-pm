@@ -28,9 +28,11 @@ from agent_pm.linear_orchestrator.engine.types import (
     Claim,
     ConfigError,
     Invalid,
-    Issue,
     LinearError,
     Stopped,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    Issue,
 )
 from agent_pm.session import SessionStatus
 from agent_pm.utils import OutcomeStatus

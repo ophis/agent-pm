@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, issues, target
-from agent_pm.linear_orchestrator.engine.types import Issue
+from agent_pm.linear_orchestrator.flow.types import (
+    Issue,
+)
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE

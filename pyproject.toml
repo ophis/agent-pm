@@ -107,9 +107,9 @@ dependencies = [
     "agent_pm.linear_orchestrator.engine.client -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
     "agent_pm.linear_orchestrator.engine.log -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
     "agent_pm.linear_orchestrator.engine.ops -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.issues -> agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.linear_orchestrator.flow.workflow agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.issues -> agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.linear_orchestrator.flow.types agent_pm.linear_orchestrator.flow.workflow agent_pm.utils",
     "agent_pm.linear_orchestrator.engine.run_comments -> agent_pm.linear_orchestrator.engine.linear_tracker agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.types -> agent_pm.delegate agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.types -> agent_pm.linear_orchestrator.flow.types agent_pm.delegate agent_pm.utils",
     "agent_pm.linear_orchestrator.cli -> agent_pm.linear_orchestrator.engine agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
 ]
 

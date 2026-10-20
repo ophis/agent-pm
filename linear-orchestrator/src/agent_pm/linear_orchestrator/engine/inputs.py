@@ -11,7 +11,13 @@ from urllib.parse import quote, unquote
 from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.target import pr_title
-from agent_pm.linear_orchestrator.engine.types import Group, InputError, Related
+from agent_pm.linear_orchestrator.engine.types import (
+    InputError,
+    Related,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    Group,
+)
 from agent_pm.utils import SHORT, err_text, one_line, parse_time
 
 

@@ -31,18 +31,20 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ATTACHED as Q_A
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ID as Q_ID
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
     Claim,
     ConfigError,
     Invalid,
-    Issue,
     LinearError,
     Spec,
     Stopped,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
-from agent_pm.linear_orchestrator.flow.types import IssueState
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+    Issue,
+    IssueState,
+)
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,

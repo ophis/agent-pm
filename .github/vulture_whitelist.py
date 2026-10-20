@@ -4,7 +4,14 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
-from agent_pm.linear_orchestrator.engine import promote, prune, router, run_comments, writeback
+from agent_pm.linear_orchestrator.engine import (
+    promote,
+    prune,
+    router,
+    run_comments,
+    types,
+    writeback,
+)
 from agent_pm.linear_orchestrator.engine.issue_refs import milestone
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
@@ -44,6 +51,8 @@ _ = (
     writeback.Q_ATTACHED,
     writeback.Q_ID,
 )
+# engine.types re-exports Linked, now flow.types', only for tests; 第 2 阶段删除.
+_ = types.Linked
 # Record checks ctl[0] against LayerCommand's values.
 _ = LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.

@@ -119,7 +119,6 @@ from agent_pm.linear_orchestrator.engine.runs import (
     trim,
 )
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
     UUID_RE,
     ClientSource,
     ConfigError,
@@ -131,7 +130,10 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.linear_orchestrator.flow.types import IssueState
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+    IssueState,
+)
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)

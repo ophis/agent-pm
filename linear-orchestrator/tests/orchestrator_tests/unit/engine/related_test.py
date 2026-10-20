@@ -7,13 +7,15 @@ from agent_pm.linear_orchestrator.engine import issues, related
 from agent_pm.linear_orchestrator.engine.config import Docs
 from agent_pm.linear_orchestrator.engine.ops import NOT_FOUND
 from agent_pm.linear_orchestrator.engine.types import (
-    Found,
     InputError,
-    Issue,
     LinearError,
     Ref,
     Related,
     Target,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    Found,
+    Issue,
 )
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case

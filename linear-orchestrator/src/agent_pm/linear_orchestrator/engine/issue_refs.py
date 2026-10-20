@@ -10,11 +10,13 @@ import shlex
 from agent_pm.linear_orchestrator.engine import issue_page
 from agent_pm.linear_orchestrator.engine.client import messages
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
     UUID_RE,
     GraphQLErrors,
     IssueError,
     LinearError,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
 )
 
 NOT_FOUND = "Entity not found"
