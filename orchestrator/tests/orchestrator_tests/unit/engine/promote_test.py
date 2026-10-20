@@ -210,7 +210,7 @@ class ConfigurationFailures(Base):
                             config_path=self.config_path,
                             pruner=FakePruner,
                         )
-                    self.assertEqual((rc, err.getvalue(), out.getvalue()), (1, printed, ""))
+                    self.assertEqual((rc, err.getvalue(), out.getvalue()), (2, printed, ""))
                 events = logged(self.logs)[before:]
                 self.assertEqual(
                     [(e["src"], show(e)) for e in events],
@@ -220,7 +220,7 @@ class ConfigurationFailures(Base):
 
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write_local('work_dir = "w"\n')
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(), 2)
         self.assertEqual(
             self.err,
             ("orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n"),
@@ -459,7 +459,7 @@ class HandoffPromotion(Base):
     def test_bad_state_id_stops_before_changes(self):
         self.ready()
         self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(), 2)
         self.assertIn("[linear.states] not workflow states of team 'Team': done", self.out)
         self.assertEqual(self.fake.mutations, [])
 

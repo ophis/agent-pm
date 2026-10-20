@@ -57,8 +57,9 @@ Prerequisites and effects:
   agent-pm-orchestrator prune --help
   A prune failure is logged without breaking Handoff work.
   Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
-  plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear
-  error (logged once a day); 2: bad arguments. Individual Handoff errors do
+  plans print JSON lines to stderr. Exit 0: tick completed; 1: Linear
+  unavailable; 2: configuration error or bad arguments (errors logged once a
+  day). Individual Handoff errors do
   not prevent other promotions; prolonged failures can return an issue to
   In Review with a comment.
 
@@ -302,7 +303,7 @@ def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
         cfg = config.load(path=config_path)
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
-        return 1
+        return 2
     event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
