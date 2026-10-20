@@ -625,7 +625,9 @@ class WritebackContext(run_fixtures.Base):
                     harness=ctx.harness,
                 )
                 self.assertEqual(ctx, want)
-                self.assertEqual((ctx.tracker.config, ctx.tracker.team_id), (cfg.states, cfg.team))
+                self.assertEqual(
+                    (ctx.tracker.state_ids, ctx.tracker.team_id), (cfg.states, cfg.team)
+                )
                 gql.return_value = {"comment": None}
                 ctx.tracker.find_comment(UUID, (SID, "start"))
                 gql.assert_called_with(

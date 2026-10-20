@@ -7,7 +7,7 @@ import os
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, linear_tracker, ops, promote
+from agent_pm.linear_orchestrator.engine import config, ops, promote, run_comments
 from agent_pm.linear_orchestrator.flow.types import Task
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import FINISHED, TEAM
@@ -460,7 +460,7 @@ class HandoffPromotion(Base):
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
-        record = {"title": "Run s-1", "url": linear_tracker.RUN_URL + "s-1"}
+        record = {"title": "Run s-1", "url": run_comments.URL + "s-1"}
         self.ready(
             "DR-1",
             attachments=[

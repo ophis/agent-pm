@@ -607,7 +607,7 @@ class ApprovedList(Case):
             "attachments": {
                 "nodes": [
                     {"title": "Report", "url": "https://x/report"},
-                    {"title": "Run", "url": f"{linear_tracker.RUN_URL}abc"},
+                    {"title": "Run", "url": f"{run_comments.URL}abc"},
                 ]
             },
         }

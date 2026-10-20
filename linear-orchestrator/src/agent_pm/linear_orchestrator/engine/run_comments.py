@@ -10,7 +10,12 @@ from agent_pm.delegate import ConfigError, Resumable, SessionError
 
 # Kept only for tests reading run_comments.<query>; 第 2 阶段删除.
 from agent_pm.linear_orchestrator.engine.linear_tracker import M_UPDATE as M_UPDATE
+
+# Kept for issues.py and tests, now linear_tracker's; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import URL as URL
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import is_comment as is_comment
+from agent_pm.linear_orchestrator.engine.linear_tracker import is_record as is_record
 from agent_pm.linear_orchestrator.engine.types import ConfigError as RunConfigError
 from agent_pm.utils import one_line, timestamp
 

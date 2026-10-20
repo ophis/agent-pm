@@ -5,7 +5,7 @@ handoff, parse_handoff and head.
 import re
 from functools import cache
 
-from agent_pm.linear_orchestrator.engine.linear_tracker import is_comment
+from agent_pm.linear_orchestrator.engine import run_comments
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     Handoff,
@@ -96,7 +96,7 @@ def read_issue(gql, ident) -> Issue:
                 (c["user"] or {}).get("name"),
             )
             for c in node["comments"]["nodes"]
-            if not is_comment(c)
+            if not run_comments.is_comment(c)
         ),
         key=lambda n: parse_time(n.at),
     )

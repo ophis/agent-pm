@@ -34,7 +34,7 @@ STATES = {
 
 MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
 
-RUN_URL = "https://agent-pm.invalid/run/"
+URL = "https://agent-pm.invalid/run/"
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
@@ -92,7 +92,7 @@ ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create iss
 
 def is_record(attachment):
     # the URL alone identifies one: a source may be titled "Run rate analysis"
-    return attachment["url"].startswith(RUN_URL)
+    return attachment["url"].startswith(URL)
 
 
 def is_comment(comment):
@@ -133,8 +133,8 @@ class LinearTracker(Tracker):
         if service is not None:
             bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
             gql = functools.partial(gql, **bound)
-        self.gql, self.config, self.team_id, self.roles = gql, states, team_id, roles
-        self.ended, self.humans = finished, humans
+        self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
+        self.finished_ids, self.humans = finished, humans
         self.others = {e.lower() for e in humans}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
@@ -142,13 +142,13 @@ class LinearTracker(Tracker):
 
     def _state(self, sid):
         found = self.states.get(sid)
-        if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.ended:
+        if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.finished_ids:
             return IssueState.DONE if sid == self.ids[IssueState.DONE] else IssueState.CANCELED
         return found
 
     def read(self, ident):
-        _need("states", self.config)
-        ended = _need("finished", self.ended)
+        _need("states", self.state_ids)
+        ended = _need("finished", self.finished_ids)
         issue = self.gql(Q_ISSUE, i=ident)["issue"]
         if not issue:
             return None
@@ -159,8 +159,8 @@ class LinearTracker(Tracker):
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
 
     def finished(self, owners):
-        states, team = _need("states", self.config), _need("team_id", self.team_id)
-        roles, ended = _need("roles", self.roles), _need("finished", self.ended)
+        states, team = _need("states", self.state_ids), _need("team_id", self.team_id)
+        roles, ended = _need("roles", self.roles), _need("finished", self.finished_ids)
         ids = [uid for uid, role in roles.items() if role in owners]
         done = sorted(ended & {states[State.DONE]})
         nodes, cursor = [], None
@@ -195,7 +195,7 @@ class LinearTracker(Tracker):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
 
     def approved(self, owners):
-        _need("states", self.config)
+        _need("states", self.state_ids)
         roles = _need("roles", self.roles)
         nodes = self.gql(
             Q_HANDOFF,
@@ -222,8 +222,8 @@ class LinearTracker(Tracker):
         ]
 
     def detail(self, key):
-        _need("states", self.config)
-        _need("finished", self.ended)
+        _need("states", self.state_ids)
+        _need("finished", self.finished_ids)
         issue = self.gql(Q_DETAIL, i=key)["issue"]
         return Detail(
             self._state(issue["state"]["id"]),
@@ -250,7 +250,7 @@ class LinearTracker(Tracker):
         return Ref(nodes[0]["id"], nodes[0]["identifier"]) if nodes else None
 
     def create(self, once, *, project, owner, priority, title, description):
-        _need("states", self.config)
+        _need("states", self.state_ids)
         made = call(
             self.gql,
             M_CREATE,
@@ -282,7 +282,7 @@ class LinearTracker(Tracker):
         ops.comment(self.gql, key, body, None if ref is None else client_id(*ref))
 
     def move(self, key, to, *, frm=None):
-        _need("states", self.config)
+        _need("states", self.state_ids)
         if frm is not None:
             return ops.move(self.gql, key, self.ids[to], self.ids[frm])
         if self.gql(ops.Q_ISSUE_STATE, i=key)["issue"]["state"]["id"] != self.ids[to]:
@@ -290,7 +290,7 @@ class LinearTracker(Tracker):
         return None
 
     def comment_and_move(self, key, body, *, to, frm, notify):
-        _need("states", self.config)
+        _need("states", self.state_ids)
         return ops.comment_and_move(
             self.gql,
             key,

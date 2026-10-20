@@ -31,6 +31,8 @@ _ = promote.M_CREATE, promote.M_RELATE, promote.Q_CHILD, promote.Q_DETAIL, promo
 # run_comments re-exports its query, now linear_tracker's, and keeps write(gql, ...) only for tests;
 # 第 2 阶段删除.
 _ = run_comments.M_UPDATE, run_comments.write
+# run_comments re-exports these, now linear_tracker's, only for tests; 第 2 阶段删除.
+_ = run_comments.URL, run_comments.is_record
 # writeback re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = (
     writeback.M_ATTACH,
