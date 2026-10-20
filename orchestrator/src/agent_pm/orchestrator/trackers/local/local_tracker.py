@@ -1,5 +1,5 @@
 """The engine Tracker on a local board (docs/board.md › Local board): its reads, and its writes, each
-one locked rewrite of one issue file; promote's and prune's writes are TASK-795's."""
+one locked rewrite of one issue file; prune's archive write is TASK-795's."""
 
 import os
 import re
@@ -28,6 +28,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Origin,
     Pick,
     Recheck,
+    Ref,
     Snapshot,
     SubIssue,
 )
@@ -61,11 +62,15 @@ RUN = re.compile(f"Run {UUID_RE.pattern} · ")
 ARCHIVED = "archived"
 SEARCHED = 10
 TRIES = 3
+PROMOTED = "Created by promote."
+NAME_BYTES = 200
+UNNAMED = re.compile(r"[/\x00-\x1f\x7f]")
 
 
 class LocalTracker(Tracker):
     """board: its realpath'd dir, scanned once on first use; roles: the role dirs listed; now: the
-    time writes record. Keys and identifiers are front-matter ids."""
+    time writes record. Keys and identifiers are front-matter ids; an issue's home is its parent
+    ("" none)."""
 
     def __init__(
         self,
@@ -248,8 +253,8 @@ class LocalTracker(Tracker):
                 each.title,
                 each.priority,
                 each.created.isoformat(),
-                "",
-                "",
+                each.parent or "",
+                each.parent or "",
                 each.assignee or "",
                 tuple((link.title, link.url) for link in each.links),
             )
@@ -296,13 +301,61 @@ class LocalTracker(Tracker):
         )
 
     def created(self, once):
-        _unsupported("created")
+        wanted = issue_file.ref_key(once)
+        found = next(
+            (
+                each
+                for each in self._all().values()
+                if any(n.source == Source.SELF and n.key == wanted for n in each.comments)
+            ),
+            None,
+        )
+        return None if found is None else Ref(found.id, found.id)
 
     def create(self, once, *, home, owner, priority, title, description):
-        _unsupported("create")
+        """once's issue if one exists by now; a number whose id or path is taken is skipped."""
+        with store.locked(self.board):
+            self.files = None
+            if made := self.created(once):
+                return made
+            files = self._all()
+            prefix = _prefix(files)
+            folder = self._folder(owner, LocalState.READY.value)
+            while True:
+                ident = store.next_id(self.board, prefix)
+                path = os.path.join(folder, f"{ident} {_name(title)}.md")
+                if ident not in files and not os.path.lexists(path):
+                    break
+            now = self.now()
+            store.replace(
+                path,
+                issue_file.new(
+                    ident=ident,
+                    title=title,
+                    priority=priority,
+                    created=now,
+                    parent=home or None,
+                    description=description,
+                    note_at=now,
+                    note=PROMOTED,
+                    note_key=issue_file.ref_key(once),
+                    state=LocalState.READY,
+                ),
+            )
+            text, mtime = read_text(path)
+            files[ident] = issue_file.parse(
+                path, text, assignee=owner, state=LocalState.READY, mtime=mtime
+            )
+        return Ref(ident, ident)
 
     def relate(self, key, other):
-        _unsupported("relate")
+
+        def change(text, found):
+            if other in self._related(found):
+                return None
+            return issue_file.add_related(text, other), None
+
+        self._write(key, change)
 
     def _write_archive(self, key):
         _unsupported("archive")
@@ -349,15 +402,22 @@ class LocalTracker(Tracker):
                 return found
             raise TrackerFileError(found.path, "changed while writing")
 
+    def _folder(self, *parts):
+        """<board>/<parts…>, made if absent; a level that is no directory (or a symlink) refused."""
+        folder = self.board
+        for part in parts:
+            folder = os.path.join(folder, part)
+            try:
+                if not stat.S_ISDIR(os.lstat(folder).st_mode):
+                    raise TrackerFileError(folder, "not a directory")
+            except FileNotFoundError:
+                os.mkdir(folder)
+        return folder
+
     def _rename(self, issue, state):
         """issue's file moved, its name kept, into its assignee's state dir, made if absent; None:
         it was no longer there."""
-        folder = os.path.join(self.board, issue.assignee, state.value)
-        try:
-            if not stat.S_ISDIR(os.lstat(folder).st_mode):
-                raise TrackerFileError(folder, "not a directory")
-        except FileNotFoundError:
-            os.mkdir(folder)
+        folder = self._folder(issue.assignee, state.value)
         target = os.path.join(folder, os.path.basename(issue.path))
         if os.path.lexists(target):
             raise TrackerFileError(target, "file exists")
@@ -455,6 +515,16 @@ def _read_if_there(path):
 
 def _unsupported(name) -> NoReturn:
     raise NotImplementedError(f"local board: {name} is not supported yet")
+
+
+def _prefix(files):
+    if not files:
+        raise IssueError("no issue on the board to take an id prefix from")
+    return max(files, key=lambda i: int(i.rsplit("-", 1)[1])).rsplit("-", 1)[0]
+
+
+def _name(title):
+    return UNNAMED.sub("-", title).encode()[:NAME_BYTES].decode("utf-8", "ignore")
 
 
 def _sub_issue(issue):

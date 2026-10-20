@@ -409,3 +409,71 @@ class Edits(Zoned):
         text = issue_file.add_link(issue_file.set_title(FRONT, "a\x85b"), title=" ", url="u\x85")
         self.assertTrue(text.isascii())
         self.assertEqual(len(text.splitlines()), len(FRONT.splitlines()) + 3)
+
+    def test_add_related(self):
+        text = issue_file.add_related(FRONT, "LOC-3")
+        self.assertEqual(text, FRONT.replace("\n---\n", "\nrelated: [LOC-3]\n---\n"))
+        self.assertEqual(parse(text).related, ("LOC-3",))
+        listed = FRONT.replace("title: x\n", "title: x\nrelated: [LOC-1]\n")
+        self.assertEqual(
+            issue_file.add_related(listed, "LOC-3"),
+            listed.replace("[LOC-1]", "[LOC-1, LOC-3]"),
+        )
+        empty = FRONT.replace("title: x\n", "title: x\nrelated: []\n")
+        self.assertEqual(parse(issue_file.add_related(empty, "LOC-3")).related, ("LOC-3",))
+
+
+class New(Zoned):
+    """A new issue's text: front matter, Description, its first comment and History."""
+
+    def new(self, **given):
+        fields = {
+            "ident": "LOC-12",
+            "title": "ENG: 新 x",
+            "priority": 2,
+            "created": at(9, 30),
+            "parent": "LOC-5",
+            "description": "Handoff from LOC-1: file:///b\n\nBuild it.",
+            "note_at": at(9, 30),
+            "note": "Created by promote.",
+            "note_key": "LOC-1:engineer:2026-10-19T12:00:00.000Z",
+            "state": LocalState.READY,
+        }
+        return issue_file.new(**(fields | given))
+
+    def test_round_trips(self):
+        text = self.new()
+        self.assertTrue(text.split("---")[1].isascii())
+        found = parse(text, assignee="engineer")
+        self.assertEqual(
+            (found.id, found.title, found.priority, found.created, found.parent, found.related),
+            ("LOC-12", "ENG: 新 x", 2, at(9, 30), "LOC-5", ()),
+        )
+        self.assertEqual(found.description, "Handoff from LOC-1: file:///b\n\nBuild it.")
+        self.assertEqual(
+            found.comments,
+            (
+                Note(
+                    at(9, 30),
+                    Source.SELF,
+                    "Created by promote.",
+                    "LOC-1:engineer:2026-10-19T12:00:00.000Z",
+                ),
+            ),
+        )
+        self.assertEqual(found.history, (Entry(at(9, 30), LocalState.READY, Source.SELF),))
+
+    def test_no_parent(self):
+        text = self.new(parent=None)
+        self.assertNotIn("parent:", text)
+        self.assertIsNone(parse(text).parent)
+
+    def test_description_structure_is_escaped(self):
+        text = self.new(description="top\n### Comments\n#### self · x\n###\nend")
+        found = parse(text)
+        self.assertEqual(found.description, "top\n ### Comments\n #### self · x\n ###\nend")
+        self.assertEqual(len(found.comments), 1)
+
+    def test_new_comment_ids_follow(self):
+        text = issue_file.add_comment(self.new(), at=at(9, 31), body="b", ref_key="s:a")
+        self.assertIn("<!-- id=c2 key=s:a -->", text)

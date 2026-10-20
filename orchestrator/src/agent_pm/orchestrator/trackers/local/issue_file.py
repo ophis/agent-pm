@@ -327,6 +327,57 @@ def set_title(text: str, title: str) -> str:
     return _join(lines)
 
 
+def add_related(text: str, ident: str) -> str:
+    lines, end = _split(text)
+    key = next((i for i in range(1, end) if lines[i].startswith(f"{_Key.RELATED}:")), None)
+    if key is None:
+        return _join([*lines[:end], f"{_Key.RELATED}: [{ident}]", *lines[end:]])
+    listed = _ids(_Key.RELATED, lines[key][len(f"{_Key.RELATED}:") :].strip())
+    lines[key] = f"{_Key.RELATED}: [{', '.join([*listed, ident])}]"
+    return _join(lines)
+
+
+def new(
+    *,
+    ident: str,
+    title: str,
+    priority: int,
+    created: datetime,
+    parent: str | None,
+    description: str,
+    note_at: datetime,
+    note: str,
+    note_key: str,
+    state: LocalState,
+) -> str:
+    """Its first comment the engine's, keyed note_key, and one History line, both at note_at."""
+    front = [
+        f"{_Key.ID}: {ident}",
+        f"{_Key.TITLE}: {json.dumps(title)}",
+        f"{_Key.PRIORITY}: {priority}",
+        f"{_Key.CREATED}: {created.isoformat()}",
+        *([f"{_Key.PARENT}: {parent}"] if parent else []),
+    ]
+    return _join(
+        [
+            "---",
+            *front,
+            "---",
+            "",
+            f"### {_Section.DESCRIPTION.value}",
+            *_body(description),
+            "",
+            f"### {_Section.COMMENTS.value}",
+            "",
+            f"#### {Source.SELF} · {_minute(note_at)} <!-- id=c1 key={note_key} -->",
+            *_body(note),
+            "",
+            f"### {_Section.HISTORY.value}",
+            f"- {_minute(note_at)} {state} {Source.SELF}",
+        ]
+    )
+
+
 def add_link(text: str, *, title: str, url: str) -> str:
     lines, end = _split(text)
     pair = [f"  - title: {json.dumps(title)}", f"    url: {json.dumps(url)}"]
