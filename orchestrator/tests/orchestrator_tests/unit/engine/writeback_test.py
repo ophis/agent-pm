@@ -605,8 +605,9 @@ class WritebackContext(run_fixtures.Base):
             with self.subTest(resume=resume):
                 ctx = writeback.context(
                     cfg,
+                    cfg.linear,
                     "engineer",
-                    **writeback.accounts(cfg, gql, cfg.roles["engineer"].key),
+                    **writeback.accounts(cfg.linear, gql, cfg.linear.roles["engineer"].key),
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -624,14 +625,15 @@ class WritebackContext(run_fixtures.Base):
                     workdir=os.path.join(self.work, "work", ID),
                     tracker=ctx.tracker,
                     humans=("me@x.com",),
-                    states=cfg.states,
+                    states=cfg.linear.states,
                     repos={PROJECT: "ophis/agent-pm"},
                     target=target,
                     harness=ctx.harness,
                 )
                 self.assertEqual(ctx, want)
                 self.assertEqual(
-                    (ctx.tracker.state_ids, ctx.tracker.team_id), (cfg.states, cfg.team)
+                    (ctx.tracker.state_ids, ctx.tracker.team_id),
+                    (cfg.linear.states, cfg.linear.team),
                 )
                 gql.return_value = {"comment": None}
                 ctx.tracker.find_comment(UUID, (SID, "start"))
@@ -650,7 +652,7 @@ class WritebackContext(run_fixtures.Base):
         cfg = config.load()
         tracker, harness = object(), object()
         spec = SimpleNamespace(issue=ID, uuid=UUID, sid=SID, mode="resume", project=PROJECT)
-        ctx = writeback.for_run(cfg, "engineer", spec, tracker=tracker, harness=harness)
+        ctx = writeback.for_run(cfg, cfg.linear, "engineer", spec, tracker=tracker, harness=harness)
         self.assertIs(ctx.tracker, tracker)
         self.assertIs(ctx.harness, harness)
         self.assertEqual(
@@ -1572,7 +1574,7 @@ class Events(RunCase):
             delegate_kind="fake",
         ).detach()
         self.claim()
-        self.linear = Linear(self.cfg.states["in_progress"])
+        self.linear = Linear(self.cfg.linear.states["in_progress"])
         info = mock.patch.object(
             ReadyDelegate, "session_status", return_value=SessionStatus("yes", None, RESUME_COMMAND)
         )
@@ -1600,6 +1602,7 @@ class Events(RunCase):
     def deliver(self, e, *, workdir=None, issue=RUN_ISSUE):
         return writeback.deliver(
             self.cfg,
+            self.cfg.linear,
             issue,
             workdir or self.workdir,
             e,
@@ -1653,8 +1656,8 @@ class ForClaim(RunCase):
             calls.append((service, query, variables))
             return {}
 
-        self.assertNotEqual(self.cfg.roles["engineer"].key, CLAIM_KEY)
-        ctx = writeback.for_claim(self.cfg, CLAIM, services, attempt=1)
+        self.assertNotEqual(self.cfg.linear.roles["engineer"].key, CLAIM_KEY)
+        ctx = writeback.for_claim(self.cfg, self.cfg.linear, CLAIM, services, attempt=1)
         ctx.tracker.gql("query", i=UUID)
         self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
         self.assertEqual(
@@ -1666,7 +1669,9 @@ class ForClaim(RunCase):
     def test_a_later_attempt_is_a_resume(self):
         for attempt, resume in ((1, False), (2, True), (3, True)):
             with self.subTest(attempt=attempt):
-                ctx = writeback.for_claim(self.cfg, CLAIM, Linear(""), attempt=attempt)
+                ctx = writeback.for_claim(
+                    self.cfg, self.cfg.linear, CLAIM, Linear(""), attempt=attempt
+                )
                 self.assertIs(ctx.resume, resume)
 
 
@@ -1678,21 +1683,25 @@ class RunningEvents(Events):
             with open(self.cfg.runs_log, "w"):
                 pass
             self.claim(role=role)
-            for state in (*self.cfg.states.values(), "other-state"):
+            for state in (*self.cfg.linear.states.values(), "other-state"):
                 with self.subTest(role=role, state=state):
                     attempt += 1
                     self.linear.state = state
                     n = len(self.linear.calls)
                     self.assertTrue(self.deliver(delegate_event("begun", attempt)))
                     calls = self.linear.calls[n:]
-                    self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+                    self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
                     self.assertIn((CLAIM_KEY, "reread", {"i": UUID}), calls)
                     moved = [c for c in calls if c[1] == "state"]
                     expected = (
                         []
-                        if state == self.cfg.states["in_progress"]
+                        if state == self.cfg.linear.states["in_progress"]
                         else [
-                            (CLAIM_KEY, "state", {"i": UUID, "s": self.cfg.states["in_progress"]})
+                            (
+                                CLAIM_KEY,
+                                "state",
+                                {"i": UUID, "s": self.cfg.linear.states["in_progress"]},
+                            )
                         ]
                     )
                     self.assertEqual(moved, expected)
@@ -1704,53 +1713,53 @@ class RunningEvents(Events):
     def test_limit_resume_returns_to_work_and_the_next_limit_ends_it_again(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         self.assertTrue(self.deliver(self.finished(-9, limit={"resets_at": None})))
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         self.assertTrue(self.deliver(delegate_event("begun", 2)))
-        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
         self.assertTrue(self.deliver(self.finished(-9, attempt=2, limit={"resets_at": None})))
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
 
     def test_failed_state_read_or_write_is_retryable_from_progress(self):
         for op in ("reread", "state"):
             with self.subTest(op=op):
                 attempt = 1 if op == "reread" else 2
-                self.linear.state = self.cfg.states["in_review"]
+                self.linear.state = self.cfg.linear.states["in_review"]
                 self.linear.fail = lambda name, _v, op=op: (
                     LinearError("down") if name == op else None
                 )
                 self.assertFalse(self.deliver(delegate_event("begun", attempt)))
-                self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+                self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
                 self.linear.fail = lambda _name, _v: None
                 self.assertTrue(
                     self.deliver(delegate_event("progress", attempt, name="step", text="fix"))
                 )
-                self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+                self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
 
     def test_duplicate_or_delayed_events_do_not_reopen_an_ended_attempt(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         n = len(self.linear.writes("state"))
         self.assertTrue(self.deliver(delegate_event("begun")))
         self.assertTrue(self.deliver(delegate_event("progress", name="step", text="late")))
         self.assertEqual(len(self.linear.writes("state")), n)
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
 
     def test_a_delayed_older_attempt_cannot_move_the_current_attempt(self):
         self.assertTrue(self.deliver(delegate_event("begun", 2)))
-        self.linear.state = self.cfg.states["in_review"]
+        self.linear.state = self.cfg.linear.states["in_review"]
         n = len(self.linear.writes("state"))
         self.assertTrue(self.deliver(delegate_event("begun")))
         self.assertTrue(self.deliver(delegate_event("progress", name="step", text="old")))
         self.assertEqual(len(self.linear.writes("state")), n)
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
 
 
 class BegunEvents(Events):
     def test_posts_the_running_session_comment_as_the_harness_and_records_its_start(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         body = f"Run {RUN_SID} · running · #1 · {STARTED}\n\n```\n{RESUME_COMMAND}\n```"
-        harness = self.cfg.harness_key
+        harness = self.cfg.linear.harness_key
         self.assertEqual(
             self.linear.calls,
             [
@@ -1783,7 +1792,8 @@ class BegunEvents(Events):
         self.assertTrue(self.deliver(delegate_event("begun", attempt=2)))
         body = f"Run {RUN_SID} · running · #1 · {RESTARTED}\n\n```\n{RESUME_COMMAND}\n```"
         self.assertEqual(
-            self.linear.writes("update")[-1], (self.cfg.harness_key, {"c": RUN_SESSION, "b": body})
+            self.linear.writes("update")[-1],
+            (self.cfg.linear.harness_key, {"c": RUN_SESSION, "b": body}),
         )
         self.assertEqual(
             self.ledger()[RUN_SID]["attempts"],
@@ -1930,7 +1940,7 @@ class FinishedEvents(Events):
         self.assertTrue(self.deliver(delegate_event("begun")))
         n = len(self.linear.calls)
         self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
-        harness, states = self.cfg.harness_key, self.cfg.states
+        harness, states = self.cfg.linear.harness_key, self.cfg.linear.states
         ended = session_body(f"done · #2 · {STARTED} → {RESTARTED} · exit 0")
         self.assertEqual(
             self.linear.calls[n:],
@@ -1985,7 +1995,7 @@ class FinishedEvents(Events):
 
     def test_a_valid_outcome_is_honored_on_a_nonzero_exit(self):
         self.assertTrue(self.deliver(self.finished(1, outcome=outcome_data())))
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         self.assertEqual(self.ledger()[RUN_SID]["steps"][-1], "outcome")
         self.assertEqual(
             self.linear.comments[RUN_SESSION]["body"],
@@ -1997,7 +2007,7 @@ class FinishedEvents(Events):
         n = len(self.linear.calls)
         self.assertTrue(self.deliver(self.finished(1, error="the client exited 1")))
         ended = session_body(f"interrupted · #2 · {STARTED} → {RESTARTED} · exit 1")
-        harness = self.cfg.harness_key
+        harness = self.cfg.linear.harness_key
         self.assertEqual(
             self.linear.calls[n:],
             [
@@ -2005,7 +2015,7 @@ class FinishedEvents(Events):
                 (harness, "find", {"c": RUN_SESSION}),
             ],
         )
-        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
         self.assertIn(
             f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=the client exited 1",
             self.said(),
@@ -2019,14 +2029,14 @@ class FinishedEvents(Events):
             self.linear.comments[RUN_SESSION]["body"],
             session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0"),
         )
-        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
         self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
 
     def test_a_failed_turn_without_an_outcome_is_written_back_as_failed(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         n = len(self.linear.calls)
         self.assertTrue(self.deliver(self.finished(0, error=TURN_FAILED)))
-        harness, states = self.cfg.harness_key, self.cfg.states
+        harness, states = self.cfg.linear.harness_key, self.cfg.linear.states
         ended = session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0")
         comment = ops.client_id(RUN_SID, "no-outcome:comment")
         self.assertEqual(
@@ -2060,7 +2070,7 @@ class FinishedEvents(Events):
         self.claim(OTHER_SID, role="researcher")
         for attempt, state in ((1, "todo"), (2, "in_review")):
             with self.subTest(attempt=attempt):
-                self.linear.state = self.cfg.states["in_progress"]
+                self.linear.state = self.cfg.linear.states["in_progress"]
                 event = delegate_event(
                     "finished",
                     attempt,
@@ -2071,7 +2081,7 @@ class FinishedEvents(Events):
                     limit=None,
                 )
                 self.assertTrue(self.deliver(event))
-                self.assertEqual(self.linear.state, self.cfg.states[state])
+                self.assertEqual(self.linear.state, self.cfg.linear.states[state])
                 self.assertEqual(
                     self.linear.comments[ops.client_id(OTHER_SID, "no-outcome:comment")]["body"],
                     TURN_FAILED,
@@ -2083,13 +2093,13 @@ class FinishedEvents(Events):
             LinearError("linear api error: down") if op == "state" else None
         )
         self.assertFalse(self.deliver(self.finished(0, error=TURN_FAILED)))
-        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
         self.linear.fail = lambda _op, _v: None
         self.assertTrue(self.deliver(self.finished(outcome=outcome_data(), attempt=2)))
         self.assertEqual(
             self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
         )
-        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
             ["no-outcome:comment", "comment", f"attach:{PR}", "move:in_review", "outcome"],
@@ -2175,7 +2185,7 @@ class LimitEvents(Events):
         self.assertTrue(self.deliver(delegate_event("begun")))
         n = len(self.linear.calls)
         self.assertTrue(self.deliver(self.limited()))
-        harness, states = self.cfg.harness_key, self.cfg.states
+        harness, states = self.cfg.linear.harness_key, self.cfg.linear.states
         ended = session_body(f"limit · #2 · {STARTED} → {RESTARTED} · exit -9")
         self.assertEqual(
             self.linear.calls[n:],
@@ -2232,14 +2242,14 @@ class LimitEvents(Events):
                 self.assertTrue(self.deliver(replace(event, limit={"resets_at": resets_at})))
                 body = self.linear.comments[ops.client_id(sid, "limit")]["body"]
                 self.assertEqual(body, "Usage limit, reset time unknown.")
-                self.linear.state = self.cfg.states["in_progress"]
+                self.linear.state = self.cfg.linear.states["in_progress"]
 
     def test_local_time(self):
         self.assertEqual(writeback.local_time(T), "2026-10-11T18:00:00+08:00")
         self.assertIsNone(writeback.local_time(None))
 
     def test_the_humans_are_subscribed_and_a_failed_subscription_noted(self):
-        self.cfg = replace(self.cfg, human_members=HUMANS)
+        self.cfg = replace(self.cfg, linear=replace(self.cfg.linear, human_members=HUMANS))
 
         def fail(op, v):
             if op == "subscribe" and v["e"] == HUMANS[0]:
@@ -2265,10 +2275,10 @@ class LimitEvents(Events):
             (2, "handoff", f"skip {RUN_ISSUE} reason=move to in_review: issue is "),
         ):
             with self.subTest(state=state):
-                self.linear.state = self.cfg.states[state]
+                self.linear.state = self.cfg.linear.states[state]
                 before = len(self.said())
                 self.assertTrue(self.deliver(self.limited(attempt)))
-                self.assertEqual(self.linear.state, self.cfg.states[state])
+                self.assertEqual(self.linear.state, self.cfg.linear.states[state])
                 skips = [line for line in self.said()[before:] if line.startswith("writeback skip")]
                 self.assertEqual(
                     [line.startswith(f"writeback {skip}") for line in skips],
@@ -2289,7 +2299,7 @@ class LimitEvents(Events):
         )
 
     def test_a_linear_failure_in_the_limit_is_a_step_error_never_raised(self):
-        self.cfg = replace(self.cfg, human_members=HUMANS)
+        self.cfg = replace(self.cfg, linear=replace(self.cfg.linear, human_members=HUMANS))
         for index, (op, step) in enumerate(
             (("reread", "limit-move:1"), ("state", "limit-move:1"), ("subscribe", "limit-row:1"))
         ):
@@ -2297,7 +2307,7 @@ class LimitEvents(Events):
                 sid = f"0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2b{index:02d}"
                 self.claim(sid)
                 self.now = iter((STARTED, RESTARTED))
-                self.linear.state = self.cfg.states["in_progress"]
+                self.linear.state = self.cfg.linear.states["in_progress"]
                 self.linear.fail = lambda o, _v, op=op: (
                     LinearError("linear api error: down") if o == op else None
                 )
@@ -2333,7 +2343,7 @@ class LimitEvents(Events):
 
     def test_a_later_attempts_limit_moves_again_without_a_second_comment(self):
         self.assertTrue(self.deliver(self.limited()))
-        self.linear.state = self.cfg.states["in_progress"]
+        self.linear.state = self.cfg.linear.states["in_progress"]
         n = len(self.linear.calls)
         self.assertTrue(self.deliver(self.limited(attempt=2)))
         self.assertEqual(
@@ -2419,6 +2429,7 @@ class RecoverReplay(Events):
     def replay(self):
         return writeback.replay(
             self.cfg,
+            self.cfg.linear,
             RUN_ISSUE,
             RUN_SID,
             self.outcome(),

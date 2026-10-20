@@ -89,11 +89,13 @@ def child_title(prefix, src_prefix, title):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, now, dry, *, tasks, wait=True):
+    def __init__(self, gql, cfg, linear, now, dry, *, tasks, wait=True):
         self.cfg, self.now, self.dry, self.wait = cfg, now, dry, wait
         self.tasks = tasks
-        self.team, self.roles = team_and_roles(gql, cfg)
-        self.tracker = LinearTracker.of_team(gql, self.team, self.roles, humans=cfg.human_members)
+        self.team, self.roles = team_and_roles(gql, linear)
+        self.tracker = LinearTracker.of_team(
+            gql, self.team, self.roles, humans=linear.human_members
+        )
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):
@@ -304,14 +306,18 @@ def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
         return 2
-    if refused := config.linear_only(cfg, "promote"):
+    try:
+        linear = config.linear_settings(cfg, "promote")
+    except ConfigError as refused:
         print(f"promote.py: {refused}", file=sys.stderr)
         return 2
     event_log.use_logs(cfg.logs_dir)
-    gql = functools.partial(gql, service=cfg.harness_key)
+    gql = functools.partial(gql, service=linear.harness_key)
     now = now or datetime.now(UTC)
     try:
-        promoter = Promoter(gql, cfg, now, dry, tasks=config.TASKS, wait="--now" not in argv)
+        promoter = Promoter(
+            gql, cfg, linear, now, dry, tasks=config.TASKS, wait="--now" not in argv
+        )
         promoter.run()
     except LinearError as e:
         return event_log.config_error("promote", e, dry=dry)

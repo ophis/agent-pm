@@ -6,6 +6,7 @@ import functools
 import re
 from typing import TypeVar
 
+from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
@@ -205,10 +206,10 @@ def _quiet(*_, **__):
     pass
 
 
-def team_and_roles(gql, cfg):
+def team_and_roles(gql, linear):
     """The team (states, finished) and the role accounts' user ids promote and prune build their
-    tracker from: the team read first."""
-    return ops.team(gql, cfg), ops.role_ids(gql, cfg.roles)
+    tracker from, by the LinearSettings linear: the team read first."""
+    return ops.team(gql, linear), ops.role_ids(gql, linear.roles)
 
 
 class LinearTracker(Tracker):
@@ -261,22 +262,23 @@ class LinearTracker(Tracker):
     def connect(cls, gql, cfg, *, say):
         """Checks the team and task label group, then reads the human and role accounts; keeps
         the task and Agent label maps."""
-        found = ops.team(gql, cfg)
-        ops.task_group(gql, cfg)
-        people = frozenset(ops.humans(gql, cfg))
+        linear = config.linear_settings(cfg, "router")
+        found = ops.team(gql, linear)
+        ops.task_group(gql, linear)
+        people = frozenset(ops.humans(gql, linear))
         return cls(
             gql,
             states=found.states,
             team_id=found.id,
             finished=found.finished,
-            roles=ops.role_ids(gql, cfg.roles),
-            humans=cfg.human_members,
+            roles=ops.role_ids(gql, linear.roles),
+            humans=linear.human_members,
             people=people,
             say=say,
-            task_group=cfg.task_label_group,
-            label_tasks={i: task for task, i in cfg.task_labels.items()},
-            agent_group=cfg.agent_label_group,
-            label_clients={i: client for client, i in cfg.agent_labels.items()},
+            task_group=linear.task_label_group,
+            label_tasks={i: task for task, i in linear.task_labels.items()},
+            agent_group=linear.agent_label_group,
+            label_clients={i: client for client, i in linear.agent_labels.items()},
         )
 
     @classmethod

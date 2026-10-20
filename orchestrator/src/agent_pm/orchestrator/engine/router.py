@@ -356,6 +356,8 @@ class Board:
         a resume (FR-41): None when there is none; else whether its write-back is now complete.
         """
         ident = issue["identifier"]
+        if self.cfg.linear is None:
+            return None  # a local board has no write-back
         try:
             outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.outcome()
         except (ConfigError, delegate.ConfigError, delegate.SessionError):
@@ -363,7 +365,9 @@ class Board:
         if outcome is None:
             return None
         try:
-            done = writeback.replay(self.cfg, ident, sid, outcome, gql=self.gql, dry=self.dry)
+            done = writeback.replay(
+                self.cfg, self.cfg.linear, ident, sid, outcome, gql=self.gql, dry=self.dry
+            )
         except (ConfigError, ValueError) as error:
             self.say("recover-skip", ident, once=True, sid=sid, reason=one_line(error))
             return False
@@ -532,7 +536,7 @@ class Board:
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
         current = self.tracker.recheck(issue["id"])
-        role = current.role
+        role, linear = current.role, self.cfg.linear
         if not current.ready:
             skip = "no longer Todo"
         elif role is None:
@@ -541,7 +545,7 @@ class Board:
             skip = f"{role} is full"
         elif current.refused:
             skip = current.refused
-        elif (key := self.cfg.roles[role].key) and not self.keychain(key):
+        elif linear and (key := linear.roles[role].key) and not self.keychain(key):
             skip = f"no Keychain item for role key {key}"
         else:
             skip = None
@@ -596,7 +600,7 @@ def begin(cfg, spec: Spec) -> Spec:
     return spec
 
 
-def record(cfg, spec: Spec, *, role, now, target=None) -> str:
+def record(cfg, spec: Spec, *, role, key, now, target=None) -> str:
     """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
     uuid, project, target, the role's key), which its write-back reads, and its task, which picks
     a resume's tier; returns its Delegate kind.
@@ -608,7 +612,7 @@ def record(cfg, spec: Spec, *, role, now, target=None) -> str:
                 "uuid": spec.uuid,
                 "project": spec.project,
                 "target": target,
-                "key": cfg.roles[role].key,
+                "key": key,
                 "task": spec.task,
             },
         )
@@ -653,13 +657,14 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
         return 2
-    role = config.role_for(cfg.roles, a.assignee)
+    linear = config.linear_settings(cfg, "router")
+    role = config.role_for(linear.roles, a.assignee)
     tasks = cfg.roles[role].tasks if role is not None else ()
     reason = a.role_error(role, tasks)
     if role is None or reason:
         return fail(a.issue, "config-error", reason, 2)
-    key = cfg.roles[role].key
-    kind = record(cfg, a, role=role, now=now) if a.mode == "resume" else cfg.delegate_kind
+    key = linear.roles[role].key
+    kind = record(cfg, a, role=role, key=key, now=now) if a.mode == "resume" else cfg.delegate_kind
     if not keychain(key):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
@@ -671,20 +676,20 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].input == "build"
-    reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
+    reader = LinearTracker(gql, states=linear.states, team_id=linear.team)
     try:
         issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
-    ctx = writeback.for_run(cfg, role, a, **writeback.accounts(cfg, gql, key))
+    ctx = writeback.for_run(cfg, linear, role, a, **writeback.accounts(linear, gql, key))
     workdir = cfg.issue_workdir(a.issue)
     delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
                 issue,
-                cfg.project_repos,
+                linear.project_repos,
                 run=run,
                 delegate=delegate_cls,
                 workdir=workdir,
@@ -702,7 +707,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
-        repo = target.research_repo(issue, cfg.project_repos)
+        repo = target.research_repo(issue, linear.project_repos)
     slug = f"{repo.owner}/{repo.name}" if build and repo else None
     if repo is not None:
         repo = target.with_clone(
@@ -762,7 +767,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
                 return _label_client_error(a, ctx, error)
             raise
         if a.mode == "new":
-            record(cfg, a, role=role, target=slug, now=now)
+            record(cfg, a, role=role, key=key, target=slug, now=now)
         detached = linear_run.detach()
     except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -1140,7 +1145,7 @@ def main(
     except ConfigError as error:
         print(f"router.py: {error}", file=sys.stderr)
         return 2
-    gql = functools.partial(gql, service=cfg.harness_key)
+    gql = functools.partial(gql, service=cfg.linear.harness_key if cfg.linear else None)
     if start is None:
         start = functools.partial(
             outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended

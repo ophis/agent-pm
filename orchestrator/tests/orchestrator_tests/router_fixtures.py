@@ -628,7 +628,7 @@ class TickBase(Base):
     def launched_run(self):
         """The run the tick handed to its start, as last_run's row would show it."""
         a = self.start.launches[-1]
-        role = config.role_for(self.cfg().roles, a.assignee)
+        role = config.role_for(self.cfg().linear.roles, a.assignee)
         return "start" if a.mode == "new" else "resume", a.issue, self.unmap(a.sid), role, a.client
 
     def launched(self):
@@ -662,7 +662,7 @@ class OuterBase(TickBase):
         row holding started_task.
         """
         if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
-            role = config.role_for(self.cfg().roles, assignee) or "engineer"
+            role = config.role_for(self.cfg().linear.roles, assignee) or "engineer"
             runs.note(
                 self.runs,
                 "start",

@@ -730,18 +730,21 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    if refused := config.linear_only(cfg, "issue"):
+    try:
+        linear = config.linear_settings(cfg, "issue")
+    except ConfigError as refused:
         diagnose(err, refused)
         return USAGE
-    gql = functools.partial(gql, service=cfg.harness_key)
+    gql = functools.partial(gql, service=linear.harness_key)
     try:
-        data = _run(gql, args, cfg.team, body)
+        data = _run(gql, args, linear.team, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE
     except (subprocess.SubprocessError, OSError, KeychainError) as error:
         diagnose(
-            err, f"linear.harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}"
+            err,
+            f"linear.harness_key Keychain service {linear.harness_key!r}: {type(error).__name__}",
         )
         return USAGE
     except GraphQLErrors as error:

@@ -3356,6 +3356,7 @@ class RunStartRecords(Base):
                     Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"), uuid=UUID
                 ),
                 role="researcher",
+                key=cfg.linear.roles["researcher"].key,
                 target=None,
                 now=lambda: datetime.fromisoformat(stamp),
             )
@@ -3368,7 +3369,7 @@ class RunStartRecords(Base):
         )
         claim = (
             f'"uuid": "{UUID}", "project": "{IDS[DR]}", "target": null, '
-            f'"key": "{cfg.roles["researcher"].key}", "task": "light-research"'
+            f'"key": "{cfg.linear.roles["researcher"].key}", "task": "light-research"'
         )
         with open(cfg.runs_log) as f:
             self.assertEqual(
@@ -3377,7 +3378,9 @@ class RunStartRecords(Base):
                 f'{{"ts": "{stamp}", "kind": "resume", {common}}}\n',
             )
         self.assertEqual([e.kind for e in runs.parse_log(cfg.runs_log)], ["start", "resume"])
-        self.assertEqual(runs.claim(cfg.runs_log, "TASK-1", "s1").key, cfg.roles["researcher"].key)
+        self.assertEqual(
+            runs.claim(cfg.runs_log, "TASK-1", "s1").key, cfg.linear.roles["researcher"].key
+        )
 
 
 class ExplicitIssueRuns(TickBase):
@@ -4615,10 +4618,11 @@ class RoleKeys(Base):
 
     def cfg(self):
         cfg = super().cfg()
-        return replace(cfg, roles={**cfg.roles, "pm": replace(cfg.roles["pm"], key="")})
+        roles = {**cfg.linear.roles, "pm": replace(cfg.linear.roles["pm"], key="")}
+        return replace(cfg, linear=replace(cfg.linear, roles=roles))
 
     def test_the_keychain_is_checked_only_for_a_role_key(self):
-        key = self.cfg().roles["researcher"].key
+        key = self.cfg().linear.roles["researcher"].key
         self.missing = {key, ""}
         self.assertEqual(self.claim(two()), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
         self.assertEqual(self.keychain_calls, [key])
@@ -5175,7 +5179,7 @@ class RecoverWriteBack(TickBase):
         super().setUp()
         self.moved("TASK-1", 61)
         start = json.loads(self.row("start", "TASK-1", "a", "researcher", minutes=60))
-        key = self.cfg().roles["researcher"].key
+        key = self.cfg().linear.roles["researcher"].key
         self.lines.append(
             json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
         )
@@ -5223,6 +5227,18 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_local_board_replays_nothing(self):
+        self.ended()
+        self.write_runs()
+        cfg = replace(self.cfg(), tracker=TrackerKind.LOCAL, linear=None, board=self.tmp)
+        sid = self.sid("a")
+        self.assertIsNotNone(router.LinearRun.attach("TASK-1", cfg=cfg, sid=sid).delegate.outcome())
+        board = router.Board(
+            None, [], cfg, now=NOW, dry=True, keychain=None, connect=lambda *_, **__: None
+        )
+        self.assertIsNone(board.replay({"identifier": "TASK-1"}, sid))
+        self.assertEqual(self.steps(), ["comment"])
 
     def test_a_dry_run_writes_nothing(self):
         self.ended()

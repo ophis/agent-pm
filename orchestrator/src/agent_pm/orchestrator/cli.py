@@ -17,7 +17,7 @@ from agent_pm.orchestrator.engine import (
     runs,
     writeback,
 )
-from agent_pm.orchestrator.engine.config import linear_only, load
+from agent_pm.orchestrator.engine.config import linear_settings, load
 from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.types import ConfigError, TrackerKind
@@ -217,17 +217,20 @@ def main(argv=None):
                 _log_ignored(args.issue, ignored)
             return 2
         event_log.use_logs(cfg.logs_dir)
-        if args.command in {"writeback", "resume"} and (refused := linear_only(cfg, args.command)):
-            print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
-            if args.command == "writeback":
-                _refused(args.issue, refused)
-                _log_ignored(args.issue, ignored)
-            return 2
-        if args.command == "writeback":
+        if args.command in {"writeback", "resume"}:
             try:
-                return _writeback(cfg, args.issue, args.workdir)
-            finally:
-                _log_ignored(args.issue, ignored)
+                linear = linear_settings(cfg, args.command)
+            except ConfigError as refused:
+                print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
+                if args.command == "writeback":
+                    _refused(args.issue, refused)
+                    _log_ignored(args.issue, ignored)
+                return 2
+            if args.command == "writeback":
+                try:
+                    return _writeback(cfg, linear, args.issue, args.workdir)
+                finally:
+                    _log_ignored(args.issue, ignored)
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
@@ -302,13 +305,15 @@ def _log_ignored(issue, ignored):
     ignored.clear()
 
 
-def _writeback(cfg, issue, workdir):
+def _writeback(cfg, linear, issue, workdir):
     lines = sys.stdin.read().splitlines()
     try:
         if len(lines) != 1:
             raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
         event = DelegateEvent.parse(lines[0])
-        return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
+        return (
+            0 if writeback.deliver(cfg, linear, issue, workdir, event, gql=client.linear_gql) else 1
+        )
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)
         _refused(issue, error)

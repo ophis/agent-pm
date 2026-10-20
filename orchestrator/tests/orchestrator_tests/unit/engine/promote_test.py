@@ -708,8 +708,8 @@ class PromotionScope(Base):
                 self.write_config(PM_NEXT)
                 self.ready(role="pm", title=title)
                 cfg = config.load(path=self.config_path)
-                gql = functools.partial(self.fake, service=cfg.harness_key)
-                promote.Promoter(gql, cfg, NOW, dry=False, tasks=tasks).run()
+                gql = functools.partial(self.fake, service=cfg.linear.harness_key)
+                promote.Promoter(gql, cfg, cfg.linear, NOW, dry=False, tasks=tasks).run()
                 (child,) = self.fake.children.values()
                 self.assertEqual(
                     (child["projectId"], child["assigneeId"], child["title"]),

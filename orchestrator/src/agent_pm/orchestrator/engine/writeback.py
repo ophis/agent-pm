@@ -83,17 +83,17 @@ TURN_FAILED = "the client's turn failed: "
 NO_OUTCOME = "no-outcome:"
 
 
-def accounts(cfg, gql, key) -> dict[str, Tracker]:
-    """context's tracker (key's) and harness (the session comment's)."""
+def accounts(linear, gql, key) -> dict[str, Tracker]:
+    """context's tracker (key's) and harness (the session comment's), by the LinearSettings linear."""
     return {
         "tracker": LinearTracker(
-            gql, states=cfg.states, team_id=cfg.team, humans=cfg.human_members, service=key
+            gql, states=linear.states, team_id=linear.team, humans=linear.human_members, service=key
         ),
-        "harness": LinearTracker(gql, service=cfg.harness_key, timeout=run_comments.LIMIT),
+        "harness": LinearTracker(gql, service=linear.harness_key, timeout=run_comments.LIMIT),
     }
 
 
-def context(cfg, role, *, tracker, harness, ident, issue_id, sid, resume, project, target):
+def context(cfg, linear, role, *, tracker, harness, ident, issue_id, sid, resume, project, target):
     return Context(
         ident=ident,
         issue_id=issue_id,
@@ -103,17 +103,18 @@ def context(cfg, role, *, tracker, harness, ident, issue_id, sid, resume, projec
         project=project,
         workdir=cfg.issue_workdir(ident),
         tracker=tracker,
-        states=cfg.states,
-        humans=tuple(e.lower() for e in cfg.human_members),
-        repos=cfg.project_repos,
+        states=linear.states,
+        humans=tuple(e.lower() for e in linear.human_members),
+        repos=linear.project_repos,
         target=target,
         harness=harness,
     )
 
 
-def for_run(cfg, role, spec: Spec, *, tracker, harness):
+def for_run(cfg, linear, role, spec: Spec, *, tracker, harness):
     return context(
         cfg,
+        linear,
         role,
         tracker=tracker,
         harness=harness,
@@ -126,13 +127,14 @@ def for_run(cfg, role, spec: Spec, *, tracker, harness):
     )
 
 
-def for_claim(cfg, claim: Claim, gql, *, attempt: int) -> Context:
+def for_claim(cfg, linear, claim: Claim, gql, *, attempt: int) -> Context:
     """Writes as the claim's account, whatever the role's is now."""
     return replace(
         context(
             cfg,
+            linear,
             claim.role,
-            **accounts(cfg, gql, claim.key),
+            **accounts(linear, gql, claim.key),
             ident=claim.issue,
             issue_id=claim.uuid,
             sid=claim.sid,
@@ -541,7 +543,7 @@ def _replayed_attempt(begun, rows) -> int:
 
 
 def replay(
-    cfg, issue: str, sid: str, outcome: Outcome, *, gql, dry=False, now=timestamp
+    cfg, linear, issue: str, sid: str, outcome: Outcome, *, gql, dry=False, now=timestamp
 ) -> bool | None:
     """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
     as its callback's, then its session comment's end unless the callback's wrote it: None when
@@ -550,7 +552,7 @@ def replay(
     """
     rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
     claim = _claim(cfg, issue, sid)
-    ctx = for_claim(cfg, claim, gql, attempt=len(rows))
+    ctx = for_claim(cfg, linear, claim, gql, attempt=len(rows))
     attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
     ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
@@ -566,7 +568,9 @@ def replay(
         return done
 
 
-def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp) -> bool:
+def deliver(
+    cfg, linear, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp
+) -> bool:
     """Writes the (issue, event.sid) run's event back as its start row's claim, each step once
     however often the event arrives; False when a write failed. Raises ConfigError or ValueError,
     before any write, on what it cannot write.
@@ -579,7 +583,7 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
     claim = _claim(cfg, issue, event.sid)
-    ctx = for_claim(cfg, claim, gql, attempt=attempt)
+    ctx = for_claim(cfg, linear, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:
         return held and _deliver(ctx, cfg, claim, event, now=now)
 

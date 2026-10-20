@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import agent_pm.utils as utils
@@ -16,6 +17,8 @@ from agent_pm.orchestrator.engine.types import (
     Config,
     ConfigError,
     Docs,
+    LinearRole,
+    LinearSettings,
     Role,
     State,
     TrackerKind,
@@ -75,11 +78,11 @@ def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
         config_error(src, error, dry=dry)
 
 
-def linear_only(cfg: Config, command: str) -> str | None:
-    """Why command cannot run on cfg's tracker; None: it can."""
-    if cfg.tracker is TrackerKind.LINEAR:
-        return None
-    return f'{command} needs [orchestrator] tracker = "linear"'
+def linear_settings(cfg: Config, command: str) -> LinearSettings:
+    """cfg's Linear settings; raises ConfigError, command's refusal, on another tracker."""
+    if cfg.linear is None:
+        raise ConfigError(f'{command} needs [orchestrator] tracker = "linear"')
+    return cfg.linear
 
 
 def load(*, path: str | None = None) -> Config:
@@ -158,7 +161,7 @@ def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     return utils.sh(argv, timeout, env={**os.environ, "PATH": path()})
 
 
-def role_for(roles, email):
+def role_for(roles: Mapping[str, LinearRole], email):
     return next(
         (r for r, role in roles.items() if email and role.account.lower() == email.lower()), None
     )
@@ -233,37 +236,41 @@ def _work_dir(cfg, clones=None, *, board=None):
 def _load(cfg, work, kind, delegates, index, *, board):
     roles = _runnable(cfg, work, delegates[kind], index)
     docs = _docs(roles, LOCAL)
-    linear = cfg["linear"] if cfg["tracker"] is TrackerKind.LINEAR else {}
     frozen = {
-        k: MappingProxyType(dict(table.get(k, {})))
-        for table, keys in (
-            (linear, ("states", "task_labels", "agent_labels", "project_repos")),
-            (cfg, ("task_tiers", "client_max_runs", "local_clones")),
-        )
-        for k in keys
+        k: MappingProxyType(dict(cfg[k])) for k in ("task_tiers", "client_max_runs", "local_clones")
     }
     return Config(
-        team=linear.get("team", ""),
-        human_members=tuple(linear.get("human_members") or ()),
-        harness_key=linear.get("harness_key", ""),
-        task_label_group=linear.get("task_label_group", ""),
         roles=MappingProxyType(roles),
         tracker=cfg["tracker"],
+        linear=_linear_settings(cfg["linear"]) if cfg["tracker"] is TrackerKind.LINEAR else None,
         board=board,
         work_dir=work,
         docs=docs,
         stages=MappingProxyType(_stage_order()),
-        states=frozen["states"],
-        task_labels=frozen["task_labels"],
         task_tiers=frozen["task_tiers"],
-        agent_label_group=linear.get("agent_label_group", ""),
-        agent_labels=frozen["agent_labels"],
         client_max_runs=frozen["client_max_runs"],
-        project_repos=frozen["project_repos"],
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
         delegates=MappingProxyType(delegates),
         core=utils.freeze(cfg.get("core", {})),
+    )
+
+
+def _linear_settings(linear):
+    frozen = {
+        k: MappingProxyType(dict(linear[k]))
+        for k in ("states", "task_labels", "agent_labels", "project_repos")
+    }
+    return LinearSettings(
+        team=linear["team"],
+        human_members=tuple(linear.get("human_members") or ()),
+        harness_key=linear["harness_key"],
+        task_label_group=linear["task_label_group"],
+        agent_label_group=linear["agent_label_group"],
+        roles=MappingProxyType(
+            {name: LinearRole(p["account"], p["key"]) for name, p in linear["roles"].items()}
+        ),
+        **frozen,
     )
 
 
@@ -553,21 +560,13 @@ def _runnable(cfg, work, delegate_cls, index):
 
 def _resolve_roles(cfg, overlay, delegate_cls, index):
     out = {}
-    accounts = cfg["linear"]["roles"] if cfg["tracker"] is TrackerKind.LINEAR else {}
     for name, p in cfg["roles"].items():
         try:
             run = delegate_cls.resolve(name, overlays=(overlay,))
             tasks = tuple(index[name])
         except delegate.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
-        account = accounts.get(name, {"account": "", "key": ""})
-        out[name] = Role(
-            account["account"],
-            account["key"],
-            tasks,
-            p.get("max_runs", 1),
-            run,
-        )
+        out[name] = Role(tasks, p.get("max_runs", 1), run)
     return out
 
 

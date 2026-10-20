@@ -441,13 +441,15 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
     except ConfigError as error:
         config.report_error("prune", error, dry=dry)
         return 2
-    if refused := config.linear_only(cfg, "prune"):
+    try:
+        linear = config.linear_settings(cfg, "prune")
+    except ConfigError as refused:
         print(f"prune.py: {refused}", file=sys.stderr)
         return 2
     event_log.use_logs(cfg.logs_dir)
-    gql = functools.partial(gql, service=cfg.harness_key)
+    gql = functools.partial(gql, service=linear.harness_key)
     try:
-        team, roles = team_and_roles(gql, cfg)
+        team, roles = team_and_roles(gql, linear)
         code = pruner(
             gql,
             now or datetime.now(UTC),

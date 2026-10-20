@@ -128,8 +128,8 @@ def user_id(gql, email):
     return nodes[0]["id"] if nodes else None
 
 
-def humans(gql, cfg):
-    emails = cfg.human_members
+def humans(gql, linear):
+    emails = linear.human_members
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
         raise LinearError(
@@ -154,23 +154,26 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
   states(first: 100) { nodes { id type } } } } }"""
 
 
-def team(gql, cfg):
-    nodes = gql(Q_TEAM, t=cfg.team)["teams"]["nodes"]
+def team(gql, linear):
+    nodes = gql(Q_TEAM, t=linear.team)["teams"]["nodes"]
     if not nodes:
-        raise LinearError(f"orchestrator/config.toml: linear.team {cfg.team} not found in Linear")
+        raise LinearError(
+            f"orchestrator/config.toml: linear.team {linear.team} not found in Linear"
+        )
     t = nodes[0]
+    states = linear.states
     ids = {s["id"] for s in t["states"]["nodes"]}
-    if bad := [f"{k} {cfg.states[k]}" for k in State if cfg.states[k] not in ids]:
+    if bad := [f"{k} {states[k]}" for k in State if states[k] not in ids]:
         raise LinearError(
             f"orchestrator/config.toml: [linear.states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
         )
-    finished = {cfg.states[State.DONE], cfg.states[State.CANCELED]}
+    finished = {states[State.DONE], states[State.CANCELED]}
     finished |= {
         s["id"]
         for s in t["states"]["nodes"]
         if s["type"] in (FinishedType.CANCELED, FinishedType.DUPLICATE)
     }
-    return Team(t["id"], t["name"], {k: cfg.states[k] for k in State}, frozenset(finished))
+    return Team(t["id"], t["name"], {k: states[k] for k in State}, frozenset(finished))
 
 
 Q_TASK_GROUP = (
@@ -178,9 +181,9 @@ Q_TASK_GROUP = (
 )
 
 
-def task_group(gql, cfg):
+def task_group(gql, linear):
     # children are unpaginated (250): beyond that a valid id fails
-    group = cfg.task_label_group
+    group = linear.task_label_group
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
     except LinearError as e:
@@ -192,7 +195,7 @@ def task_group(gql, cfg):
             f"orchestrator/config.toml: linear.task_label_group {group} is not a label group"
         )
     ids = {c["id"] for c in label["children"]["nodes"]}
-    if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
+    if bad := [f"{task} {i}" for task, i in linear.task_labels.items() if i not in ids]:
         raise LinearError(
             f"orchestrator/config.toml: [linear.task_labels] not labels of linear.task_label_group {group}: {', '.join(bad)}"
         )

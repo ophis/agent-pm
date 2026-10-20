@@ -16,8 +16,6 @@ ClientSource = Literal["label", "default"]
 
 @dataclass(frozen=True)
 class Role:
-    account: str
-    key: str
     tasks: tuple[str, ...]
     max_runs: int
     run: delegate.RunConfig
@@ -38,21 +36,35 @@ class TrackerKind(StrEnum):
 
 
 @dataclass(frozen=True)
-class Config:
+class LinearRole:
+    account: str
+    key: str
+
+
+@dataclass(frozen=True)
+class LinearSettings:
+    """[orchestrator.linear]: a Linear board's entities and keys, by id."""
+
     team: str
     states: Mapping[str, str]
     human_members: tuple[str, ...]
     harness_key: str
     task_label_group: str
     task_labels: Mapping[str, str]
-    task_tiers: Mapping[str, int]
     agent_label_group: str
     agent_labels: Mapping[str, str]
+    project_repos: Mapping[str, str]
+    roles: Mapping[str, LinearRole]
+
+
+@dataclass(frozen=True)
+class Config:
+    task_tiers: Mapping[str, int]
     client_max_runs: Mapping[str, int]
     roles: Mapping[str, Role]
-    project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]
     tracker: TrackerKind
+    linear: LinearSettings | None  # None: tracker = "local"
     board: str | None  # the local board's realpath; None for Linear
     work_dir: str
     docs: Docs
@@ -60,6 +72,12 @@ class Config:
     delegate_kind: str
     delegates: Mapping[str, type]
     core: Mapping
+
+    def __post_init__(self):
+        if (self.linear is None) != (self.tracker is TrackerKind.LOCAL):
+            raise ValueError(
+                f"tracker {self.tracker}: linear is set exactly when the tracker is linear"
+            )
 
     @property
     def delegate_cls(self) -> type:

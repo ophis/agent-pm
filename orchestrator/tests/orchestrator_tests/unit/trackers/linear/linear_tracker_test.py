@@ -624,7 +624,7 @@ def users(*ids):
     return [{"users": {"nodes": [{"id": i}] if i else []}} for i in ids]
 
 
-def board_cfg():
+def board_linear():
     return SimpleNamespace(
         team=TEAM,
         states=STATES,
@@ -640,7 +640,7 @@ def board_cfg():
 def connected(**replies):
     group = {"issueLabel": {"isGroup": True, "children": {"nodes": [{"id": "label-1"}]}}}
     replies = {"Q_TEAM": {"teams": {"nodes": [team_node()]}}, "Q_TASK_GROUP": group} | replies
-    return LinearTracker.connect(Gql(**replies), board_cfg(), say=None)
+    return LinearTracker.connect(Gql(**replies), SimpleNamespace(linear=board_linear()), say=None)
 
 
 class Connect(Case):
@@ -675,7 +675,7 @@ class Connect(Case):
 class TeamAndRoles(Case):
     def test_reads_the_team_then_the_role_accounts(self):
         gql = Gql(Q_TEAM={"teams": {"nodes": [team_node()]}}, Q_USER=users("u-pm"))
-        found, roles = linear_tracker.team_and_roles(gql, board_cfg())
+        found, roles = linear_tracker.team_and_roles(gql, board_linear())
         self.assertEqual(gql.names(), ["Q_TEAM", "Q_USER"])
         self.assertEqual((found.id, found.states, roles), (TEAM, STATES, {"u-pm": "pm"}))
 

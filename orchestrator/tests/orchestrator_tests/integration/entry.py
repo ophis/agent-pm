@@ -27,7 +27,7 @@ def launch(argv):
     return router.outer(
         Spec(**vars(parser.parse_args(argv))),
         cfg,
-        gql=functools.partial(client.linear_gql, service=cfg.harness_key),
+        gql=functools.partial(client.linear_gql, service=cfg.linear.harness_key),
         run=config.shell,
         keychain=client.has_key,
     )

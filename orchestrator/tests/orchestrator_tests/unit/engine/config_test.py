@@ -86,11 +86,16 @@ ROLES = {
 }
 
 
-def fields(roles):
+def fields(cfg):
     """Each role's account, key, tasks, max_runs and its stage's next (None: the last)."""
     return {
-        r: (x.account, x.key, x.tasks, x.max_runs, config.TASKS[r].next or None)
-        for r, x in roles.items()
+        r: (
+            *dataclasses.astuple(cfg.linear.roles[r]),
+            x.tasks,
+            x.max_runs,
+            config.TASKS[r].next or None,
+        )
+        for r, x in cfg.roles.items()
     }
 
 
@@ -453,15 +458,26 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_loads(self):
         cfg = self.load(PIPELINE)
         self.assertEqual(
-            (cfg.team, cfg.states, cfg.harness_key, cfg.task_label_group),
+            (
+                cfg.linear.team,
+                cfg.linear.states,
+                cfg.linear.harness_key,
+                cfg.linear.task_label_group,
+            ),
             (TEAM, STATES, "linear-api-key", TASK_GROUP),
         )
-        pm = cfg.roles["pm"]
+        pm = cfg.linear.roles["pm"]
         self.assertEqual(
-            (pm.account, pm.key, pm.max_runs), ("pm@agents.test", "linear-api-key-pm", 1)
+            (pm.account, pm.key, cfg.roles["pm"].max_runs),
+            ("pm@agents.test", "linear-api-key-pm", 1),
         )
         self.assertEqual(
-            (cfg.task_labels, cfg.project_repos, cfg.local_clones, cfg.human_members),
+            (
+                cfg.linear.task_labels,
+                cfg.linear.project_repos,
+                cfg.local_clones,
+                cfg.linear.human_members,
+            ),
             ({}, {}, {}, ()),
         )
         cfg = self.load(
@@ -474,11 +490,13 @@ class ConfigurationLoading(ConfigFile, Case):
             PIPELINE
             + f'[linear.task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n'
         )
-        self.assertEqual(cfg.task_labels, {"light-research": LABEL1, "deep-research": LABEL2})
+        self.assertEqual(
+            cfg.linear.task_labels, {"light-research": LABEL1, "deep-research": LABEL2}
+        )
         cfg = self.load(
             PIPELINE + f'[linear.project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n'
         )
-        self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
+        self.assertEqual(cfg.linear.project_repos, {P1: "ophis/x", P2: "ophis/x"})
 
     def test_workflow_path_replaces_the_packaged_one(self):
         # whole: the packaged researcher and engineer stages are gone, their tables ignored
@@ -634,9 +652,11 @@ class ConfigurationLoading(ConfigFile, Case):
         ):
             with self.subTest(group=group, labels=labels):
                 cfg = self.load(top + PIPELINE + table)
-                self.assertEqual((cfg.agent_label_group, cfg.agent_labels), (group, labels))
+                self.assertEqual(
+                    (cfg.linear.agent_label_group, cfg.linear.agent_labels), (group, labels)
+                )
                 with self.assertRaises(TypeError):
-                    cfg.agent_labels["new"] = LABEL1
+                    cfg.linear.agent_labels["new"] = LABEL1
 
     def test_agent_labels_rejected(self):
         top = f'linear.agent_label_group = "{AGENT_GROUP}"\n'
@@ -707,7 +727,9 @@ class ConfigurationLoading(ConfigFile, Case):
             + f'[linear.task_labels]\nbuild = "{LABEL1}"\n'
         )
         for obj, attr in (
-            (cfg, "team"),
+            (cfg, "linear"),
+            (cfg.linear, "team"),
+            (cfg.linear.roles["pm"], "key"),
             (cfg, "roles"),
             (cfg, "work_dir"),
             (cfg.roles["pm"], "max_runs"),
@@ -715,22 +737,23 @@ class ConfigurationLoading(ConfigFile, Case):
         ):
             with self.subTest(attr), self.assertRaises(dataclasses.FrozenInstanceError):
                 setattr(obj, attr, None)
-        for name in (
-            "states",
-            "roles",
-            "task_labels",
-            "task_tiers",
-            "project_repos",
-            "local_clones",
-            "stages",
-            "delegates",
+        for obj, name in (
+            (cfg.linear, "states"),
+            (cfg.linear, "roles"),
+            (cfg.linear, "task_labels"),
+            (cfg.linear, "project_repos"),
+            (cfg, "roles"),
+            (cfg, "task_tiers"),
+            (cfg, "local_clones"),
+            (cfg, "stages"),
+            (cfg, "delegates"),
         ):
             with self.subTest(name), self.assertRaises(TypeError):
-                getattr(cfg, name)["x"] = 1
+                getattr(obj, name)["x"] = 1
         with self.assertRaises(TypeError):
             cfg.docs.dirs["x"] = "y"
         self.assertEqual(
-            (cfg.human_members, cfg.roles["pm"].tasks), (("a@x.com",), ("product-design",))
+            (cfg.linear.human_members, cfg.roles["pm"].tasks), (("a@x.com",), ("product-design",))
         )
 
     def test_roles_keep_delegate_runs_and_task_indexes_with_core_overlay(self):
@@ -873,7 +896,7 @@ class CommittedConfiguration(Case):
     def test_real_config(self):
         cfg = self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
         self.assertEqual(
-            {r: (*v, config.TASKS[r].require_instructions) for r, v in fields(cfg.roles).items()},
+            {r: (*v, config.TASKS[r].require_instructions) for r, v in fields(cfg).items()},
             {
                 "researcher": (*ROLES["researcher"][:3], 3, "pm", True),
                 "pm": (*ROLES["pm"][:3], 3, "engineer", False),
@@ -888,7 +911,8 @@ class CommittedConfiguration(Case):
             ),
         )
         self.assertEqual(
-            (cfg.team, cfg.task_labels, cfg.project_repos, cfg.local_clones), (TEAM, {}, {}, {})
+            (cfg.linear.team, cfg.linear.task_labels, cfg.linear.project_repos, cfg.local_clones),
+            (TEAM, {}, {}, {}),
         )
         self.assertEqual(cfg.stages, {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertEqual(
@@ -924,11 +948,22 @@ class CommittedConfiguration(Case):
         )
         cfg = self.load()
         self.assertEqual(
-            (cfg.team, cfg.human_members, cfg.harness_key, cfg.task_label_group, cfg.states),
+            (
+                cfg.linear.team,
+                cfg.linear.human_members,
+                cfg.linear.harness_key,
+                cfg.linear.task_label_group,
+                cfg.linear.states,
+            ),
             (TEAM, ("me@x.com",), "linear-api-key", TASK_GROUP, STATES),
         )
         self.assertEqual(
-            (cfg.task_labels, cfg.agent_label_group, cfg.agent_labels, cfg.project_repos),
+            (
+                cfg.linear.task_labels,
+                cfg.linear.agent_label_group,
+                cfg.linear.agent_labels,
+                cfg.linear.project_repos,
+            ),
             ({"build": LABEL1}, AGENT_GROUP, {"claude": LABEL2}, {P1: "ophis/x"}),
         )
         self.assertEqual(
@@ -936,7 +971,7 @@ class CommittedConfiguration(Case):
             (os.path.realpath(self.agent_pm), {"light-build": 3}, {"opencode": 1}, {}),
         )
         self.assertEqual(
-            fields(cfg.roles),
+            fields(cfg),
             {
                 "researcher": (*ROLES["researcher"][:3], 3, "pm"),
                 "pm": (*ROLES["pm"][:3], 3, "engineer"),
@@ -1016,7 +1051,7 @@ class CommittedConfiguration(Case):
             + "".join(f'"{key}" = "{value}"\n' for key, value in local["agent_labels"].items())
         )
         self.assertEqual(
-            (cfg.agent_label_group, dict(cfg.agent_labels)),
+            (cfg.linear.agent_label_group, dict(cfg.linear.agent_labels)),
             (local["agent_label_group"], local["agent_labels"]),
         )
 
@@ -1071,9 +1106,40 @@ class TrackerChoice(ConfigFile, Case):
     def test_tracker_linear(self):
         cfg = self.load(PIPELINE)
         self.assertEqual(
-            (cfg.tracker, cfg.board, cfg.work_dir, cfg.team),
+            (cfg.tracker, cfg.board, cfg.work_dir, cfg.linear.team),
             (TrackerKind.LINEAR, None, os.path.realpath(self.agent_pm), TEAM),
         )
+
+    def test_linear_config_groups_settings(self):
+        cfg = self.load(PIPELINE + f'[linear.project_repos]\n"{P1}" = "ophis/x"\n')
+        linear = cfg.linear
+        self.assertIsInstance(linear, config.LinearSettings)
+        self.assertEqual(
+            (linear.team, linear.states, linear.harness_key, linear.task_label_group),
+            (TEAM, STATES, "linear-api-key", TASK_GROUP),
+        )
+        self.assertEqual(
+            (linear.human_members, linear.task_labels, linear.agent_label_group),
+            ((), {}, ""),
+        )
+        self.assertEqual((linear.agent_labels, linear.project_repos), ({}, {P1: "ophis/x"}))
+        self.assertEqual(
+            dict(linear.roles),
+            {r: config.LinearRole(account, key) for r, (account, key, *_) in ROLES.items()},
+        )
+        self.assertIs(config.linear_settings(cfg, "promote"), linear)
+
+    def test_linear_settings_on_local(self):
+        cfg = self.load(LOCAL_BOARD)
+        with self.assertRaises(config.ConfigError) as cm:
+            config.linear_settings(cfg, "prune")
+        self.assertEqual(str(cm.exception), 'prune needs [orchestrator] tracker = "linear"')
+
+    def test_config_invariant(self):
+        linear, local = self.load(PIPELINE), self.load(LOCAL_BOARD)
+        for cfg, settings in ((linear, None), (local, linear.linear)):
+            with self.subTest(cfg.tracker), self.assertRaises(ValueError):
+                dataclasses.replace(cfg, linear=settings)
 
     def test_tracker_rejects_other(self):
         for value, shown in (('"jira"', "'jira'"), ('"Linear"', "'Linear'"), ("5", "5")):
@@ -1084,16 +1150,10 @@ class TrackerChoice(ConfigFile, Case):
                 )
                 self.assertIsNone(e.logs_dir)
 
-    def test_local_needs_no_linear_keys(self):
+    def test_local_config_has_no_linear_settings(self):
         cfg = self.load(LOCAL_BOARD + '[linear]\nteam = "not-a-uuid"\nharness_key = ""\n')
-        self.assertEqual(
-            {r: (x.account, x.key) for r, x in cfg.roles.items()},
-            dict.fromkeys(("researcher", "pm", "engineer"), ("", "")),
-        )
-        self.assertEqual(
-            (cfg.team, cfg.states, cfg.task_labels, cfg.agent_labels, cfg.project_repos),
-            ("", {}, {}, {}, {}),
-        )
+        self.assertIsNone(cfg.linear)
+        self.assertEqual(list(cfg.roles), ["researcher", "pm", "engineer"])
         self.fails(
             "orchestrator/config.toml: unknown keys in [linear]: bogus",
             LOCAL_BOARD + "[linear]\nbogus = 1\n",
@@ -1349,8 +1409,8 @@ class RunnableRoles(ConfigFile, Case):
         return self.load(text).roles
 
     def test_roles_in_pipeline_order_tasks_from_the_index(self):
+        self.assertEqual(fields(self.load(PIPELINE)), ROLES)
         roles = self.runs()
-        self.assertEqual(fields(roles), ROLES)
         self.assertEqual(list(roles), ["researcher", "pm", "engineer"])
         self.assertEqual(
             {r: x.tasks for r, x in roles.items()},
@@ -1389,7 +1449,7 @@ class RunnableRoles(ConfigFile, Case):
         )
 
     def test_role_for(self):
-        roles = self.runs()
+        roles = self.load(PIPELINE).linear.roles
         for email in ("researcher@agents.test", "RESEARCHER@Agents.Test"):
             self.assertEqual(config.role_for(roles, email), "researcher")
         for email in ("nobody@x.com", None, ""):
@@ -1654,9 +1714,12 @@ class LocalOverlay(ConfigFile, Case):
             "[roles.researcher]\nmax_runs = 3\n[roles.pm]\n"
             f'[linear.project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
         )
-        self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
         self.assertEqual(
-            fields(cfg.roles),
+            (cfg.linear.team, cfg.linear.states, cfg.linear.human_members),
+            (TEAM, STATES, ("b@x.com",)),
+        )
+        self.assertEqual(
+            fields(cfg),
             {
                 "researcher": (
                     "researcher@agents.test",
@@ -1668,14 +1731,14 @@ class LocalOverlay(ConfigFile, Case):
                 "pm": ("pm@agents.test", "linear-api-key-pm", ROLES["pm"][2], 1, None),
             },
         )
-        self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/y"})
+        self.assertEqual(cfg.linear.project_repos, {P1: "ophis/x", P2: "ophis/y"})
         self.assertEqual(cfg.roles["pm"].run.tier, 1)
 
     def test_local_alone_and_no_local(self):
         self.local(LOCAL_PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
-        self.assertEqual(self.load(PIPELINE).team, TEAM)
+        self.assertEqual(self.load(PIPELINE).linear.team, TEAM)
 
     def test_an_empty_local_role_table_adds_no_role(self):
         self.local(LOCAL_PIPELINE)
