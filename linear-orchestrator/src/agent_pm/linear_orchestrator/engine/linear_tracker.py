@@ -1,10 +1,12 @@
 """The flow Tracker on Linear, from a gql callable: its states mapped to IssueState, its reads and
 writes in Linear's query text."""
 
+import functools
 from typing import TypeVar
 
+from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move
-from agent_pm.linear_orchestrator.engine.types import State
+from agent_pm.linear_orchestrator.engine.types import LinearError, State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
 from agent_pm.utils import parse_time
@@ -67,9 +69,23 @@ def finished_at(issue, finished):
 
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role}.
-    A method needing one not given raises TypeError."""
+    A method needing one not given raises TypeError. service: the key each call is made as, with
+    timeout when given; None: gql as given. A comment's ref is its client id's seed."""
 
-    def __init__(self, gql, *, states=None, team_id=None, finished=None, roles=None):
+    def __init__(
+        self,
+        gql,
+        *,
+        states=None,
+        team_id=None,
+        finished=None,
+        roles=None,
+        service=None,
+        timeout=None,
+    ):
+        if service is not None:
+            bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
+            gql = functools.partial(gql, **bound)
         self.gql, self.ids, self.team_id, self.roles = gql, states, team_id, roles
         self.ended = finished
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
@@ -123,6 +139,21 @@ class LinearTracker(Tracker):
 
     def archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
+
+    def find_comment(self, key, ref):
+        return ops.find_comment(self.gql, ops.client_id(ref), key)
+
+    def put_comment(self, key, body, ref):
+        cid = ops.client_id(ref)
+        try:
+            done = self.gql(M_UPDATE, c=cid, b=body)["commentUpdate"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            done = None
+        if done is None:
+            done = self.gql(ops.M_COMMENT_ID, c=cid, i=key, b=body)["commentCreate"]
+        return done["success"]
 
 
 def _need(name: str, value: T | None) -> T:

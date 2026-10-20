@@ -23,6 +23,7 @@ from agent_pm.linear_orchestrator.engine import (
     writeback,
 )
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import (
     Claim,
     ConfigError,
@@ -253,6 +254,7 @@ class Base(Case):
 
     def ctx(self, role="engineer", *, gql=None):
         workdir = tempfile.mkdtemp(dir=self.tmp)
+        gql = gql or Gql()
         return writeback.Context(
             ident=ID,
             issue_id=UUID,
@@ -261,12 +263,13 @@ class Base(Case):
             resume=False,
             project=None,
             workdir=workdir,
-            gql=gql or Gql(),
+            gql=gql,
             humans=HUMANS,
             states=STATES,
             repos=REPOS,
             team=board_ids.TEAM,
             target=TARGET,
+            harness=LinearTracker(gql),
         )
 
     def write(self, ctx, rel, text):
@@ -619,10 +622,19 @@ class WritebackContext(run_fixtures.Base):
                     repos={PROJECT: "ophis/agent-pm"},
                     team=cfg.team,
                     target=target,
+                    harness=ctx.harness,
                 )
                 self.assertEqual(ctx, want)
                 ctx.gql("q", i=UUID)
                 gql.assert_called_with("q", service=run_fixtures.KEY, i=UUID)
+                gql.return_value = {"comment": None}
+                ctx.harness.find_comment(UUID, f"{SID}/session")
+                gql.assert_called_with(
+                    ops.Q_COMMENT,
+                    service=run_fixtures.HARNESS,
+                    timeout=run_comments.LIMIT,
+                    c=ops.client_id(SID, "session"),
+                )
 
 
 class DurableRunNotes(Case):

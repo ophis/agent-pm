@@ -28,6 +28,7 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import (
     M_UNARCHIVE,
     Q_ATTACHED,
     Q_ID,
+    LinearTracker,
 )
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
@@ -49,6 +50,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Stopped,
     Unavailable,
 )
+from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,
@@ -75,6 +77,7 @@ class Context:
     repos: Mapping[str, str]
     team: str
     target: tuple[str, str] | None
+    harness: Tracker  # the session comment's account
     # look each comment step up by its client id before posting it, as on resume: its event may
     # come again after the post landed and its ledger write was lost
     redelivered: bool = False
@@ -107,6 +110,7 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         repos=cfg.project_repos,
         team=cfg.team,
         target=target,
+        harness=LinearTracker(gql, service=cfg.harness_key, timeout=run_comments.LIMIT),
     )
 
 
@@ -437,7 +441,7 @@ def _finish(ctx, o, steps=""):
     return _step(ctx, f"{steps}outcome", lambda: None) is None
 
 
-def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
+def _session(ctx, cfg, client, attempt, *, now, end=None) -> bool:
     """The attempt's session comment, as the harness: running at Begun, its `end` (rc, outcome,
     limit) at Finished, each written once.
     """
@@ -453,18 +457,23 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
         info=lambda: LinearRun.attach(ctx.ident, cfg=cfg, sid=ctx.sid).delegate.session_status(),
         seq=record["seq"],
     )
-    harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
     if end is None:
-        error = run_comments.post(ctx.ident, rec, gql=harness)
+        error = run_comments.post(ctx.ident, rec, tracker=ctx.harness)
     else:
         ended_at = now()
         rc, outcome, limited = end
         error = run_comments.post(
-            ctx.ident, rec, gql=harness, rc=rc, ended_at=ended_at, outcome=outcome, limit=limited
+            ctx.ident,
+            rec,
+            tracker=ctx.harness,
+            rc=rc,
+            ended_at=ended_at,
+            outcome=outcome,
+            limit=limited,
         )
         if error is None:
             record = {**record, "ended_at": ended_at}
-            error = run_comments.repair(ctx.ident, ctx.issue_id, rec, gql=harness)
+            error = run_comments.repair(ctx.ident, ctx.issue_id, rec, tracker=ctx.harness)
     if error is None or "ended_at" in record:
         record = {**record, "seq": rec["seq"]}
     try:
@@ -556,7 +565,7 @@ def replay(
             return False
         done = "outcome" in _done(ctx) or finish(ctx, outcome)
         end = (None, outcome, False)
-        _session(ctx, cfg, claim.client, attempt, gql=gql, now=now, end=end)
+        _session(ctx, cfg, claim.client, attempt, now=now, end=end)
         return done
 
 
@@ -575,12 +584,12 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     claim = _claim(cfg, issue, event.sid)
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:
-        return held and _deliver(ctx, cfg, claim, event, gql=gql, now=now)
+        return held and _deliver(ctx, cfg, claim, event, now=now)
 
 
-def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
+def _deliver(ctx, cfg, claim, event, *, now) -> bool:
     attempt = event.attempt
-    session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
+    session = functools.partial(_session, ctx, cfg, claim.client, attempt, now=now)
     if event.kind == "begun":
         registered = session()
         return _running(ctx, attempt) and registered

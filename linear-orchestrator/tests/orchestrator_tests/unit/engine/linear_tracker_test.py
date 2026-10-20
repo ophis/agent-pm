@@ -1,4 +1,5 @@
-"""The Linear adapter of the flow Tracker: prune's query text and its reads and writes."""
+"""The Linear adapter of the flow Tracker: prune's and write-back's query text and its reads and
+writes."""
 
 import ast
 import hashlib
@@ -6,7 +7,7 @@ import inspect
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, prune
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, prune, run_comments, writeback
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
@@ -21,7 +22,21 @@ BASE = {
     "Q_FINISHED": "d3001511732429ed7b87bfac7cc78c579737f209e410fced49a1a9030ed0bc37",
     "Q_CHILDREN": "115b789a59aec88fa1686fa993764aacae8f6af3cf0b01ec900ee82603f526fa",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
+    "M_TITLE": "1b74f5b2bb7775a1147c8a6bac7f50c09a196de9122da2c52e7cd64eaf45d7be",
+    "M_ATTACH": "8db2cfd3ed91f6b4daf1aeed80183275d14953ff02982847658243be789af1f4",
+    "M_UNARCHIVE": "e0c0d3bff0bf11847fc7ffd4b98030ac98c9319cde37a09fe0745906d545d9a3",
+    "Q_ATTACHED": "63dbe2b07f16ec03a33efb47cf14ddb32a3bac690ae5a62ac57c43c57fbe3c96",
+    "Q_ID": "339eb6885dd45c62cfae3c2f1d2bbdcdf6995a2e008079832d405f3019f5adf9",
+    "M_UPDATE": "95eaa4a0cccf407f93c0137e32a54edfd12fcc68a35f4c94b2ad407ad59377dd",
 }
+REEXPORTS = {
+    prune: ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE"),
+    writeback: ("M_TITLE", "M_ATTACH", "M_UNARCHIVE", "Q_ATTACHED", "Q_ID"),
+    run_comments: ("M_UPDATE",),
+}
+REF = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d/session"
+CID = ops.client_id("0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d", "session")
+NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 BACKLOG = "00000000-0000-4000-8000-000000000019"
 
 
@@ -76,10 +91,11 @@ class Queries(Case):
                 text = getattr(linear_tracker, name)
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
 
-    def test_prune_reexports_are_the_adapter_strings(self):
-        for name in BASE:
-            with self.subTest(query=name):
-                self.assertIs(getattr(prune, name), getattr(linear_tracker, name))
+    def test_reexports_are_the_adapter_strings(self):
+        for module, names in REEXPORTS.items():
+            for name in names:
+                with self.subTest(module=module.__name__, query=name):
+                    self.assertIs(getattr(module, name), getattr(linear_tracker, name))
 
 
 class Read(Case):
@@ -263,9 +279,97 @@ class Archive(Case):
             tracker(gql).archive("id-TASK-1")
 
 
+class Texts:
+    """Answers by query text from replies (a list is one reply per call); records every call."""
+
+    def __init__(self, replies):
+        self.replies, self.calls = replies, []
+
+    def __call__(self, query, **variables):
+        self.calls.append((query, variables))
+        reply = self.replies[query]
+        reply = reply.pop(0) if isinstance(reply, list) else reply
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+class Comments(Case):
+    def test_put_comment_updates_then_creates(self):
+        update = (linear_tracker.M_UPDATE, {"c": CID, "b": "text"})
+        create = (ops.M_COMMENT_ID, {"c": CID, "i": "TASK-7", "b": "text"})
+        for missing, calls in (
+            ({"commentUpdate": {"success": True}}, [update]),
+            ({"commentUpdate": {"success": False}}, [update]),
+            (NOT_FOUND, [update, create]),
+            ({"commentUpdate": None}, [update, create]),
+        ):
+            with self.subTest(update=missing):
+                gql = Texts(
+                    {
+                        linear_tracker.M_UPDATE: missing,
+                        ops.M_COMMENT_ID: {"commentCreate": {"success": True}},
+                    }
+                )
+                ok = LinearTracker(gql).put_comment("TASK-7", "text", REF)
+                self.assertEqual(gql.calls, calls)
+                self.assertIs(ok, missing != {"commentUpdate": {"success": False}})
+
+    def test_put_comment_reraises_other_errors(self):
+        for error in (LinearError("linear api error: forbidden"), Unavailable("x", status=503)):
+            with self.subTest(error=error), self.assertRaises(type(error)) as raised:
+                LinearTracker(Texts({linear_tracker.M_UPDATE: error})).put_comment(
+                    "TASK-7", "text", REF
+                )
+            self.assertIs(raised.exception, error)
+
+    def comment(self, issue="id-TASK-7", *, mine=True):
+        return {"comment": {"id": CID, "body": "b", "issue": {"id": issue}, "user": {"isMe": mine}}}
+
+    def test_find_comment_by_ref(self):
+        for reply, found in ((self.comment(), "b"), (NOT_FOUND, None), ({"comment": None}, None)):
+            with self.subTest(found=found):
+                gql = Texts({ops.Q_COMMENT: reply})
+                self.assertEqual(LinearTracker(gql).find_comment("id-TASK-7", REF), found)
+                self.assertEqual(gql.calls, [(ops.Q_COMMENT, {"c": CID})])
+
+    def test_find_comment_not_ours_raises(self):
+        for reply in (self.comment(issue="id-TASK-8"), self.comment(mine=False)):
+            with self.subTest(reply=reply), self.assertRaisesRegex(LinearError, "is not ours"):
+                LinearTracker(Texts({ops.Q_COMMENT: reply})).find_comment("id-TASK-7", REF)
+
+
+class Account(Case):
+    def calls(self, **kw):
+        seen = []
+
+        def gql(query, **v):
+            seen.append((query, v))
+            return {"comment": None}
+
+        LinearTracker(gql, **kw).find_comment("id-TASK-7", REF)
+        return seen
+
+    def test_service_and_timeout_bind_each_call(self):
+        self.assertEqual(
+            self.calls(service="linear-api-key", timeout=10),
+            [(ops.Q_COMMENT, {"service": "linear-api-key", "timeout": 10, "c": CID})],
+        )
+        self.assertEqual(
+            self.calls(service="linear-api-key-engineer"),
+            [(ops.Q_COMMENT, {"service": "linear-api-key-engineer", "c": CID})],
+        )
+
+    def test_no_service_calls_gql_as_given(self):
+        self.assertEqual(self.calls(), [(ops.Q_COMMENT, {"c": CID})])
+
+
 class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
-        self.assertEqual(Tracker.__abstractmethods__, {"read", "finished", "sub_issues", "archive"})
+        self.assertEqual(
+            Tracker.__abstractmethods__,
+            {"read", "finished", "sub_issues", "archive", "find_comment", "put_comment"},
+        )
         self.assertIsInstance(LinearTracker(None), Tracker)
 
 

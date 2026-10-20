@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome
 from agent_pm.linear_orchestrator.engine import ops, run_comments
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.session import SessionStatus
 from orchestrator_tests import case
@@ -48,11 +49,11 @@ def comment(id, body, issue=ISSUE_ID, *, mine=True):
 
 
 def start(gql, rec, timeout=run_comments.LIMIT):
-    return run_comments.post(ISSUE, rec, gql=gql, timeout=timeout)
+    return run_comments.post(ISSUE, rec, tracker=LinearTracker(gql), timeout=timeout)
 
 
 def end(gql, rec, rc, ended_at=T2):
-    return run_comments.post(ISSUE, rec, gql=gql, rc=rc, ended_at=ended_at)
+    return run_comments.post(ISSUE, rec, tracker=LinearTracker(gql), rc=rc, ended_at=ended_at)
 
 
 class FakeLinear:
@@ -194,7 +195,7 @@ class Record(Case):
                     run_comments.post(
                         ISSUE,
                         self.record(),
-                        gql=fake,
+                        tracker=LinearTracker(fake),
                         rc=3,
                         ended_at=T2,
                         outcome=Outcome(status, "title", "summary"),
@@ -219,7 +220,7 @@ class Record(Case):
             run_comments.post(
                 ISSUE,
                 self.record(),
-                gql=fake,
+                tracker=LinearTracker(fake),
                 rc=-9,
                 ended_at=T2,
                 limit=True,
@@ -238,7 +239,9 @@ class Record(Case):
 
     def test_end_defaults_to_now(self):
         fake = FakeLinear()
-        self.assertIsNone(run_comments.post(ISSUE, self.record(), gql=fake, rc=0))
+        self.assertIsNone(
+            run_comments.post(ISSUE, self.record(), tracker=LinearTracker(fake), rc=0)
+        )
         body = fake.only()["body"]
         stamp = body.split(" → ", 1)[1].split(" · ", 1)[0]
         self.assertEqual(body, text(f"no outcome · #1 · {T1} → {stamp} · exit 0"))
@@ -401,7 +404,7 @@ class Failure(Case):
         out = run_comments.post(
             ISSUE,
             self.record(),
-            gql=lambda _q, **_v: release.wait(30),
+            tracker=LinearTracker(lambda _q, **_v: release.wait(30)),
             timeout=0.1,
             rc=0,
         )
@@ -429,7 +432,9 @@ class Repair(Case):
         self.fake, self.rec = FakeLinear(), self.record()
 
     def repair(self, gql=None, **kw):
-        return run_comments.repair(ISSUE, ISSUE_ID, self.rec, gql=gql or self.fake, **kw)
+        return run_comments.repair(
+            ISSUE, ISSUE_ID, self.rec, tracker=LinearTracker(gql or self.fake), **kw
+        )
 
     def test_a_late_start_write_is_repaired_with_a_higher_seq(self):
         late = Late(self.fake)
@@ -476,7 +481,7 @@ class Repair(Case):
             run_comments.post(
                 ISSUE,
                 self.rec,
-                gql=down,
+                tracker=LinearTracker(down),
                 rc=-9,
                 ended_at=T2,
                 limit=True,

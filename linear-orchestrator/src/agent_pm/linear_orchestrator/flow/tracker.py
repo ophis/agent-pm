@@ -22,3 +22,10 @@ class Tracker(ABC):
     @abstractmethod
     def archive(self, key: str) -> None:
         """Its sub-issues too, as the tracker does."""
+
+    @abstractmethod
+    def find_comment(self, key: str, ref: str) -> str | None: ...
+
+    @abstractmethod
+    def put_comment(self, key: str, body: str, ref: str) -> bool:
+        """False: refused."""
