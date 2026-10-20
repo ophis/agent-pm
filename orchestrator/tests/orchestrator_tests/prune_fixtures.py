@@ -46,6 +46,7 @@ STATE_IDS = {
     "Handoff": IDS_BY_KEY["handoff"],
     "Backlog": IDS_BY_KEY["backlog"],
     "Triage": "00000000-0000-4000-8000-000000000019",  # no config key: read as state None
+    "Elsewhere Done": "00000000-0000-4000-8000-000000000098",  # another team's
 }
 
 
@@ -70,6 +71,7 @@ STATE_TYPES = {
     "Handoff": "started",
     "Backlog": "backlog",
     "Triage": "triage",
+    "Elsewhere Done": "completed",
 }
 CHILDREN = 50  # LinearTracker's archive read pages sub-issues by 50
 PRUNE_QUERIES = (  # the queries gql_for answers
@@ -93,12 +95,14 @@ def gql_for(
     children=None,
     stamps=None,
     reread=None,
-    changed=(),
+    changed=None,
+    elsewhere=(),
 ):
     """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
     left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null);
     reread: the state an issue's archive read finds, by issue (none: its own); changed: the idents
-    the change feed lists (gql.changed, settable later)."""
+    the change feed lists (gql.changed, settable later; None: every issue); elsewhere: issues the
+    batched read leaves out (another team's). gql.read: the idents read, in order."""
     owners, children, stamps, reread = owners or {}, children or {}, stamps or {}, reread or {}
 
     def at(ident):
@@ -194,26 +198,24 @@ def gql_for(
             return {"issueArchive": {"success": ident not in refuse}}
         if query == linear_tracker.Q_SNAPSHOTS:
             numbers = v["f"]["number"]["in"]
-            return {
-                "issues": {
-                    "nodes": [
-                        {"identifier": i, **snapshot(i)}
-                        for i in issues
-                        if int(i.rsplit("-", 1)[1]) in numbers
-                    ]
-                }
-            }
+            hits = [i for i in issues if int(i.rsplit("-", 1)[1]) in numbers and i not in elsewhere]
+            gql.read += hits
+            return {"issues": {"nodes": [{"identifier": i, **snapshot(i)} for i in hits]}}
         if query == linear_tracker.Q_CHANGED:
+            listed = issues if gql.changed is None else gql.changed
             return {
                 "issues": {
-                    "nodes": [{"identifier": i} for i in sorted(gql.changed)],
+                    "nodes": [{"identifier": i} for i in sorted(listed)],
                     "pageInfo": {"hasNextPage": False, "endCursor": None},
                 }
             }
+        gql.read.append(v["i"])
+        if v["i"] not in issues:
+            raise LinearError("linear api error: [{'message': 'Entity not found: Issue'}]")
         return {"issue": snapshot(v["i"])}
 
     gql.calls, gql.finished, gql.archived, gql.gone, gql.subs = [], [], [], set(), []
-    gql.changed = set(changed)
+    gql.changed, gql.read = None if changed is None else set(changed), []
     gql.issues = issues
     return gql
 
@@ -364,12 +366,12 @@ class PruneScenario(Case):
     def assertOutsideKept(self):
         self.assertTrue(os.path.isfile(os.path.join(self.outside, "keep")))
 
-    def prune(self, gql, git=None, writable=None, *, dry=False):
+    def prune(self, gql, git=None, writable=None, *, dry=False, now=NOW):
         before, err, out = (len(logged(self.logs)), io.StringIO(), io.StringIO())
         with redirect_stderr(err), redirect_stdout(out):
             code = prune.Pruner(
                 gql,
-                NOW,
+                now,
                 dry=dry,
                 run=git or Git(),
                 work=self.work,

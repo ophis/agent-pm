@@ -39,7 +39,7 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import SessionError
-from agent_pm.orchestrator.engine import config, runs
+from agent_pm.orchestrator.engine import config, prune_state, runs
 from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
@@ -50,11 +50,17 @@ from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
+    Entry,
     LinearError,
+    PruneState,
     Unavailable,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
+from agent_pm.orchestrator.trackers.linear.linear_tracker import (
+    SNAPSHOT_BATCH,
+    LinearTracker,
+    team_and_roles,
+)
 from agent_pm.utils import (
     GUARD,
     SHORT,
@@ -73,6 +79,11 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
+SYNC_PAGES, READ_REQUESTS = 3, 10  # a tick's Linear requests: change feed, issue reads
+BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again after it
+OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
+CACHE = "prune.json"
+LINEAR_ERRORS = (LinearError, OSError, subprocess.SubprocessError)
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-orchestrator prune [--dry-run]
@@ -130,15 +141,41 @@ Recovery and next help:
 """
 
 
+class Spent(Exception):
+    pass
+
+
+class Budget:
+    """gql, counted: a request past limit raises Spent unsent; None: no limit."""
+
+    def __init__(self, gql):
+        self.gql, self.left = gql, None
+
+    def limit(self, n):
+        self.left = n
+
+    def __call__(self, query, **v):
+        if self.left is not None:
+            if self.left <= 0:
+                raise Spent
+            self.left -= 1
+        return self.gql(query, **v)
+
+
 class Pruner:
     def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, linear, writable=None):
         self.now, self.dry, self.work, self.roles = now, dry, work, roles
-        self.tracker = LinearTracker.of_team(gql, linear, team, roles)
+        self.budget = Budget(gql)
+        self.tracker = LinearTracker.of_team(self.budget, linear, team, roles)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.views, self.classes, self.by_issue = 0, {}, {}, None
         self.say = functools.partial(log, "prune", dry=dry)
+        self.cache = os.path.join(cfg.logs_dir, CACHE)
+        self.state, unreadable = prune_state.load(self.cache)
+        if unreadable:
+            self.say("prune-skip", once=True, reason=f"{CACHE} unreadable: {unreadable}")
 
     def error(self, issue=None, **fields):
         self.errors += 1
@@ -284,33 +321,119 @@ class Pruner:
                 self.say("prune-archived", ident)
 
     def run(self):
-        found = self.inventory()
+        found, idents = self.inventory(), None
         self.views = found or {}
+        self.sync()
         if found is None:
             self.error(error="run inventory unknown")
         else:
-            try:
-                idents = [
-                    n
-                    for n in sorted(os.listdir(self.work))
-                    if IDENT_RE.fullmatch(n) and (self.has_agent(n) or self.bare(n))
-                ]
-            except OSError:
-                idents = []
-            for ident in idents:
-                self.prune_issue(ident)
+            idents = self.listed()
+            snapshots = self.fresh(idents or [])
+            for ident in idents or []:
+                if ident in snapshots:
+                    self.prune_issue(ident, snapshots[ident])
+        self.budget.limit(None)
         self.archive()
+        if not self.dry:
+            self.save(idents)
         return 3 if self.errors else 0
 
-    def prune_issue(self, ident):
+    def listed(self):
+        """None: unreadable."""
         try:
-            found = self.tracker.read(ident)
+            return [
+                n
+                for n in sorted(os.listdir(self.work))
+                if IDENT_RE.fullmatch(n) and (self.has_agent(n) or self.bare(n))
+            ]
+        except OSError:
+            return None
+
+    def sync(self):
+        """Drops what the change feed names, or everything when it is unknown, before any read, so
+        a change outlives a read that fails or waits."""
+        start, synced, changed = self.now, self.state.synced, None
+        self.budget.limit(SYNC_PAGES)
+        if synced is not None and synced <= start:
+            try:
+                changed = self.tracker.changed(synced - OVERLAP, SYNC_PAGES)
+            except Unavailable:
+                raise
+            except LINEAR_ERRORS as e:
+                self.error(error=f"change feed: {one_line(e)}")
+        if changed is None:
+            self.state = PruneState(synced=start)
+            return
+        state = self.state
+        state.issues = {i: e for i, e in state.issues.items() if i not in changed}
+        state.refused = {
+            i: r
+            for i, r in state.refused.items()
+            if i not in changed and changed.isdisjoint(r.unfinished)
+        }
+        state.synced = start
+
+    def trusted(self, read):
+        return read <= self.now and self.now - read < BACKSTOP
+
+    def fresh(self, idents):
+        """Each issue's snapshot, from its trusted entry, else read now while READ_REQUESTS last:
+        least recently read first, by batch unless the batch left it out before."""
+        issues, unbatched = self.state.issues, self.state.unbatched
+        found = {
+            i: issues[i].snapshot for i in idents if i in issues and self.trusted(issues[i].read)
+        }
+        stale = sorted(
+            (i for i in idents if i not in found),
+            key=lambda i: (i in issues, issues[i].read if i in issues else self.now),
+        )
+        batched = [i for i in stale if i not in unbatched]
+        singles = [i for i in stale if i in unbatched]
+        failed = set()
+        self.budget.limit(READ_REQUESTS)
+        try:
+            for at in range(0, len(batched), SNAPSHOT_BATCH):
+                batch = batched[at : at + SNAPSHOT_BATCH]
+                got = self.read_into(batch, failed, self.tracker.snapshots)
+                found |= got
+                left = [i for i in batch if i not in got and i not in failed]
+                unbatched.update(left)
+                singles += left
+            for ident in singles:
+                found |= self.read_into([ident], failed, lambda i: {i[0]: self.tracker.read(i[0])})
+        except Spent:
+            self.say("prune-deferred", issues=len(set(stale) - set(found) - failed))
+        return found
+
+    def read_into(self, idents, failed, how):
+        """how(idents)'s snapshots, cached; on an error none, idents logged and failed."""
+        try:
+            got = how(idents)
         except Unavailable:
             raise
-        except (LinearError, OSError, subprocess.SubprocessError) as e:
-            self.error(ident, error=f"Linear: {one_line(e)}")
+        except LINEAR_ERRORS as e:
+            for ident in idents:
+                self.error(ident, error=f"Linear: {one_line(e)}")
+            failed.update(idents)
+            return {}
+        self.state.issues |= {i: Entry(s, self.now) for i, s in got.items()}
+        return got
+
+    def save(self, idents):
+        state = self.state
+        if idents is not None:
+            state.issues = {i: e for i, e in state.issues.items() if i in idents}
+            state.unbatched &= set(idents)
+        try:
+            prune_state.save(self.cache, state)
+        except OSError as e:
+            self.error(error=f"{CACHE}: {one_line(e)}")
+
+    def prune_issue(self, ident, found):
+        if found is None:
+            self.say("prune-skip", ident, once=True, reason="not in Linear")
             return
-        if found is None or found.state in (IssueState.READY, IssueState.RUNNING):
+        if found.state in (IssueState.READY, IssueState.RUNNING):
             return
         if found.state not in (IssueState.DONE, IssueState.CANCELED):
             self.prune_stalled(ident, found.since)

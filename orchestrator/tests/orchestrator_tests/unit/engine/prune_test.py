@@ -6,11 +6,13 @@ import os
 import shutil
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
+from datetime import timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, SessionError
-from agent_pm.orchestrator.engine import config, prune
-from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.engine import config, prune, prune_state
+from agent_pm.orchestrator.engine.flow.types import IssueState, Snapshot
+from agent_pm.orchestrator.engine.types import Entry, LinearError, PruneState, Unavailable
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.process_fixtures import CompletedProcess
@@ -154,7 +156,7 @@ class RepositoryCleanup(PruneScenario):
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
             self.assertEqual(self.prune(again), (0, ""))
             self.assertEqual(self.prune(again), (0, ""))
-        self.assertEqual(again.calls.count(linear_tracker.Q_ISSUE), 4)
+        self.assertEqual(len(again.read), 4)
         self.assertEqual(self.closed(), [A])
 
     def test_young_workdirs_without_agent_files_are_queried_and_kept(self):
@@ -164,7 +166,7 @@ class RepositoryCleanup(PruneScenario):
         os.makedirs(checkout_path(os.path.join(self.work, "notes"), "o", "repo", "notes"))
         gql = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 2)
+        self.assertEqual(len(gql.read), 2)
         self.assertTrue(os.path.isdir(os.path.join(old, ".git")))
 
     def test_young_and_in_progress_untouched(self):
@@ -572,7 +574,7 @@ class RetentionCleanup(PruneScenario):
             out.splitlines(),
             [f"prune-closed TASK-7 session={SID}", "prune-removed TASK-7 what=agent dir"],
         )
-        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 2)
+        self.assertEqual(len(gql.read), 2)
         self.assertEqual(self.closed(), [B, A])
         again = gql_for({"TASK-7": ("Done", [(24, "Done")]), "TASK-8": ("In Progress", [])})
         self.prune(again)
@@ -583,7 +585,7 @@ class RetentionCleanup(PruneScenario):
         gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(self.closed(), [])
-        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
+        self.assertEqual(gql.read, [])
 
     def test_only_recorded_configured_roles_make_candidates(self):
         self.record("TASK-7", SID, [A])
@@ -619,7 +621,7 @@ class RetentionCleanup(PruneScenario):
             ],
         )
         self.assertEqual((seen, self.closed()), ([True], [A]))
-        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 1)
+        self.assertEqual(gql.read, ["TASK-7"])
         self.assertFalse(os.path.lexists(clone))
 
     def test_a_failed_close_or_an_unfinished_issue_keeps_the_runs_state(self):
@@ -652,7 +654,7 @@ class RetentionCleanup(PruneScenario):
                     (3, ["prune-error error=run inventory unknown", archived]),
                 )
                 self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in kept))
-                self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
+                self.assertEqual(gql.read, [])
                 self.assertEqual(gql.archived, [] if dry else ["id-TASK-49"])
                 self.assertEqual(self.api.order, [])
 
@@ -759,7 +761,7 @@ class RetentionCleanup(PruneScenario):
         clones = [self.mkc(ident) for ident in ("TASK-48", "TASK-49")]
         issues = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.outage(
-            "issue", issues, [(linear_tracker.Q_ISSUE, {"service": HARNESS, "i": "TASK-48"})]
+            "issues", issues, [(linear_tracker.Q_SNAPSHOTS, {"service": HARNESS, "f": mock.ANY})]
         )
         self.assertEqual(issues.calls, [])
         self.assertTrue(all(os.path.isdir(c) for c in clones))
@@ -909,7 +911,7 @@ class WorkdirRetention(PruneScenario):
         files = tree(workdir)
         gql = gql_for({"TASK-7": ("Done", [(8 * 24, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
+        self.assertEqual(gql.read, [])
         self.assertEqual(tree(workdir), files)
 
     def test_unfinished_or_unknown_finish_keeps_the_workdir(self):
@@ -930,7 +932,7 @@ class WorkdirRetention(PruneScenario):
         write(os.path.join(self.work, "TASK-8"), "x")
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(8 * 24, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
+        self.assertEqual(gql.read, [])
         self.assertOutsideKept()
         self.assertTrue(os.path.isfile(os.path.join(self.work, "TASK-8")))
 
@@ -1150,3 +1152,245 @@ class PruneCommand(PruneScenario):
                 code, out, err, said = self.command(gql_for({}), *argv)
                 self.assertEqual((code, out, said), (2, "", ""))
                 self.assertIn("agent-pm-orchestrator prune", err)
+
+
+class RequestBound(PruneScenario):
+    """TASK-809: a tick reads Linear through its cache, change feed and caps, whatever the dirs."""
+
+    quiet = ("In Review", [(30, "In Review")])
+
+    def dirs(self, n, start=100, state=quiet):
+        idents = [f"TASK-{start + k}" for k in range(n)]
+        for ident in idents:
+            os.makedirs(self.cfg.issue_workdir(ident))
+        return dict.fromkeys(idents, state)
+
+    def cache(self):
+        return os.path.join(self.logs, "prune.json")
+
+    def counts(self, gql):
+        return [gql.calls.count(q) for q in (linear_tracker.Q_SNAPSHOTS, linear_tracker.Q_ISSUE)]
+
+    def tick(self, gql, **kw):
+        gql.calls.clear()
+        gql.read.clear()
+        return self.prune(gql, **kw)
+
+    def test_a_cold_tick_reads_up_to_its_cap(self):
+        issues = self.dirs(300)
+        elsewhere = list(issues)[:20]
+        gql = gql_for(issues, changed=(), elsewhere=elsewhere)
+        code, out = self.tick(gql)
+        self.assertEqual((code, out), (0, "prune-deferred issues=16"))
+        self.assertEqual(self.counts(gql), [6, 4])
+        self.assertNotIn(linear_tracker.Q_CHANGED, gql.calls)
+
+    def test_a_cold_start_converges(self):
+        issues = self.dirs(300)
+        elsewhere = list(issues)[:20]
+        gql = gql_for(issues, changed=(), elsewhere=elsewhere)
+        singles = []
+        for want in ([6, 4], [0, 10], [0, 6], [0, 0]):
+            with self.subTest(want=want):
+                self.tick(gql)
+                self.assertEqual(self.counts(gql), want)
+                singles += [c for c in gql.read if c in elsewhere and want[0] == 0]
+        self.assertEqual(sorted(singles), sorted(elsewhere[4:]))
+
+    def test_a_quiet_tick_reads_only_the_feed_and_finished_page(self):
+        for n in (300, 10):
+            with self.subTest(dirs=n):
+                self.fresh()
+                os.makedirs(self.logs, exist_ok=True)
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                gql = gql_for(self.dirs(n), changed=())
+                self.tick(gql)
+                self.assertEqual(self.tick(gql), (0, ""))
+                self.assertEqual(gql.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
+
+    def test_a_changed_issue_is_read_and_acted_on(self):
+        self.record("TASK-7", SID, [A])
+        gql = gql_for({"TASK-7": ("In Progress", [(30, "In Progress")])}, changed=())
+        self.assertEqual(self.tick(gql), (0, ""))
+        gql.issues["TASK-7"] = ("Done", [(30, "In Progress"), (3, "Done")])
+        self.assertEqual(self.tick(gql), (0, ""))
+        self.assertEqual(gql.read, [])
+        gql.changed = {"TASK-7"}
+        self.assertEqual(
+            self.tick(gql),
+            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
+        )
+        self.assertEqual(gql.read, ["TASK-7"])
+
+    def test_no_cache_trusts_nothing(self):
+        gql = gql_for(self.dirs(3), changed=())
+        self.tick(gql)
+        self.assertEqual(self.counts(gql), [1, 0])
+        self.assertEqual(sorted(gql.read), ["TASK-100", "TASK-101", "TASK-102"])
+
+    def test_an_unreadable_cache_starts_cold(self):
+        gql = gql_for(self.dirs(3), changed=())
+        self.tick(gql)
+        write(self.cache(), "{")
+        code, out = self.tick(gql)
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"^prune-skip reason=prune.json unreadable: \S")
+        self.assertEqual(self.counts(gql), [1, 0])
+        self.assertNotIn(linear_tracker.Q_CHANGED, gql.calls)
+
+    def test_a_feed_over_its_pages_trusts_nothing(self):
+        inner = gql_for(self.dirs(3), changed=())
+        self.tick(inner)
+        pages = []
+
+        def gql(query, **v):
+            if query != linear_tracker.Q_CHANGED:
+                return inner(query, **v)
+            pages.append(v["c"])
+            more = {"hasNextPage": True, "endCursor": str(len(pages))}
+            return {"issues": {"nodes": [], "pageInfo": more}}
+
+        inner.calls.clear()
+        inner.read.clear()
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(len(pages), prune.SYNC_PAGES)
+        self.assertEqual(self.counts(inner), [1, 0])
+
+    def test_a_future_sync_starts_cold(self):
+        gql = gql_for(self.dirs(3), changed=())
+        self.tick(gql)
+        state = prune_state.load(self.cache())[0]
+        state.synced = NOW + timedelta(hours=1)
+        prune_state.save(self.cache(), state)
+        self.tick(gql)
+        self.assertNotIn(linear_tracker.Q_CHANGED, gql.calls)
+        self.assertEqual(self.counts(gql), [1, 0])
+
+    def test_a_feed_error_trusts_nothing(self):
+        inner = gql_for(self.dirs(3), changed=())
+        self.tick(inner)
+
+        def gql(query, **v):
+            if query == linear_tracker.Q_CHANGED:
+                raise LinearError("linear api error: feed down")
+            return inner(query, **v)
+
+        inner.calls.clear()
+        inner.read.clear()
+        self.assertEqual(
+            self.prune(gql),
+            (3, "prune-error error=change feed: LinearError: linear api error: feed down"),
+        )
+        self.assertEqual(self.counts(inner), [1, 0])
+
+    def test_a_day_old_entry_is_read_again(self):
+        gql = gql_for(self.dirs(3), changed=())
+        self.tick(gql)
+        self.tick(gql, now=NOW + prune.BACKSTOP - timedelta(seconds=1))
+        self.assertEqual(self.counts(gql), [0, 0])
+        self.tick(gql, now=NOW + prune.BACKSTOP)
+        self.assertEqual(self.counts(gql), [1, 0])
+
+    def test_an_entry_read_in_the_future_is_read_again(self):
+        gql = gql_for(self.dirs(1), changed=())
+        later = NOW + timedelta(hours=1)
+        snap = Snapshot(IssueState.REVIEW, NOW - timedelta(hours=30))
+        state = PruneState(
+            synced=NOW - timedelta(minutes=5), issues={"TASK-100": Entry(snap, later)}
+        )
+        os.makedirs(self.logs, exist_ok=True)
+        prune_state.save(self.cache(), state)
+        self.tick(gql)
+        self.assertEqual(gql.read, ["TASK-100"])
+
+    def test_reads_past_the_cap_wait_their_turn(self):
+        gql = gql_for(self.dirs(600), changed=())
+        self.assertEqual(self.tick(gql), (0, "prune-deferred issues=100"))
+        self.assertEqual(len(gql.read), 500)
+        self.assertEqual(self.tick(gql), (0, ""))
+        self.assertEqual(sorted(gql.read), [f"TASK-{n}" for n in range(600, 700)])
+
+    def test_a_named_issue_whose_read_failed_is_read_next_tick(self):
+        for how in ("deferred", "batch error", "inventory unknown"):
+            with self.subTest(how=how):
+                self.fresh()
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                self.unknown = False
+                self.mkc("TASK-999")
+                self.record("TASK-999", SID, [A])
+                issues = {"TASK-999": ("In Progress", [(30, "In Progress")])}
+                inner = gql_for(issues, changed=())
+                self.tick(inner)
+                issues["TASK-999"] = ("Done", [(30, "In Progress"), (3, "Done")])
+                inner.changed = {"TASK-999"}
+                gql = inner
+                if how == "deferred":
+                    issues |= self.dirs(500)
+                elif how == "batch error":
+
+                    def gql(query, inner=inner, **v):
+                        if query == linear_tracker.Q_SNAPSHOTS:
+                            raise LinearError("linear api error: down")
+                        return inner(query, **v)
+
+                else:
+                    self.unknown = True
+                inner.calls.clear()
+                inner.read.clear()
+                self.prune(gql)
+                self.assertNotIn("TASK-999", inner.read)
+                self.assertIsNotNone(self.checkouts("TASK-999"))
+                self.unknown = False
+                inner.changed = set()
+                code, out = self.tick(inner)
+                self.assertIn("TASK-999", inner.read)
+                self.assertIn("prune-removed TASK-999 what=agent dir", out)
+                self.assertIsNone(self.checkouts("TASK-999"))
+
+    def test_a_gone_issue_is_skipped_and_not_read_again(self):
+        os.makedirs(self.cfg.issue_workdir("TASK-7"))
+        gql = gql_for({}, changed=())
+        self.assertEqual(self.tick(gql), (0, "prune-skip TASK-7 reason=not in Linear"))
+        self.assertEqual(self.counts(gql), [1, 1])
+        self.assertEqual(self.tick(gql), (0, ""))
+        self.assertEqual(self.counts(gql), [0, 0])
+        self.assertTrue(os.path.isdir(self.cfg.issue_workdir("TASK-7")))
+
+    def test_another_teams_finished_issue_is_pruned(self):
+        self.record("OPS-7", SID, [A])
+        os.makedirs(self.cfg.issue_workdir("OPS-8"))
+        done = ("Elsewhere Done", [(30, "In Progress")])
+        gql = gql_for(
+            {"OPS-7": done, "OPS-8": done},
+            changed=(),
+            elsewhere=("OPS-7", "OPS-8"),
+            stamps={"OPS-7": {"completedAt": 3}, "OPS-8": {"completedAt": 8 * 24}},
+        )
+        code, out = self.tick(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.splitlines(),
+            [
+                f"prune-closed OPS-7 session={SID}",
+                "prune-removed OPS-7 what=agent dir",
+                "prune-removed OPS-8 what=workdir",
+            ],
+        )
+        self.assertFalse(os.path.exists(self.cfg.issue_workdir("OPS-8")))
+
+    def test_a_dry_run_never_writes_the_cache(self):
+        gql = gql_for(self.dirs(3), changed=())
+        self.tick(gql, dry=True)
+        self.assertFalse(os.path.exists(self.cache()))
+
+    def test_a_rate_limit_writes_no_cache(self):
+        self.dirs(3)
+
+        def limited(_query, **_v):
+            raise Unavailable("issues", status=400, reason="RATELIMITED")
+
+        with self.assertRaises(Unavailable):
+            self.prune(limited)
+        self.assertFalse(os.path.exists(self.cache()))
