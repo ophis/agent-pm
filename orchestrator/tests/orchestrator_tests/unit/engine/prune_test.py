@@ -1470,6 +1470,27 @@ class ArchiveBound(Bound):
         self.assertEqual(gql.archived, ["id-TASK-2"])
         self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
 
+    def test_a_dry_run_counts_the_archive_write(self):
+        big = {f"SUB-{k}": "completed" for k in range(18)}
+        children = {"TASK-1": big} | {c: {f"LEAF-{c}": "completed"} for c in big}
+        for dry in (False, True):
+            with self.subTest(dry=dry):
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                gql = gql_for(
+                    {"TASK-1": self.done}, owners={"TASK-1": "u-pm"}, children=children, changed=()
+                )
+                self.assertEqual(
+                    self.tick(gql, dry=dry), (0, f"prune-skip TASK-1 reason={prune.TOO_BIG}")
+                )
+                self.assertEqual(len(gql.calls), prune.ARCHIVE_REQUESTS)
+
+    def test_a_list_leaving_no_room_to_archive_waits(self):
+        done, owners = self.candidates(19 * 50 + 1)
+        gql = gql_for(done, owners, changed=())
+        self.assertEqual(self.tick(gql), (0, f"prune-deferred archive={19 * 50 + 1}"))
+        self.assertEqual(prune_state.load(self.cache())[0].refused, {})
+
     def test_a_finished_list_past_the_cap_waits(self):
         done, owners = self.candidates(30)
         gql = gql_for(done, owners, page=1, changed=())

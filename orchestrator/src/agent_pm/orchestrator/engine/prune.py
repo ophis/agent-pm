@@ -166,10 +166,13 @@ class Budget:
     def limit(self, n):
         self.left = n
 
-    def __call__(self, query, **v):
+    def spend(self):
         if self.left <= 0:
             raise Spent
         self.left -= 1
+
+    def __call__(self, query, **v):
+        self.spend()
         return self.gql(query, **v)
 
 
@@ -320,6 +323,9 @@ class Pruner:
             elif self.now - issue.since >= QUARANTINE:
                 due.append(issue)
         left = self.budget.left
+        if due and left < 2:
+            self.say("prune-deferred", archive=len(due))
+            return
         for n, issue in enumerate(due):
             alone = self.budget.left == left
             try:
@@ -341,6 +347,8 @@ class Pruner:
         try:
             if self.dry:
                 plan = self.tracker.archive_plan(issue.key)
+                if plan.outcome == "changed":
+                    self.budget.spend()  # the write a real tick sends
             else:
                 self.tracker.archive(issue.key)
         except ArchiveRefused as e:
