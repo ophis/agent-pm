@@ -511,6 +511,10 @@ class Archive(Case):
             self.assertTrue(expected.unfinished)
             self.assertNotIn("M_ARCHIVE", gql.names())
 
+    def test_the_rule_is_trackers_not_its_own(self):
+        self.assertNotIn("archive", vars(LinearTracker))
+        self.assertIn("_write_archive", vars(LinearTracker))
+
     def test_success_false_raises(self):
         gql = Gql(Q_ARCHIVE=planned(), M_ARCHIVE={"issueArchive": {"success": False}})
         with self.assertRaisesRegex(LinearError, "^issueArchive: success: false$"):
@@ -1019,7 +1023,7 @@ class Interface(Case):
                 "read",
                 "finished",
                 "archive_plan",
-                "archive",
+                "_write_archive",
                 "approved",
                 "detail",
                 "created",

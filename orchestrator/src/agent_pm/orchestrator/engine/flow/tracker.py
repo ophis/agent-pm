@@ -8,6 +8,7 @@ from typing import Literal
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
+    ArchiveRefused,
     Detail,
     Finished,
     Found,
@@ -40,14 +41,25 @@ class Tracker(ABC):
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:
-        """Owners' done issues and all canceled ones; all pages read first (archiving shifts them)."""
+        """Owners' done, all canceled; every page read first: archiving shifts them."""
 
     @abstractmethod
-    def archive_plan(self, key: str) -> ArchivePlan: ...
+    def archive_plan(self, key: str) -> ArchivePlan:
+        """A gone issue or an unreadable page raises the adapter's error."""
 
     @abstractmethod
-    def archive(self, key: str) -> bool:
-        """Unfinished: ArchiveRefused(plan); False: already archived."""
+    def _write_archive(self, key: str) -> None:
+        """With its sub-issues; failing raises the adapter's error."""
+
+    def archive(self, key: str, plan: ArchivePlan | None = None) -> bool:
+        """plan: one just read; False: already archived."""
+        plan = plan or self.archive_plan(key)
+        if plan.outcome == "refused":
+            raise ArchiveRefused(plan)
+        if plan.outcome == "unchanged":
+            return False
+        self._write_archive(key)
+        return True
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:
@@ -81,11 +93,11 @@ class Tracker(ABC):
 
     @abstractmethod
     def move(self, key: str, to: IssueState, *, frm: IssueState | None = None) -> str | None:
-        """Without frm, from any state; None: moved, else its state, opaque."""
+        """No frm: from any state; None: moved, else its state, opaque."""
 
     @abstractmethod
     def claim(self, key: str) -> None:
-        """To RUNNING, its state unread: the caller rechecked it."""
+        """To RUNNING, unread: the caller rechecked it."""
 
     @abstractmethod
     def comment_and_move(

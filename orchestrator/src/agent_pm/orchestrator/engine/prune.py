@@ -276,7 +276,7 @@ class Pruner:
             except (LinearError, OSError, subprocess.SubprocessError) as e:
                 self.error(ident, error=f"archive: {one_line(e)}")
                 continue
-            if plan is not None and plan.unfinished:
+            if plan is not None and plan.outcome == "refused":
                 self.say("prune-skip", ident, once=True, reason=_kept(plan))
             elif self.dry:
                 self.say("prune-plan", ident, what="archive")

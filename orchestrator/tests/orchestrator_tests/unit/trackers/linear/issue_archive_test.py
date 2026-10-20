@@ -162,6 +162,7 @@ class Archive(Case):
             (("id-TASK-1", 50), LinearError("linear api error: boom"), LinearError),
             (("id-TASK-1", 250), GraphQLErrors([{"message": "boom"}]), GraphQLErrors),
             (("id-TASK-2", 0), Unavailable("issue", reason="timed out"), Unavailable),
+            (("id-TASK-2", 0), Unavailable("issueArchive", reason="timed out"), Unavailable),
             (("id-TASK-2", 0), None, LinearError),
             (("id-TASK-1", 0), None, LinearError),
         )
@@ -185,6 +186,11 @@ class Archive(Case):
                 WriteUnknown,
                 "archive TASK-1: result unknown (issueArchive: timed out): check with "
                 "agent-pm-orchestrator issue read TASK-1 before retrying",
+            ),
+            (
+                Unavailable("renamedArchive", reason="timed out"),
+                WriteUnknown,
+                "archive TASK-1: result unknown (renamedArchive: timed out)",
             ),
             ({"success": False}, LinearError, "success: false"),
         ):

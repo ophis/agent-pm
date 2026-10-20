@@ -57,6 +57,12 @@ class ArchivePlan:
     descendants: tuple[SubIssue, ...]
     unfinished: tuple[SubIssue, ...]
 
+    @property
+    def outcome(self) -> Literal["unchanged", "refused", "changed"]:
+        if self.archived:
+            return "unchanged"
+        return "refused" if self.unfinished else "changed"
+
 
 class ArchiveRefused(Exception):
     def __init__(self, plan: ArchivePlan, message: str = ""):

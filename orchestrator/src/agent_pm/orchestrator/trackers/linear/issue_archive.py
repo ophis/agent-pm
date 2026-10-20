@@ -1,5 +1,5 @@
 """agent-pm-orchestrator issue archive: the ident checked, then the Tracker's archive rule
-(LinearTracker.archive_plan, archive) applied and its result formatted: a receipt, a refusal naming
+(Tracker.archive over the plan it reads first) applied and its result formatted: a receipt, a refusal naming
 the unfinished issues, or the dry run's plan.
 """
 
@@ -17,13 +17,12 @@ def archive(tracker, gql, ident):
     """
     data = issue_read.lookup(gql, Q_ISSUE, ident)
     node = data["issue"]
+    plan = tracker.archive_plan(node["id"])
     try:
-        changed = tracker.archive(node["id"])
+        changed = tracker.archive(node["id"], plan)
     except ArchiveRefused as e:
         raise ArchiveRefused(e.plan, _refusal(ident, e.plan)) from None
-    except Unavailable as error:
-        if error.op != "issueArchive":  # a read's: nothing written
-            raise
+    except Unavailable as error:  # the plan was read: only the write can be unanswered
         raise WriteUnknown(
             f"archive {ident}: result unknown ({error}): "
             f"check with agent-pm-orchestrator issue read {ident} before retrying"
@@ -39,7 +38,7 @@ def dry_run(tracker, gql, ident):
         "issue": {"id": plan.key, "identifier": plan.ident, "url": plan.url},
         "operation": "archive",
         "dry_run": True,
-        "result": "unchanged" if plan.archived else "refused" if plan.unfinished else "changed",
+        "result": plan.outcome,
         "descendant_count": len(plan.descendants),
         "descendants": [_item(s) for s in plan.descendants],
         "unfinished_count": len(plan.unfinished),

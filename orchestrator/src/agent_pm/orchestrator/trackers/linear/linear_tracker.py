@@ -12,7 +12,6 @@ from agent_pm.orchestrator.engine.flow.types import (
     UNREADABLE,
     Approved,
     ArchivePlan,
-    ArchiveRefused,
     Comment,
     Detail,
     Finished,
@@ -429,7 +428,7 @@ class LinearTracker(Tracker):
         except LinearError as e:
             if not ops.not_found(e):
                 raise
-            node = None
+            raise LinearError(f"{key}: issue not found") from e
         if node is None:
             raise LinearError(f"{key}: issue not found")
         archived = node["archivedAt"] is not None
@@ -471,14 +470,8 @@ class LinearTracker(Tracker):
     def _children_page(self, parent, after):
         return (self.gql(Q_CHILDREN, i=parent["id"], c=after)["issue"] or {}).get("children")
 
-    def archive(self, key):
-        plan = self.archive_plan(key)
-        if plan.archived:
-            return False
-        if plan.unfinished:
-            raise ArchiveRefused(plan)
+    def _write_archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
-        return True
 
     def approved(self, owners):
         _need("states", self.state_ids)
