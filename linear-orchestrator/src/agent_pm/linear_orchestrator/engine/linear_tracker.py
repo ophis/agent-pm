@@ -103,6 +103,7 @@ class LinearTracker(Tracker):
     def __init__(self, gql, team, roles, humans=frozenset(), say=_quiet):
         self.gql, self.team, self.roles, self.humans, self.say = gql, team, roles, humans, say
         self.states = {team.states[k]: v for k, v in STATES.items()}
+        self.hist = {}
 
     @classmethod
     def connect(cls, gql, cfg, *, say):
@@ -144,6 +145,13 @@ class LinearTracker(Tracker):
                 except LinearError:
                     i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
         return [(i, tuple(blockers(i))) for i in issues]
+
+    def moved_at(self, key, state, *, by_people=False):
+        """History read once per key; by_people: moves by the human members only."""
+        if key not in self.hist:
+            self.hist[key] = self.gql(Q_HISTORY, i=key)["issue"]["history"]["nodes"]
+        moved = {self.team.states[LISTED[state]]}
+        return last_move(self.hist[key], moved, self.humans if by_people else None)
 
     def read(self, ident):
         issue = self.gql(Q_ISSUE, i=ident)["issue"]

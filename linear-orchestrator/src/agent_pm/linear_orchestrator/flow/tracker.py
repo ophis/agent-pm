@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection
+from datetime import datetime
 from typing import Literal
 
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Record, Snapshot, SubIssue
@@ -34,3 +35,6 @@ class Tracker(ABC):
 
     @abstractmethod
     def ready(self) -> list[tuple[Record, tuple[str, ...]]]: ...
+
+    @abstractmethod
+    def moved_at(self, key: str, state: Listed, *, by_people: bool = False) -> datetime | None: ...

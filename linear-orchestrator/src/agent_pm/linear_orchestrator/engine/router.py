@@ -269,14 +269,13 @@ class Board:
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.keychain, self.gate = cfg, keychain, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
-        self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
+        self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
         self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
         self.states = self.tracker.team.states
-        self.humans = self.tracker.humans
 
     def todo(self):
         if self.ready is None:
@@ -300,13 +299,6 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def last_move(self, issue, state, *, by_user=False):
-        if issue["id"] not in self.hist:
-            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
-        return ops.last_move(
-            self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
-        )
-
     def select_client(self, labels, role):
         return client_for(
             labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
@@ -319,7 +311,9 @@ class Board:
             n
             if n < CAP
             else attempt_count(
-                tried, issue["identifier"], self.last_move(issue, "todo", by_user=True)
+                tried,
+                issue["identifier"],
+                self.tracker.moved_at(issue["id"], IssueState.READY, by_people=True),
             )
         )
 
@@ -327,7 +321,7 @@ class Board:
         sid = latest_sid(self.entries, issue["identifier"])
         if not sid:
             return None
-        moved = self.last_move(issue, "in_progress")
+        moved = self.tracker.moved_at(issue["id"], IssueState.RUNNING)
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
     def comment_and_move(self, issue, body, state, frm, step):

@@ -429,6 +429,45 @@ class Ready(Case):
         self.assertEqual(tracker(gql).ready()[0][1], ("TASK-6", UNREADABLE))
 
 
+def history(*moves):
+    """Q_HISTORY's reply: (hours ago, state key, actor) moves, newest first."""
+    nodes = [
+        {"createdAt": ago(h).isoformat(), "actorId": actor, "toStateId": STATES[key]}
+        for h, key, actor in moves
+    ]
+    return {"issue": {"history": {"nodes": nodes}}}
+
+
+class MovedAt(Case):
+    def tracker(self, *replies):
+        return LinearTracker(Gql(Q_HISTORY=list(replies)), TEAM_OBJ, ROLES, frozenset({"u-human"}))
+
+    def test_cached_per_key(self):
+        found = self.tracker(history((2, "todo", "u-pm")), history((5, "todo", "u-pm")))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(2))
+        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.RUNNING))
+        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.READY, by_people=True))
+        self.assertEqual(found.moved_at("id-TASK-2", IssueState.READY), ago(5))
+        self.assertEqual(
+            found.gql.calls,
+            [
+                (linear_tracker.Q_HISTORY, {"i": "id-TASK-1"}),
+                (linear_tracker.Q_HISTORY, {"i": "id-TASK-2"}),
+            ],
+        )
+
+    def test_by_people_filters_actors(self):
+        found = self.tracker(history((1, "todo", "u-pm"), (3, "todo", "u-human")))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(1))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY, by_people=True), ago(3))
+
+    def test_state_ids(self):
+        moves = (1, "in_review", "u-pm"), (2, "in_progress", "u-pm"), (4, "todo", "u-human")
+        found = self.tracker(history(*moves))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.RUNNING), ago(2))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(4))
+
+
 class Role(Case):
     def test_by_assignee_id(self):
         self.assertEqual(tracker(Gql()).role({"assignee": {"id": "u-pm"}}), "pm")
@@ -438,7 +477,7 @@ class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(
             Tracker.__abstractmethods__,
-            {"read", "finished", "sub_issues", "archive", "role", "assigned", "ready"},
+            {"read", "finished", "sub_issues", "archive", "role", "assigned", "ready", "moved_at"},
         )
         self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES), Tracker)
 
