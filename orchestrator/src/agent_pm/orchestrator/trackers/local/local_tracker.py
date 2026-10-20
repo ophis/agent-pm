@@ -81,15 +81,15 @@ class LocalTracker(Tracker):
         *,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     ):
-        self.board, self.roles, self.files, self.now = board, frozenset(roles), None, now
+        self.board, self.roles, self._cache, self.now = board, frozenset(roles), None, now
 
-    def _all(self):
-        if self.files is None:
-            self.files = {each.id: each for each in scan(self.board)}
-        return self.files
+    def files(self):
+        if self._cache is None:
+            self._cache = {each.id: each for each in scan(self.board)}
+        return self._cache
 
     def _need(self, ident):
-        found = self._all().get(ident)
+        found = self.files().get(ident)
         if found is None:
             raise IssueError(f"{ident}: issue not found")
         return found
@@ -98,7 +98,7 @@ class LocalTracker(Tracker):
         """Role dirs' (owners' when given) issues located in states."""
         return [
             each
-            for each in self._all().values()
+            for each in self.files().values()
             if each.assignee in self.roles
             and (owners is None or each.assignee in owners)
             and each.state in states
@@ -108,7 +108,7 @@ class LocalTracker(Tracker):
         """Own related and blocked_by ids, then the issues naming it in theirs."""
         naming = [
             each.id
-            for each in self._all().values()
+            for each in self.files().values()
             if issue.id in each.related or issue.id in each.blocked_by
         ]
         return list(dict.fromkeys([*issue.related, *issue.blocked_by, *naming]))
@@ -123,7 +123,7 @@ class LocalTracker(Tracker):
 
     def ready(self):
         """An id with no issue file blocks."""
-        files = self._all()
+        files = self.files()
         return [
             (
                 _record(each),
@@ -133,7 +133,7 @@ class LocalTracker(Tracker):
         ]
 
     def recheck(self, key):
-        known = self._all().get(key)
+        known = self.files().get(key)
         found = read_one(self.board, known.path, key) if known else None
         if found is None:
             return Recheck(
@@ -145,7 +145,7 @@ class LocalTracker(Tracker):
                 task=Pick(),
                 client=Pick(),
             )
-        self._all()[key] = found
+        self.files()[key] = found
         role = found.assignee if found.assignee in self.roles else None
         return Recheck(
             ready=role is not None and found.state == LocalState.READY,
@@ -158,33 +158,33 @@ class LocalTracker(Tracker):
         )
 
     def moved_at(self, key, state, *, by=None):
-        found = self._all().get(key)
+        found = self.files().get(key)
         return None if found is None else _last(found, state, by)
 
     def read(self, ident):
-        found = self._all().get(ident)
+        found = self.files().get(ident)
         return None if found is None else Snapshot(_state(found.state), _last(found, found.state))
 
     def issue(self, ident):
         found = self._need(ident)
-        files = self._all()
+        files = self.files()
         notes = (
-            Note(n.body, _stamp(n.at), None, n.source.value, ORIGINS[n.source])
+            Note(n.body, stamp_time(n.at), None, n.source.value, ORIGINS[n.source])
             for n in found.comments
             if not _is_run(n)
         )
         return Issue(
             id=found.id,
             identifier=found.id,
-            url=_url(found),
+            url=url(found),
             title=found.title,
             description=found.description,
-            created_at=_stamp(found.created),
+            created_at=stamp_time(found.created),
             home=None,
             notes=tuple(sorted(notes, key=lambda n: n.at)),
             links=tuple(Link(each.url) for each in found.links),
             linked=tuple(
-                Linked(i, files[i].title, _shown(files[i]))
+                Linked(i, files[i].title, shown(files[i]))
                 for i in self._related(found)
                 if i in files
             ),
@@ -192,7 +192,7 @@ class LocalTracker(Tracker):
         )
 
     def search(self, words, idents):
-        files = self._all().values()
+        files = self.files().values()
         lower = [w.lower() for w in words]
         matched = [
             each
@@ -204,7 +204,7 @@ class LocalTracker(Tracker):
         return tuple(map(_found, named + matched[:SEARCHED]))
 
     def description(self, ident):
-        found = self._all().get(ident)
+        found = self.files().get(ident)
         return None if found is None else found.description
 
     def finished(self, owners):
@@ -223,7 +223,7 @@ class LocalTracker(Tracker):
         return ArchivePlan(
             found.id,
             found.id,
-            _url(found),
+            url(found),
             archived,
             below,
             () if archived else tuple(s for s in mine if not s.finished),
@@ -241,7 +241,7 @@ class LocalTracker(Tracker):
     def _children(self):
         """Unarchived issues by parent id."""
         found = {}
-        for each in self._all().values():
+        for each in self.files().values():
             if each.assignee is not None and each.parent:
                 found[each.parent] = (*found.get(each.parent, ()), _sub_issue(each))
         return found
@@ -251,7 +251,7 @@ class LocalTracker(Tracker):
             Approved(
                 each.id,
                 each.id,
-                _url(each),
+                url(each),
                 each.title,
                 each.priority,
                 each.created.isoformat(),
@@ -267,14 +267,14 @@ class LocalTracker(Tracker):
         found = self._need(key)
         moves, frm = [], None
         for move in _moves(found):
-            moves.append(Move(_stamp(move.at), _state(move.state), frm))
+            moves.append(Move(stamp_time(move.at), _state(move.state), frm))
             frm = moves[-1].to
         return Detail(
             _state(found.state),
             tuple(moves),
             tuple(
                 Comment(
-                    _stamp(n.at),
+                    stamp_time(n.at),
                     n.body,
                     n.source.value,
                     ORIGINS[n.source],
@@ -289,7 +289,7 @@ class LocalTracker(Tracker):
         return {each.url for each in self._need(key).links}
 
     def on_board(self, ident):
-        return ident if ident in self._all() else None
+        return ident if ident in self.files() else None
 
     def find_comment(self, key, ref):
         wanted = issue_file.ref_key(ref)
@@ -307,7 +307,7 @@ class LocalTracker(Tracker):
         found = next(
             (
                 each
-                for each in self._all().values()
+                for each in self.files().values()
                 if any(n.source == Source.SELF and n.key == wanted for n in each.comments)
             ),
             None,
@@ -316,38 +316,47 @@ class LocalTracker(Tracker):
 
     def create(self, once, *, home, owner, priority, title, description):
         """once's issue if one exists by now; a number whose id or path is taken is skipped."""
+
+        def render(ident):
+            now = self.now()
+            return issue_file.new(
+                ident=ident,
+                title=title,
+                priority=priority,
+                created=now,
+                parent=home or None,
+                description=description,
+                note_at=now,
+                note=PROMOTED,
+                note_key=issue_file.ref_key(once),
+                state=LocalState.READY,
+            )
+
         with store.locked(self.board):
-            self.files = None
+            self._cache = None
             if made := self.created(once):
                 return made
-            files = self._all()
-            prefix = _prefix(files)
-            folder = self._folder(owner, LocalState.READY.value)
-            while True:
-                ident = store.next_id(self.board, prefix)
-                path = os.path.join(folder, f"{ident} {_name(title)}.md")
-                if ident not in files and not os.path.lexists(path):
-                    break
-            now = self.now()
-            store.replace(
-                path,
-                issue_file.new(
-                    ident=ident,
-                    title=title,
-                    priority=priority,
-                    created=now,
-                    parent=home or None,
-                    description=description,
-                    note_at=now,
-                    note=PROMOTED,
-                    note_key=issue_file.ref_key(once),
-                    state=LocalState.READY,
-                ),
-            )
-            text, mtime = read_text(path)
-            files[ident] = issue_file.parse(
-                path, text, assignee=owner, state=LocalState.READY, mtime=mtime
-            )
+            return self._add(owner, LocalState.READY, title, render)
+
+    def add(self, owner, state, title, render):
+        """A new issue in <owner>/<state>/: render(its id)."""
+        with store.locked(self.board):
+            self._cache = None
+            return self._add(owner, state, title, render)
+
+    def _add(self, owner, state, title, render):
+        """add's, the lock held."""
+        files = self.files()
+        prefix = _prefix(files)
+        folder = self._folder(owner, state.value)
+        while True:
+            ident = store.next_id(self.board, prefix)
+            path = os.path.join(folder, f"{ident} {_name(title)}.md")
+            if ident not in files and not os.path.lexists(path):
+                break
+        store.replace(path, render(ident))
+        text, mtime = read_text(path)
+        files[ident] = issue_file.parse(path, text, assignee=owner, state=state, mtime=mtime)
         return Ref(ident, ident)
 
     def relate(self, key, other):
@@ -357,7 +366,7 @@ class LocalTracker(Tracker):
                 return None
             return issue_file.add_related(text, other), None
 
-        self._write(key, change)
+        self.write(key, change)
 
     def _write_archive(self, key):
         """Rechecked under the lock; descendants deepest first, each with its archive note."""
@@ -372,26 +381,26 @@ class LocalTracker(Tracker):
             return text, (None, None)
 
         with store.locked(self.board):
-            self.files = None
+            self._cache = None
             plan = self.archive_plan(key)
             if plan.outcome == "refused":
                 raise ArchiveRefused(plan)
             if plan.outcome == "unchanged":
                 return False
             for each in (*reversed(plan.descendants), plan):
-                self._rewrite(each.key, change)
+                self._write_locked(each.key, change)
         return True
 
-    def _write(self, key, change):
+    def write(self, key, change):
         """Under the board lock, issue key's file read fresh and Stamped, then change(text, found):
         None, or (text, None or the (assignee, state) dirs it moves to, (None, None) archive/);
         written when either changes and the file still holds what was read. A file a person moved
         or deleted meanwhile is read again. Returns the file as the deciding change saw it."""
         with store.locked(self.board):
-            return self._rewrite(key, change)
+            return self._write_locked(key, change)
 
-    def _rewrite(self, key, change):
-        """_write's, the lock held."""
+    def _write_locked(self, key, change):
+        """write's, the lock held."""
         for _ in range(TRIES):
             found = read_one(self.board, self._need(key).path, key)
             if found is None:
@@ -408,7 +417,7 @@ class LocalTracker(Tracker):
             )
             changed = change(stamped, found)
             if changed is None or changed == (stamped, None):
-                self._all()[key] = found
+                self.files()[key] = found
                 return found
             again = _read_if_there(found.path)
             if again is None or again[0] != text:
@@ -419,7 +428,7 @@ class LocalTracker(Tracker):
                 continue
             store.replace(path, changed[0])
             text, mtime = read_text(path)
-            self._all()[key] = issue_file.parse(
+            self.files()[key] = issue_file.parse(
                 path, text, assignee=assignee, state=state, mtime=mtime
             )
             return found
@@ -469,7 +478,7 @@ class LocalTracker(Tracker):
                 LOCAL_STATES[to],
             )
 
-        state = self._write(key, change).state  # None only archived, which change refuses
+        state = self.write(key, change).state  # None only archived, which change refuses
         if state is None or frm is None or state == LOCAL_STATES[frm]:
             return None
         return state.value
@@ -493,7 +502,7 @@ class LocalTracker(Tracker):
                 return None
             return issue_file.add_comment(text, at=self.now(), body=body, ref_key=wanted), None
 
-        self._write(key, change)
+        self.write(key, change)
 
     def put_comment(self, key, body, ref):
         wanted = issue_file.ref_key(ref)
@@ -504,7 +513,7 @@ class LocalTracker(Tracker):
                 edited = issue_file.add_comment(text, at=self.now(), body=body, ref_key=wanted)
             return edited, None
 
-        self._write(key, change)
+        self.write(key, change)
         return True
 
     def notify(self, key, people):
@@ -516,10 +525,10 @@ class LocalTracker(Tracker):
                 return None
             return issue_file.add_link(text, title=title, url=url), None
 
-        self._write(key, change)
+        self.write(key, change)
 
     def retitle(self, key, title):
-        self._write(key, lambda text, _: (issue_file.set_title(text, title), None))
+        self.write(key, lambda text, _: (issue_file.set_title(text, title), None))
 
     def unarchive(self, key):
         """Back to its archive note's assignee (none valid: unassigned) in its last state."""
@@ -527,9 +536,9 @@ class LocalTracker(Tracker):
         def change(text, found):
             if found.assignee is not None:
                 return None
-            return text, (_archived_from(found), found.state or LocalState.BACKLOG)
+            return text, (archived_from(found), found.state or LocalState.BACKLOG)
 
-        self._write(key, change)
+        self.write(key, change)
 
 
 def _read_if_there(path):
@@ -542,7 +551,7 @@ def _read_if_there(path):
         return None
 
 
-def _archived_from(issue):
+def archived_from(issue):
     """The last archive note's assignee if it names one directory on the board."""
     notes = [n.key for n in issue.comments if n.source == Source.SELF and n.key]
     keys = [k for k in notes if k.startswith(f"{ARCHIVED}:")]
@@ -563,14 +572,14 @@ def _name(title):
 
 
 def _sub_issue(issue):
-    return SubIssue(issue.id, issue.id, _shown(issue), issue.state in ENDED)
+    return SubIssue(issue.id, issue.id, shown(issue), issue.state in ENDED)
 
 
-def _url(issue):
+def url(issue):
     return Path(issue.path).as_uri()
 
 
-def _stamp(at):
+def stamp_time(at):
     """As Linear's times: UTC, milliseconds, Z."""
     return at.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -579,7 +588,7 @@ def _state(local):
     return None if local is None else ISSUE_STATES[local]
 
 
-def _shown(issue):
+def shown(issue):
     return issue.state.value if issue.state else ARCHIVED
 
 
@@ -587,10 +596,10 @@ def _record(issue):
     return {
         "id": issue.id,
         "identifier": issue.id,
-        "url": _url(issue),
+        "url": url(issue),
         "title": issue.title,
         "priority": issue.priority,
-        "createdAt": _stamp(issue.created),
+        "createdAt": stamp_time(issue.created),
         "assignee": {"id": issue.assignee},
         "project": None,
     }
@@ -619,7 +628,7 @@ def _found(issue):
     return Found(
         issue.id,
         issue.title,
-        _shown(issue),
+        shown(issue),
         GROUPS.get(issue.state, Group.BACKLOG),
         tuple(each.url for each in issue.links),
         issue.description,
