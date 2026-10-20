@@ -119,7 +119,8 @@ def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str
         client, sid, workdir = session["client"], session["sid"], session["workdir"]
         cwd = session["access"]["cwd"]
         name, host = state["agent_name"], state["host"]
-        account = session.get("env", {}).get("AGENT_PM_ACCOUNT", "")
+        env = session.get("env") or {}
+        account = env.get("AGENT_PM_ACCOUNT", "") if isinstance(env, dict) else None
         if not all(isinstance(value, str) and value for value in (name, host)):
             raise TypeError("no agent name or host")
         if not isinstance(account, str):

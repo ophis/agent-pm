@@ -2344,8 +2344,17 @@ class TmuxAccountTest(TmuxBase):
         workdir = os.path.join(self.dir, "work")
         os.mkdir(workdir)
         client = ClaudeClient({"accounts": {"work": {"dir": "/accounts/work"}}})
+        bin_dir = os.path.join(self.dir, "bin")
+        os.mkdir(bin_dir)
+        command = os.path.join(bin_dir, "claude")
+        with open(command, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(command, 0o755)
         prepared = []
-        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/mine"}):
+        with mock.patch.dict(
+            os.environ,
+            {"CLAUDE_CONFIG_DIR": "/mine", "PATH": bin_dir + os.pathsep + "/usr/bin:/bin"},
+        ):
             for env in ({}, {ACCOUNT: "work"}, {ACCOUNT: "default"}):
                 with self.subTest(env=env):
                     prepared.append(
