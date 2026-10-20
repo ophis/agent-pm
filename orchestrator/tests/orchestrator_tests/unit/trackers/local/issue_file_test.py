@@ -363,6 +363,27 @@ class Edits(Zoned):
         other = FRONT + "### Comments\n#### other · 2026-10-19 09:00 <!-- id=c1 key=s:o -->\nx\n"
         self.assertIsNone(issue_file.edit_comment(other, "s:o", "y"))
 
+    def test_stamp_converges_after_a_future_dated_line(self):
+        text = FRONT + "### History\n- 2099-01-01 00:00 ready other\n"
+        stamped = issue_file.stamp(text, mtime=at(9, 30), state=LocalState.RUNNING)
+        self.assertEqual(stamped, text + "- 2026-10-19 09:30 running other\n")
+        moved = issue_file.add_history(stamped, at=at(9, 35), state=LocalState.REVIEW)
+        self.assertEqual(issue_file.stamp(moved, mtime=at(9, 40), state=LocalState.REVIEW), moved)
+
+    def test_edit_comment_keeps_the_layout(self):
+        last = FRONT + "### Comments\n#### self · 2026-10-19 09:00 <!-- id=c1 key=s:a -->\nold\n"
+        self.assertEqual(
+            issue_file.edit_comment(last, "s:a", "new body"), last.replace("old", "new body")
+        )
+        tight = last + "### History\n- 2026-10-19 09:00 running self\n"
+        self.assertEqual(issue_file.edit_comment(tight, "s:a", "new"), tight.replace("old", "new"))
+        spaced = last.replace("old\n", "old\n\n\n") + "### History\n"
+        self.assertEqual(
+            issue_file.edit_comment(spaced, "s:a", "a\nb"), spaced.replace("old", "a\nb")
+        )
+        empty = last.replace("old\n", "")
+        self.assertEqual(issue_file.edit_comment(empty, "s:a", "x"), empty + "x\n")
+
     def test_add_history(self):
         text = FRONT + "### History\n- 2026-10-19 09:00 ready other\n\n"
         self.assertEqual(

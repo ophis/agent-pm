@@ -272,7 +272,7 @@ def ref_key(ref: tuple[str, ...]) -> str:
 
 def stamp(text: str, *, mtime: datetime, state: LocalState | None) -> str:
     """A person's edits fixed at mtime: bare `###` comments get their header, and a directory state
-    (None: archived) other than the last History entry's its `other` move."""
+    (None: archived) other than the last History line's its `other` move."""
     lines, end = _split(text)
     spans = _spans(lines, end)
     for i in range(*spans.get(_Section.COMMENTS, (0, 0))):
@@ -281,9 +281,8 @@ def stamp(text: str, *, mtime: datetime, state: LocalState | None) -> str:
     text = _join(lines)
     if state is None:
         return text
-    entries = sorted(
-        map(_entry, _filled(lines[slice(*spans.get(_Section.HISTORY, (0, 0)))])), key=lambda e: e.at
-    )
+    # the line written last, not the latest by time: a future-dated one would never be passed
+    entries = [_entry(line) for line in _filled(lines[slice(*spans.get(_Section.HISTORY, (0, 0)))])]
     if entries and entries[-1].state == state:
         return text
     return add_history(text, at=mtime, state=state, source=Source.OTHER)
@@ -300,7 +299,8 @@ def add_comment(text: str, *, at: datetime, body: str, ref_key: str | None = Non
 
 
 def edit_comment(text: str, ref_key: str, body: str) -> str | None:
-    """The engine's comment with ref_key holding body; None: there is none."""
+    """The engine's comment with ref_key holding body, the blank lines after it kept; None: there
+    is none."""
     lines, end = _split(text)
     first, last = _spans(lines, end).get(_Section.COMMENTS, (0, 0))
     for i in range(first, last):
@@ -310,7 +310,8 @@ def edit_comment(text: str, ref_key: str, body: str) -> str | None:
                 (j for j in range(i + 1, last) if lines[j] == _BARE or _HEADED.match(lines[j])),
                 last,
             )
-            return _join([*lines[: i + 1], *_body(body), "", *lines[after:]])
+            filled = max((j for j in range(i + 1, after) if lines[j].strip()), default=i)
+            return _join([*lines[: i + 1], *_body(body), *lines[filled + 1 :]])
     return None
 
 
