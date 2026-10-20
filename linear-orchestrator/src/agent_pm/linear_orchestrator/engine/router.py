@@ -211,18 +211,18 @@ def rank(issue):
 
 
 def task_for(labels, group, role, role_tasks, label_tasks):
-    found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
+    found = [n for n in labels if n.group is not None and n.group == group]
     if not found:
         return None, None
     if len(found) > 1:
         return (
             None,
             (
-                f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+                f"Several task labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
             ),
         )
-    name = found[0]["name"]
-    task = label_tasks.get(found[0]["id"])
+    name = found[0].name
+    task = label_tasks.get(found[0].key)
     if task is None:
         return (
             None,
@@ -241,7 +241,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 def client_for(
     labels, group, label_clients, default
 ) -> tuple[str | None, ClientSource, str | None]:
-    found = [n for n in labels if group and n["parent"] and n["parent"]["id"] == group]
+    found = [n for n in labels if group and n.group is not None and n.group == group]
     if not found:
         return default, "default", None
     if len(found) > 1:
@@ -249,15 +249,15 @@ def client_for(
             None,
             "label",
             (
-                f"Several Agent labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+                f"Several Agent labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
             ),
         )
-    if (client := label_clients.get(found[0]["id"])) is None:
+    if (client := label_clients.get(found[0].key)) is None:
         return (
             None,
             "label",
             (
-                f'Agent label "{found[0]["name"]}" is not in {config.LOCAL}\'s [agent_labels]. '
+                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [agent_labels]. '
                 "Fix the label, then move the issue back to Todo."
             ),
         )
@@ -500,7 +500,7 @@ class Board:
         client. Invalid Agent or task labels keep the resume.
         """
         ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
-        labels = self.gql(Q_RECHECK, i=issue["id"])["issue"]["labels"]["nodes"]
+        labels = self.tracker.recheck(issue["id"]).labels
         client, source, client_error = self.select_client(labels, role)
         task, task_error = task_for(
             labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
@@ -558,15 +558,15 @@ class Board:
     def claim(self, issue, full, clients=()):
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
-        current = self.gql(Q_RECHECK, i=issue["id"])["issue"]
-        role = config.role_for(self.cfg.roles, (current["assignee"] or {}).get("email"))
-        if current["state"]["id"] != self.states["todo"]:
+        current = self.tracker.recheck(issue["id"])
+        role = config.role_for(self.cfg.roles, (current.assignee or {}).get("email"))
+        if not current.ready:
             skip = "no longer Todo"
         elif role is None:
             skip = "not assigned to a role"
         elif role in full:
             skip = f"{role} is full"
-        elif current["project"] is None:
+        elif current.project is None:
             skip = "no project"
         elif not self.keychain(key := self.cfg.roles[role].key):
             skip = f"no Keychain item for role key {key}"
@@ -575,7 +575,7 @@ class Board:
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        labels = current["labels"]["nodes"]
+        labels = current.labels
         task, task_error = task_for(
             labels,
             self.cfg.task_label_group,
@@ -607,7 +607,7 @@ class Board:
             return None
         if self.gated(issue, role, client, source):
             return None
-        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
+        taken = {**issue, "assignee": current.assignee, "project": current.project}
         if self.dry:
             return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)

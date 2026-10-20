@@ -15,6 +15,8 @@ from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
     Finished,
     IssueState,
+    Label,
+    Recheck,
     Snapshot,
     SubIssue,
 )
@@ -468,6 +470,47 @@ class MovedAt(Case):
         self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(4))
 
 
+def rechecked(state, *, assignee=None, project=None, labels=()):
+    issue = {"state": {"id": state}, "assignee": assignee, "project": project}
+    return {"issue": issue | {"labels": {"nodes": list(labels)}}}
+
+
+class Rechecks(Case):
+    def test_maps_state_labels_and_parts(self):
+        pm, project = (
+            {"id": "u-pm", "email": "pm@agents.test"},
+            {"id": "p-1", "name": "Deep Research"},
+        )
+        nodes = [
+            {"id": "l-1", "name": "Light Research", "parent": {"id": TASK_GROUP}},
+            {"id": "l-2", "name": "Urgent", "parent": None},
+        ]
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=pm, project=project, labels=nodes))
+        self.assertEqual(
+            tracker(gql).recheck("id-TASK-1"),
+            Recheck(
+                ready=True,
+                assignee=pm,
+                project=project,
+                labels=(Label("l-1", "Light Research", TASK_GROUP), Label("l-2", "Urgent", None)),
+            ),
+        )
+        self.assertEqual(gql.calls, [(linear_tracker.Q_RECHECK, {"i": "id-TASK-1"})])
+
+    def test_ready_only_in_the_todo_state(self):
+        for key in ("in_progress", "in_review", "handoff", "done", "canceled"):
+            with self.subTest(state=key):
+                found = tracker(Gql(Q_RECHECK=rechecked(STATES[key]))).recheck("id-TASK-1")
+                self.assertEqual(
+                    found, Recheck(ready=False, assignee=None, project=None, labels=())
+                )
+
+    def test_a_todo_id_shared_with_another_key_stays_ready(self):
+        team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"]))
+        self.assertTrue(LinearTracker(gql, team, ROLES).recheck("id-TASK-1").ready)
+
+
 class Role(Case):
     def test_by_assignee_id(self):
         self.assertEqual(tracker(Gql()).role({"assignee": {"id": "u-pm"}}), "pm")
@@ -477,7 +520,17 @@ class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(
             Tracker.__abstractmethods__,
-            {"read", "finished", "sub_issues", "archive", "role", "assigned", "ready", "moved_at"},
+            {
+                "read",
+                "finished",
+                "sub_issues",
+                "archive",
+                "role",
+                "assigned",
+                "ready",
+                "moved_at",
+                "recheck",
+            },
         )
         self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES), Tracker)
 

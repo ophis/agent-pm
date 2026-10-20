@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 
 UNREADABLE = "(unreadable)"
-Record = dict[str, Any]  # Linear's issue keys until 第 2 阶段
+IssueRecord = dict[str, Any]  # Linear's issue keys until 第 2 阶段
 
 
 class IssueState(StrEnum):
@@ -44,3 +44,18 @@ class Finished:
     ident: str
     since: datetime | None
     children: tuple[SubIssue, ...]
+
+
+@dataclass(frozen=True)
+class Label:
+    key: str
+    name: str
+    group: str | None
+
+
+@dataclass(frozen=True)
+class Recheck:
+    ready: bool
+    assignee: IssueRecord | None
+    project: IssueRecord | None
+    labels: tuple[Label, ...]

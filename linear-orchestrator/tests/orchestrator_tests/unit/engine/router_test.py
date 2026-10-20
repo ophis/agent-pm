@@ -1,8 +1,10 @@
 """Orchestrator router behavior at its dependency boundaries."""
 
+import ast
 import contextlib
 import fcntl
 import functools
+import inspect
 import io
 import json
 import os
@@ -21,6 +23,7 @@ from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
     issues,
+    linear_tracker,
     ops,
     related,
     router,
@@ -2499,7 +2502,9 @@ class TaskSelection(TaskLabelsScenario):
         )
         for labels, want in cases:
             self.assertEqual(
-                router.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks),
+                router.task_for(
+                    linear_tracker.labels(labels), TASK_GROUP, "researcher", role_tasks, label_tasks
+                ),
                 want,
                 labels,
             )
@@ -5160,3 +5165,34 @@ class InsideAnAgentSession(RouterArguments):
                     self.assertNotIn(refused, self.main(argv)[1])
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(self.main(["--help"]), (0, ""))
+
+
+class BoardReads(Base):
+    """Spec AC3: Board and run_issue read only through the Tracker; writes may still use ops."""
+
+    def test_board_reads_only_through_tracker(self):
+        tree = ast.parse(inspect.getsource(router))
+        scopes = [
+            n
+            for n in tree.body
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("Board", "run_issue")
+        ]
+        nodes = [n for scope in scopes for n in ast.walk(scope)]
+        names = {n.id for n in nodes if isinstance(n, ast.Name)}
+        self.assertEqual(
+            {n for n in names if n.startswith("Q_") or n in ("q_issues", "RELATIONS")}, set()
+        )
+        calls = {ast.unparse(n.func) for n in nodes if isinstance(n, ast.Call)}
+        self.assertEqual(calls & {"self.gql", "gql", "board.gql"}, set())
+        from_ops = {
+            n.attr
+            for n in nodes
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "ops"
+        }
+        self.assertLessEqual(from_ops, {"comment_and_move", "call", "M_STATE"})
+        self.assertEqual(
+            [n for n in tree.body if isinstance(n, ast.ImportFrom) and n.module.endswith(".ops")],
+            [],
+        )

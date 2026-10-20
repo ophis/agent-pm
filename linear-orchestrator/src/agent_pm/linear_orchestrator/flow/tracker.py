@@ -5,7 +5,14 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import Literal
 
-from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Record, Snapshot, SubIssue
+from agent_pm.linear_orchestrator.flow.types import (
+    Finished,
+    IssueRecord,
+    IssueState,
+    Recheck,
+    Snapshot,
+    SubIssue,
+)
 
 Listed = Literal[IssueState.READY, IssueState.RUNNING]
 
@@ -28,13 +35,16 @@ class Tracker(ABC):
         """Its sub-issues too, as the tracker does."""
 
     @abstractmethod
-    def role(self, issue: Record) -> str: ...
+    def role(self, issue: IssueRecord) -> str: ...
 
     @abstractmethod
-    def assigned(self, state: Listed) -> list[Record]: ...
+    def assigned(self, state: Listed) -> list[IssueRecord]: ...
 
     @abstractmethod
-    def ready(self) -> list[tuple[Record, tuple[str, ...]]]: ...
+    def ready(self) -> list[tuple[IssueRecord, tuple[str, ...]]]: ...
 
     @abstractmethod
     def moved_at(self, key: str, state: Listed, *, by_people: bool = False) -> datetime | None: ...
+
+    @abstractmethod
+    def recheck(self, key: str) -> Recheck: ...

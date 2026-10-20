@@ -17,6 +17,8 @@ from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
     Finished,
     IssueState,
+    Label,
+    Recheck,
     Snapshot,
     SubIssue,
 )
@@ -73,6 +75,10 @@ def q_issues(fields=""):
         + fields
         + " } } }"
     )
+
+
+def labels(nodes):
+    return tuple(Label(n["id"], n["name"], (n["parent"] or {}).get("id")) for n in nodes)
 
 
 def blockers(issue):
@@ -145,6 +151,12 @@ class LinearTracker(Tracker):
                 except LinearError:
                     i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
         return [(i, tuple(blockers(i))) for i in issues]
+
+    def recheck(self, key):
+        """ready: in the configured Todo state id, whatever other key shares it."""
+        found = self.gql(Q_RECHECK, i=key)["issue"]
+        ready = found["state"]["id"] == self.team.states[State.TODO]
+        return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
 
     def moved_at(self, key, state, *, by_people=False):
         """History read once per key; by_people: moves by the human members only."""
