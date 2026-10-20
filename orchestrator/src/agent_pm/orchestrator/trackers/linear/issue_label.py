@@ -7,7 +7,7 @@ from agent_pm.orchestrator.engine.types import IssueError, LabelRefused, LinearE
 from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write, ops
 
 
-def _labels(after=""):
+def labels_page(after=""):
     return (
         f"labels(first: {issue_read.PAGE}{after}) {{ nodes {{ id name parent {{ id }} }} "
         "pageInfo { hasNextPage endCursor } }"
@@ -16,9 +16,9 @@ def _labels(after=""):
 
 Q_READ = (
     "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url "
-    f"team {{ id key }} {_labels()} }} }}"
+    f"team {{ id key }} {labels_page()} }} }}"
 )
-Q_MORE = f"query($i: String!, $c: String) {{ issue(id: $i) {{ {_labels(', after: $c')} }} }}"
+Q_MORE = f"query($i: String!, $c: String) {{ issue(id: $i) {{ {labels_page(', after: $c')} }} }}"
 M_SWAP = (
     "mutation($i: String!, $a: [String!], $r: [String!]) { issueUpdate(id: $i, input: "
     "{ addedLabelIds: $a, removedLabelIds: $r }) { success } }"
@@ -31,7 +31,7 @@ def swap(gql, ident, old, new):
     """
     data = issue_read.lookup(gql, Q_READ, ident)
     node, team_id = data["issue"], data["issue"]["team"]["id"]
-    carried = _all(gql, ident, node)
+    carried = carried_labels(gql, ident, node)
     gone = _old(gql, team_id, carried, old)
     added = issue_refs.label(gql, team_id, new, option="--to")
     ids = {n["id"] for n in carried}
@@ -62,7 +62,8 @@ def swap(gql, ident, old, new):
     return issue_write.receipt(node, "label swap", "changed", data["viewer"])
 
 
-def _all(gql, ident, node):
+def carried_labels(gql, ident, node):
+    """The labels node (read with labels_page()) carries, every later page read too."""
     page = node["labels"]
     labels = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:

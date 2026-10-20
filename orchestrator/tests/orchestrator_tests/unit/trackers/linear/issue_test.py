@@ -1,5 +1,5 @@
-"""agent-pm-orchestrator issue: help, the shared stdout/stderr/exit rules, and read, move, comment, archive,
-relation and label swap through main.
+"""agent-pm-orchestrator issue: help, the shared stdout/stderr/exit rules, and read, move, edit, comment,
+archive, relation and label swap through main.
 """
 
 import io
@@ -15,13 +15,14 @@ from agent_pm.orchestrator.trackers.linear import client, issue
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
-from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES
+from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TASK_GROUP
 from orchestrator_tests.unit.issue_fixtures import (
     CLIENT_LABELS,
     OTHER_TEAM,
     ROLE_USERS,
     TASK_LABELS,
     ArchiveGql,
+    EditGql,
     Gql,
     IssueCase,
     LabelGql,
@@ -35,6 +36,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     label,
     rel,
     tree,
+    uid,
     write_issue,
 )
 
@@ -114,6 +116,9 @@ class Help(Case):
             "me (the\n  linear.harness_key account) or unassigned",
             "none, urgent, high, medium, low",
             "Linear only: lookup, label swap, --label, --project, --milestone.",
+            "create, edit, move, comment, archive, relation and label swap write",
+            "agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build",
+            "agent-pm-orchestrator issue edit --help",
             "agent-pm-orchestrator issue move TASK-1 done",
             "agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
             "    --parent TASK-1",
@@ -126,6 +131,7 @@ class Help(Case):
             "read",
             "list",
             "create",
+            "edit",
             "move",
             "comment",
             "archive",
@@ -141,7 +147,7 @@ class Help(Case):
                 cli.main(["issue", *command.split(), "--help"])
             text = output.getvalue()
             self.assertNotIn("--assignee", text)
-            if command in ("", "list", "create", "move"):
+            if command in ("", "list", "create", "edit", "move"):
                 self.assertNotIn("--team", text)
             self.assertNotIn("move TASK-1 --state", text)
             self.assertNotIn("In Progress", text)
@@ -153,6 +159,20 @@ class Help(Case):
                 ("STATE", "backlog", "handoff", "configured team (linear.team)", "unchanged"),
             ),
             ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
+            (
+                "edit",
+                (
+                    "--title TEXT",
+                    "--body-file FILE",
+                    "--task NAME",
+                    "--client NAME",
+                    "--priority NAME",
+                    "every other label stays",
+                    "at least one",
+                    "configured team (linear.team)",
+                    "unchanged",
+                ),
+            ),
             (
                 "archive",
                 ("--dry-run", "completed, canceled or duplicate", "every page", "no override"),
@@ -209,6 +229,16 @@ class Help(Case):
             ["move", "TASK-1", "in_progress"],
             ["move", "TASK-1", "--state", "done"],
             ["move", "TASK-1", "done", "--state", "done"],
+            ["edit"],
+            ["edit", "TASK-1", "--title", "a", "--title", "b"],
+            ["edit", "TASK-1", "--body-file", "a.md", "--body-file", "b.md"],
+            ["edit", "TASK-1", "--task", "a", "--task", "b"],
+            ["edit", "TASK-1", "--client", "a", "--client", "b"],
+            ["edit", "TASK-1", "--priority", "high", "--priority", "low"],
+            ["edit", "TASK-1", "--priority", "2"],
+            ["edit", "TASK-1", "--state", "done"],
+            ["edit", "TASK-1", "--role", "me"],
+            ["edit", "TASK-1", "--label", "bug"],
             ["list", "--team", "TASK"],
             ["list", "--assignee", "me"],
             ["list", "--state", "Todo"],
@@ -438,6 +468,90 @@ class Move(IssueCase):
 
 
 BODY = 'say "hi", `ls`, $HOME and ${x}\nline two\n中文正文\n'
+
+
+class Edit(IssueCase):
+    BUILD = label(0xB1, "build", group=TASK_GROUP)
+
+    def test_prints_the_receipt(self):
+        path = os.path.join(self.root, "body.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(BODY)
+        labels = {"addedLabelIds": [TASK_LABELS["light-build"]], "removedLabelIds": [uid(0xB1)]}
+        for argv, stdin, want in (
+            (
+                ["--title", "New", "--body-file", path, "--task", "light-build"],
+                b"",
+                {"title": "New", "description": BODY, **labels},
+            ),
+            (
+                ["--body-file", "-", "--priority", "urgent"],
+                BODY.encode(),
+                {"description": BODY, "priority": 1},
+            ),
+        ):
+            gql = mock.Mock(wraps=EditGql((self.BUILD,), [self.BUILD["id"]]))
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(["edit", "TASK-2", *argv], gql, stdin)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(
+                    json.loads(out),
+                    {
+                        "issue": {
+                            "id": "id-TASK-2",
+                            "identifier": "TASK-2",
+                            "url": "https://linear.app/t/issue/TASK-2",
+                        },
+                        "operation": "edit",
+                        "result": "changed",
+                        "actor": {"id": "u-me", "name": "Me"},
+                    },
+                )
+                self.assertEqual(gql.call_args.kwargs["in"], want)
+                self.assertNotIn("中文".encode(), out)
+                self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+
+    def test_unchanged_exits_zero(self):
+        gql = EditGql((self.BUILD,), [], fields={"title": "Same"})
+        code, out, _ = self.run_main(["edit", "TASK-2", "--title", "Same"], gql)
+        self.assertEqual((code, json.loads(out)["result"], gql.writes), (0, "unchanged", []))
+
+    def test_usage_errors_exit_two_before_any_call(self):
+        blank = os.path.join(self.root, "blank.md")
+        with open(blank, "w", encoding="utf-8") as f:
+            f.write("\n  \n")
+        for argv, phrase in (
+            ([], "edit: give at least one of --title, --body-file, --task, --client, --priority"),
+            (["--title", " \n"], "--title: empty title"),
+            (["--body-file", blank], "--body-file"),
+            (["--body-file", os.path.join(self.root, "nope.md")], "--body-file"),
+        ):
+            gql = EditGql((self.BUILD,), [])
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(["edit", "TASK-2", *argv], gql)
+                self.assertEqual((code, out, gql.calls), (2, b"", []))
+                self.assertIn(phrase, err)
+
+    def test_failures_print_no_receipt(self):
+        other = {"team": {"id": OTHER_TEAM, "key": "OPS"}}
+        cases = (
+            (EditGql((), [], fields=other), ["--task", "build"], 2, "is in team OPS"),
+            (EditGql((), []), ["--client", "nope"], 2, "--client nope"),
+            (EditGql((), [], result={"success": False}), ["--title", "New"], 1, "success: false"),
+            (
+                EditGql((), [], result=Unavailable("issueUpdate", reason="timed out")),
+                ["--title", "New"],
+                1,
+                "issue read TASK-2",
+            ),
+        )
+        for gql, argv, want, phrase in cases:
+            with self.subTest(phrase=phrase):
+                code, out, err = self.run_main(["edit", "TASK-2", *argv], gql)
+                self.assertEqual((code, out), (want, b""))
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
+                self.assertIn(phrase, err)
+        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1, 1])
 
 
 class Comment(IssueCase):

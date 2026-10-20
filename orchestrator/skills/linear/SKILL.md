@@ -20,6 +20,7 @@ The prefix `agent-pm-orchestrator issue` is left out. `ID` is an identifier (`TA
 | `list [filters]` | the configured team's issues, newest update first; also the search |
 | `lookup RESOURCE` | `teams`, `states`, `labels`, `projects`, `milestones` (`--project`), `users` with ids |
 | `create --title TEXT --body-file FILE` | one issue with its fields and blocking relations |
+| `edit ID [--title TEXT] [--body-file FILE] [--task NAME] [--client NAME] [--priority NAME]` | change only those fields; a task or client replaces its group's label |
 | `move ID STATE` | set its state: `backlog`, `ready`, `running`, `review`, `approved`, `done` or `canceled` |
 | `comment ID --body-file FILE` | a new top-level comment |
 | `relation add ID --blocks OTHER` | one blocking edge; `remove` deletes it; `--blocked-by` for the other direction |
@@ -64,6 +65,7 @@ Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim, minus 
 ```bash
 agent-pm-orchestrator issue comment TASK-1 --body-file note.md
 agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md
+agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build --priority high
 agent-pm-orchestrator issue move TASK-1 running
 agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md
 agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug --project 'Agent PM' --milestone M1 --parent TASK-1 --role me --task build --priority high --state ready --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md

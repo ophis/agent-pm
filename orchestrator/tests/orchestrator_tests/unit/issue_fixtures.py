@@ -1,5 +1,5 @@
-"""Linear issue nodes, as `agent-pm-orchestrator issue read`, `move`, `comment`, `archive`, `relation` and
-`label swap` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
+"""Linear issue nodes, as `agent-pm-orchestrator issue read`, `move`, `comment`, `archive`, `relation`,
+`label swap` and `edit` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
 by its root field; IssueCase runs issue.main against a test configuration, names_cfg is its
 abstract names' part.
 """
@@ -13,6 +13,7 @@ from agent_pm.orchestrator.engine.types import GraphQLErrors
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
+    issue_edit,
     issue_label,
     issue_read,
     issue_refs,
@@ -571,3 +572,25 @@ class LabelGql:
     @property
     def writes(self):
         return [call for call in self.calls if call[0].startswith("mutation")]
+
+
+class EditGql(LabelGql):
+    """LabelGql whose issue TASK-2 also holds `fields` (title, description, priority; team to move
+    it), answering `agent-pm-orchestrator issue edit`'s read; the mutation applies its label
+    changes.
+    """
+
+    def __init__(self, catalog, carried, *, fields=None, **options):
+        super().__init__(catalog, carried, **options)
+        self.fields = {"title": "Old", "description": "Old body", "priority": 0, **(fields or {})}
+
+    def __call__(self, query, **variables):
+        found = super().__call__(query, **variables)
+        if query == issue_edit.Q_READ and found["issue"] is not None:
+            found["issue"].update(self.fields)
+        return found
+
+    def _mutate(self, variables):
+        change = variables["in"]
+        labels = {"a": change.get("addedLabelIds", []), "r": change.get("removedLabelIds", [])}
+        return super()._mutate(labels)

@@ -34,6 +34,7 @@ from agent_pm.orchestrator.engine.types import (
 from agent_pm.orchestrator.trackers.linear import (
     issue_archive,
     issue_create,
+    issue_edit,
     issue_label,
     issue_list,
     issue_lookup,
@@ -88,7 +89,7 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  create, move, comment, archive, relation and label swap write as that\n"
+    + "  create, edit, move, comment, archive, relation and label swap write as that\n"
     "  account and print a receipt instead; for them exit 1 also means the\n"
     "  write's result is unknown, for create also a relation that failed, for\n"
     "  archive and label swap also a refusal (their --help).\n\n"
@@ -108,6 +109,7 @@ _HELP = (
     "    --role engineer --priority high --blocks TASK-1\n"
     "  agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
     "    --parent TASK-1\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
     "  agent-pm-orchestrator issue move TASK-1 done\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
@@ -116,9 +118,9 @@ _HELP = (
     "Recovery and next help:\n"
     "  Command details: agent-pm-orchestrator issue read --help,\n"
     "  agent-pm-orchestrator issue list --help, agent-pm-orchestrator issue lookup --help,\n"
-    "  agent-pm-orchestrator issue create --help, agent-pm-orchestrator issue move --help,\n"
-    "  agent-pm-orchestrator issue comment --help, agent-pm-orchestrator issue archive --help,\n"
-    "  agent-pm-orchestrator issue relation add --help,\n"
+    "  agent-pm-orchestrator issue create --help, agent-pm-orchestrator issue edit --help,\n"
+    "  agent-pm-orchestrator issue move --help, agent-pm-orchestrator issue comment --help,\n"
+    "  agent-pm-orchestrator issue archive --help, agent-pm-orchestrator issue relation add --help,\n"
     "  agent-pm-orchestrator issue label swap --help\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
@@ -272,6 +274,27 @@ _MOVE_HELP = (
     "  agent-pm-orchestrator issue move TASK-1 running\n\n"
     "Recovery and next help:\n"
     "  The issue's current state: agent-pm-orchestrator issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
+)
+
+_EDIT_HELP = (
+    _WRITE_RULES % "" + "Changes the given fields of one issue in one update naming only what\n"
+    "  changes; give at least one of --title, --body-file, --task, --client,\n"
+    "  --priority. Every given value already so: result unchanged, nothing\n"
+    "  written. A name the configuration lacks exits 2 before anything is read.\n"
+    "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
+    "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
+    "  blank or unreadable exits 2.\n"
+    "--task NAME / --client NAME: a configured task / client name; its label\n"
+    "  replaces the issue's labels of that group: every other label stays. Only\n"
+    "  on an issue of the configured team (linear.team): another team's exits 2.\n"
+    "--priority NAME: none, urgent, high, medium or low.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n\n"
+    "Recovery and next help:\n"
+    "  The issue's fields and labels: agent-pm-orchestrator issue read TASK-1\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
@@ -587,6 +610,23 @@ def _parser():
         metavar="ID",
         help="issues blocking it",
     )
+    change = commands.add_parser(
+        "edit",
+        help="change one issue's title, description, task, client or priority",
+        description="Change the title, description, task, client or priority of one issue.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_EDIT_HELP,
+    )
+    change.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    change.add_argument("--title", action=_Once, metavar="TEXT", help="not blank")
+    change.add_argument(
+        "--body-file", action=_Once, metavar="FILE", help="the description, UTF-8; -: stdin"
+    )
+    change.add_argument("--task", action=_Once, metavar="NAME", help="a configured task name")
+    change.add_argument("--client", action=_Once, metavar="NAME", help="a configured client name")
+    change.add_argument(
+        "--priority", action=_Once, choices=PRIORITIES, metavar="NAME", help=", ".join(PRIORITIES)
+    )
     move = commands.add_parser(
         "move",
         help="set one issue's state, an abstract name",
@@ -684,8 +724,12 @@ def _limit(text):
 
 
 def _usage(args):
-    """The usage error in args' page options, or None."""
-    if args.command == "create" and not args.title.strip():
+    """The usage error in args' options, or None."""
+    if args.command == "edit" and (
+        (args.title, args.body_file, args.task, args.client, args.priority) == (None,) * 5
+    ):
+        return "edit: give at least one of --title, --body-file, --task, --client, --priority"
+    if args.command in ("create", "edit") and args.title is not None and not args.title.strip():
         return "--title: empty title"
     if "full" not in args:
         return None
@@ -711,6 +755,8 @@ def _run(gql, args, cfg, body):
         return receipt(issue_write.move(gql, cfg, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
+    if args.command == "edit":
+        return receipt(issue_edit.edit(gql, cfg, args, body))
     if args.command == "create":
         return receipt(issue_create.create(gql, *issue_create.plan(gql, args, cfg, body)))
     if args.command == "relation":
@@ -764,7 +810,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, usage)
         return USAGE
     body = None
-    if args.command in ("comment", "create"):
+    if getattr(args, "body_file", None) is not None:
         try:
             body = issue_write.read_body(args.body_file, stdin)
         except IssueError as error:
