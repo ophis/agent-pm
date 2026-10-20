@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
 IssueRecord = dict[str, Any]  # opaque until 第 2 阶段
+# self: the engine; other: user or manager
+Origin = Literal["self", "other"]
 
 
 class IssueState(StrEnum):
@@ -77,12 +79,12 @@ class Move:
 
 @dataclass(frozen=True)
 class Comment:
-    """other: a human's; run: a run's."""
+    """run: a run's."""
 
     at: str
     body: str
-    author: str | None
-    other: bool
+    author: str
+    origin: Origin
     run: bool
 
 
@@ -96,7 +98,7 @@ class Detail:
 
 @dataclass(frozen=True)
 class Pick:
-    """None, None: no choice; error: the choice is unusable, its bounce comment; wins over name."""
+    """None, None: no choice; error: the choice is unusable, its bounce comment; beats name."""
 
     name: str | None = None
     error: str | None = None
@@ -106,7 +108,7 @@ class Pick:
 class Recheck:
     """ready: still READY; role: the assignee's, None if unassigned or not a role's; refused: None,
     or why it can't be claimed, a skip reason shown as-is; assignee, home: opaque, for the claim;
-    task, client: the issue's picks."""
+    task, client: the picks."""
 
     ready: bool
     role: str | None
@@ -146,6 +148,7 @@ class Note:
     at: str
     account: str | None
     name: str | None
+    origin: Origin
 
 
 @dataclass(frozen=True)

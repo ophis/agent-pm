@@ -126,8 +126,9 @@ def main(argv=None):
             '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
             "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
             '  only router --dry-run and --brake run yet; "linear" reaches Linear through\n'
-            "  the linear.harness_key Keychain service, role keys identifying the\n"
-            "  accounts used for issue work. Python 3.11+ is needed.\n"
+            "  the linear.harness_key Keychain service (the issue commands:\n"
+            "  linear.manager_key), role keys identifying the accounts used for issue\n"
+            "  work. Python 3.11+ is needed.\n"
             "  Router launches need the configured client/Delegate and its Host tools.\n"
             "  Router/promote/prune prepend AGENT_PM_PATH, then this installation's bin,\n"
             "  then default executable directories. Logs: STATE/logs/orchestrator.jsonl;\n"

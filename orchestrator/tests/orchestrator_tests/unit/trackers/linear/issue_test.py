@@ -17,6 +17,8 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.issue_fixtures import (
+    CONFIG,
+    MANAGER_KEY,
     ArchiveGql,
     Gql,
     IssueCase,
@@ -184,7 +186,7 @@ class Read(IssueCase):
         self.assertEqual(view["parent"]["identifier"], "TASK-9")
         self.assertIsNone(view["continue"])
         self.assertFalse(os.path.exists(os.path.join(self.root, "logs", "runs.jsonl")))
-        self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+        self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
 
     def test_cut_fields_name_the_full_read(self):
         node = issue_node("TASK-2", comments=conn([comment(n) for n in range(1, 7)]))
@@ -311,7 +313,7 @@ class Move(IssueCase):
             },
         )
         self.assertTrue(out.endswith(b"\n"))
-        self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+        self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
 
     def test_already_there_exits_zero_unchanged(self):
         gql = WriteGql(write_issue(state="s-done", team_node=team("TASK", DONE)))
@@ -738,7 +740,7 @@ class Failures(IssueCase):
                 ["read", "TASK-2"],
                 Gql(None, fail=CalledProcessError(44, ["security"])),
                 2,
-                "linear.harness_key Keychain service 'linear-api-key': CalledProcessError",
+                "linear.manager_key Keychain service 'linear-api-key-manager': CalledProcessError",
             ),
             (["read", "TASK-2"], Gql(None, fail=FileNotFoundError("security")), 2, "Keychain"),
             (["read", "TASK-2"], Gql(None, fail=TimeoutExpired("security", 30)), 2, "Keychain"),
@@ -752,10 +754,18 @@ class Failures(IssueCase):
 
     def test_configuration_errors_exit_two(self):
         with open(self.config, "w") as f:
-            f.write(tp.CONFIG.replace('linear.harness_key = "linear-api-key"\n', ""))
+            f.write(CONFIG.replace('linear.harness_key = "linear-api-key"\n', ""))
         code, out, err = self.run_main(["read", "TASK-2"], Gql(issue_node()))
         self.assertEqual((code, out), (2, b""))
         self.assertIn("required, unset: linear.harness_key:", err)
+
+    def test_unset_manager_key_exits_two_before_any_call(self):
+        with open(self.config, "w") as f:
+            f.write(tp.CONFIG)
+        gql = Gql(issue_node())
+        code, out, err = self.run_main(["read", "TASK-2"], gql)
+        self.assertEqual((code, out, gql.calls), (2, b"", []))
+        self.assertIn("linear.manager_key is unset", err)
 
     def test_diagnostics_stay_within_eight_kib(self):
         gql = Gql(None, fail=LinearError("linear api error: " + "错" * 9000))

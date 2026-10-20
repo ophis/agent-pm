@@ -276,7 +276,7 @@ class Board:
             else attempt_count(
                 tried,
                 issue["identifier"],
-                self.tracker.moved_at(issue["id"], IssueState.READY, by_people=True),
+                self.tracker.moved_at(issue["id"], IssueState.READY, by="other"),
             )
         )
 
@@ -676,9 +676,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].input == "build"
-    reader = LinearTracker(
-        gql, states=linear.states, team_id=linear.team, service=linear.harness_key
-    )
+    reader = LinearTracker.reader(gql, linear)
     try:
         issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
@@ -734,7 +732,6 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         issue,
         role,
         sources,
-        humans=ctx.humans,
         target=repo,
         docs=cfg.docs,
         related=found,

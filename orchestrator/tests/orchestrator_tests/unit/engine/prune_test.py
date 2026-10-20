@@ -256,6 +256,7 @@ class RetentionCleanup(PruneScenario):
             dry=False,
             work=self.work,
             cfg=self.cfg,
+            linear=self.cfg.linear,
             team=TEAM_OBJ,
             roles=ROLES,
         )

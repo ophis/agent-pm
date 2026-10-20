@@ -474,9 +474,9 @@ class GraphQLProjection(ServerCase):
             [
                 {
                     "createdAt": done,
-                    "actorId": self.harness,
-                    "fromStateId": STATES["in_progress"],
                     "toStateId": STATES["done"],
+                    "actor": {"email": HARNESS_EMAIL, "isMe": True},
+                    "botActor": None,
                 }
             ],
         )
@@ -694,7 +694,7 @@ class GraphQLQueries(ServerCase):
             self.gql(linear_tracker.Q_ID, i="TASK-7"),
             {"issue": {"id": task["id"], "team": {"id": TEAM}}},
         )
-        read = linear_tracker.LinearTracker(self.gql).issue("TASK-7")
+        read = linear_tracker.LinearTracker(self.gql, selves=frozenset()).issue("TASK-7")
         self.assertEqual(
             (read.title, read.home, read.linked),
             (

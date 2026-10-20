@@ -210,7 +210,7 @@ class Recheck_(Board):
 
 
 class Moves(Board):
-    def test_moved_at_by_people_derived_move(self):
+    def test_moved_at_by_origin_derived_move(self):
         history = "- 2026-10-19 14:02 ready other\n- 2026-10-19 14:30 running self\n"
         self.write("pm/ready", "LOC-1", history=history + "- 2026-10-19 16:10 review self\n")
         self.write(
@@ -220,12 +220,13 @@ class Moves(Board):
         )
         self.write("pm/running", "LOC-3")
         moved = self.tracker.moved_at
-        self.assertEqual(moved("LOC-1", IssueState.READY, by_people=True), MTIME)
+        self.assertEqual(moved("LOC-1", IssueState.READY, by="other"), MTIME)
         self.assertEqual(moved("LOC-1", IssueState.RUNNING), at(14, 30))
-        self.assertIsNone(moved("LOC-1", IssueState.RUNNING, by_people=True))
-        self.assertEqual(moved("LOC-2", IssueState.READY, by_people=True), at(14, 2))
+        self.assertIsNone(moved("LOC-1", IssueState.RUNNING, by="other"))
+        self.assertEqual(moved("LOC-2", IssueState.READY, by="other"), at(14, 2))
         self.assertEqual(moved("LOC-2", IssueState.READY), at(15))
-        self.assertEqual(moved("LOC-3", IssueState.RUNNING, by_people=True), MTIME)
+        self.assertEqual(moved("LOC-2", IssueState.READY, by="self"), at(15))
+        self.assertEqual(moved("LOC-3", IssueState.RUNNING, by="other"), MTIME)
         self.assertIsNone(moved("LOC-3", IssueState.READY))
         self.assertIsNone(moved("LOC-404", IssueState.READY))
 
@@ -258,17 +259,15 @@ class Moves(Board):
                 ),
                 (
                     Comment(
-                        "2026-10-19T14:05:00.000Z", "look at LOC-7", "other", other=True, run=False
+                        "2026-10-19T14:05:00.000Z", "look at LOC-7", "other", "other", run=False
                     ),
-                    Comment("2026-10-19T14:31:00.000Z", RUN, "self", other=False, run=True),
-                    Comment(
-                        "2026-10-19T16:10:00.000Z", "PRD ready", "self", other=False, run=False
-                    ),
+                    Comment("2026-10-19T14:31:00.000Z", RUN, "self", "self", run=True),
+                    Comment("2026-10-19T16:10:00.000Z", "PRD ready", "self", "self", run=False),
                     Comment(
                         "2026-10-20T00:00:00.000Z",
                         "approved, over to engineer",
                         "other",
-                        other=True,
+                        "other",
                         run=False,
                     ),
                 ),
@@ -327,8 +326,8 @@ class Reads(Board):
         self.assertEqual(
             got.notes,
             (
-                Note("looks good", "2026-10-19T15:00:00.000Z", None, "other"),
-                Note("PRD ready", "2026-10-19T16:10:00.000Z", None, "self"),
+                Note("looks good", "2026-10-19T15:00:00.000Z", None, "other", "other"),
+                Note("PRD ready", "2026-10-19T16:10:00.000Z", None, "self", "self"),
             ),
         )
         self.assertEqual(got.links, (Link("https://x/doc"),))

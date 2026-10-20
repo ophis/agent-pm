@@ -48,9 +48,10 @@ Prerequisites and effects:
   Configuration: agent-pm-orchestrator --help
   For each Handoff issue in a project, assigned to a configured role with next:
   create that next role's issue in the same project, assigned to its account,
-  in Todo with source links and human instructions; relate the issues and move
-  the source to Done. Existing next-stage issues are reused. Required human
-  instructions absent: return the source to In Review with a comment.
+  in Todo with source links and the user's instructions (comments by anyone but
+  the harness and role accounts); relate the issues and move the source to
+  Done. Existing next-stage issues are reused. Required instructions absent:
+  return the source to In Review with a comment.
   Every tick also prunes: close finished runs, delete agent files and archive
   finished issues (Done ones of pm/engineer only). This includes uncommitted
   agent work. Cleanup ages, safeguards and retention:
@@ -70,7 +71,7 @@ Example (configured Linear access and Handoff issues):
 Recovery and next help:
   Review the plan before executing: agent-pm-orchestrator promote
   Inspect logged Handoff errors and fix the reported configuration, credentials
-  or missing human instructions before retrying.
+  or missing instructions before retrying.
   Cleanup details: agent-pm-orchestrator prune --help
   Command discovery: agent-pm-orchestrator --help
 """
@@ -90,12 +91,10 @@ def child_title(prefix, src_prefix, title):
 
 class Promoter:
     def __init__(self, gql, cfg, linear, now, dry, *, tasks, wait=True):
-        self.cfg, self.now, self.dry, self.wait = cfg, now, dry, wait
+        self.cfg, self.linear, self.now, self.dry, self.wait = cfg, linear, now, dry, wait
         self.tasks = tasks
         self.team, self.roles = team_and_roles(gql, linear)
-        self.tracker = LinearTracker.of_team(
-            gql, self.team, self.roles, humans=linear.human_members
-        )
+        self.tracker = LinearTracker.of_team(gql, linear, self.team, self.roles)
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):
@@ -167,7 +166,7 @@ class Promoter:
             (
                 c
                 for c in detail.comments
-                if c.other and (cutoff is None or parse_time(c.at) > parse_time(cutoff))
+                if c.origin == "other" and (cutoff is None or parse_time(c.at) > parse_time(cutoff))
             ),
             key=lambda c: parse_time(c.at),
         )
@@ -279,6 +278,7 @@ def run_prune(gql, now, promoter, pruner=None):
             team=promoter.team,
             roles=promoter.roles,
             cfg=promoter.cfg,
+            linear=promoter.linear,
         ).run()
     except Unavailable as e:
         linear_error("prune", e, dry=promoter.dry)

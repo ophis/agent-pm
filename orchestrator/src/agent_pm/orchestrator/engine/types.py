@@ -49,6 +49,7 @@ class LinearSettings:
     states: Mapping[str, str]
     human_members: tuple[str, ...]
     harness_key: str
+    manager_key: str
     task_label_group: str
     task_labels: Mapping[str, str]
     agent_label_group: str

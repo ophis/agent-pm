@@ -22,6 +22,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Linked,
     Move,
     Note,
+    Origin,
     Pick,
     Recheck,
     Snapshot,
@@ -40,6 +41,7 @@ ISSUE_STATES = {
     LocalState.CANCELED: IssueState.CANCELED,
 }
 LOCAL_STATES = {issue: local for local, issue in ISSUE_STATES.items()}
+ORIGINS: dict[Source, Origin] = {Source.SELF: "self", Source.OTHER: "other"}
 ENDED = frozenset({LocalState.DONE, LocalState.CANCELED})
 LISTED = frozenset({IssueState.READY, IssueState.RUNNING})
 GROUPS = {
@@ -136,9 +138,9 @@ class LocalTracker(Tracker):
             client=Pick(found.client),
         )
 
-    def moved_at(self, key, state, *, by_people=False):
+    def moved_at(self, key, state, *, by=None):
         found = self._all().get(key)
-        return None if found is None else _last(found, state, Source.OTHER if by_people else None)
+        return None if found is None else _last(found, state, by)
 
     def read(self, ident):
         found = self._all().get(ident)
@@ -148,7 +150,7 @@ class LocalTracker(Tracker):
         found = self._need(ident)
         files = self._all()
         notes = (
-            Note(n.body, _stamp(n.at), None, n.source.value)
+            Note(n.body, _stamp(n.at), None, n.source.value, ORIGINS[n.source])
             for n in found.comments
             if not _is_run(n)
         )
@@ -239,7 +241,7 @@ class LocalTracker(Tracker):
                     _stamp(n.at),
                     n.body,
                     n.source.value,
-                    other=n.source == Source.OTHER,
+                    ORIGINS[n.source],
                     run=_is_run(n),
                 )
                 for n in found.comments
@@ -346,9 +348,9 @@ def _moves(issue):
     return moves
 
 
-def _last(issue, state, source=None):
-    """The latest move into state (by source when given); None if none."""
-    times = [m.at for m in _moves(issue) if m.state == state and source in (None, m.source)]
+def _last(issue, state, by=None):
+    """The latest move into state (by that origin when given); None if none."""
+    times = [m.at for m in _moves(issue) if m.state == state and by in (None, m.source)]
     return times[-1] if times else None
 
 

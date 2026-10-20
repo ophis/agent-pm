@@ -156,7 +156,9 @@ class CatalogDelegate(FakeDelegate):
 
 
 LINEAR_DEFAULTS = {
-    **dict.fromkeys(("team", "harness_key", "task_label_group", "agent_label_group"), ""),
+    **dict.fromkeys(
+        ("team", "harness_key", "manager_key", "task_label_group", "agent_label_group"), ""
+    ),
     "states": dict.fromkeys(State, ""),
     "human_members": [],
     **dict.fromkeys(("task_labels", "agent_labels", "project_repos"), {}),
@@ -394,6 +396,26 @@ class ConfigurationLoading(ConfigFile, Case):
                 PIPELINE.replace("linear-api-key-engineer", "linear-api-key"),
                 "[linear.roles.engineer] key 'linear-api-key' is linear.harness_key",
             ),
+            (
+                'linear.manager_key = "linear-api-key"\n' + PIPELINE,
+                "linear.manager_key 'linear-api-key' is linear.harness_key",
+            ),
+            (
+                'linear.manager_key = "linear-api-key-pm"\n' + PIPELINE,
+                "linear.manager_key 'linear-api-key-pm' is [linear.roles.pm]'s key",
+            ),
+            (
+                "linear.manager_key = 1\n" + PIPELINE,
+                "linear.manager_key must be a Keychain service name: 1",
+            ),
+            (
+                "linear.manager_key = false\n" + PIPELINE,
+                "linear.manager_key must be a Keychain service name: False",
+            ),
+            (
+                "linear.manager_key = 0\n" + PIPELINE,
+                "linear.manager_key must be a Keychain service name: 0",
+            ),
             *[
                 (
                     text + f'[linear.task_labels]\n{task} = "{LABEL1}"\n',
@@ -454,6 +476,11 @@ class ConfigurationLoading(ConfigFile, Case):
                 msg = str(str(cm.exception))
                 self.assertTrue(msg.startswith(f"orchestrator/config.toml: {table}.{key} "), msg)
                 self.assertIn(repr(value), msg)
+
+    def test_manager_key_loaded_empty_by_default(self):
+        self.assertEqual(self.load(PIPELINE).linear.manager_key, "")
+        cfg = self.load('linear.manager_key = "linear-manager"\n' + PIPELINE)
+        self.assertEqual(cfg.linear.manager_key, "linear-manager")
 
     def test_loads(self):
         cfg = self.load(PIPELINE)

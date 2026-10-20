@@ -141,8 +141,8 @@ class ConfigLayout(Command):
         self.assertNotIn("refused a real Keychain call", done.stderr)
         return done
 
-    def test_router_dry_run_and_issue_read_stop_at_the_harness_keychain_item(self):
-        self.write_local(PIPELINE)
+    def test_router_dry_run_and_issue_read_stop_at_their_keychain_items(self):
+        self.write_local('linear.manager_key = "linear-manager"\n' + PIPELINE)
         router = self.run_fake("router", "--dry-run")
         issue = self.run_fake("issue", "read", "TASK-1")
         for done in (router, issue):
@@ -154,7 +154,7 @@ class ConfigLayout(Command):
         self.assertIn("'/usr/bin/security', 'find-generic-password'", router.stderr)
         self.assertIn("non-zero exit status 44", router.stderr)
         self.assertEqual((issue.returncode, issue.stdout), (2, ""))
-        self.assertIn("linear.harness_key Keychain service 'linear-api-key'", issue.stderr)
+        self.assertIn("linear.manager_key Keychain service 'linear-manager'", issue.stderr)
 
     def test_a_linear_key_left_flat_is_refused(self):
         self.write_local(f'team = "{TEAM}"\n' + PIPELINE)

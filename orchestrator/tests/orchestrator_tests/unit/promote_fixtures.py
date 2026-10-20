@@ -38,7 +38,11 @@ ROLE = ACCOUNTS
 
 HUMAN = {"email": "me@x.com", "name": "Me"}
 
-AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
+# a role account's: self, as the harness's
+AGENT = {"email": "Researcher@agents.test", "name": "researcher@agents.test"}
+
+# not in human_members, not a role or the harness: other, as the user's
+MANAGER = {"email": "manager@x.com", "name": "Manager"}
 
 OTHER = {"email": "other@x.com", "name": "Other"}
 
@@ -195,7 +199,7 @@ class FakeLinear:
 class FakePruner:
     calls = []
 
-    def __init__(self, gql, now, *, dry, work, team, roles, cfg):
+    def __init__(self, gql, now, *, dry, work, team, roles, cfg, linear):
         self.cfg = cfg
         FakePruner.calls.append((gql, now, dry, work, team, roles))
 
