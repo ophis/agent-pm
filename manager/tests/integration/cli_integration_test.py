@@ -17,7 +17,13 @@ class PathsAndArguments(Case):
         self.env = {
             key: value
             for key, value in os.environ.items()
-            if key not in {"AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"}
+            if key
+            not in {
+                "AGENT_PM_MANAGER",
+                "AGENT_PM_HOLDER_ID",
+                "AGENT_PM_HOLDER_GENERATION",
+                "AGENT_PM_HOLDER_PID",
+            }
         }
 
     def invoke(self, *argv, home=None):
