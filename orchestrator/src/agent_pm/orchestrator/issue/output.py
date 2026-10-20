@@ -17,6 +17,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     COMMENTS,
     DESCRIPTION_CHARS,
 )
+from agent_pm.orchestrator.engine.types import Receipt, RelationsFailed
 
 OK, FAILED, USAGE = 0, 1, 2
 LIMIT, RECEIPT = 8192, 1024
@@ -24,6 +25,8 @@ PAGE, MAX_PAGE = 20, 50
 PROG = "agent-pm-orchestrator issue"
 FULL = "--full --output FILE"
 SHOWN = 20
+ERROR_CHARS = 200
+RELATION = "agent-pm-orchestrator issue relation add"
 TEXTS = (
     "title",
     "description",
@@ -167,6 +170,43 @@ def diagnose(err, message):
         kept = data[: LIMIT // 2].decode("utf-8", "ignore").encode()
         data = kept + f" … ({len(data) - len(kept)} bytes omitted)".encode()
     print(data.decode(), file=err)
+
+
+def receipt_payload(r: Receipt):
+    payload = {
+        "issue": {"id": r.id, "identifier": r.identifier, "url": r.url},
+        "operation": r.operation,
+        "result": r.result,
+        "actor": {"id": r.actor_id, "name": r.actor_name},
+    }
+    if r.operation == "comment":
+        payload["comment_id"] = r.comment_id
+    return payload
+
+
+def partial_report(e: RelationsFailed):
+    """create's receipt, partial: the relations done, failed (error cut) and recover commands."""
+    failed = [{b.direction: b.other, "error": error[:ERROR_CHARS]} for b, error in e.failed]
+    return {
+        **receipt_payload(e.receipt),
+        "result": "partial",
+        "done": [{b.direction: b.other} for b in e.done],
+        "failed": failed,
+        "recover": [_recover(e.receipt.identifier, b) for b, _ in e.failed],
+    }
+
+
+def _recover(ident, b):
+    return f"{RELATION} {ident} --{b.direction.replace('_', '-')} {b.other}"
+
+
+def partial_message(e: RelationsFailed):
+    recover = "; ".join(_recover(e.receipt.identifier, b) for b, _ in e.failed)
+    return (
+        f"create {e.receipt.identifier}: created {e.receipt.url}, but {len(e.failed)} of "
+        f"{len(e.failed) + len(e.done)} blocking relations failed; add only them: {recover}; "
+        "do not run create again"
+    )
 
 
 def receipt(payload):

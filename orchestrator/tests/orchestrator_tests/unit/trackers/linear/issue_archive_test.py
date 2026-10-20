@@ -11,7 +11,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
-from agent_pm.orchestrator.issue.output import refusal
+from agent_pm.orchestrator.issue.output import receipt_payload, refusal
 from agent_pm.orchestrator.trackers.linear import issue_archive, linear_tracker
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from orchestrator_tests.case import Case
@@ -55,7 +55,7 @@ class Archive(Case):
         root = tree("TASK-1", "completed", tree("TASK-2", "canceled", tree("TASK-3")))
         gql = ArchiveGql(root)
         self.assertEqual(
-            archive(gql),
+            receipt_payload(archive(gql)),
             {
                 "issue": {
                     "id": "id-TASK-1",
@@ -79,7 +79,7 @@ class Archive(Case):
                 found = plan(ArchiveGql(root))
                 self.assertEqual((found.outcome, found.unfinished), ("changed", ()))
                 gql = ArchiveGql(root)
-                self.assertEqual(archive(gql)["result"], "changed")
+                self.assertEqual(archive(gql).result, "changed")
                 self.assertEqual(gql.writes, [(linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"})])
 
     def test_any_unfinished_issue_refuses_and_writes_nothing(self):
@@ -117,7 +117,7 @@ class Archive(Case):
             "TASK-1", "completed", *many(300), tree("TASK-2", "completed", *many(260, "GC"))
         )
         gql = ArchiveGql(root)
-        self.assertEqual(archive(gql)["result"], "changed")
+        self.assertEqual(archive(gql).result, "changed")
         self.assertIn((linear_tracker.Q_CHILDREN, {"i": "id-TASK-1", "c": "300"}), gql.calls)
         self.assertIn((linear_tracker.Q_CHILDREN, {"i": "id-TASK-2", "c": None}), gql.calls)
         self.assertIn((linear_tracker.Q_CHILDREN, {"i": "id-TASK-2", "c": "250"}), gql.calls)
@@ -127,7 +127,7 @@ class Archive(Case):
             tree("TASK-1", "started", tree("TASK-2", "started"), archived="2026-10-01")
         )
         receipt = archive(gql)
-        self.assertEqual((receipt["result"], receipt["actor"]), ("unchanged", VIEWER))
+        self.assertEqual((receipt.result, receipt_payload(receipt)["actor"]), ("unchanged", VIEWER))
         self.assertEqual(
             [q for q, _ in gql.calls], [issue_archive.Q_ISSUE, linear_tracker.Q_ARCHIVE]
         )

@@ -1,10 +1,12 @@
 """The issue command's output rules: a page fitted within the limit, a read cut to the default
-limits, the archive dry run's plan and the archive refusal's text.
+limits, the archive dry run's plan, the archive refusal's text, a write's receipt and create's
+partial-relations report and message.
 """
 
 import json
 
 from agent_pm.orchestrator.engine.flow.types import ArchivePlan, ArchiveRefused
+from agent_pm.orchestrator.engine.types import Blocking, Receipt, RelationsFailed
 from agent_pm.orchestrator.issue import output
 from agent_pm.orchestrator.trackers.linear import issue_archive, issue_read
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
@@ -201,4 +203,91 @@ class DryRun(Case):
         plan = dry_run(ArchiveGql(tree("TASK-1", "started", archived="2026-10-01")))
         self.assertEqual(
             (plan["result"], plan["descendants"], plan["unfinished"]), ("unchanged", [], [])
+        )
+
+
+ISSUE = {"id": "id-9", "identifier": "TASK-9", "url": "https://linear.app/t/issue/TASK-9"}
+
+
+def made(op="create", result="changed", comment_id=None):
+    return Receipt("id-9", "TASK-9", ISSUE["url"], op, result, "u-1", "Ann", comment_id=comment_id)
+
+
+class ReceiptPayload(Case):
+    def test_the_issue_operation_result_and_actor(self):
+        for op in ("create", "edit", "move", "relation add", "archive", "label swap"):
+            with self.subTest(op=op):
+                self.assertEqual(
+                    output.receipt_payload(made(op, "unchanged")),
+                    {
+                        "issue": ISSUE,
+                        "operation": op,
+                        "result": "unchanged",
+                        "actor": {"id": "u-1", "name": "Ann"},
+                    },
+                )
+
+    def test_a_comment_names_its_comment_id_even_when_unknown(self):
+        for comment_id in ("c-1", None):
+            with self.subTest(comment_id=comment_id):
+                self.assertEqual(
+                    output.receipt_payload(made("comment", comment_id=comment_id)),
+                    {
+                        "issue": ISSUE,
+                        "operation": "comment",
+                        "result": "changed",
+                        "actor": {"id": "u-1", "name": "Ann"},
+                        "comment_id": comment_id,
+                    },
+                )
+
+    def test_the_printed_receipt_is_its_payload(self):
+        sent = made("comment", comment_id="c-1")
+        printed = json.loads(output.receipt(output.receipt_payload(sent)))
+        self.assertEqual(printed, output.receipt_payload(sent))
+
+
+def partial():
+    done = (Blocking("blocks", "TASK-1"), Blocking("blocked_by", "TASK-2"))
+    failed = (
+        (Blocking("blocks", "TASK-3"), "x" * 250),
+        (Blocking("blocked_by", "TASK-4"), "linear api error: denied"),
+    )
+    return RelationsFailed(made(), done, failed)
+
+
+class PartialReport(Case):
+    def test_done_failed_with_cut_errors_and_one_recover_command_each(self):
+        self.assertEqual(
+            output.partial_report(partial()),
+            {
+                "issue": ISSUE,
+                "operation": "create",
+                "result": "partial",
+                "actor": {"id": "u-1", "name": "Ann"},
+                "done": [{"blocks": "TASK-1"}, {"blocked_by": "TASK-2"}],
+                "failed": [
+                    {"blocks": "TASK-3", "error": "x" * 200},
+                    {"blocked_by": "TASK-4", "error": "linear api error: denied"},
+                ],
+                "recover": [
+                    "agent-pm-orchestrator issue relation add TASK-9 --blocks TASK-3",
+                    "agent-pm-orchestrator issue relation add TASK-9 --blocked-by TASK-4",
+                ],
+            },
+        )
+
+    def test_an_error_at_the_limit_is_kept_whole(self):
+        error = RelationsFailed(made(), (), ((Blocking("blocks", "TASK-3"), "y" * 200),))
+        self.assertEqual(
+            output.partial_report(error)["failed"], [{"blocks": "TASK-3", "error": "y" * 200}]
+        )
+
+    def test_the_message_counts_the_failed_and_names_only_their_commands(self):
+        self.assertEqual(
+            output.partial_message(partial()),
+            "create TASK-9: created https://linear.app/t/issue/TASK-9, but 2 of 4 blocking "
+            "relations failed; add only them: agent-pm-orchestrator issue relation add TASK-9 "
+            "--blocks TASK-3; agent-pm-orchestrator issue relation add TASK-9 --blocked-by "
+            "TASK-4; do not run create again",
         )

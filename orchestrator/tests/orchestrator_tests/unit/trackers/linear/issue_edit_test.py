@@ -5,6 +5,7 @@ nothing.
 
 from agent_pm.orchestrator.engine.flow.types import Priority
 from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_edit, issue_label, issue_read
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TASK_GROUP
@@ -45,7 +46,7 @@ class Edit(Case):
                 receipt = edit(gql, body, **given)
                 self.assertEqual(gql.writes, [(issue_edit.M_EDIT, {"i": "id-TASK-2", "in": want})])
                 self.assertEqual(
-                    receipt,
+                    receipt_payload(receipt),
                     {
                         "issue": {
                             "id": "id-TASK-2",
@@ -118,10 +119,8 @@ class Edit(Case):
         receipt = edit(
             gql, BODY, title="Same", task="build", client="codex", priority=Priority.HIGH
         )
-        self.assertEqual(
-            (receipt["result"], receipt["operation"], gql.writes), ("unchanged", "edit", [])
-        )
-        self.assertEqual(receipt["actor"], VIEWER)
+        self.assertEqual((receipt.result, receipt.operation, gql.writes), ("unchanged", "edit", []))
+        self.assertEqual(receipt_payload(receipt)["actor"], VIEWER)
 
     def test_an_unconfigured_name_is_refused_before_any_read(self):
         for given in ({"task": "nope"}, {"client": "nope"}):
@@ -141,7 +140,7 @@ class Edit(Case):
 
     def test_title_description_and_priority_need_no_team(self):
         gql = EditGql(CATALOG, [], fields={"team": {"id": OTHER_TEAM, "key": "OPS"}})
-        self.assertEqual(edit(gql, title="New")["result"], "changed")
+        self.assertEqual(edit(gql, title="New").result, "changed")
 
     def test_no_such_issue_writes_nothing(self):
         gql = EditGql(CATALOG, [])

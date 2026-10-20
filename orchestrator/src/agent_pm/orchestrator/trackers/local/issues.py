@@ -13,7 +13,9 @@ from agent_pm.orchestrator.engine.flow.types import (
 )
 from agent_pm.orchestrator.engine.types import (
     UUID_RE,
+    Blocking,
     IssueError,
+    Receipt,
     RelationsFailed,
     Role,
     TrackerFileError,
@@ -29,7 +31,7 @@ from agent_pm.orchestrator.trackers.local.local_tracker import (
 )
 from agent_pm.orchestrator.trackers.local.types import LocalState, Source
 
-ACTOR = {"id": "other", "name": "other"}
+ACTOR = "other"
 TYPES = {
     LocalState.BACKLOG: "backlog",
     LocalState.READY: "unstarted",
@@ -39,8 +41,6 @@ TYPES = {
     LocalState.DONE: "completed",
     LocalState.CANCELED: "canceled",
 }
-RELATION = "agent-pm-orchestrator issue relation add"
-ERROR_CHARS = 200
 _BAD_CLIENT = re.compile(r'^"|[\s\x00-\x1f\x7f-\x9f]')
 
 
@@ -185,20 +185,17 @@ class LocalIssues:
         done, failed = [], []
         for other, option in picked.items():
             if option == "--blocked-by":
-                done.append({"blocked_by": other})
+                done.append(Blocking("blocked_by", other))
                 continue
             try:
                 self._write(other, _blocked(key, add=True))
             except (IssueError, TrackerFileError, OSError) as error:
-                reason = (str(error) or type(error).__name__)[:ERROR_CHARS]
-                failed.append({"blocks": other, "error": reason})
+                failed.append((Blocking("blocks", other), str(error) or type(error).__name__))
             else:
-                done.append({"blocks": other})
+                done.append(Blocking("blocks", other))
         receipt = self._receipt(key, "create", "changed")
         if failed:
-            recover = [f"{RELATION} {key} --blocks {each['blocks']}" for each in failed]
-            report = {**receipt, "result": "partial", "done": done, "failed": failed}
-            raise RelationsFailed({**report, "recover": recover})
+            raise RelationsFailed(receipt, tuple(done), tuple(failed))
         return receipt
 
     def edit(self, change):
@@ -278,9 +275,9 @@ class LocalIssues:
         self.tracker.write(key, step)
         return "changed" if wrote[-1] else "unchanged"
 
-    def _receipt(self, key, op, result, **extra):
-        issue = {"id": key, "identifier": key, "url": url(self.tracker.files()[key])}
-        return {"issue": issue, "operation": op, "result": result, "actor": dict(ACTOR), **extra}
+    def _receipt(self, key, op, result, comment_id=None):
+        found = self.tracker.files()[key]
+        return Receipt(key, key, url(found), op, result, ACTOR, ACTOR, comment_id)
 
 
 def _number(ident):

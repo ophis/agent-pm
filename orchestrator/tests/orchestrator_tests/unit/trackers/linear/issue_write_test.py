@@ -10,6 +10,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_write, ops
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import STATES
@@ -45,7 +46,7 @@ class Move(Case):
                 receipt = move(gql, state)
                 self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": STATES[key]})])
                 self.assertEqual(
-                    receipt,
+                    receipt_payload(receipt),
                     {
                         "issue": {
                             "id": "id-TASK-2",
@@ -61,8 +62,8 @@ class Move(Case):
     def test_already_in_the_state_is_unchanged_and_writes_nothing(self):
         gql = WriteGql(write_issue(state=STATES["handoff"]))
         receipt = move(gql, IssueState.APPROVED)
-        self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
-        self.assertEqual(receipt["actor"], VIEWER)
+        self.assertEqual((receipt.result, gql.writes), ("unchanged", []))
+        self.assertEqual(receipt_payload(receipt)["actor"], VIEWER)
 
     def test_an_issue_of_another_team_writes_nothing(self):
         gql = WriteGql(write_issue("OPS-3", team_id=OTHER_TEAM))
@@ -113,7 +114,7 @@ class Comment(Case):
         receipt = issue_write.comment(gql, "TASK-2", BODY)
         self.assertEqual(gql.writes, [(issue_write.M_COMMENT, {"i": "id-TASK-2", "b": BODY})])
         self.assertEqual(
-            receipt,
+            receipt_payload(receipt),
             {
                 "issue": {
                     "id": "id-TASK-2",

@@ -5,7 +5,7 @@ the frame maps to an exit code, translating its tracker's own failures into them
 from typing import Any, Protocol
 
 from agent_pm.orchestrator.engine.flow.types import ArchivePlan
-from agent_pm.orchestrator.engine.types import IssueEdit, ListQuery, NewIssue
+from agent_pm.orchestrator.engine.types import IssueEdit, ListQuery, NewIssue, Receipt
 
 Row = tuple[dict[str, Any], list[str], str]
 
@@ -23,22 +23,22 @@ class Backend(Protocol):
 
     def walk(self, query: ListQuery) -> list[Row]: ...
 
-    def create(self, new: NewIssue) -> dict[str, Any]:
+    def create(self, new: NewIssue) -> Receipt:
         """The receipt; RelationsFailed when a blocking relation failed."""
         ...
 
-    def edit(self, change: IssueEdit) -> dict[str, Any]: ...
+    def edit(self, change: IssueEdit) -> Receipt: ...
 
-    def move(self, ident: str, state: str) -> dict[str, Any]: ...
+    def move(self, ident: str, state: str) -> Receipt: ...
 
-    def comment(self, ident: str, body: str) -> dict[str, Any]:
+    def comment(self, ident: str, body: str) -> Receipt:
         """The receipt, with comment_id."""
         ...
 
-    def relation(self, op: str, ident: str, direction: str, other: str) -> dict[str, Any]: ...
+    def relation(self, op: str, ident: str, direction: str, other: str) -> Receipt: ...
 
     def archive_plan(self, ident: str) -> ArchivePlan: ...
 
-    def archive(self, ident: str) -> dict[str, Any]:
+    def archive(self, ident: str) -> Receipt:
         """The receipt; ArchiveRefused(plan) when an issue is unfinished."""
         ...

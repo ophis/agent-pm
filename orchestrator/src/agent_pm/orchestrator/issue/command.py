@@ -46,7 +46,10 @@ from agent_pm.orchestrator.issue.output import (
     encode,
     fit,
     fit_page,
+    partial_message,
+    partial_report,
     receipt,
+    receipt_payload,
     refusal,
     write_full,
 )
@@ -700,22 +703,22 @@ def _run(
     board: Backend, args, request: ListQuery | LookupQuery | NewIssue | IssueEdit | None, body
 ):
     if args.command == "move":
-        return receipt(board.move(args.id, args.state))
+        return receipt(receipt_payload(board.move(args.id, args.state)))
     if args.command == "comment":
-        return receipt(board.comment(args.id, body))
+        return receipt(receipt_payload(board.comment(args.id, body)))
     if isinstance(request, IssueEdit):
-        return receipt(board.edit(request))
+        return receipt(receipt_payload(board.edit(request)))
     if isinstance(request, NewIssue):
-        return receipt(board.create(request))
+        return receipt(receipt_payload(board.create(request)))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
-        return receipt(board.relation(args.op, args.id, direction, other))
+        return receipt(receipt_payload(board.relation(args.op, args.id, direction, other)))
     if args.command == "archive" and args.dry_run:
         plan = dry_run(board.archive_plan(args.id))
         return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
-        return receipt(board.archive(args.id))
+        return receipt(receipt_payload(board.archive(args.id)))
     if isinstance(request, ListQuery):
         return _listed(board.page, board.walk, request, args)
     view = board.view(args.id, full=args.full)
@@ -812,7 +815,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     try:
         if isinstance(board, LinearIssues) and args.command == "label":
-            data = receipt(board.swap(args.id, args.old, args.new))
+            data = receipt(receipt_payload(board.swap(args.id, args.old, args.new)))
         elif isinstance(board, LinearIssues) and isinstance(request, LookupQuery):
             data = _listed(board.lookup_page, board.lookup_walk, request, args)
         else:
@@ -824,8 +827,8 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
         return FAILED
     except RelationsFailed as error:
-        out.write(fit(error.report, (("done", "failed"), ("recover",)), (), None))
-        diagnose(err, error)
+        out.write(fit(partial_report(error), (("done", "failed"), ("recover",)), (), None))
+        diagnose(err, partial_message(error))
         return FAILED
     except ArchiveRefused as refused:
         diagnose(err, refusal(args.id, refused.plan))

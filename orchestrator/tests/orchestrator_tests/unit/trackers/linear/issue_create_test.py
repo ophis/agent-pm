@@ -1,10 +1,11 @@
 """agent-pm-orchestrator issue create: every reference resolved before the one create in the configured
 team, only the given fields set, backlog by default, abstract names as the configured ids, then each
-blocking relation; a failed relation reported with only the commands that add it.
+blocking relation; a failed relation reported with its whole error.
 """
 
 from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
 from agent_pm.orchestrator.engine.types import (
+    Blocking,
     GraphQLErrors,
     IssueError,
     LinearError,
@@ -12,6 +13,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import client, issue_create
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TEAM
@@ -79,7 +81,8 @@ class Create(Case):
             [relation("id-TASK-9", "id-TASK-3"), relation("id-TASK-4", "id-TASK-9")],
         )
         self.assertEqual(
-            receipt, {"issue": NEW, "operation": "create", "result": "changed", "actor": VIEWER}
+            receipt_payload(receipt),
+            {"issue": NEW, "operation": "create", "result": "changed", "actor": VIEWER},
         )
 
     def test_unset_fields_stay_unset_and_the_state_is_backlog(self):
@@ -166,38 +169,29 @@ class Create(Case):
         self.assertIn("--blocks and --blocked-by", str(cm.exception))
         self.assertEqual(fake.writes, [])
 
-    def test_a_failed_relation_reports_only_what_to_add(self):
+    def test_a_failed_relation_carries_what_was_done_and_each_whole_error(self):
+        limited = "rate limited " + "x" * 300
         fake = create_gql(
             relations=[
                 {"success": True},
-                GraphQLErrors([{"message": "rate limited"}]),
+                GraphQLErrors([{"message": limited}]),
                 Unavailable("issueRelationCreate", reason="timed out"),
             ]
         )
         with self.assertRaises(RelationsFailed) as cm:
             run(fake, blocks=("TASK-3", "TASK-5"), blocked_by=("TASK-4",))
-        report = cm.exception.report
+        error = cm.exception
         self.assertEqual(
-            (report["issue"], report["operation"], report["result"]), (NEW, "create", "partial")
+            receipt_payload(error.receipt),
+            {"issue": NEW, "operation": "create", "result": "changed", "actor": VIEWER},
         )
-        self.assertNotIn("truncated", report)
-        self.assertEqual(report["done"], [{"blocks": "TASK-3"}])
+        self.assertEqual(error.done, (Blocking("blocks", "TASK-3"),))
         self.assertEqual(
-            [{k: f[k] for k in ("blocks", "blocked_by") if k in f} for f in report["failed"]],
-            [{"blocks": "TASK-5"}, {"blocked_by": "TASK-4"}],
+            [blocking for blocking, _ in error.failed],
+            [Blocking("blocks", "TASK-5"), Blocking("blocked_by", "TASK-4")],
         )
-        self.assertIn("rate limited", report["failed"][0]["error"])
-        self.assertIn("timed out", report["failed"][1]["error"])
-        self.assertEqual(
-            report["recover"],
-            [
-                "agent-pm-orchestrator issue relation add TASK-9 --blocks TASK-5",
-                "agent-pm-orchestrator issue relation add TASK-9 --blocked-by TASK-4",
-            ],
-        )
-        text = str(cm.exception)
-        for phrase in ("TASK-9", NEW["url"], "2 of 3", "relation add", "not run create again"):
-            self.assertIn(phrase, text)
+        self.assertEqual(error.failed[0][1], limited)
+        self.assertIn("timed out", error.failed[1][1])
         self.assertEqual(
             [client.operation(q) for q, _ in fake.writes],
             ["issueCreate"] + ["issueRelationCreate"] * 3,

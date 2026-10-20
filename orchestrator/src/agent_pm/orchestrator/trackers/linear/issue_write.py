@@ -1,6 +1,6 @@
 """agent-pm-orchestrator issue move and comment: one write each, never retried, and a receipt."""
 
-from agent_pm.orchestrator.engine.types import Unavailable, WriteUnknown
+from agent_pm.orchestrator.engine.types import Receipt, Unavailable, WriteUnknown
 from agent_pm.orchestrator.trackers.linear import issue_names, issue_read, ops
 
 Q_MOVE = (
@@ -46,11 +46,6 @@ def write(gql, op, ident, query, field, **variables):
         ) from None
 
 
-def receipt(node, op, result, actor, **extra):
-    return {
-        "issue": {"id": node["id"], "identifier": node["identifier"], "url": node["url"]},
-        "operation": op,
-        "result": result,
-        "actor": {"id": actor["id"], "name": actor["name"]},
-        **extra,
-    }
+def receipt(node, op, result, actor, comment_id=None):
+    ident, url = node["identifier"], node["url"]
+    return Receipt(node["id"], ident, url, op, result, actor["id"], actor["name"], comment_id)

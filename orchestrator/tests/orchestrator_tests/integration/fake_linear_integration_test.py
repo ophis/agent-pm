@@ -1099,7 +1099,10 @@ class IssueOps(ServerCase):
             priority=Priority.HIGH,
         )
         receipt = self.issues.edit(change)
-        self.assertEqual((receipt["result"], receipt["actor"]), ("changed", self.me))
+        self.assertEqual(
+            (receipt.result, receipt.actor_id, receipt.actor_name),
+            ("changed", self.harness, "Harness"),
+        )
         self.assertEqual(
             self.fake.requests[-1].variables["in"],
             {
@@ -1179,11 +1182,11 @@ class IssueOps(ServerCase):
             },
         )
         self.fake.requests.clear()
-        self.assertEqual(self.issues.move("TASK-7", IssueState.DONE)["result"], "changed")
+        self.assertEqual(self.issues.move("TASK-7", IssueState.DONE).result, "changed")
         receipt = self.issues.comment("TASK-7", "Done.")
         last = self.task7["comments"][-1]
         self.assertEqual(
-            (receipt["comment_id"], last["body"], last["user"], self.task7["state"]),
+            (receipt.comment_id, last["body"], last["user"], self.task7["state"]),
             (last["id"], "Done.", self.harness, STATES["done"]),
         )
         self.assertEqual(
@@ -1243,7 +1246,7 @@ class IssueOps(ServerCase):
         ):
             with self.subTest(op=op, ident=ident):
                 receipt = self.issues.relation(op, ident, direction, other)
-                self.assertEqual((receipt["result"], len(self.fake.relations)), (result, left))
+                self.assertEqual((receipt.result, len(self.fake.relations)), (result, left))
 
     def test_archive_is_refused_with_an_unfinished_child_then_takes_it(self):
         child = self.fake.issue("Child", parent="TASK-7")
@@ -1256,9 +1259,9 @@ class IssueOps(ServerCase):
         for ident in ("TASK-8", "TASK-7"):
             self.fake.move(ident, "done", actor=self.human)
         self.assertEqual(self.issues.archive_plan("TASK-7").outcome, "changed")
-        self.assertEqual(self.issues.archive("TASK-7")["result"], "changed")
+        self.assertEqual(self.issues.archive("TASK-7").result, "changed")
         self.assertEqual((self.task7["archived"], child["archived"]), (True, True))
-        self.assertEqual(self.issues.archive("TASK-7")["result"], "unchanged")
+        self.assertEqual(self.issues.archive("TASK-7").result, "unchanged")
         self.assertIn("issue_write.Q_COMMENT", self.ops())
 
 

@@ -296,20 +296,32 @@ class LabelRefused(Exception):
     """A label swap the issue's current labels block; nothing was written."""
 
 
-class RelationsFailed(Exception):
-    """create made the issue but not every blocking relation: .report holds the receipt, done,
-    failed and the recover commands adding only the failed ones.
-    """
+@dataclass(frozen=True)
+class Receipt:
+    id: str
+    identifier: str
+    url: str
+    operation: str
+    result: Literal["changed", "unchanged"]
+    actor_id: str
+    actor_name: str
+    comment_id: str | None = None
 
-    def __init__(self, report):
-        self.report = report
-        failed, total = len(report["failed"]), len(report["failed"]) + len(report["done"])
-        issue = report["issue"]
-        super().__init__(
-            f"create {issue['identifier']}: created {issue['url']}, but {failed} of {total} "
-            f"blocking relations failed; add only them: {'; '.join(report['recover'])}; "
-            "do not run create again"
-        )
+
+@dataclass(frozen=True)
+class Blocking:
+    direction: Literal["blocks", "blocked_by"]
+    other: str
+
+
+class RelationsFailed(Exception):
+    """create made receipt's issue but not each failed relation (with its uncut error)."""
+
+    def __init__(
+        self, receipt: Receipt, done: tuple[Blocking, ...], failed: tuple[tuple[Blocking, str], ...]
+    ):
+        super().__init__(receipt.identifier)
+        self.receipt, self.done, self.failed = receipt, done, failed
 
 
 TRACKER_ERRORS = (LinearError, IssueError, TrackerFileError, OSError, subprocess.SubprocessError)

@@ -15,7 +15,13 @@ from agent_pm.orchestrator.engine.flow.types import (
     Priority,
     SubIssue,
 )
-from agent_pm.orchestrator.engine.types import IssueError, RelationsFailed, TrackerFileError
+from agent_pm.orchestrator.engine.types import (
+    Blocking,
+    IssueError,
+    Receipt,
+    RelationsFailed,
+    TrackerFileError,
+)
 from agent_pm.orchestrator.issue import output
 from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 from orchestrator_tests.case import Case
@@ -110,9 +116,8 @@ class Board(Case):
         self.assertEqual(str(cm.exception), message)
         self.assertEqual(self.snapshot(), before)
 
-    def receipt(self, ident, path, op, result, **extra):
-        issue = {"id": ident, "identifier": ident, "url": Path(path).as_uri()}
-        return {"issue": issue, "operation": op, "result": result, "actor": ACTOR, **extra}
+    def receipt(self, ident, path, op, result, comment_id=None):
+        return Receipt(ident, ident, Path(path).as_uri(), op, result, "other", "other", comment_id)
 
 
 class View(Board):
@@ -413,13 +418,12 @@ class Create(Board):
             self.issues().create(new)
         path = os.path.join(self.board, "unassigned/backlog/LOC-4 T.md")
         self.assertEqual(
-            cm.exception.report,
-            {
-                **self.receipt("LOC-4", path, "create", "partial"),
-                "done": [{"blocks": "LOC-1"}, {"blocked_by": "LOC-2"}],
-                "failed": [{"blocks": "LOC-3", "error": "[Errno 13] Permission denied"}],
-                "recover": ["agent-pm-orchestrator issue relation add LOC-4 --blocks LOC-3"],
-            },
+            (cm.exception.receipt, cm.exception.done, cm.exception.failed),
+            (
+                self.receipt("LOC-4", path, "create", "changed"),
+                (Blocking("blocks", "LOC-1"), Blocking("blocked_by", "LOC-2")),
+                ((Blocking("blocks", "LOC-3"), "[Errno 13] Permission denied"),),
+            ),
         )
         self.assertTrue(os.path.exists(path))
         self.assertEqual(self.issues().view("LOC-1", full=False)["blocked_by"][0]["id"], "LOC-4")
