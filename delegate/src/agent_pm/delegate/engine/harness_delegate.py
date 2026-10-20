@@ -197,6 +197,7 @@ class HarnessDelegate(Delegate):
                 config=DelegateConfig(read_config()), team=spec.team
             )
             run = self.composer.resolve(role, spec.task, overlays=overlays)
+            accounts = self.composer.accounts(role, overlays=overlays)
             self._settings = thaw(self.composer.config.values)
             self.session_cls = session_cls
             self._configure()
@@ -240,6 +241,7 @@ class HarnessDelegate(Delegate):
             ),
             driver=self.driver,
             composition=self.composer,
+            accounts=accounts,
         )
         name = spec.name or f"{role}-{accepted.sid[:8]}"
         named = name if self._named(spec.mode) else None
@@ -1073,6 +1075,7 @@ class HarnessDelegate(Delegate):
                 spec,
                 driver=self.driver,
                 composition=self.composer,
+                accounts=self.composer.accounts(state.role, overlays=state.overlays),
             )
             named = state.agent_name if self._named(mode) else None
             accepted = replace(

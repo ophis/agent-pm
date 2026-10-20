@@ -67,7 +67,7 @@ class InProcessMode(BaseMode):
         if run is None:
             raise cls._unsupported(spec)
         cls._no_tui_keys(spec, display)
-        cls._selected(spec, client)
+        spec, _ = cls._selected(spec, client)
         spec = cls._noted(spec, client)
         if spec.sid is None:
             raise ConfigError("sid: missing")

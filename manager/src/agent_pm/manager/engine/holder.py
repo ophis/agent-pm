@@ -33,6 +33,7 @@ class Holder:
                 AGENT_PM_MANAGER=os.path.basename(self.roster.directory),
                 AGENT_PM_HOLDER_ID=lease.id,
                 AGENT_PM_HOLDER_GENERATION=str(lease.generation),
+                AGENT_PM_HOLDER_PID=str(os.getpid()),
             )
             child: subprocess.Popen | None = None
             pending: list[int] = []

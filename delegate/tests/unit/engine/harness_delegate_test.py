@@ -38,6 +38,7 @@ from agent_pm.session import (
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.engine.types import Liveness
+from agent_pm.utils import ACCOUNT_ENV
 
 from delegate.tests.fakes.harness_session import (
     FakeViewer,
@@ -821,7 +822,12 @@ class CheckTuiTest(HarnessCase):
 class LaunchTest(HarnessCase):
     def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
         launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
-        lease = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+        lease = (
+            "AGENT_PM_MANAGER",
+            "AGENT_PM_HOLDER_ID",
+            "AGENT_PM_HOLDER_GENERATION",
+            "AGENT_PM_HOLDER_PID",
+        )
         with mock.patch.dict(os.environ, launcher | dict.fromkeys(lease, "1")):
             self.make().detach()
         environment = RecordingHost.launches[0]["env"]
@@ -893,6 +899,49 @@ class OverlayTest(HarnessCase):
         self.stop(record)
         HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+
+class AccountsTest(HarnessCase):
+    """The role's accounts table, resolved with the run's overlays, picks its session's account."""
+
+    def setUp(self):
+        super().setUp()
+        self.configured(
+            "[session.clients.fake.accounts.work]\n[session.clients.fake.accounts.home]\n"
+        )
+
+    def configured(self, text):
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(text)
+
+    def env(self):
+        return self.metadata()["plan"]["session"]["env"]
+
+    def test_create_takes_the_role_table_then_each_overlay(self):
+        self.make()
+        self.assertNotIn(ACCOUNT_ENV, self.env())
+        self.configured('[delegate.roles.dummy-tester.accounts]\nfake = "work"\n')
+        self.make()
+        self.assertEqual(self.env()[ACCOUNT_ENV], "work")
+        self.make(overlays=({"roles": {"dummy-tester": {"accounts": {"fake": "home"}}}},))
+        self.assertEqual(self.env()[ACCOUNT_ENV], "home")
+        self.make(overlays=({"accounts": {"claude": "home"}},))
+        self.assertEqual(self.env()[ACCOUNT_ENV], "work")
+
+    def test_resume_re_resolves_with_the_current_config_and_its_overlays(self):
+        record = self.make(overlays=({"accounts": {"fake": "home"}},)).detach()
+        self.assertEqual(self.env()[ACCOUNT_ENV], "home")
+        self.stop(record)
+        self.configured('[delegate.accounts]\nfake = "work"\n')
+        HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertEqual(self.env()[ACCOUNT_ENV], "home")
+        self.work = os.path.join(self.home, "run-2")
+        record = self.make().detach()
+        self.assertEqual(self.env()[ACCOUNT_ENV], "work")
+        self.stop(record)
+        self.configured('[delegate.roles.dummy-tester.accounts]\nfake = "home"\n')
+        HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertEqual(self.env()[ACCOUNT_ENV], "home")
 
 
 class ResumeInputTest(HarnessCase):

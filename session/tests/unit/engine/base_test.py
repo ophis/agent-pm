@@ -59,6 +59,15 @@ class SessionClassMethods(Case):
                     ProcessOptions(flags=flags, env=env)
                 self.assertEqual(str(options_error.exception), message)
 
+    def test_a_policy_env_cannot_select_an_account(self):
+        for value in ("work", ""):
+            with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
+                Session.validate_policy(flags=(), env={"TOKEN": "v", "AGENT_PM_ACCOUNT": value})
+            self.assertEqual(
+                str(caught.exception),
+                "AGENT_PM_ACCOUNT is set by --account or a role's accounts table",
+            )
+
     def test_public_config_boundary_rejects_missing_hosts_without_a_session(self):
         with self.assertRaises(ConfigError) as caught:
             Session.configure_from({})

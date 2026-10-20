@@ -505,12 +505,12 @@ class TuiMode(BaseMode):
         if run is None:
             raise cls._unsupported(spec)
         name = cls.resolve_name(spec)
+        spec, account = cls._selected(spec, client)
         events = host.events_path(spec.events)
-        cls._selected(spec, client)
         drop = identity_drop(registry)
         store = TuiStore.attach(name, host=host)
         spec, metadata = cls._hosted(
-            replace(spec, name=name, events=events), run._home(), host, name
+            replace(spec, name=name, events=events), run._home(), host, name, account
         )
         spec = cls._noted(spec, client)
         run._context = host._client_context()

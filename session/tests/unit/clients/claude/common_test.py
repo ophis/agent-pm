@@ -20,6 +20,7 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
+    Launch,
     Mode,
     Permission,
     SessionInfo,
@@ -142,6 +143,98 @@ class ModelEffortTest(Base):
 class HomeTest(Case):
     def test_the_credential_kind_a_container_host_injects(self):
         self.assertEqual(HOME.credential, "claude-setup-token")
+
+
+class AccountsTest(Base):
+    def found(self, accounts) -> dict[str, tuple[str, str]]:
+        common = ClaudeCommon({"accounts": accounts})
+        return {name: (a.dir, a.display) for name, a in common.accounts.items()}
+
+    def test_the_default_account_is_always_registered_with_the_home_claude_dir(self):
+        default = os.path.join(self.home, ".claude")
+        self.assertEqual(
+            {n: (a.dir, a.display) for n, a in ClaudeCommon({}).accounts.items()},
+            {"default": (default, "")},
+        )
+        self.assertEqual(self.found({}), {"default": (default, "")})
+        self.assertEqual(
+            self.found({"default": {"account": "me@home"}}), {"default": (default, "me@home")}
+        )
+        self.assertEqual(ClaudeClient({})._accounts(), frozenset({"default"}))
+
+    def test_the_packaged_config_registers_only_the_default_account(self):
+        table = dict(read_config(local=os.devnull)["clients"]["claude"])
+        table.pop("implementation")
+        self.assertEqual(table["accounts"], {})
+        self.assertEqual(ClaudeClient(table)._accounts(), frozenset({"default"}))
+
+    def test_each_registered_account_keeps_its_expanded_dir_and_display(self):
+        accounts = {
+            "work": {"dir": "~/.claude-work", "account": "me@work"},
+            "lab.2_x-y": {"dir": "/abs/lab"},
+            "a" * 64: {},
+        }
+        self.assertEqual(
+            self.found(accounts),
+            {
+                "default": (os.path.join(self.home, ".claude"), ""),
+                "work": (os.path.join(self.home, ".claude-work"), "me@work"),
+                "lab.2_x-y": ("/abs/lab", ""),
+                "a" * 64: (os.path.join(self.home, ".claude"), ""),
+            },
+        )
+        self.assertEqual(
+            ClaudeClient({"accounts": accounts})._accounts(),
+            frozenset({"default", "work", "lab.2_x-y", "a" * 64}),
+        )
+
+    def test_the_dir_is_expanded_through_the_users_home(self):
+        with mock.patch("os.path.expanduser", side_effect=lambda p: p.replace("~", "/u")):
+            self.assertEqual(self.found({"w": {"dir": "~/w"}})["w"], ("/u/w", ""))
+            self.refused(
+                lambda: self.found({"w": {"dir": "x~/w"}}),
+                "[clients.claude].accounts.w.dir must be an absolute path after ~ expansion",
+            )
+
+    def test_a_bad_registry_names_the_key(self):
+        name = (
+            "not an account name (1–64 lowercase letters, digits, '.', '_' or '-', starting with a"
+            " letter or digit, and not setup-token)"
+        )
+        absolute = "must be an absolute path after ~ expansion"
+        cases = (
+            ("SECRET", "[clients.claude].accounts must be a table of account tables"),
+            (["work"], "[clients.claude].accounts must be a table of account tables"),
+            *(
+                ({bad: {}}, f"[clients.claude].accounts {bad!r}: {name}")
+                for bad in ("Work", "setup-token", "", "-w", ".w", "a" * 65, "w/x", "w x")
+            ),
+            ({"work": "~/w"}, "[clients.claude].accounts.work must be a table"),
+            ({"work": ["~/w"]}, "[clients.claude].accounts.work must be a table"),
+            (
+                {"work": {"token": "SECRET"}},
+                "[clients.claude].accounts.work.token: unknown key; an account has only dir and"
+                " account",
+            ),
+            ({"work": {"dir": 1}}, "[clients.claude].accounts.work.dir must be a string"),
+            (
+                {"work": {"account": None}},
+                "[clients.claude].accounts.work.account must be a string",
+            ),
+            *(
+                ({"work": {"dir": d}}, f"[clients.claude].accounts.work.dir {absolute}")
+                for d in ("", "rel/w", "~user-that-does-not-exist-x/w", "/a\nb")
+            ),
+            (
+                {"default": {"dir": "/abs"}},
+                "[clients.claude].accounts.default.dir: the default account's dir is ~/.claude;"
+                " remove it",
+            ),
+        )
+        for accounts, message in cases:
+            with self.subTest(accounts=accounts):
+                self.refused(lambda *, a=accounts: self.found(a), message)
+                self.refused(lambda *, a=accounts: ClaudeClient({"accounts": a}), message)
 
 
 class HomeFilesTest(Base):
@@ -467,6 +560,32 @@ class UsageProbeTest(Base):
             ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"),
         )
         self.assertEqual(launch.unset[: len(UNSET)], UNSET)
+
+    def test_each_account_probes_its_own_dir_and_never_an_inherited_one(self):
+        ambient = {"ANTHROPIC_API_KEY": "sk-1", "HOME": self.home, "CLAUDE_CONFIG_DIR": "/w"}
+        accounts = {"work": {"dir": "/w"}, "same": {}, "default": {"account": "me"}}
+        env = {"K": "v", "ANTHROPIC_AUTH_TOKEN": "x", "CLAUDE_CONFIG_DIR": "/acct"}
+        with mock.patch.dict(os.environ, ambient, clear=True):
+            client = ClaudeClient({"env": env, "accounts": accounts})
+            usual = client.usage_probe()
+            probes = client._usage_probes()
+        home = os.path.join(self.home, ".claude")
+        credentials = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+        own = Launch(
+            PROBE,
+            env={"K": "v", "DISABLE_AUTOUPDATER": "1"},
+            unset=(*UNSET, *credentials, "CLAUDE_CONFIG_DIR"),
+        )
+        work = Launch(
+            PROBE,
+            env={"K": "v", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CONFIG_DIR": "/w"},
+            unset=(*UNSET, *credentials),
+        )
+        self.assertEqual(
+            probes, {"default": (home, own), "same": (home, own), "work": ("/w", work)}
+        )
+        self.assertEqual(usual.env["CLAUDE_CONFIG_DIR"], "/acct")
+        self.assertEqual(usual.unset, (*UNSET, *credentials))
 
     def test_a_usage_panel_is_the_usage(self):
         for name, five, week in (

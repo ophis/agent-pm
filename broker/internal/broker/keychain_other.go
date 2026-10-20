@@ -11,9 +11,9 @@ func ReadHidden() ([]byte, error) { return nil, errPlatform }
 
 type SystemKeychain struct{ Home string }
 
-func (SystemKeychain) Get() ([]byte, error)                        { return nil, errPlatform }
-func (SystemKeychain) GetWithDialog() ([]byte, error)              { return nil, errPlatform }
-func (SystemKeychain) Put([]byte) error                            { return errPlatform }
+func (SystemKeychain) Get(string) ([]byte, error)                  { return nil, errPlatform }
+func (SystemKeychain) GetWithDialog(string) ([]byte, error)        { return nil, errPlatform }
+func (SystemKeychain) Put(string, []byte) error                    { return errPlatform }
 func (SystemKeychain) AppAccount(string) (string, error)           { return "", errPlatform }
 func (SystemKeychain) AppKey(string, string) ([]byte, error)       { return nil, errPlatform }
 func (SystemKeychain) TrustApps(string, string, []byte) error      { return errPlatform }

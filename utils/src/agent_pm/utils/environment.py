@@ -4,10 +4,16 @@ import os
 from collections.abc import Mapping
 
 SID_ENV = "AGENT_PM_SID"
+ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
 EVENTS_ENV = "AGENT_PM_EVENTS"
 
 # a manager's roster lease: its holder's command alone carries it, no launch below it
-LEASE_ENV = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+LEASE_ENV = (
+    "AGENT_PM_MANAGER",
+    "AGENT_PM_HOLDER_ID",
+    "AGENT_PM_HOLDER_GENERATION",
+    "AGENT_PM_HOLDER_PID",
+)
 
 # on every agent client a session starts: nothing under it starts a session or run
 AGENT_SESSION_ENV = "AGENT_PM_AGENT_SESSION"

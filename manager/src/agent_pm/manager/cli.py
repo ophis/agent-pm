@@ -295,9 +295,11 @@ and identity line returned by a launch: agent-pm-session --help.
 
 Prerequisites and effects:
   Install agent-pm commands on PATH; configure the owning client/run layer.
-  hold gives its child AGENT_PM_MANAGER and the paired AGENT_PM_HOLDER_ID /
-  AGENT_PM_HOLDER_GENERATION. Keep that pair together. An active holder fences
-  ownership-sensitive roster updates; run those from its commander environment.
+  hold gives its child AGENT_PM_MANAGER, the paired AGENT_PM_HOLDER_ID /
+  AGENT_PM_HOLDER_GENERATION and AGENT_PM_HOLDER_PID, its own pid: the
+  SessionStart re-arm prompt goes only to a client in its process tree.
+  Keep the pair together. An active holder fences ownership-sensitive roster
+  updates; run those from its commander environment.
   AGENT_PM_AGENT_SESSION blocks hold/run/worker/reopen/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
   run/worker/reopen/issue/role give starters empty stdin; supply literal input.
@@ -421,12 +423,13 @@ Examples:
             "Resume a closed issue run's conversation as a worker and track its Record",
             f"{LayerCommand.SESSION} start",
             """ISSUE is a board issue identifier with a recorded run.
-Crew reads the run's client, session id, cwd, agent name and Host from its run
-record, WORK_DIR/work/ISSUE/run/delegate.json, then starts worker AGENT, the
-agent name: agent-pm-session start AGENT --host HOST --client CLIENT --cwd CWD
---resume SID, under that session identity, so a Docker run comes back on the
-Docker Host. No record or session id: exit 1. SESSION_OPTIONS naming --client,
---cwd, --host or --resume, abbreviated or not: exit 2. A run still alive
+Crew reads the run's client, session id, cwd, agent name, Host and account from
+its run record, WORK_DIR/work/ISSUE/run/delegate.json, then starts worker AGENT,
+the agent name: agent-pm-session start AGENT --host HOST --client CLIENT --cwd CWD
+--resume SID [--account NAME], under that session identity, so a Docker run comes
+back on the Docker Host and its account. No record or session id: exit 1.
+SESSION_OPTIONS naming --account, --client, --cwd, --host or --resume, abbreviated
+or not: exit 2. A run still alive
 (roster entry ISSUE or AGENT, or a session listed here or below with its
 session id): exit 2, so its conversation gets no second client. The worker is
 tracked like any other; the board is not touched.

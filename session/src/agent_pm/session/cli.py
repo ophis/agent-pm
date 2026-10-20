@@ -30,6 +30,7 @@ import agent_pm.utils
 from agent_pm.session.engine.base import Session, hosted_viewer
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
+    ACCOUNT_SET_BY,
     COMMAND,
     NO_DISPLAY,
     SESSION_NAME,
@@ -48,6 +49,7 @@ from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.tui import TuiMode
 from agent_pm.session.viewer import display as displays
 from agent_pm.utils import (
+    ACCOUNT_ENV,
     EVENTS_ENV,
     SID_ENV,
     Record,
@@ -187,6 +189,11 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         type=_env,
         metavar="NAME=VALUE",
         help="set in its environment; repeatable, the last of a NAME wins",
+    )
+    p.add_argument(
+        "--account",
+        metavar="NAME",
+        help="its [session.clients.CLIENT.accounts.NAME] account (default: default; Docker Host only)",
     )
     p.add_argument(
         "--display",
@@ -669,6 +676,11 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     host = args.host or hosts.default
     if host not in hosts.tables:
         raise UsageError(f"--host {host}: want one of {', '.join(sorted(hosts.tables))}")
+    env = dict(args.env)
+    if ACCOUNT_ENV in env:
+        raise UsageError(ACCOUNT_SET_BY)
+    if args.account:
+        env[ACCOUNT_ENV] = args.account
     events = os.environ.get(EVENTS_ENV) or None
     worker = Worker.new(
         name=args.name,
@@ -677,7 +689,7 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
         cwd=cwd,
         host=host,
         flags=tuple(flags),
-        env=dict(args.env),
+        env=env,
         events=None if events is None else os.path.abspath(events),
         display=Session.display(args.display, host=host),
     )

@@ -73,10 +73,10 @@ class Base(Case):
     def planned(self, role="researcher", task="research", *, keys=None, team=None, run=None, **kw):
         """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.",
         client "fake", headless, out self.out, workdir self.work, the cwd its agent dir, unless `kw`
-        says otherwise.
+        says otherwise; `accounts`, when given, is plan's.
         """
         kw = {"client": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
-        workdir = kw.pop("workdir", self.work)
+        workdir, accounts = kw.pop("workdir", self.work), kw.pop("accounts", None)
         composition = Composer(team=team)
         run = run or replace(composition.resolve(role), **(keys or {}))
         err = io.StringIO()
@@ -86,6 +86,7 @@ class Base(Case):
                 Spec(kw.pop("input"), workdir, task=task, team=team, **kw),
                 driver=self.driver,
                 composition=composition,
+                **({} if accounts is None else {"accounts": accounts}),
             )
         return got, err.getvalue()
 

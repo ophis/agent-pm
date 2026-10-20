@@ -25,10 +25,11 @@ queued_command attachment), then answers A; {"kind": "pause", "file": F} waits f
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
 - rate_limit: print a rate_limit_info after init.
-- usage: `-p /usage`'s stdout; default: an unused account's panel.
+- usage: `-p /usage`'s stdout, or an object mapping a CLAUDE_CONFIG_DIR ("": unset) to it; default
+(and an unmapped CLAUDE_CONFIG_DIR's): an unused account's panel.
 - exit: the exit code.
 - hang: in print, true sleeps after steps until orphaned or HANG_CAP s, then exits 1.
-- log: a file each start appends {"pid", "argv", "cwd"} to.
+- log: a file each start appends {"pid", "argv", "cwd", "config_dir"} to (config_dir: "" unset).
 - gate: a file a --session-id or --resume run waits for after its log line, as hang does.
 - commands: a file each local command appends {"pid", "line", "time", "dialog"} to; dialog: read
 while a dialog step waited.
@@ -127,7 +128,11 @@ CHECKS = {
     "turns": lambda v: isinstance(v, list) and all(isinstance(t, list) for t in v),
     "background": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "rate_limit": lambda v: v is None or isinstance(v, dict),
-    "usage": lambda v: isinstance(v, str),
+    "usage": lambda v: (
+        isinstance(v, str)
+        or isinstance(v, dict)
+        and all(isinstance(x, str) for x in (*v, *v.values()))
+    ),
     "exit": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "hang": lambda v: isinstance(v, bool),
     "log": lambda v: v is None or isinstance(v, str),
@@ -431,7 +436,9 @@ def invocation(argv: list[str]):
     s = scenario()
     if s["log"]:
         with open(s["log"], "a", encoding="utf-8") as f:
-            f.write(json.dumps({"pid": os.getpid(), "argv": argv, "cwd": os.getcwd()}) + "\n")
+            config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
+            entry = {"pid": os.getpid(), "argv": argv, "cwd": os.getcwd(), "config_dir": config_dir}
+            f.write(json.dumps(entry) + "\n")
     a = parse(argv)
     turns = [s["steps"]] if a.print else [s["steps"], *s["turns"]]
     if not all(_step(step, tui=not a.print) for steps in turns for step in steps):
@@ -557,7 +564,10 @@ def printed(s, a, journal, parent):
 def main(argv: list[str]) -> int:
     parent, s, a, turns = invocation(argv)
     if a.print and a.prompt == "/usage":
-        print(s["usage"], end="", flush=True)
+        usage = s["usage"]
+        if isinstance(usage, dict):
+            usage = usage.get(os.environ.get("CLAUDE_CONFIG_DIR", ""), DEFAULTS["usage"])
+        print(usage, end="", flush=True)
         return s["exit"]
     sid, cwd = (a.resume or a.session_id or str(uuid.uuid4()), os.getcwd())
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")

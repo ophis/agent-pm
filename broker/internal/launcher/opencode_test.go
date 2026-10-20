@@ -20,23 +20,13 @@ const opencodeDir = home + "/.agent-pm/docker-state/worker_1/opencode"
 // opencodeManifest is manifest-valid.json for client opencode, edit applied to its fields.
 func opencodeManifest(t *testing.T, edit func(map[string]any)) string {
 	t.Helper()
-	data, err := os.ReadFile(validManifest(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(data, &fields); err != nil {
-		t.Fatal(err)
-	}
-	fields["client"], fields["opencode_dir"] = "opencode", opencodeDir
-	delete(fields, "claude_dir")
-	if edit != nil {
-		edit(fields)
-	}
-	if data, err = json.Marshal(fields); err != nil {
-		t.Fatal(err)
-	}
-	return writeManifest(t, data)
+	return editedManifest(t, func(fields map[string]any) {
+		fields["client"], fields["opencode_dir"] = "opencode", opencodeDir
+		delete(fields, "claude_dir")
+		if edit != nil {
+			edit(fields)
+		}
+	})
 }
 
 func withGitHub(fields map[string]any) { fields["github"] = map[string]string{"app": "agent-pm-bot"} }

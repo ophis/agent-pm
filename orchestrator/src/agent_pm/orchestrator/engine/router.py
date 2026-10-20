@@ -98,13 +98,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
     IssueState,
 )
-from agent_pm.orchestrator.engine.gate import (
-    BRAKE_5H,
-    Gate,
-    exhausted,
-    read_usage,
-    summary,
-)
+from agent_pm.orchestrator.engine.gate import BRAKE_5H, Gate, read_usage
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.runs import (
@@ -132,7 +126,15 @@ from agent_pm.orchestrator.engine.types import (
     Wiring,
 )
 from agent_pm.orchestrator.trackers.linear.client import has_key, linear_gql
-from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line
+from agent_pm.utils import (
+    CLIENT_ENV,
+    EVENTS_ENV,
+    SID_ENV,
+    exhausted,
+    nested_start,
+    one_line,
+    summary,
+)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)

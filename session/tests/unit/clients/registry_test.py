@@ -586,6 +586,7 @@ class Committed(Case):
                     ],
                 },
                 "env": {},
+                "accounts": {},
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },

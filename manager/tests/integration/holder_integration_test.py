@@ -148,6 +148,7 @@ class HolderTest(Case):
             AGENT_PM_MANAGER="inherited",
             AGENT_PM_HOLDER_ID="inherited",
             AGENT_PM_HOLDER_GENERATION="999",
+            AGENT_PM_HOLDER_PID="999",
             AGENT_PM_SID="must-scrub",
         )
         result = subprocess.run(
@@ -166,8 +167,10 @@ class HolderTest(Case):
                 "-S",
                 "-c",
                 "import json,os,sys\n"
-                "keys=('AGENT_PM_MANAGER','AGENT_PM_HOLDER_ID','AGENT_PM_HOLDER_GENERATION')\n"
+                "keys=('AGENT_PM_MANAGER','AGENT_PM_HOLDER_ID','AGENT_PM_HOLDER_GENERATION',"
+                "'AGENT_PM_HOLDER_PID')\n"
                 "values={k:os.environ[k] for k in keys}\n"
+                "values['parent']=str(os.getppid())\n"
                 "values['AGENT_PM_SID']=os.environ.get('AGENT_PM_SID')\n"
                 "print(json.dumps(values)); sys.exit(7)",
             ),
@@ -182,6 +185,7 @@ class HolderTest(Case):
         self.assertEqual(received["AGENT_PM_MANAGER"], "mgr")
         self.assertNotEqual(received["AGENT_PM_HOLDER_ID"], "inherited")
         self.assertEqual(received["AGENT_PM_HOLDER_GENERATION"], "1")
+        self.assertEqual(received["AGENT_PM_HOLDER_PID"], received["parent"])
         self.assertIsNone(received["AGENT_PM_SID"])
         with self.roster.hold("next") as lease:
             self.assertEqual(lease.generation, 2)

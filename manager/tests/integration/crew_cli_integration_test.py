@@ -24,6 +24,7 @@ def _without_manager_identity():
             "AGENT_PM_MANAGER",
             "AGENT_PM_HOLDER_ID",
             "AGENT_PM_HOLDER_GENERATION",
+            "AGENT_PM_HOLDER_PID",
         }
     }
 

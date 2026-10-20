@@ -5,7 +5,7 @@
 # keys in that table.
 #
 # Each layer reads only its own keys (paths from the repo root): the Composer (delegate/src/agent_pm/delegate/composer/)
-# the run keys, [output], [roles.<role>], trusted_dirs and team_dirs; delegate/src/agent_pm/delegate/team/tools/repo.py
+# the run keys, [output], [accounts], [roles.<role>], trusted_dirs and team_dirs; delegate/src/agent_pm/delegate/team/tools/repo.py
 # users and trusted_dirs; delegate/src/agent_pm/delegate/config.py [delegates]; the Delegate
 # (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<client>]. [clients] and [hosts]: session/src/agent_pm/session/config.toml.
 #
@@ -88,6 +88,14 @@ branch = ""
 dir = ""
 host = ""
 
+# Accounts: client name → the account (a [clients.<client>.accounts] name: session/src/agent_pm/session/config.toml)
+# a run on that client starts on; merged entry by entry, global → role ([roles.<role>.accounts]) → each overlay (the
+# orchestrator's among them). Only the run's client's entry counts, so a role run on another client gets none; no
+# entry or "" → none. An unregistered one refuses the run
+[accounts]
+# local: [delegate.accounts]
+# local: claude = "work"
+
 # Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (core's team/roles/<role>.md › Tasks). A
 # role table holding the old task-level keys is an error (docs/upgrading.md).
 #   templates     names of team/templates/*.md inlined into the prompt; [] → none
@@ -112,6 +120,7 @@ host = ""
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the Client; "" → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, client, language, cwd, idle_timeout, show or [output], for that role
+#   accounts      [roles.<role>.accounts]: [accounts] above, for that role, entry by entry
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]

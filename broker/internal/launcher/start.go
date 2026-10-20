@@ -91,7 +91,7 @@ func (h Host) Start(ctx context.Context, path string) (StartResult, error) {
 			return StartResult{}, err
 		}
 	case "claude":
-		if err := h.Creds.Ready(); err != nil {
+		if err := h.Creds.Ready(m.ClaudeAccount); err != nil {
 			return StartResult{}, err
 		}
 	case "opencode":
@@ -268,7 +268,7 @@ func (h Host) create(ctx context.Context, c string, m Manifest, info imageInfo, 
 		}
 		codexExpiry = &expiry
 	case "claude":
-		if err := h.Creds.Inject(exec); err != nil {
+		if err := h.Creds.Inject(m.ClaudeAccount, exec); err != nil {
 			return StartResult{}, false, injected(err, protocol.StartFailed, "Injecting the Claude token failed.")
 		}
 	case "opencode":

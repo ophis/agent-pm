@@ -36,7 +36,7 @@ class ClaudeClient(Client):
         "--from-pr",
         "--teleport",
     )
-    keys = frozenset({"flags", "allow", "tiers", "efforts", "env", "modes"})
+    keys = frozenset({"flags", "allow", "tiers", "efforts", "env", "modes", "accounts"})
     client_note = ClaudeCommon.NOTE
     session_env = "CLAUDECODE"
     identity_env = tuple(key for key in ClaudeCommon.UNSET if key not in LOCAL_ENV_VARS)
@@ -51,8 +51,15 @@ class ClaudeClient(Client):
     def tui(self):
         return ClaudeTui(self.common)
 
+    def _accounts(self):
+        return frozenset(self.common.accounts)
+
     def usage_probe(self):
         return self.common.probe()
+
+    def _usage_probes(self):
+        accounts = self.common.accounts
+        return {name: (accounts[name].dir, self.common.probe(name)) for name in accounts}
 
     def usage(self, output):
         return self.common.parse_usage(output)
