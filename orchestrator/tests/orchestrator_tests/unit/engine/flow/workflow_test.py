@@ -8,11 +8,11 @@ from unittest import mock
 
 from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow import workflow
-from agent_pm.orchestrator.engine.flow.types import Task
+from agent_pm.orchestrator.engine.flow.types import Stage
 from orchestrator_tests.case import Case
 
 HINT = "To change the target repo, edit the description's `Repo:` line."
-GOOD = '[roles.pm]\nkind = "design"\nprefix = "PRD"\n'
+GOOD = '[roles.pm]\ninput = "design"\ntitle_prefix = "PRD"\n'
 
 
 class DefaultWorkflow(Case):
@@ -21,25 +21,25 @@ class DefaultWorkflow(Case):
         self.assertEqual(
             dict(workflow.Workflow()),
             {
-                "researcher": Task(
+                "researcher": Stage(
                     "research",
                     start="Research started:",
-                    failed_new="todo",
+                    first_failure="ready",
                     hint=HINT,
                     next="pm",
                 ),
-                "pm": Task(
+                "pm": Stage(
                     "design",
-                    prefix="PRD",
+                    title_prefix="PRD",
                     start="PRD started:",
                     retitle=True,
                     approve=True,
                     next="engineer",
                     require_instructions=False,
                 ),
-                "engineer": Task(
+                "engineer": Stage(
                     "build",
-                    prefix="ENG",
+                    title_prefix="ENG",
                     start="Build started:",
                     done="Build ready:",
                     question="Question:",
@@ -61,7 +61,7 @@ class DefaultWorkflow(Case):
         with mock.patch("tomllib.loads", wraps=tomllib.loads) as loads:
             flow = workflow.Workflow()
             self.assertEqual(loads.call_count, 0)
-            self.assertEqual(flow["pm"].prefix, "PRD")
+            self.assertEqual(flow["pm"].title_prefix, "PRD")
             self.assertEqual(sorted(flow), ["engineer", "pm", "researcher"])
             self.assertEqual(loads.call_count, 1)
             flow.load()
@@ -79,7 +79,7 @@ class BadWorkflow(Case):
             return dict(workflow.Workflow())
 
     def test_a_good_file(self):
-        self.assertEqual(self.read(GOOD), {"pm": Task("design", prefix="PRD")})
+        self.assertEqual(self.read(GOOD), {"pm": Stage("design", title_prefix="PRD")})
 
     def test_bad_file(self):
         at = f"{workflow.REL}: "
@@ -92,14 +92,17 @@ class BadWorkflow(Case):
             ("[roles]\npm = 1\n", "roles.pm: want a table"),
             (GOOD + "bogus = 1\nzap = 2\n", "roles.pm: unknown keys: bogus, zap"),
             (
-                '[roles.pm]\nprefix = "PRD"\n',
-                "roles.pm.kind: want one of research, design, build: None",
+                '[roles.pm]\ntitle_prefix = "PRD"\n',
+                "roles.pm.input: want one of research, design, build: None",
             ),
             (
-                GOOD + 'failed_new = "tdo"\n',
-                "roles.pm.failed_new: want one of todo, in_review: 'tdo'",
+                GOOD + 'first_failure = "tdo"\n',
+                "roles.pm.first_failure: want one of ready, review: 'tdo'",
             ),
-            ('[roles.pm]\nkind = "x"\n', "roles.pm.kind: want one of research, design, build: 'x'"),
+            (
+                '[roles.pm]\ninput = "x"\n',
+                "roles.pm.input: want one of research, design, build: 'x'",
+            ),
             (GOOD + 'retitle = "yes"\n', "roles.pm.retitle: want a bool: 'yes'"),
             (GOOD + "hint = true\n", "roles.pm.hint: want a str: True"),
             (GOOD + "next = 1\n", "roles.pm.next: want a str: 1"),

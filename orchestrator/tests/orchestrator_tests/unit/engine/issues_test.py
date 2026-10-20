@@ -322,6 +322,6 @@ class BuildCutoff(Case):
 
     def test_the_workflow_build_start_lead_is_the_cutoff(self):
         created, at = "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z"
-        [start] = [t.start for t in config.TASKS.values() if t.kind == "build"]
+        [start] = [t.start for t in config.TASKS.values() if t.input == "build"]
         notes = (note(f"{start} first build of the PRD", at),)
         self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), at)

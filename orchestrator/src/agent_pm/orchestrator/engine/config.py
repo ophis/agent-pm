@@ -533,7 +533,7 @@ def _role_links(out):
             raise ConfigError(
                 f"orchestrator/config.toml: next of {name!r} names undefined role {r.next!r}"
             )
-        if not TASKS[r.next].prefix:
+        if not TASKS[r.next].title_prefix:
             raise ConfigError(
                 f"orchestrator/config.toml: next of {name!r} is role {r.next!r}, whose config.TASKS entry has no prefix"
             )

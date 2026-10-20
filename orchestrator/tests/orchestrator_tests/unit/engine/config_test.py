@@ -875,7 +875,10 @@ class CommittedConfiguration(Case):
         flow = Path(tmp.name, "workflow.toml")
         for text, message in (
             ("[roles\n", "Expected ']'"),
-            ('[roles.pm]\nkind = "x"\n', "roles.pm.kind: want one of research, design, build: 'x'"),
+            (
+                '[roles.pm]\ninput = "x"\n',
+                "roles.pm.input: want one of research, design, build: 'x'",
+            ),
         ):
             flow.write_text(text, encoding="utf-8")
             with self.subTest(text):
@@ -887,7 +890,7 @@ class CommittedConfiguration(Case):
                 self.assertTrue(str(cm.exception).startswith(f"{workflow.REL}: "), cm.exception)
                 self.assertIn(message, str(cm.exception))
         # a bad read keeps the last good one
-        self.assertEqual(config.TASKS["pm"].prefix, "PRD")
+        self.assertEqual(config.TASKS["pm"].title_prefix, "PRD")
 
     def test_local_lines_uncommented_set_every_required_key(self):
         with files("agent_pm.orchestrator").joinpath("config.toml").open() as f:
@@ -1180,7 +1183,7 @@ class RunnableRoles(ConfigFile, Case):
     def test_tasks_by_role(self):
         self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
         self.assertEqual(
-            {r: (x.kind, x.prefix, x.files) for r, x in config.TASKS.items()},
+            {r: (x.input, x.title_prefix, x.files) for r, x in config.TASKS.items()},
             {
                 "researcher": ("research", "", False),
                 "pm": ("design", "PRD", False),

@@ -19,7 +19,7 @@ def brief(issue) -> str:
 @cache
 def _build_started():
     """A build run's start comment: the workflow's build start lead, its colon optional."""
-    leads = (t.start.removesuffix(":") for t in workflow.DEFAULT.values() if t.kind == "build")
+    leads = (t.start.removesuffix(":") for t in workflow.DEFAULT.values() if t.input == "build")
     return re.compile(rf"(?:{'|'.join(map(re.escape, leads))})\b")
 
 

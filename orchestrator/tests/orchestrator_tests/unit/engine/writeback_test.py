@@ -990,7 +990,7 @@ class ApprovalMessages(Base):
 
 class CompletionMessages(Base):
     def outcomes(self, role, spec, plan):
-        kind, files = config.TASKS[role].kind, [plan, spec]
+        kind, files = config.TASKS[role].input, [plan, spec]
         if kind == "research":
             return {
                 "done": Outcome(
@@ -1122,7 +1122,7 @@ class CompletionMessages(Base):
                 body=f"Build failed: push not permitted\n\n{TREE}",
             ),
         }
-        return table[(config.TASKS[role].kind, status)]
+        return table[(config.TASKS[role].input, status)]
 
     def test_every_role_status_and_mode(self):
         self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
@@ -1131,7 +1131,7 @@ class CompletionMessages(Base):
                 for resume in (False, True):
                     with self.subTest(role=role, status=status, resume=resume):
                         gql = Gql()
-                        build = config.TASKS[role].kind == "build"
+                        build = config.TASKS[role].input == "build"
                         ctx = replace(
                             self.ctx(role, gql=gql), resume=resume, target=TARGET if build else None
                         )

@@ -190,8 +190,8 @@ class Promoter:
                 owner=nxt,
                 priority=src.priority,
                 title=child_title(
-                    self.tasks[nxt].prefix,
-                    self.tasks[role].prefix or None,
+                    self.tasks[nxt].title_prefix,
+                    self.tasks[role].title_prefix or None,
                     src.title,
                 ),
                 description=self.description(src, comments, detail),

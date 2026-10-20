@@ -1,4 +1,4 @@
-"""Abstract issue states, a Tracker's reads and a workflow's per-role Task."""
+"""Abstract issue states, a Tracker's reads and a workflow's per-role Stage."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,14 +110,14 @@ class Recheck:
 
 
 @dataclass(frozen=True)
-class Task:
-    kind: Literal["research", "design", "build"]
-    prefix: str = ""
+class Stage:
+    input: Literal["research", "design", "build"]
+    title_prefix: str = ""
     start: str = ""
     done: str = ""
     question: str = ""
     failed: str = ""
-    failed_new: Literal["todo", "in_review"] = "in_review"
+    first_failure: Literal["ready", "review"] = "review"
     retitle: bool = False
     approve: bool = False
     files: bool = False

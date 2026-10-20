@@ -70,6 +70,8 @@ class Context:
 
 
 LEDGER = "writeback.json"
+# a Stage's first_failure → the tracker state a failed first run moves to
+FIRST_FAILURE = {"ready": "todo", "review": "in_review"}
 LOCK = "writeback.lock"
 MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
@@ -310,7 +312,7 @@ def _read_file(path, workdir):
 
 
 def _url(ctx, url):
-    if not url or TASKS[ctx.role].kind != "build":
+    if not url or TASKS[ctx.role].input != "build":
         return url
     if ctx.target and url.lower().startswith(
         f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()
@@ -344,10 +346,14 @@ def _completion_body(ctx, o):
         text = f"{questions}\n\n{FOOTER}" + (f" {task.hint}" if task.hint else "")
         lead, state = task.question, "in_review"
     else:
-        lead, text, state = task.failed, o.summary, "in_review" if ctx.resume else task.failed_new
+        lead, text, state = (
+            task.failed,
+            o.summary,
+            "in_review" if ctx.resume else FIRST_FAILURE[task.first_failure],
+        )
     body = say(lead, text)
     if url and (
-        o.status == OutcomeStatus.FAILED or o.status == OutcomeStatus.DONE and task.kind != "build"
+        o.status == OutcomeStatus.FAILED or o.status == OutcomeStatus.DONE and task.input != "build"
     ):
         body += f"\n\n{url}"
     if task.approve and o.status == OutcomeStatus.DONE:
@@ -404,7 +410,7 @@ def _finish(ctx, o, steps=""):
         and _step(
             ctx,
             "retitle",
-            lambda: ctx.tracker.retitle(issue, f"{task.prefix}: {o.title}"),
+            lambda: ctx.tracker.retitle(issue, f"{task.title_prefix}: {o.title}"),
         )
     ):
         return False

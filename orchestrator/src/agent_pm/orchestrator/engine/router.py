@@ -705,7 +705,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
-    build = config.TASKS[role].kind == "build"
+    build = config.TASKS[role].input == "build"
     reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
     try:
         issue = reader.issue(a.issue)
