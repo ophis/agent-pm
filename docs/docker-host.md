@@ -327,7 +327,7 @@ left (100 minus the higher of its 5h and weekly used percent):
 3. no reading known: none (`default`).
 
 A tie goes to `default`, then name order. Each account's reading is cached in `~/.agent-pm/usage/claude.json` for
-5 minutes, a failed probe's included, so a start or gate check within that time probes nothing; each probe prints
+5 minutes (a failed probe's for 30 seconds), so a start or gate check within that time probes nothing; each probe prints
 `claude usage: account <name>: five_hour=<p>% weekly=<p>%` (or `unknown`) to stderr, and the start
 `claude account <name>: picked (…)`. Resumes pick again.
 

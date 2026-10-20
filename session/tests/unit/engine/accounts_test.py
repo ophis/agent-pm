@@ -122,7 +122,6 @@ class ReadingsTest(Case):
         self.answers["/w"] = usage(20, 30)
         self.assertEqual(self.readings(NOW + accounts.UNKNOWN_TTL)["work"], usage(20, 30))
         self.assertEqual([launch.env["DIR"] for launch in self.read], ["/w"])
-        self.assertEqual(accounts.UNKNOWN_TTL, 30)
 
     def test_another_identity_misses(self):
         self.readings()

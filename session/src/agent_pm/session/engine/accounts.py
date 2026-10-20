@@ -47,7 +47,11 @@ def _readings(
     stale: dict[str, tuple[Launch, list[str]]] = {}
     for name, (identity, launch) in probes.items():
         entry = cached.get(name)
-        if entry is not None and entry[1] == identity and 0 <= now - entry[0] < _ttl(entry[2]):
+        if (
+            entry is not None
+            and entry[1] == identity
+            and 0 <= now - entry[0] < (UNKNOWN_TTL if entry[2] is None else TTL)
+        ):
             found[name] = entry[2]
         else:
             stale.setdefault(identity, (launch, []))[1].append(name)
@@ -63,10 +67,6 @@ def _readings(
                 print(f"{client} usage: account {name}: {summary(found[name])}", file=sys.stderr)
         _store(path, {name: cached[name] for name in probes})
     return {name: found[name] for name in probes}
-
-
-def _ttl(usage: Usage | None) -> int:
-    return UNKNOWN_TTL if usage is None else TTL
 
 
 def pick(found: Mapping[str, Usage | None]) -> str | None:
