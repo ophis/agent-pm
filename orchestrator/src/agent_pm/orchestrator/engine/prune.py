@@ -53,6 +53,7 @@ from agent_pm.orchestrator.engine.types import (
     Entry,
     LinearError,
     PruneState,
+    Refusal,
     Unavailable,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql
@@ -79,7 +80,7 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
-SYNC_PAGES, READ_REQUESTS = 3, 10  # a tick's Linear requests: change feed, issue reads
+SYNC_PAGES, READ_REQUESTS, ARCHIVE_REQUESTS = 3, 10, 20  # a tick's Linear requests, by phase
 BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again after it
 OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
 CACHE = "prune.json"
@@ -146,19 +147,18 @@ class Spent(Exception):
 
 
 class Budget:
-    """gql, counted: a request past limit raises Spent unsent; None: no limit."""
+    """gql, counted: a request past limit raises Spent unsent."""
 
     def __init__(self, gql):
-        self.gql, self.left = gql, None
+        self.gql, self.left = gql, 0
 
     def limit(self, n):
         self.left = n
 
     def __call__(self, query, **v):
-        if self.left is not None:
-            if self.left <= 0:
-                raise Spent
-            self.left -= 1
+        if self.left <= 0:
+            raise Spent
+        self.left -= 1
         return self.gql(query, **v)
 
 
@@ -171,6 +171,7 @@ class Pruner:
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.views, self.classes, self.by_issue = 0, {}, {}, None
+        self.finished = None
         self.say = functools.partial(log, "prune", dry=dry)
         self.cache = os.path.join(cfg.logs_dir, CACHE)
         self.state, unreadable = prune_state.load(self.cache)
@@ -286,39 +287,61 @@ class Pruner:
         return True
 
     def archive(self):
+        """A trusted refusal skips its plan; ARCHIVE_REQUESTS spent, the rest waits a tick."""
+        self.budget.limit(ARCHIVE_REQUESTS)
         try:
             found = self.tracker.finished(ARCHIVE_ROLES)
+        except Spent:
+            self.say("prune-deferred", archive="all")
+            return
         except Unavailable:
             raise
-        except (LinearError, OSError, subprocess.SubprocessError) as e:
+        except LINEAR_ERRORS as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
+        self.finished = {issue.ident for issue in found}
+        due = []
         for issue in found:
-            ident, since = issue.ident, issue.since
-            if since is None:
-                self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
-                continue
-            if self.now - since < QUARANTINE:
-                continue
-            plan = None
+            if issue.since is None:
+                self.say(
+                    "prune-skip", issue.ident, once=True, reason="archive: finish time unknown"
+                )
+            elif self.now - issue.since >= QUARANTINE:
+                due.append(issue)
+        for n, issue in enumerate(due):
             try:
-                if self.dry:
-                    plan = self.tracker.archive_plan(issue.key)
-                else:
-                    self.tracker.archive(issue.key)
-            except ArchiveRefused as e:
-                plan = e.plan
-            except Unavailable:
-                raise
-            except (LinearError, OSError, subprocess.SubprocessError) as e:
-                self.error(ident, error=f"archive: {one_line(e)}")
-                continue
-            if plan is not None and plan.outcome == "refused":
-                self.say("prune-skip", ident, once=True, reason=_kept(plan))
-            elif self.dry:
-                self.say("prune-plan", ident, what="archive")
+                self.archive_one(issue)
+            except Spent:
+                self.say("prune-deferred", archive=len(due) - n)
+                return
+
+    def archive_one(self, issue):
+        ident, refused = issue.ident, self.state.refused
+        if ident in refused and self.trusted(refused[ident].read):
+            self.say("prune-skip", ident, once=True, reason=refused[ident].reason)
+            return
+        plan = None
+        try:
+            if self.dry:
+                plan = self.tracker.archive_plan(issue.key)
             else:
-                self.say("prune-archived", ident)
+                self.tracker.archive(issue.key)
+        except ArchiveRefused as e:
+            plan = e.plan
+        except Unavailable:
+            raise
+        except LINEAR_ERRORS as e:
+            self.error(ident, error=f"archive: {one_line(e)}")
+            return
+        refused.pop(ident, None)
+        if plan is not None and plan.outcome == "refused":
+            unfinished = tuple(s.ident for s in plan.unfinished)
+            refused[ident] = Refusal(unfinished, _kept(plan), self.now)
+            self.say("prune-skip", ident, once=True, reason=_kept(plan))
+        elif self.dry:
+            self.say("prune-plan", ident, what="archive")
+        else:
+            self.say("prune-archived", ident)
 
     def run(self):
         found, idents = self.inventory(), None
@@ -332,7 +355,6 @@ class Pruner:
             for ident in idents or []:
                 if ident in snapshots:
                     self.prune_issue(ident, snapshots[ident])
-        self.budget.limit(None)
         self.archive()
         if not self.dry:
             self.save(idents)
@@ -424,6 +446,8 @@ class Pruner:
         if idents is not None:
             state.issues = {i: e for i, e in state.issues.items() if i in idents}
             state.unbatched &= set(idents)
+        if self.finished is not None:
+            state.refused = {i: r for i, r in state.refused.items() if i in self.finished}
         try:
             prune_state.save(self.cache, state)
         except OSError as e:

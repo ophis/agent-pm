@@ -66,7 +66,11 @@ Q_CHANGED = (
     "query($f: IssueFilter, $c: String) { issues(filter: $f, includeArchived: true, first: 100, "
     "after: $c) { nodes { identifier } pageInfo { hasNextPage endCursor } } }"
 )
-CHILD_PAGE = "nodes { id identifier state { name type } } pageInfo { hasNextPage endCursor }"
+# children(first: 1): whether a sub-issue has its own, so a leaf costs no read
+CHILD_PAGE = (
+    "nodes { id identifier state { name type } children(first: 1) { nodes { id } } } "
+    "pageInfo { hasNextPage endCursor }"
+)
 Q_ARCHIVE = (
     "query($i: String!) { issue(id: $i) { id identifier url archivedAt state { name type } "
     "children(first: 50) { " + CHILD_PAGE + " } } }"
@@ -569,6 +573,8 @@ class LinearTracker(Tracker):
         while level:
             below = []
             for parent in level:
+                if parent is not root and _leaf(parent):
+                    continue
                 for child in self._children(root, parent):
                     if child["id"] not in seen:
                         seen.add(child["id"])
@@ -755,6 +761,10 @@ def _need(name: str, value: T | None) -> T:
 def _sub_issue(node):
     state = node["state"]
     return SubIssue(node["id"], node["identifier"], state["name"], state["type"] in DONE)
+
+
+def _leaf(node):
+    return (node.get("children") or {}).get("nodes") == []
 
 
 def _checked(root, parent, page):

@@ -478,7 +478,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(
             self.prune(gql), (0, "prune-skip TASK-1 reason=archive: sub-issue TASK-3 not finished")
         )
-        self.assertEqual((gql.archived, gql.subs), ([], ["id-TASK-2", "id-TASK-3"]))
+        self.assertEqual((gql.archived, gql.subs), ([], ["id-TASK-2"]))
 
     def test_every_page_at_every_depth_is_read(self):
         many = {f"SUB-{n}": "completed" for n in range(1, 261)}
@@ -1154,7 +1154,7 @@ class PruneCommand(PruneScenario):
                 self.assertIn("agent-pm-orchestrator prune", err)
 
 
-class RequestBound(PruneScenario):
+class Bound(PruneScenario):
     """TASK-809: a tick reads Linear through its cache, change feed and caps, whatever the dirs."""
 
     quiet = ("In Review", [(30, "In Review")])
@@ -1176,6 +1176,8 @@ class RequestBound(PruneScenario):
         gql.read.clear()
         return self.prune(gql, **kw)
 
+
+class RequestBound(Bound):
     def test_a_cold_tick_reads_up_to_its_cap(self):
         issues = self.dirs(300)
         elsewhere = list(issues)[:20]
@@ -1394,3 +1396,116 @@ class RequestBound(PruneScenario):
         with self.assertRaises(Unavailable):
             self.prune(limited)
         self.assertFalse(os.path.exists(self.cache()))
+
+
+class ArchiveBound(Bound):
+    done = ("Done", [(30, "Done")])
+
+    def candidates(self, n, start=1000):
+        idents = [f"TASK-{start + k}" for k in range(n)]
+        return dict.fromkeys(idents, self.done), dict.fromkeys(idents, "u-pm")
+
+    def test_a_cold_tick_stays_within_the_bound(self):
+        bound = prune.SYNC_PAGES + prune.READ_REQUESTS + prune.ARCHIVE_REQUESTS
+        self.assertEqual(bound, 33)
+        for dirs, finished in ((300, 120), (10, 5)):
+            with self.subTest(dirs=dirs, finished=finished):
+                self.fresh()
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                issues = self.dirs(dirs)
+                done, owners = self.candidates(finished)
+                gql = gql_for(issues | done, owners, elsewhere=list(issues)[:20])
+                self.tick(gql)
+                self.assertLessEqual(len(gql.calls), bound)
+
+    def test_archive_past_the_cap_waits(self):
+        done, owners = self.candidates(30)
+        gql = gql_for(done, owners, changed=())
+        code, out = self.tick(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines()[-1], "prune-deferred archive=21")
+        self.assertEqual(len(gql.archived), 9)
+        self.assertEqual(len(gql.calls), prune.ARCHIVE_REQUESTS)
+        for _ in range(3):
+            self.tick(gql)
+        self.assertEqual(len(gql.archived), 30)
+
+    def test_a_finished_list_past_the_cap_waits(self):
+        done, owners = self.candidates(30)
+        gql = gql_for(done, owners, page=1, changed=())
+        self.assertEqual(self.tick(gql), (0, "prune-deferred archive=all"))
+        self.assertEqual(gql.archived, [])
+
+    def test_a_refused_candidate_is_replanned_only_on_change(self):
+        gql = gql_for(
+            {"TASK-1": self.done, "TASK-3": ("In Progress", [])},
+            owners={"TASK-1": "u-pm"},
+            children={"TASK-1": {"TASK-2": "completed", "TASK-3": "started"}},
+            changed=(),
+        )
+        skip = "prune-skip TASK-1 reason=archive: sub-issue TASK-3 not finished"
+        self.assertEqual(self.tick(gql), (0, skip))
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
+        self.tick(gql)
+        self.assertEqual(gql.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
+        gql.changed = {"TASK-2"}
+        self.tick(gql)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 0)
+        gql.changed = {"TASK-3"}
+        self.tick(gql)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
+        self.tick(gql, now=NOW + prune.BACKSTOP)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
+
+    def test_a_now_finished_sub_issue_lets_the_parent_go(self):
+        children = {"TASK-1": {"TASK-3": "started"}}
+        gql = gql_for(
+            {"TASK-1": self.done}, owners={"TASK-1": "u-pm"}, children=children, changed=()
+        )
+        self.tick(gql)
+        children["TASK-1"]["TASK-3"] = "completed"
+        gql.changed = {"TASK-3"}
+        self.assertEqual(self.tick(gql), (0, "prune-archived TASK-1"))
+
+    def test_an_invalidated_refusal_is_replanned_after_a_cut_short_tick(self):
+        children = {"TASK-1": {"TASK-3": "started"}}
+        gql = gql_for(
+            {"TASK-1": self.done}, owners={"TASK-1": "u-pm"}, children=children, changed=()
+        )
+        self.tick(gql)
+        children["TASK-1"]["TASK-3"] = "completed"
+        gql.changed = {"TASK-3"}
+
+        def down(query, **v):
+            if query == linear_tracker.Q_ARCHIVE:
+                raise LinearError("linear api error: down")
+            return gql(query, **v)
+
+        self.assertEqual(self.prune(down)[0], 3)
+        gql.changed = set()
+        self.assertEqual(self.tick(gql), (0, "prune-archived TASK-1"))
+
+    def test_a_standalone_prune_adds_only_its_setup_reads(self):
+        issues = self.dirs(300)
+        done, owners = self.candidates(120)
+        prune_gql, setup = gql_for(issues | done, owners), []
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            f'[orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL,
+        )
+        path = os.path.join(self.root, "config.toml")
+        write(path, tp.CONFIG)
+        fake = tp.FakeLinear()
+
+        def routed(query, **v):
+            if query in PRUNE_QUERIES:
+                return prune_gql(query, **v)
+            setup.append(query)
+            return fake(query, **v)
+
+        with redirect_stderr(io.StringIO()):
+            prune.main([], gql=routed, now=NOW, config_path=path, pruner=self.pruner)
+        roles = len(tp.ROLE)
+        self.assertEqual(len(setup), 1 + roles)
+        self.assertLessEqual(len(prune_gql.calls) + len(setup), 34 + roles)

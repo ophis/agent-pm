@@ -117,7 +117,12 @@ def gql_for(
         more = start + CHILDREN < len(kids)
         return {
             "nodes": [
-                {"id": f"id-{c}", "identifier": c, "state": {"name": t.title(), "type": t}}
+                {
+                    "id": f"id-{c}",
+                    "identifier": c,
+                    "state": {"name": t.title(), "type": t},
+                    "children": {"nodes": [{"id": "x"}] if children.get(c) else []},
+                }
                 for c, t in kids[start : start + CHILDREN]
             ],
             "pageInfo": {"hasNextPage": more, "endCursor": str(start + CHILDREN) if more else None},

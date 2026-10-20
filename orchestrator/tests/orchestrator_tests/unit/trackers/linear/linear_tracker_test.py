@@ -64,8 +64,9 @@ BASE = {
     # TASK-809: its state's type
     "Q_ISSUE": "4fbcd85c850aec9d01999f6470af96e24a9708d43211ca81c691915e2a2a9f6e",
     "Q_FINISHED": "d3e6e6d4ad803579fbc6129d0f7a52dd3ec0eaa7b337641eb16ec71a3eb4011f",
-    "Q_ARCHIVE": "57e18e04eabb1ba0bbcdd81020fdc7a89636a0d5ec41d26a67dba2c19370a0c4",
-    "Q_CHILDREN": "a680fb0be5a504651be3e72cee452f02e850e63ef6c79c88b73d55b7b0f089e0",
+    # TASK-809: each sub-issue's first child, so a leaf is not read
+    "Q_ARCHIVE": "500828f8d1a38fe25516de7caf6b04dd2ee838309c196bd0ce62e33ef924e736",
+    "Q_CHILDREN": "e687760a79592679d72265b9f4a762c262a06f2524d59e1400ba747f98ee5af3",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
     "M_TITLE": "1b74f5b2bb7775a1147c8a6bac7f50c09a196de9122da2c52e7cd64eaf45d7be",
     "M_ATTACH": "8db2cfd3ed91f6b4daf1aeed80183275d14953ff02982847658243be789af1f4",
@@ -511,6 +512,24 @@ class ArchivePlans(Case):
                 unfinished=(item("TASK-3", "started"),),
             ),
         )
+
+    def test_a_sub_issue_listing_no_children_is_not_read(self):
+        leaf = sub("TASK-2") | {"children": {"nodes": []}}
+        branch = sub("TASK-3") | {"children": {"nodes": [{"id": "id-TASK-4"}]}}
+        gql = Gql(
+            Q_ARCHIVE=planned(children=kids(leaf, branch)),
+            Q_CHILDREN=later(kids(sub("TASK-4", "started") | {"children": {"nodes": []}})),
+        )
+        plan = tracker(gql).archive_plan("id-TASK-1")
+        self.assertEqual(
+            gql.calls,
+            [
+                (linear_tracker.Q_ARCHIVE, {"i": "id-TASK-1"}),
+                (linear_tracker.Q_CHILDREN, {"i": "id-TASK-3", "c": None}),
+            ],
+        )
+        self.assertEqual(plan.unfinished, (item("TASK-4", "started"),))
+        self.assertIn("children(first: 1) { nodes { id } }", linear_tracker.Q_CHILDREN)
 
     def test_finished_by_state_type_the_issue_first(self):
         kinds = ("completed", "canceled", "duplicate", "started", "unstarted", "backlog")
