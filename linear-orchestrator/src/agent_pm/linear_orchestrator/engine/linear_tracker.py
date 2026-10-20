@@ -39,6 +39,17 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
+M_TITLE = (
+    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
+)
+M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
+Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
+Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
+M_UPDATE = (
+    "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
+)
+ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 
 
 def finished_at(issue, finished):

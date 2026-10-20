@@ -21,6 +21,14 @@ from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.linear_orchestrator.engine import ops, run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.linear_tracker import (
+    ATTACHED,
+    M_ATTACH,
+    M_TITLE,
+    M_UNARCHIVE,
+    Q_ATTACHED,
+    Q_ID,
+)
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
     call,
@@ -72,21 +80,12 @@ class Context:
     redelivered: bool = False
 
 
-M_TITLE = (
-    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
-)
-M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
-M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
-Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
-Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
-
 LEDGER = "writeback.json"
 LOCK = "writeback.lock"
 MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
-ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 # a run whose client's turn failed (delegate runner's Result.error) ends without an outcome; it is
 # written back as failed under its own steps, a later outcome of its session keeping theirs
 TURN_FAILED = "the client's turn failed: "

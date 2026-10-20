@@ -8,6 +8,7 @@ import threading
 
 from agent_pm.delegate import ConfigError, Resumable, SessionError
 from agent_pm.linear_orchestrator.engine import ops
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_UPDATE
 from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
     LinearError,
@@ -17,9 +18,6 @@ from agent_pm.utils import one_line, timestamp
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
-M_UPDATE = (
-    "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
-)
 SEQ = re.compile(r" · #(\d+) · (\S+)")
 
 
