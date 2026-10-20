@@ -1,5 +1,6 @@
 """bin/agent-pm-orchestrator run by absolute path from a temp cwd, no PYTHONPATH, a minimal PATH."""
 
+import json
 import os
 import re
 import shutil
@@ -9,6 +10,7 @@ import tempfile
 
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.config_fixtures import CORE_LOCAL, PIPELINE
+from orchestrator_tests.integration.fake_python import write_shim
 from orchestrator_tests.unit.board_ids import TEAM
 
 from utils.tests.case import local_section
@@ -106,24 +108,51 @@ class Command(Case):
 
 class ConfigLayout(Command):
     """A temp HOME whose config.local.toml sets every required Linear key under
-    [orchestrator.linear], with no Keychain item: config loading passes, the Keychain read stops.
+    [orchestrator.linear]. Its python3, also every descendant's (AGENT_PM_PATH), is fake_python.py:
+    the Keychain is the fake's, holding no item, and a real `security` call is refused.
     """
+
+    def setUp(self):
+        super().setUp()
+        self.fake = write_shim(os.path.join(self.tmp, "fake"))
+        self.transport = os.path.join(self.tmp, "transport.json")
+        with open(self.transport, "w", encoding="utf-8") as f:
+            json.dump({"url": "http://127.0.0.1:9", "keys": {}}, f)
 
     def write_local(self, orchestrator):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(CORE_LOCAL + "\n" + local_section(orchestrator, "orchestrator"))
 
+    def run_fake(self, *argv):
+        done = subprocess.run(
+            (BIN, *argv),
+            cwd=self.tmp,
+            env={
+                "HOME": self.home,
+                "PATH": f"{self.fake}:{MINIMAL}",
+                "AGENT_PM_PATH": self.fake,
+                "FAKE_LINEAR_TRANSPORT": self.transport,
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertNotIn("refused a real Keychain call", done.stderr)
+        return done
+
     def test_router_dry_run_and_issue_read_stop_at_the_harness_keychain_item(self):
         self.write_local(PIPELINE)
-        router = self.run_bin(self.minimal(), "router", "--dry-run")
-        issue = self.run_bin(self.minimal(), "issue", "read", "TASK-1")
+        router = self.run_fake("router", "--dry-run")
+        issue = self.run_fake("issue", "read", "TASK-1")
         for done in (router, issue):
             with self.subTest(argv=done.args[1:]):
                 self.assertNotEqual(done.returncode, 0)
                 self.assertNotIn("orchestrator/config.toml:", done.stdout + done.stderr)
                 self.assertNotIn("config.local.toml:", done.stdout + done.stderr)
-        # the Keychain read's error names /usr/bin/security: missing (Linux) or finding no item (macOS)
-        self.assertIn("/usr/bin/security", router.stderr)
+        # the fake's "no item" (44); a real security would be missing on Linux (FileNotFoundError)
+        self.assertIn("'/usr/bin/security', 'find-generic-password'", router.stderr)
+        self.assertIn("non-zero exit status 44", router.stderr)
         self.assertEqual((issue.returncode, issue.stdout), (2, ""))
         self.assertIn("linear.harness_key Keychain service 'linear-api-key'", issue.stderr)
 
@@ -131,6 +160,6 @@ class ConfigLayout(Command):
         self.write_local(f'team = "{TEAM}"\n' + PIPELINE)
         for argv in (("router", "--dry-run"), ("issue", "read", "TASK-1")):
             with self.subTest(argv=argv):
-                done = self.run_bin(self.minimal(), *argv)
+                done = self.run_fake(*argv)
                 self.assertNotEqual(done.returncode, 0)
                 self.assertIn("unknown key 'team' in [orchestrator]", done.stderr)
