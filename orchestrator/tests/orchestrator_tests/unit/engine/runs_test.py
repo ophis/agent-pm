@@ -606,7 +606,7 @@ class ClaimOf(Case):
         for field, value in (
             ("role", None),
             ("role", ""),
-            ("uuid", "task-1"),
+            ("uuid", ""),
             ("uuid", None),
             ("project", 7),
             ("target", "not a slug"),

@@ -119,6 +119,23 @@ class Accounts:
 
 
 @dataclass(frozen=True)
+class Claim:
+    """A run's claim context as its sid's runs.jsonl start row recorded it; `key`: the role's
+    Keychain service then, its write-back's Linear account (None: a tracker without accounts).
+    """
+
+    issue: str
+    sid: str
+    role: str
+    uuid: str
+    project: str | None
+    target: tuple[str, str] | None
+    key: str | None
+    client: str
+    delegate_kind: str
+
+
+@dataclass(frozen=True)
 class Wiring:
     """One tracker kind's engine wiring, built by cli.py; transport: the Linear gql callable (a
     local board ignores it)."""
@@ -126,6 +143,7 @@ class Wiring:
     connect: Connect  # the router's board
     reader: Callable[[Any, Config], Tracker]  # a run's issue read and Related-work search
     accounts: Callable[[Any, Config, str | None], Accounts]  # a role key's write-back accounts
+    claimed: Callable[[Any, Config, Claim], Accounts]
     key: Callable[[Config, str], str | None]  # a role's account key; None: none to check
 
 
@@ -273,23 +291,6 @@ class Target:
 
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-
-
-@dataclass(frozen=True)
-class Claim:
-    """A run's claim context as its sid's runs.jsonl start row recorded it; `key`: the role's
-    Keychain service then, its write-back's Linear account (None: a tracker without accounts).
-    """
-
-    issue: str
-    sid: str
-    role: str
-    uuid: str
-    project: str | None
-    target: tuple[str, str] | None
-    key: str | None
-    client: str
-    delegate_kind: str
 
 
 @dataclass(frozen=True, kw_only=True)

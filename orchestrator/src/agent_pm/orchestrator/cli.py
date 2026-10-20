@@ -24,6 +24,7 @@ from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.types import (
     MOVES,
+    UUID_RE,
     Accounts,
     ConfigError,
     TrackerKind,
@@ -306,6 +307,12 @@ def _linear_accounts(gql, cfg, key):
     )
 
 
+def _linear_claimed(gql, cfg, claim):
+    _start_row(claim, "key", claim.key is not None)
+    _start_row(claim, "uuid", UUID_RE.fullmatch(claim.uuid) is not None)
+    return _linear_accounts(gql, cfg, claim.key)
+
+
 def _linear_key(cfg, role):
     return cfg.linear.roles[role].key
 
@@ -323,18 +330,34 @@ def _local_accounts(transport, cfg, key):
     return Accounts(board, board, {s: LOCAL_STATES[MOVES[s]].value for s in MOVES}, (), {})
 
 
+def _local_claimed(transport, cfg, claim):
+    """A local board's row: no key, its issue id as the uuid."""
+    _start_row(claim, "key", claim.key is None)
+    _start_row(claim, "uuid", claim.uuid == claim.issue)
+    return _local_accounts(transport, cfg, None)
+
+
+def _start_row(claim, field, valid):
+    if not valid:
+        raise ConfigError(
+            f"{claim.issue}: session {claim.sid}'s start row {field}: {getattr(claim, field)!r}"
+        )
+
+
 TRACKERS = MappingProxyType(
     {
         TrackerKind.LINEAR: Wiring(
             connect=LinearTracker.connect,
             reader=_linear_reader,
             accounts=_linear_accounts,
+            claimed=_linear_claimed,
             key=_linear_key,
         ),
         TrackerKind.LOCAL: Wiring(
             connect=_local_board,
             reader=_local_board,
             accounts=_local_accounts,
+            claimed=_local_claimed,
             key=lambda *_: None,
         ),
     }
@@ -358,7 +381,7 @@ def _writeback(cfg, issue, workdir):
         if len(lines) != 1:
             raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
         event = DelegateEvent.parse(lines[0])
-        accounts = partial(TRACKERS[cfg.tracker].accounts, client.linear_gql, cfg)
+        accounts = partial(TRACKERS[cfg.tracker].claimed, client.linear_gql, cfg)
         return 0 if writeback.deliver(cfg, issue, workdir, event, accounts=accounts) else 1
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)

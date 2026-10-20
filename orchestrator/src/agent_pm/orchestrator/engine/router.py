@@ -366,7 +366,7 @@ class Board:
                 ident,
                 sid,
                 outcome,
-                accounts=functools.partial(self.wiring.accounts, self.gql, self.cfg),
+                accounts=functools.partial(self.wiring.claimed, self.gql, self.cfg),
                 dry=self.dry,
             )
         except (ConfigError, ValueError) as error:

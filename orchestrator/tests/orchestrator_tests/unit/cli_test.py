@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config, promote, prune, router, run_comments, runs
-from agent_pm.orchestrator.engine.types import State, TrackerKind
+from agent_pm.orchestrator.engine.types import Claim, ConfigError, State, TrackerKind
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
@@ -89,6 +89,32 @@ class Wirings(run_fixtures.Base):
         )
         for made in (local.connect(None, cfg, say=None), local.reader(None, cfg)):
             self.assertIsInstance(made, LocalTracker)
+
+    def test_each_tracker_checks_its_start_rows(self):
+        board = os.path.realpath(os.path.join(self.work, "board"))
+        linear_cfg = config.load()
+        local_cfg = replace(linear_cfg, tracker=TrackerKind.LOCAL, linear=None, board=board)
+        row = Claim("TASK-1", SID, "engineer", ISSUE, None, None, run_fixtures.KEY, "a", "fake")
+        local_row = replace(row, issue="LOC-1", uuid="LOC-1", key=None)
+        linear, local = cli.TRACKERS[TrackerKind.LINEAR], cli.TRACKERS[TrackerKind.LOCAL]
+        writes = linear.claimed(mock.Mock(), linear_cfg, row).tracker
+        self.assertEqual(writes.gql.keywords, {"service": run_fixtures.KEY})
+        self.assertIsInstance(local.claimed(None, local_cfg, local_row).tracker, LocalTracker)
+        for wiring, cfg, claim, field, value in (
+            (linear, linear_cfg, replace(row, key=None), "key", None),
+            (linear, linear_cfg, replace(row, uuid="TASK-1"), "uuid", "TASK-1"),
+            (local, local_cfg, replace(local_row, key="k"), "key", "k"),
+            (local, local_cfg, replace(local_row, uuid="LOC-2"), "uuid", "LOC-2"),
+            (local, local_cfg, replace(local_row, uuid=ISSUE), "uuid", ISSUE),
+        ):
+            with (
+                self.subTest(tracker=cfg.tracker, field=field),
+                self.assertRaises(ConfigError) as cm,
+            ):
+                wiring.claimed(None, cfg, claim)
+            self.assertEqual(
+                str(cm.exception), f"{claim.issue}: session {SID}'s start row {field}: {value!r}"
+            )
 
     def test_prune_prose_fits_eighty_columns(self):
         for line in prune.HELP.splitlines():

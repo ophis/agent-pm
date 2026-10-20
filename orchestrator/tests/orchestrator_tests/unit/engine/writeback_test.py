@@ -1635,7 +1635,7 @@ class Events(RunCase):
         )
 
     def accounts(self):
-        return functools.partial(cli.TRACKERS[TrackerKind.LINEAR].accounts, self.linear, self.cfg)
+        return functools.partial(cli.TRACKERS[TrackerKind.LINEAR].claimed, self.linear, self.cfg)
 
     def deliver(self, e, *, workdir=None, issue=RUN_ISSUE):
         return writeback.deliver(
@@ -1941,15 +1941,15 @@ class RefusedEvents(Events):
         local = replace(self.cfg, tracker=TrackerKind.LOCAL, linear=None, board=self.dir)
         done = Outcome(status="done", summary="x", title="x")
 
-        def accounts(_key):
-            raise AssertionError("accounts were built")
+        def accounts(cfg):
+            return functools.partial(cli.TRACKERS[cfg.tracker].claimed, self.linear, cfg)
 
         def deliver(cfg, sid):
             event = delegate_event("begun", sid=sid)
-            return writeback.deliver(cfg, RUN_ISSUE, self.workdir, event, accounts=accounts)
+            return writeback.deliver(cfg, RUN_ISSUE, self.workdir, event, accounts=accounts(cfg))
 
         def replay(cfg, sid):
-            return writeback.replay(cfg, RUN_ISSUE, sid, done, accounts=accounts)
+            return writeback.replay(cfg, RUN_ISSUE, sid, done, accounts=accounts(cfg))
 
         for cfg, sid, key in ((self.cfg, other, None), (local, RUN_SID, CLAIM_KEY)):
             for call in (deliver, replay):

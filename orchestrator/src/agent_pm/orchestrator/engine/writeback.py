@@ -40,7 +40,6 @@ from agent_pm.orchestrator.engine.types import (
     Spec,
     Stopped,
     TrackerFileError,
-    TrackerKind,
     Unavailable,
 )
 from agent_pm.utils import (
@@ -528,8 +527,6 @@ def _claim(cfg, issue, sid) -> Claim:
     claim = runs.claim(cfg.runs_log, issue, sid)
     if claim.role not in TASKS:
         raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
-    if (claim.key is None) != (cfg.tracker is TrackerKind.LOCAL):
-        raise ConfigError(f"{issue}: session {sid}'s start row key: {claim.key!r}")
     return claim
 
 
@@ -551,18 +548,18 @@ def replay(
     sid: str,
     outcome: Outcome,
     *,
-    accounts: Callable[[str | None], Accounts],
+    accounts: Callable[[Claim], Accounts],
     dry=False,
     now=timestamp,
 ) -> bool | None:
     """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
     as its callback's, then its session comment's end unless the callback's wrote it: None when
-    its ledger has it complete; else whether it now is (dry: True, nothing written). accounts: a
-    start row key's. Raises ConfigError or ValueError on a start row it cannot write back as.
+    its ledger has it complete; else whether it now is (dry: True, nothing written). Raises
+    ConfigError or ValueError on a start row it cannot write back as.
     """
     rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
     claim = _claim(cfg, issue, sid)
-    ctx = for_claim(cfg, claim, accounts(claim.key), attempt=len(rows))
+    ctx = for_claim(cfg, claim, accounts(claim), attempt=len(rows))
     attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
     ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
@@ -584,10 +581,10 @@ def deliver(
     workdir: str,
     event: DelegateEvent,
     *,
-    accounts: Callable[[str | None], Accounts],
+    accounts: Callable[[Claim], Accounts],
     now=timestamp,
 ) -> bool:
-    """Writes the (issue, event.sid) run's event back as its start row's claim (accounts: its key's),
+    """Writes the (issue, event.sid) run's event back as its start row's claim (accounts: the row's),
     each step once however often the event arrives; False when a write failed. Raises ConfigError
     or ValueError, before any write, on what it cannot write.
     """
@@ -599,7 +596,7 @@ def deliver(
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
     claim = _claim(cfg, issue, event.sid)
-    ctx = for_claim(cfg, claim, accounts(claim.key), attempt=attempt)
+    ctx = for_claim(cfg, claim, accounts(claim), attempt=attempt)
     with _exclusive(ctx) as held:
         return held and _deliver(ctx, cfg, claim, event, now=now)
 
