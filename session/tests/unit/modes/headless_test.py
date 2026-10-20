@@ -42,6 +42,8 @@ from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
+ACCOUNT = "AGENT_PM_ACCOUNT"
+
 
 class NoHeadless(StubClient):
     def headless(self):
@@ -318,6 +320,11 @@ class HomedRun(StubRun):
         return ClientHome("f", "d", "HOME_DIR", "c", (("a", "b"),))
 
 
+class AccountsClient(StubClient):
+    def _accounts(self):
+        return frozenset({"default", "work"})
+
+
 class HomeHost(PipingHost):
     _inherit_env = False
 
@@ -393,6 +400,35 @@ class ThroughItsHost(Base):
         )
         resume = f"cd {self.dir} && agent-pm-session resume w1"
         self.assertEqual((mode.prepared.info.resume, self.recorded[0].resume), (resume, resume))
+
+    def test_a_selected_account_names_the_home_in_metadata_and_never_reaches_the_run(self):
+        for env, account in (({}, None), ({ACCOUNT: "work"}, "work"), ({ACCOUNT: ""}, None)):
+            with self.subTest(env=env), mock.patch.dict(os.environ, {ACCOUNT: "outer"}):
+                host = HomeHost(FakePiped())
+                spec = Spec(
+                    workdir=self.dir,
+                    access=Access(cwd=self.dir),
+                    sid=SID,
+                    client="claude",
+                    name="w1",
+                    env={**env, "OTHER": "1"},
+                )
+                client = AccountsClient(Launch(NOTHING), run=HomedRun)
+                for call in ("preflight", "start"):
+                    more = {"record": self.recorded.append} if call == "start" else {}
+                    getattr(HeadlessMode, call)(
+                        spec,
+                        client,
+                        registry=self.session_cls._config().registry,
+                        host=host,
+                        **more,
+                    )
+                ((_, launch, metadata),) = host.pipes
+                self.assertEqual(metadata.get("home_account"), account)
+                self.assertEqual(
+                    dict(StubRun.specs[-1].env), {"OTHER": "1", "HOME_DIR": "/state/w1/d"}
+                )
+                self.assertNotIn(ACCOUNT, launch.env)
 
     def test_the_run_gets_yolo_on_an_isolated_host_else_auto(self):
         seen = []

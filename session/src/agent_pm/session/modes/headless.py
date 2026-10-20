@@ -77,11 +77,11 @@ class HeadlessMode(BaseMode):
         if run is None:
             raise cls._unsupported(spec)
         cls._no_tui_keys(spec, display, named=True)
-        cls._selected(spec, client)
+        spec, account = cls._selected(spec, client)
         drop = identity_drop(registry)
         name, metadata = spec.name, None
         if name is not None:
-            spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name))
+            spec, metadata = cls._hosted(spec, run._home(), host, checked_name(name), account)
         spec = cls._noted(spec, client)
         run._context = host._client_context()
         spec, prompt_file = cls._pointed(spec, run._context, spec.workdir)

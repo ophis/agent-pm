@@ -15,6 +15,7 @@ from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.common import check_selection
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
+    ACCOUNT_ENV,
     COMMAND,
     ClientBound,
     ClientContext,
@@ -60,12 +61,13 @@ def child_env(
     inherit: bool = True,
 ) -> dict[str, str]:
     """The environment (inherit; else none) less drop and unset, then the launch env, PWD,
-    AGENT_SESSION_ENV and CLIENT_ENV (client, when given); PATH led by the running plugin's bin/,
-    where PATH finds COMMAND (FR-32), when it does.
+    AGENT_SESSION_ENV and CLIENT_ENV (client, when given), never ACCOUNT_ENV; PATH led by the
+    running plugin's bin/, where PATH finds COMMAND (FR-32), when it does.
     """
     source = os.environ if inherit else {}
     env = {k: v for k, v in source.items() if k not in drop and k not in launch.unset}
     env = {**env, **launch.env, "PWD": cwd, AGENT_SESSION_ENV: "1"}
+    env.pop(ACCOUNT_ENV, None)
     if client is not None:
         env[CLIENT_ENV] = client
     command = command_path(COMMAND)
@@ -88,6 +90,22 @@ def identity_drop(registry: Registry) -> frozenset[str]:
         if kind.session_env and kind.session_env in os.environ:
             drop.update(k for k, v in kind.child_defaults.items() if os.environ.get(k) == v)
     return frozenset(drop)
+
+
+def _select_account(spec: Spec, client: Client) -> str:
+    """spec's ACCOUNT_ENV, one of client's registered accounts; "": none selected."""
+    account = spec.env.get(ACCOUNT_ENV, "")
+    if not account:
+        return ""
+    registered = client._accounts()
+    if registered is None:
+        raise ConfigError(f"client {spec.client} has no accounts: remove account {account!r}")
+    if account not in registered:
+        raise ConfigError(
+            f"account {account!r}: not a registered account of client {spec.client}"
+            f" ([clients.{spec.client}.accounts.{account}])"
+        )
+    return account
 
 
 class BaseMode(ABC):
@@ -175,9 +193,13 @@ class BaseMode(ABC):
 
     @staticmethod
     def _hosted(
-        spec: Spec, client_home: ClientHome | None, host: Host, name: str
+        spec: Spec, client_home: ClientHome | None, host: Host, name: str, account: str = ""
     ) -> tuple[Spec, Mapping[str, str]]:
-        """spec with `host`'s client env for `name`, and the metadata its Host keeps."""
+        """spec with `host`'s client env for `name`, and the metadata its Host keeps; account:
+        _selected's.
+        """
+        if client_home is not None:
+            client_home = replace(client_home, account=account)
         home = host._client_env(name, spec.client or "", client_home, resume=spec.resume)
         metadata = {
             "sid": spec.sid or "",
@@ -199,6 +221,7 @@ class BaseMode(ABC):
                         if client_home.persistent is not None
                         else {}
                     ),
+                    **({"home_account": client_home.account} if client_home.account else {}),
                     "resume": "1" if spec.resume else "0",
                 }
                 if home and client_home
@@ -214,8 +237,14 @@ class BaseMode(ABC):
         return prepared
 
     @staticmethod
-    def _selected(spec: Spec, client: Client) -> None:
+    def _selected(spec: Spec, client: Client) -> tuple[Spec, str]:
+        """spec less ACCOUNT_ENV, and the account it selects (for the Host only); before any Host
+        call.
+        """
         check_selection(spec.flags, client.forbidden_selection, client.valued_flags)
+        account = _select_account(spec, client)
+        env = {k: v for k, v in spec.env.items() if k != ACCOUNT_ENV}
+        return replace(spec, env=env), account
 
     @staticmethod
     def _noted(spec: Spec, client: Client) -> Spec:

@@ -1031,6 +1031,7 @@ class DockerHost(Host):
             hook_path=hook,
             github=self.github,
             providers=tuple(json.loads(metadata.get("home_providers") or "[]")),
+            account=metadata.get("home_account", ""),
         )
         _report_plan(
             name,

@@ -436,6 +436,28 @@ class ManifestTest(Case):
             else:
                 self.assertNotIn("opencode_providers", manifest)
 
+    def test_a_claude_manifest_names_its_selected_account(self):
+        path = os.path.join(self.home, "state", "g.json")
+        for account in ("work", ""):
+            broker.write_manifest(
+                path,
+                name="w",
+                generation="0" * 32,
+                image="agent-pm-worker:" + "a" * 64,
+                cwd="/work",
+                workspace="agent-pm-ws-w",
+                home=("claude_dir", "/home/claude"),
+                hook_path="/plugin/bin/agent-pm-session",
+                github="",
+                account=account,
+            )
+            with open(path) as f:
+                manifest = json.load(f)
+            if account:
+                self.assertEqual(manifest["claude_account"], "work")
+            else:
+                self.assertNotIn("claude_account", manifest)
+
 
 class StreamTest(Case):
     def run_stream(self, out, err, code, **kw):

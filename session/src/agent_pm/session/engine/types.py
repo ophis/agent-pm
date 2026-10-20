@@ -169,7 +169,7 @@ class ClientHome:
     """What a container Host needs to run a client: its per-session state dir (`field`, its name in
     the Host's records; `dir`, its last path part; `env`, the variable naming it), `credential`,
     the kind the Host injects, `files`, (name, text) for a fresh dir, `providers`, whose keys the
-    broker adds.
+    broker adds, `account`, whose token it injects.
     """
 
     field: str
@@ -179,6 +179,7 @@ class ClientHome:
     files: tuple[tuple[str, str], ...] = ()
     persistent: tuple[str, ...] | None = None
     providers: tuple[str, ...] = ()
+    account: str = ""
 
 
 class Container(NamedTuple):
@@ -233,6 +234,8 @@ SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_DISPLAY}"
 
 
 COMMAND = "agent-pm-session"
+ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
+ACCOUNT_SET_BY = f"{ACCOUNT_ENV} is set by --account or a role's accounts table"
 RESUME = (COMMAND, "resume")
 
 

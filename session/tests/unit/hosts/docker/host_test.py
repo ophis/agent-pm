@@ -806,10 +806,17 @@ class StartTest(Base):
         with open(os.path.join(self.state, f"{GEN}.json")) as f:
             self.assertEqual(json.load(f)["agent_providers"], ["lab", "strata"])
 
-    def test_no_providers_leave_the_manifest_without_them(self):
+    def test_the_manifest_names_the_selected_account(self):
+        self.start(home_account="work")
+        with open(os.path.join(self.state, f"{GEN}.json")) as f:
+            self.assertEqual(json.load(f)["agent_account"], "work")
+
+    def test_no_providers_or_account_leave_the_manifest_without_them(self):
         self.start()
         with open(os.path.join(self.state, f"{GEN}.json")) as f:
-            self.assertNotIn("agent_providers", json.load(f))
+            manifest = json.load(f)
+        self.assertNotIn("agent_providers", manifest)
+        self.assertNotIn("agent_account", manifest)
 
     def test_codex_resume_after_host_login_preserves_native_history(self):
         home = os.path.join(self.state, "codex")
