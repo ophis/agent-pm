@@ -193,7 +193,7 @@ class ConfigurationFailures(Base):
             ("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
             (
                 CONFIG + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
+                "orchestrator/config.toml: [roles.bogus] names no stage of the workflow",
             ),
         )
         for text, reason in cases:
@@ -665,6 +665,16 @@ class ChildTitles(Case):
             with self.subTest(src_prefix=src_prefix, src=src):
                 self.assertEqual(promote.child_title(prefix, src_prefix, src), want)
 
+    def test_child_title_without_prefix(self):
+        # a next stage with no title_prefix keeps the bare title
+        for src_prefix, src, want in (
+            ("PRD", "PRD: Session Registry", "Session Registry"),
+            (None, "Session Registry", "Session Registry"),
+            ("PRD", "PRD:\nX", "X"),
+        ):
+            with self.subTest(src_prefix=src_prefix, src=src):
+                self.assertEqual(promote.child_title("", src_prefix, src), want)
+
 
 class PromotionScope(Base):
     def test_role_without_next_untouched(self):
@@ -675,7 +685,9 @@ class PromotionScope(Base):
 
     def test_config_only_extension(self):
         custom = {
-            "pm": workflow.stage({"role": "pm", "input": "design", "title_prefix": "DES"}),
+            "pm": workflow.stage(
+                {"role": "pm", "input": "design", "title_prefix": "DES", "next": "engineer"}
+            ),
             "engineer": workflow.stage(
                 {"role": "engineer", "input": "build", "title_prefix": "BLD"}
             ),

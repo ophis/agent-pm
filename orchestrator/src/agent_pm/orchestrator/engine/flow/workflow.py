@@ -1,5 +1,4 @@
-"""The workflow: each orchestrated role's Stage, from a file's [[stage]] tables (the packaged
-workflow.toml unless load() names another), read on first use."""
+"""The workflow: each orchestrated role's Stage, from a file's [[stage]] tables."""
 
 import tomllib
 from collections.abc import Iterator, Mapping
@@ -14,13 +13,13 @@ TYPES = {k: get_args(t) or t for k, t in get_type_hints(Stage).items()}
 
 
 class Workflow(Mapping[str, Stage]):
-    """Role → Stage, the packaged file's by the first access unless load() read one."""
+    """Role → Stage; the packaged file's unless load() read one."""
 
     _stages: Mapping[str, Stage] | None = None
+    path: str = PACKAGED  # the stages' file, as errors name it
 
     def load(self, path: str | None = None) -> Mapping[str, Stage]:
-        """Reread path (None: the packaged file); a ValueError (message starting with the path)
-        keeps the last read."""
+        """Read path (None: the packaged file); a ValueError, naming it, keeps the last read."""
         shown = path or PACKAGED
         try:
             if path is None:
@@ -35,7 +34,7 @@ class Workflow(Mapping[str, Stage]):
             data = tomllib.loads(text)
         except (OSError, ValueError) as e:  # TOMLDecodeError is a ValueError
             raise ValueError(f"{shown}: {e}") from None
-        self._stages = _parse(data, shown)
+        self._stages, self.path = _parse(data, shown), shown
         return self._stages
 
     def __getitem__(self, role: str) -> Stage:
@@ -52,7 +51,7 @@ class Workflow(Mapping[str, Stage]):
 
 
 def stage(table: Mapping, at: str = "stage") -> Stage:
-    """table's Stage, its unset keys the defaults; a ValueError names `at`, then the role."""
+    """table's Stage, unset keys defaulted; a ValueError names `at`, then the role."""
     if extra := sorted(set(table) - set(TYPES)):
         raise ValueError(f"{at}: unknown keys: {', '.join(extra)}")
     for key in ("role", "input"):

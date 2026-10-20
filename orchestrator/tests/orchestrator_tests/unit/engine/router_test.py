@@ -97,8 +97,8 @@ from orchestrator_tests.unit.target_fixtures import ok
 
 CONFIG_ENG2 = (
     HEADER
-    + role_table("researcher", 'next = "pm"')
-    + role_table("pm", 'next = "engineer"')
+    + role_table("researcher")
+    + role_table("pm")
     + role_table("engineer", "max_runs = 2")
     + OVERLAY
 )
@@ -1078,7 +1078,7 @@ class RouterEntry(OuterBase):
             ("bogus = 1\n" + OUTER, "orchestrator/config.toml: unknown keys: bogus"),
             (
                 OUTER + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
+                "orchestrator/config.toml: [roles.bogus] names no stage of the workflow",
             ),
         ):
             self.write_config(text)
@@ -2073,8 +2073,8 @@ class ClientLimits(TickBase):
     def test_client_limit_counted_under_router_lock(self):
         self.write_config(
             HEADER
-            + role_table("researcher", 'next = "pm"', "max_runs = 2")
-            + role_table("pm", 'next = "engineer"')
+            + role_table("researcher", "max_runs = 2")
+            + role_table("pm")
             + role_table("engineer")
             + OVERLAY
             + A_LIMIT

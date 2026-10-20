@@ -16,10 +16,16 @@ def brief(issue) -> str:
     return h.instructions if h else issue.description
 
 
-@cache
 def _build_started():
     """A build run's start comment: the workflow's build start lead, its colon optional."""
-    leads = (t.start.removesuffix(":") for t in workflow.DEFAULT.values() if t.input == "build")
+    return _leads_re(
+        tuple(t.start.removesuffix(":") for t in workflow.DEFAULT.values() if t.input == "build")
+    )
+
+
+@cache
+def _leads_re(leads):
+    # keyed by the workflow's leads: a later load() is seen
     return re.compile(rf"(?:{'|'.join(map(re.escape, leads))})\b")
 
 

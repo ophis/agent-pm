@@ -19,6 +19,7 @@ from agent_pm.orchestrator.engine.types import State
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
+    BARE,
     BASE,
     CORE_LOCAL,
     HARNESS_DELEGATE,
@@ -29,7 +30,15 @@ from orchestrator_tests.config_fixtures import (
     write,
 )
 from orchestrator_tests.process_fixtures import DEVNULL, CompletedProcess
-from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+from orchestrator_tests.unit.board_ids import (
+    HEADER,
+    PACKAGED_FLOW,
+    STATES,
+    TASK_GROUP,
+    TEAM,
+    role,
+    workflow_line,
+)
 from orchestrator_tests.unit.config_fixtures import GATE
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -78,7 +87,11 @@ ROLES = {
 
 
 def fields(roles):
-    return {r: (x.account, x.key, x.tasks, x.max_runs, x.next) for r, x in roles.items()}
+    """Each role's account, key, tasks, max_runs and its stage's next (None: the last)."""
+    return {
+        r: (x.account, x.key, x.tasks, x.max_runs, config.TASKS[r].next or None)
+        for r, x in roles.items()
+    }
 
 
 CORE_TOML = """tier = 2
@@ -148,31 +161,51 @@ LINEAR_DEFAULTS = {
 
 ID = "TASK-12"
 
+RESEARCHER_ONLY = workflow_line('[[stage]]\nrole = "researcher"\ninput = "research"\n')
+
+# pm, then engineer: no researcher stage
+PM_ENGINEER = workflow_line(
+    '[[stage]]\nrole = "pm"\ninput = "design"\nnext = "engineer"\ntitle_prefix = "PRD"\n'
+    '[[stage]]\nrole = "engineer"\ninput = "build"\n'
+)
+
+# dummy-tester (a core charter, as a custom role), then pm
+TESTER_PM = (
+    '[[stage]]\nrole = "dummy-tester"\ninput = "research"\nnext = "pm"\n'
+    '[[stage]]\nrole = "pm"\ninput = "design"\ntitle_prefix = "PRD"\n'
+)
+
+TESTER_ROLE = role("dummy-tester")
+
+ENGINEER_ONLY = workflow_line('[[stage]]\nrole = "engineer"\ninput = "build"\n')
+
+# researcher, then pm, the last stage
+RESEARCHER_PM = workflow_line(
+    '[[stage]]\nrole = "researcher"\ninput = "research"\nnext = "pm"\n'
+    '[[stage]]\nrole = "pm"\ninput = "design"\n'
+)
+
 A = "engineer-TASK-12-0b6f2c1e"
 
 
 class ConfigurationLoading(ConfigFile, Case):
     def test_stage_order(self):
         self.assertEqual(self.load(PIPELINE).stages, {"researcher": 0, "pm": 1, "engineer": 2})
+        researcher_last = workflow_line(PACKAGED_FLOW.replace('next = "pm"\n', ""))
         self.assertEqual(
-            self.load(
-                HEADER + role("researcher") + role("pm", 'next = "engineer"') + role("engineer")
-            ).stages,
+            self.load(HEADER + researcher_last + PIPELINE[len(HEADER) :]).stages,
             {"researcher": 0, "pm": 0, "engineer": 1},
         )
 
     def test_rejected(self):
-        body = BASE[BASE.index("[linear.roles") :]
+        body = PIPELINE[PIPELINE.index("[linear.roles") :]
         group = "linear.task_label_group must be a Linear label group id (UUID): "
         label = BASE + f'[linear.task_labels]\nlight-research = "{LABEL1}"\n'
         upper = "ABCDEF00-0000-4000-8000-000000000021"
-        solo = role("solo")
-        x = BASE + "[roles.x]\n[linear.roles.x]\n"
+        solo = role("dummy-tester")
+        x = BARE + "[roles.dummy-tester]\n[linear.roles.dummy-tester]\n"
+        account = "linear.roles.dummy-tester.account"
         cases = [
-            (
-                BASE + role("a", 'next = "b"') + role("b", 'next = "a"'),
-                "the next chain from 'a' has a cycle",
-            ),
             (
                 HEADER
                 + 'docs = { repo = "acme/notes", clone = "/nonexistent/notes", branch = "trunk" }\n'
@@ -185,50 +218,53 @@ class ConfigurationLoading(ConfigFile, Case):
                 "unknown keys: docs, tasks",
             ),
             (
-                BASE.replace(solo, role("solo", 'role = "x"', 'task = "y"')),
-                "[roles.solo] has unknown keys: role, task",
+                BASE.replace(solo, role("dummy-tester", 'role = "x"', 'task = "y"')),
+                "[roles.dummy-tester] has unknown keys: role, task",
             ),
             (
-                BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")),
-                "[roles.solo] has unknown keys: read_only, tasks",
+                BASE.replace(solo, role("dummy-tester", 'tasks = ["x"]', "read_only = []")),
+                "[roles.dummy-tester] has unknown keys: read_only, tasks",
             ),
-            (BASE + "[roles.x]\n", missing("linear.roles.x.account, linear.roles.x.key")),
-            (x + 'key = "k-x"\n', missing("linear.roles.x.account")),
-            (x + 'account = ""\nkey = "k-x"\n', missing("linear.roles.x.account")),
+            # a stage needs no [roles.<role>] table, but its account and key
+            (BARE, missing(f"{account}, linear.roles.dummy-tester.key")),
+            (BARE + "[roles.dummy-tester]\n", missing(f"{account}, linear.roles.dummy-tester.key")),
+            (x + 'key = "k-x"\n', missing(account)),
+            (x + 'account = ""\nkey = "k-x"\n', missing(account)),
             (
                 x + 'account = 5\nkey = "k-x"\n',
-                "[linear.roles.x] account must be the role's Linear email: 5",
+                "[linear.roles.dummy-tester] account must be the role's Linear email: 5",
             ),
-            (x + 'account = "x@agents.test"\n', missing("linear.roles.x.key")),
-            (
-                BASE + "[roles.x]\n[roles.y]\n[linear.roles.y]\nkey = 'k-y'\n",
-                missing("linear.roles.y.account, linear.roles.x.account, linear.roles.x.key"),
-            ),
-            (x + 'account = "x@agents.test"\nkey = ""\n', missing("linear.roles.x.key")),
+            (x + 'account = "x@agents.test"\n', missing("linear.roles.dummy-tester.key")),
+            (x + 'account = "x@agents.test"\nkey = ""\n', missing("linear.roles.dummy-tester.key")),
             (
                 x + 'account = "x@agents.test"\nkey = ["k"]\n',
-                "[linear.roles.x] key must be a Keychain service name: ['k']",
+                "[linear.roles.dummy-tester] key must be a Keychain service name: ['k']",
             ),
             (
                 x + 'account = "x@agents.test"\nkey = "k-x"\nmax_runs = 2\n',
-                "[linear.roles.x] has unknown keys: max_runs",
+                "[linear.roles.dummy-tester] has unknown keys: max_runs",
             ),
             (
                 BASE + '[linear.roles.ghost]\naccount = "g@agents.test"\nkey = "k-g"\n',
-                "[linear.roles.ghost] names no [roles.ghost]",
+                "[linear.roles.ghost] names no stage of the workflow",
             ),
+            (BASE + "[roles.ghost]\n", "[roles.ghost] names no stage of the workflow"),
+            (BASE + "[roles.ghost]\nnext = 'pm'\n", "[roles.ghost] has unknown keys: next"),
             (
                 BASE.replace(
-                    "[roles.solo]\n", '[roles.solo]\naccount = "s@agents.test"\nkey = "k"\n'
+                    "[roles.dummy-tester]\n",
+                    '[roles.dummy-tester]\naccount = "s@agents.test"\nkey = "k"\n',
                 ),
-                "[roles.solo] has unknown keys: account, key",
+                "[roles.dummy-tester] has unknown keys: account, key",
             ),
             ("linear.typo = 1\nlinear.other = 2\n" + BASE, "unknown keys in [linear]: other, typo"),
             (HEADER + "linear.roles = 5\n[roles.x]\n", "[linear.roles] must be a table"),
+            (HEADER + "roles = 5\n", "[roles] must be a table"),
+            (HEADER + "roles.pm = 5\n", "[roles.pm] must be a table"),
             *[
                 (
-                    BASE + role("x", f"max_runs = {value}"),
-                    f"[roles.x] max_runs must be a whole number >= 1: {shown}",
+                    BARE + role("dummy-tester", f"max_runs = {value}"),
+                    f"[roles.dummy-tester] max_runs must be a whole number >= 1: {shown}",
                 )
                 for shown, value in {
                     "0": "0",
@@ -253,7 +289,7 @@ class ConfigurationLoading(ConfigFile, Case):
             (BASE.replace(f'"{TEAM}"', "5"), "linear.team must be a Linear team id (UUID): 5"),
             (BASE.replace(f'linear.team = "{TEAM}"\n', ""), missing("linear.team")),
             (
-                body,
+                HEADER[HEADER.index("delegates = ") :] + body,
                 missing(
                     "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
                     "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
@@ -340,15 +376,10 @@ class ConfigurationLoading(ConfigFile, Case):
                 BASE + f'[local_clones]\n"{SLUG}" = "/x"\n"Ophis/Agent-PM" = "/y"\n',
                 f"local_clones.{SLUG} and local_clones.Ophis/Agent-PM are the same repo",
             ),
-            (PIPELINE + role("ghost"), "role 'ghost' is not in delegate/config.toml"),
-            (PIPELINE + role("dummy-tester"), "role 'dummy-tester' has no entry in config.TASKS"),
+            (PIPELINE + role("ghost"), "[roles.ghost] names no stage of the workflow"),
             (
-                HEADER + role("researcher", 'next = "pm"'),
-                "next of 'researcher' names undefined role 'pm'",
-            ),
-            (
-                HEADER + role("researcher") + role("pm", 'next = "researcher"'),
-                "next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix",
+                PIPELINE + role("dummy-tester"),
+                "[roles.dummy-tester] names no stage of the workflow",
             ),
             (
                 PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
@@ -368,7 +399,7 @@ class ConfigurationLoading(ConfigFile, Case):
                 for task, text in (
                     ("echo", PIPELINE),
                     ("ghost", PIPELINE),
-                    ("product-design", HEADER + role("researcher")),
+                    ("product-design", HEADER + RESEARCHER_ONLY + role("researcher")),
                 )
             ],
         ]
@@ -427,22 +458,17 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         pm = cfg.roles["pm"]
         self.assertEqual(
-            (pm.account, pm.key, pm.next, pm.max_runs, pm.require_instructions),
-            ("pm@agents.test", "linear-api-key-pm", "engineer", 1, True),
+            (pm.account, pm.key, pm.max_runs), ("pm@agents.test", "linear-api-key-pm", 1)
         )
         self.assertEqual(
             (cfg.task_labels, cfg.project_repos, cfg.local_clones, cfg.human_members),
             ({}, {}, {}, ()),
         )
         cfg = self.load(
-            PIPELINE.replace(
-                role("engineer"), role("engineer", "max_runs = 3", "require_instructions = false")
-            )
+            PIPELINE.replace(role("engineer"), role("engineer", "max_runs = 3"))
             + "[core.roles.pm]\ntier = 1\n"
         )
-        self.assertEqual(
-            (cfg.roles["engineer"].max_runs, cfg.roles["engineer"].require_instructions), (3, False)
-        )
+        self.assertEqual(cfg.roles["engineer"].max_runs, 3)
         self.assertEqual((cfg.roles["pm"].run.tier, cfg.roles["researcher"].run.tier), (1, 2))
         cfg = self.load(
             PIPELINE
@@ -453,6 +479,66 @@ class ConfigurationLoading(ConfigFile, Case):
             PIPELINE + f'[linear.project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n'
         )
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
+
+    def test_workflow_path_replaces_the_packaged_one(self):
+        # whole: the packaged researcher and engineer stages are gone, their tables ignored
+        for value in (os.path.join(self.dir, "flow.toml"), "~/flow.toml"):
+            write(os.path.expanduser(value), TESTER_PM)
+            with self.subTest(value):
+                cfg = self.load(
+                    HEADER + f'workflow = "{value}"\n' + PIPELINE[len(HEADER) :] + TESTER_ROLE
+                )
+                self.assertEqual(list(cfg.roles), ["dummy-tester", "pm"])
+                self.assertEqual(dict(cfg.stages), {"dummy-tester": 0, "pm": 1})
+                self.assertEqual(config.TASKS["dummy-tester"].done, "dummy-tester done:")
+
+    def test_empty_workflow_reads_the_packaged_one(self):
+        cfg = self.load(HEADER + 'workflow = ""\n' + PIPELINE[len(HEADER) :])
+        self.assertEqual(list(cfg.roles), ["researcher", "pm", "engineer"])
+        self.assertEqual(config.TASKS.path, workflow.PACKAGED)
+
+    def test_workflow_value_must_be_an_absolute_path(self):
+        for value in ('"flow.toml"', '"./flow.toml"', "1", '"/x\\ty"'):
+            with self.subTest(value):
+                self.fails(
+                    'orchestrator/config.toml: workflow must be "" (the packaged workflow) or a '
+                    f"printable absolute or ~ path: {tomllib.loads('v = ' + value)['v']!r}",
+                    HEADER + f"workflow = {value}\n" + PIPELINE[len(HEADER) :],
+                )
+
+    def test_unreadable_workflow(self):
+        flow = os.path.join(self.dir, "missing.toml")
+        with self.assertRaises(config.ConfigError) as cm:
+            self.load(HEADER + f'workflow = "{flow}"\n' + PIPELINE[len(HEADER) :])
+        self.assertTrue(str(cm.exception).startswith(f"{flow}: "), cm.exception)
+        self.assertIn("No such file or directory", str(cm.exception))
+        self.assertIsNotNone(cm.exception.logs_dir)
+
+    def test_a_stage_role_the_delegate_does_not_know(self):
+        # reported before the stage's missing Linear account
+        flow = os.path.join(self.dir, "flow.toml")
+        write(flow, '[[stage]]\nrole = "anlyst"\ninput = "research"\n')
+        self.fails(
+            f"{flow}: stage anlyst: not a role the Delegate knows (its charters: core and "
+            "[delegate] team_dirs)",
+            HEADER + f'workflow = "{flow}"\n',
+        )
+
+    def test_role_tables_outside_the_workflow(self):
+        # a packaged stage's tables are dropped, keys checked; any other non-stage table is an error
+        flow = os.path.join(self.dir, "flow.toml")
+        write(flow, TESTER_PM)
+        head = HEADER + f'workflow = "{flow}"\n' + role("pm") + TESTER_ROLE
+        cfg = self.load(head + role("researcher", "max_runs = 2") + role("engineer"))
+        self.assertEqual(list(cfg.roles), ["dummy-tester", "pm"])
+        self.fails(
+            "orchestrator/config.toml: [roles.researcher] has unknown keys: next",
+            head + role("researcher", 'next = "pm"'),
+        )
+        self.fails(
+            "orchestrator/config.toml: [roles.ghost] names no stage of the workflow",
+            head + role("ghost"),
+        )
 
     def test_task_tiers(self):
         self.assertEqual(self.load(PIPELINE).task_tiers, {})
@@ -484,7 +570,10 @@ class ConfigurationLoading(ConfigFile, Case):
                     text + f"[task_tiers]\n{task} = 3\n",
                     f"task_tiers.{task} is not a task of a role in orchestrator/config.toml",
                 )
-                for task, text in (("ghost", PIPELINE), ("build", HEADER + role("researcher")))
+                for task, text in (
+                    ("ghost", PIPELINE),
+                    ("build", HEADER + RESEARCHER_ONLY + role("researcher")),
+                )
             ],
         ]
         for text, message in cases:
@@ -671,7 +760,7 @@ class ConfigurationLoading(ConfigFile, Case):
                 PIPELINE.replace(f'linear.team = "{TEAM}"\n', ""),
             ),
             (
-                "orchestrator/config.toml: role 'ghost' is not in delegate/config.toml",
+                "orchestrator/config.toml: [roles.ghost] names no stage of the workflow",
                 PIPELINE + role("ghost"),
             ),
         ):
@@ -784,7 +873,7 @@ class CommittedConfiguration(Case):
     def test_real_config(self):
         cfg = self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
         self.assertEqual(
-            {r: (*v, cfg.roles[r].require_instructions) for r, v in fields(cfg.roles).items()},
+            {r: (*v, config.TASKS[r].require_instructions) for r, v in fields(cfg.roles).items()},
             {
                 "researcher": (*ROLES["researcher"][:3], 3, "pm", True),
                 "pm": (*ROLES["pm"][:3], 3, "engineer", False),
@@ -855,17 +944,16 @@ class CommittedConfiguration(Case):
             },
         )
 
-    def test_a_local_flow_key_overrides_only_that_key(self):
+    def test_role_next_and_require_instructions_are_unknown_keys(self):
+        # the workflow is their only source (docs/upgrading.md)
         local = HEADER + role("researcher") + role("engineer")
-        for pm, want in (
-            (role("pm", "require_instructions = true"), ("engineer", True)),
-            (role("pm", 'next = ""'), (None, False)),
-        ):
-            with self.subTest(pm):
-                cfg = self.load(local + pm)
+        for line in ("require_instructions = true", 'next = ""'):
+            with self.subTest(line):
+                with self.assertRaises(config.ConfigError) as cm:
+                    self.load(local + role("pm", line))
                 self.assertEqual(
-                    {r: (x.next, x.require_instructions) for r, x in cfg.roles.items()},
-                    {"researcher": ("pm", True), "pm": want, "engineer": (None, True)},
+                    str(cm.exception),
+                    f"orchestrator/config.toml: [roles.pm] has unknown keys: {line.split()[0]}",
                 )
 
     def test_a_bad_workflow_stops_load(self):
@@ -980,8 +1068,8 @@ class DelegateRegistry(ConfigFile, Case):
         self.assertEqual(
             CatalogDelegate.calls,
             [
-                ("trusted_dirs",),
                 ("roles",),
+                ("trusted_dirs",),
                 *(
                     ("resolve", name, ({"roles": {"pm": {"tier": 1}}},))
                     for name in ("researcher", "pm", "engineer")
@@ -1168,18 +1256,25 @@ class RunnableRoles(ConfigFile, Case):
             {r: x.tasks for r, x in roles.items()},
             {r: tuple(HARNESS_DELEGATE.roles()[r]) for r in roles},
         )
-        roles = self.runs(HEADER + role("engineer") + role("researcher", "max_runs = 3"))
+        # the workflow's order, whatever the tables'
+        roles = self.runs(
+            HEADER + role("engineer") + role("pm") + role("researcher", "max_runs = 3")
+        )
         self.assertEqual(
-            [(r, x.max_runs) for r, x in roles.items()], [("engineer", 1), ("researcher", 3)]
+            [(r, x.max_runs) for r, x in roles.items()],
+            [("researcher", 3), ("pm", 1), ("engineer", 1)],
         )
         text = PIPELINE + f'[linear.task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
 
-    def test_a_replaced_config_leaves_unset_flow_keys_unset(self):
-        roles = self.runs(HEADER + role("researcher") + role("pm") + role("engineer"))
+    def test_a_stage_without_role_table_runs_one(self):
+        accounts = "".join(
+            f'[linear.roles.{r}]\naccount = "{r}@agents.test"\nkey = "linear-api-key-{r}"\n'
+            for r in ("researcher", "pm", "engineer")
+        )
+        roles = self.runs(HEADER + accounts + "[roles.pm]\nmax_runs = 2\n")
         self.assertEqual(
-            {r: (x.next, x.require_instructions) for r, x in roles.items()},
-            dict.fromkeys(("researcher", "pm", "engineer"), (None, True)),
+            {r: x.max_runs for r, x in roles.items()}, {"researcher": 1, "pm": 2, "engineer": 1}
         )
 
     def test_tasks_by_role(self):
@@ -1417,7 +1512,7 @@ class ConfigurationRoot(ConfigFile, Case):
     def test_docs(self):
         self.assertEqual(self.load(PIPELINE).docs, config.Docs("acme/notes", "trunk", DIRS))
         self.assertEqual(
-            self.load(HEADER + role("pm", 'next = "engineer"') + role("engineer")).docs,
+            self.load(HEADER + PM_ENGINEER + role("pm") + role("engineer")).docs,
             config.Docs("acme/notes", "trunk", {"pm": "Designs/"}),
         )
         self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", ', host = "github.com" }')))
@@ -1437,7 +1532,7 @@ class ConfigurationRoot(ConfigFile, Case):
                 self.core(CORE_TOML.replace(DESIGN, design))
                 self.fails(message, PIPELINE)
         self.core(CORE_TOML)
-        self.fails(message, HEADER + role("engineer"))
+        self.fails(message, HEADER + ENGINEER_ONLY + role("engineer"))
 
 
 # A local table that stays empty is dropped (utils/src/agent_pm/utils/config_file.py), so a role
@@ -1455,8 +1550,8 @@ class LocalOverlay(ConfigFile, Case):
             + f'[linear.project_repos]\n"{P2}" = "ophis/y"\n'
         )
         cfg = self.load(
-            'linear.human_members = ["a@x.com", "c@x.com"]\n'
-            '[roles.researcher]\nnext = "pm"\nmax_runs = 3\n[roles.pm]\n'
+            RESEARCHER_PM + 'linear.human_members = ["a@x.com", "c@x.com"]\n'
+            "[roles.researcher]\nmax_runs = 3\n[roles.pm]\n"
             f'[linear.project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
         )
         self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
@@ -1488,7 +1583,9 @@ class LocalOverlay(ConfigFile, Case):
         self.local(LOCAL_PIPELINE + "[roles.ghost]\n")
         self.assertEqual(set(self.load("").roles), want)
         self.local(LOCAL_PIPELINE + role("ghost"))
-        self.fails("orchestrator/config.toml: [linear.roles.ghost] names no [roles.ghost]", "")
+        self.fails(
+            "orchestrator/config.toml: [linear.roles.ghost] names no stage of the workflow", ""
+        )
 
     def test_a_bad_value_wrong_type_unknown_or_old_task_local_key_is_rejected_by_name(self):
         for local, text, message in (

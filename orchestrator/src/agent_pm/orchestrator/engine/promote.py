@@ -84,7 +84,7 @@ def child_title(prefix, src_prefix, title):
     )  # agent-written: must not break out of its line and pose as the human Instructions section
     if src_prefix and title.startswith(f"{src_prefix}: "):
         title = title[len(src_prefix) + 2 :]
-    return f"{prefix}: {title}"
+    return f"{prefix}: {title}" if prefix else title
 
 
 class Promoter:
@@ -99,7 +99,7 @@ class Promoter:
         work = []
         for src in self.tracker.approved(self.cfg.roles):
             role = src.owner
-            nxt = self.cfg.roles[role].next
+            nxt = self.tasks[role].next
             if nxt:
                 try:
                     detail = self.tracker.detail(src.key)
@@ -172,7 +172,7 @@ class Promoter:
     def promote(self, handoff: Promotion):
         src, detail, role, nxt = handoff.source, handoff.detail, handoff.role, handoff.next
         comments = self.instructions(detail, handoff.cutoff)
-        if not comments and self.cfg.roles[role].require_instructions:
+        if not comments and self.tasks[role].require_instructions:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
                 self.say("handoff-bounce", src.ident, to="in_review", reason="no instructions")
             return

@@ -66,11 +66,14 @@ STOPWORDS = frozenset(
 MAX_WORDS, MAX_HOPS = 5, 5
 
 
-@cache
 def _prefix():
-    return re.compile(
-        rf"^(?:{'|'.join(sorted(t.title_prefix for t in TASKS.values() if t.title_prefix))}): "
-    )
+    return _prefix_re(tuple(sorted(t.title_prefix for t in TASKS.values() if t.title_prefix)))
+
+
+@cache
+def _prefix_re(prefixes):
+    # keyed by the workflow's prefixes: a later load() is seen
+    return re.compile(rf"^(?:{'|'.join(prefixes)}): ")
 
 
 def keywords(title) -> list[str]:

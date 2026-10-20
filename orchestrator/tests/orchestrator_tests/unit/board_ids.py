@@ -1,3 +1,10 @@
+import atexit
+import hashlib
+import os
+import shutil
+import tempfile
+from importlib.resources import files
+
 TEAM = "00000000-0000-4000-8000-000000000001"
 STATES = {
     k: f"00000000-0000-4000-8000-0000000000{i:02d}"
@@ -29,6 +36,20 @@ HEADER = (
     + 'delegates = { default = "harness", harness = { implementation = "agent_pm.delegate:HarnessDelegate" } }\n'
 )
 ACCOUNTS = {r: f"{r}@agents.test" for r in ("researcher", "pm", "engineer")}
+
+
+# the packaged workflow's text, for a fixture that changes it
+PACKAGED_FLOW = files("agent_pm.orchestrator.engine.flow").joinpath("workflow.toml").read_text()
+_FLOWS = tempfile.mkdtemp(prefix="agent-pm-test-workflows-")
+atexit.register(shutil.rmtree, _FLOWS, ignore_errors=True)
+
+
+def workflow_line(text):
+    """A top-level `workflow = "<file>"` line (put it before any table), the file holding text."""
+    path = os.path.join(_FLOWS, hashlib.sha256(text.encode()).hexdigest()[:16] + ".toml")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return f'workflow = "{path}"\n'
 
 
 def role(name, *lines):

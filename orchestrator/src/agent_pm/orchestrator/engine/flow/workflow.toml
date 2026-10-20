@@ -1,8 +1,7 @@
 # The default workflow: one [[stage]] table per orchestrated role, its keys the fields of Stage
 # (orchestrator/src/agent_pm/orchestrator/engine/flow/types.py). Only role and input are required; an unset
 # key takes the default after its name.
-# [orchestrator.roles.<role>] next and require_instructions in ~/.agent-pm/config.local.toml override this
-# file's (phase 4 removes them).
+# [orchestrator] workflow in ~/.agent-pm/config.local.toml names a file in this format that replaces this one whole.
 #   role                  a role the Delegate knows (a charter in core or [delegate] team_dirs)
 #   input                 research, design or build: the role's input layout and write-back
 #   next                  the stage promote hands this stage's Handoff issues to; "" (default) → the last stage
