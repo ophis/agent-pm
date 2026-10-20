@@ -144,6 +144,22 @@ class Parse(Case):
         got = parse(FRONT + "\n### Comments\n\n###\nlooks fine\n\nship it\n")
         self.assertEqual(got.comments, (Note(MTIME, Source.OTHER, "looks fine\n\nship it", None),))
 
+    def test_empty_json_string_is_none(self):
+        got = parse(FRONT[:-4] + 'task: ""\nclient: ""\nparent: ""\n---\n')
+        self.assertEqual((got.task, got.client, got.parent), (None, None, None))
+
+    def test_heading_in_comment_body(self):
+        got = parse(FRONT + "### Comments\n###\nplan:\n#### Steps\n1. read\n")
+        self.assertEqual(
+            got.comments, (Note(MTIME, Source.OTHER, "plan:\n#### Steps\n1. read", None),)
+        )
+
+    def test_bad_header_after_a_comment(self):
+        self.refuses(
+            FRONT + "### Comments\n###\nhi\n#### other · 2026-13-19 14:05\nyo\n",
+            "bad comment header '#### other · 2026-13-19 14:05'",
+        )
+
     def test_hidden_id_and_key(self):
         got = parse(
             FRONT

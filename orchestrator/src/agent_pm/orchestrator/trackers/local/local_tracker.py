@@ -146,7 +146,7 @@ class LocalTracker(Tracker):
         return Issue(
             id=found.id,
             identifier=found.id,
-            url=Path(found.path).as_uri(),
+            url=_url(found),
             title=found.title,
             description=found.description,
             created_at=_stamp(found.created),
@@ -178,35 +178,39 @@ class LocalTracker(Tracker):
         return None if found is None else found.description
 
     def finished(self, owners):
+        children = self._children()
         return [
-            Finished(each.id, each.id, _last(each, each.state), self.sub_issues(each.id))
-            for each in self._all().values()
-            if each.assignee in self.roles
-            and (
-                each.state == LocalState.CANCELED
-                or (each.state == LocalState.DONE and each.assignee in owners)
-            )
+            Finished(each.id, each.id, _last(each, each.state), children.get(each.id, ()))
+            for each in self._in(LocalState.DONE, LocalState.CANCELED)
+            if each.state == LocalState.CANCELED or each.assignee in owners
         ]
 
     def sub_issues(self, key):
-        return tuple(
-            SubIssue(each.id, each.id, each.state in ENDED)
-            for each in self._all().values()
-            if each.assignee is not None and each.parent == key
-        )
+        return self._children().get(key, ())
+
+    def _children(self):
+        """Unarchived issues by parent id."""
+        found = {}
+        for each in self._all().values():
+            if each.assignee is not None and each.parent:
+                found[each.parent] = (
+                    *found.get(each.parent, ()),
+                    SubIssue(each.id, each.id, each.state in ENDED),
+                )
+        return found
 
     def approved(self, owners):
         return [
             Approved(
                 each.id,
                 each.id,
-                Path(each.path).as_uri(),
+                _url(each),
                 each.title,
                 each.priority,
                 each.created.isoformat(),
                 "",
                 "",
-                each.assignee,
+                each.assignee or "",
                 tuple((link.title, link.url) for link in each.links),
             )
             for each in self._in(LocalState.APPROVED, owners=owners)
@@ -295,6 +299,10 @@ def _unsupported(name) -> NoReturn:
     raise NotImplementedError(f"local board: {name} is not supported yet")
 
 
+def _url(issue):
+    return Path(issue.path).as_uri()
+
+
 def _stamp(at):
     """As Linear's times: UTC, milliseconds, Z."""
     return at.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -312,7 +320,7 @@ def _record(issue):
     return {
         "id": issue.id,
         "identifier": issue.id,
-        "url": Path(issue.path).as_uri(),
+        "url": _url(issue),
         "title": issue.title,
         "priority": issue.priority,
         "createdAt": _stamp(issue.created),

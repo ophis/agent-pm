@@ -37,6 +37,9 @@ class _Section(StrEnum):
     HISTORY = "History"
 
 
+_ORDER = list(_Section)
+
+
 _FRONT = re.compile(r"([a-z_]+):(.*)")
 _LINK_TITLE = re.compile(r"  - title:(.*)")
 _LINK_URL = re.compile(r"    url:(.*)")
@@ -44,6 +47,7 @@ _SECTION = re.compile(r"#{3} (Description|Comments|History)")
 _TIME = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"
 _SOURCE = "(" + "|".join(Source) + ")"
 _HEADER = re.compile(rf"#{{4}} {_SOURCE} · {_TIME}(?: <!-- id=\S+ key=(\S+) -->)?")
+_HEADED = re.compile(r"#{4} \S+ · ")  # header-shaped; other #### lines are body text
 _BARE = "###"
 _HISTORY = re.compile(rf"- {_TIME} (\w+) {_SOURCE}")
 
@@ -128,10 +132,11 @@ def _links(value, lines, i):
         if not title:
             raise _Bad(f"bad links line {lines[i]!r}")
         line = lines[i + 1] if i + 1 < len(lines) else ""
-        url = _LINK_URL.fullmatch(line)
-        if not url or not _scalar(url[1].strip()):
+        found = _LINK_URL.fullmatch(line)
+        url = found and _scalar(found[1].strip())
+        if not url:
             raise _Bad(f"bad links line {line or lines[i]!r}")
-        links.append(FileLink(_scalar(title[1].strip()) or "", _scalar(url[1].strip())))
+        links.append(FileLink(_scalar(title[1].strip()) or "", url))
         i += 2
     return tuple(links), i
 
@@ -148,7 +153,7 @@ def _scalar(value):
         loaded = None
     if not isinstance(loaded, str):
         raise _Bad(f"bad string {value!r}")
-    return loaded
+    return loaded or None
 
 
 def _required(front, key):
@@ -213,7 +218,7 @@ def _sections(lines):
         section = _Section(match[1])
         if section in sections:
             raise _Bad(f"duplicate section {section.value!r}")
-        later = [s for s in sections if list(_Section).index(s) > list(_Section).index(section)]
+        later = [s for s in sections if _ORDER.index(s) > _ORDER.index(section)]
         if later:
             raise _Bad(f"section {section.value!r} after {later[0].value!r}")
         sections[section], current = [], section
@@ -230,13 +235,13 @@ def _comments(lines, mtime):
     for line in lines:
         if line == _BARE:
             notes.append([mtime, Source.OTHER, [], None])
-        elif line.startswith("####") or (not notes and line.strip()):
+        elif _HEADED.match(line) or (not notes and line.strip()):
             header = _HEADER.fullmatch(line)
             try:
-                at = header and _local(header[2])
+                at = _local(header[2]) if header else None
             except ValueError:
                 at = None
-            if not at:
+            if not header or not at:
                 raise _Bad(f"bad comment header {line!r}")
             notes.append([at, Source(header[1]), [], header[3]])
         elif notes:

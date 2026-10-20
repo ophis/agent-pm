@@ -3,6 +3,7 @@
 import os
 import shutil
 from datetime import datetime
+from unittest import mock
 
 from agent_pm.orchestrator.engine.types import TrackerFileError
 from agent_pm.orchestrator.trackers.local import board
@@ -141,6 +142,18 @@ class Scan(Board):
     def test_missing_board(self):
         shutil.rmtree(self.board)
         self.refuses(self.board, "no such board directory")
+
+    def test_unreadable_dir(self):
+        self.write("pm/ready/LOC-1.md", text("LOC-1"))
+        scandir, ready = os.scandir, os.path.join(self.board, "pm", "ready")
+
+        def denied(path):
+            if path == ready:
+                raise PermissionError(13, "Permission denied", path)
+            return scandir(path)
+
+        with mock.patch("os.scandir", denied):
+            self.refuses(ready, "Permission denied")
 
     def test_empty_board(self):
         self.write(".state/logs/orchestrator.jsonl", "")

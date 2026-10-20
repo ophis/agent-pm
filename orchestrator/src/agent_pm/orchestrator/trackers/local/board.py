@@ -56,8 +56,11 @@ def _place(board, path):
 
 
 def _entries(path):
-    with os.scandir(path) as found:
-        return sorted((e for e in found if not e.name.startswith(".")), key=lambda e: e.name)
+    try:
+        with os.scandir(path) as found:
+            return sorted((e for e in found if not e.name.startswith(".")), key=lambda e: e.name)
+    except OSError as error:
+        raise TrackerFileError(path, error.strerror or str(error)) from None
 
 
 def _is_dir(entry):

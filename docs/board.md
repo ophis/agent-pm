@@ -1,6 +1,6 @@
-# Linear board
+# Board
 
-The Linear orchestrator runs the core from a Linear board: set it up once, then work through issue states.
+The orchestrator runs the core from a board, chosen by `[orchestrator] tracker`: a Linear board (`tracker = "linear"`; set it up once, then work through issue states) or a [local board](#local-board) of Markdown files (the default).
 
 ## Setup
 
