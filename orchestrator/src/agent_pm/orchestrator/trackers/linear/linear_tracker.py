@@ -13,6 +13,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     UNREADABLE,
     Approved,
     ArchivePlan,
+    Changes,
     Comment,
     Detail,
     Finished,
@@ -47,15 +48,33 @@ URL = "https://agent-pm.invalid/run/"
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
-    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
+    "query($i: String!, $after: String) { issue(id: $i) { state { id type } updatedAt "
     + STAMPS
     + " "
     + HISTORY
     + " } }"
 )
-CHILD_PAGE = "nodes { id identifier state { name type } } pageInfo { hasNextPage endCursor }"
+SNAPSHOT_BATCH = 50  # Q_FINISHED's page: issues with their history
+Q_SNAPSHOTS = (
+    "query($f: IssueFilter, $after: String) { issues(filter: $f, includeArchived: true, "
+    f"first: {SNAPSHOT_BATCH}) {{ nodes {{ identifier updatedAt state {{ id type }} "
+    + STAMPS
+    + " "
+    + HISTORY
+    + " } } }"
+)
+Q_CHANGED = (
+    "query($f: IssueFilter, $c: String) { issues(filter: $f, includeArchived: true, first: 100, "
+    "after: $c, orderBy: updatedAt) { nodes { identifier updatedAt } "
+    "pageInfo { hasNextPage endCursor } } }"
+)
+# children(first: 1): whether a sub-issue has its own, so a leaf costs no read
+CHILD_PAGE = (
+    "nodes { id identifier updatedAt state { name type } children(first: 1) { nodes { id } } } "
+    "pageInfo { hasNextPage endCursor }"
+)
 Q_ARCHIVE = (
-    "query($i: String!) { issue(id: $i) { id identifier url archivedAt state { name type } "
+    "query($i: String!) { issue(id: $i) { id identifier url archivedAt updatedAt state { name type } "
     "children(first: 50) { " + CHILD_PAGE + " } } }"
 )
 Q_CHILDREN = (
@@ -67,7 +86,7 @@ Q_FINISHED = (
     """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
   issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
   { state: { id: { in: $s } } }] }, first: 50, after: $c) {
-  nodes { id identifier """
+  nodes { id identifier updatedAt """
     + STAMPS
     + " "
     + HISTORY
@@ -388,15 +407,57 @@ class LinearTracker(Tracker):
 
     def read(self, ident):
         _need("states", self.state_ids)
-        ended = _need("finished", self.finished_ids)
-        issue = self.gql(Q_ISSUE, i=ident)["issue"]
-        if not issue:
+        _need("finished", self.finished_ids)
+        try:
+            issue = self.gql(Q_ISSUE, i=ident)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
             return None
-        state = issue["state"]["id"]
-        found = self._state(state)
+        return self._snapshot(issue) if issue else None
+
+    def snapshots(self, idents):
+        """Omits what read must resolve: one read per SNAPSHOT_BATCH, by this team and number,
+        lists no other team's (moved) or deleted issue."""
+        _need("states", self.state_ids)
+        _need("finished", self.finished_ids)
+        team = _need("team_id", self.team_id)
+        found = {}
+        for at in range(0, len(idents), SNAPSHOT_BATCH):
+            batch = idents[at : at + SNAPSHOT_BATCH]
+            numbers = [int(i.rsplit("-", 1)[1]) for i in batch]
+            f = {"team": {"id": {"eq": team}}, "number": {"in": numbers}}
+            nodes = {n["identifier"]: n for n in self.gql(Q_SNAPSHOTS, f=f)["issues"]["nodes"]}
+            found |= {i: self._snapshot(nodes[i]) for i in batch if i in nodes}
+        return found
+
+    def changed(self, since, pages):
+        """Issues updated after since, archived too, newest first; issues None: past pages."""
+        f = {
+            "team": {"id": {"eq": _need("team_id", self.team_id)}},
+            "updatedAt": {"gt": since.isoformat()},
+        }
+        found, cursor, cursors = {}, None, set()
+        for _ in range(pages):
+            page = self.gql(Q_CHANGED, f=f, c=cursor)["issues"]
+            for n in page["nodes"]:
+                at = parse_time(n["updatedAt"])
+                found[n["identifier"]] = max(at, found.get(n["identifier"], at))
+            if not page["pageInfo"]["hasNextPage"]:
+                return Changes(found, max(found.values(), default=None))
+            cursor = ops.advance("changed issues", page["pageInfo"]["endCursor"], cursors)
+        return Changes(None, max(found.values(), default=None))
+
+    def _snapshot(self, issue):
+        """Another team's finished state by its type."""
+        state = issue["state"]
+        found = self._state(state["id"])
+        if found is None and state["type"] in DONE:
+            found = IssueState.DONE if state["type"] == "completed" else IssueState.CANCELED
+        updated = parse_time(issue["updatedAt"])
         if found in (IssueState.DONE, IssueState.CANCELED):
-            return Snapshot(found, finished_at(issue, ended))
-        return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
+            return Snapshot(found, finished_at(issue, self.finished_ids), updated)
+        return Snapshot(found, last_move(issue["history"]["nodes"], {state["id"]}), updated)
 
     def issue(self, ident):
         selves = _need("selves", self.selves)
@@ -489,7 +550,10 @@ class LinearTracker(Tracker):
             if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
                 break
             cursor = end
-        return [Finished(n["id"], n["identifier"], finished_at(n, ended)) for n in nodes]
+        return [
+            Finished(n["id"], n["identifier"], finished_at(n, ended), parse_time(n["updatedAt"]))
+            for n in nodes
+        ]
 
     def archive_plan(self, key):
         """Unless archived, its descendants level by level (Linear lists no archived sub-issue)."""
@@ -517,6 +581,8 @@ class LinearTracker(Tracker):
         while level:
             below = []
             for parent in level:
+                if parent is not root and _leaf(parent):
+                    continue
                 for child in self._children(root, parent):
                     if child["id"] not in seen:
                         seen.add(child["id"])
@@ -702,7 +768,14 @@ def _need(name: str, value: T | None) -> T:
 
 def _sub_issue(node):
     state = node["state"]
-    return SubIssue(node["id"], node["identifier"], state["name"], state["type"] in DONE)
+    finished = state["type"] in DONE
+    return SubIssue(
+        node["id"], node["identifier"], state["name"], finished, parse_time(node["updatedAt"])
+    )
+
+
+def _leaf(node):
+    return (node.get("children") or {}).get("nodes") == []
 
 
 def _checked(root, parent, page):

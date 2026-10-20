@@ -206,7 +206,7 @@ class Writes(Case):
             and "history(first: 250, after: $after" in value
             and value != ops.HISTORY
         }
-        self.assertEqual(len(found), 4)
+        self.assertEqual(len(found), 5)
         for name, query in found.items():
             with self.subTest(name=name):
                 self.assertIn("$after: String", query)

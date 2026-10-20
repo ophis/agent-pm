@@ -28,6 +28,10 @@ attached; one of a kind no longer configured is neither queried nor logged. Run 
 error, and no issue is pruned. Each step is logged (event_log.log, src prune); a failure is logged
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
+
+A tick's Linear requests after team_and_roles: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at
+most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the
+tracker's time (sync).
 """
 
 import functools
@@ -39,7 +43,7 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import SessionError
-from agent_pm.orchestrator.engine import config, runs
+from agent_pm.orchestrator.engine import config, prune_state, runs
 from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
@@ -50,11 +54,18 @@ from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
+    Entry,
     LinearError,
+    PruneState,
+    Refusal,
     Unavailable,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
+from agent_pm.orchestrator.trackers.linear.linear_tracker import (
+    SNAPSHOT_BATCH,
+    LinearTracker,
+    team_and_roles,
+)
 from agent_pm.utils import (
     GUARD,
     SHORT,
@@ -73,6 +84,12 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
+SYNC_PAGES, READ_REQUESTS, ARCHIVE_REQUESTS = 3, 10, 20  # a tick's Linear requests, by phase
+BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again after it
+OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
+CACHE = "prune.json"
+TOO_BIG = "archive: too many sub-issues to read in one tick"
+LINEAR_ERRORS = (LinearError, OSError, subprocess.SubprocessError)
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-orchestrator prune [--dry-run]
@@ -112,6 +129,13 @@ Prerequisites and effects:
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
+  Past its team and role reads, at most 33 Linear requests per run: 3
+  change-feed pages, 10 issue reads, 20 archive requests; work past a cap
+  waits for a later run, and an issue whose sub-issues alone need more is
+  not archived. logs/prune.json caches what was read, read again when Linear
+  reports a change or after a day (a dry run never writes it). An issue
+  Linear no longer has is skipped; one moved to another team finishes by
+  its state there.
   Events go to orchestrator.jsonl (src prune); preview JSON lines go to stderr.
   Exit 0: completed; 1: Linear unavailable (logged once a day), unknown
   inventory or failed step after remaining steps; 2: configuration error
@@ -130,15 +154,44 @@ Recovery and next help:
 """
 
 
+class Spent(Exception):
+    pass
+
+
+class Budget:
+    """gql, counted: a request past limit raises Spent unsent."""
+
+    def __init__(self, gql):
+        self.gql, self.left = gql, 0
+
+    def limit(self, n):
+        self.left = n
+
+    def spend(self):
+        if self.left <= 0:
+            raise Spent
+        self.left -= 1
+
+    def __call__(self, query, **v):
+        self.spend()
+        return self.gql(query, **v)
+
+
 class Pruner:
     def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, linear, writable=None):
         self.now, self.dry, self.work, self.roles = now, dry, work, roles
-        self.tracker = LinearTracker.of_team(gql, linear, team, roles)
+        self.budget = Budget(gql)
+        self.tracker = LinearTracker.of_team(self.budget, linear, team, roles)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.views, self.classes, self.by_issue = 0, {}, {}, None
+        self.finished, self.anchor, self.cold = None, None, False
         self.say = functools.partial(log, "prune", dry=dry)
+        self.cache = os.path.join(cfg.logs_dir, CACHE)
+        self.state, unreadable = prune_state.load(self.cache)
+        if unreadable:
+            self.say("prune-skip", once=True, reason=f"{CACHE} unreadable: {unreadable}")
 
     def error(self, issue=None, **fields):
         self.errors += 1
@@ -249,68 +302,202 @@ class Pruner:
         return True
 
     def archive(self):
+        """A trusted refusal skips its plan; ARCHIVE_REQUESTS spent, the rest waits a tick."""
+        self.budget.limit(ARCHIVE_REQUESTS)
         try:
             found = self.tracker.finished(ARCHIVE_ROLES)
+        except Spent:
+            self.say("prune-deferred", archive="all")
+            return
         except Unavailable:
             raise
-        except (LinearError, OSError, subprocess.SubprocessError) as e:
+        except LINEAR_ERRORS as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
+        self.finished = {issue.ident for issue in found}
+        self.see(issue.updated for issue in found)
+        due = []
         for issue in found:
-            ident, since = issue.ident, issue.since
-            if since is None:
-                self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
-                continue
-            if self.now - since < QUARANTINE:
-                continue
-            plan = None
+            if issue.since is None:
+                self.say(
+                    "prune-skip", issue.ident, once=True, reason="archive: finish time unknown"
+                )
+            elif self.now - issue.since >= QUARANTINE:
+                due.append(issue)
+        left = self.budget.left
+        if due and left < 2:
+            self.say("prune-deferred", archive=len(due))
+            return
+        for n, issue in enumerate(due):
+            alone = self.budget.left == left
             try:
-                if self.dry:
-                    plan = self.tracker.archive_plan(issue.key)
-                else:
-                    self.tracker.archive(issue.key)
-            except ArchiveRefused as e:
-                plan = e.plan
-            except Unavailable:
-                raise
-            except (LinearError, OSError, subprocess.SubprocessError) as e:
-                self.error(ident, error=f"archive: {one_line(e)}")
-                continue
-            if plan is not None and plan.outcome == "refused":
-                self.say("prune-skip", ident, once=True, reason=_kept(plan))
-            elif self.dry:
-                self.say("prune-plan", ident, what="archive")
+                self.archive_one(issue)
+            except Spent:
+                if alone:  # its plan alone outgrows a tick: skipped like a refusal
+                    versions = {issue.ident: issue.updated}
+                    self.state.refused[issue.ident] = Refusal(versions, TOO_BIG, self.now)
+                    self.say("prune-skip", issue.ident, once=True, reason=TOO_BIG)
+                if rest := len(due) - n - alone:
+                    self.say("prune-deferred", archive=rest)
+                return
+
+    def archive_one(self, issue):
+        ident, refused = issue.ident, self.state.refused
+        if ident in refused and self.trusted(refused[ident].read):
+            self.say("prune-skip", ident, once=True, reason=refused[ident].reason)
+            return
+        plan = None
+        try:
+            if self.dry:
+                plan = self.tracker.archive_plan(issue.key)
+                if plan.outcome == "changed":
+                    self.budget.spend()  # the write a real tick sends
             else:
-                self.say("prune-archived", ident)
+                self.tracker.archive(issue.key)
+        except ArchiveRefused as e:
+            plan = e.plan
+        except Unavailable:
+            raise
+        except LINEAR_ERRORS as e:
+            self.error(ident, error=f"archive: {one_line(e)}")
+            return
+        refused.pop(ident, None)
+        if plan is not None and plan.outcome == "refused":
+            versions = {ident: issue.updated} | {s.ident: s.updated for s in plan.unfinished}
+            refused[ident] = Refusal(versions, _kept(plan), self.now)
+            self.say("prune-skip", ident, once=True, reason=_kept(plan))
+        elif self.dry:
+            self.say("prune-plan", ident, what="archive")
+        else:
+            self.say("prune-archived", ident)
 
     def run(self):
-        found = self.inventory()
+        found, idents = self.inventory(), None
         self.views = found or {}
+        self.sync()
         if found is None:
             self.error(error="run inventory unknown")
         else:
-            try:
-                idents = [
-                    n
-                    for n in sorted(os.listdir(self.work))
-                    if IDENT_RE.fullmatch(n) and (self.has_agent(n) or self.bare(n))
-                ]
-            except OSError:
-                idents = []
-            for ident in idents:
-                self.prune_issue(ident)
+            idents = self.listed()
+            snapshots = self.fresh(idents or [])
+            for ident in idents or []:
+                if ident in snapshots:
+                    self.prune_issue(ident, snapshots[ident])
         self.archive()
+        if not self.dry:
+            self.save(idents)
         return 3 if self.errors else 0
 
-    def prune_issue(self, ident):
+    def listed(self):
+        """None: unreadable."""
         try:
-            found = self.tracker.read(ident)
+            return [
+                n
+                for n in sorted(os.listdir(self.work))
+                if IDENT_RE.fullmatch(n) and (self.has_agent(n) or self.bare(n))
+            ]
+        except OSError:
+            return None
+
+    def sync(self):
+        """Before any read, drops what the feed names as changed since read, or all when it is
+        unknown. The cursor: the feed's latest time, not the host's."""
+        changes = None
+        self.budget.limit(SYNC_PAGES)
+        if self.state.synced is not None:
+            try:
+                changes = self.tracker.changed(self.state.synced - OVERLAP, SYNC_PAGES)
+            except Unavailable:
+                raise
+            except LINEAR_ERRORS as e:
+                self.error(error=f"change feed: {one_line(e)}")
+            else:
+                self.anchor = changes.latest
+        if changes is None or changes.issues is None:
+            self.state, self.cold = PruneState(), True
+            return
+        named, state = changes.issues, self.state
+        state.issues = {
+            i: e
+            for i, e in state.issues.items()
+            if not _newer(named, i, e.snapshot and e.snapshot.updated)
+        }
+        state.refused = {
+            i: r
+            for i, r in state.refused.items()
+            if not any(_newer(named, j, t) for j, t in r.versions.items())
+        }
+
+    def see(self, times):
+        """A cold tick's anchor: its first read carrying a time."""
+        if self.cold and self.anchor is None:
+            self.anchor = max(filter(None, times), default=None)
+
+    def trusted(self, read):
+        return read <= self.now and self.now - read < BACKSTOP
+
+    def fresh(self, idents):
+        """Each issue's snapshot, from its trusted entry, else read now while READ_REQUESTS last:
+        least recently read first, by batch unless the batch left it out before."""
+        issues, unbatched = self.state.issues, self.state.unbatched
+        found = {
+            i: issues[i].snapshot for i in idents if i in issues and self.trusted(issues[i].read)
+        }
+        stale = sorted(
+            (i for i in idents if i not in found),
+            key=lambda i: (i in issues, issues[i].read if i in issues else self.now),
+        )
+        batched = [i for i in stale if i not in unbatched]
+        singles = [i for i in stale if i in unbatched]
+        failed = set()
+        self.budget.limit(READ_REQUESTS)
+        try:
+            for at in range(0, len(batched), SNAPSHOT_BATCH):
+                batch = batched[at : at + SNAPSHOT_BATCH]
+                got = self.read_into(batch, failed, self.tracker.snapshots)
+                found |= got
+                left = [i for i in batch if i not in got and i not in failed]
+                unbatched.update(left)
+                singles += left
+            for ident in singles:
+                found |= self.read_into([ident], failed, lambda i: {i[0]: self.tracker.read(i[0])})
+        except Spent:
+            self.say("prune-deferred", issues=len(set(stale) - set(found) - failed))
+        return found
+
+    def read_into(self, idents, failed, how):
+        """how(idents)'s snapshots, cached; on an error none, idents logged and failed."""
+        try:
+            got = how(idents)
         except Unavailable:
             raise
-        except (LinearError, OSError, subprocess.SubprocessError) as e:
-            self.error(ident, error=f"Linear: {one_line(e)}")
+        except LINEAR_ERRORS as e:
+            for ident in idents:
+                self.error(ident, error=f"Linear: {one_line(e)}")
+            failed.update(idents)
+            return {}
+        self.state.issues |= {i: Entry(s, self.now) for i, s in got.items()}
+        self.see(s.updated for s in got.values() if s)
+        return got
+
+    def save(self, idents):
+        state = self.state
+        if idents is not None:
+            state.issues = {i: e for i, e in state.issues.items() if i in idents}
+            state.unbatched &= set(idents)
+        if self.finished is not None:
+            state.refused = {i: r for i, r in state.refused.items() if i in self.finished}
+        state.synced = max(filter(None, (state.synced, self.anchor)), default=None)
+        try:
+            prune_state.save(self.cache, state)
+        except OSError as e:
+            self.error(error=f"{CACHE}: {one_line(e)}")
+
+    def prune_issue(self, ident, found):
+        if found is None:
+            self.say("prune-skip", ident, once=True, reason="not in Linear")
             return
-        if found is None or found.state in (IssueState.READY, IssueState.RUNNING):
+        if found.state in (IssueState.READY, IssueState.RUNNING):
             return
         if found.state not in (IssueState.DONE, IssueState.CANCELED):
             self.prune_stalled(ident, found.since)
@@ -415,6 +602,10 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
+
+
+def _newer(named, ident, version):
+    return ident in named and (version is None or named[ident] > version)
 
 
 def _kept(plan):

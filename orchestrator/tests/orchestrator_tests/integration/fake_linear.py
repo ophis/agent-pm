@@ -521,6 +521,7 @@ class FakeLinear:
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
             },
             "archivedAt": stamp() if rec["archived"] else None,
+            "updatedAt": max([rec["createdAt"], *(h["createdAt"] for h in rec["history"])]),
             "history": {
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -564,6 +565,7 @@ class FakeLinear:
     def _match(self, rec, flt):
         values = {
             "id": rec["id"],
+            "number": int(rec["identifier"].split("-")[1]),
             "team": TEAM,
             "state": rec["state"],
             "assignee": rec["assignee"],
@@ -668,6 +670,14 @@ class FakeLinear:
             50,
             v.get("c"),
         )
+
+    def _snapshots(self, caller, v):
+        return self._list(caller, v["f"], 50, archived=True)
+
+    def _changed(self, caller, v):
+        """Every issue: the fake keeps no update time."""
+        flt = {k: c for k, c in v["f"].items() if k != "updatedAt"}
+        return self._list(caller, flt, 100, v.get("c"), archived=True)
 
     def _comment_create(self, caller, v, cid=None):
         self._comment(self._get(v["i"]), caller["id"], v["b"], stamp(), cid)
@@ -796,6 +806,8 @@ OPS = {
     "promote.M_RELATE": FakeLinear._relate,
     "prune.Q_ISSUE": FakeLinear._issue,
     "prune.Q_FINISHED": FakeLinear._finished,
+    "prune.Q_SNAPSHOTS": FakeLinear._snapshots,
+    "prune.Q_CHANGED": FakeLinear._changed,
     "prune.Q_ARCHIVE": FakeLinear._issue,
     "prune.Q_CHILDREN": FakeLinear._issue,
     "prune.M_ARCHIVE": FakeLinear._archive,

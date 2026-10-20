@@ -1,5 +1,6 @@
 """Tracker and workflow types."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
@@ -36,6 +37,7 @@ class Snapshot:
 
     state: IssueState | None
     since: datetime | None
+    updated: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class SubIssue:
     ident: str
     state: str
     finished: bool
+    updated: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,13 @@ class Finished:
     key: str
     ident: str
     since: datetime | None
+    updated: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Changes:
+    issues: Mapping[str, datetime] | None
+    latest: datetime | None
 
 
 @dataclass(frozen=True)

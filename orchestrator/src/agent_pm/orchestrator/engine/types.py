@@ -3,13 +3,14 @@
 import os
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
 from agent_pm import delegate
 from agent_pm.orchestrator.engine.flow.tracker import Connect, Tracker
-from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState
+from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState, Snapshot
 from agent_pm.utils import Stopped as Stopped
 
 ClientSource = Literal["label", "default"]
@@ -335,3 +336,26 @@ class Spec:
         if self.task is not None and self.task not in tasks:
             return f"task {self.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         return None
+
+
+@dataclass(frozen=True)
+class Entry:
+    snapshot: Snapshot | None
+    read: datetime
+
+
+@dataclass(frozen=True)
+class Refusal:
+    versions: Mapping[str, datetime | None]  # the candidate's and each unfinished sub-issue's
+    reason: str
+    read: datetime
+
+
+@dataclass
+class PruneState:
+    """prune.json; an Entry's snapshot None: gone; unbatched: read one by one."""
+
+    synced: datetime | None = None
+    issues: dict[str, Entry] = field(default_factory=dict)
+    refused: dict[str, Refusal] = field(default_factory=dict)
+    unbatched: set[str] = field(default_factory=set)
