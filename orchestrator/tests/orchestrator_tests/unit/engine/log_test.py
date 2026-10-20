@@ -345,9 +345,9 @@ class ConfigurationFailures(Logs):
         destination = os.path.join(self.tmp, "rejected-config")
         error = ConfigError("invalid role", destination)
         code, said = self.stderr(lambda: log.config_error("router", error, now=self.now))
-        self.assertEqual((code, said), (1, ""))
+        self.assertEqual((code, said), (2, ""))
         code, said = self.stderr(lambda: log.config_error("router", error, now=self.now), tty=True)
-        self.assertEqual((code, said), (1, "router.py: invalid role\n"))
+        self.assertEqual((code, said), (2, "router.py: invalid role\n"))
         text = self.text(os.path.join(destination, "orchestrator.jsonl"))
         self.assertEqual(text, self.json("router", "config-error", reason="invalid role"))
         self.assertEqual((log.LOGS_DIR, self.text()), (self.logs, ""))
@@ -360,7 +360,7 @@ class ConfigurationFailures(Logs):
             )
         )
         self.assertEqual(
-            (code, said), (1, self.json("router", "config-error", reason="invalid role"))
+            (code, said), (2, self.json("router", "config-error", reason="invalid role"))
         )
         self.assertEqual((log.LOGS_DIR, os.listdir(self.tmp)), (self.logs, []))
 
@@ -372,5 +372,5 @@ class ConfigurationFailures(Logs):
 
     def test_plain_reasons_keep_the_configured_destination(self):
         code, said = self.stderr(lambda: log.config_error("run", "invalid task", now=self.now))
-        self.assertEqual((code, said), (1, ""))
+        self.assertEqual((code, said), (2, ""))
         self.assertEqual(self.text(), self.json("run", "config-error", reason="invalid task"))

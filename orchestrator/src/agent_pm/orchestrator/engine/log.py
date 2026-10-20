@@ -89,7 +89,8 @@ def _size(path):
 def config_error(src, e, *, dry=False, now=datetime.now):
     reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
     logs = e.logs_dir if isinstance(e, ConfigError) else LOGS_DIR
-    return _stop(src, "config-error", reason, dry, logs=logs, reason=reason, now=now)
+    _stop(src, "config-error", reason, dry, logs=logs, reason=reason, now=now)
+    return 2
 
 
 def linear_error(src, e, *, dry=False, now=datetime.now):

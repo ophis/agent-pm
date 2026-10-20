@@ -109,7 +109,7 @@ The interface the Linear orchestrator's engine reads and writes issues through, 
 _Avoid_: backend
 
 **Workflow**:
-Each orchestrated role's stage data: the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: the default workflow, `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml`, read by `engine/flow/workflow.py` on first use (`config.TASKS`).
+The board's stages, one per orchestrated role: its input layout, the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: a file of `[[stage]]` tables, the packaged `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml` unless `[orchestrator] workflow` names another, which `config.load()` reads into `config.TASKS` (`engine/flow/workflow.py`).
 _Avoid_: pipeline, TASKS
 
 **Write-back**:
