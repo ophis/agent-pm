@@ -1,4 +1,5 @@
-"""The Linear adapter of the flow Tracker: prune's and the router's query text and its reads and writes."""
+"""The Linear adapter of the flow Tracker: prune's, promote's and the router's query text and its reads
+and writes."""
 
 import ast
 import hashlib
@@ -7,16 +8,28 @@ from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, ops, prune, router
+from agent_pm.linear_orchestrator.engine import (
+    linear_tracker,
+    ops,
+    promote,
+    prune,
+    router,
+    run_comments,
+)
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
+    Approved,
+    Comment,
+    Detail,
     Finished,
     IssueState,
     Label,
+    Move,
     Recheck,
+    Ref,
     Snapshot,
     SubIssue,
 )
@@ -31,7 +44,14 @@ BASE = {
     "Q_FINISHED": "d3001511732429ed7b87bfac7cc78c579737f209e410fced49a1a9030ed0bc37",
     "Q_CHILDREN": "115b789a59aec88fa1686fa993764aacae8f6af3cf0b01ec900ee82603f526fa",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
+    "Q_HANDOFF": "d5f85ca23fbe967486bc4ddfab203a172d029c0533575e9ea5d74a5a92e141b9",
+    "Q_DETAIL": "b2e26faf4a8f91935fd12b5c84aa12b6bd23ed8781de3db8d13214e5cff469a5",
+    "Q_CHILD": "4fa2b83d88ba5fc7dd9a33223140644eb8647521ac24c8c19ba044602dbca7a1",
+    "M_CREATE": "a67ba5a98ce64a1689f6842fca53f944e76ab2437837d95c7c5ce1940911b430",
+    "M_RELATE": "6672d8a892ce59d43f46f25990e6867358dff5cf5e8f79438d77d09bb1e587d5",
 }
+PRUNE = ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE")
+PROMOTE = ("Q_HANDOFF", "Q_DETAIL", "Q_CHILD", "M_CREATE", "M_RELATE")
 # the router's, on orchestrator-revamped; LISTS: q_issues(<fields>) by the fields' name
 ROUTER = {
     "RELATIONS": "b443e58b5f277fc5edad3e11004a6af6f76beb96e1858ce1920077c9f20798a8",
@@ -44,6 +64,9 @@ LISTS = {
     "RELATIONS": "7d8c26493df3c7696386e34534445288717b64ace14ed4866316e03bb51463fa",
 }
 BACKLOG = "00000000-0000-4000-8000-000000000019"
+# ops queries the adapter delegates to
+OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
+HUMANS = ("Me@X.com", "you@x.com")
 
 
 def ago(hours):
@@ -70,7 +93,7 @@ def child(ident, kind):
 
 def names():
     found = {getattr(linear_tracker, n): n for n in (*BASE, *ROUTER)}
-    found |= {getattr(ops, n): n for n in ("Q_TEAM", "Q_TASK_GROUP", "Q_USER")}
+    found |= {getattr(ops, n): n for n in ("Q_TEAM", "Q_TASK_GROUP", "Q_USER")} | OPS
     lists = linear_tracker.q_issues(), linear_tracker.q_issues(linear_tracker.RELATIONS)
     return found | dict(zip(lists, ("LIST", "LIST_RELATIONS"), strict=True))
 
@@ -97,7 +120,7 @@ class Gql:
 
 
 def tracker(gql):
-    return LinearTracker(gql, TEAM_OBJ, ROLES)
+    return LinearTracker(gql, TEAM_OBJ, ROLES, HUMANS)
 
 
 class Queries(Case):
@@ -108,9 +131,14 @@ class Queries(Case):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
 
     def test_prune_reexports_are_the_adapter_strings(self):
-        for name in BASE:
+        for name in PRUNE:
             with self.subTest(query=name):
                 self.assertIs(getattr(prune, name), getattr(linear_tracker, name))
+
+    def test_promote_reexports_are_the_adapter_strings(self):
+        for name in PROMOTE:
+            with self.subTest(query=name):
+                self.assertIs(getattr(promote, name), getattr(linear_tracker, name))
 
     def test_router_text_is_the_base_text(self):
         texts = {n: getattr(linear_tracker, n) for n in ROUTER}
@@ -176,7 +204,7 @@ class Read(Case):
             with self.subTest(shared=(key, active)):
                 team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, key: STATES[active]})
                 gql = Gql(Q_ISSUE={"issue": issue(STATES[active], (3, STATES[active]))})
-                found = LinearTracker(gql, team, ROLES).read("TASK-1")
+                found = LinearTracker(gql, team, ROLES, HUMANS).read("TASK-1")
                 self.assertEqual(found, Snapshot(abstract, ago(3)))
 
     def test_missing_issue_is_none(self):
@@ -319,7 +347,8 @@ class Connect(Case):
             [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "human@x.test"}, {"e": "pm@agents.test"}],
         )
         self.assertEqual((found.team.id, found.team.states), (TEAM, STATES))
-        self.assertEqual((found.roles, found.humans), ({"u-pm": "pm"}, frozenset({"u-human"})))
+        self.assertEqual((found.roles, found.people), ({"u-pm": "pm"}, frozenset({"u-human"})))
+        self.assertEqual(found.humans, ("human@x.test",))
 
     def test_errors_propagate(self):
         for replies, message in (
@@ -381,7 +410,7 @@ class Ready(Case):
         plain = {"issues": {"nodes": [todo("TASK-1"), todo("TASK-2")]}}
         gql = Gql(LIST_RELATIONS=error, LIST=plain, Q_RELATIONS=list(replies))
         found = LinearTracker(
-            gql, TEAM_OBJ, ROLES, say=lambda *a, **f: said.append((len(gql.calls), a, f))
+            gql, TEAM_OBJ, ROLES, HUMANS, say=lambda *a, **f: said.append((len(gql.calls), a, f))
         ).ready()
         self.assertEqual(said, [(1, ("todo-error",), {"error": one_line(error)})])
         self.assertEqual(gql.names(), ["LIST_RELATIONS", "LIST", "Q_RELATIONS", "Q_RELATIONS"])
@@ -442,7 +471,8 @@ def history(*moves):
 
 class MovedAt(Case):
     def tracker(self, *replies):
-        return LinearTracker(Gql(Q_HISTORY=list(replies)), TEAM_OBJ, ROLES, frozenset({"u-human"}))
+        gql = Gql(Q_HISTORY=list(replies))
+        return LinearTracker(gql, TEAM_OBJ, ROLES, HUMANS, people=frozenset({"u-human"}))
 
     def test_cached_per_key(self):
         found = self.tracker(history((2, "todo", "u-pm")), history((5, "todo", "u-pm")))
@@ -508,7 +538,7 @@ class Rechecks(Case):
     def test_a_todo_id_shared_with_another_key_stays_ready(self):
         team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
         gql = Gql(Q_RECHECK=rechecked(STATES["todo"]))
-        self.assertTrue(LinearTracker(gql, team, ROLES).recheck("id-TASK-1").ready)
+        self.assertTrue(LinearTracker(gql, team, ROLES, HUMANS).recheck("id-TASK-1").ready)
 
 
 class Role(Case):
@@ -520,19 +550,242 @@ class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(
             Tracker.__abstractmethods__,
-            {
-                "read",
-                "finished",
-                "sub_issues",
-                "archive",
-                "role",
-                "assigned",
-                "ready",
-                "moved_at",
-                "recheck",
-            },
+            {"read", "finished", "sub_issues", "archive"}
+            | {"approved", "detail", "created", "create", "relate", "comment", "move"}
+            | {"comment_and_move"}
+            | {"role", "assigned", "ready", "moved_at", "recheck"},
         )
-        self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES), Tracker)
+        self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES, HUMANS), Tracker)
+
+
+CREATED = "2026-09-27T10:00:00.000Z"
+ONCE = ("id-DR-1", "pm", "2026-09-27T12:00:00.000Z")
+
+
+def node(**user):
+    return user or None
+
+
+class ApprovedList(Case):
+    def test_variables_and_records(self):
+        found = {
+            "id": "id-DR-1",
+            "identifier": "DR-1",
+            "url": "https://l/DR-1",
+            "title": "Title",
+            "priority": 2,
+            "createdAt": CREATED,
+            "project": {"id": "p-dr", "name": "Deep Research"},
+            "assignee": {"id": "u-pm"},
+            "attachments": {
+                "nodes": [
+                    {"title": "Report", "url": "https://x/report"},
+                    {"title": "Run", "url": f"{run_comments.URL}abc"},
+                ]
+            },
+        }
+        gql = Gql(Q_HANDOFF={"issues": {"nodes": [found]}})
+        listed = tracker(gql).approved(("engineer", "pm", "researcher"))
+        self.assertEqual(
+            gql.calls,
+            [
+                (
+                    linear_tracker.Q_HANDOFF,
+                    {
+                        "t": TEAM,
+                        "s": STATES["handoff"],
+                        "a": ["u-researcher", "u-pm", "u-engineer"],
+                    },
+                )
+            ],
+        )
+        self.assertEqual(
+            listed,
+            [
+                Approved(
+                    "id-DR-1",
+                    "DR-1",
+                    "https://l/DR-1",
+                    "Title",
+                    2,
+                    CREATED,
+                    "p-dr",
+                    "Deep Research",
+                    "pm",
+                    (("Report", "https://x/report"),),
+                )
+            ],
+        )
+
+
+class DetailRead(Case):
+    def test_states_moves_comments_related(self):
+        review, handoff = STATES["in_review"], STATES["handoff"]
+        run = "Run 00000000-0000-4000-8000-000000000099 · started"
+        found = {
+            "state": {"id": handoff},
+            "history": {
+                "nodes": [
+                    {
+                        "createdAt": "t4",
+                        "actorId": "a",
+                        "fromStateId": review,
+                        "toStateId": handoff,
+                    },
+                    {"createdAt": "t3", "actorId": "a", "fromStateId": None, "toStateId": review},
+                    {
+                        "createdAt": "t2",
+                        "actorId": "a",
+                        "fromStateId": review,
+                        "toStateId": DUPLICATE,
+                    },
+                    {
+                        "createdAt": "t1",
+                        "actorId": "a",
+                        "fromStateId": BACKLOG,
+                        "toStateId": STATES["done"],
+                    },
+                ],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            },
+            "comments": {
+                "nodes": [
+                    {
+                        "body": "build X",
+                        "createdAt": "c1",
+                        "user": node(email="me@x.COM", name="Me"),
+                    },
+                    {"body": "hi", "createdAt": "c2", "user": node(email="bot@x.com", name="Bot")},
+                    {"body": "synced", "createdAt": "c3", "user": None},
+                    {
+                        "body": run,
+                        "createdAt": "c4",
+                        "user": node(email="h@x.com", name="H", isMe=True),
+                    },
+                    {"body": "no email", "createdAt": "c5", "user": node(email=None, name="N")},
+                ]
+            },
+            "relations": {"nodes": [{"relatedIssue": {"id": "id-A"}}]},
+            "inverseRelations": {"nodes": [{"issue": {"id": "id-B"}}, {"issue": {"id": "id-A"}}]},
+        }
+        gql = Gql(Q_DETAIL={"issue": found})
+        detail = tracker(gql).detail("id-DR-1")
+        self.assertEqual(gql.calls, [(linear_tracker.Q_DETAIL, {"i": "id-DR-1"})])
+        self.assertEqual(
+            detail,
+            Detail(
+                IssueState.APPROVED,
+                (
+                    Move("t4", IssueState.APPROVED, IssueState.REVIEW),
+                    Move("t3", IssueState.REVIEW, None),
+                    Move("t2", IssueState.CANCELED, IssueState.REVIEW),
+                    Move("t1", IssueState.DONE, None),
+                ),
+                (
+                    Comment("c1", "build X", "Me", other=True, run=False),
+                    Comment("c2", "hi", "Bot", other=False, run=False),
+                    Comment("c3", "synced", "integration", other=False, run=False),
+                    Comment("c4", run, "H", other=False, run=True),
+                    Comment("c5", "no email", "N", other=False, run=False),
+                ),
+                frozenset({"id-A", "id-B"}),
+            ),
+        )
+
+
+class NextIssue(Case):
+    def test_created_by_once(self):
+        key = ops.client_id(*ONCE)
+        for nodes, want in (([{"id": key, "identifier": "C-1"}], Ref(key, "C-1")), ([], None)):
+            with self.subTest(found=want):
+                gql = Gql(Q_CHILD={"issues": {"nodes": nodes}})
+                self.assertEqual(tracker(gql).created(ONCE), want)
+                self.assertEqual(gql.calls, [(linear_tracker.Q_CHILD, {"c": key})])
+
+    def test_create_variables(self):
+        key = ops.client_id(*ONCE)
+        reply = {"issueCreate": {"success": True, "issue": {"id": key, "identifier": "C-1"}}}
+        gql = Gql(M_CREATE=reply)
+        made = tracker(gql).create(
+            ONCE, project="p-dr", owner="engineer", priority=3, title="ENG: T", description="D"
+        )
+        self.assertEqual(made, Ref(key, "C-1"))
+        sent = {
+            "id": key,
+            "teamId": TEAM,
+            "projectId": "p-dr",
+            "assigneeId": "u-engineer",
+            "stateId": STATES["todo"],
+            "priority": 3,
+            "title": "ENG: T",
+            "description": "D",
+        }
+        self.assertEqual(gql.calls, [(linear_tracker.M_CREATE, {"in": sent})])
+        self.assertEqual(list(gql.calls[0][1]["in"]), list(sent))
+
+    def test_create_success_false_raises(self):
+        gql = Gql(M_CREATE={"issueCreate": {"success": False}})
+        with self.assertRaisesRegex(LinearError, "^issueCreate: success: false$"):
+            tracker(gql).create(
+                ONCE, project="p", owner="pm", priority=0, title="T", description=""
+            )
+
+
+class Writes(Case):
+    def test_relate(self):
+        gql = Gql(M_RELATE={"issueRelationCreate": {"success": True}})
+        tracker(gql).relate("id-A", "id-B")
+        self.assertEqual(
+            gql.calls,
+            [
+                (
+                    linear_tracker.M_RELATE,
+                    {"in": {"type": "related", "issueId": "id-A", "relatedIssueId": "id-B"}},
+                )
+            ],
+        )
+
+    def test_comment(self):
+        gql = Gql(M_COMMENT={"commentCreate": {"success": True}})
+        tracker(gql).comment("id-A", "Promoted to C-1.")
+        self.assertEqual(gql.calls, [(ops.M_COMMENT, {"i": "id-A", "b": "Promoted to C-1."})])
+
+    def test_move_maps_states_and_returns_current(self):
+        for now, left, sent in (
+            (STATES["handoff"], None, [(ops.M_STATE, {"i": "id-A", "s": STATES["done"]})]),
+            (STATES["in_review"], STATES["in_review"], []),
+        ):
+            with self.subTest(now=now):
+                gql = Gql(
+                    Q_ISSUE_STATE={"issue": {"state": {"id": now}}},
+                    M_STATE={"issueUpdate": {"success": True}},
+                )
+                moved = tracker(gql).move("id-A", IssueState.DONE, frm=IssueState.APPROVED)
+                self.assertEqual(moved, left)
+                self.assertEqual(gql.calls, [(ops.Q_ISSUE_STATE, {"i": "id-A"}), *sent])
+
+    def test_comment_and_move_subscribes_then_moves_then_comments(self):
+        for notify, subscribed in ((True, list(HUMANS)), (False, [])):
+            with self.subTest(notify=notify):
+                gql = Gql(
+                    M_SUBSCRIBE={"issueSubscribe": {"success": True}},
+                    Q_ISSUE_STATE={"issue": {"state": {"id": STATES["handoff"]}}},
+                    M_STATE={"issueUpdate": {"success": True}},
+                    M_COMMENT={"commentCreate": {"success": True}},
+                )
+                left = tracker(gql).comment_and_move(
+                    "id-A", "Back.", to=IssueState.REVIEW, frm=IssueState.APPROVED, notify=notify
+                )
+                self.assertIsNone(left)
+                self.assertEqual(
+                    gql.calls,
+                    [
+                        *((ops.M_SUBSCRIBE, {"i": "id-A", "e": e}) for e in subscribed),
+                        (ops.Q_ISSUE_STATE, {"i": "id-A"}),
+                        (ops.M_STATE, {"i": "id-A", "s": STATES["in_review"]}),
+                        (ops.M_COMMENT, {"i": "id-A", "b": "Back."}),
+                    ],
+                )
 
 
 class PruneSeam(Case):
@@ -560,3 +813,37 @@ class PruneSeam(Case):
             for a in n.names
         }
         self.assertEqual(from_ops, {"role_ids", "team"})
+
+
+class PromoteSeam(Case):
+    def test_promote_module_builds_no_graphql(self):
+        tree = ast.parse(inspect.getsource(promote))
+        texts = [
+            n.value
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        ]
+        self.assertEqual([t for t in texts if "query(" in t or "mutation(" in t], [])
+        self.assertEqual(
+            [
+                ast.unparse(n)
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Attribute)
+                and (ast.unparse(n) == "self.gql" or ast.unparse(n).startswith("ops."))
+            ],
+            [],
+        )
+        imported = [
+            (n.module, a.name)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom)
+            for a in n.names
+            if n.module == "agent_pm.linear_orchestrator.engine.ops" or a.name == "ops"
+        ]
+        self.assertEqual(
+            sorted(imported),
+            [
+                ("agent_pm.linear_orchestrator.engine.ops", "role_ids"),
+                ("agent_pm.linear_orchestrator.engine.ops", "team"),
+            ],
+        )

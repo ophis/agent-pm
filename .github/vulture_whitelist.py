@@ -4,7 +4,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
-from agent_pm.linear_orchestrator.engine import prune, router
+from agent_pm.linear_orchestrator.engine import promote, prune, router
 from agent_pm.linear_orchestrator.engine.issue_refs import milestone
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
@@ -26,6 +26,8 @@ _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # prune re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = prune.M_ARCHIVE, prune.Q_CHILDREN, prune.Q_FINISHED, prune.Q_ISSUE
+# promote re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
+_ = promote.M_CREATE, promote.M_RELATE, promote.Q_CHILD, promote.Q_DETAIL, promote.Q_HANDOFF
 # router re-exports its queries and blockers, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = router.RELATIONS, router.Q_RELATIONS, router.Q_RECHECK, router.Q_HISTORY, router.q_issues
 _ = router.blockers
