@@ -127,6 +127,16 @@ class PoolClient(ProbeClient):
         five, week = map(float, output.split(","))
         return engine_types.Usage(engine_types.Window(five, None), engine_types.Window(week, None))
 
+    def headless(self):
+        return PoolHeadless(self)
+
+
+class PoolHeadless(fake_client.FakeHeadless):
+    """Has a home, so a container Host's start records the account it selects."""
+
+    def _home(self):
+        return engine_types.ClientHome("pool_dir", "pool", "FAKE_HOME", "pool-token")
+
 
 class InnerClient(fake_client.FakeClient):
     """Records requests and injects INNER_SESSION into tui children."""

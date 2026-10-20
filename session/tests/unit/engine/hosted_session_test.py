@@ -61,6 +61,7 @@ from agent_pm.utils import ACCOUNT_ENV, Record, StatusState, exhausted, inode_lo
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
+from session.tests.fakes.container_host import HOMED as HOMED_HOST
 from session.tests.fakes.container_host import PATH as CONTAINER_HOST
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.terminal import MemoryHost, MemoryViewer, ScreenHost
@@ -1233,6 +1234,30 @@ class AccountPoolTest(Base):
     def pool(self, accounts, *, container=True):
         settings = {"implementation": CONTAINER_HOST} if container else None
         self.configure("pool", settings, probe={"argv": ("probe-cmd", "/x")}, accounts=accounts)
+
+    def started_account(self, **env):
+        """The account a headless start with `env` hands its (recording) container Host."""
+        self.configure(
+            "pool",
+            {"implementation": HOMED_HOST},
+            probe={"argv": ("probe-cmd", "/x")},
+            accounts={"default": "/d", "work": "/w"},
+        )
+        spec = self.spec(client="pool", mode=Mode.HEADLESS, name="w1", env=env)
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(SessionError, "refused by the test Host"),
+        ):
+            self.session.start(spec)
+        (metadata,) = self.session.host().piped
+        return metadata.get("home_account")
+
+    def test_a_start_selecting_none_hands_the_host_the_best_account(self):
+        self.assertEqual(self.started_account(), "work")
+
+    def test_a_selected_account_reaches_the_host_unprobed(self):
+        self.assertEqual(self.started_account(**{ACCOUNT_ENV: "default"}), "default")
+        self.probe.assert_not_called()
 
     def usage(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:
