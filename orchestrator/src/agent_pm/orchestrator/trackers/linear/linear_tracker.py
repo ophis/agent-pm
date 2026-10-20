@@ -440,7 +440,7 @@ class LinearTracker(Tracker):
             node["url"],
             archived,
             found[1:],
-            tuple(s for s in found if not s.finished),
+            () if archived else tuple(s for s in found if not s.finished),
         )
 
     def _descendants(self, root):

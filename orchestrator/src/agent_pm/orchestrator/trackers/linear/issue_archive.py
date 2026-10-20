@@ -35,16 +35,15 @@ def archive(tracker, gql, ident):
 def dry_run(tracker, gql, ident):
     """What archive would do, with the descendants it would archive and the unfinished issues."""
     plan = tracker.archive_plan(issue_read.lookup(gql, Q_ISSUE, ident)["issue"]["id"])
-    unfinished = () if plan.archived else plan.unfinished
     return {
         "issue": {"id": plan.key, "identifier": plan.ident, "url": plan.url},
         "operation": "archive",
         "dry_run": True,
-        "result": "unchanged" if plan.archived else "refused" if unfinished else "changed",
+        "result": "unchanged" if plan.archived else "refused" if plan.unfinished else "changed",
         "descendant_count": len(plan.descendants),
         "descendants": [_item(s) for s in plan.descendants],
-        "unfinished_count": len(unfinished),
-        "unfinished": [_item(s) for s in unfinished],
+        "unfinished_count": len(plan.unfinished),
+        "unfinished": [_item(s) for s in plan.unfinished],
         "truncated": [],
     }
 

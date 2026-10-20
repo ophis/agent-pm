@@ -19,7 +19,7 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.orchestrator.engine import (
     config,
 )
-from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState, Priority
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
     GraphQLErrors,
@@ -38,6 +38,7 @@ from agent_pm.orchestrator.trackers.linear import (
     issue_label,
     issue_list,
     issue_lookup,
+    issue_names,
     issue_page,
     issue_read,
     issue_relation,
@@ -52,7 +53,7 @@ PAGE, MAX_PAGE = 20, 50
 PROG = "agent-pm-orchestrator issue"
 FULL = "--full --output FILE"
 STATES = [str(state) for state in IssueState]
-PRIORITIES = [str(priority) for priority in Priority]
+PRIORITIES = [str(priority) for priority in issue_names.PRIORITIES]
 TEXTS = (
     "title",
     "description",

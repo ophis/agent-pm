@@ -65,9 +65,9 @@ def swap(gql, ident, old, new):
 def carried_labels(gql, ident, node):
     """The labels node (read with labels_page()) carries, every later page read too."""
     page = node["labels"]
-    labels = list(page["nodes"])
+    labels, seen = list(page["nodes"]), set()
     while page["pageInfo"]["hasNextPage"]:
-        after = page["pageInfo"]["endCursor"]
+        after = ops.advance(f"{ident} labels", page["pageInfo"]["endCursor"], seen)
         page = (gql(Q_MORE, i=node["id"], c=after)["issue"] or {}).get("labels")
         if not ops.is_page(page):
             raise LinearError(f"{ident}: labels page missing: deleted mid-read?")

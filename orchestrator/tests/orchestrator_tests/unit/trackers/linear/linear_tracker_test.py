@@ -428,6 +428,11 @@ class ArchivePlans(Case):
         self.assertEqual((plan.archived, plan.descendants), (True, ()))
         self.assertEqual(gql.names(), ["Q_ARCHIVE"])
 
+    def test_an_archived_unfinished_issue_has_nothing_unfinished(self):
+        gql = Gql(Q_ARCHIVE=planned(kind="started", archived=NOW))
+        plan = tracker(gql).archive_plan("id-TASK-1")
+        self.assertEqual((plan.archived, plan.unfinished), (True, ()))
+
     def test_a_missing_issue_raises_linear_error(self):
         for reply in (
             {"issue": None},
