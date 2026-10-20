@@ -49,16 +49,16 @@ class Tracker(ABC):
 
     @abstractmethod
     def _write_archive(self, key: str) -> None:
-        """With its sub-issues; failing raises the adapter's error."""
+        """With its sub-issues; failure: the adapter's error."""
 
     def archive(self, key: str, plan: ArchivePlan | None = None) -> bool:
-        """plan: one just read; False: already archived."""
+        """Given plan (just read): only writes. False: was archived."""
         plan = plan or self.archive_plan(key)
         if plan.outcome == "refused":
             raise ArchiveRefused(plan)
         if plan.outcome == "unchanged":
             return False
-        self._write_archive(key)
+        self._write_archive(plan.key)
         return True
 
     @abstractmethod
