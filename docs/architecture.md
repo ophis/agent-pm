@@ -20,7 +20,7 @@ flowchart TB
     WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
     LT["engine/linear_tracker.py<br>LinearTracker"]
-    FL["flow/<br>Tracker · IssueState · workflow"]
+    FL["flow/<br>Tracker · IssueState · Handoff grammar · workflow"]
     LC["engine/config.py<br>[core] overlay"]
   end
   subgraph DL[agent_pm.delegate]
