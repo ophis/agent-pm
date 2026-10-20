@@ -7,12 +7,14 @@ import json
 import os
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
 from agent_pm.orchestrator.engine.types import (
+    Blocking,
     GraphQLErrors,
     IssueEdit,
     IssueError,
@@ -20,11 +22,15 @@ from agent_pm.orchestrator.engine.types import (
     ListQuery,
     LookupQuery,
     NewIssue,
+    Receipt,
+    RelationsFailed,
     Resource,
     Unavailable,
 )
 from agent_pm.orchestrator.issue import command as issue
+from agent_pm.orchestrator.issue.output import partial_message, refusal
 from agent_pm.orchestrator.trackers.linear import client
+from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -1057,14 +1063,15 @@ class LocalCase(IssueCase):
         with open(self.config, "w", encoding="utf-8") as f:
             f.write(LOCAL)
 
-    def put(self, rel_dir, ident, *, mtime=1_790_000_000, description="", comments=""):
+    def put(self, rel_dir, ident, *, mtime=1_790_000_000, description="", comments="", parent=None):
         path = os.path.join(self.board, rel_dir, f"{ident} x.md")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         body = f"### Description\n{description}\n" if description else ""
         body += f"### Comments\n{comments}" if comments else ""
+        parent_line = f"parent: {parent}\n" if parent else ""
         with open(path, "w", encoding="utf-8") as f:
             f.write(
-                f"---\nid: {ident}\ntitle: {ident} title\n"
+                f"---\nid: {ident}\ntitle: {ident} title\n{parent_line}"
                 f"created: 2026-10-19T14:02:00-04:00\n---\n{body}"
             )
         os.utime(path, (mtime, mtime))
@@ -1244,6 +1251,86 @@ class LocalErrors(LocalCase):
             self.run_local(["move", "LOC-1", "Ready"])
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("invalid choice: 'Ready'", err.getvalue())
+
+    def test_a_bad_cursor_task_or_client_exits_two_writing_nothing(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        create = ["create", "--title", "T", "--body-file", "-"]
+        client = (
+            "--client 'a b': want a client name: no whitespace, control character or leading quote"
+        )
+        for argv, message in (
+            (["list", "--cursor", "LOC-999"], "--cursor LOC-999: not a cursor of this list\n"),
+            (["list", "--task", "nope"], "--task nope: not a configured task: "),
+            ([*create, "--task", "nope"], "--task nope: not a configured task: "),
+            (["list", "--client", "a b"], client + "\n"),
+            ([*create, "--client", "a b"], client + "\n"),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv, b"body")
+                self.assertEqual((code, out), (2, b""))
+                self.assertTrue(err.startswith(f"agent-pm-orchestrator issue: {message}"), err)
+        self.assertEqual(self.snapshot(), before)
+
+
+class LocalCreatePartial(LocalCase):
+    def test_a_failed_blocks_write_exits_one_with_the_report_and_the_issue_made(self):
+        failing = self.put("pm/ready", "LOC-1")
+        self.put("pm/ready", "LOC-2")
+        self.put("pm/ready", "LOC-3")
+        before = self.snapshot()
+        real = os.replace
+
+        def replace(src, dst):
+            if dst == failing:
+                raise PermissionError(13, "Permission denied")
+            return real(src, dst)
+
+        argv = ["create", "--title", "T", "--body-file", "-", "--blocks", "LOC-1"]
+        argv += ["--blocks", "LOC-2", "--blocked-by", "LOC-3"]
+        with mock.patch("os.replace", side_effect=replace):
+            code, out, err = self.run_local(argv, b"body")
+        self.assertEqual(code, 1)
+        made = [p for p in self.snapshot() if os.path.basename(p).startswith("LOC-4 ")]
+        self.assertEqual(len(made), 1)
+        receipt = Receipt(
+            "LOC-4", "LOC-4", Path(made[0]).as_uri(), "create", "changed", "other", "other"
+        )
+        error = "[Errno 13] Permission denied"
+        self.assertEqual(
+            json.loads(out),
+            {
+                "issue": {"id": "LOC-4", "identifier": "LOC-4", "url": receipt.url},
+                "operation": "create",
+                "result": "partial",
+                "actor": {"id": "other", "name": "other"},
+                "done": [{"blocks": "LOC-2"}, {"blocked_by": "LOC-3"}],
+                "failed": [{"blocks": "LOC-1", "error": error}],
+                "recover": ["agent-pm-orchestrator issue relation add LOC-4 --blocks LOC-1"],
+                "truncated": [],
+            },
+        )
+        partial = RelationsFailed(
+            receipt,
+            (Blocking("blocks", "LOC-2"), Blocking("blocked_by", "LOC-3")),
+            ((Blocking("blocks", "LOC-1"), error),),
+        )
+        self.assertEqual(err, f"agent-pm-orchestrator issue: {partial_message(partial)}\n")
+        self.assertEqual(self.snapshot()[failing], before[failing])
+
+
+class LocalArchiveRefused(LocalCase):
+    def test_a_refusal_prints_the_same_text_as_linears(self):
+        self.put("pm/done", "LOC-1")
+        self.put("pm/ready", "LOC-2", parent="LOC-1")
+        before = self.snapshot()
+        plan = LocalIssues(self.board, config.load(path=self.config).roles).archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "refused")
+        code, out, err = self.run_local(["archive", "LOC-1"])
+        self.assertEqual(
+            (code, out, err), (1, b"", f"agent-pm-orchestrator issue: {refusal('LOC-1', plan)}\n")
+        )
+        self.assertEqual(self.snapshot(), before)
 
 
 class HelpOnBothTrackers(LocalCase):
