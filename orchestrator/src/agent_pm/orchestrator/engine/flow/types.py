@@ -1,4 +1,4 @@
-"""Abstract issue states, a Tracker's reads and a workflow's per-role Task."""
+"""Abstract issue states, a Tracker's reads and a workflow's per-role Stage."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,20 +110,23 @@ class Recheck:
 
 
 @dataclass(frozen=True)
-class Task:
-    kind: Literal["research", "design", "build"]
-    prefix: str = ""
-    start: str = ""
-    done: str = ""
-    question: str = ""
-    failed: str = ""
-    failed_new: Literal["todo", "in_review"] = "in_review"
-    retitle: bool = False
-    approve: bool = False
-    files: bool = False
-    hint: str = ""
-    next: str = ""
-    require_instructions: bool = True
+class Stage:
+    """A workflow stage (workflow.toml's header says each field)."""
+
+    role: str
+    input: Literal["research", "design", "build"]
+    next: str
+    require_instructions: bool
+    title_prefix: str
+    retitle: bool
+    start: str
+    done: str
+    question: str
+    failed: str
+    first_failure: Literal["ready", "review"]
+    approve: bool
+    files: bool
+    hint: str
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"

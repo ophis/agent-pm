@@ -38,8 +38,10 @@ Prerequisites and effects:
   print JSON lines to stderr. Output files follow Delegate configuration.
 
 Exit conditions:
-  Tick: 1 on configuration/Linear failure (logged once a day), otherwise 0.
-  --issue: 1 on config/Linear failure or unknown run inventory; 2 when busy,
+  Tick: 2 on configuration failure, 1 when Linear is unavailable (each logged
+  once a day), otherwise 0.
+  --issue: 2 on configuration failure, 1 when Linear is unavailable or on
+  unknown run inventory; 2 when busy,
   already live or unclaimable; 0 if an ended outcome was written back. Otherwise
   launch result: 0 detached/bounced, 1 launch failure, 2 issue config error,
   3 transient error. --dry-run: 0 for the plan; setup failures still apply.
@@ -712,7 +714,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
-    build = config.TASKS[role].kind == "build"
+    build = config.TASKS[role].input == "build"
     reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
     try:
         issue = reader.issue(a.issue)
@@ -1149,7 +1151,7 @@ def main(
         cfg = config.load(path=config_path)
     except ConfigError as error:
         config.report_error("router", error, dry=opts["dry"])
-        return 1
+        return 2
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})

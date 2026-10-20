@@ -27,6 +27,7 @@ REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 _ROLE_ISSUE = r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)"
 
 TOP_KEYS = {
+    "workflow",
     "task_tiers",
     "client_max_runs",
     "roles",
@@ -48,7 +49,7 @@ LINEAR_KEYS = {
     "roles",
     "project_repos",
 }
-ROLE_KEYS = {"next", "require_instructions", "max_runs"}
+ROLE_KEYS = {"max_runs"}
 LINEAR_ROLE_KEYS = {"account", "key"}
 REQUIRED = (
     "linear.team",
@@ -78,30 +79,44 @@ def load(*, path: str | None = None) -> Config:
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"orchestrator/config.toml: {e}") from None
-    _flow(cfg, default=path is None)
     work = _work_dir(cfg)
     try:
+        _workflow(cfg)
+        kind, delegates = _delegates(cfg)
+        index = _index(delegates[kind])
         _load_config(cfg, LOCAL)
-        return _load(cfg, work)
+        return _load(cfg, work, kind, delegates, index)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
 
 
-def _flow(cfg, *, default):
-    """Read the workflow; with the packaged config.toml, its next and require_instructions are each
-    role's defaults. A replaced config.toml (path=) keeps them unset, as before the workflow file."""
+def _workflow(cfg):
+    """Load TASKS from workflow: "" → the packaged file; else that file, whole."""
+    v = cfg.get("workflow", "")
+    path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
+    if v != "" and not os.path.isabs(path):
+        raise ConfigError(
+            f'orchestrator/config.toml: workflow must be "" (the packaged workflow) or a printable absolute or ~ path: {v!r}'
+        )
     try:
-        tasks = TASKS.load()
+        TASKS.load(path or None)
     except ValueError as e:
         raise ConfigError(str(e)) from None
-    roles = cfg.get("roles")
-    if not default or not isinstance(roles, dict):
-        return
-    for role, p in roles.items():
-        if role in tasks and isinstance(p, dict):
-            p.setdefault("next", tasks[role].next)
-            p.setdefault("require_instructions", tasks[role].require_instructions)
+
+
+def _index(delegate_cls):
+    """The Delegate's role → task index; every stage's role must be in it."""
+    try:
+        index = delegate_cls.roles()
+    except (OSError, ValueError, delegate.ConfigError) as e:
+        raise ConfigError(f"core: {e}") from None
+    for name in TASKS:
+        if name not in index:
+            raise ConfigError(
+                f"{TASKS.path}: stage {name}: not a role the Delegate knows (its charters: core and [delegate] team_dirs)"
+            )
+    return index
 
 
 def tui_prefix(role, issue):
@@ -182,9 +197,8 @@ def _work_dir(cfg, clones=None):
     return path
 
 
-def _load(cfg, work):
-    kind, delegates = _delegates(cfg)
-    roles = _runnable(cfg, work, delegates[kind])
+def _load(cfg, work, kind, delegates, index):
+    roles = _runnable(cfg, work, delegates[kind], index)
     docs = _docs(roles, LOCAL)
     linear = cfg["linear"]
     frozen = {
@@ -203,7 +217,7 @@ def _load(cfg, work):
         roles=MappingProxyType(roles),
         work_dir=work,
         docs=docs,
-        stages=MappingProxyType(_stage_order(cfg["roles"])),
+        stages=MappingProxyType(_stage_order()),
         states=frozen["states"],
         task_labels=frozen["task_labels"],
         task_tiers=frozen["task_tiers"],
@@ -274,9 +288,7 @@ def _load_config(cfg, local):
     accounts = linear.setdefault("roles", {})
     if not isinstance(accounts, dict):
         raise ConfigError("orchestrator/config.toml: [linear.roles] must be a table")
-    roles = cfg.setdefault("roles", {})
-    for name in roles:
-        accounts.setdefault(name, {})
+    roles = _stage_roles(cfg, linear)
     if missing := utils.unset(cfg, REQUIRED):
         raise ConfigError(
             f"orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} (orchestrator/config.toml's `# local:` lines)"
@@ -291,9 +303,8 @@ def _load_config(cfg, local):
         raise ConfigError(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
     if extra := sorted(set(linear) - LINEAR_KEYS):
         raise ConfigError(f"orchestrator/config.toml: unknown keys in [linear]: {', '.join(extra)}")
-    _linear_roles(linear, roles)
+    _linear_roles(linear)
     _role_fields(roles)
-    _next_chains(roles)
     _project_repos(linear)
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
@@ -303,19 +314,39 @@ def _load_config(cfg, local):
     _client_max_runs(cfg)
 
 
-def _linear_roles(linear, roles):
-    """Each [linear.roles.<role>]: a [roles.<role>] role's account and a key no other account or
-    the harness uses."""
+def _stage_roles(cfg, linear):
+    """[roles] and [linear.roles]: one table per stage, in the workflow's order. A table for a
+    packaged stage the workflow leaves out is dropped (the packaged config.toml has one); one for
+    any other non-stage role is an error."""
+    packaged = set(workflow.Workflow().load())
+    out = {}
+    for where, tables, keys in (
+        ("roles", cfg.setdefault("roles", {}), ROLE_KEYS),
+        ("linear.roles", linear["roles"], LINEAR_ROLE_KEYS),
+    ):
+        if not isinstance(tables, dict):
+            raise ConfigError(f"orchestrator/config.toml: [{where}] must be a table")
+        for name, p in tables.items():
+            if not isinstance(p, dict):
+                raise ConfigError(f"orchestrator/config.toml: [{where}.{name}] must be a table")
+            if extra := sorted(set(p) - keys):
+                raise ConfigError(
+                    f"orchestrator/config.toml: [{where}.{name}] has unknown keys: {', '.join(extra)}"
+                )
+            if name not in TASKS and name not in packaged:
+                raise ConfigError(
+                    f"orchestrator/config.toml: [{where}.{name}] names no stage of the workflow"
+                )
+        out[where] = {name: tables.get(name, {}) for name in TASKS}
+    cfg["roles"], linear["roles"] = out["roles"], out["linear.roles"]
+    return cfg["roles"]
+
+
+def _linear_roles(linear):
+    """Each [linear.roles.<role>]: a stage's account and a key no other account or the harness
+    uses."""
     owner = {}
     for name, p in linear["roles"].items():
-        if name not in roles:
-            raise ConfigError(
-                f"orchestrator/config.toml: [linear.roles.{name}] names no [roles.{name}]"
-            )
-        if extra := sorted(set(p) - LINEAR_ROLE_KEYS):
-            raise ConfigError(
-                f"orchestrator/config.toml: [linear.roles.{name}] has unknown keys: {', '.join(extra)}"
-            )
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
                 raise ConfigError(
@@ -335,27 +366,11 @@ def _linear_roles(linear, roles):
 
 def _role_fields(roles):
     for name, p in roles.items():
-        if extra := sorted(set(p) - ROLE_KEYS):
-            raise ConfigError(
-                f"orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}"
-            )
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
             raise ConfigError(
                 f"orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}"
             )
-
-
-def _next_chains(roles):
-    for name in roles:
-        nxt, seen = roles[name].get("next"), {name}
-        while nxt:
-            if nxt in seen:
-                raise ConfigError(
-                    f"orchestrator/config.toml: the next chain from {name!r} has a cycle"
-                )
-            seen.add(nxt)
-            nxt = roles.get(nxt, {}).get("next")
 
 
 def _project_repos(linear):
@@ -482,17 +497,15 @@ def _client_max_runs(cfg):
             )
 
 
-def _runnable(cfg, work, delegate_cls):
+def _runnable(cfg, work, delegate_cls, index):
     try:
         trusted = delegate_cls.trusted_dirs()
-        index = delegate_cls.roles()
     except (OSError, ValueError, delegate.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
     out = _resolve_roles(cfg, cfg.get("core", {}), delegate_cls, index)
-    _role_links(out)
     _runnable_inputs(cfg, out)
     return out
 
@@ -500,14 +513,6 @@ def _runnable(cfg, work, delegate_cls):
 def _resolve_roles(cfg, overlay, delegate_cls, index):
     out, accounts = {}, cfg["linear"]["roles"]
     for name, p in cfg["roles"].items():
-        if name not in index:
-            raise ConfigError(
-                f"orchestrator/config.toml: role {name!r} is not in delegate/config.toml"
-            )
-        if name not in TASKS:
-            raise ConfigError(
-                f"orchestrator/config.toml: role {name!r} has no entry in config.TASKS"
-            )
         try:
             run = delegate_cls.resolve(name, overlays=(overlay,))
             tasks = tuple(index[name])
@@ -518,25 +523,9 @@ def _resolve_roles(cfg, overlay, delegate_cls, index):
             accounts[name]["key"],
             tasks,
             p.get("max_runs", 1),
-            p.get("next") or None,
-            p.get("require_instructions", True),
             run,
         )
     return out
-
-
-def _role_links(out):
-    for name, r in out.items():
-        if not r.next:
-            continue
-        if r.next not in out:
-            raise ConfigError(
-                f"orchestrator/config.toml: next of {name!r} names undefined role {r.next!r}"
-            )
-        if not TASKS[r.next].prefix:
-            raise ConfigError(
-                f"orchestrator/config.toml: next of {name!r} is role {r.next!r}, whose config.TASKS entry has no prefix"
-            )
 
 
 def _runnable_inputs(cfg, roles):
@@ -566,14 +555,14 @@ def _docs(roles, local):
     return Docs(name, branch, MappingProxyType({r: o["dir"] for r, o in outs.items()}))
 
 
-def _stage_order(roles):
-    targets = {p["next"] for p in roles.values() if p.get("next")}
-    order = {name: 0 for name in roles}
-    for start in roles:
+def _stage_order():
+    targets = {s.next for s in TASKS.values() if s.next}
+    order = dict.fromkeys(TASKS, 0)
+    for start in TASKS:
         if start in targets:
             continue
         name, i = start, 0
         while name:
             order[name] = i
-            name, i = roles.get(name, {}).get("next"), i + 1
+            name, i = TASKS[name].next, i + 1
     return order

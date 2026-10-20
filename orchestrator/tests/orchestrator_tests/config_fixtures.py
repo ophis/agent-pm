@@ -6,25 +6,23 @@ import tempfile
 from agent_pm.delegate import Delegate
 from agent_pm.orchestrator.engine import config
 from agent_pm.utils import load_class
-from orchestrator_tests.unit.board_ids import HEADER, role
+from orchestrator_tests.unit.board_ids import HEADER, PACKAGED_FLOW, role, workflow_line
 
 from utils.tests.case import local_section
 
 HARNESS_DELEGATE = load_class("agent_pm.delegate:HarnessDelegate", Delegate)
 
 
-PIPELINE = (
-    HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
-)
+PIPELINE = HEADER + role("researcher") + role("pm") + role("engineer")
 
 
-BASE = (
-    HEADER
-    + role("researcher", 'next = "pm"')
-    + role("pm", 'next = "engineer"')
-    + role("engineer")
-    + role("solo")
-)
+# the packaged stages and a last one, dummy-tester (a core charter)
+TESTER = workflow_line(PACKAGED_FLOW + '\n[[stage]]\nrole = "dummy-tester"\ninput = "research"\n')
+
+# BASE, its dummy-tester stage without tables
+BARE = HEADER + TESTER + role("researcher") + role("pm") + role("engineer")
+
+BASE = BARE + role("dummy-tester")
 
 CORE_TOP = '[delegate]\nlanguage = "Chinese"\n'
 

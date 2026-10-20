@@ -136,7 +136,7 @@ def _branches(ident, o, n, *, run, delegate, workdir, roles):
         read_only = {
             f"{ident}-{t}"
             for r, role in roles.items()
-            if TASKS[r].kind != "build"
+            if TASKS[r].input != "build"
             for t in role.tasks
         }
         if local := [b for b in res.stdout.split() if b not in read_only]:

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm.orchestrator.engine import config, runs
+from agent_pm.orchestrator.engine import config, runs, writeback
 from agent_pm.orchestrator.engine import router as routing
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.utils import Record
@@ -288,7 +288,7 @@ class Segment(TmuxFlow):
         if outcome == "done":
             report["url"] = url or (
                 f"https://github.com/{REPO}/pull/{n}"
-                if config.TASKS[role].kind == "build"
+                if config.TASKS[role].input == "build"
                 else self.doc_url(f"{DIRS[role]}{datetime.now(UTC):%Y-%m-%d}-{ident}-run-{n}.md")
             )
         if outcome == "needs_input":
@@ -413,10 +413,18 @@ class Segment(TmuxFlow):
             )
             if report:
                 outcome, url = report["status"], report.get("url")
-                state = "in_review" if outcome != "failed" or p.resumed else task.failed_new
+                state = (
+                    "in_review"
+                    if outcome != "failed" or p.resumed
+                    else writeback.FIRST_FAILURE[task.first_failure]
+                )
                 if outcome == "done" and task.retitle:
                     steps.append("retitle")
-                    changes["title"] = f"{task.prefix}: {report['title']}"
+                    changes["title"] = (
+                        f"{task.title_prefix}: {report['title']}"
+                        if task.title_prefix
+                        else report["title"]
+                    )
                 steps.append("comment")
                 comments += [(account, k) for k in p.script.texts.values()]
                 if outcome == "done" and url:
@@ -582,8 +590,8 @@ class Segment(TmuxFlow):
             self.assertEqual(len(related), 1, f"issues related from {ident}: {related}")
             child = copy.deepcopy(self.fake.find(related[0]))
             name = self.fake.users[self.ids[HUMAN]]["name"]
-        prefix, want = config.TASKS[role].prefix, self.want[ident]
-        title = f"{config.TASKS[nxt].prefix}: " + (
+        prefix, want = config.TASKS[role].title_prefix, self.want[ident]
+        title = f"{config.TASKS[nxt].title_prefix}: " + (
             want.title.removeprefix(f"{prefix}: ") if prefix else want.title
         )
         self.assertEqual(
@@ -719,7 +727,7 @@ class Segment(TmuxFlow):
             self.track(src["identifier"], attachments=[report])
             ident = self.backlog_issue(
                 "pm",
-                f"{config.TASKS['pm'].prefix}: {RESEARCH[0]}",
+                f"{config.TASKS['pm'].title_prefix}: {RESEARCH[0]}",
                 "\n\n".join(
                     [
                         f"Handoff from {src['identifier']}: {src['url']}",
