@@ -42,7 +42,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
 
 | Job | Schedule |
 |---|---|
-| router | :00 and :30, with `--now` (drop it to run only 01:00–06:59) |
+| router | :00 and :30 |
 | promote | every 5 min |
 
 The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `orchestrator/launchd/` and rerun step 4. To uninstall a job:
@@ -98,7 +98,7 @@ flowchart LR
 ```
 
 ```bash
-bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the hours, run limits and usage gates
+bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the run limits and usage gates
 bin/agent-pm-orchestrator router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
 bin/agent-pm-orchestrator status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
 bin/agent-pm-orchestrator attach-command <ID>         # the command that shows its agent run
@@ -115,7 +115,7 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 
 ### Run limits
 
-A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (unset: 3), and its client fewer than its `[client_max_runs]` entry. No client is limited by default: an unlisted client is unlimited. Set limits in `~/.agent-pm/config.local.toml`, e.g. `opencode = 1`, as the host's local models run one job at a time:
+A run starts only when both layers have room: its role has fewer live runs than `[roles.<role>] max_runs` (packaged: 3 for researcher, pm and engineer; another stage's role without a table: 1), and its client fewer than its `[client_max_runs]` entry. No client is limited by default: an unlisted client is unlimited. Set limits in `~/.agent-pm/config.local.toml`, e.g. `opencode = 1`, as the host's local models run one job at a time:
 
 ```toml
 [orchestrator.client_max_runs]

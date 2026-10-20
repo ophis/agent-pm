@@ -87,13 +87,7 @@ CLIENTS = {"researcher": "a", "pm": "b", "engineer": "a"}
 OVERLAY = '[core]\nclient = "a"\n\n[core.roles.pm]\nclient = "b"\n'
 
 
-CONFIG = (
-    HEADER
-    + role_table("researcher", 'next = "pm"')
-    + role_table("pm", 'next = "engineer"')
-    + role_table("engineer")
-    + OVERLAY
-)
+CONFIG = HEADER + role_table("researcher") + role_table("pm") + role_table("engineer") + OVERLAY
 
 
 LIGHT, DEEP, STRAY, ORPHAN_LABEL = (
@@ -133,7 +127,6 @@ def issue(
     state,
     role=None,
     *,
-    updated=None,
     priority=0,
     created="2026-09-01T00:00:00Z",
     project=DR,
@@ -149,7 +142,6 @@ def issue(
         "assignee": who(role),
         "priority": priority,
         "createdAt": created,
-        "updatedAt": updated or ago(minutes=5),
         "inverseRelations": {"nodes": list(inverse)},
         "labels": list(labels),
     }
@@ -562,7 +554,6 @@ class TickBase(Base):
         self,
         fake,
         *argv,
-        hour=2,
         live=(),
         start=None,
         again=False,
@@ -608,7 +599,6 @@ class TickBase(Base):
                 list(argv),
                 now=clock or (lambda: now),
                 config_path=self.config_path,
-                hour=hour,
                 gql=fake,
                 delegate_cls=delegate_cls,
                 start=self.start,

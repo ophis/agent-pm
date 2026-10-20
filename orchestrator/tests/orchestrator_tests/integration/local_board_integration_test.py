@@ -163,7 +163,7 @@ class LocalBoard(BinFlow):
 
     def dry_run(self, board=None):
         self.scene([], usage=usage(0.5))
-        res = self.run_router("--now", "--dry-run", board=board)
+        res = self.run_router("--dry-run", board=board)
         self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
         return lines(res)
 
@@ -259,7 +259,7 @@ class LocalBoard(BinFlow):
         bad = os.path.join(self.board, "pm", "ready", "LOC-16 Bad.md")
         with open(bad, "w", encoding="utf-8") as f:
             f.write("id: LOC-16\n")
-        for argv in (("--now",), ("--issue", "LOC-1")):
+        for argv in ((), ("--issue", "LOC-1")):
             with self.subTest(argv=argv):
                 res = self.run_router(*argv, "--dry-run")
                 self.assertEqual(
@@ -276,7 +276,7 @@ class LocalBoard(BinFlow):
             with self.subTest(name):
                 for dirname in made:
                     os.makedirs(os.path.join(self.board, dirname))
-                res = self.run_router("--now", "--dry-run")
+                res = self.run_router("--dry-run")
                 self.assertEqual(
                     (res.returncode, res.stdout, res.stderr),
                     (2, "", f"router.py: {self.board}: {reason}\n"),

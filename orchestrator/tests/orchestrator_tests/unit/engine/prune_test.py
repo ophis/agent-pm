@@ -996,6 +996,27 @@ class PruneCommand(PruneScenario):
             (2, "", 'prune.py: prune needs [orchestrator] tracker = "linear"\n', []),
         )
 
+    def test_config_error_exits_2(self):
+        # a config.toml or Linear setup error, each logged as config-error
+        def rejected(*_, **__):
+            raise LinearError("linear api error: teams: HTTP 401")
+
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            f'[orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL,
+        )
+        path = os.path.join(self.root, "config.toml")
+        for text, gql, reason in (
+            ("bogus = 1\n" + tp.CONFIG, None, "orchestrator/config.toml: unknown keys: bogus"),
+            (tp.CONFIG, rejected, "linear api error: teams: HTTP 401"),
+        ):
+            with self.subTest(reason):
+                write(path, text)
+                with redirect_stderr(io.StringIO()):
+                    code = prune.main([], gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+                self.assertEqual(code, 2)
+                self.assertIn(f"config-error reason={reason}", [show(e) for e in logged(self.logs)])
+
     def test_a_tick_deletes_finished_checkouts_and_archives(self):
         clone = self.mkc("TASK-49")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})

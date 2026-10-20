@@ -1,5 +1,5 @@
 """router.py --tui end to end (Segment): run from MANAGER's pane with $AGENT_PM_EVENTS, an --issue
-claim or a --now tick prints the run's one pipeline Record and its sessions and attach command
+claim or a tick prints the run's one pipeline Record and its sessions and attach command
 (FR-28); its harness and TUI live, the TUI in MANAGER's grid, the harness listed by MANAGER's
 `agent-pm-session ls --here`; written back as a headless run is; the events file gets the TUI's
 turn ends, one outcome and the harness's exit; an idle tick prints nothing. Ending the harness
@@ -92,7 +92,7 @@ class Attended(Segment):
         self.claim(ident, "pm", self.agent_script("pm", "done", ident), tui=True, tick=True)
         self.agent_run()
         with self.step("router: idle tick"):
-            res = self.router("--now", "--tui", AGENT_PM_EVENTS=self.events, **self.in_manager())
+            res = self.router("--tui", AGENT_PM_EVENTS=self.events, **self.in_manager())
             self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
 
     def run_processes(self, ident):
@@ -211,7 +211,7 @@ class Refused(TmuxFlow):
             ("no events file", (), inside, "--tui needs --events FILE or $AGENT_PM_EVENTS"),
         )
         for name, extra, env, said in cases:
-            for mode in (("--issue", ID), ("--now",)):
+            for mode in (("--issue", ID), ()):
                 with self.subTest(name, mode=mode):
                     res = self.router(*mode, "--tui", *extra, **env)
                     self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)

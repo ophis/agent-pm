@@ -184,7 +184,7 @@ class ConfigurationLoading(ConfigFile, Case):
             timeout=60,
             env=child_env(None, ORCH_ROOT),
         )
-        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertEqual(res.returncode, 2, res.stderr)
         # with logs_dir set, report_error logs instead and a non-tty stderr stays empty
         [msg] = res.stderr.splitlines()
         self.assertTrue(msg.startswith("orchestrator/config.toml: "), msg)

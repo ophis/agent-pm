@@ -57,8 +57,9 @@ Prerequisites and effects:
   agent-pm-orchestrator prune --help
   A prune failure is logged without breaking Handoff work.
   Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
-  plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear
-  error (logged once a day); 2: bad arguments. Individual Handoff errors do
+  plans print JSON lines to stderr. Exit 0: tick completed; 1: Linear
+  unavailable; 2: configuration error or bad arguments (errors logged once a
+  day). Individual Handoff errors do
   not prevent other promotions; prolonged failures can return an issue to
   In Review with a comment.
 
@@ -84,7 +85,7 @@ def child_title(prefix, src_prefix, title):
     )  # agent-written: must not break out of its line and pose as the human Instructions section
     if src_prefix and title.startswith(f"{src_prefix}: "):
         title = title[len(src_prefix) + 2 :]
-    return f"{prefix}: {title}"
+    return f"{prefix}: {title}" if prefix else title
 
 
 class Promoter:
@@ -99,7 +100,7 @@ class Promoter:
         work = []
         for src in self.tracker.approved(self.cfg.roles):
             role = src.owner
-            nxt = self.cfg.roles[role].next
+            nxt = self.tasks[role].next
             if nxt:
                 try:
                     detail = self.tracker.detail(src.key)
@@ -172,7 +173,7 @@ class Promoter:
     def promote(self, handoff: Promotion):
         src, detail, role, nxt = handoff.source, handoff.detail, handoff.role, handoff.next
         comments = self.instructions(detail, handoff.cutoff)
-        if not comments and self.cfg.roles[role].require_instructions:
+        if not comments and self.tasks[role].require_instructions:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
                 self.say("handoff-bounce", src.ident, to="in_review", reason="no instructions")
             return
@@ -190,8 +191,8 @@ class Promoter:
                 owner=nxt,
                 priority=src.priority,
                 title=child_title(
-                    self.tasks[nxt].prefix,
-                    self.tasks[role].prefix or None,
+                    self.tasks[nxt].title_prefix,
+                    self.tasks[role].title_prefix or None,
                     src.title,
                 ),
                 description=self.description(src, comments, detail),
@@ -302,7 +303,7 @@ def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
         cfg = config.load(path=config_path)
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
-        return 1
+        return 2
     if refused := config.linear_only(cfg, "promote"):
         print(f"promote.py: {refused}", file=sys.stderr)
         return 2

@@ -221,7 +221,6 @@ class FakeLinear:
         priority=0,
         labels=(),
         created=None,
-        updated=None,
     ):
         with self.lock:
             if (
@@ -232,7 +231,6 @@ class FakeLinear:
                 raise ValueError("assignee or a label not seeded")
             if project:
                 self.projects[project["id"]] = project["name"]
-            at = stamp(created)
             try:
                 return self._add(
                     id or str(uuid.uuid4()),
@@ -244,8 +242,7 @@ class FakeLinear:
                     assignee=assignee,
                     project=project and dict(project),
                     labels=list(labels),
-                    createdAt=at,
-                    updatedAt=stamp(updated) if updated else at,
+                    createdAt=stamp(created),
                 )
             except Problem as e:
                 raise ValueError(str(e)) from None
@@ -443,7 +440,7 @@ class FakeLinear:
             rec["history"].append(
                 {"createdAt": at, "actorId": actor, "fromStateId": rec["state"], "toStateId": state}
             )
-            rec["state"], rec["updatedAt"] = state, at
+            rec["state"] = state
 
     def _entered(self, rec, kind):
         """When rec last moved into its state, if that state is of type kind (Linear clears it on
@@ -499,7 +496,6 @@ class FakeLinear:
                 "description",
                 "priority",
                 "createdAt",
-                "updatedAt",
                 "project",
             )
         }
@@ -689,7 +685,7 @@ class FakeLinear:
 
     def _set_title(self, caller, v):
         rec = self._get(v["i"])
-        rec["title"], rec["updatedAt"] = v["t"], stamp()
+        rec["title"] = v["t"]
         return {"issueUpdate": {"success": True}}
 
     def _subscribe(self, caller, v):
@@ -744,7 +740,6 @@ class FakeLinear:
             project=pid and {"id": pid, "name": self.projects[pid]},
             labels=[],
             createdAt=now,
-            updatedAt=now,
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 

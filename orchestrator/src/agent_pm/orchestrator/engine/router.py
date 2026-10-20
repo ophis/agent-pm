@@ -1,17 +1,15 @@
 """Claim or resume issue work with one scheduler tick or an explicit issue.
 
-Usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID]
+Usage: agent-pm-orchestrator router [--dry-run] [--issue ID]
                              [--tui [--display D] [--events FILE]]
        agent-pm-orchestrator router --brake ROLE
 
 Arguments and options:
-  (no mode)     One scheduled tick: local 01:00-06:59 hours, role max_runs,
-                client_max_runs and usage gates; starts at most one run
-                assigned to a role account.
-  --now         Skip the tick's hours check.
-  --issue ID    Only this issue identifier, e.g. TASK-1; bypass hours, max_runs,
+  (no mode)     One scheduled tick: role max_runs, client_max_runs and usage
+                gates; starts at most one run assigned to a role account.
+  --issue ID    Only this issue identifier, e.g. TASK-1; bypass max_runs,
                 client_max_runs and usage gates (its run still counts toward
-                them). --issue and --now cannot be combined.
+                them).
   --dry-run     Print the plan without claiming issues or launching work;
                 a tick still performs usage checks. Not an offline preview:
                 read configuration, run inventory, credentials and Linear data.
@@ -40,8 +38,10 @@ Prerequisites and effects:
   print JSON lines to stderr. Output files follow Delegate configuration.
 
 Exit conditions:
-  Tick: 1 on configuration/Linear failure (logged once a day), otherwise 0.
-  --issue: 1 on config/Linear failure or unknown run inventory; 2 when busy,
+  Tick: 2 on configuration failure, 1 when Linear is unavailable (each logged
+  once a day), otherwise 0.
+  --issue: 2 on configuration failure, 1 when Linear is unavailable or on
+  unknown run inventory; 2 when busy,
   already live or unclaimable; 0 if an ended outcome was written back. Otherwise
   launch result: 0 detached/bounced, 1 launch failure, 2 issue config error,
   3 transient error. --dry-run: 0 for the plan; setup failures still apply.
@@ -135,7 +135,7 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear.client import has_key, linear_gql
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
-from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
+from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -145,10 +145,10 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
 USAGE = (
-    "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
+    "usage: agent-pm-orchestrator router [--dry-run] [--issue ID] "
     "[--tui [--display D] [--events FILE]] | --brake ROLE"
 )
-FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
+FLAGS = {"--dry-run": "dry", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
 
 
@@ -385,6 +385,9 @@ class Board:
         if sid and (replayed := self.replay(issue, sid)) is not None:
             self.replays[ident] = replayed
             return False
+        entered = (
+            self.tracker.moved_at(issue["id"], IssueState.RUNNING) if wait and not sid else None
+        )
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
             self.comment_and_move(
@@ -415,8 +418,14 @@ class Board:
                 self.comment_and_move(
                     issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
                 )
-        elif not wait or parse_time(issue["updatedAt"]) < self.now - STALE:
-            self.say("recover", ident, to="todo", reason="no session", updated=issue["updatedAt"])
+        elif not wait or entered is None or entered < self.now - STALE:
+            self.say(
+                "recover",
+                ident,
+                to="todo",
+                reason="no session",
+                entered=entered.isoformat() if entered else None,
+            )
             self.comment_and_move(
                 issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
             )
@@ -668,7 +677,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
-    build = config.TASKS[role].kind == "build"
+    build = config.TASKS[role].input == "build"
     reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
     try:
         issue = reader.issue(a.issue)
@@ -912,17 +921,10 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
     return spec
 
 
-def tick(
-    opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, hour=None, launch_sid=None
-):
+def tick(opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
-    hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
-    if not opts["now"] and not 1 <= hour <= 6:
-        if not dry:
-            return 0
-        say("skip", reason="outside hours")
     with lock(runs, dry) as free:
         if not free:
             say("skip", reason=BUSY)
@@ -1031,7 +1033,7 @@ def brake(role, cfg):
 
 
 def options(argv):
-    opts = {"brake": None, "dry": False, "now": False, "tui": False}
+    opts = {"brake": None, "dry": False, "tui": False}
     opts.update(dict.fromkeys(VALUED.values()))
     if "--brake" in argv:
         ok = len(argv) == 2 and argv[0] == "--brake" and not argv[1].startswith("-")
@@ -1047,8 +1049,6 @@ def options(argv):
         else:
             return None
         i += 1
-    if opts["issue"] is not None and opts["now"]:
-        return None
     if not opts["tui"] and (opts["display"] is not None or opts["events"] is not None):
         return None
     return opts
@@ -1090,7 +1090,6 @@ def main(
     *,
     now=datetime.now,
     config_path=None,
-    hour=None,
     gql=None,
     run=None,
     keychain=None,
@@ -1124,7 +1123,7 @@ def main(
         cfg = config.load(path=config_path)
     except ConfigError as error:
         config.report_error("router", error, dry=opts["dry"])
-        return 1
+        return 2
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
@@ -1169,7 +1168,6 @@ def main(
             opts,
             cfg,
             gql,
-            hour=hour,
             start=start,
             keychain=keychain,
             connect=connect,

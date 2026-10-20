@@ -316,7 +316,6 @@ def _record(issue):
         "title": issue.title,
         "priority": issue.priority,
         "createdAt": _stamp(issue.created),
-        "updatedAt": _stamp(issue.mtime),
         "assignee": {"id": issue.assignee},
         "project": None,
     }

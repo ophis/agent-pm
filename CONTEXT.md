@@ -112,7 +112,7 @@ _Avoid_: backend
 A directory of Markdown issue files, `$AGENT_PM_BOARD_DIR` (default `~/.agent-pm/board/`), each file's directory its assignee and state (`<assignee>/<state>/`, or flat `archive/`), its runtime state in `<board>/.state/`; one directory is one board, never synced. Only `router --dry-run` reads one yet. Format: `docs/board.md` › Local board. In code: `orchestrator/src/agent_pm/orchestrator/trackers/local/`.
 
 **Workflow**:
-Each orchestrated role's stage data: the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: the default workflow, `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml`, read by `engine/flow/workflow.py` on first use (`config.TASKS`).
+The board's stages, one per orchestrated role: its input layout, the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: a file of `[[stage]]` tables, the packaged `orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml` unless `[orchestrator] workflow` names another, which `config.load()` reads into `config.TASKS` (`engine/flow/workflow.py`).
 _Avoid_: pipeline, TASKS
 
 **Write-back**:

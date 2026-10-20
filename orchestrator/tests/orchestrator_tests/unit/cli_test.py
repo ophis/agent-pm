@@ -147,7 +147,6 @@ class Commands(Case):
             "router": (
                 "--display",
                 "--events",
-                "--issue and --now",
                 "at most once",
                 "repeat",
                 "Keychain",
@@ -193,7 +192,7 @@ class Commands(Case):
                 },
             ),
             (["--brake", "engineer"], {"brake": "engineer"}),
-            (["--now", "--now", "--dry-run", "--dry-run"], {"now": True, "dry": True}),
+            (["--dry-run", "--dry-run"], {"dry": True}),
         )
         for arguments, expected in fixtures:
             with self.subTest(arguments=arguments):
@@ -202,7 +201,6 @@ class Commands(Case):
                 for key, value in expected.items():
                     self.assertEqual(actual[key], value)
         for arguments in (
-            ["--issue", "TASK-1", "--now"],
             ["--events", "/tmp/demo-events.jsonl"],
             ["--issue", "TASK-1", "--issue", "TASK-2"],
             ["--brake", "engineer", "--dry-run"],
@@ -229,7 +227,7 @@ class Commands(Case):
 
     def test_router_promote_and_prune_help_exits_0_naming_their_options(self):
         for command, options in (
-            ("router", ("--now", "--dry-run", "--issue ID", "--brake ROLE")),
+            ("router", ("--dry-run", "--issue ID", "--brake ROLE")),
             ("promote", ("--dry-run", "--now")),
             ("prune", ("--dry-run",)),
         ):
@@ -276,7 +274,7 @@ class InsideAnAgentSession(Case):
 
 DEPLOY = "/Users/francis/playground/agent-pm"
 LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
-JOBS = {"router": ["--now"], "promote": []}
+JOBS = {"router": [], "promote": []}
 
 
 def plist(job):
@@ -607,13 +605,13 @@ class OnALocalBoard(RunCase):
         self.assertNotIn("needs [orchestrator]", _call(["status", "TASK-1"])[2])
 
     def test_router_dry_run_reads_the_local_board(self):
-        missing = _call(["router", "--dry-run", "--now"])
+        missing = _call(["router", "--dry-run"])
         self.assertEqual(missing[0], 2)
         self.assertEqual(
             missing[2].splitlines()[-1], f"router.py: {self.board}: no such board directory"
         )
         os.makedirs(self.board)
-        empty = _call(["router", "--dry-run", "--now"])
+        empty = _call(["router", "--dry-run"])
         self.assertEqual(empty[0], 2)
         self.assertEqual(
             empty[2].splitlines()[-1],

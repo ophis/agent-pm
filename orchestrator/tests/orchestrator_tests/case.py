@@ -13,6 +13,7 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.orchestrator.engine import log
+from agent_pm.orchestrator.engine.flow import workflow
 
 from utils.tests.sandbox import clean_env, project_roots
 
@@ -52,6 +53,7 @@ class Case(unittest.TestCase):
             if ".unit." in self.id():
                 stack.enter_context(mock.patch("subprocess.run", system_probe))
             log.use_logs(None)
+            workflow.DEFAULT.load()  # a test's own workflow must not reach the next
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
             return super().run(result)

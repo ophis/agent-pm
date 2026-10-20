@@ -95,7 +95,6 @@ class Listing(Board):
                 "title": "LOC-1 title",
                 "priority": 2,
                 "createdAt": "2026-10-19T18:02:00.000Z",
-                "updatedAt": "2026-10-20T00:00:00.000Z",
                 "assignee": {"id": "pm"},
                 "project": None,
             },
