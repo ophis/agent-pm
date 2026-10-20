@@ -19,6 +19,7 @@ type Manifest struct {
 	Labels                                                                                      map[string]string
 	GitHubApp                                                                                   string   // the App whose tokens the session gets; "": github null
 	OpencodeProviders                                                                           []string // the providers whose API keys an opencode container gets
+	ClaudeAccount                                                                               string   // the account whose setup-token a claude container gets; "" for other clients
 }
 
 // A workspace volume's labels: its kind (always kind) and its mount point.
@@ -37,10 +38,21 @@ var (
 	appPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	// An OpenCode provider's name: its keychain account and its key file's name, <name>.key.
 	providerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	// A Claude account's name: its setup-token item's keychain account. Lowercase only, so the keychain's case
+	// handling cannot merge two names.
+	claudeAccountPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
 // ValidProvider is whether name can be a listed OpenCode provider; ollama needs no key.
 func ValidProvider(name string) bool { return providerPattern.MatchString(name) && name != "ollama" }
+
+// DefaultClaudeAccount is the Claude account a start without a selection uses.
+const DefaultClaudeAccount = "default"
+
+// ValidClaudeAccount is whether name can be a Claude account; setup-token is the retired single item's account.
+func ValidClaudeAccount(name string) bool {
+	return claudeAccountPattern.MatchString(name) && name != "setup-token"
+}
 
 func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
@@ -119,7 +131,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir,
 		"opencode_dir": &m.OpencodeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
-		if key == "labels" || key == "github" || key == "opencode_providers" {
+		if key == "labels" || key == "github" || key == "opencode_providers" || key == "claude_account" {
 			continue
 		}
 		target, ok := targets[key]
@@ -186,6 +198,19 @@ func ParseManifest(data []byte) (Manifest, error) {
 			}
 		}
 		m.OpencodeProviders = providers
+	}
+
+	if raw, ok := fields["claude_account"]; ok {
+		if m.Client != "claude" {
+			return reject("claude_account requires client claude")
+		}
+		account, ok := str(raw)
+		if !ok || !ValidClaudeAccount(account) {
+			return reject("invalid claude_account")
+		}
+		m.ClaudeAccount = account
+	} else if m.Client == "claude" {
+		m.ClaudeAccount = DefaultClaudeAccount
 	}
 
 	var labels map[string]json.RawMessage

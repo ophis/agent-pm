@@ -1,5 +1,5 @@
-// Package broker owns the broker's keychain secrets: the Claude setup-token (login, access, injection into a container)
-// and the GitHub App private keys (login).
+// Package broker owns the broker's keychain secrets: each Claude account's setup-token (login, access, injection into a
+// container) and the GitHub App private keys (login).
 // It never decides how a container starts: the launcher calls it through Credentials with an exec bound to one container.
 package broker
 
@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/ophis/agent-pm/broker/internal/docker"
+	"github.com/ophis/agent-pm/broker/internal/launcher"
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
@@ -25,21 +26,22 @@ const (
 	maxToken       = 16384
 )
 
-const tokenService, tokenAccount = "agent-pm-claude", "setup-token"
+// A Claude account's setup-token: service tokenService, account the account's name (launcher.ValidClaudeAccount).
+const tokenService = "agent-pm-claude"
 
-// TokenReader is start's side of the setup-token item: its access (ItemTrust's AppAccess of tokenService and
-// tokenAccount) and Get, a read that fails with ErrNeedsDialog rather than show a keychain dialog.
+// TokenReader is start's side of the setup-token items: an item's access (ItemTrust's AppAccess of tokenService and
+// the account) and Get, a read of the account's item that fails with ErrNeedsDialog rather than show a keychain dialog.
 type TokenReader interface {
 	AppAccess(service, account string) (AppAccess, error)
-	Get() ([]byte, error)
+	Get(account string) ([]byte, error)
 }
 
-// Keychain is login claude's side of the setup-token item; GetWithDialog is a read macOS may ask the user to allow.
+// Keychain is login claude's side of the setup-token items; GetWithDialog is a read macOS may ask the user to allow.
 type Keychain interface {
 	TokenReader
 	ItemTrust
-	GetWithDialog() ([]byte, error)
-	Put([]byte) error
+	GetWithDialog(account string) ([]byte, error)
+	Put(account string, token []byte) error
 }
 
 var (
@@ -215,11 +217,22 @@ func erase(b []byte) {
 	}
 }
 
-// Login reads a setup-token with read, checks it, stores it and makes the item trust only the broker (secureItem,
-// asking password when needed). It then proves start's no-dialog read returns the token. When that read would ask,
-// the one dialog happens here, announced on notice, and a second no-dialog read proves Always Allow was clicked.
-// Neither notice nor out sees the token.
-func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Writer) error {
+// ClaudeLogin is the command that logs account in: login claude, NAME only for an account other than the default.
+func ClaudeLogin(account string) string {
+	if account == launcher.DefaultClaudeAccount {
+		return "agent-pm-broker login claude"
+	}
+	return "agent-pm-broker login claude " + account
+}
+
+// Login reads account's setup-token with read, checks it, stores it in account's item (replacing an earlier one) and
+// makes the item trust only the broker (secureItem, asking password when needed). It then proves start's no-dialog
+// read returns the token. When that read would ask, the one dialog happens here, announced on notice, and a second
+// no-dialog read proves Always Allow was clicked. Neither notice nor out sees the token.
+func Login(account string, read, password func() ([]byte, error), k Keychain, notice, out io.Writer) error {
+	if !launcher.ValidClaudeAccount(account) {
+		return fmt.Errorf("invalid Claude account name %q", account)
+	}
 	token, err := read()
 	defer erase(token)
 	if err != nil {
@@ -228,20 +241,22 @@ func Login(read, password func() ([]byte, error), k Keychain, notice, out io.Wri
 	if err := checkSecret("setup-token", token); err != nil {
 		return err
 	}
-	if err := k.Put(token); err != nil {
+	if err := k.Put(account, token); err != nil {
 		return err
 	}
-	if err := secureItem(tokenService, tokenAccount, "rerun agent-pm-broker login claude to finish", k, password); err != nil {
+	item, rerun := tokenService+" "+account, "rerun "+ClaudeLogin(account)
+	if err := secureItem(tokenService, account, rerun+" to finish", k, password); err != nil {
 		return err
 	}
-	err = readsBack(token, k.Get)
+	get := func() ([]byte, error) { return k.Get(account) }
+	err = readsBack(token, item, rerun, get)
 	if errors.Is(err, ErrNeedsDialog) {
-		err = approveByDialog(token, k, notice)
+		err = approveByDialog(token, item, rerun, get, func() ([]byte, error) { return k.GetWithDialog(account) }, notice)
 	}
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, "Claude setup-token saved; keychain trusts only the broker")
+	_, err = fmt.Fprintf(out, "Claude account %s setup-token saved; keychain trusts only the broker\n", account)
 	return err
 }
 
@@ -258,31 +273,32 @@ func checkSecret(what string, secret []byte) error {
 	return nil
 }
 
-// approveByDialog moves the one read dialog into login claude: it announces it on notice, reads with it, then
-// proves with a no-dialog read that Always Allow, not Allow, was clicked.
-func approveByDialog(token []byte, k Keychain, notice io.Writer) error {
-	if _, err := fmt.Fprintln(notice, "macOS will ask to let agent-pm-broker use "+tokenService+": enter the login keychain password if asked and click Always Allow"); err != nil {
+// approveByDialog moves item's one read dialog into login claude: it announces it on notice, reads with it
+// (getWithDialog), then proves with a no-dialog read (get) that Always Allow, not Allow, was clicked.
+func approveByDialog(token []byte, item, rerun string, get, getWithDialog func() ([]byte, error), notice io.Writer) error {
+	if _, err := fmt.Fprintln(notice, "macOS will ask to let agent-pm-broker use "+item+": enter the login keychain password if asked and click Always Allow"); err != nil {
 		return err
 	}
-	if err := readsBack(token, k.GetWithDialog); err != nil {
+	if err := readsBack(token, item, rerun, getWithDialog); err != nil {
 		return err
 	}
-	err := readsBack(token, k.Get)
+	err := readsBack(token, item, rerun, get)
 	if errors.Is(err, ErrNeedsDialog) {
-		return fmt.Errorf("keychain item %s still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude", tokenService)
+		return fmt.Errorf("keychain item %s still needs a keychain dialog: click Always Allow, not Allow; %s", item, rerun)
 	}
 	return err
 }
 
-// readsBack is nil when get returns token, else why not, wrapping get's error; it erases what get returned.
-func readsBack(token []byte, get func() ([]byte, error)) error {
+// readsBack is nil when get returns token, else why not, wrapping get's error and ending with rerun; it erases what
+// get returned.
+func readsBack(token []byte, item, rerun string, get func() ([]byte, error)) error {
 	saved, err := get()
 	defer erase(saved)
 	if err == nil && !bytes.Equal(saved, token) {
 		err = errors.New("it holds other bytes")
 	}
 	if err != nil {
-		return fmt.Errorf("keychain item %s: reading it failed: %w; rerun agent-pm-broker login claude", tokenService, err)
+		return fmt.Errorf("keychain item %s: reading it failed: %w; %s", item, err, rerun)
 	}
 	return nil
 }
@@ -398,37 +414,38 @@ func incomplete(item, account, rerun string, k ItemTrust, before AppAccess, caus
 
 type Credentials struct{ Keychain TokenReader }
 
-// keychainError maps a keychain failure to the protocol, without its detail.
-func keychainError(err error) *protocol.Error {
+// keychainError maps a keychain failure for account's token to the protocol, without its detail.
+func keychainError(account string, err error) *protocol.Error {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		return protocol.New(protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude.")
+		return protocol.New(protocol.LoginRequired, "No Claude setup-token for account "+account+": run "+ClaudeLogin(account)+".")
 	case errors.Is(err, ErrNeedsDialog):
-		return protocol.New(protocol.LoginRequired, "The Claude setup-token needs keychain approval: unlock the login keychain, or run agent-pm-broker login claude.")
+		return protocol.New(protocol.LoginRequired, "The Claude account "+account+" setup-token needs keychain approval: unlock the login keychain, or run "+ClaudeLogin(account)+".")
 	}
-	return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude setup-token failed.")
+	return protocol.New(protocol.KeychainFailed, "Keychain access to the Claude account "+account+" setup-token failed.")
 }
 
-// Ready reads only the item's access, so it never prompts: an item trusting another broker build would ask at Inject.
-func (c Credentials) Ready() error {
-	access, err := c.Keychain.AppAccess(tokenService, tokenAccount)
+// Ready reads only account's item's access, so it never prompts: an item trusting another broker build would ask at
+// Inject.
+func (c Credentials) Ready(account string) error {
+	access, err := c.Keychain.AppAccess(tokenService, account)
 	if err != nil {
-		return keychainError(err)
+		return keychainError(account, err)
 	}
 	if onlyBroker(access) != nil {
-		return protocol.New(protocol.LoginRequired, "The Claude setup-token trusts another broker build: run agent-pm-broker login claude.")
+		return protocol.New(protocol.LoginRequired, "The Claude account "+account+" setup-token trusts another broker build: run "+ClaudeLogin(account)+".")
 	}
 	return nil
 }
 
-// Inject writes the token into the container's secrets tmpfs through exec's stdin.
+// Inject writes account's token, and no other, into the container's secrets tmpfs through exec's stdin.
 // The token read never shows a keychain dialog: one it would need, or a locked keychain, fails here.
 // Errors are keychainError's, wrap docker.ErrUnreachable or are opaque: no Docker stderr, no keychain detail.
-func (c Credentials) Inject(exec func(argv []string, stdin []byte) error) error {
-	token, err := c.Keychain.Get()
+func (c Credentials) Inject(account string, exec func(argv []string, stdin []byte) error) error {
+	token, err := c.Keychain.Get(account)
 	defer erase(token)
 	if err != nil {
-		return keychainError(err)
+		return keychainError(account, err)
 	}
 	err = exec([]string{"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}, token)
 	if errors.Is(err, docker.ErrUnreachable) {

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
@@ -44,9 +45,11 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
+from agent_pm.session.engine.worker import WorkerState
 from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.modes import tui, tui_hook
 from agent_pm.session.modes.base import POINTER
+from agent_pm.utils import ACCOUNT_ENV as ACCOUNT
 from agent_pm.utils import StatusState, inode_lock, over_argv
 
 from session.tests import fake_client
@@ -685,6 +688,41 @@ class StartTest(Base):
                 self.assertEqual(json.loads(metadata["home_files"]), {"settings.json": "{}"})
                 self.assertNotIn("approval", metadata)
                 self.assertEqual(args[1].transcript, "/home/fake/projects/p/s.jsonl")
+
+    def test_a_workers_saved_account_names_the_home_on_each_start_never_the_launch(self):
+        class Homed(ScanTui):
+            def _home(self):
+                return ClientHome("claude_dir", "claude", "FAKE_HOME", "claude-setup-token")
+
+            def launch(self, spec, hook):
+                self.spec = spec
+                return super().launch(spec, hook)
+
+        run = Homed(self.client)
+        saved = WorkerState(
+            NAME, SID, "fake", self.tmp, "tmux", env={ACCOUNT: "work"}, events=self.events
+        )
+        for resume, (env, account) in itertools.product(
+            (False, True), (({ACCOUNT: "work"}, "work"), ({}, None))
+        ):
+            with (
+                self.subTest(resume=resume, env=env),
+                mock.patch.object(self.client, "_accounts", return_value={"default", "work"}),
+                mock.patch.object(self.host, "_client_env", return_value={"FAKE_HOME": "/h"}),
+                mock.patch.dict(os.environ, {ACCOUNT: "outer"}),
+            ):
+                self.host.processes.clear()
+                spec = replace(saved, env=env).spec(prompt="", resume=resume)
+                self.start(
+                    run=run, **{k: getattr(spec, k) for k in ("workdir", "access", "env", "resume")}
+                )
+                launch = self.host.calls.terminal.call_args.args[1]
+                metadata = self.host.calls.terminal.call_args.kwargs["metadata"]
+                self.assertEqual(metadata.get("home_account"), account)
+                self.assertEqual(dict(run.spec.env), {"FAKE_HOME": "/h"})
+                self.assertNotIn(ACCOUNT, launch.env)
+                self.assertNotIn(ACCOUNT, self.prepared.spec.env)
+        self.assertEqual(saved.env[ACCOUNT], "work")
 
     def test_host_context_reaches_adapter_and_projection_reaches_terminal(self):
         context = ClientContext(
@@ -2299,6 +2337,65 @@ class TmuxErrorTest(TmuxBase):
         with self.assertRaises(SessionError) as caught:
             tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")
+
+
+class TmuxAccountTest(TmuxBase):
+    def test_a_valid_selection_changes_no_tmux_launch(self):
+        workdir = os.path.join(self.dir, "work")
+        os.mkdir(workdir)
+        client = ClaudeClient({"accounts": {"work": {"dir": "/accounts/work"}}})
+        bin_dir = os.path.join(self.dir, "bin")
+        os.mkdir(bin_dir)
+        command = os.path.join(bin_dir, "claude")
+        with open(command, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(command, 0o755)
+        prepared = []
+        with mock.patch.dict(
+            os.environ,
+            {"CLAUDE_CONFIG_DIR": "/mine", "PATH": bin_dir + os.pathsep + "/usr/bin:/bin"},
+        ):
+            for env in ({}, {ACCOUNT: "work"}, {ACCOUNT: "default"}):
+                with self.subTest(env=env):
+                    prepared.append(
+                        tui.TuiMode.preflight(
+                            Spec(
+                                workdir=workdir,
+                                access=Access(cwd=workdir),
+                                name=NAME,
+                                client="claude",
+                                sid=SID,
+                                env=env,
+                            ),
+                            client,
+                            registry=self.session_cls._config().registry,
+                            host=self.host,
+                        )
+                    )
+        argv, env = prepared[0].argv, dict(prepared[0].env)
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], "/mine")
+        self.assertNotIn(ACCOUNT, env)
+        for other in prepared[1:]:
+            self.assertEqual((other.argv, dict(other.env)), (argv, env))
+        with self.assertRaises(ConfigError) as caught:
+            tui.TuiMode.preflight(
+                Spec(
+                    workdir=workdir,
+                    access=Access(cwd=workdir),
+                    name=NAME,
+                    client="claude",
+                    sid=SID,
+                    env={ACCOUNT: "nope"},
+                ),
+                client,
+                registry=self.session_cls._config().registry,
+                host=self.host,
+            )
+        self.assertEqual(
+            str(caught.exception),
+            "account 'nope': not a registered account of client claude"
+            " ([clients.claude.accounts.nope])",
+        )
 
 
 BIG = "雪" * 40_000

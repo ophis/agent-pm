@@ -9,7 +9,7 @@ import re
 import stat
 import sys
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from agent_pm.session.clients import common
@@ -248,8 +248,48 @@ CHECKS = (
     common.FLAGS,
     common.MODES,
     ("allow", strings, "a list of strings"),
+    ("accounts", lambda v: isinstance(v, Mapping), "a table of account tables"),
     *common.CHECKS,
 )
+DEFAULT_ACCOUNT = "default"
+ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+NOT_ACCOUNT = (
+    "not an account name (1–64 lowercase letters, digits, '.', '_' or '-', starting with a letter"
+    " or digit, and not setup-token)"
+)
+
+
+@dataclass(frozen=True)
+class _Account:
+    """A [clients.claude.accounts.<name>] table: its CLAUDE_CONFIG_DIR and display string."""
+
+    dir: str
+    display: str = ""
+
+
+def _accounts(config: Mapping) -> dict[str, _Account]:
+    """The registry, `default` always in it; a config error names the bad key."""
+    found = {DEFAULT_ACCOUNT: _Account(os.path.expanduser("~/.claude"))}
+    for name, table in config.get("accounts", {}).items():
+        at = f"{TABLE}.accounts.{name}"
+        if not (isinstance(name, str) and ACCOUNT_NAME.fullmatch(name)) or name == "setup-token":
+            raise ConfigError(f"{TABLE}.accounts {name!r}: {NOT_ACCOUNT}")
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"{at} must be a table")
+        for key, value in table.items():
+            if key not in ("dir", "account"):
+                raise ConfigError(f"{at}.{key}: unknown key; an account has only dir and account")
+            if not isinstance(value, str):
+                raise ConfigError(f"{at}.{key} must be a string")
+        account = replace(found[DEFAULT_ACCOUNT], display=table.get("account", ""))
+        if "dir" in table:
+            if name == DEFAULT_ACCOUNT:
+                raise ConfigError(f"{at}.dir: the default account's dir is ~/.claude; remove it")
+            if not printable_abs(path := os.path.expanduser(table["dir"])):
+                raise ConfigError(f"{at}.dir must be an absolute path after ~ expansion")
+            account = replace(account, dir=path)
+        found[name] = account
+    return found
 
 
 def size(path: str) -> int:
@@ -332,6 +372,7 @@ class ClaudeCommon:
                     f"--setting-sources is set by the Claude client: remove it from {TABLE}.{key}"
                 )
         self.allow = tuple(config.get("allow", ()))
+        self.accounts = _accounts(config)
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
         self._env = dict(config.get("env", {}))

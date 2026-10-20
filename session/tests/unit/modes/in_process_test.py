@@ -330,6 +330,21 @@ class Start(Base):
                 )
                 self.assertEqual(prepared, Prepared(noted, info))
 
+    def test_a_selected_account_is_checked_then_kept_from_the_run(self):
+        class Accounts(StubClient):
+            def _accounts(self):
+                return frozenset({"default", "work"})
+
+        runs = []
+        client = Accounts(lambda spec: runs.append(spec) or [])
+        spec = dataclasses.replace(SPEC, env={"AGENT_PM_ACCOUNT": "work", "OTHER": "1"})
+        prepared = self.start(client, spec)
+        self.assertEqual(self.drain(), [])
+        self.assertEqual(
+            (dict(client.checked[-1].env), dict(runs[-1].env), dict(prepared.spec.env)),
+            ({"OTHER": "1"},) * 3,
+        )
+
     def test_refused_before_its_session_line_or_its_run(self):
         refused = StubClient(ended, ConfigError("tier 4 is unmapped"))
         for client, fields, message in (

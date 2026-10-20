@@ -570,6 +570,35 @@ class Policy(Base):
                 start.assert_not_called()
 
 
+class Accounts(Base):
+    """plan puts the effective client's account (its role's accounts table) into the session env."""
+
+    def test_the_effective_clients_entry_only(self):
+        accounts = {"claude": "work", "codex": ""}
+        for client, keys, want in (
+            ("claude", None, {"AGENT_PM_ACCOUNT": "work"}),
+            (None, {"client": "claude"}, {"AGENT_PM_ACCOUNT": "work"}),
+            ("codex", None, {}),
+            ("fake", {"client": "claude"}, {}),
+        ):
+            with self.subTest(client=client, keys=keys):
+                got, _ = self.planned(client=client, keys=keys, accounts=accounts)
+                self.assertEqual(dict(got.session.env), want)
+                self.assertEqual(got.session.client, client or "claude")
+        got, _ = self.planned(client="claude")
+        self.assertEqual(dict(got.session.env), {})
+
+    def test_it_joins_the_policy_env_and_a_docker_runs_users(self):
+        self.local('[policy.claude]\nenv = { K = "v" }\n')
+        got, _ = self.planned(client="claude", accounts={"claude": "work"})
+        self.assertEqual(dict(got.session.env), {"K": "v", "AGENT_PM_ACCOUNT": "work"})
+        self.driver.docker = True
+        got, _ = self.planned(client="claude", mode="tui", out=None, accounts={"claude": "w"})
+        self.assertEqual(
+            (got.session.env["AGENT_PM_ACCOUNT"], got.session.env["AGENT_PM_USERS"]), ("w", "[]")
+        )
+
+
 class InstructionPlans(InstructionCase):
     def test_each_roles_destination_and_prompt_are_the_same_under_any_client(self):
         for local in ("", GITHUB):

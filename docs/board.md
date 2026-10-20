@@ -17,6 +17,8 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    max_runs = 1
    ```
 
+   The board role's `account` is its Linear user; the Claude account its board runs use is `[linear_orchestrator.core.roles.<role>.accounts]` (`[delegate.roles.<role>.accounts]` for every run; [Claude accounts](docker-host.md#claude-accounts)).
+
 2. Create the Linear presets, accounts and Keychain items, and fill their keys: [Linear presets](credentials.md#linear-presets).
 3. Dry-run each job:
    ```bash
@@ -140,7 +142,7 @@ Selection: [router.py:592](../linear-orchestrator/src/agent_pm/linear_orchestrat
 
 Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([router.py:494](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L494)); a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([modes/base.py:53](../session/src/agent_pm/session/modes/base.py#L53), [router.py:1074](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1074)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([gate.py:56](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L56)). A role's [Claude account](docker-host.md#claude-accounts) (`[linear_orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([modes/base.py:53](../session/src/agent_pm/session/modes/base.py#L53), [router.py:1074](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L1074)).
 
 `--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([router.py:622](../linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L622)).
 

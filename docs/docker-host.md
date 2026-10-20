@@ -39,15 +39,15 @@ Checks: [Docker checks › Install](docker-checks.md#install).
 ## Log in
 
 After every install or reinstall, run all three logins: `login claude`, `login github agent-pm-bot` and
-`login codex` ([Codex operations](docker-codex.md#commands)), and `login opencode <name>` for each configured
-OpenCode provider. The keychain trusts the broker by its code requirement
-(an ad hoc signature's cdhash), not its path, so a reinstalled broker cannot read the old one's items without asking;
+`login codex` ([Codex operations](docker-codex.md#commands)), plus `login claude <name>` for each other registered
+[Claude account](#claude-accounts) and `login opencode <name>` for each configured OpenCode provider. The keychain
+trusts the broker by its code requirement (an ad hoc signature's cdhash), not its path, so a reinstalled broker cannot read the old one's items without asking;
 `start` never asks, failing instead (`login_required`, or `keychain_failed` for an old GitHub item). Each login asks its terminal questions first, without
 echo:
 
 | Login | Terminal | macOS dialog, at most | Click |
 |---|---|---|---|
-| `login claude` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
+| `login claude [<name>]` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
 | `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
 | `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
 | `login opencode <name>` | the provider's API key; the login keychain password only when the item's access needs a change | at most one change-access dialog (Deny / Allow), after the password | Allow |
@@ -60,12 +60,15 @@ What each login hands a container: [Credentials › Who logs in](credentials.md#
 ```sh
 claude setup-token          # copy the token it prints
 "$B" login claude           # paste it; nothing echoes
+"$B" login claude work      # another registered account's token, from its own subscription
 ```
 
-It saves the token in a new item, makes its access trust only the broker as `login github` does (prompt
-`Login keychain password, to make Claude trust only the broker (hidden):`) and reads it back. If macOS would still
-ask, it first prints `macOS will ask to let agent-pm-broker use agent-pm-claude: enter the login keychain password if
-asked and click Always Allow`, then reads once with the dialog and once without, proving Always Allow was clicked.
+It saves the token in the account's item, `agent-pm-claude` / `<name>` (`default` without a name), replacing an
+earlier one, makes its access trust only the broker as `login github` does (prompt `Login keychain password, to make
+Claude trust only the broker (hidden):`), reads it back and prints `Claude account <name> setup-token saved; keychain
+trusts only the broker`. If macOS would still ask, it first prints `macOS will ask to let agent-pm-broker use
+agent-pm-claude <name>: enter the login keychain password if asked and click Always Allow`, then reads once with the
+dialog and once without, proving Always Allow was clicked.
 
 Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
@@ -299,6 +302,56 @@ In the container `repo.py worktree` makes a fresh blobless clone at `<Workdir>/s
 marks it ready, you approve with your own account, and revision rounds push to the same branch. Then
 [review before pulling](#review-before-pulling).
 
+### Claude accounts
+
+A Docker Claude session runs on one Claude account, a subscription whose setup-token the broker keeps: `default`
+unless a worker or role selects another. Register each other one in `~/.agent-pm/config.local.toml`, then
+[log it in](#log-in) (`"$B" login claude work`):
+
+```toml
+[session.clients.claude.accounts.work]
+dir = "~/.claude-work"   # its CLAUDE_CONFIG_DIR on the host, absolute after ~; absent → ~/.claude
+account = "me@work"      # a display string, e.g. its login email
+```
+
+No other key and no secret. A name is 1–64 lowercase letters, digits, `.`, `_` or `-`, never `setup-token`.
+`default` is always registered, its `dir` `~/.claude` (never written; a `[…accounts.default]` table may set only
+`account`). Nothing reads `dir` yet (TASK-804's per-account usage probe).
+
+Select one:
+
+- **Worker**: `agent-pm-crew worker NAME --client claude --account work` (`agent-pm-session start NAME --client claude
+  --account work`); restart and resume keep it.
+- **Role**: keyed by client, so a run whose client an Agent label switches to Codex or OpenCode gets none:
+
+  ```toml
+  [delegate.roles.engineer.accounts]
+  claude = "work"
+  ```
+
+  `[delegate.accounts]` holds every role's, and for board runs `[linear_orchestrator.core.accounts]` and
+  `[linear_orchestrator.core.roles.<role>.accounts]` come after; a later table wins entry by entry, `""` unsets one.
+  A Delegate resume, a board run's included, resolves it again from the current config; `agent-pm-crew reopen`
+  restarts on the account its run record holds.
+
+The session takes the selection as `AGENT_PM_ACCOUNT` ([agent-pm-session](sessions.md#agent-pm-session)) and writes
+it into the manifest as `claude_account`; the broker injects that account's token alone. Each failure comes before
+any container:
+
+| Cause | Result |
+|---|---|
+| an account (`--account` or a role entry) not registered | exit 2, `account 'nope': not a registered account of client claude ([clients.claude.accounts.nope])` |
+| an account for `--client codex` or `opencode` | exit 2, `client codex has no accounts: remove account 'work'` |
+| `--env AGENT_PM_ACCOUNT=…`, or `AGENT_PM_ACCOUNT` in a `[delegate.policy.<client>] env` | exit 2, `AGENT_PM_ACCOUNT is set by --account or a role's accounts table` |
+| a registered account not logged in | `login_required`, `No Claude setup-token for account work: run agent-pm-broker login claude work.` |
+
+- Config picks the account; it is no access control: any process running as you can start a container with any
+  logged-in account ([Credentials › Risks](credentials.md#risks)).
+- The usage gate probes the host's Claude login (the `[session.clients.claude]` table's), not the selected
+  account's, and the board's limit hold is per client: one account's usage limit holds every board run on Claude
+  (per account: TASK-804).
+- The tmux Host checks a selection as above, then ignores it: the session runs on your own Claude login.
+
 ### OpenCode
 
 OpenCode sessions run the host's Ollama models, or a configured provider's ([OpenCode sessions](sessions.md#opencode-sessions)).
@@ -342,7 +395,7 @@ not yet made: a role run makes its agent dir after); the broker's `version` matc
 [Install](#install)); `build` succeeds, rebuilding an image 7 or more days old, its progress on stderr. `resume` runs it
 before touching anything; `restart` closes first, so after a failed preflight `resume` continues the worker once
 fixed. Missing client credentials fail at the broker's `start`, before creation, naming the host
-`agent-pm-broker login <client>` command; the start is not retried.
+`agent-pm-broker login` command to run; the start is not retried.
 
 **Waits**: `agent-pm-crew` waits up to 1920 s for a start or resume (a rebuild alone may take 1800 s), then sends
 SIGTERM and, 60 s later, SIGKILL. From just before the broker's `start` until the client runs, a start holds SIGTERM,
@@ -393,7 +446,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | Line | Phase | Covers |
 |---|---|---|
 | `docker timing NAME` | `preflight` | cwd checks, broker `version` and `build` (a rebuild lands here) |
-| `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, setup-token or OpenCode providers' keys present |
+| `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, the Claude account's setup-token or OpenCode providers' keys present |
 | | `image`, `checks` | the image check; the container-name check and workspace volume (created for `agent` on first use) |
 | | `create`, `bootstrap`, `clients` | `docker run`; the client's bootstrap state (none for OpenCode) and the hook stub; every client's `--version` |
 | | `client_update` | Codex only: [version preparation](docker-codex.md#container-versions) |
@@ -509,8 +562,8 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
 
 - Container credentials are readable by every process in the container and by any process running as you
   ([Credentials](credentials.md)); each restart and resume writes them into a new container.
-- A broker reinstall needs all three logins and each `login opencode <name>` again ([Log in](#log-in)); until then
-  starts fail (`login_required`, or `keychain_failed` for the GitHub items).
+- A broker reinstall needs all three logins, each `login claude <name>` and each `login opencode <name>` again
+  ([Log in](#log-in)); until then starts fail (`login_required`, or `keychain_failed` for the GitHub items).
 - An OpenCode provider at an `http://` `base_url` gets its API key and every prompt in plaintext: anyone on the LAN
   path can capture them. Prefer `https://`, or a key that only that server accepts.
 - A GitHub token the broker could not revoke stays valid until it expires (an hour); `"$B" status` lists it.

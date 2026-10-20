@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "15"
+PROTOCOL = "16"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -435,9 +435,11 @@ def write_manifest(
     hook_path: str,
     github: str,
     providers: tuple[str, ...] = (),
+    account: str = "",
 ) -> None:
     """The start manifest, 0600; home: (its manifest field, the client home's path); github: the
-    App whose tokens the container gets, "": none; providers: those whose API keys it gets.
+    App whose tokens the container gets, "": none; providers: those whose API keys it gets;
+    account: the one whose credential it gets, "": the default.
     """
     field, home_path = home
     client = field.removesuffix("_dir")
@@ -453,5 +455,6 @@ def write_manifest(
         "github": {"app": github} if github else None,
         "labels": {},
         **({f"{client}_providers": list(providers)} if providers else {}),
+        **({f"{client}_account": account} if account else {}),
     }
     save(path, json.dumps(manifest), durable=True)

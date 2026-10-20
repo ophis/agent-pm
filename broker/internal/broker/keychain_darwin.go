@@ -538,17 +538,17 @@ func (k fileKeychain) get(service, account string, noUI bool) ([]byte, error) {
 	return b, nil
 }
 
-func (k fileKeychain) Get() ([]byte, error) { return k.get(tokenService, tokenAccount, true) }
+func (k fileKeychain) Get(account string) ([]byte, error) { return k.get(tokenService, account, true) }
 
-func (k fileKeychain) GetWithDialog() ([]byte, error) {
-	return k.get(tokenService, tokenAccount, false)
+func (k fileKeychain) GetWithDialog(account string) ([]byte, error) {
+	return k.get(tokenService, account, false)
 }
 
-func (k fileKeychain) Put(token []byte) error {
+func (k fileKeychain) Put(account string, token []byte) error {
 	if len(token) == 0 {
 		return errors.New("empty setup-token")
 	}
-	return k.put(tokenService, tokenAccount, "agent-pm Claude setup-token", token)
+	return k.put(tokenService, account, "agent-pm Claude setup-token "+account, token)
 }
 
 func (k fileKeychain) put(service, account, label string, data []byte) error {
@@ -643,25 +643,25 @@ func (k SystemKeychain) login() fileKeychain {
 	return fileKeychain(filepath.Join(k.Home, "Library/Keychains/login.keychain-db"))
 }
 
-func (k SystemKeychain) Get() ([]byte, error) {
+func (k SystemKeychain) Get(account string) ([]byte, error) {
 	if err := CheckInstalled(); err != nil {
 		return nil, err
 	}
-	return k.login().Get()
+	return k.login().Get(account)
 }
 
-func (k SystemKeychain) GetWithDialog() ([]byte, error) {
+func (k SystemKeychain) GetWithDialog(account string) ([]byte, error) {
 	if err := CheckInstalled(); err != nil {
 		return nil, err
 	}
-	return k.login().GetWithDialog()
+	return k.login().GetWithDialog(account)
 }
 
-func (k SystemKeychain) Put(token []byte) error {
+func (k SystemKeychain) Put(account string, token []byte) error {
 	if err := CheckInstalled(); err != nil {
 		return err
 	}
-	return k.login().Put(token)
+	return k.login().Put(account, token)
 }
 
 func (k SystemKeychain) AppAccount(app string) (string, error) {

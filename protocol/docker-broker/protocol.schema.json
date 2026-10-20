@@ -208,6 +208,13 @@
           },
           "maxItems": 32,
           "uniqueItems": true
+        },
+        "claude_account": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "not": {
+            "const": "setup-token"
+          }
         }
       },
       "required": [
@@ -276,6 +283,11 @@
                 "required": [
                   "opencode_providers"
                 ]
+              },
+              {
+                "required": [
+                  "claude_account"
+                ]
               }
             ]
           }
@@ -299,6 +311,11 @@
               {
                 "required": [
                   "codex_dir"
+                ]
+              },
+              {
+                "required": [
+                  "claude_account"
                 ]
               }
             ]
@@ -329,7 +346,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "15"
+          "const": "16"
         }
       },
       "required": [

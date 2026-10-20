@@ -116,6 +116,28 @@ class RecordControl(HostedTuiBase):
         self.assertIn("refused on the other Host", err)
         self.assertEqual(self.host.processes, {})
 
+    def test_start_account_sets_the_account_variable_and_env_cannot(self):
+        with open(Path(self.agent_pm, "config.local.toml"), "a") as f:
+            f.write(
+                'accounts = ["default", "work"]\n[session.hosts.other]\n'
+                'implementation = "session.tests.unit.cli_test:OtherHost"\n'
+            )
+        code, out, err = self.invoke(
+            "start", "w2", "--client", "fake", "--env", "AGENT_PM_ACCOUNT=work"
+        )
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("AGENT_PM_ACCOUNT is set by --account or a role's accounts table", err)
+        code, out, err = self.invoke("start", "w2", "--client", "fake", "--account", "nope")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("account 'nope': not a registered account of client fake", err)
+        self.assertEqual(self.host.processes, {})
+        # a registered account passes the selection and reaches the Host
+        code, out, err = self.invoke(
+            "start", "w2", "--client", "fake", "--account", "work", "--host", "other"
+        )
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("refused on the other Host", err)
+
     def test_status_refuses_a_record_with_one_replaced_session(self):
         self.host.create("w1", sid=SID)
         self.host.create("w2", sid="replacement")

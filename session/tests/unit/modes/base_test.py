@@ -1,6 +1,6 @@
 """modes/base.py: BaseMode, the ABC each Mode's running session implements (a class start
-returning it started, then its session calls), and the start helpers the modes share: child_env
-and identity_drop.
+returning it started, then its session calls), and the start helpers the modes share: child_env,
+identity_drop and _select_account.
 """
 
 import inspect
@@ -14,9 +14,10 @@ from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.modes import headless, in_process, tui
+from agent_pm.session.modes import base, headless, in_process, tui
 from agent_pm.session.modes.base import BaseMode, child_env, identity_drop
 from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.utils import ACCOUNT_ENV as ACCOUNT
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost
@@ -87,6 +88,22 @@ class OtherClient(NoModeClient):
     session_env = "OTHER_SESSION"
     identity_env = ("OTHER_SESSION", "OTHER_ID")
     child_defaults = {"OTHER_MODE": "on"}
+
+
+class AccountsClient(Client):
+    """A client with registered accounts default and work, and every mode (none ever run)."""
+
+    def headless(self):
+        return mock.Mock()
+
+    def tui(self):
+        return mock.Mock()
+
+    def in_process(self):
+        return mock.Mock()
+
+    def _accounts(self):
+        return frozenset({"default", "work"})
 
 
 def registry(**clients) -> Registry:
@@ -170,6 +187,67 @@ class BaseModeTest(Case):
             )
         self.assertTrue(str(caught.exception).startswith("refused inside an agent session"))
         self.assertEqual((client.mode.asked, recorded), ([], []))
+
+
+class AccountTest(Case):
+    def spec(self, client="claude", **env) -> Spec:
+        return Spec(workdir="/w", access=Access(cwd="/w"), client=client, sid="s1", env=env)
+
+    def test_no_or_an_empty_selection_is_no_account_on_any_client(self):
+        for client, env in itertools.product(
+            (AccountsClient({}), NoModeClient({})), ({}, {ACCOUNT: ""})
+        ):
+            with self.subTest(client=type(client).__name__, env=env):
+                self.assertEqual(base._select_account(self.spec(**env), client), "")
+
+    def test_a_registered_name_is_the_selected_account(self):
+        for name in ("default", "work"):
+            with self.subTest(name=name):
+                spec = self.spec(**{ACCOUNT: name})
+                self.assertEqual(base._select_account(spec, AccountsClient({})), name)
+
+    def test_an_unregistered_name_is_a_config_error_naming_the_typed_clients_table(self):
+        for client, name in (("claude", "nope"), ("claude", "Bad!"), ("claude-work", "nope")):
+            with self.subTest(client=client, name=name), self.assertRaises(ConfigError) as caught:
+                base._select_account(self.spec(client, **{ACCOUNT: name}), AccountsClient({}))
+            self.assertEqual(
+                str(caught.exception),
+                f"account {name!r}: not a registered account of client {client}"
+                f" ([clients.{client}.accounts.{name}])",
+            )
+
+    def test_a_client_without_accounts_refuses_any_selection(self):
+        for client in ("codex", "opencode"):
+            with self.subTest(client=client), self.assertRaises(ConfigError) as caught:
+                base._select_account(self.spec(client, **{ACCOUNT: "work"}), NoModeClient({}))
+            self.assertEqual(
+                str(caught.exception), f"client {client} has no accounts: remove account 'work'"
+            )
+
+    def test_the_account_variable_never_reaches_a_child_inherited_or_given(self):
+        self.enterContext(mock.patch.dict(os.environ, {ACCOUNT: "outer", "KEEP": "k"}))
+        for inherit in (True, False):
+            with self.subTest(inherit=inherit):
+                launch = Launch(("x",), env={ACCOUNT: "given", "SET": "1"})
+                env = child_env(launch, "/cwd", inherit=inherit)
+                self.assertNotIn(ACCOUNT, env)
+                self.assertEqual((env["SET"], env.get("KEEP", "k")), ("1", "k"))
+
+    def test_every_mode_refuses_a_bad_selection_before_any_host_call(self):
+        for mode, call, env in itertools.product(
+            KINDS, ("start", "preflight"), ({ACCOUNT: "nope"}, {ACCOUNT: "Bad!"})
+        ):
+            host, recorded = mock.Mock(), []
+            more = {"record": recorded.append} if call == "start" else {}
+            with (
+                self.subTest(mode=mode.kind.value, call=call, env=env),
+                self.assertRaises(ConfigError) as caught,
+            ):
+                getattr(mode, call)(
+                    self.spec(**env), AccountsClient({}), registry=registry(), host=host, **more
+                )
+            self.assertTrue(str(caught.exception).startswith(f"account {env[ACCOUNT]!r}: "))
+            self.assertEqual((host.mock_calls, recorded), ([], []))
 
 
 class ChildEnvTest(Case):

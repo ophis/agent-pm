@@ -4,7 +4,7 @@ import os
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.utils import AGENT_SESSION_ENV, environment_ok, nested_start
+from agent_pm.utils import ACCOUNT_ENV, AGENT_SESSION_ENV, environment_ok, nested_start
 
 from utils.tests.case import Case
 
@@ -28,6 +28,11 @@ class Environment(Case):
         ):
             with self.subTest(env=value):
                 self.assertIs(environment_ok(value), ok)
+
+
+class AccountEnv(Case):
+    def test_the_selected_client_account_has_one_name(self):
+        self.assertEqual(ACCOUNT_ENV, "AGENT_PM_ACCOUNT")
 
 
 class NestedStart(Case):

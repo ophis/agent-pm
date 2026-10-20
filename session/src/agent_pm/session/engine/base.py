@@ -9,6 +9,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 from agent_pm.session.engine.types import (
+    ACCOUNT_SET_BY,
+    ConfigError,
     Hosts,
     IdleTimeout,
     KeyPress,
@@ -23,7 +25,7 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display, Record, Status, load_class
+from agent_pm.utils import ACCOUNT_ENV, Display, Record, Status, load_class
 
 HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
@@ -100,7 +102,8 @@ class Session(ABC):
 
     @staticmethod
     def validate_policy(*, flags, env) -> None:
-        ProcessOptions(flags=flags, env=env)
+        if ACCOUNT_ENV in ProcessOptions(flags=flags, env=env).env:
+            raise ConfigError(ACCOUNT_SET_BY)
 
     @classmethod
     def configure(cls, *, clients: Mapping, hosts: Hosts) -> None:

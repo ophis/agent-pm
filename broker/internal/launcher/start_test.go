@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,10 +29,15 @@ const (
 type fakeCreds struct {
 	ready     error
 	injectErr error
+	calls     []string // "ready <account>" and "inject <account>", in turn
 }
 
-func (c *fakeCreds) Ready() error { return c.ready }
-func (c *fakeCreds) Inject(exec func(argv []string, stdin []byte) error) error {
+func (c *fakeCreds) Ready(account string) error {
+	c.calls = append(c.calls, "ready "+account)
+	return c.ready
+}
+func (c *fakeCreds) Inject(account string, exec func(argv []string, stdin []byte) error) error {
+	c.calls = append(c.calls, "inject "+account)
 	if err := exec([]string{"inject"}, []byte(fakeToken)); err != nil {
 		return err
 	}
@@ -153,6 +159,30 @@ func validManifest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return writeManifest(t, data)
+}
+
+// editedManifest is manifest-valid.json, edit applied to its fields.
+func editedManifest(t *testing.T, edit func(map[string]any)) string {
+	t.Helper()
+	data, err := os.ReadFile(validManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(fields)
+	}
+	if data, err = json.Marshal(fields); err != nil {
+		t.Fatal(err)
+	}
+	return writeManifest(t, data)
+}
+
+func withClaudeAccount(account any) func(map[string]any) {
+	return func(f map[string]any) { f["claude_account"] = account }
 }
 
 func startHost(w *world, creds *fakeCreds) (Host, *fakeDocker) {
@@ -392,6 +422,20 @@ func TestStartOrder(t *testing.T) {
 	for _, c := range d.calls {
 		if slices.Contains(c, "root") {
 			t.Fatalf("hook installed without hook_path: %q", c)
+		}
+	}
+}
+
+// A Claude start checks and injects only the manifest's account's setup-token; without one, the default account's.
+func TestStartClaudeAccount(t *testing.T) {
+	for want, path := range map[string]string{"default": validManifest(t), "work": editedManifest(t, withClaudeAccount("work"))} {
+		creds := &fakeCreds{}
+		h, _ := startHost(&world{labels: goodLabels()}, creds)
+		if _, err := h.Start(context.Background(), path); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(creds.calls, []string{"ready " + want, "inject " + want}) {
+			t.Fatalf("%s: %q", want, creds.calls)
 		}
 	}
 }

@@ -13,17 +13,17 @@ After [Install](docker-host.md#install).
 |---|---|
 | `codesign -dv --verbose=4 "$B" 2>&1 \| grep -E 'Identifier\|flags'` | `Identifier=com.github.ophis.agent-pm-broker`, `flags=0x10002(adhoc,runtime)` |
 | `ls -ld /usr/local/libexec/agent-pm "$B"` | both `root wheel`, `drwxr-xr-x` / `-rwxr-xr-x` |
-| `"$B" version` | `{"protocol_version":"15"}` |
+| `"$B" version` | `{"protocol_version":"16"}` |
 | edit `~/.agent-pm/docker/worker/Dockerfile`, rerun `install.sh` | your edit stays |
 
 ## Claude login
 
-After `login claude` ([Log in](docker-host.md#log-in)).
+After `login claude` and each `login claude <name>` ([Log in](docker-host.md#log-in)).
 
 | Check | Expect |
 |---|---|
-| output | `Claude setup-token saved; keychain trusts only the broker`, no token |
-| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, account `setup-token`; the only trusted application is `$B` |
+| output | `Claude account default setup-token saved; keychain trusts only the broker` (`<name>` for the others), no token |
+| `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A20 agent-pm-claude` | service `agent-pm-claude`, one item per account logged in (`default`, each `<name>`), none `setup-token`; the only trusted application of each is `$B` |
 | shell history | no token |
 | first Claude [start](docker-host.md#start) after it | no keychain dialog |
 
@@ -108,7 +108,9 @@ Each fails before any container exists (`docker ps -a` unchanged):
 | `cwd` a missing dir, `/`, `/home`, `/usr/local/x`, `/opt/agent-pm`, `/home/agent` or `$HOME` (it holds `claude_dir`) | 4 `mount_rejected` |
 | `claude_dir` any other path | 4 |
 | `hook_path` inside `cwd` | 4 |
-| `security delete-generic-password -s agent-pm-claude -a setup-token ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
+| `security delete-generic-password -s agent-pm-claude -a default ~/Library/Keychains/login.keychain-db`, then start | 5 `login_required`, naming `agent-pm-broker login claude`; log in again after |
+| `"claude_account": "nope"`, an account never logged in | 5 `login_required`, naming `agent-pm-broker login claude nope` |
+| `"claude_account": "Work"` or `"setup-token"`, or `claude_account` in a Codex manifest | 3 `manifest_rejected` |
 | reinstall the broker (`install.sh --build`), then start a Claude manifest without `login claude` | 5 `login_required`, "trusts another broker build"; no keychain dialog; log in again after |
 | `security lock-keychain ~/Library/Keychains/login.keychain-db`, then start a Claude manifest | 5 `login_required`, "unlock the login keychain, or run agent-pm-broker login claude"; no dialog; `security unlock-keychain ~/Library/Keychains/login.keychain-db` after |
 | start the same manifest while its container runs | 9 `start_failed`, "close it first"; the running container untouched |

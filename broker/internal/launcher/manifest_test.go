@@ -122,3 +122,53 @@ func TestManifestGitHub(t *testing.T) {
 		}
 	}
 }
+
+func TestValidClaudeAccount(t *testing.T) {
+	for _, name := range []string{"default", "work", "a", "0", "a.b-c_d", strings.Repeat("a", 64)} {
+		if !ValidClaudeAccount(name) {
+			t.Errorf("%q rejected", name)
+		}
+	}
+	for _, name := range []string{"", "Work", "setup-token", ".a", "-a", "_a", "a/b", "a b", "a\n", strings.Repeat("a", 65), "é"} {
+		if ValidClaudeAccount(name) {
+			t.Errorf("%q accepted", name)
+		}
+	}
+}
+
+func TestManifestClaudeAccount(t *testing.T) {
+	parse := func(edit func(map[string]any)) (Manifest, error) {
+		data, err := os.ReadFile(editedManifest(t, edit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ParseManifest(data)
+	}
+	for want, edit := range map[string]func(map[string]any){"default": nil, "work": withClaudeAccount("work"), "a.b-c_d": withClaudeAccount("a.b-c_d")} {
+		if m, err := parse(edit); err != nil || m.ClaudeAccount != want {
+			t.Fatalf("%s: %q %v", want, m.ClaudeAccount, err)
+		}
+	}
+	codex := func(f map[string]any) {
+		f["client"], f["codex_dir"], f["claude_account"] = "codex", "/c", "work"
+		delete(f, "claude_dir")
+	}
+	opencode := func(f map[string]any) {
+		f["client"], f["opencode_dir"], f["claude_account"] = "opencode", "/o", "default"
+		delete(f, "claude_dir")
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"uppercase": withClaudeAccount("Work"), "setup-token": withClaudeAccount("setup-token"), "empty": withClaudeAccount(""),
+		"path": withClaudeAccount("../a"), "too long": withClaudeAccount(strings.Repeat("a", 65)), "control": withClaudeAccount("a\n"),
+		"number": withClaudeAccount(1), "null": withClaudeAccount(nil), "array": withClaudeAccount([]string{"work"}),
+		"codex": codex, "opencode": opencode,
+	} {
+		m, err := parse(edit)
+		if code(t, err) != protocol.ManifestRejected {
+			t.Fatalf("%s accepted: %+v", name, m)
+		}
+		if want := map[bool]string{true: "claude_account requires client claude", false: "invalid claude_account"}[name == "codex" || name == "opencode"]; !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
