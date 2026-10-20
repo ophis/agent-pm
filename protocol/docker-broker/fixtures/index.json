@@ -1,5 +1,5 @@
 {
-  "protocol_version": "15",
+  "protocol_version": "16",
   "cases": [
     {
       "file": "manifest-valid.json",
@@ -1658,6 +1658,46 @@
     },
     {
       "file": "manifest-opencode-providers-bad-name.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-claude-account.json",
+      "definition": "manifest",
+      "valid": true,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 0,
+        "error_code": null
+      }
+    },
+    {
+      "file": "manifest-claude-account-bad-name.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-claude-account-setup-token.json",
+      "definition": "manifest",
+      "valid": false,
+      "expected": {
+        "stage": "schema",
+        "exit_code": 3,
+        "error_code": "manifest_rejected"
+      }
+    },
+    {
+      "file": "manifest-codex-claude-account.json",
       "definition": "manifest",
       "valid": false,
       "expected": {

@@ -19,6 +19,7 @@ type Manifest struct {
 	Labels                                                                                      map[string]string
 	GitHubApp                                                                                   string   // the App whose tokens the session gets; "": github null
 	OpencodeProviders                                                                           []string // the providers whose API keys an opencode container gets
+	ClaudeAccount                                                                               string   // the account whose setup-token a claude container gets; "" for other clients
 }
 
 // A workspace volume's labels: its kind (always kind) and its mount point.
@@ -130,7 +131,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		"cwd": &m.CWD, "workspace": &m.Workspace, "client": &m.Client, "claude_dir": &m.ClaudeDir, "codex_dir": &m.CodexDir,
 		"opencode_dir": &m.OpencodeDir, "hook_path": &m.HookPath}
 	for key, raw := range fields {
-		if key == "labels" || key == "github" || key == "opencode_providers" {
+		if key == "labels" || key == "github" || key == "opencode_providers" || key == "claude_account" {
 			continue
 		}
 		target, ok := targets[key]
@@ -197,6 +198,19 @@ func ParseManifest(data []byte) (Manifest, error) {
 			}
 		}
 		m.OpencodeProviders = providers
+	}
+
+	if raw, ok := fields["claude_account"]; ok {
+		if m.Client != "claude" {
+			return reject("claude_account requires client claude")
+		}
+		account, ok := str(raw)
+		if !ok || !ValidClaudeAccount(account) {
+			return reject("invalid claude_account")
+		}
+		m.ClaudeAccount = account
+	} else if m.Client == "claude" {
+		m.ClaudeAccount = DefaultClaudeAccount
 	}
 
 	var labels map[string]json.RawMessage

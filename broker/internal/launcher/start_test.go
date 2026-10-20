@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -158,6 +159,30 @@ func validManifest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return writeManifest(t, data)
+}
+
+// editedManifest is manifest-valid.json, edit applied to its fields.
+func editedManifest(t *testing.T, edit func(map[string]any)) string {
+	t.Helper()
+	data, err := os.ReadFile(validManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(fields)
+	}
+	if data, err = json.Marshal(fields); err != nil {
+		t.Fatal(err)
+	}
+	return writeManifest(t, data)
+}
+
+func withClaudeAccount(account any) func(map[string]any) {
+	return func(f map[string]any) { f["claude_account"] = account }
 }
 
 func startHost(w *world, creds *fakeCreds) (Host, *fakeDocker) {
@@ -401,15 +426,17 @@ func TestStartOrder(t *testing.T) {
 	}
 }
 
-// A Claude start checks and injects the default account's setup-token.
+// A Claude start checks and injects only the manifest's account's setup-token; without one, the default account's.
 func TestStartClaudeAccount(t *testing.T) {
-	creds := &fakeCreds{}
-	h, _ := startHost(&world{labels: goodLabels()}, creds)
-	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"ready " + DefaultClaudeAccount, "inject " + DefaultClaudeAccount}; !slices.Equal(creds.calls, want) || DefaultClaudeAccount != "default" {
-		t.Fatalf("%q", creds.calls)
+	for want, path := range map[string]string{"default": validManifest(t), "work": editedManifest(t, withClaudeAccount("work"))} {
+		creds := &fakeCreds{}
+		h, _ := startHost(&world{labels: goodLabels()}, creds)
+		if _, err := h.Start(context.Background(), path); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(creds.calls, []string{"ready " + want, "inject " + want}) {
+			t.Fatalf("%s: %q", want, creds.calls)
+		}
 	}
 }
 
