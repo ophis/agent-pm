@@ -94,7 +94,7 @@ canceled = ""
 # engineer. The workflow sets each role's next and require_instructions.
 #   account               local, required for each role: the role's Linear account (email)
 #   key                   local, required: Keychain service of that account's API key
-#   max_runs              agent runs of this role at once; unset → 1
+#   max_runs              agent runs of this role at once; 3 unless config.local.toml sets it
 #   next                  local: overrides the workflow's: the role promote hands this role's Handoff issues to;
 #                         "" → the last stage (phase 4 removes it)
 #   require_instructions  local: overrides the workflow's: true → a Handoff issue with no human_members comment goes
