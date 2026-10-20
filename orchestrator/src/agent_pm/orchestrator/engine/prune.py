@@ -28,6 +28,9 @@ attached; one of a kind no longer configured is neither queried nor logged. Run 
 error, and no issue is pruned. Each step is logged (event_log.log, src prune); a failure is logged
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
+
+A tick's Linear requests after team_and_roles: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at
+most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json (sync, fresh).
 """
 
 import functools
@@ -124,6 +127,12 @@ Prerequisites and effects:
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
+  At most 33 Linear requests per run after its setup reads (3 change-feed
+  pages, 10 issue reads, 20 archive requests); work past a cap waits for a
+  later run. logs/prune.json caches what was read, read again when Linear
+  reports a change or after a day (a dry run never writes it). An issue
+  Linear no longer has is skipped; one moved to another team finishes by
+  its state there.
   Events go to orchestrator.jsonl (src prune); preview JSON lines go to stderr.
   Exit 0: completed; 1: Linear unavailable (logged once a day), unknown
   inventory or failed step after remaining steps; 2: configuration error

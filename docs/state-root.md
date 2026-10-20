@@ -19,6 +19,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 │   ├── orchestrator.jsonl        the event log, also launchd's stdout and stderr
 │   ├── orchestrator.jsonl.1      the event log before its last rotation
 │   ├── orchestrator.jsonl.lock   one rotation at a time
+│   ├── prune.json                prune's cache of what it read from Linear
 │   └── router.lock               one router at a time
 ├── board/                        the local board when $AGENT_PM_BOARD_DIR is unset: issue files in <assignee>/<state>/ and archive/
 │   ├── .next-id                  the next issue number
@@ -45,6 +46,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 | `work/<ID>/writeback.json`, `writeback.lock` | prune, with `work/<ID>/run/` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](board.md#operating)) |
 | `logs/orchestrator.jsonl`, `.1`, `.lock` | each event's writer: at 10 MiB the file becomes `.1`, replacing the old `.1` | any time; keep `logs/` ([Setup](board.md#setup) step 4) |
+| `logs/prune.json` | prune rewrites it each tick, dropping issues whose workdir is gone | any time: the next tick reads Linear again |
 | `logs/router.lock` | nobody | while no router runs |
 | `board/` (or `$AGENT_PM_BOARD_DIR`): issue files, `.next-id` | nobody | never: your issues and the next issue number |
 | `board/.lock` | nobody | while no program writes the board |
