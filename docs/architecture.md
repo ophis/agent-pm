@@ -19,6 +19,8 @@ flowchart TB
     LR["engine/linear_run.py<br>Delegate ownership · queries"]
     WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
+    LT["engine/linear_tracker.py<br>LinearTracker"]
+    FL["flow/<br>Tracker · IssueState"]
     LC["engine/config.py<br>[core] overlay"]
   end
   subgraph DL[agent_pm.delegate]
@@ -55,6 +57,8 @@ flowchart TB
   SC --> DR
   LCLI --> R & PP & WB & LR
   R & PP & WB --> LR
+  PP --> LT --> FL
+  PP --> FL
   R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
   H -.->|"each event: agent-pm-linear writeback"| LCLI

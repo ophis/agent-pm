@@ -104,6 +104,10 @@ _Avoid_: orchestration layer, runner
 A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
 _Avoid_: ticket, card, 票
 
+**Tracker**:
+The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`linear-orchestrator/src/agent_pm/linear_orchestrator/flow/tracker.py`); its Linear adapter, `LinearTracker` (`engine/linear_tracker.py`). Prune goes through it so far.
+_Avoid_: backend, adapter (one tracker's implementation)
+
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
 
