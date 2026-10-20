@@ -20,6 +20,7 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.local import issue_file
 from agent_pm.orchestrator.trackers.local.local_tracker import (
+    ARCHIVED,
     UNASSIGNED,
     LocalTracker,
     archived_from,
@@ -79,7 +80,8 @@ class LocalIssues:
         """Always whole: full changes nothing."""
         found, files = self._issue(ident), self.tracker.files()
         state, person = found.state, _person(found)
-        notes = sorted(enumerate(found.comments, 1), key=lambda p: (p[1].at, p[0]), reverse=True)
+        notes = [(n, note) for n, note in enumerate(found.comments, 1) if not _archive_note(note)]
+        notes.sort(key=lambda p: (p[1].at, p[0]), reverse=True)
         return {
             "id": found.id,
             "identifier": found.id,
@@ -296,6 +298,11 @@ def _person(found):
 
 def _labels(found):
     return [{"id": name, "name": name} for name in (found.task, found.client) if name]
+
+
+def _archive_note(note):
+    """The engine's bookkeeping, which Linear has no comment for."""
+    return note.source == Source.SELF and (note.key or "").startswith(f"{ARCHIVED}:")
 
 
 def _comment(ident, n, note):

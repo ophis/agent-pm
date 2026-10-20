@@ -209,6 +209,28 @@ class View(Board):
         self.assertEqual((view["state"], view["assignee"]), (None, None))
         self.assertIsNone(self.issues().view("LOC-3", full=False)["assignee"])
 
+    def test_archive_note_left_out(self):
+        """The engine's archive note stays in the file, not in the view; ids keep file positions."""
+        self.put(
+            "archive",
+            "LOC-1",
+            comments="#### other · 2026-10-19 14:05\nfirst\n"
+            "#### self · 2026-10-19 14:06 <!-- id=c0 key=result:ab12 -->\nBuild ready.\n"
+            + NOTE
+            + "#### other · 2026-10-19 16:00\nlast\n",
+            history="- 2026-10-19 14:02 done self\n",
+        )
+        view = self.issues().view("LOC-1", full=True)
+        self.assertEqual(
+            [(c["id"], c["author"]["id"], c["body"]) for c in view["comments"]],
+            [
+                ("LOC-1#4", "other", "last"),
+                ("LOC-1#2", "self", "Build ready."),
+                ("LOC-1#1", "other", "first"),
+            ],
+        )
+        self.assertEqual(view["assignee"], {"id": "engineer", "name": "engineer", "email": None})
+
     def test_state_types(self):
         types = {
             "backlog": "backlog",
