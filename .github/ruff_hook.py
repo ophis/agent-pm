@@ -4,6 +4,7 @@ Works on the staged blob, so unstaged edits are neither committed nor lost; the 
 rewritten only when it had none. Enabled by .githooks/pre-commit (docs/tests.md).
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -25,7 +26,9 @@ def pinned_version(text):
     return versions.pop() if len(versions) == 1 else None
 
 
-def runner(version):
+def runner(version, tried=None):
+    """The first ruff command at version; tried, when given, collects the rejected ones."""
+    tried = [] if tried is None else tried
     for name, *args in (
         ["ruff"],
         ["uvx", f"ruff@{version}"],
@@ -39,6 +42,7 @@ def runner(version):
         )
         if probe.returncode == 0 and probe.stdout.split()[-1:] == [version]:
             return [path, *args]
+        tried.append(f"{' '.join([path, *args])}: {probe.stdout.strip() or probe.returncode}")
     return None
 
 
@@ -87,18 +91,23 @@ def main():
     if not version:
         say(f"no single ruff== pin in {WORKFLOW}; skipped")
         return 0
-    command = runner(version)
+    tried = []
+    command = runner(version, tried)
     if not command:
-        say(f"neither ruff {version} nor uv/uvx found; skipped (install one; CI still checks)")
+        found = "; ".join(tried) or "neither ruff nor uv/uvx on PATH"
+        say(f"no ruff {version} ({found}); skipped (install one; CI still checks)")
         return 0
+    # `git commit <paths>` stages into this temporary index and the real one separately.
+    only = Path(os.environ.get("GIT_INDEX_FILE", "")).name.startswith("next-index-")
     unstaged = set(git("diff", "--name-only", "-z").split(b"\0"))
-    failed = False
+    failed = fixed_any = False
     for mode, blob, path in entries:
         source = git("cat-file", "blob", blob.decode())
         fixed, clean = fix(command, path, source)
         failed = failed or not clean
         if fixed == source:
             continue
+        fixed_any = True
         sha = git("hash-object", "-w", "--stdin", data=fixed).strip()
         git("update-index", "--cacheinfo", b"%s,%s,%s" % (mode, sha, path))
         name = path.decode(errors="replace")
@@ -107,6 +116,9 @@ def main():
         else:
             git("--literal-pathspecs", "checkout-index", "-f", "--", path)
             say(f"fixed {name}")
+    if only and fixed_any:
+        say("`git commit <paths>` cannot re-stage the fixes; run the same commit again")
+        return 1
     if failed:
         say("ruff reported problems it cannot fix (above); commit aborted")
         return 1

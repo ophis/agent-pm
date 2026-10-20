@@ -44,7 +44,7 @@ class Hook(Case):
     def read(self, name):
         return (self.root / name).read_text()
 
-    def commit(self, *names):
+    def commit(self, *names, only=()):
         if names:
             git("add", "--", *names, cwd=self.root)
         return git_run(
@@ -53,6 +53,7 @@ class Hook(Case):
             "commit",
             "-qm",
             "c",
+            *only,
             cwd=self.root,
             env={**os.environ, "PATH": self.path},
         )
@@ -85,6 +86,23 @@ class Hook(Case):
         self.assertIn("F821", done.stderr)
         self.assertIn("commit aborted", done.stderr)
         self.assertNotEqual(git_run("rev-parse", "--verify", "HEAD", cwd=self.root).returncode, 0)
+
+    def test_commit_with_paths_fixes_the_file_and_asks_to_commit_again(self):
+        pinned_ruff()
+        self.write("a.py", "x = 1\n")
+        git("add", "a.py", cwd=self.root)
+        git("commit", "-qm", "base", cwd=self.root)
+        self.write("a.py", BAD)
+        done = self.commit(only=("a.py",))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("run the same commit again", done.stderr)
+        self.assertEqual(self.committed("a.py"), "x = 1\n")
+        self.assertEqual(git("show", ":a.py", cwd=self.root) + "\n", "x = 1\n")
+        self.assertEqual(self.read("a.py"), GOOD)
+        done = self.commit(only=("a.py",))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.committed("a.py"), GOOD)
+        self.assertEqual(git("status", "--porcelain", cwd=self.root), "?? ruff.toml")
 
     def test_unstaged_changes_and_other_files_stay_as_they_were(self):
         pinned_ruff()
@@ -128,7 +146,7 @@ class Hook(Case):
         done = self.commit("a.py")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.committed("a.py"), BAD)
-        self.assertIn(f"neither ruff {VERSION} nor uv/uvx found; skipped", done.stderr)
+        self.assertIn(f"no ruff {VERSION} (neither ruff nor uv/uvx on PATH); skipped", done.stderr)
 
     def test_without_python_the_commit_goes_through_with_a_hint(self):
         self.bin_dir({}, python=False)

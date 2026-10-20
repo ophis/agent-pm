@@ -60,6 +60,19 @@ class Runner(unittest.TestCase):
         found = self.pick({"uvx": "/bin/uvx", "uv": "/bin/uv"}, {"/bin/uv": "ruff 0.16.9\n"})
         self.assertEqual(found, ["/bin/uv", "tool", "run", "ruff@0.16.9"])
 
+    def test_rejected_commands_are_reported(self):
+        tried = []
+        with (
+            mock.patch.object(ruff_hook.shutil, "which", {"ruff": "/bin/ruff"}.get),
+            mock.patch.object(
+                ruff_hook.subprocess,
+                "run",
+                lambda *_, **__: SimpleNamespace(returncode=0, stdout="ruff 0.15.0\n"),
+            ),
+        ):
+            self.assertIsNone(ruff_hook.runner("0.16.9", tried))
+        self.assertEqual(tried, ["/bin/ruff: ruff 0.15.0"])
+
     def test_nothing_usable_is_none(self):
         self.assertIsNone(self.pick({"ruff": "/bin/ruff"}, {"/bin/ruff": "ruff 0.15.0\n"}))
         self.assertIsNone(self.pick({}, {}))
