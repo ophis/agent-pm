@@ -19,8 +19,8 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.orchestrator.engine import (
     config,
 )
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused
 from agent_pm.orchestrator.engine.types import (
-    ArchiveRefused,
     ConfigError,
     GraphQLErrors,
     IssueError,
@@ -43,6 +43,7 @@ from agent_pm.orchestrator.trackers.linear import (
     issue_write,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 
 OK, FAILED, USAGE = 0, 1, 2
 LIMIT, RECEIPT = 8192, 1024
@@ -679,9 +680,10 @@ def _run(gql, args, team_id, body):
     if args.command == "label":
         return receipt(issue_label.swap(gql, args.id, args.old, args.new))
     if args.command == "archive" and args.dry_run:
-        return fit(issue_archive.dry_run(gql, args.id), (("descendants", "unfinished"),), (), None)
+        plan = issue_archive.dry_run(LinearTracker(gql), gql, args.id)
+        return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
-        return receipt(issue_archive.archive(gql, args.id))
+        return receipt(issue_archive.archive(LinearTracker(gql), gql, args.id))
     if args.command == "read":
         view = issue_read.view(gql, args.id, full=args.full)
         if args.full:

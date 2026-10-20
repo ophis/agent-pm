@@ -58,10 +58,32 @@ ROLES = {
 TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED)
 
 
-def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, stamps=None):
+STATE_TYPES = {
+    "Done": "completed",
+    "Canceled": "canceled",
+    "Duplicate": "duplicate",
+    "In Progress": "started",
+    "Todo": "unstarted",
+    "In Review": "started",
+    "Handoff": "started",
+}
+CHILDREN = 50  # LinearTracker's archive read pages sub-issues by 50
+PRUNE_QUERIES = (  # the queries gql_for answers
+    linear_tracker.Q_ISSUE,
+    linear_tracker.Q_FINISHED,
+    linear_tracker.Q_ARCHIVE,
+    linear_tracker.Q_CHILDREN,
+    linear_tracker.M_ARCHIVE,
+)
+
+
+def gql_for(
+    issues, owners=None, page=50, fail=(), refuse=(), *, children=None, stamps=None, reread=None
+):
     """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
-    left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null)."""
-    owners, children, stamps = owners or {}, children or {}, stamps or {}
+    left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null);
+    reread: the state an issue's archive read finds, by issue (none: its own)."""
+    owners, children, stamps, reread = owners or {}, children or {}, stamps or {}, reread or {}
 
     def at(ident):
         given = stamps.get(ident, {})
@@ -70,12 +92,26 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, 
             for k in ("canceledAt", "completedAt")
         }
 
-    def subs(ident):
+    def subs(ident, after=None):
+        kids, start = list(children.get(ident, {}).items()), int(after or 0)
+        more = start + CHILDREN < len(kids)
         return {
             "nodes": [
-                {"id": f"id-{c}", "identifier": c, "state": {"type": t}}
-                for c, t in children.get(ident, {}).items()
-            ]
+                {"id": f"id-{c}", "identifier": c, "state": {"name": t.title(), "type": t}}
+                for c, t in kids[start : start + CHILDREN]
+            ],
+            "pageInfo": {"hasNextPage": more, "endCursor": str(start + CHILDREN) if more else None},
+        }
+
+    def planned(ident):
+        state = reread.get(ident, issues[ident][0])
+        return {
+            "id": f"id-{ident}",
+            "identifier": ident,
+            "url": f"https://linear.app/t/issue/{ident}",
+            "archivedAt": NOW.isoformat() if ident in gql.gone else None,
+            "state": {"name": state, "type": STATE_TYPES[state]},
+            "children": subs(ident),
         }
 
     def history(ident):
@@ -109,7 +145,6 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, 
                             "id": f"id-{i}",
                             "identifier": i,
                             "history": history(i),
-                            "children": subs(i),
                             **at(i),
                         }
                         for i in hits[start : start + page]
@@ -120,9 +155,11 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, 
                     },
                 }
             }
+        if query == linear_tracker.Q_ARCHIVE:
+            return {"issue": planned(v["i"].removeprefix("id-"))}
         if query == linear_tracker.Q_CHILDREN:
             gql.subs.append(v["i"])
-            return {"issue": {"children": subs(v["i"].removeprefix("id-"))}}
+            return {"issue": {"children": subs(v["i"].removeprefix("id-"), v["c"])}}
         if query == linear_tracker.M_ARCHIVE:
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
@@ -327,12 +364,7 @@ class PruneScenario(Case):
 
         def gql(query, **v):
             self.user_queries += query == ops.Q_USER
-            return (
-                prune_gql
-                if query
-                in (linear_tracker.Q_ISSUE, linear_tracker.Q_FINISHED, linear_tracker.M_ARCHIVE)
-                else fake
-            )(query, **v)
+            return (prune_gql if query in PRUNE_QUERIES else fake)(query, **v)
 
         self.user_queries = 0
         before, err = (len(logged(self.logs)), io.StringIO())

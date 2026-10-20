@@ -29,11 +29,30 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class SubIssue:
-    """key: the handle sub_issues and archive take; ident: the KEY-N read takes."""
+    """key: archive's handle; ident: read's KEY-N; state: its name (opaque)."""
 
     key: str
     ident: str
+    state: str
     finished: bool
+
+
+@dataclass(frozen=True)
+class ArchivePlan:
+    """unfinished: it first; descendants: any depth, none if archived."""
+
+    key: str
+    ident: str
+    url: str
+    archived: bool
+    descendants: tuple[SubIssue, ...]
+    unfinished: tuple[SubIssue, ...]
+
+
+class ArchiveRefused(Exception):
+    def __init__(self, plan: ArchivePlan, message: str = ""):
+        super().__init__(message)
+        self.plan = plan
 
 
 @dataclass(frozen=True)
@@ -43,7 +62,6 @@ class Finished:
     key: str
     ident: str
     since: datetime | None
-    children: tuple[SubIssue, ...]
 
 
 @dataclass(frozen=True)

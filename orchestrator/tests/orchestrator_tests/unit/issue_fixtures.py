@@ -11,12 +11,12 @@ from agent_pm.orchestrator.engine.types import GraphQLErrors
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
-    issue_archive,
     issue_label,
     issue_read,
     issue_refs,
     issue_relation,
     issue_write,
+    linear_tracker,
 )
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -266,11 +266,14 @@ def tree(ident="TASK-1", kind="completed", *children, archived=None):
 
 
 class ArchiveGql:
-    """Answers the archive read with `root` (None: no such issue) and VIEWER, each children
-    connection in pages of issue_read.PAGE (cursor: the next offset), and the mutation with
-    `result`, raised when an exception. `broken` maps (issue id, offset) to an exception that page
-    raises, or None for a page missing. Records every (query, variables) call.
+    """Answers issue archive's lookup with `root` (None: no such issue) and VIEWER, LinearTracker's
+    archive read with root and its first children page, each later children page in pages of
+    CHILDREN (cursor: the next offset), and the mutation with `result`, raised when an exception.
+    `broken` maps (issue id, offset) to an exception that page raises, or None for a page missing.
+    Records every (query, variables) call.
     """
+
+    CHILDREN = 50
 
     def __init__(self, root, *, broken=None, result=None, viewer=VIEWER):
         self.root, self.broken, self.result, self.viewer = root, dict(broken or {}), result, viewer
@@ -285,10 +288,14 @@ class ArchiveGql:
             if (error := self.broken[node["id"], offset]) is not None:
                 raise error
             return None
-        kids = node["kids"][offset : offset + issue_read.PAGE]
-        more = offset + issue_read.PAGE < len(node["kids"])
+        kids = node["kids"][offset : offset + self.CHILDREN]
+        more = offset + self.CHILDREN < len(node["kids"])
         nodes = [{k: kid[k] for k in ("id", "identifier", "state")} for kid in kids]
-        return conn(nodes, more=more, cursor=str(offset + issue_read.PAGE) if more else None)
+        return conn(nodes, more=more, cursor=str(offset + self.CHILDREN) if more else None)
+
+    def _plan(self, key):
+        node = {k: v for k, v in self.nodes[key].items() if k != "kids"}
+        return {"issue": node | {"children": self._page(self.nodes[key], 0)}}
 
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
@@ -296,13 +303,13 @@ class ArchiveGql:
             if isinstance(self.result, BaseException):
                 raise self.result
             return {"issueArchive": {"success": True} if self.result is None else self.result}
-        if query == issue_archive.Q_CHILDREN:
+        if query == linear_tracker.Q_CHILDREN:
             page = self._page(self.nodes[variables["i"]], int(variables["c"] or 0))
             return {"issue": None if page is None else {"children": page}}
-        if self.root is None:
-            return {"viewer": self.viewer, "issue": None}
-        node = {k: v for k, v in self.root.items() if k != "kids"}
-        return {"viewer": self.viewer, "issue": node | {"children": self._page(self.root, 0)}}
+        if query == linear_tracker.Q_ARCHIVE:
+            return self._plan(variables["i"])
+        found = self.root and {k: self.root[k] for k in ("id", "identifier", "url")}
+        return {"viewer": self.viewer, "issue": found}
 
     @property
     def writes(self):

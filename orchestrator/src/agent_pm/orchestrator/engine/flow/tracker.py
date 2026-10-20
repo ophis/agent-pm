@@ -7,6 +7,7 @@ from typing import Literal
 
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
+    ArchivePlan,
     Detail,
     Finished,
     Found,
@@ -16,7 +17,6 @@ from agent_pm.orchestrator.engine.flow.types import (
     Recheck,
     Ref,
     Snapshot,
-    SubIssue,
 )
 
 Listed = Literal[IssueState.READY, IssueState.RUNNING]
@@ -43,12 +43,11 @@ class Tracker(ABC):
         """Owners' done issues and all canceled ones; all pages read first (archiving shifts them)."""
 
     @abstractmethod
-    def sub_issues(self, key: str) -> tuple[SubIssue, ...]:
-        """Direct ones, not archived."""
+    def archive_plan(self, key: str) -> ArchivePlan: ...
 
     @abstractmethod
-    def archive(self, key: str) -> None:
-        """Its sub-issues too, as the tracker does."""
+    def archive(self, key: str) -> bool:
+        """Unfinished: ArchiveRefused(plan); False: already archived."""
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:

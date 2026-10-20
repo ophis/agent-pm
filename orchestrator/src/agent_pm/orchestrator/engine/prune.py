@@ -11,8 +11,9 @@ configured one) reports agent files in (Delegate.checkouts not None):
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team, a Done one only when assigned to the pm or engineer
   role account (a researcher's report stays), any other whatever its assignee, none included, unless
-  a sub-issue, at any depth, is unfinished (Linear archives sub-issues with their parent, theirs
-  too): skipped until each is finished or archived.
+  it (reopened since) or a sub-issue, at any depth, is unfinished, every page of them read first
+  (Tracker.archive; Linear archives sub-issues with their parent, theirs too): skipped until each
+  is finished or archived.
 
 For each stalled issue (any state but Todo, In Progress or a finished one) whose latest move into its
 state and latest recorded run are both at least 7 days old, it deletes its agent files' checkouts and
@@ -42,6 +43,7 @@ from agent_pm.orchestrator.engine import config, runs
 from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
+    ArchiveRefused,
     IssueState,
 )
 from agent_pm.orchestrator.engine.linear_run import LinearRun
@@ -260,37 +262,25 @@ class Pruner:
                 continue
             if self.now - since < QUARANTINE:
                 continue
+            plan = None
             try:
-                open_child = self.open_descendant(issue.children)
-                if open_child is None and not self.dry:
+                if self.dry:
+                    plan = self.tracker.archive_plan(issue.key)
+                else:
                     self.tracker.archive(issue.key)
+            except ArchiveRefused as e:
+                plan = e.plan
             except Unavailable:
                 raise
             except (LinearError, OSError, subprocess.SubprocessError) as e:
                 self.error(ident, error=f"archive: {one_line(e)}")
                 continue
-            if open_child:
-                self.say(
-                    "prune-skip",
-                    ident,
-                    once=True,
-                    reason=f"archive: sub-issue {open_child} not finished",
-                )
+            if plan is not None and plan.unfinished:
+                self.say("prune-skip", ident, once=True, reason=_kept(plan))
             elif self.dry:
                 self.say("prune-plan", ident, what="archive")
             else:
                 self.say("prune-archived", ident)
-
-    def open_descendant(self, children):
-        """The first unfinished one of children and, recursively, their sub-issues; None: all
-        finished or archived (the tracker lists no archived sub-issue)."""
-        for child in children:
-            if not child.finished:
-                return child.ident
-        for child in children:
-            if found := self.open_descendant(self.tracker.sub_issues(child.key)):
-                return found
-        return None
 
     def run(self):
         found = self.inventory()
@@ -424,6 +414,14 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
+
+
+def _kept(plan):
+    """Why the archive rule keeps plan's issue: its first unfinished sub-issue, else itself."""
+    sub = next((s for s in plan.unfinished if s.key != plan.key), None)
+    if sub is not None:
+        return f"archive: sub-issue {sub.ident} not finished"
+    return f"archive: {plan.ident} not finished"
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):

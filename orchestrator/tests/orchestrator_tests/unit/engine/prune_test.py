@@ -16,6 +16,7 @@ from agent_pm.utils import temp_dirs
 from orchestrator_tests.process_fixtures import CompletedProcess
 from orchestrator_tests.prune_fixtures import (
     NOW,
+    PRUNE_QUERIES,
     ROLES,
     STATE_IDS,
     TEAM_OBJ,
@@ -34,6 +35,17 @@ from delegate.tests.workdir import checkout_path
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER_SID = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
+
+
+def gone_on_reread(gql, key):
+    """gql, but key's archive read finds no issue."""
+
+    def call(query, **v):
+        if query == linear_tracker.Q_ARCHIVE and v["i"] == key:
+            return {"issue": None}
+        return gql(query, **v)
+
+    return call
 
 
 class RepositoryCleanup(PruneScenario):
@@ -463,7 +475,75 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(
             self.prune(gql), (0, "prune-skip TASK-1 reason=archive: sub-issue TASK-3 not finished")
         )
-        self.assertEqual((gql.archived, gql.subs), ([], ["id-TASK-2"]))
+        self.assertEqual((gql.archived, gql.subs), ([], ["id-TASK-2", "id-TASK-3"]))
+
+    def test_every_page_at_every_depth_is_read(self):
+        many = {f"SUB-{n}": "completed" for n in range(1, 261)}
+        for name, children, last in (
+            ("261st child", {"TASK-1": {**many, "TASK-9": "started"}}, "TASK-9"),
+            (
+                "fifth level",
+                {f"TASK-{n}": {f"TASK-{n + 1}": "completed"} for n in range(1, 5)}
+                | {"TASK-5": {"TASK-6": "started"}},
+                "TASK-6",
+            ),
+        ):
+            for dry in (False, True):
+                with self.subTest(name, dry=dry):
+                    gql = gql_for(
+                        {"TASK-1": ("Done", [(30, "Done")])},
+                        owners={"TASK-1": "u-pm"},
+                        children=children,
+                    )
+                    self.assertEqual(
+                        self.prune(gql, dry=dry),
+                        (0, f"prune-skip TASK-1 reason=archive: sub-issue {last} not finished"),
+                    )
+                    self.assertEqual(gql.archived, [])
+        gql = gql_for(
+            {"TASK-1": ("Done", [(30, "Done")])},
+            owners={"TASK-1": "u-pm"},
+            children={"TASK-1": many},
+        )
+        self.assertEqual(self.prune(gql), (0, "prune-archived TASK-1"))
+        self.assertEqual(gql.archived, ["id-TASK-1"])
+        self.assertEqual(gql.subs.count("id-TASK-1"), 5)
+
+    def test_an_issue_reopened_since_the_list_is_kept(self):
+        for dry in (False, True):
+            with self.subTest(dry=dry):
+                gql = gql_for(
+                    {"TASK-1": ("Done", [(30, "Done")])},
+                    owners={"TASK-1": "u-pm"},
+                    children={"TASK-1": {"TASK-2": "completed"}},
+                    reread={"TASK-1": "In Progress"},
+                )
+                self.assertEqual(
+                    self.prune(gql, dry=dry),
+                    (0, "prune-skip TASK-1 reason=archive: TASK-1 not finished"),
+                )
+                self.assertEqual(gql.archived, [])
+
+    def test_an_issue_gone_before_its_archive_read_is_an_error(self):
+        done = ("Done", [(30, "Done")])
+        for dry in (False, True):
+            with self.subTest(dry=dry):
+                gql = gql_for(
+                    {"TASK-1": done, "TASK-2": done},
+                    owners=dict.fromkeys(("TASK-1", "TASK-2"), "u-pm"),
+                )
+                code, out = self.prune(gone_on_reread(gql, "id-TASK-1"), dry=dry)
+                self.assertEqual(
+                    (code, out.splitlines()),
+                    (
+                        3,
+                        [
+                            "prune-error TASK-1 error=archive: LinearError: id-TASK-1: issue not found",
+                            "prune-plan TASK-2 what=archive" if dry else "prune-archived TASK-2",
+                        ],
+                    ),
+                )
+                self.assertEqual(gql.archived, [] if dry else ["id-TASK-2"])
 
     def test_candidate_query_failure_keeps_clone_step(self):
         clone = self.mkc("TASK-49")
@@ -967,12 +1047,7 @@ class PruneCommand(PruneScenario):
         fake = tp.FakeLinear()
 
         def gql(query, **v):
-            board = query not in (
-                linear_tracker.Q_ISSUE,
-                linear_tracker.Q_FINISHED,
-                linear_tracker.M_ARCHIVE,
-            )
-            return (fake if board else prune_gql)(query, **v)
+            return (prune_gql if query in PRUNE_QUERIES else fake)(query, **v)
 
         before, out, err = len(logged(self.logs)), io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):

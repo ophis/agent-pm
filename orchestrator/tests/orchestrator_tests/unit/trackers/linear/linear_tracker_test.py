@@ -2,6 +2,7 @@
 text and its reads and writes."""
 
 import ast
+import copy
 import hashlib
 import inspect
 from dataclasses import replace
@@ -26,6 +27,8 @@ from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     UNREADABLE,
     Approved,
+    ArchivePlan,
+    ArchiveRefused,
     Comment,
     Detail,
     Finished,
@@ -55,11 +58,13 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ
 from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TASK_GROUP, TEAM, team_node
 
-# sha256 of each query's text on orchestrator-revamped: the fake Linear pairs queries by text
+# sha256 of each query's text (orchestrator-revamped's but the archive rule's): the fake Linear
+# pairs queries by text
 BASE = {
     "Q_ISSUE": "caaea6b489b3a2fc9db26b44693fd8762fe1284b0001b9e7cad1846bd7deae5c",
-    "Q_FINISHED": "d3001511732429ed7b87bfac7cc78c579737f209e410fced49a1a9030ed0bc37",
-    "Q_CHILDREN": "115b789a59aec88fa1686fa993764aacae8f6af3cf0b01ec900ee82603f526fa",
+    "Q_FINISHED": "d3e6e6d4ad803579fbc6129d0f7a52dd3ec0eaa7b337641eb16ec71a3eb4011f",
+    "Q_ARCHIVE": "57e18e04eabb1ba0bbcdd81020fdc7a89636a0d5ec41d26a67dba2c19370a0c4",
+    "Q_CHILDREN": "a680fb0be5a504651be3e72cee452f02e850e63ef6c79c88b73d55b7b0f089e0",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
     "M_TITLE": "1b74f5b2bb7775a1147c8a6bac7f50c09a196de9122da2c52e7cd64eaf45d7be",
     "M_ATTACH": "8db2cfd3ed91f6b4daf1aeed80183275d14953ff02982847658243be789af1f4",
@@ -131,8 +136,30 @@ def issue(state, *pairs, canceled=None, completed=None):
     }
 
 
-def child(ident, kind):
-    return {"id": f"id-{ident}", "identifier": ident, "state": {"type": kind}}
+def sub(ident, kind="completed"):
+    return {"id": f"id-{ident}", "identifier": ident, "state": {"name": kind.title(), "type": kind}}
+
+
+def kids(*nodes, cursor=None):
+    """A children page; cursor: the next one's, None: the last."""
+    return {
+        "nodes": list(nodes),
+        "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor},
+    }
+
+
+def planned(ident="TASK-1", kind="completed", children=None, *, archived=None):
+    """The archive read's answer: ident with its first children page (none: empty)."""
+    node = sub(ident, kind) | {"url": f"https://linear.app/t/issue/{ident}", "archivedAt": archived}
+    return {"issue": node | {"children": kids() if children is None else children}}
+
+
+def later(page):
+    return {"issue": {"children": page}}
+
+
+def item(ident, kind="completed"):
+    return SubIssue(f"id-{ident}", ident, kind.title(), kind in ops.DONE)
 
 
 def names():
@@ -264,13 +291,12 @@ class Read(Case):
 
 
 class FinishedIssues(Case):
-    def node(self, ident, *children, completed=2):
+    def node(self, ident, completed=2):
         return {
             "id": f"id-{ident}",
             "identifier": ident,
             "canceledAt": None,
             "completedAt": ago(completed).isoformat(),
-            "children": {"nodes": list(children)},
             "history": moves(),
         }
 
@@ -278,7 +304,7 @@ class FinishedIssues(Case):
         return {"issues": {"nodes": nodes, "pageInfo": {"hasNextPage": more, "endCursor": cursor}}}
 
     def test_variables_and_paging(self):
-        first, second = self.node("TASK-1", child("TASK-3", "started")), self.node("TASK-2")
+        first, second = self.node("TASK-1"), self.node("TASK-2", 3)
         gql = Gql(Q_FINISHED=[self.page([first], "1"), self.page([second], "2", more=False)])
         found = tracker(gql).finished(("pm", "engineer"))
         common = {
@@ -296,15 +322,7 @@ class FinishedIssues(Case):
         )
         self.assertEqual(
             found,
-            [
-                Finished(
-                    "id-TASK-1",
-                    "TASK-1",
-                    ago(2),
-                    (SubIssue("id-TASK-3", "TASK-3", finished=False),),
-                ),
-                Finished("id-TASK-2", "TASK-2", ago(2), ()),
-            ],
+            [Finished("id-TASK-1", "TASK-1", ago(2)), Finished("id-TASK-2", "TASK-2", ago(3))],
         )
 
     def test_stops_on_repeated_or_empty_cursor(self):
@@ -342,31 +360,147 @@ class FinishedIssues(Case):
                 self.assertEqual(gql.calls[0][1]["a"], ids)
 
 
-class SubIssues(Case):
-    def test_finished_by_state_type(self):
-        kinds = {"completed": True, "canceled": True, "duplicate": True, "started": False}
-        kinds |= {"unstarted": False, "backlog": False}
-        nodes = [child(f"TASK-{i}", kind) for i, kind in enumerate(kinds, start=2)]
-        gql = Gql(Q_CHILDREN={"issue": {"children": {"nodes": nodes}}})
-        found = tracker(gql).sub_issues("id-TASK-1")
-        self.assertEqual(gql.calls, [(linear_tracker.Q_CHILDREN, {"i": "id-TASK-1"})])
+class ArchivePlans(Case):
+    def test_reads_every_page_at_every_level(self):
+        gql = Gql(
+            Q_ARCHIVE=planned(children=kids(sub("TASK-2"), sub("TASK-3", "started"), cursor="p2")),
+            Q_CHILDREN=[
+                later(kids(sub("TASK-4", "canceled"))),
+                later(kids(sub("TASK-5"))),
+                later(kids()),
+                later(kids()),
+                later(kids(sub("TASK-6", "duplicate"))),
+                later(kids()),
+            ],
+        )
+        plan = tracker(gql).archive_plan("id-TASK-1")
         self.assertEqual(
-            found,
-            tuple(
-                SubIssue(f"id-TASK-{i}", f"TASK-{i}", done)
-                for i, done in enumerate(kinds.values(), start=2)
+            gql.calls,
+            [
+                (linear_tracker.Q_ARCHIVE, {"i": "id-TASK-1"}),
+                (linear_tracker.Q_CHILDREN, {"i": "id-TASK-1", "c": "p2"}),
+                *(
+                    (linear_tracker.Q_CHILDREN, {"i": f"id-TASK-{n}", "c": None})
+                    for n in (2, 3, 4, 5, 6)
+                ),
+            ],
+        )
+        self.assertEqual(
+            plan,
+            ArchivePlan(
+                "id-TASK-1",
+                "TASK-1",
+                "https://linear.app/t/issue/TASK-1",
+                archived=False,
+                descendants=(
+                    item("TASK-2"),
+                    item("TASK-3", "started"),
+                    item("TASK-4", "canceled"),
+                    item("TASK-5"),
+                    item("TASK-6", "duplicate"),
+                ),
+                unfinished=(item("TASK-3", "started"),),
             ),
         )
 
+    def test_finished_by_state_type_the_issue_first(self):
+        kinds = ("completed", "canceled", "duplicate", "started", "unstarted", "backlog")
+        nodes = [sub(f"TASK-{i}", kind) for i, kind in enumerate(kinds, start=2)]
+        gql = Gql(Q_ARCHIVE=planned(kind="triage", children=kids(*nodes)), Q_CHILDREN=later(kids()))
+        plan = tracker(gql).archive_plan("id-TASK-1")
+        self.assertEqual(
+            plan.unfinished,
+            (item("TASK-1", "triage"), item("TASK-5", "started"), item("TASK-6", "unstarted"))
+            + (item("TASK-7", "backlog"),),
+        )
+        self.assertEqual(len(plan.descendants), len(kinds))
+
+    def test_an_archived_issue_reads_no_sub_issue(self):
+        gql = Gql(Q_ARCHIVE=planned(children=kids(sub("TASK-2", "started")), archived=NOW))
+        plan = tracker(gql).archive_plan("id-TASK-1")
+        self.assertEqual((plan.archived, plan.descendants), (True, ()))
+        self.assertEqual(gql.names(), ["Q_ARCHIVE"])
+
+    def test_a_missing_issue_raises_linear_error(self):
+        for reply in (
+            {"issue": None},
+            LinearError("linear api error: [{'message': 'Entity not found: Issue'}]"),
+        ):
+            with self.subTest(reply=reply):
+                gql = Gql(Q_ARCHIVE=reply)
+                with self.assertRaisesRegex(LinearError, "^id-TASK-1: issue not found$"):
+                    tracker(gql).archive_plan("id-TASK-1")
+                self.assertEqual(gql.names(), ["Q_ARCHIVE"])
+
+    def test_other_errors_propagate(self):
+        for error in (LinearError("linear api error: boom"), Unavailable("issue", status=503)):
+            with self.subTest(error=error), self.assertRaises(type(error)) as raised:
+                tracker(Gql(Q_ARCHIVE=error)).archive_plan("id-TASK-1")
+            self.assertIs(raised.exception, error)
+
+    def test_an_unreadable_children_page_raises(self):
+        for name, where, replies in (
+            ("first page", "TASK-1", {"Q_ARCHIVE": planned(children={"nodes": []})}),
+            ("issue gone", "TASK-2", {"Q_CHILDREN": {"issue": None}}),
+            ("no children", "TASK-2", {"Q_CHILDREN": {"issue": {}}}),
+            ("no pageInfo", "TASK-2", {"Q_CHILDREN": later({"nodes": []})}),
+        ):
+            gql = Gql(**{"Q_ARCHIVE": planned(children=kids(sub("TASK-2"))), **replies})
+            with self.subTest(name), self.assertRaises(LinearError) as raised:
+                tracker(gql).archive_plan("id-TASK-1")
+            self.assertEqual(
+                str(raised.exception),
+                f"archive TASK-1: sub-issues of {where} unreadable (deleted or archived "
+                "mid-read?): nothing archived",
+            )
+
+    def test_a_next_page_without_a_new_cursor_raises(self):
+        for cursor in ("", "p1"):
+            gql = Gql(
+                Q_ARCHIVE=planned(children=kids(sub("TASK-2"), cursor="p1")),
+                Q_CHILDREN=later(kids(sub("TASK-3"), cursor=cursor)),
+            )
+            with self.subTest(cursor=cursor), self.assertRaisesRegex(LinearError, "endCursor"):
+                tracker(gql).archive_plan("id-TASK-1")
+
 
 class Archive(Case):
-    def test_sends_m_archive(self):
-        gql = Gql(M_ARCHIVE={"issueArchive": {"success": True}})
-        self.assertIsNone(tracker(gql).archive("id-TASK-1"))
-        self.assertEqual(gql.calls, [(linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"})])
+    def test_archives_once_nothing_is_unfinished(self):
+        gql = Gql(
+            Q_ARCHIVE=planned(children=kids(sub("TASK-2", "canceled"))),
+            Q_CHILDREN=later(kids()),
+            M_ARCHIVE={"issueArchive": {"success": True}},
+        )
+        self.assertTrue(tracker(gql).archive("id-TASK-1"))
+        self.assertEqual(gql.names(), ["Q_ARCHIVE", "Q_CHILDREN", "M_ARCHIVE"])
+        self.assertEqual(gql.calls[-1], (linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"}))
+
+    def test_already_archived_writes_nothing(self):
+        gql = Gql(Q_ARCHIVE=planned(kind="started", archived=NOW))
+        self.assertFalse(tracker(gql).archive("id-TASK-1"))
+        self.assertEqual(gql.names(), ["Q_ARCHIVE"])
+
+    def test_anything_unfinished_refuses_with_the_plan(self):
+        for name, replies in (
+            ("issue", {"Q_ARCHIVE": planned(kind="started")}),
+            (
+                "grandchild",
+                {
+                    "Q_ARCHIVE": planned(children=kids(sub("TASK-2"))),
+                    "Q_CHILDREN": [later(kids(sub("TASK-3", "started"))), later(kids())],
+                },
+            ),
+        ):
+            gql = Gql(**replies)
+            expected = tracker(Gql(**copy.deepcopy(replies))).archive_plan("id-TASK-1")
+            with self.subTest(name), self.assertRaises(ArchiveRefused) as raised:
+                tracker(gql).archive("id-TASK-1")
+            self.assertEqual(raised.exception.plan, expected)
+            self.assertTrue(expected.unfinished)
+            self.assertNotIn("M_ARCHIVE", gql.names())
 
     def test_success_false_raises(self):
-        gql = Gql(M_ARCHIVE={"issueArchive": {"success": False}})
+        gql = Gql(Q_ARCHIVE=planned(), M_ARCHIVE={"issueArchive": {"success": False}})
         with self.assertRaisesRegex(LinearError, "^issueArchive: success: false$"):
             tracker(gql).archive("id-TASK-1")
 
@@ -872,7 +1006,7 @@ class Interface(Case):
             {
                 "read",
                 "finished",
-                "sub_issues",
+                "archive_plan",
                 "archive",
                 "approved",
                 "detail",
