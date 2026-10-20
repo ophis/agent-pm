@@ -8,7 +8,7 @@ import re
 from dataclasses import replace
 from functools import cache
 
-from agent_pm.linear_orchestrator.engine import inputs, linear_tracker
+from agent_pm.linear_orchestrator.engine import inputs
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
     InputError,
@@ -64,13 +64,6 @@ STOPWORDS = frozenset(
     }
 )
 MAX_WORDS, MAX_HOPS = 5, 5
-# Q_* kept only for tests reading related.<name>; 第 2 阶段删除.
-Q_SEARCH, Q_SEARCH_IDS, Q_IDS, Q_UPSTREAM = (
-    linear_tracker.Q_SEARCH,
-    linear_tracker.Q_SEARCH_IDS,
-    linear_tracker.Q_IDS,
-    linear_tracker.Q_UPSTREAM,
-)
 
 
 @cache

@@ -7,7 +7,7 @@ import os
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, ops, promote, run_comments
+from agent_pm.linear_orchestrator.engine import config, linear_tracker, ops, promote
 from agent_pm.linear_orchestrator.flow.types import Task
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import FINISHED, TEAM
@@ -35,7 +35,7 @@ class PromotionFailures(Base):
     def test_error_on_one_issue_others_still_run(self):
         self.ready("DR-1")
         other = self.ready("DR-2")
-        self.fake.fail[promote.Q_DETAIL, "DR-1"] = "boom"
+        self.fake.fail[linear_tracker.Q_DETAIL, "DR-1"] = "boom"
         self.run_main()
         self.assertEqual(other["state"], "Done")
         self.assertEqual(self.fake.issues["DR-1"]["state"], "Handoff")
@@ -47,9 +47,9 @@ class PromotionFailures(Base):
 
     def test_failing_over_grace_bounces(self):
         for fail, existing, posted in (
-            (promote.M_CREATE, False, "Handoff failed: linear api error: create failed"),
+            (linear_tracker.M_CREATE, False, "Handoff failed: linear api error: create failed"),
             (
-                promote.M_RELATE,
+                linear_tracker.M_RELATE,
                 True,
                 "Handoff failed: linear api error: relate failed The "
                 "next-stage issue C-9 already exists.",
@@ -62,7 +62,7 @@ class PromotionFailures(Base):
                     cid = ops.client_id("DR-1", "pm", ago(90))
                     self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
                 self.fake.fail[fail] = (
-                    "create failed" if fail == promote.M_CREATE else "relate failed"
+                    "create failed" if fail == linear_tracker.M_CREATE else "relate failed"
                 )
                 self.run_main()
                 self.assertEqual(
@@ -80,7 +80,7 @@ class PromotionFailures(Base):
         self.fake.moved("DR-1", 2800, "In Review", frm=STATES["Handoff"])
         self.fake.said("DR-1", 20, body="again")
         self.fake.moved("DR-1", 10, "Handoff", frm=STATES["In Review"])
-        self.fake.fail[promote.M_CREATE] = "create failed"
+        self.fake.fail[linear_tracker.M_CREATE] = "create failed"
         self.run_main()
         self.assertEqual(src["state"], "Handoff")
         self.assertNotIn("posted", src)
@@ -101,7 +101,7 @@ class PartialPromotion(Base):
 
         def gql(query, **v):
             out = fake(query, **v)
-            if query == promote.Q_DETAIL:
+            if query == linear_tracker.Q_DETAIL:
                 fake.issues[v["i"]]["state"] = state
             return out
 
@@ -151,7 +151,8 @@ class PartialPromotion(Base):
         self.assertEqual(src["state"], "In Review")
         self.assertNotIn("posted", src)
         self.assertEqual(
-            self.fake.writes(), [promote.M_CREATE, promote.M_RELATE, ops.Q_ISSUE_STATE]
+            self.fake.writes(),
+            [linear_tracker.M_CREATE, linear_tracker.M_RELATE, ops.Q_ISSUE_STATE],
         )
         self.assertEqual(self.out, f"move-skip DR-1 step=promote state={STATES['In Review']}")
 
@@ -270,9 +271,9 @@ class PromotionOutages(Base):
                     (self.out, self.err, FakePruner.calls),
                     (f"linear-error op=issue {FIELDS[name]}", "", []),
                 )
-                self.assertIn((promote.Q_DETAIL, {"i": "DR-1"}), fake.calls)
+                self.assertIn((linear_tracker.Q_DETAIL, {"i": "DR-1"}), fake.calls)
                 self.assertEqual(
-                    down.failed, [(promote.Q_DETAIL, {"service": HARNESS, "i": "DR-2"})]
+                    down.failed, [(linear_tracker.Q_DETAIL, {"service": HARNESS, "i": "DR-2"})]
                 )
                 self.assertEqual(
                     (first["state"], later["state"], fake.mutations), ("Handoff", "Handoff", [])
@@ -300,7 +301,7 @@ class PromotionOutages(Base):
                 )
                 self.assertEqual(
                     [q for q, _ in self.fake.mutations],
-                    [promote.M_CREATE, promote.M_RELATE, ops.M_STATE, ops.M_COMMENT],
+                    [linear_tracker.M_CREATE, linear_tracker.M_RELATE, ops.M_STATE, ops.M_COMMENT],
                 )
 
     def test_a_failure_bouncing_a_failed_handoff_stops_the_run(self):
@@ -308,7 +309,7 @@ class PromotionOutages(Base):
             with self.subTest(failure=name):
                 self.fake = FakeLinear()
                 src = self.ready(handoff=90)
-                self.fake.fail[promote.M_CREATE] = "create failed"
+                self.fake.fail[linear_tracker.M_CREATE] = "create failed"
                 self.assertEqual(
                     self.run_main(gql=failing(error, gql=self.fake, ops={"issueUpdate"})), 1
                 )
@@ -406,15 +407,19 @@ class HandoffPromotion(Base):
         self.assertEqual(
             self.fake.writes(),
             [
-                promote.M_CREATE,
-                promote.M_RELATE,
+                linear_tracker.M_CREATE,
+                linear_tracker.M_RELATE,
                 ops.Q_ISSUE_STATE,
                 ops.M_STATE,
                 ops.M_COMMENT,
             ],
         )
         self.assertFalse(
-            any("assigneeId" in repr(v) for q, v in self.fake.mutations if q != promote.M_CREATE)
+            any(
+                "assigneeId" in repr(v)
+                for q, v in self.fake.mutations
+                if q != linear_tracker.M_CREATE
+            )
         )
         self.assertEqual(self.out, "promote DR-1 to=C-1")
 
@@ -443,7 +448,7 @@ class HandoffPromotion(Base):
 
         def stale(query, **v):
             out = orig(query, **v)
-            if query == promote.Q_DETAIL:
+            if query == linear_tracker.Q_DETAIL:
                 out["issue"]["state"] = {"id": STATES["Done"]}
             return out
 
@@ -460,7 +465,7 @@ class HandoffPromotion(Base):
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
-        record = {"title": "Run s-1", "url": run_comments.URL + "s-1"}
+        record = {"title": "Run s-1", "url": linear_tracker.URL + "s-1"}
         self.ready(
             "DR-1",
             attachments=[
@@ -608,7 +613,7 @@ class PromotionIdempotency(Base):
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         src["inverse"].append(cid)
         self.run_main()
-        self.assertNotIn(promote.M_RELATE, [q for q, _ in self.fake.mutations])
+        self.assertNotIn(linear_tracker.M_RELATE, [q for q, _ in self.fake.mutations])
         self.assertEqual(src["state"], "Done")
 
     def test_rehandoff_from_done_reuses_child(self):
@@ -628,7 +633,7 @@ class PromotionIdempotency(Base):
         self.fake.moved("DR-1", 10, "Handoff", frm=STATES["In Review"])
         self.run_main()
         self.assertEqual(len(self.fake.children), 1)
-        self.assertNotIn(promote.M_CREATE, [q for q, _ in self.fake.mutations])
+        self.assertNotIn(linear_tracker.M_CREATE, [q for q, _ in self.fake.mutations])
         self.assertEqual(src["relations"], [cid])
         self.assertEqual(src["state"], "Done")
 
@@ -715,10 +720,10 @@ class PromotionScope(Base):
             self.fake.handoff_vars, {"t": TEAM, "s": IDS_BY_KEY["handoff"], "a": mock.ANY}
         )
         self.assertEqual(sorted(self.fake.handoff_vars["a"]), sorted(f"u-{r}" for r in ROLE))
-        self.assertIn("team: { id: { eq: $t } }", promote.Q_HANDOFF)
-        self.assertIn("state: { id: { eq: $s } }", promote.Q_HANDOFF)
-        self.assertIn("project: { null: false }", promote.Q_HANDOFF)
-        self.assertIn("assignee: { id: { in: $a } }", promote.Q_HANDOFF)
+        self.assertIn("team: { id: { eq: $t } }", linear_tracker.Q_HANDOFF)
+        self.assertIn("state: { id: { eq: $s } }", linear_tracker.Q_HANDOFF)
+        self.assertIn("project: { null: false }", linear_tracker.Q_HANDOFF)
+        self.assertIn("assignee: { id: { in: $a } }", linear_tracker.Q_HANDOFF)
 
     def test_unknown_flag(self):
         self.assertEqual(self.run_main("--nope"), 2)

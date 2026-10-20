@@ -16,6 +16,7 @@ from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.types import Begun, Finished, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
+    linear_tracker,
     log,
     ops,
     run_comments,
@@ -87,12 +88,12 @@ NAMES = {
     ops.M_COMMENT_ID: "comment",
     ops.Q_COMMENT: "find",
     ops.M_STATE: "state",
-    writeback.M_TITLE: "title",
-    writeback.M_ATTACH: "attach",
-    writeback.M_UNARCHIVE: "unarchive",
-    writeback.Q_ATTACHED: "read",
+    linear_tracker.M_TITLE: "title",
+    linear_tracker.M_ATTACH: "attach",
+    linear_tracker.M_UNARCHIVE: "unarchive",
+    linear_tracker.Q_ATTACHED: "read",
     ops.Q_ISSUE_STATE: "reread",
-    writeback.Q_ID: "id",
+    linear_tracker.Q_ID: "id",
 }
 
 FIELDS = {
@@ -961,25 +962,28 @@ class ApprovalMessages(Base):
 
     def test_queries_verbatim(self):
         self.assertEqual(
-            writeback.M_TITLE,
+            linear_tracker.M_TITLE,
             (
                 "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
             ),
         )
         self.assertEqual(
-            writeback.M_ATTACH,
+            linear_tracker.M_ATTACH,
             (
                 "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
             ),
         )
         self.assertEqual(
-            writeback.M_UNARCHIVE, "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
+            linear_tracker.M_UNARCHIVE,
+            "mutation($i: String!) { issueUnarchive(id: $i) { success } }",
         )
         self.assertEqual(
-            writeback.Q_ATTACHED,
+            linear_tracker.Q_ATTACHED,
             "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }",
         )
-        self.assertEqual(writeback.Q_ID, "query($i: String!) { issue(id: $i) { id team { id } } }")
+        self.assertEqual(
+            linear_tracker.Q_ID, "query($i: String!) { issue(id: $i) { id team { id } } }"
+        )
 
 
 class CompletionMessages(Base):
@@ -1463,15 +1467,15 @@ CLAIM = Claim(
 )
 
 EVENT_OPS = {
-    run_comments.M_UPDATE: "update",
+    linear_tracker.M_UPDATE: "update",
     ops.M_COMMENT_ID: "comment",
     ops.Q_COMMENT: "find",
     ops.Q_ISSUE_STATE: "reread",
     ops.M_STATE: "state",
     ops.M_SUBSCRIBE: "subscribe",
-    writeback.Q_ATTACHED: "read",
-    writeback.M_TITLE: "title",
-    writeback.M_ATTACH: "attach",
+    linear_tracker.Q_ATTACHED: "read",
+    linear_tracker.M_TITLE: "title",
+    linear_tracker.M_ATTACH: "attach",
 }
 
 EVENT_FIELDS = {

@@ -22,7 +22,6 @@ from agent_pm.linear_orchestrator.engine import (
     client,
     config,
     inputs,
-    issues,
     linear_tracker,
     ops,
     related,
@@ -204,7 +203,7 @@ class ClaimLinear(FakeLinear):
         self.node = node
 
     def __call__(self, query, **v):
-        if query == issues.Q_ISSUE:
+        if query == linear_tracker.Q_READ:
             self.queries.append((query, v))
             if isinstance(self.node, Exception):
                 raise self.node
@@ -624,7 +623,10 @@ class IssueBlockers(Base):
                 "claim TASK-3 role=researcher client=a client_source=default",
             ],
         )
-        self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
+        self.assertEqual(
+            fake.reads(),
+            [linear_tracker.q_issues(linear_tracker.RELATIONS), linear_tracker.q_issues()],
+        )
         self.assertEqual(
             [v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q],
             ["TASK-1", "TASK-2", "TASK-3"],

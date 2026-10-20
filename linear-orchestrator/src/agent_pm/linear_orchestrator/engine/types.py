@@ -9,9 +9,6 @@ from typing import Literal
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.flow.types import ISSUE_ID, Found
-
-# Linked kept only for tests reading types.Linked; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.flow.types import Linked as Linked
 from agent_pm.utils import Stopped as Stopped
 
 ClientSource = Literal["label", "default"]

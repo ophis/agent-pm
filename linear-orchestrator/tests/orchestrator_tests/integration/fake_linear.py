@@ -20,16 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from agent_pm.linear_orchestrator.engine import (
     client,
-    issues,
+    linear_tracker,
     ops,
-    promote,
-    prune,
-    related,
-    run_comments,
     types,
-    writeback,
 )
-from agent_pm.linear_orchestrator.engine import router as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.integration.fixture_errors import Problem
 from orchestrator_tests.unit.board_ids import STATES, TEAM
@@ -84,18 +78,18 @@ KINDS = ("error", "unsuccessful", "503", "hang")
 
 MODULES = {
     "linear": ops,
-    "issues": issues,
-    "sessions": run_comments,
-    "writeback": writeback,
-    "promote": promote,
-    "prune": prune,
-    "router": routing,
-    "related": related,
+    "sessions": linear_tracker,
+    "writeback": linear_tracker,
+    "promote": linear_tracker,
+    "prune": linear_tracker,
+    "router": linear_tracker,
+    "related": linear_tracker,
 }
 
 BUILT = {
-    "router.issues": routing.q_issues(),
-    "router.issues+relations": routing.q_issues(routing.RELATIONS),
+    "issues.Q_ISSUE": linear_tracker.Q_READ,
+    "router.issues": linear_tracker.q_issues(),
+    "router.issues+relations": linear_tracker.q_issues(linear_tracker.RELATIONS),
 }
 
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}

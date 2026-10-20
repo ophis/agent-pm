@@ -16,8 +16,8 @@ from agent_pm.delegate import Spec as DelegateSpec
 from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
+    linear_tracker,
     ops,
-    related,
     router,
     runs,
 )
@@ -260,7 +260,7 @@ class FakeLinear:
     def _identity(self, query, v):
         if query == ops.Q_COMMENT:
             return {"comment": self.comments.get(v["c"])}
-        if query in (related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS):
+        if query in (linear_tracker.Q_SEARCH, linear_tracker.Q_SEARCH_IDS, linear_tracker.Q_IDS):
             return {"searchIssues": {"nodes": []}, "issues": {"nodes": []}}
         if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}

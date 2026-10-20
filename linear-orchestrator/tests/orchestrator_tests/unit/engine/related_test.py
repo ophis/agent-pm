@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import related
+from agent_pm.linear_orchestrator.engine import linear_tracker, related
 from agent_pm.linear_orchestrator.engine.config import Docs
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.ops import NOT_FOUND
@@ -78,7 +78,7 @@ class Gql:
 
     def __call__(self, query, **v):
         self.calls.append((query, v))
-        if query == related.Q_UPSTREAM:
+        if query == linear_tracker.Q_UPSTREAM:
             if v["i"] not in self.upstream:
                 raise LinearError(f"linear api error: [{{'message': '{NOT_FOUND}'}}]")
             d = self.upstream[v["i"]]
@@ -131,7 +131,7 @@ class Search(Case):
             gql.calls,
             [
                 (
-                    related.Q_SEARCH_IDS,
+                    linear_tracker.Q_SEARCH_IDS,
                     {"t": "queue backends", "f": TEAM_F, "n": {**TEAM_F, "number": {"in": [30]}}},
                 )
             ],
@@ -141,7 +141,9 @@ class Search(Case):
     def test_without_ids_only_the_term(self):
         gql = Gql(found=[node("TASK-3")])
         search(issue(), gql, run())
-        self.assertEqual(gql.calls, [(related.Q_SEARCH, {"t": "queue backends", "f": TEAM_F})])
+        self.assertEqual(
+            gql.calls, [(linear_tracker.Q_SEARCH, {"t": "queue backends", "f": TEAM_F})]
+        )
 
     def test_candidate_fields_come_from_the_search(self):
         gql = Gql(
@@ -193,8 +195,11 @@ class Search(Case):
         self.assertEqual([f.identifier for f in got.issues], ["TASK-8", "TASK-3"])
         self.assertEqual(got.refs, ())
         self.assertEqual(
-            [c for c in gql.calls if c[0] == related.Q_UPSTREAM],
-            [(related.Q_UPSTREAM, {"i": "TASK-5"}), (related.Q_UPSTREAM, {"i": "TASK-2"})],
+            [c for c in gql.calls if c[0] == linear_tracker.Q_UPSTREAM],
+            [
+                (linear_tracker.Q_UPSTREAM, {"i": "TASK-5"}),
+                (linear_tracker.Q_UPSTREAM, {"i": "TASK-2"}),
+            ],
         )
 
     def test_chain_stops_at_five_a_cycle_or_a_missing_issue(self):
@@ -210,11 +215,13 @@ class Search(Case):
             with self.subTest(name):
                 gql = Gql(upstream=upstream)
                 search(issue(description=handoff("TASK-20")), gql, run())
-                self.assertEqual(sum(1 for q, _ in gql.calls if q == related.Q_UPSTREAM), reads)
+                self.assertEqual(
+                    sum(1 for q, _ in gql.calls if q == linear_tracker.Q_UPSTREAM), reads
+                )
 
     def test_an_upstream_read_error_propagates(self):
         def broken(query, **_v):
-            if query == related.Q_UPSTREAM:
+            if query == linear_tracker.Q_UPSTREAM:
                 raise LinearError("linear api error: boom")
             return {"searchIssues": {"nodes": []}}
 
@@ -344,6 +351,8 @@ class Search(Case):
         gql = Gql(named=[node("TASK-30")])
         gh = run()
         got = search(issue(title="Of the", description="see TASK-30"), gql, gh, TARGET)
-        self.assertEqual(gql.calls, [(related.Q_IDS, {"n": {**TEAM_F, "number": {"in": [30]}}})])
+        self.assertEqual(
+            gql.calls, [(linear_tracker.Q_IDS, {"n": {**TEAM_F, "number": {"in": [30]}}})]
+        )
         self.assertEqual([f.identifier for f in got.issues], ["TASK-30"])
         self.assertEqual(gh.calls, [(RESEARCH, SHORT), (DESIGN, SHORT)])

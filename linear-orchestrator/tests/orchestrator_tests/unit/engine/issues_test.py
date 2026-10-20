@@ -2,7 +2,7 @@
 
 import dataclasses
 
-from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine import config, issues, linear_tracker
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
@@ -118,7 +118,7 @@ class ReadIssue(Case):
             )
         )
         got = LinearTracker(gql).issue("ENG-7")
-        self.assertEqual(gql.calls, [(issues.Q_ISSUE, {"i": "ENG-7"})])
+        self.assertEqual(gql.calls, [(linear_tracker.Q_READ, {"i": "ENG-7"})])
         self.assertEqual(
             got,
             Issue(
@@ -140,7 +140,7 @@ class ReadIssue(Case):
         self.assertEqual(read().labels, ())
         got = read(labels={"nodes": [{"id": "l-2"}, {"id": "l-1"}]})
         self.assertEqual(got.labels, ("l-2", "l-1"))
-        self.assertIn("labels(first: 50) { nodes { id } }", issues.Q_ISSUE)
+        self.assertIn("labels(first: 50) { nodes { id } }", linear_tracker.Q_READ)
 
     def test_null_description_and_project(self):
         got = read(description=None, project=None)

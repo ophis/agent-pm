@@ -42,12 +42,6 @@ from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
-
-# Kept only for tests reading prune.<query>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_ARCHIVE as M_ARCHIVE
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILDREN as Q_CHILDREN
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_FINISHED as Q_FINISHED
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ISSUE as Q_ISSUE
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.types import (

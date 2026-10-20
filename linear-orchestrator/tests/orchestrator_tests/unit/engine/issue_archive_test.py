@@ -2,7 +2,7 @@
 the archive only when all are finished, nothing written after a failed read.
 """
 
-from agent_pm.linear_orchestrator.engine import issue_archive, prune
+from agent_pm.linear_orchestrator.engine import issue_archive, linear_tracker
 from agent_pm.linear_orchestrator.engine.types import (
     ArchiveRefused,
     GraphQLErrors,
@@ -48,7 +48,7 @@ class Archive(Case):
                 "actor": VIEWER,
             },
         )
-        self.assertEqual(gql.writes, [(prune.M_ARCHIVE, {"i": "id-TASK-1"})])
+        self.assertEqual(gql.writes, [(linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"})])
 
     def test_a_duplicate_is_finished_as_prune_counts_it(self):
         for name, root in (
@@ -60,7 +60,7 @@ class Archive(Case):
                 self.assertEqual((plan["result"], plan["unfinished"]), ("changed", []))
                 gql = ArchiveGql(root)
                 self.assertEqual(issue_archive.archive(gql, "TASK-1")["result"], "changed")
-                self.assertEqual(gql.writes, [(prune.M_ARCHIVE, {"i": "id-TASK-1"})])
+                self.assertEqual(gql.writes, [(linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"})])
 
     def test_any_unfinished_issue_refuses_and_writes_nothing(self):
         cases = {

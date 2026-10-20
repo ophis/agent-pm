@@ -9,7 +9,7 @@ from dataclasses import replace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, SessionError
-from agent_pm.linear_orchestrator.engine import ops, prune
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.process_fixtures import CompletedProcess
@@ -55,7 +55,7 @@ class RepositoryCleanup(PruneScenario):
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
         self.assertNotIn(ops.Q_TEAM, gql.calls)
-        self.assertIn("state { id }", prune.Q_ISSUE)
+        self.assertIn("state { id }", linear_tracker.Q_ISSUE)
 
     def test_a_tick_reads_the_runs_log_once(self):
         idents = [f"TASK-{n}" for n in range(40, 46)]
@@ -141,7 +141,7 @@ class RepositoryCleanup(PruneScenario):
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
             self.assertEqual(self.prune(again), (0, ""))
             self.assertEqual(self.prune(again), (0, ""))
-        self.assertEqual(again.calls.count(prune.Q_ISSUE), 4)
+        self.assertEqual(again.calls.count(linear_tracker.Q_ISSUE), 4)
         self.assertEqual(self.closed(), [A])
 
     def test_young_workdirs_without_agent_files_are_queried_and_kept(self):
@@ -151,7 +151,7 @@ class RepositoryCleanup(PruneScenario):
         os.makedirs(checkout_path(os.path.join(self.work, "notes"), "o", "repo", "notes"))
         gql = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertEqual(gql.calls.count(prune.Q_ISSUE), 2)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 2)
         self.assertTrue(os.path.isdir(os.path.join(old, ".git")))
 
     def test_young_and_in_progress_untouched(self):
@@ -238,7 +238,7 @@ class RepositoryCleanup(PruneScenario):
                 ],
             ),
         )
-        self.assertNotIn(prune.M_ARCHIVE, gql.calls)
+        self.assertNotIn(linear_tracker.M_ARCHIVE, gql.calls)
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
         self.assertEqual(self.api.order, [])
         PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
@@ -469,7 +469,7 @@ class RetentionCleanup(PruneScenario):
         issues = gql_for({"TASK-49": ("Done", [(30, "Done")])})
 
         def gql(query, **v):
-            if query == prune.Q_FINISHED:
+            if query == linear_tracker.Q_FINISHED:
                 raise LinearError("linear api error: down")
             return issues(query, **v)
 
@@ -490,7 +490,7 @@ class RetentionCleanup(PruneScenario):
             out.splitlines(),
             [f"prune-closed TASK-7 session={SID}", "prune-removed TASK-7 what=agent dir"],
         )
-        self.assertEqual(gql.calls.count(prune.Q_ISSUE), 2)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 2)
         self.assertEqual(self.closed(), [B, A])
         again = gql_for({"TASK-7": ("Done", [(24, "Done")]), "TASK-8": ("In Progress", [])})
         self.prune(again)
@@ -501,7 +501,7 @@ class RetentionCleanup(PruneScenario):
         gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(self.closed(), [])
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
 
     def test_only_recorded_configured_roles_make_candidates(self):
         self.record("TASK-7", SID, [A])
@@ -537,7 +537,7 @@ class RetentionCleanup(PruneScenario):
             ],
         )
         self.assertEqual((seen, self.closed()), ([True], [A]))
-        self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ISSUE), 1)
         self.assertFalse(os.path.lexists(clone))
 
     def test_a_failed_close_or_an_unfinished_issue_keeps_the_runs_state(self):
@@ -570,7 +570,7 @@ class RetentionCleanup(PruneScenario):
                     (3, ["prune-error error=run inventory unknown", archived]),
                 )
                 self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in kept))
-                self.assertNotIn(prune.Q_ISSUE, gql.calls)
+                self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
                 self.assertEqual(gql.archived, [] if dry else ["id-TASK-49"])
                 self.assertEqual(self.api.order, [])
 
@@ -676,13 +676,15 @@ class RetentionCleanup(PruneScenario):
     def test_an_outage_reading_an_issue_stops_prune(self):
         clones = [self.mkc(ident) for ident in ("TASK-48", "TASK-49")]
         issues = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
-        self.outage("issue", issues, [(prune.Q_ISSUE, {"service": HARNESS, "i": "TASK-48"})])
+        self.outage(
+            "issue", issues, [(linear_tracker.Q_ISSUE, {"service": HARNESS, "i": "TASK-48"})]
+        )
         self.assertEqual(issues.calls, [])
         self.assertTrue(all(os.path.isdir(c) for c in clones))
 
     def test_an_outage_reading_the_finished_issues_stops_prune(self):
         issues = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
-        self.outage("issues", issues, [(prune.Q_FINISHED, mock.ANY)])
+        self.outage("issues", issues, [(linear_tracker.Q_FINISHED, mock.ANY)])
 
     def test_an_outage_archiving_stops_prune(self):
         done = ("Done", [(30, "Done")])
@@ -690,7 +692,9 @@ class RetentionCleanup(PruneScenario):
             {"TASK-1": done, "TASK-2": done}, owners={"TASK-1": "u-pm", "TASK-2": "u-pm"}
         )
         self.outage(
-            "issueArchive", issues, [(prune.M_ARCHIVE, {"service": HARNESS, "i": "id-TASK-1"})]
+            "issueArchive",
+            issues,
+            [(linear_tracker.M_ARCHIVE, {"service": HARNESS, "i": "id-TASK-1"})],
         )
 
 
@@ -823,7 +827,7 @@ class WorkdirRetention(PruneScenario):
         files = tree(workdir)
         gql = gql_for({"TASK-7": ("Done", [(8 * 24, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
         self.assertEqual(tree(workdir), files)
 
     def test_unfinished_or_unknown_finish_keeps_the_workdir(self):
@@ -844,7 +848,7 @@ class WorkdirRetention(PruneScenario):
         write(os.path.join(self.work, "TASK-8"), "x")
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(8 * 24, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+        self.assertNotIn(linear_tracker.Q_ISSUE, gql.calls)
         self.assertOutsideKept()
         self.assertTrue(os.path.isfile(os.path.join(self.work, "TASK-8")))
 
@@ -962,7 +966,11 @@ class PruneCommand(PruneScenario):
         fake = tp.FakeLinear()
 
         def gql(query, **v):
-            board = query not in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE)
+            board = query not in (
+                linear_tracker.Q_ISSUE,
+                linear_tracker.Q_FINISHED,
+                linear_tracker.M_ARCHIVE,
+            )
             return (fake if board else prune_gql)(query, **v)
 
         before, out, err = len(logged(self.logs)), io.StringIO(), io.StringIO()
@@ -1009,7 +1017,7 @@ class PruneCommand(PruneScenario):
 
     def test_a_failed_step_exits_1_after_the_rest(self):
         def down(query, **v):
-            if query == prune.Q_ISSUE:
+            if query == linear_tracker.Q_ISSUE:
                 raise LinearError("linear api error: down")
             return gql_for({})(query, **v)
 

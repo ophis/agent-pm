@@ -10,7 +10,15 @@ from dataclasses import replace
 from datetime import timedelta
 
 from agent_pm.delegate import ConfigError, SessionError, Spec
-from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    linear_tracker,
+    log,
+    ops,
+    promote,
+    prune,
+    runs,
+)
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -80,7 +88,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, 
         gql.calls.append(query)
         if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
-        if query == prune.Q_FINISHED:
+        if query == linear_tracker.Q_FINISHED:
             gql.finished.append(v)
             hits = [
                 i
@@ -110,10 +118,10 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=(), *, children=None, 
                     },
                 }
             }
-        if query == prune.Q_CHILDREN:
+        if query == linear_tracker.Q_CHILDREN:
             gql.subs.append(v["i"])
             return {"issue": {"children": subs(v["i"].removeprefix("id-"))}}
-        if query == prune.M_ARCHIVE:
+        if query == linear_tracker.M_ARCHIVE:
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
             if ident in fail:
@@ -318,7 +326,10 @@ class PruneScenario(Case):
         def gql(query, **v):
             self.user_queries += query == ops.Q_USER
             return (
-                prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else fake
+                prune_gql
+                if query
+                in (linear_tracker.Q_ISSUE, linear_tracker.Q_FINISHED, linear_tracker.M_ARCHIVE)
+                else fake
             )(query, **v)
 
         self.user_queries = 0

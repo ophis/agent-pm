@@ -21,14 +21,7 @@ from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
-
-# Kept only for tests reading writeback.<query>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_ATTACH as M_ATTACH
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_TITLE as M_TITLE
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_UNARCHIVE as M_UNARCHIVE
 from agent_pm.linear_orchestrator.engine.linear_tracker import MOVES, LinearTracker
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ATTACHED as Q_ATTACHED
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ID as Q_ID
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.types import (
     Claim,

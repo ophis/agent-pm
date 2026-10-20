@@ -10,12 +10,9 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import (
-    issues,
+    linear_tracker,
     log,
     ops,
-    related,
-    run_comments,
-    writeback,
 )
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
@@ -112,21 +109,21 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
 
 
 NAMES = {
-    issues.Q_ISSUE: "issue",
+    linear_tracker.Q_READ: "issue",
     ops.M_COMMENT: "post",
-    run_comments.M_UPDATE: "update",
+    linear_tracker.M_UPDATE: "update",
     ops.M_COMMENT_ID: "comment",
     ops.Q_COMMENT: "find",
-    writeback.Q_ATTACHED: "read",
+    linear_tracker.Q_ATTACHED: "read",
     ops.Q_ISSUE_STATE: "reread",
     ops.M_STATE: "state",
     ops.M_SUBSCRIBE: "subscribe",
-    writeback.M_ATTACH: "attach",
-    writeback.M_TITLE: "title",
-    related.Q_SEARCH: "search",
-    related.Q_SEARCH_IDS: "search",
-    related.Q_IDS: "search",
-    related.Q_UPSTREAM: "upstream",
+    linear_tracker.M_ATTACH: "attach",
+    linear_tracker.M_TITLE: "title",
+    linear_tracker.Q_SEARCH: "search",
+    linear_tracker.Q_SEARCH_IDS: "search",
+    linear_tracker.Q_IDS: "search",
+    linear_tracker.Q_UPSTREAM: "upstream",
 }
 
 FIELDS = {

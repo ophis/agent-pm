@@ -4,16 +4,6 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
-from agent_pm.linear_orchestrator.engine import (
-    issues,
-    promote,
-    prune,
-    related,
-    router,
-    run_comments,
-    types,
-    writeback,
-)
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.opencode import OpenCodeClient
@@ -29,33 +19,6 @@ _ = TeamKind.ROLES, TeamKind.TEMPLATES
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 # outcome.py parses AutopilotStatus(status).
 _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
-# prune re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = prune.M_ARCHIVE, prune.Q_CHILDREN, prune.Q_FINISHED, prune.Q_ISSUE
-# promote re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = promote.M_CREATE, promote.M_RELATE, promote.Q_CHILD, promote.Q_DETAIL, promote.Q_HANDOFF
-# router re-exports its queries and blockers, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = router.RELATIONS, router.Q_RELATIONS, router.Q_RECHECK, router.Q_HISTORY, router.q_issues
-_ = router.blockers
-# run_comments re-exports its query, now linear_tracker's, and keeps write(gql, ...) only for tests;
-# 第 2 阶段删除.
-_ = run_comments.M_UPDATE, run_comments.write
-# run_comments re-exports these, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = run_comments.URL, run_comments.is_record
-# writeback re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = (
-    writeback.M_ATTACH,
-    writeback.M_TITLE,
-    writeback.M_UNARCHIVE,
-    writeback.Q_ATTACHED,
-    writeback.Q_ID,
-)
-# issues re-exports the run issue read, now linear_tracker's (with project_id), and the Handoff
-# parser, now flow.handoff's, only for tests; 第 2 阶段删除.
-_ = issues.Q_ISSUE, issues.read_issue, issues.parse_handoff
-# related re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
-_ = related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS, related.Q_UPSTREAM
-# engine.types re-exports Linked, now flow.types', only for tests; 第 2 阶段删除.
-_ = types.Linked
 # Record checks ctl[0] against LayerCommand's values.
 _ = LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.

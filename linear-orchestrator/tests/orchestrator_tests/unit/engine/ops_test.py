@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import ops, promote, prune, router, types
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, types
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
@@ -218,7 +218,7 @@ class Writes(Case):
     def test_each_query_with_the_history_declares_its_cursor(self):
         found = {
             f"{module.__name__}.{name}": value
-            for module in (promote, prune, router)
+            for module in (linear_tracker,)
             for name, value in vars(module).items()
             if isinstance(value, str) and ops.HISTORY in value and value != ops.HISTORY
         }

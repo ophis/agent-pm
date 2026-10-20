@@ -76,13 +76,6 @@ BASE = {
     "Q_IDS": "fd0f74d3cdd0d0a34ba9f12805652c7ecedebd4d75e003bece27d4d9912f9b95",
     "Q_UPSTREAM": "be140943c548c5d9b8dc0940cd9dd8c712469da812be4997e0d9ebc3fad38eda",
 }
-REEXPORTS = {
-    prune: ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE"),
-    promote: ("Q_HANDOFF", "Q_DETAIL", "Q_CHILD", "M_CREATE", "M_RELATE"),
-    writeback: ("M_TITLE", "M_ATTACH", "M_UNARCHIVE", "Q_ATTACHED", "Q_ID"),
-    run_comments: ("M_UPDATE",),
-    related: ("Q_SEARCH", "Q_SEARCH_IDS", "Q_IDS", "Q_UPSTREAM"),
-}
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 REF = (SID, "session")
 CID = ops.client_id(SID, "session")
@@ -186,12 +179,6 @@ class Queries(Case):
                 text = getattr(linear_tracker, name)
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
 
-    def test_reexports_are_the_adapter_strings(self):
-        for module, names in REEXPORTS.items():
-            for name in names:
-                with self.subTest(module=module.__name__, query=name):
-                    self.assertIs(getattr(module, name), getattr(linear_tracker, name))
-
     def test_router_text_is_the_base_text(self):
         texts = {n: getattr(linear_tracker, n) for n in ROUTER}
         texts |= {f"q_issues({f})": linear_tracker.q_issues(texts.get(f, "")) for f in LISTS}
@@ -199,14 +186,6 @@ class Queries(Case):
         for name, text in texts.items():
             with self.subTest(query=name):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
-
-    def test_the_run_issue_read_is_issues_q_issue(self):
-        self.assertIs(issues.Q_ISSUE, linear_tracker.Q_READ)
-
-    def test_router_reexports_are_the_adapter_strings(self):
-        for name in (*ROUTER, "q_issues", "blockers"):
-            with self.subTest(query=name):
-                self.assertIs(getattr(router, name), getattr(linear_tracker, name))
 
 
 class Read(Case):
@@ -942,7 +921,7 @@ class ApprovedList(Case):
             "attachments": {
                 "nodes": [
                     {"title": "Report", "url": "https://x/report"},
-                    {"title": "Run", "url": f"{run_comments.URL}abc"},
+                    {"title": "Run", "url": f"{linear_tracker.URL}abc"},
                 ]
             },
         }
@@ -1243,11 +1222,6 @@ class RunIssue(Case):
             with self.subTest(message=message), self.assertRaises(IssueError) as caught:
                 LinearTracker(Gql(Q_READ=reply)).issue("TASK-7")
             self.assertEqual(str(caught.exception), message)
-
-    def test_issues_read_issue_is_the_adapters_with_its_project_id(self):
-        gql = Gql(Q_READ=run_issue())
-        read, issue = issues.read_issue(gql, "TASK-7"), LinearTracker(gql).issue("TASK-7")
-        self.assertEqual(vars(read), {**vars(issue), "project_id": "p-1"})
 
 
 def candidate(ident, state, kind, *, urls=(), comment=None):

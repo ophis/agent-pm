@@ -7,15 +7,6 @@ import re
 import threading
 
 from agent_pm.delegate import ConfigError, Resumable, SessionError
-
-# Kept only for tests reading run_comments.<query>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_UPDATE as M_UPDATE
-
-# Kept for issues.py and tests, now linear_tracker's; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import URL as URL
-from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.linear_tracker import is_comment as is_comment
-from agent_pm.linear_orchestrator.engine.linear_tracker import is_record as is_record
 from agent_pm.linear_orchestrator.engine.types import ConfigError as RunConfigError
 from agent_pm.utils import one_line, timestamp
 
@@ -94,11 +85,6 @@ def _ref(sid):
 def _write(tracker, sid, issue, text, limit):
     ok, error = _bounded(lambda: tracker.put_comment(issue, text, _ref(sid)), limit)
     return error or (None if ok else "success: false")
-
-
-def write(gql, sid, issue, text, limit=LIMIT):
-    # kept only for tests writing through a gql; 第 2 阶段删除
-    return _write(LinearTracker(gql), sid, issue, text, limit)
 
 
 def _text(rec):

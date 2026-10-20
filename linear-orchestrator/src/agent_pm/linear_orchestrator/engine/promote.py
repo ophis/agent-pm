@@ -9,13 +9,6 @@ from traceback import format_exception
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
-
-# Kept only for tests reading promote.<query>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_CREATE as M_CREATE
-from agent_pm.linear_orchestrator.engine.linear_tracker import M_RELATE as M_RELATE
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILD as Q_CHILD
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_DETAIL as Q_DETAIL
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HANDOFF as Q_HANDOFF
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.prune import Pruner

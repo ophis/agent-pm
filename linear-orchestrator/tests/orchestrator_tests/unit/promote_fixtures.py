@@ -7,7 +7,7 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import ops, promote
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, promote
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, team_node
@@ -122,7 +122,7 @@ class FakeLinear:
                     "nodes": [{"id": users[v["e"].lower()]}] if v["e"].lower() in users else []
                 }
             }
-        if query == promote.Q_HANDOFF:
+        if query == linear_tracker.Q_HANDOFF:
             self.handoff_vars = v
             return {
                 "issues": {
@@ -139,7 +139,7 @@ class FakeLinear:
         return None
 
     def _detail(self, query, v):
-        if query == promote.Q_DETAIL:
+        if query == linear_tracker.Q_DETAIL:
             i = self.issues[v["i"]]
             return {
                 "issue": {
@@ -150,14 +150,14 @@ class FakeLinear:
                     "inverseRelations": {"nodes": [{"issue": {"id": r}} for r in i["inverse"]]},
                 }
             }
-        if query == promote.Q_CHILD:
+        if query == linear_tracker.Q_CHILD:
             return {"issues": {"nodes": [self.children[v["c"]]] if v["c"] in self.children else []}}
         if query == ops.Q_ISSUE_STATE:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         return None
 
     def _mutate(self, query, v):
-        if query == promote.M_CREATE:
+        if query == linear_tracker.M_CREATE:
             inp = v["in"]
             child = dict(inp, identifier=f"C-{len(self.children) + 1}")
             self.children[inp["id"]] = child
@@ -167,7 +167,7 @@ class FakeLinear:
                     "issue": {"id": inp["id"], "identifier": child["identifier"]},
                 }
             }
-        if query == promote.M_RELATE:
+        if query == linear_tracker.M_RELATE:
             self.issues[v["in"]["issueId"]]["relations"].append(v["in"]["relatedIssueId"])
             return {"issueRelationCreate": {"success": True}}
         if query == ops.M_COMMENT:

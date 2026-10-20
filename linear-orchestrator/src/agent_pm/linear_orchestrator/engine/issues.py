@@ -2,22 +2,9 @@
 
 import re
 from functools import cache
-from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import linear_tracker
 from agent_pm.linear_orchestrator.flow import workflow
-
-# Q_ISSUE, parse_handoff and read_issue (with project_id) kept only for tests reading
-# issues.<name>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.flow.handoff import parse_handoff as parse_handoff
 from agent_pm.utils import parse_time
-
-Q_ISSUE = linear_tracker.Q_READ
-
-
-def read_issue(gql, ident):
-    issue = linear_tracker.LinearTracker(gql).issue(ident)
-    return SimpleNamespace(**vars(issue), project_id=issue.home)
 
 
 def is_user(note, humans) -> bool:

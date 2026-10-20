@@ -97,15 +97,7 @@ from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
-
-# Q_*, RELATIONS, blockers and q_issues kept only for tests reading router.<name>; 第 2 阶段删除.
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HISTORY as Q_HISTORY
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RECHECK as Q_RECHECK
-from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RELATIONS as Q_RELATIONS
-from agent_pm.linear_orchestrator.engine.linear_tracker import RELATIONS as RELATIONS
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.linear_tracker import blockers as blockers
-from agent_pm.linear_orchestrator.engine.linear_tracker import q_issues as q_issues
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
