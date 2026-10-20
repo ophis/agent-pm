@@ -166,7 +166,10 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login", "github", "agent-pm-engineer"}},
 		{"unknown", []string{"login", "github", "agent-pm-docs"}},
 		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
-		{"unknown", []string{"login", "claude", "x"}},
+		{"unknown", []string{"login", "claude", "Work"}},
+		{"unknown", []string{"login", "claude", "setup-token"}},
+		{"unknown", []string{"login", "claude", "a", "b"}},
+		{"unknown", []string{"login", "claude", ""}},
 		{"unknown", []string{"login", "opencode"}},
 		{"unknown", []string{"login", "opencode", "ollama"}},
 		{"unknown", []string{"login", "opencode", "a/b"}},
@@ -201,6 +204,29 @@ func TestLoginGitHubDispatch(t *testing.T) {
 	a := app{loginGitHub: func(context.Context, string, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+}
+
+func TestLoginClaudeDispatch(t *testing.T) {
+	for want, args := range map[string][]string{"default": {"login", "claude"}, "work": {"login", "claude", "work"}, "a.b-1_2": {"login", "claude", "a.b-1_2"}} {
+		var got string
+		a := app{login: func(account string, out io.Writer) error {
+			got = account
+			_, err := io.WriteString(out, "ok\n")
+			return err
+		}}
+		if code, out, errOut := invoke(a, args...); code != 0 || got != want || out != "ok\n" || errOut != "" {
+			t.Fatalf("%q: exit %d account %q %q %q", args, code, got, out, errOut)
+		}
+	}
+	a := app{login: func(string, io.Writer) error { return errors.New("no terminal") }}
+	if code, out, errOut := invoke(a, "login", "claude", "work"); code != 1 || out != "" || errOut != "agent-pm-broker: no terminal\n" {
+		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+	_, _, errOut := invoke(app{}, "login", "claude", "Work")
+	var got struct{ Error struct{ Message string } }
+	if err := json.Unmarshal([]byte(errOut), &got); err != nil || !strings.Contains(got.Error.Message, " | login claude [NAME] | ") {
+		t.Fatalf("usage %q", errOut)
 	}
 }
 
@@ -381,7 +407,7 @@ func (k *memKeychain) AppAccess(string, string) (broker.AppAccess, error) {
 		{Authorizations: []string{"partition_id"}, Partitions: []string{"p"}},
 	}}, nil
 }
-func (k *memKeychain) Get() ([]byte, error) { return append([]byte(nil), k.token...), nil }
+func (k *memKeychain) Get(string) ([]byte, error) { return append([]byte(nil), k.token...), nil }
 
 type scripted struct {
 	calls [][]string

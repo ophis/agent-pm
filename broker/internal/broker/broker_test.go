@@ -2,11 +2,14 @@ package broker
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"io"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -18,9 +21,11 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-// fakeKeychain is the setup-token item: its access is fakeApps', its reads return token (readBack when set).
+// fakeKeychain is one setup-token item, service tokenService and account account ("": default): its access is
+// fakeApps', its reads return token (readBack when set). A call naming another item fails.
 type fakeKeychain struct {
 	fakeApps
+	account          string
 	token, readBack  []byte
 	getErr           error
 	getErrs          []error // the no-dialog reads' errors in turn, then getErr
@@ -30,23 +35,35 @@ type fakeKeychain struct {
 	returned         [][]byte // every buffer a read returned
 }
 
+var errWrongItem = errors.New("wrong item")
+
+func (k *fakeKeychain) is(service, account string) bool {
+	return service == tokenService && account == cmp.Or(k.account, "default")
+}
 func (k *fakeKeychain) AppAccess(service, account string) (AppAccess, error) {
-	if service != tokenService || account != tokenAccount {
-		return AppAccess{}, errors.New("wrong item")
+	if !k.is(service, account) {
+		return AppAccess{}, errWrongItem
 	}
 	return k.fakeApps.AppAccess(service, account)
 }
-func (k *fakeKeychain) Get() ([]byte, error) {
+func (k *fakeKeychain) Get(account string) ([]byte, error) {
 	k.gets++
 	err := k.getErr
 	if len(k.getErrs) > 0 {
 		err, k.getErrs = k.getErrs[0], k.getErrs[1:]
 	}
+	if !k.is(tokenService, account) {
+		err = errWrongItem
+	}
 	return k.read(err)
 }
-func (k *fakeKeychain) GetWithDialog() ([]byte, error) {
+func (k *fakeKeychain) GetWithDialog(account string) ([]byte, error) {
 	k.dialogGets++
-	return k.read(k.dialogErr)
+	err := k.dialogErr
+	if !k.is(tokenService, account) {
+		err = errWrongItem
+	}
+	return k.read(err)
 }
 func (k *fakeKeychain) read(err error) ([]byte, error) {
 	if err != nil {
@@ -59,9 +76,44 @@ func (k *fakeKeychain) read(err error) ([]byte, error) {
 	k.returned = append(k.returned, b)
 	return b, nil
 }
-func (k *fakeKeychain) Put(b []byte) error {
+func (k *fakeKeychain) Put(account string, b []byte) error {
+	if !k.is(tokenService, account) {
+		return errWrongItem
+	}
 	k.put, k.token = append([]byte(nil), b...), append([]byte(nil), b...)
 	return nil
+}
+
+// accounts is the login keychain holding one fakeKeychain item per account: each call goes to its account's item.
+type accounts map[string]*fakeKeychain
+
+func (a accounts) item(account string) *fakeKeychain {
+	if k := a[account]; k != nil {
+		return k
+	}
+	return &fakeKeychain{account: account, getErr: ErrNotFound, fakeApps: fakeApps{accessErr: ErrNotFound}}
+}
+func (a accounts) AppAccess(service, account string) (AppAccess, error) {
+	return a.item(account).AppAccess(service, account)
+}
+func (a accounts) Get(account string) ([]byte, error) { return a.item(account).Get(account) }
+func (a accounts) GetWithDialog(account string) ([]byte, error) {
+	return a.item(account).GetWithDialog(account)
+}
+func (a accounts) Put(account string, b []byte) error {
+	if a[account] == nil {
+		a[account] = &fakeKeychain{account: account}
+	}
+	return a[account].Put(account, b)
+}
+func (a accounts) TrustApps(service, account string, password []byte) error {
+	return a.item(account).TrustApps(service, account, password)
+}
+func (a accounts) TrustAppsByDialog(service, account string) error {
+	return a.item(account).TrustAppsByDialog(service, account)
+}
+func (a accounts) TrustPartition(service, account string, password []byte) error {
+	return a.item(account).TrustPartition(service, account, password)
 }
 
 // erased is nil when every buffer a read returned is all zeros.
@@ -88,14 +140,14 @@ func (e *fakeExec) run(argv []string, stdin []byte) error {
 
 const token = "sk-ant-oat01-SECRET"
 
-const claudeSaved = "Claude setup-token saved; keychain trusts only the broker\n"
+const claudeSaved = "Claude account default setup-token saved; keychain trusts only the broker\n"
 
 func TestLogin(t *testing.T) {
 	for _, bad := range []string{"", "has space", "tab\there", "nul\x00", strings.Repeat("a", 16385)} {
 		k := &fakeKeychain{}
 		ask := &askOnce{}
 		var out bytes.Buffer
-		err := Login(func() ([]byte, error) { return []byte(bad), nil }, ask.read, k, &out, &out)
+		err := Login("default", func() ([]byte, error) { return []byte(bad), nil }, ask.read, k, &out, &out)
 		if err == nil || k.put != nil || ask.calls != 0 || strings.Contains(err.Error(), bad) && bad != "" {
 			t.Fatalf("%q accepted or echoed: %v", bad, err)
 		}
@@ -104,7 +156,7 @@ func TestLogin(t *testing.T) {
 	ask := &askOnce{}
 	var notice, out bytes.Buffer
 	read := []byte(token)
-	if err := Login(func() ([]byte, error) { return read, nil }, ask.read, k, &notice, &out); err != nil {
+	if err := Login("default", func() ([]byte, error) { return read, nil }, ask.read, k, &notice, &out); err != nil {
 		t.Fatal(err)
 	}
 	if string(k.put) != token || out.String() != claudeSaved || notice.Len() != 0 {
@@ -119,7 +171,7 @@ func TestLogin(t *testing.T) {
 	if err := k.erased(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Login(func() ([]byte, error) { return nil, errors.New("needs an interactive terminal") }, ask.read, &fakeKeychain{}, &out, &out); err == nil || err.Error() != "reading the setup-token failed: needs an interactive terminal" {
+	if err := Login("default", func() ([]byte, error) { return nil, errors.New("needs an interactive terminal") }, ask.read, &fakeKeychain{}, &out, &out); err == nil || err.Error() != "reading the setup-token failed: needs an interactive terminal" {
 		t.Fatalf("read error: %v", err)
 	}
 }
@@ -128,7 +180,7 @@ func TestLogin(t *testing.T) {
 func loginClaude(t *testing.T, k *fakeKeychain, ask *askOnce) (notice string, err error) {
 	t.Helper()
 	var n, out bytes.Buffer
-	err = Login(func() ([]byte, error) { return []byte(token), nil }, ask.read, k, &n, &out)
+	err = Login("default", func() ([]byte, error) { return []byte(token), nil }, ask.read, k, &n, &out)
 	text := n.String() + out.String()
 	if err != nil {
 		text += err.Error()
@@ -146,7 +198,7 @@ func loginClaude(t *testing.T, k *fakeKeychain, ask *askOnce) (notice string, er
 }
 
 func TestLoginTrustsOnlyBroker(t *testing.T) {
-	const item = " agent-pm-claude setup-token"
+	const item = " agent-pm-claude default"
 	for name, tc := range map[string]struct {
 		access          *AppAccess
 		appsErr, askErr error
@@ -184,7 +236,7 @@ func TestLoginTrustsOnlyBroker(t *testing.T) {
 
 // A no-dialog read that would ask moves the one dialog into login claude, announced, and proves it lasts.
 func TestLoginNeedsDialog(t *testing.T) {
-	const announce = "macOS will ask to let agent-pm-broker use agent-pm-claude: enter the login keychain password if asked and click Always Allow\n"
+	const announce = "macOS will ask to let agent-pm-broker use agent-pm-claude default: enter the login keychain password if asked and click Always Allow\n"
 	for name, tc := range map[string]struct {
 		getErrs   []error
 		dialogErr error
@@ -193,10 +245,10 @@ func TestLoginNeedsDialog(t *testing.T) {
 		fails     string
 	}{
 		"always allowed": {getErrs: []error{ErrNeedsDialog}, dialog: true},
-		"allowed once":   {getErrs: []error{ErrNeedsDialog, ErrNeedsDialog}, dialog: true, fails: "keychain item agent-pm-claude still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude"},
-		"denied":         {getErrs: []error{ErrNeedsDialog}, dialogErr: errors.New("keychain status -128"), dialog: true, fails: "keychain item agent-pm-claude: reading it failed: keychain status -128; rerun agent-pm-broker login claude"},
-		"other bytes":    {readBack: "sk-ant-other", fails: "keychain item agent-pm-claude: reading it failed: it holds other bytes; rerun agent-pm-broker login claude"},
-		"read error":     {getErrs: []error{errors.New("keychain status -25300")}, fails: "keychain item agent-pm-claude: reading it failed: keychain status -25300; rerun agent-pm-broker login claude"},
+		"allowed once":   {getErrs: []error{ErrNeedsDialog, ErrNeedsDialog}, dialog: true, fails: "keychain item agent-pm-claude default still needs a keychain dialog: click Always Allow, not Allow; rerun agent-pm-broker login claude"},
+		"denied":         {getErrs: []error{ErrNeedsDialog}, dialogErr: errors.New("keychain status -128"), dialog: true, fails: "keychain item agent-pm-claude default: reading it failed: keychain status -128; rerun agent-pm-broker login claude"},
+		"other bytes":    {readBack: "sk-ant-other", fails: "keychain item agent-pm-claude default: reading it failed: it holds other bytes; rerun agent-pm-broker login claude"},
+		"read error":     {getErrs: []error{errors.New("keychain status -25300")}, fails: "keychain item agent-pm-claude default: reading it failed: keychain status -25300; rerun agent-pm-broker login claude"},
 	} {
 		k := &fakeKeychain{getErrs: tc.getErrs, dialogErr: tc.dialogErr}
 		if tc.readBack != "" {
@@ -210,6 +262,66 @@ func TestLoginNeedsDialog(t *testing.T) {
 		if wantNotice := map[bool]string{true: announce}[tc.dialog]; notice != wantNotice || k.dialogGets != map[bool]int{true: 1}[tc.dialog] || ask.calls != 0 {
 			t.Fatalf("%s: notice %q, dialog reads %d, asked %d", name, notice, k.dialogGets, ask.calls)
 		}
+	}
+}
+
+// Two accounts log in separately: each its own agent-pm-claude item, its own token, trusting only the broker.
+func TestLoginAccounts(t *testing.T) {
+	k := accounts{"default": {fakeApps: fakeApps{access: reinstalled()}}}
+	tokens := map[string]string{"default": token, "work": "sk-ant-oat01-WORK"}
+	for _, account := range []string{"default", "work"} {
+		ask := &askOnce{}
+		var notice, out bytes.Buffer
+		err := Login(account, func() ([]byte, error) { return []byte(tokens[account]), nil }, ask.read, k, &notice, &out)
+		text := notice.String() + out.String()
+		if err != nil {
+			text += err.Error()
+		}
+		if err != nil || out.String() != "Claude account "+account+" setup-token saved; keychain trusts only the broker\n" || notice.Len() != 0 {
+			t.Fatalf("%s: %v %q %q", account, err, out.String(), notice.String())
+		}
+		if strings.Contains(text, token) || strings.Contains(text, tokens["work"]) || strings.Contains(text, keychainPass) {
+			t.Fatalf("%s: secret in %q", account, text)
+		}
+	}
+	for account, want := range tokens {
+		item := k[account]
+		if item == nil || string(item.token) != want || item.gets != 1 {
+			t.Fatalf("%s: item %+v", account, item)
+		}
+		if access, err := item.fakeApps.AppAccess(tokenService, account); err != nil || onlyBroker(access) != nil {
+			t.Fatalf("%s: access %v %v", account, onlyBroker(access), err)
+		}
+		if err := item.erased(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if steps := k["default"].steps; !slices.Equal(steps, []string{"partition agent-pm-claude default", "apps agent-pm-claude default"}) {
+		t.Fatalf("default steps %q", steps)
+	}
+	if steps := k["work"].steps; len(steps) != 0 {
+		t.Fatalf("work steps %q", steps)
+	}
+	k["work"].getErrs = []error{errors.New("keychain status -25300")}
+	err := Login("work", func() ([]byte, error) { return []byte(tokens["work"]), nil }, (&askOnce{}).read, k, io.Discard, io.Discard)
+	if err == nil || err.Error() != "keychain item agent-pm-claude work: reading it failed: keychain status -25300; rerun agent-pm-broker login claude work" {
+		t.Fatalf("work rerun: %v", err)
+	}
+	for _, bad := range []string{"Work", "setup-token", "", "a/b", "-x", strings.Repeat("a", 65)} {
+		reads, ask, k := 0, &askOnce{}, accounts{}
+		err := Login(bad, func() ([]byte, error) { reads++; return []byte(token), nil }, ask.read, k, io.Discard, io.Discard)
+		if err == nil || err.Error() != fmt.Sprintf("invalid Claude account name %q", bad) || reads != 0 || ask.calls != 0 || len(k) != 0 {
+			t.Fatalf("%q: %v, reads %d, asked %d, items %d", bad, err, reads, ask.calls, len(k))
+		}
+	}
+}
+
+func TestClaudeLogin(t *testing.T) {
+	if got := ClaudeLogin("default"); got != "agent-pm-broker login claude" {
+		t.Fatal(got)
+	}
+	if got := ClaudeLogin("work"); got != "agent-pm-broker login claude work" {
+		t.Fatal(got)
 	}
 }
 
@@ -649,37 +761,50 @@ func TestParseAccess(t *testing.T) {
 }
 
 func TestReady(t *testing.T) {
-	for _, tc := range []struct {
-		err     error
-		access  *AppAccess
-		code    protocol.Code
-		message string
-	}{
-		{nil, nil, "", ""},
-		{ErrNotFound, nil, protocol.LoginRequired, "No Claude setup-token: run agent-pm-broker login claude."},
-		{errors.New("user denied"), nil, protocol.KeychainFailed, "Keychain access to the Claude setup-token failed."},
-		{nil, reinstalled(), protocol.LoginRequired, "The Claude setup-token trusts another broker build: run agent-pm-broker login claude."},
-		{nil, halfDone(), protocol.LoginRequired, "The Claude setup-token trusts another broker build: run agent-pm-broker login claude."},
-	} {
-		k := &fakeKeychain{fakeApps: fakeApps{access: tc.access, accessErr: tc.err}}
-		err := Credentials{Keychain: k}.Ready()
-		var e *protocol.Error
-		if tc.code == "" && err != nil || tc.code != "" && (!errors.As(err, &e) || e.Code != tc.code || e.Message != tc.message) {
-			t.Fatalf("%v → %v", tc.err, err)
+	for _, account := range []string{"default", "work"} {
+		login := ClaudeLogin(account)
+		for _, tc := range []struct {
+			err     error
+			access  *AppAccess
+			code    protocol.Code
+			message string
+		}{
+			{nil, nil, "", ""},
+			{ErrNotFound, nil, protocol.LoginRequired, "No Claude setup-token for account " + account + ": run " + login + "."},
+			{errors.New("user denied"), nil, protocol.KeychainFailed, "Keychain access to the Claude account " + account + " setup-token failed."},
+			{nil, reinstalled(), protocol.LoginRequired, "The Claude account " + account + " setup-token trusts another broker build: run " + login + "."},
+			{nil, halfDone(), protocol.LoginRequired, "The Claude account " + account + " setup-token trusts another broker build: run " + login + "."},
+		} {
+			k := &fakeKeychain{account: account, fakeApps: fakeApps{access: tc.access, accessErr: tc.err}}
+			err := Credentials{Keychain: k}.Ready(account)
+			var e *protocol.Error
+			if tc.code == "" && err != nil || tc.code != "" && (!errors.As(err, &e) || e.Code != tc.code || e.Message != tc.message) {
+				t.Fatalf("%s: %v → %v", account, tc.err, err)
+			}
+			if k.gets != 0 || k.reads != 1 {
+				t.Fatalf("%s: read the token %d, access %d", account, k.gets, k.reads)
+			}
+			if e != nil && e.Cause != "" {
+				t.Fatalf("keychain detail in cause: %q", e.Cause)
+			}
 		}
-		if k.gets != 0 {
-			t.Fatal("Ready read the token")
-		}
-		if e != nil && e.Cause != "" {
-			t.Fatalf("keychain detail in cause: %q", e.Cause)
-		}
+	}
+	// Only the selected account's item is checked.
+	k := accounts{"default": {fakeApps: fakeApps{accessErr: errors.New("default must not be read")}}, "work": {account: "work"}}
+	if err := (Credentials{Keychain: k}).Ready("work"); err != nil || k["work"].reads != 1 || k["default"].reads != 0 {
+		t.Fatalf("%v, work %d, default %d", err, k["work"].reads, k["default"].reads)
+	}
+	var e *protocol.Error
+	if err := (Credentials{Keychain: k}).Ready("other"); !errors.As(err, &e) || e.Code != protocol.LoginRequired ||
+		e.Message != "No Claude setup-token for account other: run agent-pm-broker login claude other." {
+		t.Fatalf("other: %v", err)
 	}
 }
 
 func TestInject(t *testing.T) {
 	e := &fakeExec{}
 	k := &fakeKeychain{token: []byte(token)}
-	if err := (Credentials{Keychain: k}).Inject(e.run); err != nil {
+	if err := (Credentials{Keychain: k}).Inject("default", e.run); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/bin/sh", "-c", "umask 0377 && set -C && cat > " + docker.SecretsDir + "/claude"}
@@ -694,7 +819,7 @@ func TestInject(t *testing.T) {
 		{errors.Join(docker.ErrUnreachable, errors.New(token)), nil, true},
 	} {
 		e := &fakeExec{err: tc.dockerErr}
-		err := Credentials{Keychain: &fakeKeychain{token: []byte(token), getErr: tc.keyErr}}.Inject(e.run)
+		err := Credentials{Keychain: &fakeKeychain{token: []byte(token), getErr: tc.keyErr}}.Inject("default", e.run)
 		if err == nil || strings.Contains(err.Error(), token) || errors.Is(err, docker.ErrUnreachable) != tc.unreachable {
 			t.Fatalf("%v", err)
 		}
@@ -705,16 +830,39 @@ func TestInject(t *testing.T) {
 	}
 }
 
-func TestInjectKeychainFailure(t *testing.T) {
-	for keyErr, code := range map[error]protocol.Code{errors.New("locked " + token): protocol.KeychainFailed, ErrNotFound: protocol.LoginRequired, ErrNeedsDialog: protocol.LoginRequired} {
+// Only the selected account's token enters the container: once, through exec's stdin; the other item is never read.
+func TestInjectSelectedAccount(t *testing.T) {
+	const workToken = "sk-ant-oat01-WORK"
+	for selected, want := range map[string]string{"work": workToken, "default": token} {
+		k := accounts{"default": {token: []byte(token)}, "work": {account: "work", token: []byte(workToken)}}
 		e := &fakeExec{}
-		err := Credentials{Keychain: &fakeKeychain{getErr: keyErr}}.Inject(e.run)
-		var pe *protocol.Error
-		if !errors.As(err, &pe) || pe.Code != code || pe.Cause != "" || strings.Contains(err.Error(), token) || len(e.argv) != 0 {
-			t.Fatalf("%v: %v %q", keyErr, err, e.argv)
+		if err := (Credentials{Keychain: k}).Inject(selected, e.run); err != nil {
+			t.Fatal(err)
 		}
-		if keyErr == ErrNeedsDialog && pe.Message != "The Claude setup-token needs keychain approval: unlock the login keychain, or run agent-pm-broker login claude." {
-			t.Fatal(pe.Message)
+		other := map[string]string{"work": "default", "default": "work"}[selected]
+		if len(e.stdin) != 1 || string(e.stdin[0]) != want || k[selected].gets != 1 || k[other].gets != 0 || k[other].dialogGets != 0 || k[other].reads != 0 {
+			t.Fatalf("%s: stdin %d, reads %d/%d", selected, len(e.stdin), k[selected].gets, k[other].gets)
+		}
+		if err := k[selected].erased(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestInjectKeychainFailure(t *testing.T) {
+	for _, account := range []string{"default", "work"} {
+		for keyErr, message := range map[error]string{
+			errors.New("locked " + token): "Keychain access to the Claude account " + account + " setup-token failed.",
+			ErrNotFound:                   "No Claude setup-token for account " + account + ": run " + ClaudeLogin(account) + ".",
+			ErrNeedsDialog:                "The Claude account " + account + " setup-token needs keychain approval: unlock the login keychain, or run " + ClaudeLogin(account) + ".",
+		} {
+			code := map[bool]protocol.Code{true: protocol.LoginRequired, false: protocol.KeychainFailed}[keyErr == ErrNotFound || keyErr == ErrNeedsDialog]
+			e := &fakeExec{}
+			err := Credentials{Keychain: &fakeKeychain{account: account, getErr: keyErr}}.Inject(account, e.run)
+			var pe *protocol.Error
+			if !errors.As(err, &pe) || pe.Code != code || pe.Cause != "" || pe.Message != message || strings.Contains(err.Error(), token) || len(e.argv) != 0 {
+				t.Fatalf("%s %v: %v %q", account, keyErr, err, e.argv)
+			}
 		}
 	}
 }

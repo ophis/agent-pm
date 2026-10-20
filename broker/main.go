@@ -26,7 +26,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude | login github agent-pm-bot | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -42,7 +42,7 @@ type app struct {
 	refresh       func(ctx context.Context, container, manifest string) (any, error)
 	status        func(ctx context.Context) (any, error)
 	workspaceRm   func(ctx context.Context, volume string, force bool) (any, error)
-	login         func(out io.Writer) error
+	login         func(account string, out io.Writer) error // login claude [NAME]
 	loginGitHub   func(ctx context.Context, app string, out io.Writer) error
 	loginCodex    func(context.Context, io.Writer) error
 	loginOpencode func(provider string, out io.Writer) error
@@ -89,7 +89,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 			case len(args) == 2 && args[1] == "codex":
 				login = func() error { return a.loginCodex(ctx, stdout) }
 			case len(args) == 2 && args[1] == "claude":
-				login = func() error { return a.login(stdout) }
+				login = func() error { return a.login(launcher.DefaultClaudeAccount, stdout) }
+			case len(args) == 3 && args[1] == "claude" && launcher.ValidClaudeAccount(args[2]):
+				login = func() error { return a.login(args[2], stdout) }
 			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
 				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
 			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
@@ -255,7 +257,7 @@ func system() app {
 		workspaceRm: func(ctx context.Context, volume string, force bool) (any, error) {
 			return withHost("workspace-rm", "", nil, func(h launcher.Host) (any, error) { return h.WorkspaceRm(ctx, volume, force) })
 		},
-		login: func(out io.Writer) error {
+		login: func(account string, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -263,8 +265,8 @@ func system() app {
 			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			return broker.Login(func() ([]byte, error) {
-				fmt.Fprint(os.Stderr, "Claude setup-token (hidden): ")
+			return broker.Login(account, func() ([]byte, error) {
+				fmt.Fprint(os.Stderr, "Claude account "+account+" setup-token (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()
 			}, func() ([]byte, error) {

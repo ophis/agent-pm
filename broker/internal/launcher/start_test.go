@@ -28,10 +28,15 @@ const (
 type fakeCreds struct {
 	ready     error
 	injectErr error
+	calls     []string // "ready <account>" and "inject <account>", in turn
 }
 
-func (c *fakeCreds) Ready() error { return c.ready }
-func (c *fakeCreds) Inject(exec func(argv []string, stdin []byte) error) error {
+func (c *fakeCreds) Ready(account string) error {
+	c.calls = append(c.calls, "ready "+account)
+	return c.ready
+}
+func (c *fakeCreds) Inject(account string, exec func(argv []string, stdin []byte) error) error {
+	c.calls = append(c.calls, "inject "+account)
 	if err := exec([]string{"inject"}, []byte(fakeToken)); err != nil {
 		return err
 	}
@@ -393,6 +398,18 @@ func TestStartOrder(t *testing.T) {
 		if slices.Contains(c, "root") {
 			t.Fatalf("hook installed without hook_path: %q", c)
 		}
+	}
+}
+
+// A Claude start checks and injects the default account's setup-token.
+func TestStartClaudeAccount(t *testing.T) {
+	creds := &fakeCreds{}
+	h, _ := startHost(&world{labels: goodLabels()}, creds)
+	if _, err := h.Start(context.Background(), validManifest(t)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ready " + DefaultClaudeAccount, "inject " + DefaultClaudeAccount}; !slices.Equal(creds.calls, want) || DefaultClaudeAccount != "default" {
+		t.Fatalf("%q", creds.calls)
 	}
 }
 

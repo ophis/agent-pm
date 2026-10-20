@@ -122,3 +122,16 @@ func TestManifestGitHub(t *testing.T) {
 		}
 	}
 }
+
+func TestValidClaudeAccount(t *testing.T) {
+	for _, name := range []string{"default", "work", "a", "0", "a.b-c_d", strings.Repeat("a", 64)} {
+		if !ValidClaudeAccount(name) {
+			t.Errorf("%q rejected", name)
+		}
+	}
+	for _, name := range []string{"", "Work", "setup-token", ".a", "-a", "_a", "a/b", "a b", "a\n", strings.Repeat("a", 65), "é"} {
+		if ValidClaudeAccount(name) {
+			t.Errorf("%q accepted", name)
+		}
+	}
+}
