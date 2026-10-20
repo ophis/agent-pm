@@ -121,7 +121,7 @@ class Queries(Case):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
 
     def test_router_reexports_are_the_adapter_strings(self):
-        for name in (*ROUTER, "q_issues"):
+        for name in (*ROUTER, "q_issues", "blockers"):
             with self.subTest(query=name):
                 self.assertIs(getattr(router, name), getattr(linear_tracker, name))
 

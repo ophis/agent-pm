@@ -26,8 +26,9 @@ _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # prune re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = prune.M_ARCHIVE, prune.Q_CHILDREN, prune.Q_FINISHED, prune.Q_ISSUE
-# router re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
+# router re-exports its queries and blockers, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = router.RELATIONS, router.Q_RELATIONS, router.Q_RECHECK, router.Q_HISTORY, router.q_issues
+_ = router.blockers
 # Record checks ctl[0] against LayerCommand's values.
 _ = LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.
