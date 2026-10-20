@@ -15,19 +15,26 @@ from agent_pm.orchestrator.engine import (
     promote,
     prune,
     router,
+    run_comments,
     runs,
     writeback,
 )
 from agent_pm.orchestrator.engine.config import linear_settings, load
 from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
-from agent_pm.orchestrator.engine.types import ConfigError, TrackerKind
+from agent_pm.orchestrator.engine.types import (
+    MOVES,
+    Accounts,
+    ConfigError,
+    TrackerKind,
+    Wiring,
+)
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
 )
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
-from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
 from agent_pm.utils import (
     SID_ENV,
     Record,
@@ -222,7 +229,7 @@ def main(argv=None):
         event_log.use_logs(cfg.logs_dir)
         if args.command in {"writeback", "resume"}:
             try:
-                linear = linear_settings(cfg, args.command)
+                linear_settings(cfg, args.command)
             except ConfigError as refused:
                 print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
                 if args.command == "writeback":
@@ -231,7 +238,7 @@ def main(argv=None):
                 return 2
             if args.command == "writeback":
                 try:
-                    return _writeback(cfg, linear, args.issue, args.workdir)
+                    return _writeback(cfg, args.issue, args.workdir)
                 finally:
                     _log_ignored(args.issue, ignored)
 
@@ -291,14 +298,56 @@ def main(argv=None):
     )
 
 
-def _local_board(transport, cfg, *, say):
-    """The Connect for tracker = "local": a board read needs no transport and logs nothing."""
+def _linear_reader(gql, cfg):
+    return LinearTracker.reader(gql, cfg.linear)
+
+
+def _linear_accounts(gql, cfg, key):
+    """key's tracker and the harness_key's, for the session comment."""
+    linear = cfg.linear
+    return Accounts(
+        LinearTracker(
+            gql, states=linear.states, team_id=linear.team, humans=linear.human_members, service=key
+        ),
+        LinearTracker(gql, service=linear.harness_key, timeout=run_comments.LIMIT),
+        linear.states,
+        tuple(e.lower() for e in linear.human_members),
+        linear.project_repos,
+    )
+
+
+def _linear_key(cfg, role):
+    return cfg.linear.roles[role].key
+
+
+def _local_board(transport, cfg, *, say=None):
+    """A local board's tracker, the router's and a run's: it needs no transport and logs nothing."""
     del transport, say
     return LocalTracker(cfg.board, cfg.roles)
 
 
+def _local_accounts(transport, cfg, key):
+    """One board writes everything; it notifies no one and maps no project repos."""
+    del key
+    board = _local_board(transport, cfg)
+    return Accounts(board, board, {s: LOCAL_STATES[MOVES[s]].value for s in MOVES}, (), {})
+
+
 TRACKERS = MappingProxyType(
-    {TrackerKind.LINEAR: LinearTracker.connect, TrackerKind.LOCAL: _local_board}
+    {
+        TrackerKind.LINEAR: Wiring(
+            connect=LinearTracker.connect,
+            reader=_linear_reader,
+            accounts=_linear_accounts,
+            key=_linear_key,
+        ),
+        TrackerKind.LOCAL: Wiring(
+            connect=_local_board,
+            reader=_local_board,
+            accounts=_local_accounts,
+            key=lambda *_: None,
+        ),
+    }
 )
 
 
@@ -313,15 +362,14 @@ def _log_ignored(issue, ignored):
     ignored.clear()
 
 
-def _writeback(cfg, linear, issue, workdir):
+def _writeback(cfg, issue, workdir):
     lines = sys.stdin.read().splitlines()
     try:
         if len(lines) != 1:
             raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
         event = DelegateEvent.parse(lines[0])
-        return (
-            0 if writeback.deliver(cfg, linear, issue, workdir, event, gql=client.linear_gql) else 1
-        )
+        accounts = partial(TRACKERS[cfg.tracker].accounts, client.linear_gql, cfg)
+        return 0 if writeback.deliver(cfg, issue, workdir, event, accounts=accounts) else 1
     except (ValueError, ConfigError) as error:
         print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)
         _refused(issue, error)

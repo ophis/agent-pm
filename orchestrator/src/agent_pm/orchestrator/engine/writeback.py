@@ -1,7 +1,8 @@
 """Write-back: an agent run's progress, outcome and usage limit as tracker comments, links and
-moves through the engine Tracker (its Linear adapter), each step once per session id (the ledger;
-comment steps by ref (sid, step), found again on resume); `deliver`, one DelegateEvent's
-write-back; `replay`, Recover's of an ended run's outcome; bounce, the router's repo-check report.
+moves through the engine Tracker (the Accounts cli.py's wiring builds), each step once per session
+id (the ledger; comment steps by ref (sid, step), found again on resume); `deliver`, one
+DelegateEvent's write-back; `replay`, Recover's of an ended run's outcome; bounce, the router's
+repo-check report.
 """
 
 import contextlib
@@ -12,7 +13,7 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from traceback import format_exception
@@ -30,15 +31,18 @@ from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import log
 from agent_pm.orchestrator.engine.types import (
     MOVES,
+    Accounts,
     Claim,
     ConfigError,
     Invalid,
+    IssueError,
     LinearError,
     Spec,
     Stopped,
+    TrackerFileError,
+    TrackerKind,
     Unavailable,
 )
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,
@@ -82,19 +86,18 @@ LIMIT = "Usage limit,"
 # written back as failed under its own steps, a later outcome of its session keeping theirs
 TURN_FAILED = "the client's turn failed: "
 NO_OUTCOME = "no-outcome:"
+# what a failed tracker read or write raises
+ERRORS = (
+    LinearError,
+    Unavailable,
+    OSError,
+    subprocess.SubprocessError,
+    TrackerFileError,
+    IssueError,
+)
 
 
-def accounts(linear, gql, key) -> dict[str, Tracker]:
-    """context's tracker (key's) and harness (the session comment's), by the LinearSettings linear."""
-    return {
-        "tracker": LinearTracker(
-            gql, states=linear.states, team_id=linear.team, humans=linear.human_members, service=key
-        ),
-        "harness": LinearTracker(gql, service=linear.harness_key, timeout=run_comments.LIMIT),
-    }
-
-
-def context(cfg, linear, role, *, tracker, harness, ident, issue_id, sid, resume, project, target):
+def context(cfg, role, accounts: Accounts, *, ident, issue_id, sid, resume, project, target):
     return Context(
         ident=ident,
         issue_id=issue_id,
@@ -103,22 +106,20 @@ def context(cfg, linear, role, *, tracker, harness, ident, issue_id, sid, resume
         resume=resume,
         project=project,
         workdir=cfg.issue_workdir(ident),
-        tracker=tracker,
-        states=linear.states,
-        humans=tuple(e.lower() for e in linear.human_members),
-        repos=linear.project_repos,
+        tracker=accounts.tracker,
+        states=accounts.states,
+        humans=accounts.humans,
+        repos=accounts.repos,
         target=target,
-        harness=harness,
+        harness=accounts.harness,
     )
 
 
-def for_run(cfg, linear, role, spec: Spec, *, tracker, harness):
+def for_run(cfg, role, spec: Spec, accounts: Accounts):
     return context(
         cfg,
-        linear,
         role,
-        tracker=tracker,
-        harness=harness,
+        accounts,
         ident=spec.issue,
         issue_id=spec.uuid,
         sid=spec.sid,
@@ -128,14 +129,13 @@ def for_run(cfg, linear, role, spec: Spec, *, tracker, harness):
     )
 
 
-def for_claim(cfg, linear, claim: Claim, gql, *, attempt: int) -> Context:
-    """Writes as the claim's account, whatever the role's is now."""
+def for_claim(cfg, claim: Claim, accounts: Accounts, *, attempt: int) -> Context:
+    """Writes as accounts, the claim's key's, whatever the role's is now."""
     return replace(
         context(
             cfg,
-            linear,
             claim.role,
-            **accounts(linear, gql, claim.key),
+            accounts,
             ident=claim.issue,
             issue_id=claim.uuid,
             sid=claim.sid,
@@ -271,7 +271,7 @@ def _step(ctx, step, write, ref=None):
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, {}).setdefault("steps", []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
-    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
+    except ERRORS as e:
         _error(ctx, step, e)
         return e
     log("writeback", "step", ctx.ident, sid=ctx.sid, step=step, found=found or None)
@@ -400,7 +400,7 @@ def _finish(ctx, o, steps=""):
 
     try:
         attached = ctx.tracker.links(issue)
-    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
+    except ERRORS as e:
         _error(ctx, "read", e)
         return False
 
@@ -528,6 +528,8 @@ def _claim(cfg, issue, sid) -> Claim:
     claim = runs.claim(cfg.runs_log, issue, sid)
     if claim.role not in TASKS:
         raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
+    if (claim.key is None) != (cfg.tracker is TrackerKind.LOCAL):
+        raise ConfigError(f"{issue}: session {sid}'s start row key: {claim.key!r}")
     return claim
 
 
@@ -544,16 +546,23 @@ def _replayed_attempt(begun, rows) -> int:
 
 
 def replay(
-    cfg, linear, issue: str, sid: str, outcome: Outcome, *, gql, dry=False, now=timestamp
+    cfg,
+    issue: str,
+    sid: str,
+    outcome: Outcome,
+    *,
+    accounts: Callable[[str | None], Accounts],
+    dry=False,
+    now=timestamp,
 ) -> bool | None:
     """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
     as its callback's, then its session comment's end unless the callback's wrote it: None when
-    its ledger has it complete; else whether it now is (dry: True, nothing written). Raises
-    ConfigError or ValueError on a start row it cannot write back as.
+    its ledger has it complete; else whether it now is (dry: True, nothing written). accounts: a
+    start row key's. Raises ConfigError or ValueError on a start row it cannot write back as.
     """
     rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
     claim = _claim(cfg, issue, sid)
-    ctx = for_claim(cfg, linear, claim, gql, attempt=len(rows))
+    ctx = for_claim(cfg, claim, accounts(claim.key), attempt=len(rows))
     attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
     ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
@@ -570,11 +579,17 @@ def replay(
 
 
 def deliver(
-    cfg, linear, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp
+    cfg,
+    issue: str,
+    workdir: str,
+    event: DelegateEvent,
+    *,
+    accounts: Callable[[str | None], Accounts],
+    now=timestamp,
 ) -> bool:
-    """Writes the (issue, event.sid) run's event back as its start row's claim, each step once
-    however often the event arrives; False when a write failed. Raises ConfigError or ValueError,
-    before any write, on what it cannot write.
+    """Writes the (issue, event.sid) run's event back as its start row's claim (accounts: its key's),
+    each step once however often the event arrives; False when a write failed. Raises ConfigError
+    or ValueError, before any write, on what it cannot write.
     """
     if not re.fullmatch(ISSUE_ID, issue):
         raise ConfigError(f"bad issue id: {issue}")
@@ -584,7 +599,7 @@ def deliver(
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
     claim = _claim(cfg, issue, event.sid)
-    ctx = for_claim(cfg, linear, claim, gql, attempt=attempt)
+    ctx = for_claim(cfg, claim, accounts(claim.key), attempt=attempt)
     with _exclusive(ctx) as held:
         return held and _deliver(ctx, cfg, claim, event, now=now)
 
@@ -639,7 +654,7 @@ def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
             if invalid.mapped
             else ""
         )
-        with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
+        with contextlib.suppress(*ERRORS):
             tracker.unarchive(src)
         notes = tracker.notify(src, ctx.humans)
         tracker.comment(src, text + notes)

@@ -1480,13 +1480,6 @@ class RunnableRoles(ConfigFile, Case):
             },
         )
 
-    def test_role_for(self):
-        roles = self.load(PIPELINE).linear.roles
-        for email in ("researcher@agents.test", "RESEARCHER@Agents.Test"):
-            self.assertEqual(config.role_for(roles, email), "researcher")
-        for email in ("nobody@x.com", None, ""):
-            self.assertIsNone(config.role_for(roles, email))
-
 
 class ConfigurationRoot(ConfigFile, Case):
     def setUp(self):

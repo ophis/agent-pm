@@ -94,7 +94,6 @@ from agent_pm.orchestrator.engine import (
     writeback,
 )
 from agent_pm.orchestrator.engine import log as event_log
-from agent_pm.orchestrator.engine.flow.tracker import Connect
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
     IssueState,
@@ -124,16 +123,15 @@ from agent_pm.orchestrator.engine.types import (
     ConfigError,
     InputError,
     Invalid,
-    IssueError,
     LinearError,
     Spec,
     TrackerFileError,
     TrackerKind,
     Transient,
     Unavailable,
+    Wiring,
 )
 from agent_pm.orchestrator.trackers.linear.client import has_key, linear_gql
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line
 
 STALE = timedelta(hours=2)
@@ -235,15 +233,15 @@ def client_for(pick, default) -> tuple[str | None, ClientSource, str | None]:
 
 class Board:
     def __init__(
-        self, gql, entries, cfg, *, now, dry, keychain, connect: Connect, gate=None, say=None
+        self, gql, entries, cfg, *, now, dry, keychain, wiring: Wiring, gate=None, say=None
     ):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
-        self.cfg, self.keychain, self.gate = cfg, keychain, gate
+        self.cfg, self.keychain, self.wiring, self.gate = cfg, keychain, wiring, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
-        self.tracker = connect(gql, cfg, say=self.say)
+        self.tracker = wiring.connect(gql, cfg, say=self.say)
 
     def todo(self):
         if self.ready is None:
@@ -366,7 +364,12 @@ class Board:
             return None
         try:
             done = writeback.replay(
-                self.cfg, self.cfg.linear, ident, sid, outcome, gql=self.gql, dry=self.dry
+                self.cfg,
+                ident,
+                sid,
+                outcome,
+                accounts=functools.partial(self.wiring.accounts, self.gql, self.cfg),
+                dry=self.dry,
             )
         except (ConfigError, ValueError) as error:
             self.say("recover-skip", ident, once=True, sid=sid, reason=one_line(error))
@@ -483,9 +486,12 @@ class Board:
         if client_error or task_error or client == resumed:
             if self.dry:
                 self.say("preview", ident, client=resumed, mode="resume", sid=sid)
-            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=resumed)
+            return Spec.from_issue(
+                issue, role=role, mode="resume", sid=sid, task=None, client=resumed
+            )
         return Spec.from_issue(
             issue,
+            role=role,
             mode="new",
             # a launcher's sid naming the old session: a fresh one, which other_sid refuses
             sid=str(uuid.uuid4()) if new_sid == sid else new_sid,
@@ -536,7 +542,7 @@ class Board:
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
         current = self.tracker.recheck(issue["id"])
-        role, linear = current.role, self.cfg.linear
+        role = current.role
         if not current.ready:
             skip = "no longer Todo"
         elif role is None:
@@ -545,7 +551,7 @@ class Board:
             skip = f"{role} is full"
         elif current.refused:
             skip = current.refused
-        elif linear and (key := linear.roles[role].key) and not self.keychain(key):
+        elif (key := self.wiring.key(self.cfg, role)) and not self.keychain(key):
             skip = f"no Keychain item for role key {key}"
         else:
             skip = None
@@ -637,7 +643,17 @@ def fail(ident, kind, reason, rc):
     return rc
 
 
-def outer(a, cfg, *, gql, run, keychain, now=datetime.now, attended: Attended | None = None):
+def outer(
+    a,
+    cfg,
+    *,
+    gql,
+    run,
+    keychain,
+    wiring: Wiring,
+    now=datetime.now,
+    attended: Attended | None = None,
+):
     """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given.
     Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
     first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new
@@ -645,27 +661,28 @@ def outer(a, cfg, *, gql, run, keychain, now=datetime.now, attended: Attended | 
     """
     rc = None
     try:
-        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended)
+        rc = _outer(
+            a, cfg, gql=gql, run=run, keychain=keychain, wiring=wiring, now=now, attended=attended
+        )
         return rc
     finally:
         if a.mode == "new" and rc != 0 and a.sid not in {e.sid for e in parse_log(cfg.runs_log)}:
             note(cfg.runs_log, "failed", issue=a.issue, sid=a.sid, now=now)
 
 
-def _outer(a, cfg, *, gql, run, keychain, now, attended):
+def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
         return 2
-    linear = config.linear_settings(cfg, "router")
-    role = config.role_for(linear.roles, a.assignee)
+    role = a.role
     tasks = cfg.roles[role].tasks if role is not None else ()
     reason = a.role_error(role, tasks)
     if role is None or reason:
         return fail(a.issue, "config-error", reason, 2)
-    key = linear.roles[role].key
+    key = wiring.key(cfg, role)
     kind = record(cfg, a, role=role, key=key, now=now) if a.mode == "resume" else cfg.delegate_kind
-    if not keychain(key):
+    if key is not None and not keychain(key):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
@@ -676,20 +693,21 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].input == "build"
-    reader = LinearTracker.reader(gql, linear)
+    reader = wiring.reader(gql, cfg)
     try:
         issue = reader.issue(a.issue)
-    except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
+    except writeback.ERRORS as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
-    ctx = writeback.for_run(cfg, linear, role, a, **writeback.accounts(linear, gql, key))
+    accounts = wiring.accounts(gql, cfg, key)
+    ctx = writeback.for_run(cfg, role, a, accounts)
     workdir = cfg.issue_workdir(a.issue)
     delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
                 issue,
-                linear.project_repos,
+                accounts.repos,
                 run=run,
                 delegate=delegate_cls,
                 workdir=workdir,
@@ -702,12 +720,12 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo)
-            except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
+            except writeback.ERRORS as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
-        repo = target.research_repo(issue, linear.project_repos)
+        repo = target.research_repo(issue, accounts.repos)
     slug = f"{repo.owner}/{repo.name}" if build and repo else None
     if repo is not None:
         repo = target.with_clone(
@@ -794,7 +812,7 @@ def _label_client_error(spec, ctx, error):
             frm=IssueState.RUNNING,
             notify=True,
         )
-    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as write_error:
+    except writeback.ERRORS as write_error:
         return fail(spec.issue, "transient", f"client error write-back: {one_line(write_error)}", 3)
     return 1
 
@@ -907,9 +925,15 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
         if not (taken := board.take(full=full, clients=clients)):
             unclaimed = True
             return
-        issue, task, _, client, source = taken
+        issue, task, role, client, source = taken
         yield Spec.from_issue(
-            issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
+            issue,
+            role=role,
+            mode="new",
+            sid=new_sid,
+            task=task,
+            client=client,
+            client_source=source,
         )
 
     spec = board.first(itertools.chain(resumes(), claimed()))
@@ -918,7 +942,7 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
     return spec
 
 
-def tick(opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, launch_sid=None):
+def tick(opts, cfg, gql, *, start, keychain, wiring, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
@@ -954,7 +978,7 @@ def tick(opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, launch
                 now=now,
                 dry=dry,
                 keychain=keychain,
-                connect=connect,
+                wiring=wiring,
                 gate=gate,
                 say=walk,
             )
@@ -969,7 +993,7 @@ def tick(opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, launch
             return start_run(start, begin(cfg, spec), walk)
 
 
-def run_issue(opts, cfg, gql, start, *, keychain, connect, clock=datetime.now, launch_sid=None):
+def run_issue(opts, cfg, gql, start, *, keychain, wiring, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 2
@@ -994,7 +1018,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, connect, clock=datetime.now, l
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain, connect=connect)
+        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain, wiring=wiring)
         if issue := next(
             (i for i in board.tracker.assigned(IssueState.RUNNING) if i["identifier"] == ident),
             None,
@@ -1009,9 +1033,10 @@ def run_issue(opts, cfg, gql, start, *, keychain, connect, clock=datetime.now, l
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
-            issue, task, _, client, source = taken
+            issue, task, role, client, source = taken
             spec = Spec.from_issue(
                 issue,
+                role=role,
                 mode="new",
                 sid=launch_sid or str(uuid.uuid4()),
                 task=task,
@@ -1085,7 +1110,7 @@ def _help_text():
 def main(
     argv,
     *,
-    trackers: Mapping[TrackerKind, Connect],
+    trackers: Mapping[TrackerKind, Wiring],
     now=datetime.now,
     config_path=None,
     gql=None,
@@ -1124,7 +1149,7 @@ def main(
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
-    connect = trackers[cfg.tracker]
+    wiring = trackers[cfg.tracker]
     if cfg.tracker == TrackerKind.LOCAL and starts:
         print(
             f'router.py: tracker "{cfg.tracker}" runs only --dry-run and --brake', file=sys.stderr
@@ -1143,7 +1168,14 @@ def main(
         return 2
     if start is None:
         start = functools.partial(
-            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended
+            outer,
+            cfg=cfg,
+            gql=gql,
+            run=run,
+            keychain=keychain,
+            wiring=wiring,
+            now=now,
+            attended=attended,
         )
     try:
         if opts["issue"]:
@@ -1153,7 +1185,7 @@ def main(
                 gql,
                 start,
                 keychain=keychain,
-                connect=connect,
+                wiring=wiring,
                 clock=now,
                 launch_sid=launch_sid,
             )
@@ -1163,7 +1195,7 @@ def main(
             gql,
             start=start,
             keychain=keychain,
-            connect=connect,
+            wiring=wiring,
             clock=now,
             launch_sid=launch_sid,
         )

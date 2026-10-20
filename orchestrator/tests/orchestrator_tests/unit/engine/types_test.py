@@ -18,7 +18,7 @@ class RunSpec(Case):
                 uuid="00000000-0000-4000-8000-000000000001",
                 issue="TASK-26",
                 project="",
-                assignee="engineer@example.com",
+                role="engineer",
                 sid="00000000-0000-4000-8000-000000000002",
                 mode="new",
                 client="claude",
@@ -34,7 +34,7 @@ class RunSpec(Case):
             self.spec(issue="bad", sid="bad").identity_error(),
             "bad issue or session id: bad bad",
         )
-        self.assertEqual(spec.role_error(None, ()), "'engineer@example.com' is not a role account")
+        self.assertEqual(spec.role_error(None, ()), "not assigned to a role")
         self.assertEqual(
             self.spec(task="unknown").role_error("engineer", ("build",)),
             "task 'unknown' is not one of engineer's tasks (build)",

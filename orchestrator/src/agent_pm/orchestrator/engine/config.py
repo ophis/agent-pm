@@ -4,7 +4,6 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Mapping
 from types import MappingProxyType
 
 import agent_pm.utils as utils
@@ -160,12 +159,6 @@ def path():
 
 def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     return utils.sh(argv, timeout, env={**os.environ, "PATH": path()})
-
-
-def role_for(roles: Mapping[str, LinearRole], email):
-    return next(
-        (r for r, role in roles.items() if email and role.account.lower() == email.lower()), None
-    )
 
 
 def writable(work):

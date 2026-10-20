@@ -11,23 +11,84 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import config, promote, prune, router, runs
-from agent_pm.orchestrator.engine.types import TrackerKind
+from agent_pm.orchestrator.engine import config, promote, prune, router, run_comments, runs
+from agent_pm.orchestrator.engine.types import State, TrackerKind
+from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
+from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.run_fixtures import logged
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.cli_help import examples, parse_only
 
+ISSUE = "11111111-2222-4333-8444-555555555555"
+
 
 class Commands(Case):
     def test_trackers_cover_every_kind(self):
         self.assertEqual(set(cli.TRACKERS), set(TrackerKind))
-        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR], LinearTracker.connect)
+        self.assertEqual(cli.TRACKERS[TrackerKind.LINEAR].connect, LinearTracker.connect)
+
+
+class Wirings(run_fixtures.Base):
+    """Each tracker kind's engine wiring: its run reader, role keys and write-back accounts."""
+
+    def test_linear_writes_as_the_role_key_and_the_harness_key(self):
+        cfg = config.load()
+        gql = mock.Mock(return_value={})
+        linear = cli.TRACKERS[TrackerKind.LINEAR]
+        key = linear.key(cfg, "engineer")
+        self.assertEqual(key, run_fixtures.KEY)
+        accounts = linear.accounts(gql, cfg, key)
+        self.assertEqual(
+            (accounts.states, accounts.humans, accounts.repos),
+            (cfg.linear.states, ("me@x.com",), {run_fixtures.PROJECT: "ophis/agent-pm"}),
+        )
+        self.assertEqual(
+            (accounts.tracker.state_ids, accounts.tracker.team_id),
+            (cfg.linear.states, cfg.linear.team),
+        )
+        gql.return_value = {"comment": None}
+        accounts.tracker.find_comment(ISSUE, (SID, "start"))
+        gql.assert_called_with(ops.Q_COMMENT, service=key, c=ops.client_id(SID, "start"))
+        accounts.harness.find_comment(ISSUE, (SID, "session"))
+        gql.assert_called_with(
+            ops.Q_COMMENT,
+            service=run_fixtures.HARNESS,
+            timeout=run_comments.LIMIT,
+            c=ops.client_id(SID, "session"),
+        )
+
+    def test_linear_reads_a_run_as_the_harness_key(self):
+        cfg = config.load()
+        reader = cli.TRACKERS[TrackerKind.LINEAR].reader(mock.Mock(), cfg)
+        self.assertEqual(
+            (reader.gql.keywords, reader.state_ids, reader.team_id),
+            ({"service": run_fixtures.HARNESS}, cfg.linear.states, cfg.linear.team),
+        )
+
+    def test_a_local_board_writes_as_one_tracker_with_no_keys(self):
+        board = os.path.realpath(os.path.join(self.work, "board"))
+        cfg = replace(config.load(), tracker=TrackerKind.LOCAL, linear=None, board=board)
+        local = cli.TRACKERS[TrackerKind.LOCAL]
+        self.assertIsNone(local.key(cfg, "engineer"))
+        accounts = local.accounts(None, cfg, None)
+        self.assertIs(accounts.tracker, accounts.harness)
+        self.assertIsInstance(accounts.tracker, LocalTracker)
+        self.assertEqual(accounts.tracker.board, board)
+        self.assertEqual(
+            (accounts.humans, accounts.repos, set(accounts.states)), ((), {}, set(State))
+        )
+        self.assertEqual(
+            (accounts.states["in_progress"], accounts.states["handoff"]), ("running", "approved")
+        )
+        for made in (local.connect(None, cfg, say=None), local.reader(None, cfg)):
+            self.assertIsInstance(made, LocalTracker)
 
     def test_prune_prose_fits_eighty_columns(self):
         for line in prune.HELP.splitlines():

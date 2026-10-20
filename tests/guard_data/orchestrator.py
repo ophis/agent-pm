@@ -143,8 +143,7 @@ ENGINE_WIRING = frozenset(
     for rule, bindings in (
         ("promote", ("client", "linear_tracker")),
         ("prune", ("client", "linear_tracker")),
-        ("router", ("client", "linear_tracker")),
-        ("writeback", ("linear_tracker",)),
+        ("router", ("client",)),
     )
     for binding in bindings
 )

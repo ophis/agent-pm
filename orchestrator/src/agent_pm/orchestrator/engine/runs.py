@@ -5,9 +5,11 @@ lines as Entries, a sid's start row as its Claim and its task (`started_task`), 
 
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
+from agent_pm.orchestrator.engine.flow.types import ISSUE_ID
 from agent_pm.orchestrator.engine.types import UUID_RE, Claim, ConfigError
 from agent_pm.utils import append_line, file_lock, repo_slug, save, timestamp
 
@@ -98,10 +100,12 @@ def parse_line(line):
 
 CLAIMED = {
     "role": _text,
-    "uuid": lambda v: isinstance(v, str) and UUID_RE.fullmatch(v) is not None,
+    "uuid": lambda v: (
+        isinstance(v, str) and bool(UUID_RE.fullmatch(v) or re.fullmatch(ISSUE_ID, v))
+    ),
     "project": lambda v: v is None or isinstance(v, str),
     "target": lambda v: v is None or repo_slug(v) is not None,
-    "key": _text,
+    "key": lambda v: v is None or _text(v),
     "client": _text,
     "delegate_kind": _text,
 }

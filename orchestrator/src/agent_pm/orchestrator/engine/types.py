@@ -2,12 +2,13 @@
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from agent_pm import delegate
+from agent_pm.orchestrator.engine.flow.tracker import Connect, Tracker
 from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState
 from agent_pm.utils import Stopped as Stopped
 
@@ -102,6 +103,30 @@ class Config:
     def task_tier(self, task: str | None) -> int | None:
         """The [task_tiers] tier of task, else None: the run keeps its Delegate tier."""
         return None if task is None else self.task_tiers.get(task)
+
+
+@dataclass(frozen=True)
+class Accounts:
+    """A run's write-back side of its tracker: tracker writes as the run's role, harness posts the
+    session comment; states: each State's value as Tracker.move returns it; humans: who In Review
+    notifies (lowercase); repos: project → owner/name."""
+
+    tracker: Tracker
+    harness: Tracker
+    states: Mapping[str, str]
+    humans: tuple[str, ...]
+    repos: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class Wiring:
+    """One tracker kind's engine wiring, built by cli.py; transport: the Linear gql callable (a
+    local board ignores it)."""
+
+    connect: Connect  # the router's board
+    reader: Callable[[Any, Config], Tracker]  # a run's issue read and Related-work search
+    accounts: Callable[[Any, Config, str | None], Accounts]  # a role key's write-back accounts
+    key: Callable[[Config, str], str | None]  # a role's account key; None: none to check
 
 
 class State(StrEnum):
@@ -253,7 +278,7 @@ UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 @dataclass(frozen=True)
 class Claim:
     """A run's claim context as its sid's runs.jsonl start row recorded it; `key`: the role's
-    Keychain service then, its write-back's Linear account.
+    Keychain service then, its write-back's Linear account (None: a tracker without accounts).
     """
 
     issue: str
@@ -262,19 +287,20 @@ class Claim:
     uuid: str
     project: str | None
     target: tuple[str, str] | None
-    key: str
+    key: str | None
     client: str
     delegate_kind: str
 
 
 @dataclass(frozen=True, kw_only=True)
 class Spec:
-    """A run the router claimed or resumes: its issue's identity, its session and client."""
+    """A run the router claimed or resumes: its issue's identity, its role (the tracker's for its
+    assignee), its session and client."""
 
     uuid: str
     issue: str
     project: str | None
-    assignee: str | None
+    role: str | None
     sid: str
     task: str | None = None
     mode: str
@@ -282,12 +308,14 @@ class Spec:
     client_source: ClientSource = "default"
 
     @classmethod
-    def from_issue(cls, issue, *, mode, sid, task, client, client_source: ClientSource = "default"):
+    def from_issue(
+        cls, issue, *, role, mode, sid, task, client, client_source: ClientSource = "default"
+    ):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
             project=(issue.get("project") or {}).get("id"),
-            assignee=(issue.get("assignee") or {}).get("email"),
+            role=role,
             sid=sid,
             task=task,
             mode=mode,
@@ -302,7 +330,7 @@ class Spec:
 
     def role_error(self, role: str | None, tasks: tuple[str, ...]) -> str | None:
         if role is None:
-            return f"{self.assignee!r} is not a role account"
+            return "not assigned to a role"
         if self.task is not None and self.task not in tasks:
             return f"task {self.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         return None

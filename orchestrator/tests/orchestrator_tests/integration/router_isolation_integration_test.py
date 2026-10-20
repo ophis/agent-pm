@@ -10,14 +10,12 @@ from orchestrator_tests.router_fixtures import (
     INPUT,
     LS_REMOTE,
     OUTER,
-    ROLE,
     SEARCHED,
     OuterBase,
     pr_search,
 )
 from orchestrator_tests.unit.run_fixtures import (
     ID,
-    RESEARCHER,
 )
 from orchestrator_tests.unit.target_fixtures import ok
 
@@ -53,10 +51,10 @@ class RunLaunching(OuterBase):
 
     def test_research_and_design_name_the_local_clone(self):
         clone = self.local_clone()
-        for who_, role in ((RESEARCHER, "researcher"), (ROLE["pm"], "pm")):
-            with self.subTest(who=who_):
+        for role in ("researcher", "pm"):
+            with self.subTest(role=role):
                 self.run_.table = SEARCHED
-                self.assertEqual(self.outer(assignee=who_), 0)
+                self.assertEqual(self.outer(role=role), 0)
                 self.assertEqual(self.detached(role).input.splitlines()[1], f"Repo: {clone}")
                 self.assertIsNone(json.loads(self.raw_runs().splitlines()[-1])["target"])
 

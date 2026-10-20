@@ -19,7 +19,7 @@ from orchestrator_tests.integration.fake_transport import install, refuse_keycha
 
 def launch(argv):
     parser = argparse.ArgumentParser(prog="entry.py launch")
-    for name in ("uuid", "issue", "project", "assignee", "sid", "mode", "client"):
+    for name in ("uuid", "issue", "project", "role", "sid", "mode", "client"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--task")
     cfg = config.load()
@@ -30,6 +30,7 @@ def launch(argv):
         gql=client.linear_gql,
         run=config.shell,
         keychain=client.has_key,
+        wiring=cli.TRACKERS[cfg.tracker],
     )
 
 

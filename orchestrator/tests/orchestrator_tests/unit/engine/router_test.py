@@ -93,7 +93,6 @@ from orchestrator_tests.unit.run_fixtures import (
     ID,
     KEY,
     PROJECT,
-    RESEARCHER,
     SID,
     USER_NOTE,
     UUID,
@@ -2231,7 +2230,8 @@ class LocalBoard(TickBase):
         return BrokenBoard()
 
     def on_local(self, fake, *argv, **kw):
-        return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: self.connect}, **kw)
+        wiring = replace(cli.TRACKERS[TrackerKind.LOCAL], connect=self.connect)
+        return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: wiring}, **kw)
 
     def test_local_refuses_non_dry(self):
         for argv in ([], ["--issue", "TASK-1"], ["--tui", "--events", "e"]):
@@ -3043,14 +3043,14 @@ class RunLaunching(OuterBase):
 
     def test_research_and_design_have_no_target(self):
         rows = (
-            (RESEARCHER, "researcher", LISTING, "research", "Question", "Compare queues", "Which?"),
-            (ROLE["pm"], "pm", DESIGN_LISTING, "design", "Brief", "Queues PRD", "Build a PRD."),
+            ("researcher", LISTING, "research", "Question", "Compare queues", "Which?"),
+            ("pm", DESIGN_LISTING, "design", "Brief", "Queues PRD", "Build a PRD."),
         )
-        for who_, role, listing, kind, heading, title, description in rows:
+        for role, listing, kind, heading, title, description in rows:
             with self.subTest(role=role):
                 self.gql.issue = node(title=title, description=description)
                 self.run_.table, self.run_.calls = SEARCHED, []
-                self.assertEqual(self.outer(assignee=who_), 0)
+                self.assertEqual(self.outer(role=role), 0)
                 self.assertEqual(
                     self.detached(role),
                     self.expected(
@@ -3124,9 +3124,9 @@ class RunLaunching(OuterBase):
 
     def test_role_and_task_errors_are_config_errors_of_the_issue(self):
         for kw, reason in (
-            ({"assignee": "x@y.com"}, "'x@y.com' is not a role account"),
+            ({"role": None}, "not assigned to a role"),
             (
-                {"assignee": RESEARCHER, "task": "build"},
+                {"role": "researcher", "task": "build"},
                 "task 'build' is not one of researcher's tasks (deep-research, research, light-research)",
             ),
         ):
@@ -3260,7 +3260,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(reason=reason):
                 self.run_.table = [(LISTING, r)]
-                self.assertEqual(self.outer(assignee=RESEARCHER), 3)
+                self.assertEqual(self.outer(role="researcher"), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
         self.assertEqual(self.api.detached, [])
 
@@ -3374,7 +3374,10 @@ class RunStartRecords(Base):
             router.record(
                 cfg,
                 replace(
-                    Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"), uuid=UUID
+                    Spec.from_issue(
+                        found, role="researcher", mode=mode, sid="s1", task=task, client="a"
+                    ),
+                    uuid=UUID,
                 ),
                 role="researcher",
                 key=cfg.linear.roles["researcher"].key,
@@ -3483,7 +3486,7 @@ class ExplicitIssueRuns(TickBase):
                 uuid="TASK-4",
                 issue="TASK-4",
                 project=IDS[PD],
-                assignee=ROLE["engineer"],
+                role="engineer",
                 sid=launch.sid,
                 task=None,
                 mode="new",
@@ -3601,7 +3604,7 @@ class ExplicitIssueRuns(TickBase):
                 uuid="TASK-1",
                 issue="TASK-1",
                 project=IDS[DR],
-                assignee=ROLE["researcher"],
+                role="researcher",
                 sid=self.sid("a"),
                 task=None,
                 mode="resume",
@@ -4549,9 +4552,9 @@ class ClaimRechecks(Base):
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
             self.cfg(),
-            Spec.from_issue(taken, mode="new", sid="s1", task=task, client=client),
+            Spec.from_issue(taken, role=role, mode="new", sid="s1", task=task, client=client),
         )
-        self.assertEqual((a.assignee, a.client), (ROLE["pm"], "b"))
+        self.assertEqual((a.role, a.client), ("pm", "b"))
 
     def test_the_task_label_is_checked_against_the_new_role(self):
         self.write_config(HUMANS + CONFIG + TASK_LABELS)
@@ -4605,7 +4608,9 @@ class ClaimRechecks(Base):
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
             self.cfg(),
-            Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
+            Spec.from_issue(
+                self.taken[0], role="researcher", mode="new", sid="s1", task=None, client="a"
+            ),
         )
         self.assertEqual(a.project, IDS[PD])
 
@@ -4656,6 +4661,12 @@ class RoleKeys(Base):
         self.assertEqual(self.claim(two()), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
         self.assertEqual(self.keychain_calls, [key])
         self.assertIn(f"claim-skip TASK-1 reason=no Keychain item for role key {key}", self.said())
+
+    def test_a_tracker_without_role_keys_checks_no_keychain(self):
+        self.missing = {self.cfg().linear.roles["researcher"].key, ""}
+        self.wiring = replace(cli.TRACKERS[TrackerKind.LINEAR], key=lambda *_: None)
+        self.assertEqual(self.claim(two()), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
+        self.assertEqual(self.keychain_calls, [])
 
 
 class LiveLimits(Base):
@@ -4804,7 +4815,7 @@ class ScheduledRuns(TickScenario):
                         uuid="TASK-1",
                         issue="TASK-1",
                         project=IDS[DR],
-                        assignee=ROLE["researcher"],
+                        role="researcher",
                         sid=launch.sid,
                         task=None,
                         mode="new",
@@ -5264,7 +5275,13 @@ class RecoverWriteBack(TickBase):
         sid = self.sid("a")
         self.assertIsNotNone(router.LinearRun.attach("TASK-1", cfg=cfg, sid=sid).delegate.outcome())
         board = router.Board(
-            None, [], cfg, now=NOW, dry=True, keychain=None, connect=lambda *_, **__: None
+            None,
+            [],
+            cfg,
+            now=NOW,
+            dry=True,
+            keychain=None,
+            wiring=replace(cli.TRACKERS[TrackerKind.LOCAL], connect=lambda *_, **__: None),
         )
         self.assertIsNone(board.replay({"identifier": "TASK-1"}, sid))
         self.assertEqual(self.steps(), ["comment"])
