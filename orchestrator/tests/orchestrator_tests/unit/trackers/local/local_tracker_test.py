@@ -1,5 +1,6 @@
 """LocalTracker: the Tracker on a temp board, its reads and writes."""
 
+import fcntl
 import os
 import shutil
 import time
@@ -29,7 +30,6 @@ from agent_pm.orchestrator.engine.flow.types import (
     SubIssue,
 )
 from agent_pm.orchestrator.engine.types import IssueError, TrackerFileError
-from agent_pm.orchestrator.trackers.local import store
 from agent_pm.orchestrator.trackers.local.local_tracker import ISSUE_STATES, LocalTracker
 from agent_pm.orchestrator.trackers.local.types import LocalState
 from orchestrator_tests.case import Case
@@ -978,14 +978,14 @@ def archived_by(assignee, minute=10):
 
 class Archive(Written):
     def locks(self):
-        """store.locked, counted."""
-        real, taken = store.locked, []
+        """The board lock's exclusive takes, counted at fcntl.flock."""
+        real, taken = fcntl.flock, []
 
-        def counted(board):
-            taken.append(board)
-            return real(board)
+        def counted(fd, operation):
+            taken.append(operation)
+            return real(fd, operation)
 
-        return mock.patch.object(store, "locked", side_effect=counted), taken
+        return mock.patch("fcntl.flock", side_effect=counted), taken
 
     def test_moves_issue_and_descendants_flat(self):
         self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
@@ -1003,7 +1003,7 @@ class Archive(Written):
         patched, taken = self.locks()
         with patched:
             self.assertTrue(self.tracker.archive("LOC-1"))
-        self.assertEqual(taken, [self.board])
+        self.assertEqual(taken, [fcntl.LOCK_EX])
         self.assertEqual(
             sorted(os.listdir(os.path.join(self.board, "archive"))),
             ["LOC-1 x.md", "LOC-2 x.md", "LOC-3 x.md", "LOC-4 x.md"],
