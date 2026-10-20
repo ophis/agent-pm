@@ -25,11 +25,9 @@ from agent_pm.session import Session
 from agent_pm.session.engine.accounts import TTL
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
-    LOCAL_CONTEXT,
     Access,
     Activity,
     ConfigError,
-    Container,
     Exited,
     IdleTimeout,
     LimitHit,
@@ -42,10 +40,10 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Window,
 )
-from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.utils import exhausted
 
 from session.tests.case import PLUGIN_BIN, PY, Case, child_env
+from session.tests.fakes.container_host import PATH as CONTAINER_HOST
 from session.tests.integration.clients.claude import fake_claude
 from utils.tests.sandbox import git
 
@@ -494,12 +492,8 @@ class AccountUsageTest(Base):
         super().setUp()
         self.default = os.environ["CLAUDE_CONFIG_DIR"]
         self.work = os.path.join(self.dir, "work-config")
-        self.configure_session({"claude": {**TABLE, "accounts": {"work": {"dir": self.work}}}})
-        container = Container("/opt/bin", "/usr/bin/python3", "/opt/src", "/run")
-        context = dataclasses.replace(LOCAL_CONTEXT, container=container)
-        patch = mock.patch.object(TmuxHost, "_client_context", return_value=context)
-        patch.start()
-        self.addCleanup(patch.stop)
+        table = {**TABLE, "accounts": {"work": {"dir": self.work}}}
+        self.configure_session({"claude": table}, {"implementation": CONTAINER_HOST})
 
     def usage(self, default, work, now=None):
         self.scenario(usage={self.default: panel(*default), self.work: panel(*work)})

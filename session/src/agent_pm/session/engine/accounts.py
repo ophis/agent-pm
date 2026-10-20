@@ -1,6 +1,4 @@
-"""A client's per-account usage readings, cached on disk for every process, and the account a start
-with none selected runs on.
-"""
+"""Per-account usage readings, cached on disk, and the account a start selecting none runs on."""
 
 import json
 import math

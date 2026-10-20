@@ -164,9 +164,7 @@ def _read_usage(setup: _Setup, client: Client, launch: Launch | None) -> Usage |
 def _pooled(
     setup: _Setup, name: str, client: Client, host: Callable[[], Host]
 ) -> dict[str, Usage | None] | None:
-    """Each account's reading when `client` has two or more and `host` runs containers, which
-    take a selected account's token; else None.
-    """
+    """Each account's reading when `client` has two or more and `host` runs containers."""
     probes = client._usage_probes()
     if probes is None or len(probes) < 2 or host()._client_context().container is None:
         return None
@@ -441,7 +439,6 @@ class HostedSession(Session):
 
     @classmethod
     def usage(cls, client: str) -> Usage | None:
-        """On a pool, the reading of the account a start with none selected picks."""
         setup = cls._config()
         found = setup.registry.client(client)
         if (pool := _pooled(setup, client, found, cls.host)) is None:

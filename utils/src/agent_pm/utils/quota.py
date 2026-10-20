@@ -1,4 +1,4 @@
-"""The usage thresholds the board's gate and a Claude account pick share."""
+"""Usage thresholds of the board's gate and an account pick."""
 
 MAX_5H = 90
 MAX_WEEK = 100

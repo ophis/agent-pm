@@ -29,13 +29,11 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
-    LOCAL_CONTEXT,
     Access,
     Activity,
     Blocked,
     ClientBound,
     ConfigError,
-    Container,
     Exited,
     Hosts,
     IdleTimeout,
@@ -63,6 +61,7 @@ from agent_pm.utils import ACCOUNT_ENV, Record, StatusState, exhausted, inode_lo
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
+from session.tests.fakes.container_host import PATH as CONTAINER_HOST
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.terminal import MemoryHost, MemoryViewer, ScreenHost
 from session.tests.hosted_support import (
@@ -1223,10 +1222,6 @@ class AccountPoolTest(Base):
     account's reading, and a start selecting none runs on it.
     """
 
-    CONTAINER = dataclasses.replace(
-        LOCAL_CONTEXT, container=Container("/opt/bin", "/usr/bin/python3", "/opt/src", "/run")
-    )
-
     def setUp(self):
         super().setUp()
         self.outputs = {"/d": "70,10", "/w": "20,30", "/x": "-1,-1"}
@@ -1236,11 +1231,8 @@ class AccountPoolTest(Base):
         self.cache = os.path.join(self.agent_pm, "usage", "pool.json")
 
     def pool(self, accounts, *, container=True):
-        self.configure("pool", probe={"argv": ("probe-cmd", "/x")}, accounts=accounts)
-        context = self.CONTAINER if container else LOCAL_CONTEXT
-        patched = mock.patch.object(TmuxHost, "_client_context", return_value=context)
-        patched.start()
-        self.addCleanup(patched.stop)
+        settings = {"implementation": CONTAINER_HOST} if container else None
+        self.configure("pool", settings, probe={"argv": ("probe-cmd", "/x")}, accounts=accounts)
 
     def usage(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:
@@ -1249,18 +1241,14 @@ class AccountPoolTest(Base):
         return found
 
     def started_env(self, **env):
-        """The env the mode starts with, from a start the mode then refuses."""
-        mode = mock.Mock()
-        mode.start.side_effect = SessionError("stopped by the test")
+        """The env a start of a spec with `env` hands its mode."""
+        setup = self.session._config()
         spec = self.spec(client="pool", mode=Mode.HEADLESS, env=env)
-        with (
-            mock.patch.dict(hosted_session.MODES, {Mode.HEADLESS: mode}),
-            contextlib.redirect_stderr(io.StringIO()) as err,
-            self.assertRaises(SessionError),
-        ):
-            self.session.start(spec)
+        client = setup.registry.client("pool")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            picked = hosted_session._picked(setup, spec, "pool", client, self.session.host())
         self.err = err.getvalue()
-        return dict(mode.start.call_args.args[0].env)
+        return dict(picked.env)
 
     def probed(self):
         return sorted(call.args[0][-1] for call in self.probe.call_args_list)

@@ -673,9 +673,8 @@ class ClaudeCommon:
         )
 
     def probe(self, account: str = DEFAULT_ACCOUNT) -> Launch:
-        """The account's own env (CLAUDE_CONFIG_DIR), without API credentials that would pick
-        another account; a registered account's dir other than ~/.claude, which Claude reads only
-        with CLAUDE_CONFIG_DIR unset, is its CLAUDE_CONFIG_DIR.
+        """`account`'s env (its dir, unless ~/.claude, as CLAUDE_CONFIG_DIR), without API
+        credentials that would pick another account.
         """
         env = {k: v for k, v in self.env().items() if not _credential(k)}
         if (path := self.accounts[account].dir) != self.accounts[DEFAULT_ACCOUNT].dir:

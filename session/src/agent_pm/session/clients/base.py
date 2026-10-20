@@ -62,9 +62,6 @@ class Client:
         return None
 
     def _usage_probes(self) -> dict[str, tuple[str, Launch]] | None:
-        """Each registered account's (identity: the login it reads, its usage_probe); None: the
-        client has no accounts.
-        """
         return None
 
     def usage(self, output: str) -> Usage | None:
