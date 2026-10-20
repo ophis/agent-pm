@@ -276,7 +276,6 @@ class Board:
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
         self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
-        self.states = cfg.states
 
     def todo(self):
         if self.ready is None:
@@ -325,25 +324,20 @@ class Board:
         moved = self.tracker.moved_at(issue["id"], IssueState.RUNNING)
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
-    def comment_and_move(self, issue, body, state, frm, step):
+    def comment_and_move(self, issue, body, to: IssueState, frm: IssueState, step):
         if self.dry:
             return
-        left = ops.comment_and_move(
-            self.gql,
-            issue["id"],
-            body,
-            to=self.states[state],
-            frm=self.states[frm],
-            emails=self.cfg.human_members if state == "in_review" else (),
+        left = self.tracker.comment_and_move(
+            issue["id"], body, to=to, frm=frm, notify=to == IssueState.REVIEW
         )
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
-    def bounce(self, issue, body, frm="todo"):
+    def bounce(self, issue, body, frm=IssueState.READY):
         """An issue that cannot be run: comment body and move it from frm to In Review."""
         if self.dry:
             self.say("would comment", issue["identifier"], body=body, to="in_review")
-        self.comment_and_move(issue, body, "in_review", frm, "claim")
+        self.comment_and_move(issue, body, IssueState.REVIEW, frm, "claim")
 
     def status(self, ident, sid):
         if sid not in self.statuses:
@@ -423,7 +417,9 @@ class Board:
             return False
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
-            self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover")
+            self.comment_and_move(
+                issue, CAP_COMMENT, IssueState.REVIEW, IssueState.RUNNING, "recover"
+            )
         elif sid:
             st = self.status(ident, sid)
             if st is None:
@@ -440,16 +436,20 @@ class Board:
                 self.comment_and_move(
                     issue,
                     f"The interrupted agent run's {why}; needs a look.",
-                    "in_review",
-                    "in_progress",
+                    IssueState.REVIEW,
+                    IssueState.RUNNING,
                     "recover",
                 )
             elif not wait or sid_times(self.entries, sid)[-1] < self.now - LIVE:
                 self.say("recover", ident, to="todo", reason="not resumable", sid=sid)
-                self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover")
+                self.comment_and_move(
+                    issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
+                )
         elif not wait or parse_time(issue["updatedAt"]) < self.now - STALE:
             self.say("recover", ident, to="todo", reason="no session", updated=issue["updatedAt"])
-            self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover")
+            self.comment_and_move(
+                issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
+            )
         return False
 
     def queue(self, full=()):
@@ -481,7 +481,7 @@ class Board:
             resumed=client_of(self.entries, sid),
         )
 
-    def gated(self, issue, role, client, source, frm="todo"):
+    def gated(self, issue, role, client, source, frm=IssueState.READY):
         """Whether the usage gate blocks a new run of client; a label-selected client's quota
         configuration error bounces the issue from frm instead.
         """
@@ -539,7 +539,9 @@ class Board:
             ident = issue["identifier"]
             if self.attempts(issue) >= CAP:
                 self.say("claim-skip", ident, to="in_review", reason=f"reached {CAP} attempts")
-                self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick")
+                self.comment_and_move(
+                    issue, CAP_COMMENT, IssueState.REVIEW, IssueState.READY, "pick"
+                )
                 return None
             self.say("pick", ident, queue=len(queue))
             return self.claim(issue, full, clients)
@@ -921,7 +923,9 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
                 board.say("recover-skip", issue["identifier"], once=True, sid=sid, reason=reason)
                 continue
             if spec.mode == "new":
-                blocked = board.gated(issue, role, spec.client, spec.client_source, "in_progress")
+                blocked = board.gated(
+                    issue, role, spec.client, spec.client_source, IssueState.RUNNING
+                )
             else:
                 key = (delegate_of(board.entries, sid), spec.client)
                 blocked = gate.blocked(role, issue["identifier"], key=key)
