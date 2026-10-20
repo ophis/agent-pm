@@ -195,11 +195,7 @@ class BaseMode(ABC):
     def _hosted(
         spec: Spec, client_home: ClientHome | None, host: Host, name: str, account: str = ""
     ) -> tuple[Spec, Mapping[str, str]]:
-        """spec with `host`'s client env for `name`, and the metadata its Host keeps; account:
-        _selected's.
-        """
-        if client_home is not None:
-            client_home = replace(client_home, account=account)
+        """spec with `host`'s client env for `name`, and the metadata its Host keeps."""
         home = host._client_env(name, spec.client or "", client_home, resume=spec.resume)
         metadata = {
             "sid": spec.sid or "",
@@ -221,7 +217,7 @@ class BaseMode(ABC):
                         if client_home.persistent is not None
                         else {}
                     ),
-                    **({"home_account": client_home.account} if client_home.account else {}),
+                    **({"home_account": account} if account else {}),
                     "resume": "1" if spec.resume else "0",
                 }
                 if home and client_home
