@@ -2,7 +2,9 @@
 
 from types import SimpleNamespace
 
-from agent_pm.utils import MAX_5H, MAX_WEEK, exhausted
+from agent_pm import utils
+from agent_pm.utils import exhausted
+from agent_pm.utils.quota import MAX_5H, MAX_WEEK
 
 from utils.tests.case import Case
 
@@ -18,6 +20,7 @@ def reading(five, week):
 class Exhausted(Case):
     def test_thresholds(self):
         self.assertEqual((MAX_5H, MAX_WEEK), (90, 100))
+        self.assertFalse({"MAX_5H", "MAX_WEEK"} & set(utils.__all__))
 
     def test_either_window_at_its_threshold_is_exhausted(self):
         for five, week, want in (

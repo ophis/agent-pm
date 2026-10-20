@@ -72,7 +72,7 @@ from agent_pm.utils.paths import (
     under,
 )
 from agent_pm.utils.process_control import ProcessControl
-from agent_pm.utils.quota import MAX_5H, MAX_WEEK, exhausted, summary
+from agent_pm.utils.quota import exhausted, summary
 from agent_pm.utils.record import (
     Display,
     LayerCommand,
@@ -126,8 +126,6 @@ __all__ = [
     "LOCAL_ENV_VARS",
     "LONG",
     "LayerCommand",
-    "MAX_5H",
-    "MAX_WEEK",
     "NAME",
     "OWNER",
     "Once",
