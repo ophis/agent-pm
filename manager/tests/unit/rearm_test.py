@@ -7,7 +7,7 @@ import io
 import json
 import os
 import re
-import subprocess
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.manager import rearm
@@ -24,7 +24,7 @@ SKILL = os.path.join(REPO, "manager", "skills", "manage", "SKILL.md")
 
 
 def _ps(stdout: bytes = TABLE, returncode: int = 0) -> mock.Mock:
-    return mock.Mock(return_value=subprocess.CompletedProcess((), returncode, stdout, b""))
+    return mock.Mock(return_value=SimpleNamespace(returncode=returncode, stdout=stdout))
 
 
 def _no_proc(path):
@@ -203,7 +203,7 @@ class MainTest(Case):
     def test_failed_process_table_prints_nothing(self):
         cases = {
             "no ps": mock.Mock(side_effect=FileNotFoundError("ps")),
-            "timeout": mock.Mock(side_effect=subprocess.TimeoutExpired("ps", 2)),
+            "timeout": mock.Mock(side_effect=rearm.subprocess.TimeoutExpired("ps", 2)),
             "nonzero exit": _ps(returncode=1),
             "garbage line": _ps(TABLE + b"pid ppid\n"),
             "one column": _ps(b"100\n50 4242\n"),
@@ -250,7 +250,7 @@ class AncestorsTest(Case):
     def test_stops_at_an_unreadable_parent_or_a_cycle(self):
         cases = {
             "gone": ({100: b"100 (x) S 50"}, {50}),
-            "unparseable": ({100: b"100 (x) S 50", 50: b"50 (x) S"}, {50}),
+            "truncated": ({100: b"100 (x) S 50", 50: b"50 (x) S"}, {50}),
             "cycle": ({100: b"100 (x) S 50", 50: b"50 (x) S 60", 60: b"60 (x) S 50"}, {50, 60}),
             "no parent": ({100: b"100 (x) S 0"}, set()),
         }
