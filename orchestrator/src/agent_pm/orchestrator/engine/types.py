@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -146,6 +147,7 @@ class Wiring:
     accounts: Callable[[Any, Config, str | None], Accounts]  # a role key's write-back accounts
     claimed: Callable[[Any, Config, Claim], Accounts]
     key: Callable[[Config, str], str | None]  # a role's account key; None: none to check
+    board: Callable[[Any, Config], Callable[[Any], Tracker]]
 
 
 class State(StrEnum):
@@ -251,6 +253,9 @@ class RelationsFailed(Exception):
             f"blocking relations failed; add only them: {'; '.join(report['recover'])}; "
             "do not run create again"
         )
+
+
+TRACKER_ERRORS = (LinearError, IssueError, TrackerFileError, OSError, subprocess.SubprocessError)
 
 
 class InputError(RuntimeError):

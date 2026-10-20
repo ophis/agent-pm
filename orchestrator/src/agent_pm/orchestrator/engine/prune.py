@@ -29,9 +29,8 @@ error, and no issue is pruned. Each step is logged (event_log.log, src prune); a
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
 
-A tick's Linear requests after team_and_roles: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at
-most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the
-tracker's time (sync).
+A tick's requests past its setup: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at most, the
+rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the tracker's time.
 """
 
 import functools
@@ -53,18 +52,14 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.types import (
+    TRACKER_ERRORS,
     ConfigError,
     Entry,
     LinearError,
     PruneState,
     Refusal,
+    TrackerFileError,
     Unavailable,
-)
-from agent_pm.orchestrator.trackers.linear.client import linear_gql
-from agent_pm.orchestrator.trackers.linear.linear_tracker import (
-    SNAPSHOT_BATCH,
-    LinearTracker,
-    team_and_roles,
 )
 from agent_pm.utils import (
     GUARD,
@@ -89,22 +84,25 @@ BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again afte
 OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
 CACHE = "prune.json"
 TOO_BIG = "archive: too many sub-issues to read in one tick"
-LINEAR_ERRORS = (LinearError, OSError, subprocess.SubprocessError)
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-orchestrator prune [--dry-run]
 
 Arguments and options:
   --dry-run   Print the cleanup plan without closing, deleting or archiving.
-              Read Linear, configuration, local runs/checkouts and Delegate
-              status; this is not an offline or credentials-free preview.
+              Read the board, configuration, local runs/checkouts and
+              Delegate status; on Linear this is not an offline or
+              credentials-free preview.
   -h, --help  Print this help alone; exit 0.
   --dry-run may repeat with no further effect; other arguments exit 2.
 
 Prerequisites and effects:
-  Requires configured Linear/Delegate settings, Linear access,
-  linear.harness_key Keychain credentials and access to the configured
-  work_dir/local clones.
+  Requires configured Delegate settings and access to the configured
+  work_dir/local clones; on Linear ([orchestrator] tracker = "linear") also
+  Linear access and linear.harness_key Keychain credentials. A local board
+  ($AGENT_PM_BOARD_DIR) needs no account; no job runs it on a timer: run it
+  (or promote) on demand. It archives by moving issue files flat into
+  <board>/archive/; an unreadable board exits 2 (prune.py: <path>: <reason>).
   Configuration and executable lookup: agent-pm-orchestrator --help
   For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
   hours (the latest of their move into one and Linear's canceledAt and
@@ -139,7 +137,7 @@ Prerequisites and effects:
   Events go to orchestrator.jsonl (src prune); preview JSON lines go to stderr.
   Exit 0: completed; 1: Linear unavailable (logged once a day), unknown
   inventory or failed step after remaining steps; 2: configuration error
-  (logged once a day) or bad arguments.
+  (logged once a day), an unreadable local board or bad arguments.
   Promote also runs this cleanup after each tick.
 
 Example (configured Linear access and finished issues):
@@ -178,10 +176,10 @@ class Budget:
 
 
 class Pruner:
-    def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, linear, writable=None):
-        self.now, self.dry, self.work, self.roles = now, dry, work, roles
+    def __init__(self, board, gql, now, *, dry, run=None, work, cfg, writable=None):
+        self.now, self.dry, self.work = now, dry, work
         self.budget = Budget(gql)
-        self.tracker = LinearTracker.of_team(self.budget, linear, team, roles)
+        self.tracker = board(self.budget)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
@@ -266,7 +264,7 @@ class Pruner:
         except (OSError, ValueError):
             return None
         for ident, entry in sorted(latest.items()):
-            if entry.role not in self.roles.values() or not self.has_agent(ident, quiet=True):
+            if entry.role not in self.cfg.roles or not self.has_agent(ident, quiet=True):
                 continue
             try:
                 view = LinearRun.attach(ident, cfg=self.cfg, sid=entry.sid)
@@ -311,8 +309,8 @@ class Pruner:
             return
         except Unavailable:
             raise
-        except LINEAR_ERRORS as e:
-            self.error(error=f"archive: Linear: {one_line(e)}")
+        except TRACKER_ERRORS as e:
+            self.error(error=f"archive: {one_line(e)}")
             return
         self.finished = {issue.ident for issue in found}
         self.see(issue.updated for issue in found)
@@ -346,19 +344,19 @@ class Pruner:
         if ident in refused and self.trusted(refused[ident].read):
             self.say("prune-skip", ident, once=True, reason=refused[ident].reason)
             return
-        plan = None
+        plan, archived = None, True
         try:
             if self.dry:
                 plan = self.tracker.archive_plan(issue.key)
                 if plan.outcome == "changed":
                     self.budget.spend()  # the write a real tick sends
             else:
-                self.tracker.archive(issue.key)
+                archived = self.tracker.archive(issue.key)
         except ArchiveRefused as e:
             plan = e.plan
         except Unavailable:
             raise
-        except LINEAR_ERRORS as e:
+        except TRACKER_ERRORS as e:
             self.error(ident, error=f"archive: {one_line(e)}")
             return
         refused.pop(ident, None)
@@ -368,7 +366,7 @@ class Pruner:
             self.say("prune-skip", ident, once=True, reason=_kept(plan))
         elif self.dry:
             self.say("prune-plan", ident, what="archive")
-        else:
+        elif archived:
             self.say("prune-archived", ident)
 
     def run(self):
@@ -409,7 +407,7 @@ class Pruner:
                 changes = self.tracker.changed(self.state.synced - OVERLAP, SYNC_PAGES)
             except Unavailable:
                 raise
-            except LINEAR_ERRORS as e:
+            except TRACKER_ERRORS as e:
                 self.error(error=f"change feed: {one_line(e)}")
             else:
                 self.anchor = changes.latest
@@ -452,8 +450,9 @@ class Pruner:
         failed = set()
         self.budget.limit(READ_REQUESTS)
         try:
-            for at in range(0, len(batched), SNAPSHOT_BATCH):
-                batch = batched[at : at + SNAPSHOT_BATCH]
+            size = self.tracker.batch
+            for at in range(0, len(batched), size):
+                batch = batched[at : at + size]
                 got = self.read_into(batch, failed, self.tracker.snapshots)
                 found |= got
                 left = [i for i in batch if i not in got and i not in failed]
@@ -471,9 +470,9 @@ class Pruner:
             got = how(idents)
         except Unavailable:
             raise
-        except LINEAR_ERRORS as e:
+        except TRACKER_ERRORS as e:
             for ident in idents:
-                self.error(ident, error=f"Linear: {one_line(e)}")
+                self.error(ident, error=f"issue read: {one_line(e)}")
             failed.update(idents)
             return {}
         self.state.issues |= {i: Entry(s, self.now) for i, s in got.items()}
@@ -495,7 +494,7 @@ class Pruner:
 
     def prune_issue(self, ident, found):
         if found is None:
-            self.say("prune-skip", ident, once=True, reason="not in Linear")
+            self.say("prune-skip", ident, once=True, reason="not on the board")
             return
         if found.state in (IssueState.READY, IssueState.RUNNING):
             return
@@ -616,7 +615,7 @@ def _kept(plan):
     return f"archive: {plan.ident} not finished"
 
 
-def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
+def main(argv, *, trackers, gql, now=None, config_path=None, pruner=Pruner):
     if argv in (["--help"], ["-h"]):
         print(HELP)
         return 0
@@ -630,25 +629,15 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
     except ConfigError as error:
         config.report_error("prune", error, dry=dry)
         return 2
-    try:
-        linear = config.linear_settings(cfg, "prune")
-    except ConfigError as refused:
-        print(f"prune.py: {refused}", file=sys.stderr)
-        return 2
     event_log.use_logs(cfg.logs_dir)
-    gql = functools.partial(gql, service=linear.harness_key)
     try:
-        team, roles = team_and_roles(gql, linear)
+        board = trackers[cfg.tracker].board(gql, cfg)
         code = pruner(
-            gql,
-            now or datetime.now(UTC),
-            dry=dry,
-            work=cfg.workdirs,
-            team=team,
-            roles=roles,
-            cfg=cfg,
-            linear=linear,
+            board, gql, now or datetime.now(UTC), dry=dry, work=cfg.workdirs, cfg=cfg
         ).run()
+    except TrackerFileError as e:
+        print(f"prune.py: {e}", file=sys.stderr)
+        return 2
     except LinearError as e:
         return event_log.config_error("prune", e, dry=dry)
     except Unavailable as e:

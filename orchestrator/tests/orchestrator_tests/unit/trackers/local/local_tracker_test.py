@@ -1,6 +1,6 @@
-"""LocalTracker: the Tracker on a temp board, its reads and writes; promote's and prune's writes
-refused."""
+"""LocalTracker: the Tracker on a temp board, its reads and writes."""
 
+import fcntl
 import os
 import shutil
 import time
@@ -12,6 +12,7 @@ from agent_pm.orchestrator.engine.flow.handoff import handoff, parse_handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
+    ArchiveRefused,
     Comment,
     Detail,
     Finished,
@@ -24,6 +25,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Note,
     Pick,
     Recheck,
+    Ref,
     Snapshot,
     SubIssue,
 )
@@ -498,7 +500,7 @@ class Reads(Board):
         )
 
     def test_approved(self):
-        front = "priority: 2\nlinks:\n  - title: the doc\n    url: https://x/doc\n"
+        front = "priority: 2\nparent: LOC-5\nlinks:\n  - title: the doc\n    url: https://x/doc\n"
         path = self.write("pm/approved", "LOC-1", front=front)
         self.write("engineer/approved", "LOC-2")
         self.write("me/approved", "LOC-3")
@@ -513,15 +515,16 @@ class Reads(Board):
                     "LOC-1 title",
                     2,
                     "2026-10-19T14:02:00-04:00",
-                    "",
-                    "",
+                    "LOC-5",
+                    "LOC-5",
                     "pm",
                     (("the doc", "https://x/doc"),),
                 )
             ],
         )
         self.assertEqual(
-            [a.owner for a in self.tracker.approved({"pm", "engineer"})], ["engineer", "pm"]
+            [(a.owner, a.home_key) for a in self.tracker.approved({"pm", "engineer"})],
+            [("engineer", ""), ("pm", "LOC-5")],
         )
 
     def test_find_comment(self):
@@ -539,7 +542,7 @@ STAMPED = "- 2026-10-20 00:00 {} other\n"
 WROTE = "- 2026-10-20 09:30 {} self\n"
 
 
-class Writes(Board):
+class Written(Board):
     def setUp(self):
         super().setUp()
         self.tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
@@ -554,6 +557,8 @@ class Writes(Board):
         self.assertEqual((self.read(path), os.stat(path).st_mtime_ns), before)
         return result
 
+
+class Writes(Written):
     def test_move_renames_and_appends_history(self):
         old = self.write("pm/ready", "LOC-1", history="- 2026-10-19 14:02 ready other\n")
         self.assertIsNone(self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.READY))
@@ -694,13 +699,9 @@ class Writes(Board):
         self.write("pm/review", "LOC-1")
         self.assertEqual(self.tracker.notify("LOC-1", ("a@example.com",)), "")
 
-    def test_unarchive(self):
+    def test_unarchive_a_live_issue(self):
         path = self.write("pm/review", "LOC-1")
-        self.write("archive", "LOC-2", history="- 2026-10-19 14:30 done self\n")
         self.unchanged(path, lambda: self.tracker.unarchive("LOC-1"))
-        with self.assertRaises(IssueError) as caught:
-            self.tracker.unarchive("LOC-2")
-        self.assertEqual(str(caught.exception), "LOC-2: archived")
 
     def test_missing_and_archived_issues(self):
         self.write("pm/done", "LOC-1")
@@ -828,21 +829,370 @@ class Writes(Board):
             self.tracker.comment("LOC-1", "Seen.")
         self.assertEqual(str(caught.exception), "LOC-1: issue not found")
 
-    def test_writes_not_supported(self):
-        t = self.tracker
-        calls = {
-            "created": lambda: t.created(("a",)),
-            "create": lambda: t.create(
-                ("a",), home="", owner="pm", priority=0, title="t", description=""
-            ),
-            "relate": lambda: t.relate("LOC-1", "LOC-2"),
-            "archive": lambda: t.archive(
-                "LOC-1",
-                ArchivePlan("LOC-1", "LOC-1", "u", archived=False, descendants=(), unfinished=()),
-            ),
+
+ONCE = ("LOC-1", "engineer", "2026-10-19T16:10:00.000Z")
+KEY = "LOC-1:engineer:2026-10-19T16:10:00.000Z"
+NOTE = f"#### self · 2026-10-19 16:10 <!-- id=c1 key={KEY} -->\nCreated by promote.\n"
+
+
+class Create(Written):
+    def create(self, once=ONCE, *, home="LOC-5", title="ENG: Queue", **given):
+        fields = {"owner": "engineer", "priority": 2, "description": "Handoff from LOC-1: u\n\nGo."}
+        return self.tracker.create(once, home=home, title=title, **(fields | given))
+
+    def next_id(self, number):
+        with open(os.path.join(self.board, ".next-id"), "w", encoding="utf-8") as file:
+            file.write(f"{number}\n")
+
+    def test_writes_the_next_issue(self):
+        self.write("pm/approved", "LOC-1")
+        self.next_id(10)
+        self.assertIsNone(self.tracker.created(ONCE))
+        self.assertEqual(self.create(), Ref("LOC-10", "LOC-10"))
+        path = os.path.join(self.board, "engineer/ready/LOC-10 ENG: Queue.md")
+        self.assertEqual(self.read(os.path.join(self.board, ".next-id")), "11\n")
+        fresh = LocalTracker(self.board, ("pm", "engineer"))
+        self.assertEqual(fresh.created(ONCE), Ref("LOC-10", "LOC-10"))
+        [ready] = fresh.assigned(IssueState.READY)
+        self.assertEqual(
+            (ready["identifier"], ready["title"], ready["priority"], ready["url"]),
+            ("LOC-10", "ENG: Queue", 2, Path(path).as_uri()),
+        )
+        found = fresh.issue("LOC-10")
+        self.assertEqual(found.description, "Handoff from LOC-1: u\n\nGo.")
+        self.assertEqual(found.created_at, "2026-10-20T09:30:00.000Z")
+        self.assertEqual([n.body for n in found.notes], ["Created by promote."])
+        self.assertEqual(
+            fresh.detail("LOC-10").moves,
+            (Move("2026-10-20T09:30:00.000Z", IssueState.READY, None),),
+        )
+        self.assertIn("parent: LOC-5\n", self.read(path))
+        self.assertNotIn("related", self.read(path))
+        self.assertEqual(self.tracker.created(ONCE), Ref("LOC-10", "LOC-10"))
+
+    def test_no_home_no_parent(self):
+        self.write("pm/approved", "LOC-1")
+        self.create(home="")
+        [path] = os.listdir(os.path.join(self.board, "engineer/ready"))
+        self.assertNotIn("parent:", self.read(os.path.join(self.board, "engineer/ready", path)))
+
+    def test_existing_once_key_is_reused(self):
+        for rel in ("engineer/done", "archive"):
+            with self.subTest(rel):
+                shutil.rmtree(self.board)
+                os.mkdir(self.board)
+                self.write("pm/approved", "LOC-1")
+                path = self.write(
+                    rel, "LOC-7", comments=NOTE, history="- 2026-10-19 16:10 done self\n"
+                )
+                tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
+                self.assertEqual(tracker.created(ONCE), Ref("LOC-7", "LOC-7"))
+                self.tracker = tracker
+                self.assertEqual(self.unchanged(path, self.create), Ref("LOC-7", "LOC-7"))
+                self.assertFalse(os.path.exists(os.path.join(self.board, ".next-id")))
+                self.assertFalse(os.path.exists(os.path.join(self.board, "engineer/ready")))
+
+    def test_rechecks_under_the_lock(self):
+        self.write("pm/approved", "LOC-1")
+        self.assertIsNone(self.tracker.created(ONCE))
+        self.write("engineer/ready", "LOC-7", comments=NOTE)  # another promote, meanwhile
+        self.assertEqual(self.create(), Ref("LOC-7", "LOC-7"))
+        self.assertEqual(os.listdir(os.path.join(self.board, "engineer/ready")), ["LOC-7 x.md"])
+
+    def test_id_prefix_and_collision(self):
+        self.write("pm/approved", "AB-3")
+        self.write("pm/done", "LOC-12")
+        self.write("me/backlog", "XY-2")
+        self.next_id(12)
+        taken = self.write("engineer/ready", "LOC-4")
+        os.rename(taken, taken := os.path.join(self.board, "engineer/ready/LOC-13 ENG: Queue.md"))
+        kept = self.read(taken)
+        self.assertEqual(
+            self.create(), Ref("LOC-14", "LOC-14")
+        )  # LOC-12 on the board, LOC-13's name taken
+        self.assertEqual(self.read(taken), kept)
+        self.assertEqual(self.read(os.path.join(self.board, ".next-id")), "15\n")
+
+    def test_makes_missing_role_dirs(self):
+        self.write("pm/approved", "LOC-1")
+        self.create()
+        self.assertEqual(len(os.listdir(os.path.join(self.board, "engineer/ready"))), 1)
+
+    def test_refuses_a_role_dir_that_is_no_directory(self):
+        outside = os.path.join(self.home, "outside")
+        os.mkdir(outside)
+        for rel, make in (
+            ("engineer", lambda p: open(p, "w", encoding="utf-8").close()),
+            ("engineer", lambda p: os.symlink(outside, p)),
+            ("engineer/ready", lambda p: os.symlink(outside, p)),
+            ("engineer/ready", lambda p: os.symlink(os.path.join(self.home, "gone"), p)),
+        ):
+            with self.subTest(rel=rel):
+                shutil.rmtree(self.board)
+                os.makedirs(os.path.join(self.board, "engineer"))
+                self.write("pm/approved", "LOC-1")
+                if rel == "engineer":
+                    os.rmdir(os.path.join(self.board, "engineer"))
+                target = os.path.join(self.board, rel)
+                make(target)
+                self.tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
+                with self.assertRaises(TrackerFileError) as caught:
+                    self.create()
+                self.assertEqual(
+                    (caught.exception.path, caught.exception.reason), (target, "not a directory")
+                )
+                self.assertEqual(os.listdir(outside), [])
+
+    def test_file_name(self):
+        self.write("pm/approved", "LOC-1")
+        cases = {
+            "a/b\nc\x00d\x7fe\tf": "a-b-c-d-e-f",
+            "🙂" * 75: "🙂" * 50,
         }
-        for name, call in calls.items():
-            with self.subTest(name), self.assertRaises(NotImplementedError) as caught:
-                call()
-            self.assertEqual(str(caught.exception), f"local board: {name} is not supported yet")
-        self.assertEqual(os.listdir(self.board), [])
+        for n, (title, name) in enumerate(cases.items()):
+            with self.subTest(title=title[:8]):
+                made = self.create(("LOC-1", "engineer", str(n)), title=title)
+                path = os.path.join(self.board, "engineer/ready", f"{made.ident} {name}.md")
+                self.assertTrue(os.path.isfile(path), os.listdir(os.path.dirname(path)))
+                self.assertEqual(self.tracker.issue(made.key).title, title)
+
+
+class Stamped(Written):
+    def test_derived_times_survive_a_stamp(self):
+        """promote's once key holds the derived move's time: a write's stamp must not change it."""
+        path = self.write(
+            "pm/approved",
+            "LOC-1",
+            comments="###\nGo on.\n",
+            history="- 2026-10-19 16:10 review self\n",
+        )
+        self.write("engineer/ready", "LOC-2")
+        late = MTIME.timestamp() + 27.5
+        os.utime(path, (late, late))
+        before = self.tracker.detail("LOC-1")
+        self.assertEqual(
+            (before.moves[-1].at, before.comments[0].at),
+            ("2026-10-20T00:00:00.000Z", "2026-10-20T00:00:00.000Z"),
+        )
+        self.tracker.relate("LOC-1", "LOC-2")
+        after = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+        self.assertEqual(after.moves, before.moves)
+        self.assertEqual(after.comments[0].at, before.comments[0].at)
+
+    def test_derived_times_survive_a_stamp_in_a_dst_fold(self):
+        """01:30 New York time twice on 2026-11-01: a derived time is the one its History line reads."""
+        zone = mock.patch.dict(os.environ, {"TZ": "America/New_York"})
+        zone.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(zone.stop)
+        time.tzset()
+        for at in ("2026-11-01T06:30:20+00:00", "2026-11-01T05:30:20+00:00"):  # EST, then EDT
+            with self.subTest(at=at):
+                shutil.rmtree(self.board)
+                os.mkdir(self.board)
+                path = self.write(
+                    "pm/approved",
+                    "LOC-1",
+                    comments="###\nGo on.\n",
+                    history="- 2026-10-31 12:00 review self\n",
+                )
+                self.write("engineer/ready", "LOC-2")
+                when = datetime.fromisoformat(at).timestamp()
+                os.utime(path, (when, when))
+                before = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+                LocalTracker(self.board, ("pm", "engineer")).relate("LOC-1", "LOC-2")
+                after = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+                self.assertIn(" approved other\n", self.read(path))
+                self.assertEqual(after.moves, before.moves)
+                self.assertEqual(after.comments[0].at, before.comments[0].at)
+
+
+class Relate(Written):
+    def test_adds_once(self):
+        path = self.write("pm/done", "LOC-1", front="related: [LOC-7]\n")
+        self.write("engineer/ready", "LOC-2")
+        self.write("engineer/ready", "LOC-3", front="related: [LOC-1]\n")
+        self.tracker.relate("LOC-1", "LOC-2")
+        self.assertIn("related: [LOC-7, LOC-2]\n", self.read(path))
+        self.assertEqual(
+            self.tracker.detail("LOC-1").related, frozenset({"LOC-7", "LOC-2", "LOC-3"})
+        )
+        for other in ("LOC-2", "LOC-3", "LOC-7"):
+            with self.subTest(other):
+                self.unchanged(path, lambda o=other: self.tracker.relate("LOC-1", o))
+
+
+def archived_by(assignee, minute=10):
+    return f"#### self · 2026-10-19 16:{minute} <!-- id=c1 key=archived:{assignee} -->\nArchived.\n"
+
+
+class Archive(Written):
+    def locks(self):
+        """The board lock's exclusive takes, counted at fcntl.flock."""
+        real, taken = fcntl.flock, []
+
+        def counted(fd, operation):
+            taken.append(operation)
+            return real(fd, operation)
+
+        return mock.patch("fcntl.flock", side_effect=counted), taken
+
+    def test_moves_issue_and_descendants_flat(self):
+        self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        self.write("engineer/canceled", "LOC-2", front="parent: LOC-1\n")
+        self.write(
+            "engineer/done",
+            "LOC-3",
+            front="parent: LOC-2\n",
+            history="- 2026-10-19 15:00 done self\n",
+        )
+        old = self.write(
+            "archive", "LOC-4", front="parent: LOC-1\n", history="- 2026-10-19 15:00 done self\n"
+        )
+        before = self.read(old)
+        patched, taken = self.locks()
+        with patched:
+            self.assertTrue(self.tracker.archive("LOC-1"))
+        self.assertEqual(taken, [fcntl.LOCK_EX])
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.board, "archive"))),
+            ["LOC-1 x.md", "LOC-2 x.md", "LOC-3 x.md", "LOC-4 x.md"],
+        )
+        self.assertEqual(self.read(old), before)
+        self.assertEqual(os.listdir(os.path.join(self.board, "pm/done")), [])
+        two = self.read(os.path.join(self.board, "archive/LOC-2 x.md"))
+        self.assertEqual(
+            two,
+            text(
+                "LOC-2",
+                front="parent: LOC-1\n",
+                comments="\n#### self · 2026-10-20 09:30 <!-- id=c1 key=archived:engineer -->\n"
+                "Archived from engineer/canceled/.\n\n",
+                history=STAMPED.format("canceled"),
+            ),
+        )
+        fresh = LocalTracker(self.board, ("pm", "engineer"))
+        self.assertEqual(
+            [fresh.read(i).state for i in ("LOC-1", "LOC-2", "LOC-3")],
+            [IssueState.DONE, IssueState.CANCELED, IssueState.DONE],
+        )
+        self.assertEqual(fresh.detail("LOC-1").comments[-1].body, "Archived from pm/done/.")
+        self.assertFalse(self.tracker.archive("LOC-1"))
+
+    def test_refuses_unfinished_descendant(self):
+        path = self.write("pm/done", "LOC-1")
+        self.write("engineer/ready", "LOC-2", front="parent: LOC-1\n")
+        with self.assertRaises(ArchiveRefused) as caught:
+            self.unchanged(path, lambda: self.tracker.archive("LOC-1"))
+        self.assertEqual([s.ident for s in caught.exception.plan.unfinished], ["LOC-2"])
+        self.assertFalse(os.path.exists(os.path.join(self.board, "archive")))
+
+    def test_rechecks_under_the_lock(self):
+        path = self.write("pm/done", "LOC-1")
+        sub = self.write("engineer/done", "LOC-2", front="parent: LOC-1\n")
+        plan = self.tracker.archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "changed")
+        os.makedirs(os.path.join(self.board, "engineer/ready"))
+        os.rename(sub, os.path.join(self.board, "engineer/ready/LOC-2 x.md"))  # reopened meanwhile
+        with self.assertRaises(ArchiveRefused):
+            self.unchanged(path, lambda: self.tracker.archive("LOC-1", plan))
+        self.assertFalse(os.path.exists(os.path.join(self.board, "archive")))
+
+    def test_occupied_archive_target(self):
+        path = self.write("pm/done", "LOC-1")
+        taken = self.write("archive", "LOC-9", history="- 2026-10-19 15:00 done self\n")
+        os.rename(taken, taken := os.path.join(self.board, "archive/LOC-1 x.md"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.archive("LOC-1")
+        self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
+        self.assertTrue(os.path.exists(path))
+
+    def test_archived_meanwhile_is_not_archived(self):
+        path = self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        plan = self.tracker.archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "changed")
+        os.mkdir(os.path.join(self.board, "archive"))
+        os.rename(path, path := os.path.join(self.board, "archive/LOC-1 x.md"))  # by another hand
+        self.assertFalse(self.unchanged(path, lambda: self.tracker.archive("LOC-1", plan)))
+
+    def test_unarchive_follows_the_latest_archive(self):
+        path = self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        for owner in ("pm", "engineer", "pm"):
+            with self.subTest(owner=owner):
+                if not path.startswith(os.path.join(self.board, owner, "")):  # a person's move
+                    os.makedirs(os.path.join(self.board, owner, "done"), exist_ok=True)
+                    os.rename(path, path := os.path.join(self.board, owner, "done/LOC-1 x.md"))
+                self.tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
+                self.assertTrue(self.tracker.archive("LOC-1"))
+                self.tracker.unarchive("LOC-1")
+                self.assertTrue(os.path.exists(path), os.listdir(self.board))
+        notes = [c.body for c in LocalTracker(self.board, ()).detail("LOC-1").comments]
+        self.assertEqual(notes, ["Archived from engineer/done/.", "Archived from pm/done/."])
+
+    def test_one_note_per_assignee(self):
+        self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        self.tracker.archive("LOC-1")
+        self.tracker.unarchive("LOC-1")
+        self.tracker.archive("LOC-1")
+        notes = [c.body for c in LocalTracker(self.board, ()).detail("LOC-1").comments]
+        self.assertEqual(notes, ["Archived from pm/done/."])
+
+
+class Unarchive(Written):
+    def setUp(self):
+        super().setUp()
+        os.mkdir(os.path.join(self.board, "pm"))  # a board holds an assignee dir
+
+    def test_restores_recorded_assignee(self):
+        notes = archived_by("pm", 10) + "\n" + archived_by("engineer", 20).replace("c1", "c2")
+        path = self.write(
+            "archive", "LOC-1", comments=notes, history="- 2026-10-19 16:00 done self\n"
+        )
+        before = self.read(path)
+        self.tracker.unarchive("LOC-1")
+        restored = os.path.join(self.board, "engineer/done/LOC-1 x.md")
+        self.assertEqual(self.read(restored), before)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.tracker.read("LOC-1").state, IssueState.DONE)
+        self.assertIsNone(self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.DONE))
+        self.assertTrue(os.path.exists(os.path.join(self.board, "engineer/review/LOC-1 x.md")))
+
+    def test_hand_archived_goes_to_unassigned(self):
+        self.write("archive", "LOC-1", history="- 2026-10-19 16:00 review other\n")
+        self.write("archive", "LOC-2")
+        self.tracker.unarchive("LOC-1")
+        self.tracker.unarchive("LOC-2")
+        self.assertTrue(os.path.exists(os.path.join(self.board, "unassigned/review/LOC-1 x.md")))
+        self.assertTrue(os.path.exists(os.path.join(self.board, "unassigned/backlog/LOC-2 x.md")))
+
+    def test_bad_recorded_assignee(self):
+        outside = os.listdir(self.home)
+        for assignee in ("../..", "a/b", ".state", "archive", "%2E%2E", "a%2Fb", "a%00b", ""):
+            with self.subTest(assignee=assignee):
+                path = self.write(
+                    "archive",
+                    "LOC-1",
+                    comments=archived_by(assignee),
+                    history="- 2026-10-19 16:00 done self\n",
+                )
+                self.tracker = LocalTracker(self.board, ("pm",), now=lambda: NOW)
+                self.tracker.unarchive("LOC-1")
+                restored = os.path.join(self.board, "unassigned/done/LOC-1 x.md")
+                self.assertTrue(os.path.exists(restored))
+                os.unlink(restored)
+                self.assertFalse(os.path.exists(path))
+                self.assertEqual(
+                    sorted(os.listdir(self.board)), [".lock", "archive", "pm", "unassigned"]
+                )
+                self.assertEqual(os.listdir(self.home), outside)
+
+    def test_occupied_target(self):
+        path = self.write(
+            "archive", "LOC-1", comments=archived_by("pm"), history="- 2026-10-19 16:00 done self\n"
+        )
+        taken = self.write("pm/done", "LOC-9")
+        os.rename(taken, taken := os.path.join(self.board, "pm/done/LOC-1 x.md"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.unarchive("LOC-1")
+        self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
+        self.assertTrue(os.path.exists(path))

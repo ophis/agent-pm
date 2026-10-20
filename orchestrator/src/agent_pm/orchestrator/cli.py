@@ -34,7 +34,8 @@ from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
 )
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
+from agent_pm.orchestrator.trackers.local.board import scan
 from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
 from agent_pm.utils import (
     SID_ENV,
@@ -112,8 +113,14 @@ def main(argv=None):
             partial(router.main, trackers=TRACKERS),
             "claim or resume an issue's agent run: a tick, --issue or --brake",
         ),
-        "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
-        "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
+        "promote": (
+            partial(promote.main, trackers=TRACKERS, gql=client.linear_gql),
+            "promote Handoff issues to the next role, then prune",
+        ),
+        "prune": (
+            partial(prune.main, trackers=TRACKERS, gql=client.linear_gql),
+            "close finished issues' runs, delete their agent dirs, then archive",
+        ),
         "issue": (
             issue.main,
             "read, list, create, edit, move, comment on, archive, relate or relabel issues; "
@@ -132,7 +139,7 @@ def main(argv=None):
             "  Operational commands require configured orchestrator and Delegate\n"
             '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
             "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
-            '  promote, prune and issue do not run yet; "linear" reaches Linear through\n'
+            '  issue does not run yet; "linear" reaches Linear through\n'
             "  the linear.harness_key Keychain service (the issue commands:\n"
             "  linear.manager_key), role keys identifying the accounts used for issue\n"
             "  work. Python 3.11+ is needed.\n"
@@ -317,10 +324,27 @@ def _linear_key(cfg, role):
     return cfg.linear.roles[role].key
 
 
+def _linear_board_factory(gql, cfg):
+    """The team and role accounts read once; each tracker calls its transport as the harness_key
+    service."""
+    linear = cfg.linear
+    team, roles = team_and_roles(partial(gql, service=linear.harness_key), linear)
+    return lambda transport: LinearTracker.of_team(
+        partial(transport, service=linear.harness_key), linear, team, roles
+    )
+
+
 def _local_board(transport, cfg, *, say=None):
     """A local board's tracker, the router's and a run's: it needs no transport and logs nothing."""
     del transport, say
     return LocalTracker(cfg.board, cfg.roles)
+
+
+def _local_board_factory(transport, cfg):
+    """The board scanned once, so an unreadable one fails here; then a fresh tracker each call."""
+    del transport
+    scan(cfg.board)
+    return lambda _: LocalTracker(cfg.board, cfg.roles)
 
 
 def _local_accounts(transport, cfg, key):
@@ -352,6 +376,7 @@ TRACKERS = MappingProxyType(
             accounts=_linear_accounts,
             claimed=_linear_claimed,
             key=_linear_key,
+            board=_linear_board_factory,
         ),
         TrackerKind.LOCAL: Wiring(
             connect=_local_board,
@@ -359,6 +384,7 @@ TRACKERS = MappingProxyType(
             accounts=_local_accounts,
             claimed=_local_claimed,
             key=lambda *_: None,
+            board=_local_board_factory,
         ),
     }
 )

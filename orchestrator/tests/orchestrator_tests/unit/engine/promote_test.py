@@ -4,12 +4,20 @@ import functools
 import io
 import json
 import os
+import time
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import timedelta
+from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config, promote
+from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow import workflow
+from agent_pm.orchestrator.engine.flow.types import IssueState
+from agent_pm.orchestrator.engine.types import IssueError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
+from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import FINISHED, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -179,7 +187,7 @@ class DryPromotion(Base):
         self.assertEqual(
             self.out.splitlines(),
             [
-                "promote DR-1 role=pm project=Deep Research",
+                "promote DR-1 role=pm home=Deep Research",
                 "handoff-bounce DR-2 to=in_review reason=no instructions",
             ],
         )
@@ -206,6 +214,7 @@ class ConfigurationFailures(Base):
                     with redirect_stderr(err), redirect_stdout(out):
                         rc = promote.main(
                             [],
+                            trackers=cli.TRACKERS,
                             gql=self.fake,
                             now=NOW,
                             config_path=self.config_path,
@@ -218,13 +227,6 @@ class ConfigurationFailures(Base):
                     [("promote", f"config-error reason={reason}")],
                 )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
-
-    def test_a_local_board_is_refused_after_config(self):
-        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
-        self.write_config(CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
-        self.assertEqual(self.run_main(), 2)
-        self.assertEqual(self.err, 'promote.py: promote needs [orchestrator] tracker = "linear"\n')
-        self.assertEqual((self.fake.calls, FakePruner.calls, self.out), ([], [], ""))
 
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write_local('work_dir = "w"\n')
@@ -352,12 +354,19 @@ class PromotionCleanup(Base):
     def test_prune_runs_each_tick(self):
         self.run_main("--dry-run")
         self.assertEqual(len(FakePruner.calls), 1)
-        gql, now, dry, work, team, roles = FakePruner.calls[0]
-        self.assertIsInstance(gql, functools.partial)
-        self.assertEqual((gql.func, gql.keywords), (self.fake, {"service": HARNESS}))
+        board, gql, now, dry, work = FakePruner.calls[0]
+        self.assertIs(gql, self.fake)
         self.assertEqual((now, dry, work), (NOW, True, os.path.join(self.work, "work")))
-        self.assertEqual(team, ops.Team(TEAM, "Team", dict(IDS_BY_KEY), FINISHED))
-        self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
+        tracker = board(gql)
+        self.assertIsInstance(tracker.gql, functools.partial)
+        self.assertEqual(
+            (tracker.gql.func, tracker.gql.keywords), (self.fake, {"service": HARNESS})
+        )
+        self.assertEqual(
+            (tracker.team_id, tracker.state_ids, tracker.finished_ids),
+            (TEAM, dict(IDS_BY_KEY), FINISHED),
+        )
+        self.assertEqual(tracker.roles, {f"u-{role}": role for role in ROLE})
 
     def test_prune_error_does_not_break_promote(self):
         class Boom:
@@ -373,7 +382,7 @@ class PromotionCleanup(Base):
                 rc = self.run_main("--dry-run", pruner=Boom)
                 self.assertEqual(rc, 0)
                 self.assertEqual(
-                    self.out.splitlines()[0], "promote DR-1 role=pm project=Deep Research"
+                    self.out.splitlines()[0], "promote DR-1 role=pm home=Deep Research"
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
@@ -737,8 +746,8 @@ class PromotionScope(Base):
                 self.write_config(PM_NEXT)
                 self.ready(role="pm", title=title)
                 cfg = config.load(path=self.config_path)
-                gql = functools.partial(self.fake, service=cfg.linear.harness_key)
-                promote.Promoter(gql, cfg, cfg.linear, NOW, dry=False, tasks=tasks).run()
+                board = cli.TRACKERS[cfg.tracker].board(self.fake, cfg)
+                promote.Promoter(cfg, board(self.fake), NOW, dry=False, tasks=tasks).run()
                 (child,) = self.fake.children.values()
                 self.assertEqual(
                     (child["projectId"], child["assigneeId"], child["title"]),
@@ -776,3 +785,116 @@ class PromotionScope(Base):
 
     def test_unknown_flag(self):
         self.assertEqual(self.run_main("--nope"), 2)
+
+
+class LocalBoardPromotion(Base):
+    """promote on a local board: a researcher's approved file promoted to pm/ready/."""
+
+    def setUp(self):
+        super().setUp()
+        zone = mock.patch.dict(os.environ, {"TZ": "UTC0"})
+        zone.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(zone.stop)
+        time.tzset()
+        self.board = os.path.join(os.path.realpath(self.home), "board")
+        self.logs = os.path.join(self.board, ".state", "logs")  # the board's state root
+        os.environ[config.BOARD_ENV] = self.board
+        self.write_config(CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+
+    def approved(self, *, comments="###\nGo on.\n", age=30):
+        path = os.path.join(self.board, "researcher/approved/LOC-1 Queue survey.md")
+        os.makedirs(os.path.dirname(path))
+        self.write(
+            path,
+            '---\nid: LOC-1\ntitle: "Queue survey"\npriority: 3\n'
+            "created: 2026-09-27T12:00:00+00:00\nparent: LOC-9\n---\n"
+            f"### Description\nSurvey.\n### Comments\n{comments}### History\n"
+            "- 2026-09-27 13:00 ready other\n- 2026-09-27 13:10 running self\n"
+            "- 2026-09-27 14:00 review self\n",
+        )
+        at = (NOW - timedelta(minutes=age)).timestamp()
+        os.utime(path, (at, at))
+        return path
+
+    def files(self):
+        """The board's issue files and their text, its state root left out."""
+        found = {}
+        for folder, dirs, names in os.walk(self.board):
+            dirs[:] = [d for d in dirs if d != ".state"]
+            for name in names:
+                with open(os.path.join(folder, name), encoding="utf-8") as file:
+                    found[os.path.relpath(file.name, self.board)] = file.read()
+        return found
+
+    def tracker(self):
+        return LocalTracker(self.board, ("researcher", "pm", "engineer"))
+
+    def test_promotes_past_the_undo_window(self):
+        self.approved()
+        self.assertEqual(self.run_main(), 0, self.err)
+        [made] = os.listdir(os.path.join(self.board, "pm/ready"))
+        self.assertTrue(made.startswith("LOC-2 "), made)
+        text = self.files()[f"pm/ready/{made}"]
+        self.assertIn("\npriority: 3\n", text)
+        self.assertIn("\nparent: LOC-9\n", text)
+        child = self.tracker().issue("LOC-2")
+        self.assertTrue(child.description.startswith("Handoff from LOC-1"), child.description)
+        self.assertEqual(self.tracker().read("LOC-1").state, IssueState.DONE)
+        self.assertTrue(
+            os.path.exists(os.path.join(self.board, "researcher/done/LOC-1 Queue survey.md"))
+        )
+        source = self.tracker().detail("LOC-1")
+        self.assertIn("LOC-2", source.related)
+        self.assertEqual(source.comments[-1].body, "Promoted to LOC-2.")
+        self.assertIn("promote LOC-1 to=LOC-2", self.out)
+        self.assertEqual(self.fake.calls, [])
+        [(board, *_)] = FakePruner.calls
+        self.assertIsInstance(board(None), LocalTracker)
+
+    def test_waits_inside_the_window(self):
+        self.approved(age=5)
+        before = self.files()
+        self.assertEqual(self.run_main(), 0, self.err)
+        self.assertEqual(self.files(), before)
+        self.assertIn("handoff-wait LOC-1", self.out)
+
+    def test_bounces_without_instructions(self):
+        self.approved(comments="")
+        self.assertEqual(self.run_main(), 0, self.err)
+        self.assertEqual(self.tracker().read("LOC-1").state, IssueState.REVIEW)
+        self.assertEqual(self.tracker().detail("LOC-1").comments[-1].body, promote.NO_INSTRUCTIONS)
+        self.assertFalse(os.path.exists(os.path.join(self.board, "pm")))
+
+    def test_dry_run_writes_nothing(self):
+        self.approved()
+        before = self.files()
+        self.assertEqual(self.run_main("--dry-run"), 0, self.err)
+        self.assertEqual(self.files(), before)
+        self.assertIn("promote LOC-1 role=pm home=LOC-9", self.out)
+
+    def test_an_unreadable_board_exits_2(self):
+        self.assertEqual(self.run_main(), 2)
+        self.assertEqual(self.err, f"promote.py: {self.board}: no such board directory\n")
+        path = self.approved()
+        self.write(path, "nonsense\n")
+        self.assertEqual(self.run_main(), 2)
+        self.assertEqual(self.err, f"promote.py: {path}: no front matter\n")
+        self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
+
+    def test_a_tracker_error_bouncing_is_logged(self):
+        """The source archived meanwhile: its bounce fails as a handoff-error, not a crash."""
+
+        class Archived:
+            def comment_and_move(self, *_, **__):
+                raise IssueError("LOC-1: archived")
+
+        cfg = config.load(path=self.config_path)
+        event_log.use_logs(cfg.logs_dir)
+        promoter = promote.Promoter(cfg, Archived(), NOW, dry=False, tasks=config.TASKS)
+        promoter.bounce_failed(SimpleNamespace(ident="LOC-1", key="LOC-1"), ValueError("x"), None)
+        [record] = logged(self.logs)
+        self.assertEqual(
+            (record["kind"], record["reason"], record["error"]),
+            ("handoff-error", "could not move to In Review", "IssueError: LOC-1: archived"),
+        )

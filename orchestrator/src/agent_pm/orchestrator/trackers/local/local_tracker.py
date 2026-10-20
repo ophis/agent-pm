@@ -1,5 +1,5 @@
 """The engine Tracker on a local board (docs/board.md › Local board): its reads, and its writes, each
-one locked rewrite of one issue file; promote's and prune's writes are TASK-795's."""
+one locked rewrite of one issue file."""
 
 import os
 import re
@@ -7,13 +7,14 @@ import stat
 from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NoReturn
+from urllib.parse import unquote
 
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
+    ArchiveRefused,
     Comment,
     Detail,
     Finished,
@@ -28,12 +29,13 @@ from agent_pm.orchestrator.engine.flow.types import (
     Origin,
     Pick,
     Recheck,
+    Ref,
     Snapshot,
     SubIssue,
 )
 from agent_pm.orchestrator.engine.types import UUID_RE, IssueError, TrackerFileError
 from agent_pm.orchestrator.trackers.local import issue_file, store
-from agent_pm.orchestrator.trackers.local.board import read_one, read_text, scan
+from agent_pm.orchestrator.trackers.local.board import ARCHIVE, read_one, read_text, scan
 from agent_pm.orchestrator.trackers.local.types import Entry, LocalState, Source
 
 ISSUE_STATES = {
@@ -61,11 +63,16 @@ RUN = re.compile(f"Run {UUID_RE.pattern} · ")
 ARCHIVED = "archived"
 SEARCHED = 10
 TRIES = 3
+PROMOTED = "Created by promote."
+NAME_BYTES = 200
+UNASSIGNED = "unassigned"
+UNNAMED = re.compile(r"[/\x00-\x1f\x7f]")
 
 
 class LocalTracker(Tracker):
     """board: its realpath'd dir, scanned once on first use; roles: the role dirs listed; now: the
-    time writes record. Keys and identifiers are front-matter ids."""
+    time writes record. Keys and identifiers are front-matter ids; an issue's home is its parent
+    ("" none)."""
 
     def __init__(
         self,
@@ -248,8 +255,8 @@ class LocalTracker(Tracker):
                 each.title,
                 each.priority,
                 each.created.isoformat(),
-                "",
-                "",
+                each.parent or "",
+                each.parent or "",
                 each.assignee or "",
                 tuple((link.title, link.url) for link in each.links),
             )
@@ -296,68 +303,144 @@ class LocalTracker(Tracker):
         )
 
     def created(self, once):
-        _unsupported("created")
+        wanted = issue_file.ref_key(once)
+        found = next(
+            (
+                each
+                for each in self._all().values()
+                if any(n.source == Source.SELF and n.key == wanted for n in each.comments)
+            ),
+            None,
+        )
+        return None if found is None else Ref(found.id, found.id)
 
     def create(self, once, *, home, owner, priority, title, description):
-        _unsupported("create")
+        """once's issue if one exists by now; a number whose id or path is taken is skipped."""
+        with store.locked(self.board):
+            self.files = None
+            if made := self.created(once):
+                return made
+            files = self._all()
+            prefix = _prefix(files)
+            folder = self._folder(owner, LocalState.READY.value)
+            while True:
+                ident = store.next_id(self.board, prefix)
+                path = os.path.join(folder, f"{ident} {_name(title)}.md")
+                if ident not in files and not os.path.lexists(path):
+                    break
+            now = self.now()
+            store.replace(
+                path,
+                issue_file.new(
+                    ident=ident,
+                    title=title,
+                    priority=priority,
+                    created=now,
+                    parent=home or None,
+                    description=description,
+                    note_at=now,
+                    note=PROMOTED,
+                    note_key=issue_file.ref_key(once),
+                    state=LocalState.READY,
+                ),
+            )
+            text, mtime = read_text(path)
+            files[ident] = issue_file.parse(
+                path, text, assignee=owner, state=LocalState.READY, mtime=mtime
+            )
+        return Ref(ident, ident)
 
     def relate(self, key, other):
-        _unsupported("relate")
+
+        def change(text, found):
+            if other in self._related(found):
+                return None
+            return issue_file.add_related(text, other), None
+
+        self._write(key, change)
 
     def _write_archive(self, key):
-        _unsupported("archive")
+        """Rechecked under the lock; descendants deepest first, each with its archive note."""
+
+        def change(text, found):
+            if found.assignee is None:
+                return None
+            ref = issue_file.ref_key((ARCHIVED, found.assignee))
+            body = f"Archived from {found.assignee}/{found.state}/."
+            text = issue_file.drop_comment(text, ref) or text
+            text = issue_file.add_comment(text, at=self.now(), body=body, ref_key=ref)
+            return text, (None, None)
+
+        with store.locked(self.board):
+            self.files = None
+            plan = self.archive_plan(key)
+            if plan.outcome == "refused":
+                raise ArchiveRefused(plan)
+            if plan.outcome == "unchanged":
+                return False
+            for each in (*reversed(plan.descendants), plan):
+                self._rewrite(each.key, change)
+        return True
 
     def _write(self, key, change):
         """Under the board lock, issue key's file read fresh and Stamped, then change(text, found):
-        None, or (text, the state dir it moves to or None); written only when that differs from
-        the Stamped text and the file still holds what was read. A file a person moved or deleted
-        meanwhile is read again. Returns the file as the deciding change saw it."""
+        None, or (text, None or the (assignee, state) dirs it moves to, (None, None) archive/);
+        written when either changes and the file still holds what was read. A file a person moved
+        or deleted meanwhile is read again. Returns the file as the deciding change saw it."""
         with store.locked(self.board):
-            for _ in range(TRIES):
-                found = read_one(self.board, self._need(key).path, key)
-                if found is None:
-                    raise IssueError(f"{key}: issue not found")
-                read = _read_if_there(found.path)
-                if read is None:
-                    continue
-                text, mtime = read
-                found = issue_file.parse(
-                    found.path, text, assignee=found.assignee, state=found.state, mtime=mtime
-                )
-                stamped = issue_file.stamp(
-                    text, mtime=mtime, state=found.state if found.assignee else None
-                )
-                changed = change(stamped, found)
-                if changed is None or changed[0] == stamped:
-                    self._all()[key] = found
-                    return found
-                again = _read_if_there(found.path)
-                if again is None or again[0] != text:
-                    continue
-                path = found.path if changed[1] is None else self._rename(found, changed[1])
-                if path is None:
-                    continue
-                store.replace(path, changed[0])
-                text, mtime = read_text(path)
-                self._all()[key] = issue_file.parse(
-                    path,
-                    text,
-                    assignee=found.assignee,
-                    state=changed[1] or found.state,
-                    mtime=mtime,
-                )
-                return found
-            raise TrackerFileError(found.path, "changed while writing")
+            return self._rewrite(key, change)
 
-    def _rename(self, issue, state):
-        """issue's file moved, its name kept, into its assignee's state dir, made if absent; None:
-        it was no longer there."""
-        folder = os.path.join(self.board, issue.assignee, state.value)
-        try:
-            if not stat.S_ISDIR(os.lstat(folder).st_mode):
-                raise TrackerFileError(folder, "not a directory")
-        except FileNotFoundError:
-            os.mkdir(folder)
+    def _rewrite(self, key, change):
+        """_write's, the lock held."""
+        for _ in range(TRIES):
+            found = read_one(self.board, self._need(key).path, key)
+            if found is None:
+                raise IssueError(f"{key}: issue not found")
+            read = _read_if_there(found.path)
+            if read is None:
+                continue
+            text, mtime = read
+            found = issue_file.parse(
+                found.path, text, assignee=found.assignee, state=found.state, mtime=mtime
+            )
+            stamped = issue_file.stamp(
+                text, mtime=mtime, state=found.state if found.assignee else None
+            )
+            changed = change(stamped, found)
+            if changed is None or changed == (stamped, None):
+                self._all()[key] = found
+                return found
+            again = _read_if_there(found.path)
+            if again is None or again[0] != text:
+                continue
+            assignee, state = changed[1] or (found.assignee, found.state)
+            path = found.path if changed[1] is None else self._rename(found, assignee, state)
+            if path is None:
+                continue
+            store.replace(path, changed[0])
+            text, mtime = read_text(path)
+            self._all()[key] = issue_file.parse(
+                path, text, assignee=assignee, state=state, mtime=mtime
+            )
+            return found
+        raise TrackerFileError(found.path, "changed while writing")
+
+    def _folder(self, *parts):
+        """<board>/<parts…>, made if absent; a level that is no directory (or a symlink) refused."""
+        folder = self.board
+        for part in parts:
+            folder = os.path.join(folder, part)
+            try:
+                if not stat.S_ISDIR(os.lstat(folder).st_mode):
+                    raise TrackerFileError(folder, "not a directory")
+            except FileNotFoundError:
+                os.mkdir(folder)
+        return folder
+
+    def _rename(self, issue, assignee, state):
+        """issue's file moved, its name kept, into <assignee>/<state>/ (no assignee: archive/), made
+        if absent; None: it was no longer there."""
+        folder = self._folder(assignee, state.value) if assignee else self._folder(ARCHIVE)
         target = os.path.join(folder, os.path.basename(issue.path))
         if os.path.lexists(target):
             raise TrackerFileError(target, "file exists")
@@ -382,7 +465,8 @@ class LocalTracker(Tracker):
             if body is not None:
                 text = issue_file.add_comment(text, at=self.now(), body=body)
             return issue_file.add_history(text, at=self.now(), state=LOCAL_STATES[to]), (
-                LOCAL_STATES[to]
+                found.assignee,
+                LOCAL_STATES[to],
             )
 
         state = self._write(key, change).state  # None only archived, which change refuses
@@ -438,9 +522,14 @@ class LocalTracker(Tracker):
         self._write(key, lambda text, _: (issue_file.set_title(text, title), None))
 
     def unarchive(self, key):
-        """A live issue is on the board already; restoring an archived one is prune's."""
-        if self._need(key).assignee is None:
-            raise IssueError(f"{key}: archived")
+        """Back to its archive note's assignee (none valid: unassigned) in its last state."""
+
+        def change(text, found):
+            if found.assignee is not None:
+                return None
+            return text, (_archived_from(found), found.state or LocalState.BACKLOG)
+
+        self._write(key, change)
 
 
 def _read_if_there(path):
@@ -453,8 +542,24 @@ def _read_if_there(path):
         return None
 
 
-def _unsupported(name) -> NoReturn:
-    raise NotImplementedError(f"local board: {name} is not supported yet")
+def _archived_from(issue):
+    """The last archive note's assignee if it names one directory on the board."""
+    notes = [n.key for n in issue.comments if n.source == Source.SELF and n.key]
+    keys = [k for k in notes if k.startswith(f"{ARCHIVED}:")]
+    name = unquote(keys[-1].split(":", 1)[1]) if keys else ""
+    if not name or name.startswith(".") or name == ARCHIVE or "/" in name or "\0" in name:
+        return UNASSIGNED
+    return name
+
+
+def _prefix(files):
+    if not files:
+        raise IssueError("no issue on the board to take an id prefix from")
+    return max(files, key=lambda i: int(i.rsplit("-", 1)[1])).rsplit("-", 1)[0]
+
+
+def _name(title):
+    return UNNAMED.sub("-", title).encode()[:NAME_BYTES].decode("utf-8", "ignore")
 
 
 def _sub_issue(issue):
@@ -495,7 +600,7 @@ def _moves(issue):
     """History, then the derived move: a person's move to where the file sits, unrecorded."""
     moves = list(issue.history)
     if issue.state is not None and (not moves or moves[-1].state != issue.state):
-        moves.append(Entry(issue.mtime, issue.state, Source.OTHER))
+        moves.append(Entry(issue_file.minute(issue.mtime), issue.state, Source.OTHER))
     return moves
 
 

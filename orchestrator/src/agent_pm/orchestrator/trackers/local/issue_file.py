@@ -236,7 +236,7 @@ def _comments(lines, mtime):
     notes = []
     for line in lines:
         if line == _BARE:
-            notes.append([mtime, Source.OTHER, [], None])
+            notes.append([minute(mtime), Source.OTHER, [], None])
         elif _HEADED.match(line) or (not notes and line.strip()):
             header = _HEADER.fullmatch(line)
             try:
@@ -302,6 +302,23 @@ def edit_comment(text: str, ref_key: str, body: str) -> str | None:
     """The engine's comment with ref_key holding body, the blank lines after it kept; None: there
     is none."""
     lines, end = _split(text)
+    if found := _comment(lines, end, ref_key):
+        i, after = found
+        filled = max((j for j in range(i + 1, after) if lines[j].strip()), default=i)
+        return _join([*lines[: i + 1], *_body(body), *lines[filled + 1 :]])
+    return None
+
+
+def drop_comment(text: str, ref_key: str) -> str | None:
+    """Without the engine's comment with ref_key; None: there is none."""
+    lines, end = _split(text)
+    if found := _comment(lines, end, ref_key):
+        return _join([*lines[: found[0]], *lines[found[1] :]])
+    return None
+
+
+def _comment(lines, end, ref_key):
+    """The engine's comment ref_key: its header index, then the next comment's or section's."""
     first, last = _spans(lines, end).get(_Section.COMMENTS, (0, 0))
     for i in range(first, last):
         header = _HEADER.fullmatch(lines[i])
@@ -310,8 +327,7 @@ def edit_comment(text: str, ref_key: str, body: str) -> str | None:
                 (j for j in range(i + 1, last) if lines[j] == _BARE or _HEADED.match(lines[j])),
                 last,
             )
-            filled = max((j for j in range(i + 1, after) if lines[j].strip()), default=i)
-            return _join([*lines[: i + 1], *_body(body), *lines[filled + 1 :]])
+            return i, after
     return None
 
 
@@ -327,6 +343,57 @@ def set_title(text: str, title: str) -> str:
     return _join(lines)
 
 
+def add_related(text: str, ident: str) -> str:
+    lines, end = _split(text)
+    key = next((i for i in range(1, end) if lines[i].startswith(f"{_Key.RELATED}:")), None)
+    if key is None:
+        return _join([*lines[:end], f"{_Key.RELATED}: [{ident}]", *lines[end:]])
+    listed = _ids(_Key.RELATED, lines[key][len(f"{_Key.RELATED}:") :].strip())
+    lines[key] = f"{_Key.RELATED}: [{', '.join([*listed, ident])}]"
+    return _join(lines)
+
+
+def new(
+    *,
+    ident: str,
+    title: str,
+    priority: int,
+    created: datetime,
+    parent: str | None,
+    description: str,
+    note_at: datetime,
+    note: str,
+    note_key: str,
+    state: LocalState,
+) -> str:
+    """Its first comment the engine's, keyed note_key, and one History line, both at note_at."""
+    front = [
+        f"{_Key.ID}: {ident}",
+        f"{_Key.TITLE}: {json.dumps(title)}",
+        f"{_Key.PRIORITY}: {priority}",
+        f"{_Key.CREATED}: {created.isoformat()}",
+        *([f"{_Key.PARENT}: {parent}"] if parent else []),
+    ]
+    return _join(
+        [
+            "---",
+            *front,
+            "---",
+            "",
+            f"### {_Section.DESCRIPTION.value}",
+            *_body(description),
+            "",
+            f"### {_Section.COMMENTS.value}",
+            "",
+            f"#### {Source.SELF} · {_minute(note_at)} <!-- id=c1 key={note_key} -->",
+            *_body(note),
+            "",
+            f"### {_Section.HISTORY.value}",
+            f"- {_minute(note_at)} {state} {Source.SELF}",
+        ]
+    )
+
+
 def add_link(text: str, *, title: str, url: str) -> str:
     lines, end = _split(text)
     pair = [f"  - title: {json.dumps(title)}", f"    url: {json.dumps(url)}"]
@@ -338,6 +405,11 @@ def add_link(text: str, *, title: str, url: str) -> str:
 
 
 _ID = re.compile(r"^#{4} .* <!-- id=c(\d+) key=\S+ -->$")
+
+
+def minute(at: datetime) -> datetime:
+    """at as a stamp records it: through its History text."""
+    return _local(_minute(at))
 
 
 def _minute(at):

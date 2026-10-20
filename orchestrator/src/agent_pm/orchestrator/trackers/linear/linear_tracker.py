@@ -264,6 +264,8 @@ class LinearTracker(Tracker):
     returned. task_group, agent_group: the task and Agent label groups; label_tasks,
     label_clients: {label id: task or client}, which recheck's picks read."""
 
+    batch = SNAPSHOT_BATCH
+
     def __init__(
         self,
         gql,
@@ -608,6 +610,7 @@ class LinearTracker(Tracker):
 
     def _write_archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
+        return True
 
     def approved(self, owners):
         _need("states", self.state_ids)

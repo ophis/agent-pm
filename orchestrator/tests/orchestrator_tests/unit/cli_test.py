@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import config, promote, prune, router, run_comments, runs
+from agent_pm.orchestrator.engine import config, prune, router, run_comments, runs
 from agent_pm.orchestrator.engine.types import Claim, ConfigError, State, TrackerKind
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
@@ -172,7 +172,7 @@ class Wirings(run_fixtures.Base):
                             ),
                             self.assertRaises(StopIteration),
                         ):
-                            {"promote": promote.main, "prune": prune.main}[command[1]](command[2:])
+                            cli.main(command[1:])
                     else:
                         parse_only(cli.main, command[1:])
 
@@ -678,7 +678,7 @@ class Queries(RunCase):
 
 
 class OnALocalBoard(RunCase):
-    """router, writeback and resume reach the local board; promote and prune need Linear."""
+    """router, writeback, resume, promote and prune reach the local board; issue needs Linear."""
 
     def configure(self, default="fake"):
         self.board = os.path.join(os.path.realpath(self.home), "board")
@@ -689,17 +689,16 @@ class OnALocalBoard(RunCase):
         local.write_text(text.replace('tracker = "linear"', 'tracker = "local"'), encoding="utf-8")
         self.cfg = config.load()
 
-    def test_local_runs_writeback_and_resume_and_refuses_the_rest(self):
+    def test_local_runs_writeback_resume_promote_and_prune(self):
         self.assertEqual(self.cfg.tracker, "local")
         for argv in (["writeback", "--issue", "TASK-1", "--workdir", "/w"], ["resume", "TASK-1"]):
             with self.subTest(argv[0]):
                 self.assertNotIn("needs [orchestrator]", _call(argv, stdin="{}\n")[2])
-        for command, argv in (("promote", []), ("prune", [])):
+        for command in ("promote", "prune"):
             with self.subTest(command):
-                result, output, errors = _call([command, *argv])
-                self.assertEqual((result, output), (2, ""))
-                self.assertTrue(
-                    errors.endswith(f'{command} needs [orchestrator] tracker = "linear"\n'), errors
+                self.assertEqual(
+                    _call([command]),
+                    (2, "", f"{command}.py: {self.board}: empty board: no assignee directory\n"),
                 )
 
     def test_router_dry_run_reads_the_local_board(self):

@@ -4,13 +4,15 @@ import io
 import json
 import os
 import shutil
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, SessionError
-from agent_pm.orchestrator.engine import config, prune, prune_state
+from agent_pm.orchestrator import cli
+from agent_pm.orchestrator.engine import config, log, prune, prune_state
 from agent_pm.orchestrator.engine.flow.types import IssueState, Snapshot
 from agent_pm.orchestrator.engine.types import Entry, LinearError, PruneState, Unavailable
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
@@ -19,9 +21,7 @@ from orchestrator_tests.process_fixtures import CompletedProcess
 from orchestrator_tests.prune_fixtures import (
     NOW,
     PRUNE_QUERIES,
-    ROLES,
     STATE_IDS,
-    TEAM_OBJ,
     PruneDelegate,
     PruneScenario,
     gql_for,
@@ -264,16 +264,7 @@ class RepositoryCleanup(PruneScenario):
 
 class RetentionCleanup(PruneScenario):
     def test_writable_dirs_default_to_work_and_the_temp_dirs(self):
-        pruner = prune.Pruner(
-            None,
-            NOW,
-            dry=False,
-            work=self.work,
-            cfg=self.cfg,
-            linear=self.cfg.linear,
-            team=TEAM_OBJ,
-            roles=ROLES,
-        )
+        pruner = prune.Pruner(self.board, None, NOW, dry=False, work=self.work, cfg=self.cfg)
         self.assertEqual(pruner.writable, (self.work, *temp_dirs()))
 
     def test_archives_pm_and_engineer_issues_finished_2h(self):
@@ -559,7 +550,7 @@ class RetentionCleanup(PruneScenario):
 
         code, out = self.prune(gql)
         self.assertEqual(code, 3)
-        self.assertIn("prune-error error=archive: Linear: LinearError: linear api error: down", out)
+        self.assertIn("prune-error error=archive: LinearError: linear api error: down", out)
         self.assertFalse(os.path.lexists(clone))
 
     def test_recorded_run_alone_closes_all_owned_sessions_when_finished(self):
@@ -754,7 +745,9 @@ class RetentionCleanup(PruneScenario):
 
         code, state, out = self.tick(down)
         self.assertEqual((code, state), (0, "Done"))
-        self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", out)
+        self.assertIn(
+            "prune-error TASK-49 error=issue read: LinearError: linear api error: down", out
+        )
         self.assertTrue(os.path.isdir(clone))
 
     def test_an_outage_reading_an_issue_stops_prune(self):
@@ -1061,25 +1054,19 @@ class PruneCommand(PruneScenario):
 
         before, out, err = len(logged(self.logs)), io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            code = prune.main(list(argv), gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+            code = prune.main(
+                list(argv),
+                trackers=cli.TRACKERS,
+                gql=gql,
+                now=NOW,
+                config_path=path,
+                pruner=self.pruner,
+            )
         lines = err.getvalue().splitlines()
         copies = [json.loads(line) for line in lines if line.startswith("{")]
         said = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
         rest = "".join(f"{line}\n" for line in lines if not line.startswith("{"))
         return code, out.getvalue(), rest, said
-
-    def test_a_local_board_is_refused_after_config(self):
-        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
-        write(os.path.join(self.agent_pm, "config.local.toml"), "[orchestrator]\n" + CORE_LOCAL)
-        path = os.path.join(self.root, "config.toml")
-        write(path, tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
-        fake, out, err = tp.FakeLinear(), io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = prune.main([], gql=fake, now=NOW, config_path=path)
-        self.assertEqual(
-            (code, out.getvalue(), err.getvalue(), fake.calls),
-            (2, "", 'prune.py: prune needs [orchestrator] tracker = "linear"\n', []),
-        )
 
     def test_config_error_exits_2(self):
         # a config.toml or Linear setup error, each logged as config-error
@@ -1098,7 +1085,14 @@ class PruneCommand(PruneScenario):
             with self.subTest(reason):
                 write(path, text)
                 with redirect_stderr(io.StringIO()):
-                    code = prune.main([], gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+                    code = prune.main(
+                        [],
+                        trackers=cli.TRACKERS,
+                        gql=gql,
+                        now=NOW,
+                        config_path=path,
+                        pruner=self.pruner,
+                    )
                 self.assertEqual(code, 2)
                 self.assertIn(f"config-error reason={reason}", [show(e) for e in logged(self.logs)])
 
@@ -1144,7 +1138,9 @@ class PruneCommand(PruneScenario):
         self.mkc("TASK-49")
         code, _, _, said = self.command(down)
         self.assertEqual(code, 1)
-        self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", said)
+        self.assertIn(
+            "prune-error TASK-49 error=issue read: LinearError: linear api error: down", said
+        )
 
     def test_other_arguments_are_a_usage_error(self):
         for argv in (["--now"], ["TASK-1"], ["--dry-run", "x"]):
@@ -1447,7 +1443,10 @@ class RequestBound(Bound):
         self.assertEqual(code, 3)
         self.assertEqual(
             out.splitlines(),
-            [f"prune-error {i} error=Linear: LinearError: linear api error: down" for i in failed],
+            [
+                f"prune-error {i} error=issue read: LinearError: linear api error: down"
+                for i in failed
+            ],
         )
         self.assertEqual(sorted(inner.read), [f"TASK-{n}" for n in range(150, 160)])
         self.assertEqual(sorted(prune_state.load(self.cache())[0].issues), inner.read)
@@ -1457,7 +1456,7 @@ class RequestBound(Bound):
     def test_a_gone_issue_is_skipped_and_not_read_again(self):
         os.makedirs(self.cfg.issue_workdir("TASK-7"))
         gql = gql_for(self.dirs(1), changed=())  # a live issue gives the cold tick its anchor
-        self.assertEqual(self.tick(gql), (0, "prune-skip TASK-7 reason=not in Linear"))
+        self.assertEqual(self.tick(gql), (0, "prune-skip TASK-7 reason=not on the board"))
         self.assertEqual(self.counts(gql), [1, 1])
         self.assertEqual(self.tick(gql), (0, ""))
         self.assertEqual(self.counts(gql), [0, 0])
@@ -1670,7 +1669,115 @@ class ArchiveBound(Bound):
             return fake(query, **v)
 
         with redirect_stderr(io.StringIO()):
-            prune.main([], gql=routed, now=NOW, config_path=path, pruner=self.pruner)
+            prune.main(
+                [],
+                trackers=cli.TRACKERS,
+                gql=routed,
+                now=NOW,
+                config_path=path,
+                pruner=self.pruner,
+            )
         roles = len(tp.ROLE)
         self.assertEqual(len(setup), 1 + roles)
         self.assertLessEqual(len(prune_gql.calls) + len(setup), 34 + roles)
+
+
+DONE_3H = "- 2026-09-27 12:00 done self\n"  # NOW - 3 h
+
+
+class LocalBoardPrune(PruneScenario):
+    """agent-pm-orchestrator prune on a local board: finished issues archived flat into archive/."""
+
+    def setUp(self):
+        super().setUp()
+        zone = mock.patch.dict(os.environ, {"TZ": "UTC0"})
+        zone.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(zone.stop)
+        time.tzset()
+        self.board = os.path.join(self.root, "board")
+        os.environ[config.BOARD_ENV] = self.board
+        self.logs = os.path.join(self.board, ".state", "logs")
+        write(os.path.join(self.agent_pm, "config.local.toml"), "[orchestrator]\n" + CORE_LOCAL)
+        self.path = os.path.join(self.root, "config.toml")
+        write(self.path, tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+
+    def issue(self, rel, ident, front="", history=DONE_3H):
+        path = os.path.join(self.board, rel, f"{ident} x.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        text = f"---\nid: {ident}\ntitle: x\ncreated: 2026-09-27T09:00:00Z\n{front}---\n"
+        write(path, text + f"### History\n{history}")
+        return path
+
+    def run_prune(self, *argv):
+        fake, err = tp.FakeLinear(), io.StringIO()
+        before = len(logged(self.logs)) if os.path.exists(self.logs) else 0
+        with redirect_stderr(err):
+            code = prune.main(
+                list(argv),
+                trackers=cli.TRACKERS,
+                gql=fake,
+                now=NOW,
+                config_path=self.path,
+                pruner=self.pruner,
+            )
+        self.assertEqual(fake.calls, [])
+        lines = err.getvalue().splitlines()
+        events = logged(self.logs)[before:] if os.path.exists(self.logs) else []
+        events += [json.loads(line) for line in lines if line.startswith("{")]  # a dry run's
+        rest = "".join(f"{line}\n" for line in lines if not line.startswith("{"))
+        return code, rest, [show(e) for e in events if e["src"] == "prune"]
+
+    def archived(self):
+        folder = os.path.join(self.board, "archive")
+        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+
+    def test_skips_an_unfinished_sub_issue_then_archives_flat(self):
+        self.issue("pm/done", "LOC-1")
+        sub = self.issue("engineer/ready", "LOC-2", front="parent: LOC-1\n", history="")
+        self.issue("researcher/done", "LOC-3")  # a researcher's report stays
+        code, _, said = self.run_prune("--dry-run")
+        self.assertEqual((code, self.archived()), (0, []))
+        self.assertIn("prune-skip LOC-1 reason=archive: sub-issue LOC-2 not finished", said)
+        code, _, said = self.run_prune()
+        self.assertEqual((code, self.archived()), (0, []))
+        self.assertIn("prune-skip LOC-1 reason=archive: sub-issue LOC-2 not finished", said)
+        os.makedirs(os.path.join(self.board, "engineer/done"))
+        os.rename(sub, done := os.path.join(self.board, "engineer/done/LOC-2 x.md"))
+        at = (NOW - timedelta(hours=3)).timestamp()
+        os.utime(done, (at, at))
+        code, _, said = self.run_prune("--dry-run")
+        self.assertEqual((code, self.archived()), (0, []))
+        self.assertIn("prune-plan LOC-1 what=archive", said)
+        code, _, said = self.run_prune()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(self.archived(), ["LOC-1 x.md", "LOC-2 x.md"])
+        self.assertIn("prune-archived LOC-1", said)
+        self.assertTrue(os.path.exists(os.path.join(self.board, "researcher/done/LOC-3 x.md")))
+
+    def test_waits_2_hours(self):
+        self.issue("pm/done", "LOC-1", history="- 2026-09-27 14:00 done self\n")
+        self.assertEqual(self.run_prune()[0], 0)
+        self.assertEqual(self.archived(), [])
+
+    def test_an_unreadable_board_exits_2(self):
+        self.assertEqual(
+            self.run_prune()[:2], (2, f"prune.py: {self.board}: no such board directory\n")
+        )
+        path = self.issue("pm/done", "LOC-1")
+        write(path, "nonsense\n")
+        self.assertEqual(self.run_prune()[:2], (2, f"prune.py: {path}: no front matter\n"))
+
+    def test_archived_meanwhile_logs_nothing(self):
+        path = self.issue("pm/done", "LOC-1")
+        cfg = config.load(path=self.path)
+        log.use_logs(cfg.logs_dir)
+        board = cli.TRACKERS[cfg.tracker].board(None, cfg)
+        pruner = self.pruner(board, None, NOW, dry=False, work=cfg.workdirs, cfg=cfg)
+        pruner.tracker.read("LOC-1")  # scanned: LOC-1 done, not archived
+        os.makedirs(os.path.join(self.board, "archive"))
+        os.rename(path, os.path.join(self.board, "archive/LOC-1 x.md"))  # by another hand
+        self.assertEqual(pruner.run(), 0)
+        said = [show(e) for e in logged(self.logs) if e["src"] == "prune"]
+        self.assertNotIn("prune-archived LOC-1", said)
+        self.assertEqual(self.archived(), ["LOC-1 x.md"])

@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 from agent_pm.delegate import ConfigError, SessionError, Spec
+from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import (
     config,
     log,
@@ -321,7 +322,7 @@ class PruneScenario(Case):
         self.cfg = config.Config(
             task_tiers={},
             client_max_runs={},
-            roles={},
+            roles=dict.fromkeys(ROLES.values()),  # prune reads only the names
             local_clones={},
             tracker=TrackerKind.LINEAR,
             linear=linear,
@@ -399,21 +400,23 @@ class PruneScenario(Case):
         before, err, out = (len(logged(self.logs)), io.StringIO(), io.StringIO())
         with redirect_stderr(err), redirect_stdout(out):
             code = prune.Pruner(
+                self.board,
                 gql,
                 now,
                 dry=dry,
                 run=git or Git(),
                 work=self.work,
                 cfg=self.cfg,
-                linear=self.cfg.linear,
-                team=TEAM_OBJ,
-                roles=ROLES,
                 writable=writable,
             ).run()
         self.assertEqual(out.getvalue(), "")
         copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
         self.assertEqual({e["src"] for e in logged(self.logs)[before:] + copies} - {"prune"}, set())
         return (code, "\n".join(show(e) for e in logged(self.logs)[before:] + copies))
+
+    def board(self, transport):
+        """Wiring.board's Linear tracker, from the fixtures' team and roles."""
+        return linear_tracker.LinearTracker.of_team(transport, self.cfg.linear, TEAM_OBJ, ROLES)
 
     def mkg(self, ident, owner="o", name="n"):
         path = checkout_path(self.cfg.issue_workdir(ident), owner, name, ident)
@@ -445,7 +448,9 @@ class PruneScenario(Case):
         self.user_queries = 0
         before, err = (len(logged(self.logs)), io.StringIO())
         with redirect_stderr(err):
-            code = promote.main([], gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+            code = promote.main(
+                [], trackers=cli.TRACKERS, gql=gql, now=NOW, config_path=path, pruner=self.pruner
+            )
         self.events, self.err = (logged(self.logs)[before:], err.getvalue())
         return (code, fake.issues["DR-1"]["state"], "\n".join(show(e) for e in self.events))
 
