@@ -6,14 +6,14 @@ import io
 import os
 from unittest import mock
 
-from agent_pm.orchestrator.trackers.linear import issue_write, ops
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LinearError,
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import issue_write, ops
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.issue_fixtures import VIEWER, WriteGql, conn, team, write_issue
 

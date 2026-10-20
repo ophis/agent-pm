@@ -6,8 +6,8 @@ cannot hand on goes back to In Review with a comment saying why, and no next-sta
 import unittest
 from datetime import UTC, datetime, timedelta
 
+from agent_pm.orchestrator.engine.promote import GRACE, NO_INSTRUCTIONS
 from agent_pm.orchestrator.trackers.linear import ops
-from agent_pm.orchestrator.trackers.linear.promote import GRACE, NO_INSTRUCTIONS
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,

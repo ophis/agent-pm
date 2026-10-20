@@ -4,14 +4,14 @@ side, so `A --blocks B` and `B --blocked-by A` name the same edge; any other rel
 
 import subprocess
 
-from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write
-from agent_pm.orchestrator.trackers.linear.client import messages
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LinearError,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write
+from agent_pm.orchestrator.trackers.linear.client import messages
 
 # direction: the issue's connection holding the edge, and the field naming its other end
 SIDES = {"blocks": ("relations", "relatedIssue"), "blocked_by": ("inverseRelations", "issue")}

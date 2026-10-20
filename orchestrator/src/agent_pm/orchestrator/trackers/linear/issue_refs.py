@@ -7,17 +7,17 @@ IssueError with the candidates and the lookup command that lists them, never gue
 import re
 import shlex
 
-from agent_pm.orchestrator.engine.types import (
+from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
 )
-from agent_pm.orchestrator.trackers.linear import issue_page
-from agent_pm.orchestrator.trackers.linear.client import messages
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     UUID_RE,
     GraphQLErrors,
     IssueError,
     LinearError,
 )
+from agent_pm.orchestrator.trackers.linear import issue_page
+from agent_pm.orchestrator.trackers.linear.client import messages
 
 NOT_FOUND = "Entity not found"
 CANDIDATES = 10

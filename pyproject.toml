@@ -82,7 +82,7 @@ source_modules = ["agent_pm.orchestrator", "orchestrator_tests"]
 forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
 ignore_imports = [
-    "orchestrator_tests.unit.trackers.linear.writeback_test -> agent_pm.delegate.engine.types",
+    "orchestrator_tests.unit.engine.writeback_test -> agent_pm.delegate.engine.types",
     "orchestrator_tests.integration.promote_integration_test -> agent_pm.delegate.engine.config",
 ]
 
@@ -97,21 +97,22 @@ allow_indirect_imports = true
 name = "Linear transport, operations and reporting have one direction"
 type = "units"
 container = "agent_pm.orchestrator"
-units = ["agent_pm.orchestrator", "agent_pm.orchestrator.cli", "agent_pm.orchestrator.trackers", "agent_pm.orchestrator.trackers.linear", "agent_pm.orchestrator.trackers.linear.client", "agent_pm.orchestrator.trackers.linear.log", "agent_pm.orchestrator.trackers.linear.ops", "agent_pm.orchestrator.trackers.linear.issues", "agent_pm.orchestrator.trackers.linear.run_comments", "agent_pm.orchestrator.trackers.linear.types", "agent_pm.orchestrator.trackers.linear.linear_tracker", "agent_pm.orchestrator.engine", "agent_pm.orchestrator.engine.handoff", "agent_pm.orchestrator.engine.tracker", "agent_pm.orchestrator.engine.types", "agent_pm.orchestrator.engine.workflow"]
+units = ["agent_pm.orchestrator", "agent_pm.orchestrator.cli", "agent_pm.orchestrator.engine", "agent_pm.orchestrator.engine.log", "agent_pm.orchestrator.engine.issues", "agent_pm.orchestrator.engine.run_comments", "agent_pm.orchestrator.engine.types", "agent_pm.orchestrator.engine.flow", "agent_pm.orchestrator.engine.flow.handoff", "agent_pm.orchestrator.engine.flow.tracker", "agent_pm.orchestrator.engine.flow.types", "agent_pm.orchestrator.engine.flow.workflow", "agent_pm.orchestrator.trackers", "agent_pm.orchestrator.trackers.linear", "agent_pm.orchestrator.trackers.linear.client", "agent_pm.orchestrator.trackers.linear.ops", "agent_pm.orchestrator.trackers.linear.linear_tracker"]
 dependencies = [
-    "agent_pm.orchestrator -> agent_pm.orchestrator.trackers.linear",
-    "agent_pm.orchestrator.trackers.linear -> agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.log agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.linear.issues agent_pm.orchestrator.trackers.linear.run_comments agent_pm.orchestrator.trackers.linear.types agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.orchestrator.engine.handoff agent_pm.orchestrator.engine.tracker agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.workflow agent_pm.delegate agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.linear_tracker -> agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.linear.types agent_pm.orchestrator.engine.handoff agent_pm.orchestrator.engine.tracker agent_pm.orchestrator.engine.types agent_pm.utils",
-    "agent_pm.orchestrator.engine.handoff -> agent_pm.orchestrator.engine.types agent_pm.utils",
-    "agent_pm.orchestrator.engine.tracker -> agent_pm.orchestrator.engine.types",
-    "agent_pm.orchestrator.engine.workflow -> agent_pm.orchestrator.engine.types",
-    "agent_pm.orchestrator.trackers.linear.client -> agent_pm.orchestrator.trackers.linear.types agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.log -> agent_pm.orchestrator.trackers.linear.types agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.ops -> agent_pm.orchestrator.trackers.linear.types agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.issues -> agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.orchestrator.engine.handoff agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.workflow agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.run_comments -> agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.orchestrator.trackers.linear.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.orchestrator.trackers.linear.types -> agent_pm.orchestrator.engine.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.orchestrator.cli -> agent_pm.orchestrator.trackers.linear agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.log agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.linear.issues agent_pm.orchestrator.trackers.linear.run_comments agent_pm.orchestrator.trackers.linear.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator -> agent_pm.orchestrator.engine",
+    "agent_pm.orchestrator.engine -> agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.engine.flow.handoff -> agent_pm.orchestrator.engine.flow.types agent_pm.utils",
+    "agent_pm.orchestrator.engine.flow.tracker -> agent_pm.orchestrator.engine.flow.types",
+    "agent_pm.orchestrator.engine.flow.workflow -> agent_pm.orchestrator.engine.flow.types",
+    "agent_pm.orchestrator.engine.log -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.engine.issues -> agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.utils",
+    "agent_pm.orchestrator.engine.run_comments -> agent_pm.orchestrator.engine.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.engine.types -> agent_pm.orchestrator.engine.flow.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear -> agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.orchestrator.engine agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.linear_tracker -> agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.client -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.ops -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.cli -> agent_pm.orchestrator.engine agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.trackers.linear agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.delegate agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]
@@ -119,6 +120,16 @@ name = "engine imports no tracker"
 type = "forbidden"
 source_modules = ["agent_pm.orchestrator.engine"]
 forbidden_modules = ["agent_pm.orchestrator.trackers"]
+# the board rules' Linear wiring, until cli.py hands them their tracker
+ignore_imports = [
+    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.router -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.router -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.writeback -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+]
 
 [[tool.importlinter.contracts]]
 name = "orchestrator tests respect layer ownership"

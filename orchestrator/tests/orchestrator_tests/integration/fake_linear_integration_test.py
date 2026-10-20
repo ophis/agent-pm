@@ -11,14 +11,16 @@ from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.orchestrator.engine.types import Linked
+from agent_pm.orchestrator.engine import (
+    types,
+)
+from agent_pm.orchestrator.engine.flow.types import Linked
+from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import (
     client,
     linear_tracker,
     ops,
-    types,
 )
-from agent_pm.orchestrator.trackers.linear.types import LinearError
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear

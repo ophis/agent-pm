@@ -7,6 +7,7 @@ import io
 import os
 import re
 
+from agent_pm.orchestrator.engine.types import GraphQLErrors
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue,
@@ -17,7 +18,6 @@ from agent_pm.orchestrator.trackers.linear import (
     issue_relation,
     issue_write,
 )
-from agent_pm.orchestrator.trackers.linear.types import GraphQLErrors
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import TEAM

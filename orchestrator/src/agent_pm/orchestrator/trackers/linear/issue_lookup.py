@@ -2,8 +2,8 @@
 their fixed fields, every same-named one its own item; labels only those an issue can carry.
 """
 
+from agent_pm.orchestrator.engine.types import IssueError, Resource
 from agent_pm.orchestrator.trackers.linear import issue_refs
-from agent_pm.orchestrator.trackers.linear.types import IssueError, Resource
 
 
 def source(gql, args, team_id):

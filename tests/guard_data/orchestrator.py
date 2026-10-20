@@ -39,42 +39,42 @@ SUBPACKAGES = {
 
 
 # FR-25: the router only triggers a run; its Delegate's harness runs it and calls write-back back
-ORCH_ABSENT = ("trackers/linear/run.py",)
+ORCH_ABSENT = ("engine/run.py",)
 
 
 NOQA_ALLOWED = {
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/run_comments.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run_comments.py",
         "BLE001",
         "_bounded.run",
     ): "Forward failures to the caller thread.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/promote.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
         "BLE001",
         "Promoter.pending",
     ): "Keep reading the other handoffs.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/promote.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
         "BLE001",
         "Promoter.run",
     ): "Keep processing other handoffs.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/promote.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
         "BLE001",
         "run_prune",
     ): "Prune failures leave promotions intact.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/router.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
         "BLE001",
         "start_run",
     ): "A recorded launch may fail.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/writeback.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "progress",
     ): "A sink failure must not stop the run.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}trackers/linear/writeback.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "finish",
     ): "Report the session after failed steps.",
@@ -82,33 +82,34 @@ NOQA_ALLOWED = {
 
 
 OPTION_TUPLES_ALLOWED = {
-    (f"{ORCH_FILES}trackers/linear/log.py", "ONCE"): "the log fields keying a once-only line",
+    (f"{ORCH_FILES}engine/log.py", "ONCE"): "the log fields keying a once-only line",
     (
-        f"{ORCH_FILES}trackers/linear/prune.py",
+        f"{ORCH_FILES}engine/prune.py",
         "ARCHIVE_ROLES",
     ): "roles whose Done issues are archived",
 }
 
 
-CONFIG_PY = f"{ORCH_SRC}trackers/linear/config.py"
+CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 
 
 ENTRIES = (
     f"{ORCH_SRC}cli.py",
-    *(f"{ORCH_SRC}trackers/linear/{name}.py" for name in ("issue", "promote", "prune", "router")),
+    f"{ORCH_SRC}trackers/linear/issue.py",
+    *(f"{ORCH_SRC}engine/{name}.py" for name in ("promote", "prune", "router")),
 )
 
 
 ONCE = (
-    f"{ORCH_PKG}.trackers.linear.config.load",
-    f"{ORCH_PKG}.trackers.linear.log.use_logs",
+    f"{ORCH_PKG}.engine.config.load",
+    f"{ORCH_PKG}.engine.log.use_logs",
 )
 
 
 LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
 
 
-HANDOFF_HOME = f"{ORCH_SRC}engine/handoff.py"
+HANDOFF_HOME = f"{ORCH_SRC}engine/flow/handoff.py"
 
 
 COMMAND_SRC = (f"{ORCH_PROJECT}/{ORCH_SRC}",)
@@ -120,27 +121,37 @@ COMMAND_FILES = (f"{ORCH_PROJECT}/{ORCH_SRC}config.toml",)
 PYTHON_CODE_ALLOWED = {
     (
         "orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
-        "f280501cb853c1b3aba91eab98fb1b7e5494e52e76d374cfb4e5e1eb42b54aa5",
-    ): "Import-time globals and file opens of agent_pm.orchestrator.trackers.linear.config (no public re-export) observed in a fresh interpreter.",
+        "165041a70db533bfed166951878a0871c7046a00848c307694b076367a00e9a3",
+    ): "Import-time globals and file opens of agent_pm.orchestrator.engine.config (no public re-export) observed in a fresh interpreter.",
     (
         "orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
-        "a2d134686f81af24ad735e68cf9d621d9155acf872080a3b5980f242e6472d47",
-    ): "trackers.linear.config.load() in a copied-package deployment interpreter; no public loader, and CLI commands that load config go on to call Linear.",
+        "cb62981be5b0d5a55a5cfa67837751c7f47c06cdce91be9040a86171ef092469",
+    ): "engine.config.load() in a copied-package deployment interpreter; no public loader, and CLI commands that load config go on to call Linear.",
     (
         "orchestrator/tests/orchestrator_tests/integration/linear_run_extension_integration_test.py",
-        "4b5296e4b98e450496c5e9c0b2719a54289d75712aa80aa69f457228935b0d69",
-    ): "Creating a pipeline run with a config-loaded external Delegate needs trackers.linear.config.load() and runs.note; no public loader.",
+        "b76230139f6d7d55f790ce593752db41b91dc413ad66f2d4dd6be6fbe2cb378b",
+    ): "Creating a pipeline run with a config-loaded external Delegate needs engine.config.load() and runs.note; no public loader.",
 }
 
 
-# engine/ imports nothing under trackers/, directly or indirectly, with no exception
+# engine/ imports nothing under trackers/, directly or indirectly, but the board rules' Linear wiring
 ENGINE_CONTRACT = "engine imports no tracker"
+
+
+ENGINE_WIRING = frozenset(
+    f"{ORCH_PKG}.engine.{rule} -> {ORCH_PKG}.trackers.linear.{binding}"
+    for rule, bindings in (
+        ("promote", ("client", "linear_tracker")),
+        ("prune", ("client", "linear_tracker")),
+        ("router", ("client", "linear_tracker")),
+        ("writeback", ("linear_tracker",)),
+    )
+    for binding in bindings
+)
 
 
 GRAPHQL = re.compile(r"\b(?:query|mutation)\s*(?:\w+\s*)?(?:\(\s*\$|\{)")
 
 
-# Linear concepts engine/ names none of
-ENGINE_LINEAR = re.compile(
-    rf"{GRAPHQL.pattern}|linear|graphql|project|email|state id|label id", re.I
-)
+# Linear concepts engine/flow/, the tracker-agnostic core, names none of
+FLOW_LINEAR = re.compile(rf"{GRAPHQL.pattern}|linear|graphql|project|email|state id|label id", re.I)

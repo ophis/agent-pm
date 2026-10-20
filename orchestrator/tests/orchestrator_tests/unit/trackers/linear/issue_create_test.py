@@ -5,8 +5,7 @@ the commands that add it.
 
 from types import SimpleNamespace
 
-from agent_pm.orchestrator.trackers.linear import client, issue_create
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LinearError,
@@ -14,6 +13,7 @@ from agent_pm.orchestrator.trackers.linear.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import client, issue_create
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.issue_fixtures import (

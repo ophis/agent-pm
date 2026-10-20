@@ -17,7 +17,7 @@ class RealTree(Case):
             ".".join(path.relative_to(ORCH_ROOT).with_suffix("").parts).removesuffix(".__init__")
             for path in Path(package).rglob("*.py")
         )
-        self.assertIn("agent_pm.orchestrator.trackers.linear.router", names)
+        self.assertIn("agent_pm.orchestrator.engine.router", names)
         out = subprocess.run(
             [*PY, "-c", PROBE, *names],
             env=child_env(),

@@ -3,10 +3,10 @@ issue and every unarchived descendant are finished, read over every children pag
 first; a failed read raises before anything is written.
 """
 
+from agent_pm.orchestrator.engine.types import ArchiveRefused, LinearError
 from agent_pm.orchestrator.trackers.linear import issue_page, issue_read, issue_write
 from agent_pm.orchestrator.trackers.linear.linear_tracker import M_ARCHIVE
 from agent_pm.orchestrator.trackers.linear.ops import DONE
-from agent_pm.orchestrator.trackers.linear.types import ArchiveRefused, LinearError
 
 SHOWN = 20
 _NODE = "id identifier state { name type }"

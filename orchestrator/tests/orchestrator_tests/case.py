@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import agent_pm
-from agent_pm.orchestrator.trackers.linear import log
+from agent_pm.orchestrator.engine import log
 
 from utils.tests.sandbox import clean_env, project_roots
 

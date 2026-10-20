@@ -10,8 +10,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.orchestrator import cli
+from agent_pm.orchestrator.engine.types import GraphQLErrors, LinearError, Unavailable
 from agent_pm.orchestrator.trackers.linear import client, issue
-from agent_pm.orchestrator.trackers.linear.types import GraphQLErrors, LinearError, Unavailable
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp

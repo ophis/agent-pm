@@ -2,8 +2,8 @@
 candidates and the lookup command.
 """
 
+from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError
 from agent_pm.orchestrator.trackers.linear import issue_refs
-from agent_pm.orchestrator.trackers.linear.types import GraphQLErrors, IssueError, LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.issue_fixtures import (

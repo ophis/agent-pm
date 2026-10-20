@@ -1,7 +1,7 @@
 """issue_page: a connection's page by edge, and every page."""
 
+from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import issue_page, issue_refs
-from agent_pm.orchestrator.trackers.linear.types import LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.issue_fixtures import Routes, edges, team_ref
 

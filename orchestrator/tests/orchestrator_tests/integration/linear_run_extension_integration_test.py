@@ -49,7 +49,7 @@ class NewDefault(ExtensionDelegate):
 
 START = """import sys
 from agent_pm.orchestrator import LinearRun
-from agent_pm.orchestrator.trackers.linear import config, runs
+from agent_pm.orchestrator.engine import config, runs
 issue, sid = sys.argv[1:]
 cfg = config.load()
 owner = LinearRun(issue, "Echo.", cfg.issue_workdir(issue), cfg=cfg, role="engineer", sid=sid, display="opaque display")

@@ -11,45 +11,45 @@ OPKG = "src/agent_pm/orchestrator"
 
 
 class ConfigOnce(Sample):
-    LOAD = "calls agent_pm.orchestrator.trackers.linear.config.load outside an entry main"
-    USE_LOGS = "calls agent_pm.orchestrator.trackers.linear.log.use_logs outside an entry main"
+    LOAD = "calls agent_pm.orchestrator.engine.config.load outside an entry main"
+    USE_LOGS = "calls agent_pm.orchestrator.engine.log.use_logs outside an entry main"
 
     def test_load_use_logs_and_load_helpers_outside_an_entry_main_or_config_py(self):
         for files, expected in (
             (
                 {
-                    f"{OPKG}/trackers/linear/prune.py": "from agent_pm.orchestrator.trackers.linear import config\nfrom agent_pm.orchestrator.trackers.linear import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
-                    f"{OPKG}/trackers/linear/writeback.py": (
-                        "from agent_pm.orchestrator.trackers.linear import config\nfrom agent_pm.orchestrator.trackers.linear.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
+                    f"{OPKG}/engine/prune.py": "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                    f"{OPKG}/engine/writeback.py": (
+                        "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
                     ),
-                    f"{OPKG}/trackers/linear/promote.py": (
-                        "import agent_pm.orchestrator.trackers.linear.config as c\n\nclass P:\n    def main(self):\n        c.load()\n"
+                    f"{OPKG}/engine/promote.py": (
+                        "import agent_pm.orchestrator.engine.config as c\n\nclass P:\n    def main(self):\n        c.load()\n"
                     ),
-                    "src/run.py": "import agent_pm.orchestrator.trackers.linear.config\n\ndef main():\n    agent_pm.orchestrator.trackers.linear.config.load()\n",
+                    "src/run.py": "import agent_pm.orchestrator.engine.config\n\ndef main():\n    agent_pm.orchestrator.engine.config.load()\n",
                 },
                 [
-                    f"{OPKG}/trackers/linear/promote.py:5: {self.LOAD}",
-                    f"{OPKG}/trackers/linear/prune.py:8: {self.LOAD}",
-                    f"{OPKG}/trackers/linear/writeback.py:5: {self.LOAD}",
-                    f"{OPKG}/trackers/linear/writeback.py:6: {self.USE_LOGS}",
+                    f"{OPKG}/engine/promote.py:5: {self.LOAD}",
+                    f"{OPKG}/engine/prune.py:8: {self.LOAD}",
+                    f"{OPKG}/engine/writeback.py:5: {self.LOAD}",
+                    f"{OPKG}/engine/writeback.py:6: {self.USE_LOGS}",
                     f"src/run.py:4: {self.LOAD}",
                 ],
             ),
             (
                 {
-                    f"{OPKG}/trackers/linear/run.py": (
-                        "from agent_pm.orchestrator.trackers.linear import config\nconfig._runnable(1)\n"
+                    f"{OPKG}/engine/run.py": (
+                        "from agent_pm.orchestrator.engine import config\nconfig._runnable(1)\n"
                     ),
-                    f"{OPKG}/trackers/linear/config.py": (
+                    f"{OPKG}/engine/config.py": (
                         "def _runnable():\n    pass\n\ndef load():\n    _runnable()\n    _docs()\n    _load_config()\n"
                     ),
-                    f"{OPKG}/trackers/linear/promote.py": (
-                        "from agent_pm.orchestrator.trackers.linear import config\nfrom agent_pm.orchestrator.trackers.linear import log as linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
+                    f"{OPKG}/engine/promote.py": (
+                        "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine import log as linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
                     ),
                     "src/config.py": "def load():\n    _runnable()\n",
                 },
                 [
-                    f"{OPKG}/trackers/linear/run.py:2: calls agent_pm.orchestrator.trackers.linear.config._runnable",
+                    f"{OPKG}/engine/run.py:2: calls agent_pm.orchestrator.engine.config._runnable",
                     "src/config.py:2: calls _runnable",
                 ],
             ),
@@ -68,7 +68,7 @@ class ConfigOnce(Sample):
         files = {}
         for name in ("promote.py", "prune.py"):
             with open(
-                os.path.join(ORCH_ROOT, "agent_pm", "orchestrator", "trackers", "linear", name),
+                os.path.join(ORCH_ROOT, "agent_pm", "orchestrator", "engine", name),
                 encoding="utf-8",
             ) as f:
                 files[f"{OPKG}/not_{name}"] = f.read()

@@ -5,7 +5,7 @@ dotted path of the data, and shape maps a node to (item, cut fields) or None to 
 
 import functools
 
-from agent_pm.orchestrator.trackers.linear.types import LinearError
+from agent_pm.orchestrator.engine.types import LinearError
 
 PAGE = 250
 PAGE_INFO = "pageInfo { hasNextPage endCursor }"

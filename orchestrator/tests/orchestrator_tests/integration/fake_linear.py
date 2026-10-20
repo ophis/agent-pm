@@ -18,13 +18,15 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from agent_pm.orchestrator.engine import (
+    types,
+)
+from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import (
     client,
     linear_tracker,
     ops,
-    types,
 )
-from agent_pm.orchestrator.trackers.linear.types import LinearError
 from orchestrator_tests.integration.fixture_errors import Problem
 from orchestrator_tests.unit.board_ids import STATES, TEAM
 

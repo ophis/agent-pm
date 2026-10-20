@@ -159,17 +159,17 @@ class OrchestratorLayout(Sample):
             (
                 {
                     f"{ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
-                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/router.py": 'if __name__ == "__main__": pass\n',
+                    f"{ORCH_PROJECT}/{OPKG}/engine/router.py": 'if __name__ == "__main__": pass\n',
                 },
-                [f"{ORCH_PROJECT}/{OPKG}/trackers/linear/router.py:1: entry outside cli.py"],
+                [f"{ORCH_PROJECT}/{OPKG}/engine/router.py:1: entry outside cli.py"],
             ),
             (
                 {
                     f"{ORCH_PROJECT}/{OPKG}/cli.py": "",
-                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/run.py": "from agent_pm import delegate\n",
+                    f"{ORCH_PROJECT}/{OPKG}/engine/run.py": "from agent_pm import delegate\n",
                 },
                 [
-                    f"{ORCH_PROJECT}/{OPKG}/trackers/linear/run.py: no such module: a run is its Delegate's"
+                    f"{ORCH_PROJECT}/{OPKG}/engine/run.py: no such module: a run is its Delegate's"
                     " harness (FR-25)"
                 ],
             ),

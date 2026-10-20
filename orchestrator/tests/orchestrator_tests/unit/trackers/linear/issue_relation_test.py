@@ -2,14 +2,14 @@
 once, every other relation left alone.
 """
 
-from agent_pm.orchestrator.trackers.linear import issue_read, issue_relation
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LinearError,
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import issue_read, issue_relation
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.unit.issue_fixtures import VIEWER, RelationGql, SecondFails, uid

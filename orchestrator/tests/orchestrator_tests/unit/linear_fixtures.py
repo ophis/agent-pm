@@ -9,8 +9,9 @@ import urllib.request
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.orchestrator.trackers.linear import client, log, ops
-from agent_pm.orchestrator.trackers.linear.types import LinearError
+from agent_pm.orchestrator.engine import log
+from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.trackers.linear import client, ops
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import STATES
 from orchestrator_tests.unit.streams import Stderr

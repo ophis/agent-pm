@@ -2,7 +2,7 @@
 
 import contextlib
 
-from agent_pm.orchestrator.trackers.linear import log
+from agent_pm.orchestrator.engine import log
 
 
 @contextlib.contextmanager

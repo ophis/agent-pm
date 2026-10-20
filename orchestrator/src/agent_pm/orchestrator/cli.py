@@ -9,20 +9,22 @@ from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DelegateEvent, SessionError
-from agent_pm.orchestrator.trackers.linear import (
-    client,
-    issue,
+from agent_pm.orchestrator.engine import log as event_log
+from agent_pm.orchestrator.engine import (
     promote,
     prune,
     router,
     runs,
     writeback,
 )
-from agent_pm.orchestrator.trackers.linear import log as event_log
-from agent_pm.orchestrator.trackers.linear.config import load
-from agent_pm.orchestrator.trackers.linear.gate import Gate
-from agent_pm.orchestrator.trackers.linear.linear_run import LinearRun
-from agent_pm.orchestrator.trackers.linear.types import ConfigError
+from agent_pm.orchestrator.engine.config import load
+from agent_pm.orchestrator.engine.gate import Gate
+from agent_pm.orchestrator.engine.linear_run import LinearRun
+from agent_pm.orchestrator.engine.types import ConfigError
+from agent_pm.orchestrator.trackers.linear import (
+    client,
+    issue,
+)
 from agent_pm.utils import (
     SID_ENV,
     Record,

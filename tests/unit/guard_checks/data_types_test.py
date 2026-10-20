@@ -40,21 +40,21 @@ class SharedTypes(Sample):
                 self.assertEqual(self.found(home, user), expected)
 
     def test_orchestrator_issue_data_types_have_no_exemption(self):
-        home = "orchestrator/src/agent_pm/orchestrator/trackers/linear"
+        home = "orchestrator/src/agent_pm/orchestrator/engine"
         for name in ("Issue", "Handoff", "Note", "Link", "Linked"):
             with self.subTest(name=name):
                 root = self.tree(
                     {
                         f"{home}/issues.py": self.DATA.replace("class A:", f"class {name}:"),
                         f"{home}/writeback.py": (
-                            f"from agent_pm.orchestrator.trackers.linear.issues import {name}\n"
+                            f"from agent_pm.orchestrator.engine.issues import {name}\n"
                         ),
                     }
                 )
                 self.assertEqual(
                     data_types.shared_types(root),
                     [
-                        f"{home}/writeback.py:1: agent_pm.orchestrator.trackers.linear.issues.{name}: a shared data type belongs in a types.py"
+                        f"{home}/writeback.py:1: agent_pm.orchestrator.engine.issues.{name}: a shared data type belongs in a types.py"
                     ],
                 )
 
@@ -251,7 +251,7 @@ class TypesOnly(Sample):
 
 class RunSpecSerialization(Sample):
     def test_serialization_belongs_to_the_run_spec_alone(self):
-        spec = f"{ORCH_PROJECT}/{OPKG}/trackers/linear/types.py"
+        spec = f"{ORCH_PROJECT}/{OPKG}/engine/types.py"
         for path, source, expected in (
             (
                 spec,

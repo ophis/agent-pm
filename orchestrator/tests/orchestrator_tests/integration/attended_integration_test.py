@@ -14,7 +14,7 @@ import os
 import subprocess
 import unittest
 
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 from agent_pm.utils import Record
 from orchestrator_tests.case import REPO
 from orchestrator_tests.integration.flow_fixtures import (

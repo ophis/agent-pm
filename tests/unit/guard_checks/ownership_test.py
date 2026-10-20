@@ -140,7 +140,7 @@ class OrchestratorText(Sample):
             ),
             (
                 {
-                    f"{OPKG}/engine/handoff.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                    f"{OPKG}/engine/flow/handoff.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
                     f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
                     f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
                     "src/issues.py": 'H = "Handoff from"\n',
@@ -169,7 +169,7 @@ class Standalone(Sample):
             {
                 "delegate/src/agent_pm/delegate/config.toml": "# see ../orchestrator/\n",
                 f"{team}/roles/r.md": (
-                    "x\nRun agent_pm.orchestrator.trackers.linear.run, not orchestrator/cli.py\n"
+                    "x\nRun agent_pm.orchestrator.engine.run, not orchestrator/cli.py\n"
                 ),
                 f"session/{PKG}/session/x.py": "import agent_pm.orchestrator\n",
                 f"utils/{PKG}/utils/y.py": "# [orchestrator] team\n",

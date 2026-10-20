@@ -94,7 +94,7 @@ TAIL = 20
 
 GUARD = (
     "import json, shutil, sys\n"
-    "from agent_pm.orchestrator.trackers.linear import config\n"
+    "from agent_pm.orchestrator.engine import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
 

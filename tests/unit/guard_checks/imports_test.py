@@ -52,9 +52,7 @@ class OrchestratorSessionImports(Sample):
         config = Path(REPO, "pyproject.toml").read_text()
         contract = f'name = "{ORCH_SESSION_CONTRACT}"\n'
         self.assertIn(contract, config)
-        edge = (
-            'ignore_imports = ["agent_pm.orchestrator.trackers.linear.prune -> agent_pm.session"]\n'
-        )
+        edge = 'ignore_imports = ["agent_pm.orchestrator.engine.prune -> agent_pm.session"]\n'
         config = config.replace(contract, contract + edge, 1)
         self.assertEqual(
             self.check("engine/prune.py", "", config),
@@ -88,7 +86,7 @@ class OrchestratorImports(Sample):
                     "from agent_pm import delegate\ndelegate.ConfigError\n",
                     "from agent_pm.utils import Record\nimport agent_pm.utils\n",
                     "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
-                    "from agent_pm.orchestrator.trackers.linear import runs\nfrom . import log\n",
+                    "from agent_pm.orchestrator.engine import runs\nfrom . import log\n",
                 )
             ),
             *(
@@ -126,7 +124,7 @@ class OrchestratorImports(Sample):
                 )
                 for sample in (
                     "from agent_pm.orchestrator import LinearRun\n",
-                    "import agent_pm.orchestrator.trackers.linear.runs\n",
+                    "import agent_pm.orchestrator.engine.runs\n",
                     "from agent_pm import orchestrator\n",
                     "import agent_pm\nagent_pm.orchestrator.LinearRun\n",
                 )

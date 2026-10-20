@@ -179,7 +179,7 @@ def _type_methods(project, rel, node, kind, bound):
         }
         if (
             project == ORCH_PROJECT
-            and rel == ORCH_SRC.removeprefix("src/") + "trackers/linear/types.py"
+            and rel == ORCH_SRC.removeprefix("src/") + "engine/types.py"
             and node.name == "Spec"
             and method.name == "to_argv"
             and kind == "dataclass"

@@ -11,8 +11,9 @@ import re
 import unittest
 from urllib.parse import unquote
 
-from agent_pm.orchestrator.engine import handoff
-from agent_pm.orchestrator.trackers.linear import config, ops
+from agent_pm.orchestrator.engine import config
+from agent_pm.orchestrator.engine.flow import handoff
+from agent_pm.orchestrator.trackers.linear import ops
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
 from orchestrator_tests.integration.segments import BUILD, REPORT, Segment

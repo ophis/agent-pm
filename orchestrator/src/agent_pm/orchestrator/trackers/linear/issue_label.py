@@ -3,8 +3,8 @@ names only those two (addedLabelIds, removedLabelIds), so every other label stay
 issue carries neither, or the new one would join a label group the issue already holds another of.
 """
 
+from agent_pm.orchestrator.engine.types import IssueError, LabelRefused, LinearError
 from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write
-from agent_pm.orchestrator.trackers.linear.types import IssueError, LabelRefused, LinearError
 
 
 def _labels(after=""):

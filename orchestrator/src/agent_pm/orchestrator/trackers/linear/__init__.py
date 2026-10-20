@@ -1,1 +1,1 @@
-"""The Linear tracker: its adapter and issue commands, and the router, promote, prune and write-back still bound to it."""
+"""The Linear tracker: its adapter, GraphQL client and operations, and the issue commands."""

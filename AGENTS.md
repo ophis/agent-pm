@@ -5,7 +5,7 @@ Test boundaries and commands: `docs/tests.md`.
 ## Gotchas
 
 - This file never loads in an agent run outside a trusted cwd (`docs/sessions.md` › Session settings). An agent run reaches only its cwd, `<work_dir>/work/<ID>/agent/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
-- Input rendering and write-back changes: `orchestrator/tests/orchestrator_tests/unit/trackers/linear/inputs_test.py` and `orchestrator/tests/orchestrator_tests/unit/trackers/linear/writeback_test.py` pin input text and Linear calls.
+- Input rendering and write-back changes: `orchestrator/tests/orchestrator_tests/unit/engine/inputs_test.py` and `orchestrator/tests/orchestrator_tests/unit/engine/writeback_test.py` pin input text and Linear calls.
 - Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`delegate/tests/unit/team_test.py` checks): without the start report the Delegate logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in the team text (`delegate/src/agent_pm/delegate/team/`) or in `/agent-pm:act-as` and `/agent-pm:manage`: only `/agent-pm:linear` (`orchestrator/skills/linear/SKILL.md`), the Linear layer's skill, does.
 - Skills and `config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:act-as`), never "the act-as skill" or `agent-pm:act-as`.
@@ -29,7 +29,7 @@ Test boundaries and commands: `docs/tests.md`.
 
 ## Import rules
 
-Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package; exact test exceptions for removed exports are listed in `pyproject.toml`. Orchestration reaches session only through Delegate: its contract ignores no import. Orchestrator `engine/` (tracker-agnostic) imports nothing under `trackers/` (one subpackage per tracker; Linear: `trackers/linear/`). Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package; exact test exceptions for removed exports are listed in `pyproject.toml`. Orchestration reaches session only through Delegate: its contract ignores no import. Orchestrator `engine/` imports nothing under `trackers/` (one subpackage per tracker; Linear: `trackers/linear/`) but the board rules' Linear wiring its contract lists; `engine/flow/`, its tracker-agnostic core, names no Linear concept. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
 Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guard_checks/` enforces those names and literal dynamic imports.
 

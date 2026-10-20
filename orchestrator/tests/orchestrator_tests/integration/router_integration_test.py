@@ -13,7 +13,7 @@ import subprocess
 import sys
 import unittest
 
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 from orchestrator_tests.case import PYTHONPATH
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,

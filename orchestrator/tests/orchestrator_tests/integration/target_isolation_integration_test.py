@@ -4,7 +4,7 @@ import os
 import shutil
 import tempfile
 
-from agent_pm.orchestrator.trackers.linear import target
+from agent_pm.orchestrator.engine import target
 from agent_pm.utils import SHORT, checkout
 from orchestrator_tests.case import Case
 from orchestrator_tests.target_fixtures import LOCAL

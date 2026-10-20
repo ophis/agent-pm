@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm import delegate
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 from agent_pm.utils import GUARD, SHORT
 from orchestrator_tests.case import ORCH_ROOT, PY, REPO, Case, child_env
 from orchestrator_tests.config_fixtures import (
@@ -32,7 +32,7 @@ from utils.tests.sandbox import clean_env, git
 IMPORT_ALONE = """import json, os, sys
 opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 import agent_pm.session
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
@@ -45,7 +45,7 @@ print(json.dumps({
 
 
 DEPLOYED_LOAD = """import json, sys
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 cfg = config.load()
 if sys.argv[1:] == ["gate"]:
     print(json.dumps(cfg.roles["researcher"].run.gate))

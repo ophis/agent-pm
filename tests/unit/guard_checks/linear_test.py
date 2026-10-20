@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tests.case import REPO
 from tests.guard_checks import linear
-from tests.guard_data.orchestrator import ENGINE_CONTRACT, ORCH_FILES, ORCH_PKG
+from tests.guard_data.orchestrator import ENGINE_CONTRACT, ENGINE_WIRING, ORCH_FILES, ORCH_PKG
 from tests.guard_samples import Sample
 
 
@@ -65,6 +65,7 @@ class EnumComparisons(Sample):
 
 
 ENGINE = f"{ORCH_FILES}engine/"
+FLOW = f"{ENGINE}flow/"
 TRACKERS = f"{ORCH_FILES}trackers/"
 
 
@@ -96,6 +97,11 @@ class EngineTrackerContract(Sample):
     def test_a_contract_forbidding_trackers_from_engine_passes(self):
         self.assertEqual(self.check(contract()), [])
 
+    def test_a_listed_wiring_edge_may_be_ignored(self):
+        for edge in sorted(ENGINE_WIRING):
+            with self.subTest(edge=edge):
+                self.assertEqual(self.check(contract(ignore=edge)), [])
+
     def test_a_missing_or_weakened_contract_is_reported(self):
         for config, error in (
             (contract(name="other"), f"no contract named {ENGINE_CONTRACT!r}"),
@@ -109,8 +115,8 @@ class EngineTrackerContract(Sample):
             ),
             (contract(indirect=True), f"{ENGINE_CONTRACT!r} must not allow indirect imports"),
             (
-                contract(ignore=f"{ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.types"),
-                f"{ENGINE_CONTRACT!r} must ignore no import",
+                contract(ignore=f"{ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops"),
+                f"{ENGINE_CONTRACT!r} must not ignore {ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops",
             ),
         ):
             with self.subTest(error=error):
@@ -123,7 +129,7 @@ class EngineTrackerContract(Sample):
         self.assertEqual(found["source_modules"], [f"{ORCH_PKG}.engine"])
 
 
-class EngineNamesNoLinear(Sample):
+class FlowNamesNoLinear(Sample):
     def test_linear_concepts_and_query_text_are_reported(self):
         for line, match in (
             ("project: str", "project"),
@@ -136,24 +142,25 @@ class EngineNamesNoLinear(Sample):
             ('M = "mutation { x }"', "mutation {"),
         ):
             with self.subTest(line=line):
-                root = self.tree({f"{ENGINE}types.py": f"X = 1\n{line}\n"})
+                root = self.tree({f"{FLOW}types.py": f"X = 1\n{line}\n"})
                 self.assertEqual(
-                    linear.engine_names_no_linear(root),
-                    [f"{ENGINE}types.py:2: engine names a Linear concept: {match}"],
+                    linear.flow_names_no_linear(root),
+                    [f"{FLOW}types.py:2: flow names a Linear concept: {match}"],
                 )
 
     def test_package_paths_toml_and_other_trees(self):
         root = self.tree(
             {
-                f"{ENGINE}workflow.py": 'REL = "orchestrator/src/agent_pm/orchestrator/x"\n',
-                f"{ENGINE}workflow.toml": "# [orchestrator.roles] project\n",
+                f"{FLOW}workflow.py": 'REL = "orchestrator/src/agent_pm/orchestrator/x"\n',
+                f"{FLOW}workflow.toml": "# [orchestrator.roles] project\n",
+                f"{ENGINE}router.py": "# the Linear project\n",
                 f"{TRACKERS}linear/ops.py": 'Q = "query { project { id } }"\n',
             }
         )
         self.assertEqual(
-            linear.engine_names_no_linear(root),
-            [f"{ENGINE}workflow.toml:1: engine names a Linear concept: project"],
+            linear.flow_names_no_linear(root),
+            [f"{FLOW}workflow.toml:1: flow names a Linear concept: project"],
         )
 
-    def test_real_engine_names_no_linear_concept(self):
-        self.assertEqual(linear.engine_names_no_linear(REPO), [])
+    def test_real_flow_names_no_linear_concept(self):
+        self.assertEqual(linear.flow_names_no_linear(REPO), [])

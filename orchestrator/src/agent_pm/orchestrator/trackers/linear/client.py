@@ -7,7 +7,7 @@ import subprocess
 import urllib.error
 import urllib.request
 
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     KeychainError,
     LinearError,

@@ -6,8 +6,9 @@ import urllib.request
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.orchestrator.trackers.linear import client, ops, types
-from agent_pm.orchestrator.trackers.linear.types import LinearError
+from agent_pm.orchestrator.engine import types
+from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.trackers.linear import client, ops
 from agent_pm.utils import one_line
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM

@@ -7,9 +7,7 @@ made, and RelationsFailed names the commands that add only the failed ones.
 import shlex
 import subprocess
 
-from agent_pm.orchestrator.trackers.linear import issue_refs, issue_write, ops
-from agent_pm.orchestrator.trackers.linear.client import messages
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LinearError,
@@ -17,6 +15,8 @@ from agent_pm.orchestrator.trackers.linear.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import issue_refs, issue_write, ops
+from agent_pm.orchestrator.trackers.linear.client import messages
 
 BACKLOG = "Backlog"
 ERROR_CHARS = 200

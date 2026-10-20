@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from agent_pm.delegate import Delegate
-from agent_pm.orchestrator.trackers.linear import config
+from agent_pm.orchestrator.engine import config
 from agent_pm.utils import load_class
 from orchestrator_tests.unit.board_ids import HEADER, role
 

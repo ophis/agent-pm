@@ -62,7 +62,7 @@ class PythonCommands(Sample):
                     "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                     "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
                     f"{team}/roles/r.md": (
-                        "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.orchestrator.trackers.linear.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n7. `python3 -P <role team>/tools/x.py`\n"
+                        "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.orchestrator.engine.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n7. `python3 -P <role team>/tools/x.py`\n"
                     ),
                 },
                 [

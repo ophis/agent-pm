@@ -2,8 +2,7 @@
 only those two, every other label kept, a label group never holding two.
 """
 
-from agent_pm.orchestrator.trackers.linear import issue_label, issue_read
-from agent_pm.orchestrator.trackers.linear.types import (
+from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
     LabelRefused,
@@ -11,6 +10,7 @@ from agent_pm.orchestrator.trackers.linear.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.trackers.linear import issue_label, issue_read
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.issue_fixtures import OTHER_TEAM, VIEWER, LabelGql, label, uid

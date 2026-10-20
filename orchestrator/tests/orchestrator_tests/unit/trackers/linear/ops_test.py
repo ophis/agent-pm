@@ -2,8 +2,9 @@
 
 from types import SimpleNamespace
 
-from agent_pm.orchestrator.trackers.linear import linear_tracker, ops, types
-from agent_pm.orchestrator.trackers.linear.types import LinearError, Stopped
+from agent_pm.orchestrator.engine import types
+from agent_pm.orchestrator.engine.types import LinearError, Stopped
+from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import (

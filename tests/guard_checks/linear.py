@@ -1,11 +1,17 @@
-"""The orchestrator's own rules: enum comparisons, and engine/ kept free of trackers and Linear."""
+"""The orchestrator's own rules: enum comparisons, engine/ kept free of trackers and engine/flow/ of Linear."""
 
 import ast
 import os
 import tomllib
 
 from tests.guard_checks.common import _files
-from tests.guard_data.orchestrator import ENGINE_CONTRACT, ENGINE_LINEAR, ORCH_FILES, ORCH_PKG
+from tests.guard_data.orchestrator import (
+    ENGINE_CONTRACT,
+    ENGINE_WIRING,
+    FLOW_LINEAR,
+    ORCH_FILES,
+    ORCH_PKG,
+)
 
 
 def linear_enum_comparisons(repo: str) -> list[str]:
@@ -57,15 +63,19 @@ def engine_tracker_contract(repo: str) -> list[str]:
         errors.append(f"pyproject.toml: {ENGINE_CONTRACT!r} must forbid {ORCH_PKG}.trackers")
     if found.get("allow_indirect_imports"):
         errors.append(f"pyproject.toml: {ENGINE_CONTRACT!r} must not allow indirect imports")
-    if found.get("ignore_imports"):
-        errors.append(f"pyproject.toml: {ENGINE_CONTRACT!r} must ignore no import")
+    errors.extend(
+        f"pyproject.toml: {ENGINE_CONTRACT!r} must not ignore {edge}"
+        for edge in sorted(set(found.get("ignore_imports", ())) - ENGINE_WIRING)
+    )
     return errors
 
 
-def engine_names_no_linear(repo: str) -> list[str]:
+def flow_names_no_linear(repo: str) -> list[str]:
     found = []
-    for rel, text in _files(os.path.join(repo, ORCH_FILES, "engine"), (".py", ".toml")):
+    for rel, text in _files(os.path.join(repo, ORCH_FILES, "engine", "flow"), (".py", ".toml")):
         for n, line in enumerate(text.splitlines(), 1):
-            if m := ENGINE_LINEAR.search(line):
-                found.append(f"{ORCH_FILES}engine/{rel}:{n}: engine names a Linear concept: {m[0]}")
+            if m := FLOW_LINEAR.search(line):
+                found.append(
+                    f"{ORCH_FILES}engine/flow/{rel}:{n}: flow names a Linear concept: {m[0]}"
+                )
     return found
