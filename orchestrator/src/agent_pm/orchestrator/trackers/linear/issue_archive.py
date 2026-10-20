@@ -4,7 +4,7 @@ first; a failed read raises before anything is written.
 """
 
 from agent_pm.orchestrator.engine.types import ArchiveRefused, LinearError
-from agent_pm.orchestrator.trackers.linear import issue_page, issue_read, issue_write
+from agent_pm.orchestrator.trackers.linear import issue_read, issue_write, ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import M_ARCHIVE
 from agent_pm.orchestrator.trackers.linear.ops import DONE
 
@@ -82,9 +82,7 @@ def _all_children(gql, ident, parent):
     page, seen = _checked(ident, parent, first), set()
     nodes = list(page["nodes"])
     while page["pageInfo"]["hasNextPage"]:
-        after = issue_page.advance(
-            f"{parent['identifier']} children", page["pageInfo"]["endCursor"], seen
-        )
+        after = ops.advance(f"{parent['identifier']} children", page["pageInfo"]["endCursor"], seen)
         page = _checked(ident, parent, _page(gql, parent, after))
         nodes += page["nodes"]
     return nodes
@@ -95,7 +93,7 @@ def _page(gql, parent, after):
 
 
 def _checked(ident, parent, page):
-    if issue_read.is_page(page):
+    if ops.is_page(page):
         return page
     raise LinearError(
         f"archive {ident}: sub-issues of {parent['identifier']} unreadable "

@@ -4,7 +4,7 @@ issue carries neither, or the new one would join a label group the issue already
 """
 
 from agent_pm.orchestrator.engine.types import IssueError, LabelRefused, LinearError
-from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write
+from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write, ops
 
 
 def _labels(after=""):
@@ -68,7 +68,7 @@ def _all(gql, ident, node):
     while page["pageInfo"]["hasNextPage"]:
         after = page["pageInfo"]["endCursor"]
         page = (gql(Q_MORE, i=node["id"], c=after)["issue"] or {}).get("labels")
-        if not issue_read.is_page(page):
+        if not ops.is_page(page):
             raise LinearError(f"{ident}: labels page missing: deleted mid-read?")
         labels += page["nodes"]
     return labels
