@@ -1115,6 +1115,7 @@ class CrewTest(Case):
                         "AGENT_PM_MANAGER": "parent",
                         "AGENT_PM_HOLDER_ID": lease.id,
                         "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
+                        "AGENT_PM_HOLDER_PID": str(os.getpid()),
                     },
                 ),
                 mock.patch("subprocess.Popen", wraps=subprocess.Popen) as popen,
@@ -1122,7 +1123,12 @@ class CrewTest(Case):
                 record = crew.run(Spec("worker", (self.command, "start", "worker")))
             env = popen.call_args.kwargs["env"]
             self.assertEqual(env["AGENT_PM_SID"], record.sid)
-            for key in ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"):
+            for key in (
+                "AGENT_PM_MANAGER",
+                "AGENT_PM_HOLDER_ID",
+                "AGENT_PM_HOLDER_GENERATION",
+                "AGENT_PM_HOLDER_PID",
+            ):
                 self.assertNotIn(key, env)
 
 
