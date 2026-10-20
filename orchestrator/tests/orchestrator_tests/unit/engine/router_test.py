@@ -27,7 +27,13 @@ from agent_pm.orchestrator.engine import (
 )
 from agent_pm.orchestrator.engine import gate as quota
 from agent_pm.orchestrator.engine.flow.types import IssueState, Pick
-from agent_pm.orchestrator.engine.types import LinearError, Spec, Unavailable
+from agent_pm.orchestrator.engine.types import (
+    LinearError,
+    Spec,
+    TrackerFileError,
+    TrackerKind,
+    Unavailable,
+)
 from agent_pm.orchestrator.trackers.linear import (
     client,
     linear_tracker,
@@ -2186,6 +2192,71 @@ class RunBrake(Base):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.brake("researcher"), (0, "five_hour=70% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["a"])
+
+
+LOCAL = CONFIG.replace('tracker = "linear"\n', 'tracker = "local"\n')
+
+
+class BrokenBoard:
+    """A tracker whose board holds an issue file it cannot parse."""
+
+    def assigned(self, state):
+        return []
+
+    def ready(self):
+        raise TrackerFileError("/board/researcher/ready/x.md", "no front matter")
+
+
+class LocalBoard(TickBase):
+    """Spec AC9 and AC11 in the router: the tracker comes from main's Connect map by kind."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ[config.BOARD_ENV] = os.path.join(self.tmp, "board")
+        self.write_config(LOCAL)
+        self.connects = []
+
+    def connect(self, gql, cfg, *, say):
+        self.connects.append(cfg.tracker)
+        return BrokenBoard()
+
+    def on_local(self, fake, *argv, **kw):
+        return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: self.connect}, **kw)
+
+    def test_local_refuses_non_dry(self):
+        for argv in ([], ["--now"], ["--issue", "TASK-1"], ["--tui", "--events", "e"]):
+            with self.subTest(argv=argv):
+                fake = self.fake(issue("TASK-1", "Todo", "researcher"))
+                self.assertEqual(self.on_local(fake, *argv), 2)
+                self.assertEqual(
+                    self.err, 'router.py: tracker "local" runs only --dry-run and --brake\n'
+                )
+                self.assertEqual((self.connects, fake.queries, self.start.launches), ([], [], []))
+
+    def test_brake_on_local(self):
+        self.api.usages = {"a": reading(70)}
+        self.assertEqual(self.on_local(self.fake(), "--brake", "researcher"), 0)
+        self.assertEqual((self.out, self.err), ("five_hour=70% weekly=10%\n", ""))
+        self.assertEqual(self.connects, [])
+
+    def test_tracker_file_error_exit_2(self):
+        for argv in (["--dry-run", "--now"], ["--dry-run", "--issue", "TASK-1"]):
+            with self.subTest(argv=argv):
+                self.connects = []
+                self.assertEqual(self.on_local(self.fake(), *argv), 2)
+                self.assertEqual(
+                    self.err.splitlines()[-1],
+                    "router.py: /board/researcher/ready/x.md: no front matter",
+                )
+                self.assertEqual(self.connects, [TrackerKind.LOCAL])
+
+    def test_no_tracker_kind(self):
+        for argv in (["--dry-run", "--now"], ["--now"]):
+            with self.subTest(argv=argv):
+                fake = self.fake()
+                self.assertEqual(self.tick(fake, *argv), 2)
+                self.assertEqual(self.err, 'router.py: no tracker "local"\n')
+                self.assertEqual(fake.queries, [])
 
 
 class ScheduledUsageGates(TickBase):

@@ -500,6 +500,7 @@ class Base(run_fixtures.Base):
                     now=NOW,
                     dry=dry,
                     keychain=self.keychain,
+                    connect=linear_tracker.LinearTracker.connect,
                     gate=quota.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
@@ -570,6 +571,7 @@ class TickBase(Base):
         outer=None,
         clock=None,
         env=None,
+        trackers=None,
     ):
         # outer: main's run and keychain; main then starts through its own outer
         # env: the caller's variables over PATH; a launcher's events file and sid only from env
@@ -610,6 +612,7 @@ class TickBase(Base):
                 gql=fake,
                 delegate_cls=delegate_cls,
                 start=self.start,
+                trackers=trackers,
                 **{"keychain": self.keychain, **(outer or {})},
             )
             self.path = os.environ["PATH"]

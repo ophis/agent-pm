@@ -80,10 +80,11 @@ import sys
 import textwrap
 import uuid
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
+from typing import Protocol
 
 from agent_pm import delegate
 from agent_pm.orchestrator.engine import (
@@ -94,6 +95,7 @@ from agent_pm.orchestrator.engine import (
     writeback,
 )
 from agent_pm.orchestrator.engine import log as event_log
+from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
     IssueState,
@@ -126,6 +128,8 @@ from agent_pm.orchestrator.engine.types import (
     IssueError,
     LinearError,
     Spec,
+    TrackerFileError,
+    TrackerKind,
     Transient,
     Unavailable,
 )
@@ -230,15 +234,23 @@ def client_for(pick, default) -> tuple[str | None, ClientSource, str | None]:
     return pick.name, "label", None
 
 
+class Connect(Protocol):
+    """A tracker kind's factory, as LinearTracker.connect."""
+
+    def __call__(self, gql, cfg, *, say: Callable[..., None]) -> Tracker: ...
+
+
 class Board:
-    def __init__(self, gql, entries, cfg, *, now, dry, keychain, gate=None, say=None):
+    def __init__(
+        self, gql, entries, cfg, *, now, dry, keychain, connect: Connect, gate=None, say=None
+    ):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.keychain, self.gate = cfg, keychain, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
-        self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
+        self.tracker = connect(gql, cfg, say=self.say)
 
     def todo(self):
         if self.ready is None:
@@ -900,7 +912,9 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
     return spec
 
 
-def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, launch_sid=None):
+def tick(
+    opts, cfg, gql, *, start, keychain, connect, clock=datetime.now, hour=None, launch_sid=None
+):
     now = clock().astimezone(UTC)
     hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
@@ -935,7 +949,15 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, cfg=cfg)
             board = Board(
-                gql, entries, cfg, now=now, dry=dry, keychain=keychain, gate=gate, say=walk
+                gql,
+                entries,
+                cfg,
+                now=now,
+                dry=dry,
+                keychain=keychain,
+                connect=connect,
+                gate=gate,
+                say=walk,
             )
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
@@ -948,7 +970,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
             return start_run(start, begin(cfg, spec), walk)
 
 
-def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid=None):
+def run_issue(opts, cfg, gql, start, *, keychain, connect, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 2
@@ -973,7 +995,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)
+        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain, connect=connect)
         if issue := next(
             (i for i in board.tracker.assigned(IssueState.RUNNING) if i["identifier"] == ident),
             None,
@@ -1074,6 +1096,7 @@ def main(
     keychain=None,
     start=None,
     delegate_cls=None,
+    trackers: Mapping[TrackerKind, Connect] | None = None,
 ):
     gql = gql or linear_gql
     run = run or config.shell
@@ -1105,6 +1128,15 @@ def main(
     event_log.use_logs(cfg.logs_dir)
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
+    connect = {TrackerKind.LINEAR: LinearTracker.connect, **(trackers or {})}.get(cfg.tracker)
+    if connect is None:
+        print(f'router.py: no tracker "{cfg.tracker}"', file=sys.stderr)
+        return 2
+    if cfg.tracker == TrackerKind.LOCAL and starts:
+        print(
+            f'router.py: tracker "{cfg.tracker}" runs only --dry-run and --brake', file=sys.stderr
+        )
+        return 2
     if opts["brake"] is not None:
         role = opts["brake"]
         if role not in cfg.roles:
@@ -1124,7 +1156,14 @@ def main(
     try:
         if opts["issue"]:
             return run_issue(
-                opts, cfg, gql, start, keychain=keychain, clock=now, launch_sid=launch_sid
+                opts,
+                cfg,
+                gql,
+                start,
+                keychain=keychain,
+                connect=connect,
+                clock=now,
+                launch_sid=launch_sid,
             )
         return tick(
             opts,
@@ -1133,11 +1172,15 @@ def main(
             hour=hour,
             start=start,
             keychain=keychain,
+            connect=connect,
             clock=now,
             launch_sid=launch_sid,
         )
     except LinearError as e:
         return event_log.config_error("router", e, dry=opts["dry"])
+    except TrackerFileError as e:
+        print(f"router.py: {e}", file=sys.stderr)
+        return 2
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
 

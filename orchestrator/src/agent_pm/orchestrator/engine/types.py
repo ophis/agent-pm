@@ -151,6 +151,14 @@ class IssueError(LookupError):
     pass
 
 
+class TrackerFileError(Exception):
+    """A tracker file that cannot be read."""
+
+    def __init__(self, path: str, reason: str):
+        super().__init__(f"{path}: {reason}")
+        self.path, self.reason = path, reason
+
+
 class ArchiveRefused(Exception):
     """An archive the issue's or a descendant's unfinished state blocks; nothing was written."""
 
