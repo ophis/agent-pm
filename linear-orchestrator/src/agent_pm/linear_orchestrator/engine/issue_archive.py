@@ -4,8 +4,8 @@ first; a failed read raises before anything is written.
 """
 
 from agent_pm.linear_orchestrator.engine import issue_page, issue_read, issue_write
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_ARCHIVE
 from agent_pm.linear_orchestrator.engine.ops import DONE
-from agent_pm.linear_orchestrator.engine.prune import M_ARCHIVE
 from agent_pm.linear_orchestrator.engine.types import ArchiveRefused, LinearError
 
 SHOWN = 20

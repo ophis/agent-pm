@@ -42,8 +42,15 @@ from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.linear_tracker import (
+    M_ARCHIVE,
+    Q_CHILDREN,
+    Q_FINISHED,
+    Q_ISSUE,
+    finished_at,
+)
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move, role_ids, team
+from agent_pm.linear_orchestrator.engine.ops import DONE, call, last_move, role_ids, team
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     ConfigError,
@@ -57,7 +64,6 @@ from agent_pm.utils import (
     StatusState,
     common_dir,
     one_line,
-    parse_time,
     remove_tree,
     under,
 )
@@ -69,30 +75,6 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
-STAMPS = "canceledAt completedAt"
-Q_ISSUE = (
-    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
-    + STAMPS
-    + " "
-    + HISTORY
-    + " } }"
-)
-CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
-Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
-Q_FINISHED = (
-    """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
-  issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
-  { state: { id: { in: $s } } }] }, first: 50, after: $c) {
-  nodes { id identifier """
-    + STAMPS
-    + " "
-    + CHILDREN
-    + " "
-    + HISTORY
-    + """ }
-  pageInfo { hasNextPage endCursor } } }"""
-)
-M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-linear prune [--dry-run]
@@ -473,15 +455,6 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
-
-
-def finished_at(issue, finished):
-    """The latest of issue's move into finished and its canceledAt and completedAt (the history
-    read can lack a move into Duplicate that canceledAt holds); None: unknown."""
-    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue[k]]
-    if moved := last_move(issue["history"]["nodes"], finished):
-        times.append(moved)
-    return max(times, default=None)
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
