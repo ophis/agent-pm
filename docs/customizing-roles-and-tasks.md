@@ -83,4 +83,4 @@ It starts with a `# ` heading, has exactly one `[agent-pm-progress:start] <what 
 
 ## On the board
 
-The router's per-role behavior is code: `TASKS` in `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py` has researcher, pm and engineer. A `[linear_orchestrator.roles.<role>]` table for any other role stops every `agent-pm-linear` command with `has no entry in config.TASKS`, and a `[linear_orchestrator.task_labels]` or `[linear_orchestrator.task_tiers]` entry must name a task of an orchestrated role. Board runs' run keys: `[linear_orchestrator.core]`, above.
+The board's per-role behavior (stage order, title prefix, comment leads, whether a Handoff needs instructions) is the default workflow, `linear-orchestrator/src/agent_pm/linear_orchestrator/flow/workflow.toml`: it has researcher, pm and engineer. A `[linear_orchestrator.roles.<role>]` table for any other role stops every `agent-pm-linear` command with `has no entry in config.TASKS`, and a `[linear_orchestrator.task_labels]` or `[linear_orchestrator.task_tiers]` entry must name a task of an orchestrated role. Board runs' run keys: `[linear_orchestrator.core]`, above.

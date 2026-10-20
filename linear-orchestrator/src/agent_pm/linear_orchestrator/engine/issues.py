@@ -3,6 +3,7 @@ handoff, parse_handoff and head.
 """
 
 import re
+from functools import cache
 
 from agent_pm.linear_orchestrator.engine import run_comments
 from agent_pm.linear_orchestrator.engine.types import (
@@ -14,6 +15,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Linked,
     Note,
 )
+from agent_pm.linear_orchestrator.flow import workflow
 from agent_pm.utils import one_line, parse_time
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
@@ -23,7 +25,6 @@ Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title descri
   labels(first: 50) { nodes { id } }
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
-BUILD_STARTED = re.compile(r"Build started\b")
 
 
 HANDOFF = re.compile(rf"Handoff from ({ISSUE_ID}): \S+")
@@ -164,8 +165,17 @@ def brief(issue) -> str:
     return h.instructions if h else issue.description
 
 
+@cache
+def _build_started():
+    """A build run's start comment: the workflow's build start lead, its colon optional."""
+    leads = (t.start.removesuffix(":") for t in workflow.DEFAULT.values() if t.kind == "build")
+    return re.compile(rf"(?:{'|'.join(map(re.escape, leads))})\b")
+
+
 def build_cutoff(issue, humans) -> str:
     started = [
-        n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())
+        n.at
+        for n in issue.notes
+        if not is_user(n, humans) and _build_started().match(n.body.strip())
     ]
     return max(started, key=parse_time) if started else issue.created_at

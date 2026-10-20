@@ -17,8 +17,8 @@ from agent_pm.linear_orchestrator.engine.types import (
     Docs,
     Role,
     State,
-    Task,
 )
+from agent_pm.linear_orchestrator.flow import workflow
 from agent_pm.utils import GUARD, STATE, temp_dirs, under
 
 LOCAL = utils.LOCAL
@@ -55,20 +55,7 @@ REQUIRED = (
 )
 
 
-REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
-TASKS = {
-    "researcher": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
-    "pm": Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
-    "engineer": Task(
-        "build",
-        prefix="ENG",
-        start="Build started:",
-        done="Build ready:",
-        question="Question:",
-        failed="Build failed:",
-        files=True,
-    ),
-}
+TASKS = workflow.DEFAULT
 
 
 def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
@@ -86,6 +73,7 @@ def load(*, path: str | None = None) -> Config:
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
+    _flow(cfg, default=path is None)
     work = _work_dir(cfg)
     try:
         _load_config(cfg, LOCAL)
@@ -93,6 +81,22 @@ def load(*, path: str | None = None) -> Config:
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
+
+
+def _flow(cfg, *, default):
+    """Read the workflow; with the packaged config.toml, its next and require_instructions are each
+    role's defaults. A replaced config.toml (path=) keeps them unset, as before the workflow file."""
+    try:
+        tasks = TASKS.load()
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+    roles = cfg.get("roles")
+    if not default or not isinstance(roles, dict):
+        return
+    for role, p in roles.items():
+        if role in tasks and isinstance(p, dict):
+            p.setdefault("next", tasks[role].next)
+            p.setdefault("require_instructions", tasks[role].require_instructions)
 
 
 def tui_prefix(role, issue):

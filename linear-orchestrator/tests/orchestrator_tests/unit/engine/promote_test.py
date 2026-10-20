@@ -8,6 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, ops, promote, run_comments
+from agent_pm.linear_orchestrator.flow.types import Task
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import FINISHED, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -670,8 +671,8 @@ class PromotionScope(Base):
 
     def test_config_only_extension(self):
         custom = {
-            "pm": config.Task("design", prefix="DES"),
-            "engineer": config.Task("build", prefix="BLD"),
+            "pm": Task("design", prefix="DES"),
+            "engineer": Task("build", prefix="BLD"),
         }
         for tasks, title, want in (
             (config.TASKS, "PRD: Title DR-1", "ENG: Title DR-1"),

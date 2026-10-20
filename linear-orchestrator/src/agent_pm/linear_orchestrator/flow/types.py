@@ -1,9 +1,9 @@
-"""Abstract issue states and a Tracker's reads."""
+"""Abstract issue states, a Tracker's reads and a workflow's per-role Task."""
 
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
 IssueRecord = dict[str, Any]  # Linear's issue keys until 第 2 阶段
@@ -107,3 +107,20 @@ class Recheck:
     assignee: IssueRecord | None
     project: IssueRecord | None
     labels: tuple[Label, ...]
+
+
+@dataclass(frozen=True)
+class Task:
+    kind: Literal["research", "design", "build"]
+    prefix: str = ""
+    start: str = ""
+    done: str = ""
+    question: str = ""
+    failed: str = ""
+    failed_new: Literal["todo", "in_review"] = "in_review"
+    retitle: bool = False
+    approve: bool = False
+    files: bool = False
+    hint: str = ""
+    next: str = ""
+    require_instructions: bool = True
