@@ -53,8 +53,8 @@ _ = (
     writeback.Q_ATTACHED,
     writeback.Q_ID,
 )
-# issues re-exports the run issue read, now linear_tracker's, and the Handoff parser, now
-# flow.handoff's, only for tests; 第 2 阶段删除.
+# issues re-exports the run issue read, now linear_tracker's (with project_id), and the Handoff
+# parser, now flow.handoff's, only for tests; 第 2 阶段删除.
 _ = issues.Q_ISSUE, issues.read_issue, issues.parse_handoff
 # related re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS, related.Q_UPSTREAM

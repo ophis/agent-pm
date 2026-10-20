@@ -569,7 +569,7 @@ class Board:
             skip = "not assigned to a role"
         elif role in full:
             skip = f"{role} is full"
-        elif current.project is None:
+        elif current.home is None:
             skip = "no project"
         elif not self.keychain(key := self.cfg.roles[role].key):
             skip = f"no Keychain item for role key {key}"
@@ -610,7 +610,7 @@ class Board:
             return None
         if self.gated(issue, role, client, source):
             return None
-        taken = {**issue, "assignee": current.assignee, "project": current.project}
+        taken = {**issue, "assignee": current.assignee, "project": current.home}
         if self.dry:
             return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)

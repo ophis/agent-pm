@@ -187,12 +187,12 @@ class Promoter:
         if existing:
             child = handoff.child = existing
         elif self.dry:
-            self.say("promote", src.ident, role=nxt, project=src.project_name)
+            self.say("promote", src.ident, role=nxt, project=src.home_name)
             return
         else:
             child = handoff.child = self.tracker.create(
                 once,
-                project=src.project_key,
+                home=src.home_key,
                 owner=nxt,
                 priority=src.priority,
                 title=child_title(

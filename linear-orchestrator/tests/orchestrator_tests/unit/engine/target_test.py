@@ -40,7 +40,7 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
         title=title,
         description=description,
         created_at="2026-09-01T00:00:00.000Z",
-        project_id=project,
+        home=project,
         notes=(),
         links=(),
         linked=(),

@@ -858,7 +858,7 @@ class Rechecks(Case):
             Recheck(
                 ready=True,
                 assignee=pm,
-                project=project,
+                home=project,
                 labels=(Label("l-1", "Light Research", TASK_GROUP), Label("l-2", "Urgent", None)),
             ),
         )
@@ -868,9 +868,7 @@ class Rechecks(Case):
         for key in ("in_progress", "in_review", "handoff", "done", "canceled"):
             with self.subTest(state=key):
                 found = tracker(Gql(Q_RECHECK=rechecked(STATES[key]))).recheck("id-TASK-1")
-                self.assertEqual(
-                    found, Recheck(ready=False, assignee=None, project=None, labels=())
-                )
+                self.assertEqual(found, Recheck(ready=False, assignee=None, home=None, labels=()))
 
     def test_a_todo_id_shared_with_another_key_stays_ready(self):
         team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
@@ -1071,7 +1069,7 @@ class NextIssue(Case):
         reply = {"issueCreate": {"success": True, "issue": {"id": key, "identifier": "C-1"}}}
         gql = Gql(M_CREATE=reply)
         made = tracker(gql).create(
-            ONCE, project="p-dr", owner="engineer", priority=3, title="ENG: T", description="D"
+            ONCE, home="p-dr", owner="engineer", priority=3, title="ENG: T", description="D"
         )
         self.assertEqual(made, Ref(key, "C-1"))
         sent = {
@@ -1090,9 +1088,7 @@ class NextIssue(Case):
     def test_create_success_false_raises(self):
         gql = Gql(M_CREATE={"issueCreate": {"success": False}})
         with self.assertRaisesRegex(LinearError, "^issueCreate: success: false$"):
-            tracker(gql).create(
-                ONCE, project="p", owner="pm", priority=0, title="T", description=""
-            )
+            tracker(gql).create(ONCE, home="p", owner="pm", priority=0, title="T", description="")
 
 
 class Writes(Case):
@@ -1236,7 +1232,7 @@ class RunIssue(Case):
 
     def test_null_description_and_project(self):
         got = LinearTracker(Gql(Q_READ=run_issue(description=None, project=None))).issue("TASK-7")
-        self.assertEqual((got.description, got.project_id, got.handoff), ("", None, None))
+        self.assertEqual((got.description, got.home, got.handoff), ("", None, None))
 
     def test_no_such_issue_or_another_raises(self):
         cases = (
@@ -1248,9 +1244,10 @@ class RunIssue(Case):
                 LinearTracker(Gql(Q_READ=reply)).issue("TASK-7")
             self.assertEqual(str(caught.exception), message)
 
-    def test_issues_read_issue_is_the_adapters(self):
+    def test_issues_read_issue_is_the_adapters_with_its_project_id(self):
         gql = Gql(Q_READ=run_issue())
-        self.assertEqual(issues.read_issue(gql, "TASK-7"), LinearTracker(gql).issue("TASK-7"))
+        read, issue = issues.read_issue(gql, "TASK-7"), LinearTracker(gql).issue("TASK-7")
+        self.assertEqual(vars(read), {**vars(issue), "project_id": "p-1"})
 
 
 def candidate(ident, state, kind, *, urls=(), comment=None):

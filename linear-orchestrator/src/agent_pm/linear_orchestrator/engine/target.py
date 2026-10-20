@@ -70,9 +70,9 @@ def pr_title(ident, title):
 
 
 def research_repo(issue, repos) -> Target | None:
-    if parse_repo(issue.description) != NO_LINE or issue.project_id not in repos:
+    if parse_repo(issue.description) != NO_LINE or issue.home not in repos:
         return None
-    one = repo_slug(repos[issue.project_id])
+    one = repo_slug(repos[issue.home])
     return Target(*one) if one else None
 
 
@@ -166,11 +166,11 @@ def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Inval
     if run is None:
         run = config.shell
     repo = parse_repo(issue.description)
-    mapped = repo == NO_LINE and issue.project_id in repos
+    mapped = repo == NO_LINE and issue.home in repos
     tag = MAPPED if mapped else ""
     if mapped:
-        repo = repo_slug(repos[issue.project_id]) or Invalid(
-            f"{MAPPED}{str(repos[issue.project_id])[:80]!r}: not <owner>/<name>", mapped=True
+        repo = repo_slug(repos[issue.home]) or Invalid(
+            f"{MAPPED}{str(repos[issue.home])[:80]!r}: not <owner>/<name>", mapped=True
         )
     if isinstance(repo, Invalid):
         return repo
