@@ -61,6 +61,12 @@ class Client:
         """The registered account names a session may select; None: the client has no accounts."""
         return None
 
+    def _usage_probes(self) -> dict[str, tuple[str, Launch]] | None:
+        """Each registered account's (identity: the login it reads, its usage_probe); None: the
+        client has no accounts.
+        """
+        return None
+
     def usage(self, output: str) -> Usage | None:
         """None only when the probe failed."""
         return None

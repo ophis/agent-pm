@@ -672,11 +672,14 @@ class ClaudeCommon:
             *tail,
         )
 
-    def probe(self) -> Launch:
+    def probe(self, account: str = DEFAULT_ACCOUNT) -> Launch:
         """The account's own env (CLAUDE_CONFIG_DIR), without API credentials that would pick
-        another account.
+        another account; a registered account's dir other than ~/.claude, which Claude reads only
+        with CLAUDE_CONFIG_DIR unset, is its CLAUDE_CONFIG_DIR.
         """
         env = {k: v for k, v in self.env().items() if not _credential(k)}
+        if (path := self.accounts[account].dir) != self.accounts[DEFAULT_ACCOUNT].dir:
+            env["CLAUDE_CONFIG_DIR"] = path
         found = sorted(
             name for name in {*os.environ, "CLAUDE_CODE_OAUTH_TOKEN"} if _credential(name)
         )

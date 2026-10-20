@@ -57,6 +57,10 @@ class ClaudeClient(Client):
     def usage_probe(self):
         return self.common.probe()
 
+    def _usage_probes(self):
+        launches = {name: self.common.probe(name) for name in self.common.accounts}
+        return {name: (self.common.config_dir(it.env), it) for name, it in launches.items()}
+
     def usage(self, output):
         return self.common.parse_usage(output)
 

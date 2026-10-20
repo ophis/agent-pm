@@ -20,6 +20,7 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
+    Launch,
     Mode,
     Permission,
     SessionInfo,
@@ -559,6 +560,38 @@ class UsageProbeTest(Base):
             ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"),
         )
         self.assertEqual(launch.unset[: len(UNSET)], UNSET)
+
+    def test_each_account_probes_its_own_dir_and_the_default_its_usual_login(self):
+        ambient = {"ANTHROPIC_API_KEY": "sk-1", "HOME": self.home}
+        accounts = {"work": {"dir": "/w"}, "same": {}, "default": {"account": "me"}}
+        config = {"env": {"K": "v", "ANTHROPIC_AUTH_TOKEN": "x"}, "accounts": accounts}
+        with mock.patch.dict(os.environ, ambient, clear=True):
+            client = ClaudeClient(config)
+            usual = client.usage_probe()
+            probes = client._usage_probes()
+        home = os.path.join(self.home, ".claude")
+        work = Launch(
+            PROBE,
+            env={"K": "v", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CONFIG_DIR": "/w"},
+            unset=usual.unset,
+        )
+        self.assertEqual(
+            probes, {"default": (home, usual), "same": (home, usual), "work": ("/w", work)}
+        )
+        self.assertNotIn("CLAUDE_CONFIG_DIR", usual.env)
+        self.assertEqual(
+            usual.unset[len(UNSET) :], ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+        )
+
+    def test_the_usual_logins_identity_follows_its_configured_dir(self):
+        config = {"env": {"CLAUDE_CONFIG_DIR": "/acct"}, "accounts": {"work": {"dir": "/w"}}}
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/ambient"}, clear=True):
+            probes = ClaudeClient(config)._usage_probes()
+            self.assertEqual(ClaudeClient({})._usage_probes()["default"][0], "/ambient")
+        self.assertEqual(probes["default"][0], "/acct")
+        self.assertEqual(
+            (probes["work"][0], probes["work"][1].env["CLAUDE_CONFIG_DIR"]), ("/w", "/w")
+        )
 
     def test_a_usage_panel_is_the_usage(self):
         for name, five, week in (
