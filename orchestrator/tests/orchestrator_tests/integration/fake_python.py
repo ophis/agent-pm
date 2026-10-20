@@ -5,9 +5,28 @@ only the fake service. Its shim adds the test roots to PYTHONPATH.
 
 import os
 import runpy
+import shlex
 import sys
 
 from orchestrator_tests.integration.fake_transport import install
+
+FAKE_PYTHON = os.path.abspath(__file__)
+TESTS = os.path.dirname(os.path.dirname(os.path.dirname(FAKE_PYTHON)))
+REPO = os.path.dirname(os.path.dirname(TESTS))
+
+
+def write_shim(directory):
+    """`<directory>/python3`: this interpreter on this file with the test roots appended to
+    PYTHONPATH; returns directory, for PATH.
+    """
+    os.makedirs(directory, exist_ok=True)
+    with open(shim := os.path.join(directory, "python3"), "w", encoding="utf-8") as f:
+        f.write(
+            f'#!/bin/sh\nPYTHONPATH="$PYTHONPATH:{TESTS}:{REPO}" '
+            f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(FAKE_PYTHON)} "$@"\n'
+        )
+    os.chmod(shim, 0o755)
+    return directory
 
 
 def main(argv):

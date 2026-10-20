@@ -22,6 +22,7 @@ from urllib.parse import quote
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh, fake_linear
+from orchestrator_tests.integration.fake_python import write_shim
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.run_fixtures import ID, SID
 
@@ -34,9 +35,6 @@ ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
 
 BIN = os.path.join(WORKTREE, "bin", "agent-pm-orchestrator")
 
-TESTS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-FAKE_PYTHON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_python.py")
 
 LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
@@ -386,14 +384,7 @@ class BinFlow(TmuxFlow):
     def setUp(self):
         super().setUp()
         os.unlink(os.path.join(self.bin, "agent-pm-orchestrator"))
-        self.python = os.path.join(self.root, "python")
-        os.mkdir(self.python)
-        with open(shim := os.path.join(self.python, "python3"), "w") as f:
-            f.write(
-                f'#!/bin/sh\nPYTHONPATH="$PYTHONPATH:{TESTS}:{WORKTREE}" '
-                f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(FAKE_PYTHON)} "$@"\n'
-            )
-        os.chmod(shim, 0o755)
+        self.python = write_shim(os.path.join(self.root, "python"))
 
     def bin_env(self):
         env = {k: v for k, v in self.env().items() if k != "PYTHONPATH"}
