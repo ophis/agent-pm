@@ -246,7 +246,7 @@ def supervise(title):
         roots = [
             repo,
             repo / ".github",
-            repo / "linear-orchestrator/tests",
+            repo / "orchestrator/tests",
             *src_trees(repo),
             sysconfig.get_path("purelib"),
             sysconfig.get_path("platlib"),

@@ -13,7 +13,7 @@ class RealTree(Case):
                 self.assertEqual(found, [])
 
     def test_src_modules_load_from_src(self):
-        for root in (r for sub, r in SRC.items() if sub != "linear_orchestrator"):
+        for root in (r for sub, r in SRC.items() if sub != "orchestrator"):
             src = os.path.realpath(root)
             for top, dirs, files in os.walk(root):
                 dirs[:] = sorted(d for d in dirs if d != "__pycache__")

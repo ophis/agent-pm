@@ -15,7 +15,7 @@ permissions:
 env:
   IMPORT_LINTER_VERSION: "2.15"
   COVERAGE_VERSION: "7.10.7"
-  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/.github:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/linear-orchestrator/tests
+  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/.github:${{ github.workspace }}/manager/src:${{ github.workspace }}/orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/orchestrator/tests
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
           esac
       - name: Protect shipped source
         if: ${{ !cancelled() }}
-        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: chmod -R a-w manager/src orchestrator/src delegate/src session/src utils/src
       - name: Comment budget
         if: ${{ !cancelled() && matrix.group == 'style' }}
         run: python3 .github/comment_budget.py
@@ -94,7 +94,7 @@ jobs:
         run: lint-imports --no-cache
       - name: Pylint
         if: ${{ !cancelled() && matrix.group == 'design' }}
-        run: pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: pylint --disable=all --enable=cyclic-import,duplicate-code manager/src orchestrator/src delegate/src session/src utils/src
       - name: Vulture
         if: ${{ !cancelled() && matrix.group == 'style' }}
         run: vulture
@@ -143,7 +143,7 @@ jobs:
       - name: Install pinned test dependencies
         run: python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9 jsonschema==4.26.0
       - name: Protect shipped source
-        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: chmod -R a-w manager/src orchestrator/src delegate/src session/src utils/src
       - name: Repository integration tests
         run: python3 -X faulthandler .github/run_tests.py 'Repository integration' tests/integration
       - name: Require unchanged checkout
@@ -178,7 +178,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Protect shipped source
-        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: chmod -R a-w manager/src orchestrator/src delegate/src session/src utils/src
       - name: Install pinned coverage
         if: ${{ github.event_name == 'pull_request' }}
         run: python3 -m pip install coverage=="$COVERAGE_VERSION"
@@ -282,7 +282,7 @@ jobs:
             sudo apt-get install -y --no-install-recommends tmux
           fi
       - name: Protect shipped source
-        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: chmod -R a-w manager/src orchestrator/src delegate/src session/src utils/src
       - name: Integration tests
         env:
           INTEGRATION_TIMING_DIR: ${{ runner.temp }}/integration-timing

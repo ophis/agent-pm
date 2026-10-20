@@ -1,11 +1,11 @@
 from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
-from tests.guard_data.linear_orchestrator import ORCH_FILES
+from tests.guard_data.orchestrator import ORCH_FILES
 from tests.guard_data.session import CLIENTS_HOME, SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
-OPKG = "src/agent_pm/linear_orchestrator"
+OPKG = "src/agent_pm/orchestrator"
 
 
 class DelegatePackageNames(Sample):
@@ -77,7 +77,7 @@ class OrchestratorText(Sample):
     def test_agent_label_examples_in_the_packaged_config_name_no_client(self):
         path = f"{OPKG}/config.toml"
         text = (
-            "# local: [linear_orchestrator.agent_labels]\n"
+            "# local: [orchestrator.agent_labels]\n"
             '# local: codex = "00000000-0000-4000-8000-000000000083"\n'
         )
         root = self.wrap_orchestrator(self.tree({path: text}))
@@ -91,7 +91,7 @@ class OrchestratorText(Sample):
             "opencode = 1  # one job\n"
             "# claude = 3\n"
             "codex = 2  # not claude\n"
-            "# local: [linear_orchestrator.client_max_runs]\n"
+            "# local: [orchestrator.client_max_runs]\n"
             "# local: opencode = 1\n"
             'claude = "x"\n'
             "[task_tiers]\n"
@@ -140,7 +140,7 @@ class OrchestratorText(Sample):
             ),
             (
                 {
-                    f"{OPKG}/flow/handoff.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                    f"{OPKG}/engine/flow/handoff.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
                     f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
                     f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
                     "src/issues.py": 'H = "Handoff from"\n',
@@ -163,35 +163,35 @@ class OrchestratorText(Sample):
 
 
 class Standalone(Sample):
-    def test_any_file_of_a_lower_project_naming_the_linear_orchestrator(self):
+    def test_any_file_of_a_lower_project_naming_the_orchestrator(self):
         team = f"delegate/{PKG}/delegate/team"
         root = self.tree(
             {
-                "delegate/src/agent_pm/delegate/config.toml": "# see ../linear-orchestrator/\n",
+                "delegate/src/agent_pm/delegate/config.toml": "# see ../orchestrator/\n",
                 f"{team}/roles/r.md": (
-                    "x\nRun agent_pm.linear_orchestrator.engine.run, not linear-orchestrator\n"
+                    "x\nRun agent_pm.orchestrator.engine.run, not orchestrator/cli.py\n"
                 ),
-                f"session/{PKG}/session/x.py": "import agent_pm.linear_orchestrator\n",
-                f"utils/{PKG}/utils/y.py": "# linear_orchestrator\n",
-                f"manager/{PKG}/manager/z.py": "# linear-orchestrator\n",
-                f"delegate/{PKG}/__pycache__/x.pyc": "linear_orchestrator",
+                f"session/{PKG}/session/x.py": "import agent_pm.orchestrator\n",
+                f"utils/{PKG}/utils/y.py": "# [orchestrator] team\n",
+                f"manager/{PKG}/manager/z.py": "# agent_pm/orchestrator/cli.py\n",
+                f"delegate/{PKG}/__pycache__/x.pyc": "agent_pm.orchestrator",
                 "manager/skills/a/notes": (
-                    "Linear orchestrator, linear_orchestra, agent_pm_lineage\n"
+                    "the orchestrator's overlay, an `orchestrator` destination, sub_orchestrator/\n"
                 ),
-                "session/tests/a_test.py": "import agent_pm.linear_orchestrator\n",
-                "linear-orchestrator/b.py": "import agent_pm.linear_orchestrator\n",
-                "tests/c.py": "import agent_pm.linear_orchestrator\n",
+                "session/tests/a_test.py": "import agent_pm.orchestrator\n",
+                "orchestrator/b.py": "import agent_pm.orchestrator\n",
+                "tests/c.py": "import agent_pm.orchestrator\n",
             }
         )
         self.assertEqual(
             ownership.standalone(root),
             [
-                "delegate/src/agent_pm/delegate/config.toml:1: names linear-orchestrator",
-                f"{team}/roles/r.md:2: names linear-orchestrator",
-                f"{team}/roles/r.md:2: names linear_orchestrator",
-                f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
-                f"session/{PKG}/session/x.py:1: names linear_orchestrator",
-                f"utils/{PKG}/utils/y.py:1: names linear_orchestrator",
+                "delegate/src/agent_pm/delegate/config.toml:1: names orchestrator/",
+                f"{team}/roles/r.md:2: names agent_pm.orchestrator",
+                f"{team}/roles/r.md:2: names orchestrator/",
+                f"manager/{PKG}/manager/z.py:1: names agent_pm/orchestrator",
+                f"session/{PKG}/session/x.py:1: names agent_pm.orchestrator",
+                f"utils/{PKG}/utils/y.py:1: names [orchestrator]",
             ],
         )
 
@@ -390,7 +390,7 @@ class SessionDisplay(Sample):
             {
                 f"session/{PKG}/session/engine/tmux_cli.py": source,
                 f"delegate/{PKG}/delegate/engine/other.py": source,
-                f"linear-orchestrator/{OPKG}/engine/sample.py": source,
+                f"orchestrator/{OPKG}/engine/sample.py": source,
                 "session/tests/unit/sample_test.py": source,
             },
             {
@@ -440,7 +440,7 @@ class DelegateDisplay(Sample):
 
 
 class OrchestratorDisplay(Sample):
-    def test_display_names_are_rejected_anywhere_in_linear_orchestrator_source_only(self):
+    def test_display_names_are_rejected_anywhere_in_orchestrator_source_only(self):
         named = 'def f(pane): return "@opener"\n'
         for files, expected in (
             *(
@@ -462,7 +462,7 @@ class OrchestratorDisplay(Sample):
                     ORCH_FILES + "engine/sample.py": (
                         '@record\ndef f(display): return display.split("/")  # a pane\n'
                     ),
-                    "linear-orchestrator/tests/orchestrator_tests/sample_test.py": named,
+                    "orchestrator/tests/orchestrator_tests/sample_test.py": named,
                     f"session/{PKG}/session/hosts/tmux/sample.py": named,
                 },
                 [],
@@ -517,14 +517,14 @@ class StatusLogFormat(Sample):
                 {
                     f"delegate/{PKG}/delegate/x.py": self.CLOCK,
                     f"manager/{PKG}/manager/y.py": 'import time\n\nline = f"{time.strftime(\'%H:%M:%S\')} {name}"\nhook = f"$(date +%H:%M:%S) {name} dead"\n',
-                    f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
+                    f"orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
                 },
                 sorted(
                     [
                         f"delegate/{PKG}/delegate/x.py:1: {outside}",
                         f"manager/{PKG}/manager/y.py:3: {outside}",
                         f"manager/{PKG}/manager/y.py:4: {outside}",
-                        f"linear-orchestrator/{OPKG}/z.py:2: {outside}",
+                        f"orchestrator/{OPKG}/z.py:2: {outside}",
                     ]
                 ),
             ),

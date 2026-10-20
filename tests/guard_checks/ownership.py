@@ -8,7 +8,7 @@ import tokenize
 
 from tests.guard_checks.common import _bindings, _dotted, _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
-from tests.guard_data.linear_orchestrator import (
+from tests.guard_data.orchestrator import (
     CLIENT_LIMIT_TABLES,
     HANDOFF_HOME,
     ORCH,
@@ -55,7 +55,8 @@ DISPLAY_NAMES = re.compile(
 )
 
 
-LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
+# the orchestrator's package, project path or config section; "orchestrator" alone is a word
+LINEAR = re.compile(rf"(?<![\w.]){PKG}[./]{ORCH}\b|(?<![\w-]){ORCH_PROJECT}/|\[{ORCH}[.\]]")
 
 
 TOOL_STRINGS = ("tmux", "clients")

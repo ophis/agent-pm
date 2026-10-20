@@ -13,9 +13,7 @@ class Levels(Case):
         )
 
     def test_the_layer_order(self):
-        self.assertEqual(
-            guards.LAYERS, ("utils", "session", "delegate", "linear-orchestrator", "manager")
-        )
+        self.assertEqual(guards.LAYERS, ("utils", "session", "delegate", "orchestrator", "manager"))
 
 
 if __name__ == "__main__":

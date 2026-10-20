@@ -6,7 +6,7 @@ import re
 import tomllib
 
 from tests.guard_checks.common import _bindings, _dotted, _files
-from tests.guard_data.linear_orchestrator import (
+from tests.guard_data.orchestrator import (
     CONFIG_PY,
     ENTRIES,
     LOAD_HELPERS,

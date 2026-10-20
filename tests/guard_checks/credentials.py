@@ -6,7 +6,7 @@ import os
 import re
 import tomllib
 
-from tests.guard_data.linear_orchestrator import ORCH_FILES
+from tests.guard_data.orchestrator import ORCH_FILES
 
 INVENTORY = "docs/credentials.md"
 CONFIG = f"{ORCH_FILES}config.toml"

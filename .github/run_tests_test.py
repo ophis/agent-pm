@@ -199,7 +199,7 @@ class Discovery(unittest.TestCase):
     def test_top_level_preserves_project_packages_and_normalized_tests(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         regular = root / "session/tests/unit"
-        normalized = root / "linear-orchestrator/tests/orchestrator_tests/unit"
+        normalized = root / "orchestrator/tests/orchestrator_tests/unit"
         for path in (regular, normalized):
             path.mkdir(parents=True)
             (path / "__init__.py").touch()

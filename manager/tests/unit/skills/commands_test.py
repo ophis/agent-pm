@@ -153,7 +153,7 @@ class Names(Case):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("manage")):
             homes = [
                 os.path.join(REPO, d, "skills", skill)
-                for d in ("manager", "delegate", "linear-orchestrator")
+                for d in ("manager", "delegate", "orchestrator")
             ]
             self.assertTrue(any(os.path.isfile(os.path.join(h, "SKILL.md")) for h in homes), skill)
 

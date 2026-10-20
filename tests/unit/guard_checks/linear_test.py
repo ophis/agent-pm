@@ -1,11 +1,11 @@
-"""The Linear layer's own rules are checked without changing shipped source."""
+"""The orchestrator's own rules are checked without changing shipped source."""
 
 import tomllib
 from pathlib import Path
 
 from tests.case import REPO
 from tests.guard_checks import linear
-from tests.guard_data.linear_orchestrator import FLOW_CONTRACT, ORCH_FILES, ORCH_PKG
+from tests.guard_data.orchestrator import ENGINE_CONTRACT, ENGINE_WIRING, ORCH_FILES, ORCH_PKG
 from tests.guard_samples import Sample
 
 
@@ -55,7 +55,7 @@ class EnumComparisons(Sample):
         root = self.tree(
             {
                 "manager/src/agent_pm/manager/example.py": 'entry.state == "live"\n',
-                "linear-orchestrator/tests/example.py": 'run.state == "working"\n',
+                "orchestrator/tests/example.py": 'run.state == "working"\n',
             }
         )
         self.assertEqual(linear.linear_enum_comparisons(root), [])
@@ -65,71 +65,68 @@ class EnumComparisons(Sample):
 
 
 ENGINE = f"{ORCH_FILES}engine/"
-FLOW = f"{ORCH_FILES}flow/"
+FLOW = f"{ENGINE}flow/"
+TRACKERS = f"{ORCH_FILES}trackers/"
 
 
-def contract(*modules, name=FLOW_CONTRACT, indirect=None):
+def contract(
+    source=f"{ORCH_PKG}.engine",
+    forbidden=f"{ORCH_PKG}.trackers",
+    name=ENGINE_CONTRACT,
+    indirect=None,
+    ignore=None,
+):
     lines = [
         "[[tool.importlinter.contracts]]",
         f"name = {name!r}",
         'type = "forbidden"',
-        f'source_modules = ["{ORCH_PKG}.flow"]',
-        f"forbidden_modules = {[f'{ORCH_PKG}.engine.{m}' for m in modules]!r}",
+        f"source_modules = [{source!r}]",
+        f"forbidden_modules = [{forbidden!r}]",
     ]
     if indirect is not None:
         lines.append(f"allow_indirect_imports = {str(indirect).lower()}")
+    if ignore is not None:
+        lines.append(f"ignore_imports = [{ignore!r}]")
     return "\n".join(lines) + "\n"
 
 
-class FlowBindingContract(Sample):
-    BINDING = ("client", "issue", "issues", "ops", "related", "run_comments")
+class EngineTrackerContract(Sample):
+    def check(self, config):
+        return linear.engine_tracker_contract(self.tree({"pyproject.toml": config}))
 
-    def engine(self, config, **extra):
-        files = {f"{ENGINE}{m}.py": "X = 1\n" for m in self.BINDING}
-        files |= {f"{ENGINE}router.py": "X = 1\n", "pyproject.toml": config}
-        return self.tree(files | {f"{ENGINE}{m}.py": t for m, t in extra.items()})
+    def test_a_contract_forbidding_trackers_from_engine_passes(self):
+        self.assertEqual(self.check(contract()), [])
 
-    def test_a_contract_forbidding_every_binding_module_passes(self):
-        root = self.engine(contract(*self.BINDING))
-        self.assertEqual(linear.flow_binding_contract(root), [])
+    def test_a_listed_wiring_edge_may_be_ignored(self):
+        for edge in sorted(ENGINE_WIRING):
+            with self.subTest(edge=edge):
+                self.assertEqual(self.check(contract(ignore=edge)), [])
 
-    def test_issue_modules_and_query_text_modules_are_binding(self):
-        root = self.engine(
-            contract(*self.BINDING),
-            issue_x="X = 1\n",
-            adapter='Q = "query($i: String!) { issue(id: $i) { id } }"\n',
-            words='"""Builds no query (or mutation) here."""\n',
-        )
-        self.assertEqual(
-            linear.flow_binding_contract(root),
-            [
-                f"pyproject.toml: {FLOW_CONTRACT!r} must forbid {ORCH_PKG}.engine.{m}"
-                for m in ("adapter", "issue_x")
-            ],
-        )
+    def test_a_missing_or_weakened_contract_is_reported(self):
+        for config, error in (
+            (contract(name="other"), f"no contract named {ENGINE_CONTRACT!r}"),
+            (
+                contract(source=f"{ORCH_PKG}.cli"),
+                f"{ENGINE_CONTRACT!r} must have source_modules [{ORCH_PKG}.engine]",
+            ),
+            (
+                contract(forbidden=f"{ORCH_PKG}.trackers.local"),
+                f"{ENGINE_CONTRACT!r} must forbid {ORCH_PKG}.trackers",
+            ),
+            (contract(indirect=True), f"{ENGINE_CONTRACT!r} must not allow indirect imports"),
+            (
+                contract(ignore=f"{ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops"),
+                f"{ENGINE_CONTRACT!r} must not ignore {ORCH_PKG}.engine.types -> {ORCH_PKG}.trackers.linear.ops",
+            ),
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(self.check(config), [f"pyproject.toml: {error}"])
 
-    def test_a_missing_module_contract_or_indirect_allowance_is_reported(self):
-        missing = self.engine(contract(*self.BINDING[1:]))
-        self.assertEqual(
-            linear.flow_binding_contract(missing),
-            [f"pyproject.toml: {FLOW_CONTRACT!r} must forbid {ORCH_PKG}.engine.client"],
-        )
-        none = self.engine(contract(*self.BINDING, name="other"))
-        self.assertEqual(
-            linear.flow_binding_contract(none),
-            [f"pyproject.toml: no contract named {FLOW_CONTRACT!r}"],
-        )
-        indirect = self.engine(contract(*self.BINDING, indirect=True))
-        self.assertEqual(
-            linear.flow_binding_contract(indirect),
-            [f"pyproject.toml: {FLOW_CONTRACT!r} must not allow indirect imports"],
-        )
-
-    def test_the_real_contract_lists_every_binding_module(self):
-        self.assertEqual(linear.flow_binding_contract(REPO), [])
+    def test_the_real_contract_forbids_trackers_from_engine(self):
+        self.assertEqual(linear.engine_tracker_contract(REPO), [])
         contracts = tomllib.loads(Path(REPO, "pyproject.toml").read_text())["tool"]["importlinter"]
-        found = next(c for c in contracts["contracts"] if c["name"] == FLOW_CONTRACT)
-        self.assertEqual(found["source_modules"], [f"{ORCH_PKG}.flow"])
+        found = next(c for c in contracts["contracts"] if c["name"] == ENGINE_CONTRACT)
+        self.assertEqual(found["source_modules"], [f"{ORCH_PKG}.engine"])
 
 
 class FlowNamesNoLinear(Sample):
@@ -154,9 +151,10 @@ class FlowNamesNoLinear(Sample):
     def test_package_paths_toml_and_other_trees(self):
         root = self.tree(
             {
-                f"{FLOW}workflow.py": 'REL = "linear-orchestrator/src/agent_pm/linear_orchestrator/x"\n',
-                f"{FLOW}workflow.toml": "# [linear_orchestrator.roles] project\n",
-                f"{ENGINE}ops.py": 'Q = "query { project { id } }"\n',
+                f"{FLOW}workflow.py": 'REL = "orchestrator/src/agent_pm/orchestrator/x"\n',
+                f"{FLOW}workflow.toml": "# [orchestrator.roles] project\n",
+                f"{ENGINE}router.py": "# the Linear project\n",
+                f"{TRACKERS}linear/ops.py": 'Q = "query { project { id } }"\n',
             }
         )
         self.assertEqual(

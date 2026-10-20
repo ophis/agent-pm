@@ -3,29 +3,29 @@ import os
 
 from tests.case import ORCH_ROOT, REPO
 from tests.guard_checks import configuration, ownership
-from tests.guard_data.linear_orchestrator import CONFIG_PY, LOAD_HELPERS, ORCH_PROJECT
+from tests.guard_data.orchestrator import CONFIG_PY, LOAD_HELPERS, ORCH_PROJECT
 from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import Sample
 
-OPKG = "src/agent_pm/linear_orchestrator"
+OPKG = "src/agent_pm/orchestrator"
 
 
 class ConfigOnce(Sample):
-    LOAD = "calls agent_pm.linear_orchestrator.engine.config.load outside an entry main"
-    USE_LOGS = "calls agent_pm.linear_orchestrator.engine.log.use_logs outside an entry main"
+    LOAD = "calls agent_pm.orchestrator.engine.config.load outside an entry main"
+    USE_LOGS = "calls agent_pm.orchestrator.engine.log.use_logs outside an entry main"
 
     def test_load_use_logs_and_load_helpers_outside_an_entry_main_or_config_py(self):
         for files, expected in (
             (
                 {
-                    f"{OPKG}/engine/prune.py": "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                    f"{OPKG}/engine/prune.py": "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
                     f"{OPKG}/engine/writeback.py": (
-                        "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
+                        "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
                     ),
                     f"{OPKG}/engine/promote.py": (
-                        "import agent_pm.linear_orchestrator.engine.config as c\n\nclass P:\n    def main(self):\n        c.load()\n"
+                        "import agent_pm.orchestrator.engine.config as c\n\nclass P:\n    def main(self):\n        c.load()\n"
                     ),
-                    "src/run.py": "import agent_pm.linear_orchestrator.engine.config\n\ndef main():\n    agent_pm.linear_orchestrator.engine.config.load()\n",
+                    "src/run.py": "import agent_pm.orchestrator.engine.config\n\ndef main():\n    agent_pm.orchestrator.engine.config.load()\n",
                 },
                 [
                     f"{OPKG}/engine/promote.py:5: {self.LOAD}",
@@ -38,18 +38,18 @@ class ConfigOnce(Sample):
             (
                 {
                     f"{OPKG}/engine/run.py": (
-                        "from agent_pm.linear_orchestrator.engine import config\nconfig._runnable(1)\n"
+                        "from agent_pm.orchestrator.engine import config\nconfig._runnable(1)\n"
                     ),
                     f"{OPKG}/engine/config.py": (
                         "def _runnable():\n    pass\n\ndef load():\n    _runnable()\n    _docs()\n    _load_config()\n"
                     ),
                     f"{OPKG}/engine/promote.py": (
-                        "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
+                        "from agent_pm.orchestrator.engine import config\nfrom agent_pm.orchestrator.engine import log as linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
                     ),
                     "src/config.py": "def load():\n    _runnable()\n",
                 },
                 [
-                    f"{OPKG}/engine/run.py:2: calls agent_pm.linear_orchestrator.engine.config._runnable",
+                    f"{OPKG}/engine/run.py:2: calls agent_pm.orchestrator.engine.config._runnable",
                     "src/config.py:2: calls _runnable",
                 ],
             ),
@@ -68,7 +68,7 @@ class ConfigOnce(Sample):
         files = {}
         for name in ("promote.py", "prune.py"):
             with open(
-                os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator", "engine", name),
+                os.path.join(ORCH_ROOT, "agent_pm", "orchestrator", "engine", name),
                 encoding="utf-8",
             ) as f:
                 files[f"{OPKG}/not_{name}"] = f.read()
@@ -127,12 +127,12 @@ class ExplicitKeys(Sample):
                 "sectioned examples",
                 {
                     orch: (
-                        '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
-                        '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
-                        "# local: [linear_orchestrator]\n# local: typo = 1\n# local: [session]\n"
+                        '[labels]\n# local: [orchestrator.labels]\n# local: x = "1"\n'
+                        '[roles.a]\nkey = ""\n# local: [orchestrator.roles.b]\n# local: key = "k"\n'
+                        "# local: [orchestrator]\n# local: typo = 1\n# local: [session]\n"
                     )
                 },
-                [f"{orch}: `# local:` key linear_orchestrator.typo has no real line"],
+                [f"{orch}: `# local:` key orchestrator.typo has no real line"],
             ),
             (
                 "a project root config.toml",

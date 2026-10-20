@@ -23,7 +23,7 @@ class Assignment(unittest.TestCase):
             for directory in (
                 "tests/integration",
                 "session/tests/integration",
-                "linear-orchestrator/tests/orchestrator_tests/integration",
+                "orchestrator/tests/orchestrator_tests/integration",
             ):
                 package = root / directory
                 package.mkdir(parents=True)
@@ -31,7 +31,7 @@ class Assignment(unittest.TestCase):
             self.assertEqual(
                 gate.directories(root),
                 [
-                    "linear-orchestrator/tests/orchestrator_tests/integration",
+                    "orchestrator/tests/orchestrator_tests/integration",
                     "session/tests/integration",
                 ],
             )

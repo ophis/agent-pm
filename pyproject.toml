@@ -21,12 +21,12 @@ typeCheckingMode = "basic"
 reportUnnecessaryComparison = "error"
 reportUnnecessaryCast = "error"
 pythonVersion = "3.11"
-include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
-extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+include = ["manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src"]
+extraPaths = ["manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src"]
 
 [tool.vulture]
 paths = [
-    "manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src",
+    "manager/src", "orchestrator/src", "delegate/src", "session/src", "utils/src",
     ".github/vulture_whitelist.py",
 ]
 
@@ -38,13 +38,13 @@ root_packages = ["agent_pm", "manager.tests", "orchestrator_tests", "delegate.te
 [[tool.importlinter.contracts]]
 name = "Production layers"
 type = "layers"
-layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
+layers = ["agent_pm.manager", "agent_pm.orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
 
 [[tool.importlinter.contracts]]
 name = "Manager communicates with layers only through commands"
 type = "forbidden"
 source_modules = ["agent_pm.manager"]
-forbidden_modules = ["agent_pm.session", "agent_pm.delegate", "agent_pm.linear_orchestrator"]
+forbidden_modules = ["agent_pm.session", "agent_pm.delegate", "agent_pm.orchestrator"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
@@ -66,7 +66,7 @@ dependencies = [
 name = "manager uses lower public packages"
 type = "forbidden"
 source_modules = ["agent_pm.manager", "manager.tests"]
-forbidden_modules = ["agent_pm.linear_orchestrator.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+forbidden_modules = ["agent_pm.orchestrator.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
@@ -76,9 +76,9 @@ source_modules = ["manager.tests"]
 forbidden_modules = ["tests"]
 
 [[tool.importlinter.contracts]]
-name = "linear_orchestrator uses lower public packages"
+name = "orchestrator uses lower public packages"
 type = "forbidden"
-source_modules = ["agent_pm.linear_orchestrator", "orchestrator_tests"]
+source_modules = ["agent_pm.orchestrator", "orchestrator_tests"]
 forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
 ignore_imports = [
@@ -87,59 +87,63 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "linear_orchestrator reaches session only through delegate"
+name = "orchestrator reaches session only through delegate"
 type = "forbidden"
-source_modules = ["agent_pm.linear_orchestrator"]
+source_modules = ["agent_pm.orchestrator"]
 forbidden_modules = ["agent_pm.session"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Linear transport, operations and reporting have one direction"
 type = "units"
-container = "agent_pm.linear_orchestrator"
-units = ["agent_pm.linear_orchestrator", "agent_pm.linear_orchestrator.cli", "agent_pm.linear_orchestrator.engine", "agent_pm.linear_orchestrator.engine.client", "agent_pm.linear_orchestrator.engine.log", "agent_pm.linear_orchestrator.engine.ops", "agent_pm.linear_orchestrator.engine.issues", "agent_pm.linear_orchestrator.engine.run_comments", "agent_pm.linear_orchestrator.engine.types", "agent_pm.linear_orchestrator.engine.linear_tracker", "agent_pm.linear_orchestrator.flow", "agent_pm.linear_orchestrator.flow.handoff", "agent_pm.linear_orchestrator.flow.tracker", "agent_pm.linear_orchestrator.flow.types", "agent_pm.linear_orchestrator.flow.workflow"]
+container = "agent_pm.orchestrator"
+units = ["agent_pm.orchestrator", "agent_pm.orchestrator.cli", "agent_pm.orchestrator.engine", "agent_pm.orchestrator.engine.log", "agent_pm.orchestrator.engine.issues", "agent_pm.orchestrator.engine.run_comments", "agent_pm.orchestrator.engine.types", "agent_pm.orchestrator.engine.flow", "agent_pm.orchestrator.engine.flow.handoff", "agent_pm.orchestrator.engine.flow.tracker", "agent_pm.orchestrator.engine.flow.types", "agent_pm.orchestrator.engine.flow.workflow", "agent_pm.orchestrator.trackers", "agent_pm.orchestrator.trackers.linear", "agent_pm.orchestrator.trackers.linear.client", "agent_pm.orchestrator.trackers.linear.ops", "agent_pm.orchestrator.trackers.linear.linear_tracker"]
 dependencies = [
-    "agent_pm.linear_orchestrator -> agent_pm.linear_orchestrator.engine",
-    "agent_pm.linear_orchestrator.engine -> agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.linear_orchestrator.engine.linear_tracker agent_pm.linear_orchestrator.flow.handoff agent_pm.linear_orchestrator.flow.tracker agent_pm.linear_orchestrator.flow.types agent_pm.linear_orchestrator.flow.workflow agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.linear_tracker -> agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.types agent_pm.linear_orchestrator.flow.handoff agent_pm.linear_orchestrator.flow.tracker agent_pm.linear_orchestrator.flow.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.flow.handoff -> agent_pm.linear_orchestrator.flow.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.flow.tracker -> agent_pm.linear_orchestrator.flow.types",
-    "agent_pm.linear_orchestrator.flow.workflow -> agent_pm.linear_orchestrator.flow.types",
-    "agent_pm.linear_orchestrator.engine.client -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.log -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.ops -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.issues -> agent_pm.linear_orchestrator.engine.linear_tracker agent_pm.linear_orchestrator.flow.handoff agent_pm.linear_orchestrator.flow.types agent_pm.linear_orchestrator.flow.workflow agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.run_comments -> agent_pm.linear_orchestrator.engine.linear_tracker agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.types -> agent_pm.linear_orchestrator.flow.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.cli -> agent_pm.linear_orchestrator.engine agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator -> agent_pm.orchestrator.engine",
+    "agent_pm.orchestrator.engine -> agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.engine.flow.handoff -> agent_pm.orchestrator.engine.flow.types agent_pm.utils",
+    "agent_pm.orchestrator.engine.flow.tracker -> agent_pm.orchestrator.engine.flow.types",
+    "agent_pm.orchestrator.engine.flow.workflow -> agent_pm.orchestrator.engine.flow.types",
+    "agent_pm.orchestrator.engine.log -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.engine.issues -> agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.flow.workflow agent_pm.utils",
+    "agent_pm.orchestrator.engine.run_comments -> agent_pm.orchestrator.engine.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.engine.types -> agent_pm.orchestrator.engine.flow.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear -> agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.linear.linear_tracker agent_pm.orchestrator.engine agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.types agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.linear_tracker -> agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.engine.types agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.client -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.trackers.linear.ops -> agent_pm.orchestrator.engine.types agent_pm.utils",
+    "agent_pm.orchestrator.cli -> agent_pm.orchestrator.engine agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.trackers.linear agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.delegate agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]
-name = "flow imports no Linear binding module"
+name = "engine imports no tracker"
 type = "forbidden"
-source_modules = ["agent_pm.linear_orchestrator.flow"]
-forbidden_modules = [
-    "agent_pm.linear_orchestrator.engine.client",
-    "agent_pm.linear_orchestrator.engine.issue",
-    "agent_pm.linear_orchestrator.engine.issue_archive",
-    "agent_pm.linear_orchestrator.engine.issue_create",
-    "agent_pm.linear_orchestrator.engine.issue_label",
-    "agent_pm.linear_orchestrator.engine.issue_list",
-    "agent_pm.linear_orchestrator.engine.issue_lookup",
-    "agent_pm.linear_orchestrator.engine.issue_page",
-    "agent_pm.linear_orchestrator.engine.issue_read",
-    "agent_pm.linear_orchestrator.engine.issue_refs",
-    "agent_pm.linear_orchestrator.engine.issue_relation",
-    "agent_pm.linear_orchestrator.engine.issue_write",
-    "agent_pm.linear_orchestrator.engine.issues",
-    "agent_pm.linear_orchestrator.engine.linear_tracker",
-    "agent_pm.linear_orchestrator.engine.ops",
-    "agent_pm.linear_orchestrator.engine.related",
-    "agent_pm.linear_orchestrator.engine.run_comments",
+source_modules = ["agent_pm.orchestrator.engine"]
+forbidden_modules = ["agent_pm.orchestrator.trackers"]
+# the board rules' Linear wiring, until cli.py hands them their tracker
+ignore_imports = [
+    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.promote -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.prune -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.router -> agent_pm.orchestrator.trackers.linear.client",
+    "agent_pm.orchestrator.engine.router -> agent_pm.orchestrator.trackers.linear.linear_tracker",
+    "agent_pm.orchestrator.engine.writeback -> agent_pm.orchestrator.trackers.linear.linear_tracker",
 ]
 
 [[tool.importlinter.contracts]]
-name = "linear_orchestrator tests respect layer ownership"
+name = "trackers import no board rule"
+type = "forbidden"
+source_modules = ["agent_pm.orchestrator.trackers"]
+forbidden_modules = [
+    "agent_pm.orchestrator.engine.router",
+    "agent_pm.orchestrator.engine.promote",
+    "agent_pm.orchestrator.engine.prune",
+    "agent_pm.orchestrator.engine.writeback",
+]
+
+[[tool.importlinter.contracts]]
+name = "orchestrator tests respect layer ownership"
 type = "forbidden"
 source_modules = ["orchestrator_tests"]
 forbidden_modules = ["tests", "agent_pm.manager", "manager.tests"]
@@ -162,7 +166,7 @@ ignore_imports = [
 name = "delegate tests respect layer ownership"
 type = "forbidden"
 source_modules = ["delegate.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "manager.tests", "orchestrator_tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.orchestrator", "manager.tests", "orchestrator_tests"]
 
 [[tool.importlinter.contracts]]
 name = "session uses lower public packages"
@@ -175,13 +179,13 @@ allow_indirect_imports = true
 name = "session tests respect layer ownership"
 type = "forbidden"
 source_modules = ["session.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "manager.tests", "orchestrator_tests", "delegate.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.orchestrator", "agent_pm.delegate", "manager.tests", "orchestrator_tests", "delegate.tests"]
 
 [[tool.importlinter.contracts]]
 name = "utils tests respect layer ownership"
 type = "forbidden"
 source_modules = ["utils.tests"]
-forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
 
 [[tool.importlinter.contracts]]
 name = "Modes do not import the session API"

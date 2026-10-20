@@ -18,7 +18,7 @@ from tests.guard_checks.common import (
 )
 from tests.guard_data import STANDALONE
 from tests.guard_data.delegate import DELEGATE_SRC
-from tests.guard_data.linear_orchestrator import (
+from tests.guard_data.orchestrator import (
     ORCH,
     ORCH_PKG,
     ORCH_PROJECT,
@@ -104,7 +104,7 @@ def orchestrator_session_imports(repo: str) -> list[str]:
 
 
 def orchestrator_imports(repo: str) -> list[str]:
-    """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
+    """FR-3: orchestrator imports only the standard library, itself, agent_pm.utils and the
     names in delegate's literal __all__; no other package imports it.
     """
     exported = _literal_all(os.path.join(repo, DELEGATE_SRC, "__init__.py"))

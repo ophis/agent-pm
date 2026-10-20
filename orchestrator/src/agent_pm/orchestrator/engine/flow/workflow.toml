@@ -1,0 +1,39 @@
+# The default workflow: one [roles.<role>] table per orchestrated role, its keys the fields of Task
+# (orchestrator/src/agent_pm/orchestrator/engine/flow/types.py); an unset key takes Task's default.
+# [orchestrator.roles.<role>] next and require_instructions in ~/.agent-pm/config.local.toml override this
+# file's (phase 4 removes them).
+#   kind                  research, design or build: the role's input layout and write-back
+#   next                  the role promote hands this role's Handoff issues to; "" → the last stage
+#   require_instructions  true → a Handoff issue with no human_members comment goes back to In Review
+#   prefix                the title prefix of this role's issues ("<prefix>: <title>"); a next role needs one
+#   start, done, question, failed  the lead of write-back's start, done, needs-input and failed comments
+#   failed_new            the state a failed first run's issue moves to: todo or in_review
+#   retitle               a done run retitles the issue "<prefix>: <outcome title>"
+#   approve               a done run's comment ends with the approve line
+#   files                 write-back's comment lists the run's files
+#   hint                  added after the needs-input comment's footer
+
+[roles.researcher]
+kind = "research"
+next = "pm"
+start = "Research started:"
+failed_new = "todo"
+hint = "To change the target repo, edit the description's `Repo:` line."
+
+[roles.pm]
+kind = "design"
+next = "engineer"
+require_instructions = false       # a PRD carries enough context
+prefix = "PRD"
+start = "PRD started:"
+retitle = true
+approve = true
+
+[roles.engineer]
+kind = "build"
+prefix = "ENG"
+start = "Build started:"
+done = "Build ready:"
+question = "Question:"
+failed = "Build failed:"
+files = true
