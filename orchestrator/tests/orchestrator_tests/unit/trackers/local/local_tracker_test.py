@@ -1,4 +1,5 @@
-"""LocalTracker: the Tracker read side on a temp board; writes refused."""
+"""LocalTracker: the Tracker on a temp board, its reads and writes; promote's and prune's writes
+refused."""
 
 import os
 import shutil
@@ -533,7 +534,246 @@ class Reads(Board):
         self.assertIsNone(self.tracker.find_comment("LOC-1", ("result", "zz")))
 
 
+NOW = datetime(2026, 10, 20, 9, 30, tzinfo=UTC)
+STAMPED = "- 2026-10-20 00:00 {} other\n"
+WROTE = "- 2026-10-20 09:30 {} self\n"
+
+
 class Writes(Board):
+    def setUp(self):
+        super().setUp()
+        self.tracker = LocalTracker(self.board, ("pm", "engineer"), now=lambda: NOW)
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as file:
+            return file.read()
+
+    def unchanged(self, path, call):
+        before = (self.read(path), os.stat(path).st_mtime_ns)
+        result = call()
+        self.assertEqual((self.read(path), os.stat(path).st_mtime_ns), before)
+        return result
+
+    def test_move_renames_and_appends_history(self):
+        old = self.write("pm/ready", "LOC-1", history="- 2026-10-19 14:02 ready other\n")
+        self.assertIsNone(self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.READY))
+        new = os.path.join(self.board, "pm/review/LOC-1 x.md")
+        self.assertFalse(os.path.exists(old))
+        self.assertEqual(
+            self.read(new),
+            text("LOC-1", history="- 2026-10-19 14:02 ready other\n" + WROTE.format("review")),
+        )
+        self.assertEqual(self.tracker.read("LOC-1").state, IssueState.REVIEW)
+        self.assertEqual(LocalTracker(self.board, ()).read("LOC-1").state, IssueState.REVIEW)
+
+    def test_claim_moves_to_running(self):
+        self.write("pm/ready", "LOC-1")
+        self.tracker.claim("LOC-1")
+        self.assertEqual(
+            self.read(os.path.join(self.board, "pm/running/LOC-1 x.md")),
+            text("LOC-1", history=STAMPED.format("ready") + WROTE.format("running")),
+        )
+        self.assertEqual(self.tracker.moved_at("LOC-1", IssueState.READY, by="other"), MTIME)
+
+    def test_move_to_its_state_writes_nothing(self):
+        path = self.write("pm/review", "LOC-1")
+        self.assertIsNone(
+            self.unchanged(path, lambda: self.tracker.move("LOC-1", IssueState.REVIEW))
+        )
+
+    def test_a_guarded_move_of_a_moved_issue_writes_nothing(self):
+        path = self.write("pm/ready", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        left = self.unchanged(
+            path, lambda: self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.RUNNING)
+        )
+        self.assertEqual(left, "ready")
+
+    def test_comment_and_move_of_a_moved_issue_posts_nothing(self):
+        path = self.write("pm/ready", "LOC-1")
+        left = self.unchanged(
+            path,
+            lambda: self.tracker.comment_and_move(
+                "LOC-1", "b", to=IssueState.REVIEW, frm=IssueState.RUNNING, notify=True
+            ),
+        )
+        self.assertEqual(left, "ready")
+
+    def test_comment_and_move(self):
+        self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        left = self.tracker.comment_and_move(
+            "LOC-1", "Stopped.", to=IssueState.REVIEW, frm=IssueState.RUNNING, notify=True
+        )
+        self.assertIsNone(left)
+        self.assertEqual(
+            self.read(os.path.join(self.board, "pm/review/LOC-1 x.md")),
+            text(
+                "LOC-1",
+                comments="\n#### self · 2026-10-20 09:30\nStopped.\n\n",
+                history="- 2026-10-19 14:30 running self\n" + WROTE.format("review"),
+            ),
+        )
+
+    def test_comment_with_ref_has_id_and_key(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.comment("LOC-1", "Started.", ("sid", "start"))
+        self.assertIn(
+            "### Comments\n\n#### self · 2026-10-20 09:30 <!-- id=c1 key=sid:start -->\nStarted.\n",
+            self.read(path),
+        )
+        self.assertEqual(self.tracker.find_comment("LOC-1", ("sid", "start")), "Started.")
+        self.assertEqual(
+            LocalTracker(self.board, ()).find_comment("LOC-1", ("sid", "start")), "Started."
+        )
+
+    def test_comment_twice_with_a_ref_writes_once(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.comment("LOC-1", "Started.", ("sid", "start"))
+        self.unchanged(path, lambda: self.tracker.comment("LOC-1", "Again.", ("sid", "start")))
+
+    def test_comment_without_ref(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.comment("LOC-1", "Note.")
+        self.assertIn("\n#### self · 2026-10-20 09:30\nNote.\n", self.read(path))
+        self.assertEqual(
+            [(c.body, c.origin) for c in self.tracker.detail("LOC-1").comments], [("Note.", "self")]
+        )
+
+    def test_put_comment_edits_in_place(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.put_comment("LOC-1", "Run · running", ("sid", "session"))
+        self.tracker.comment("LOC-1", "Started.", ("sid", "start"))
+        before = self.read(path)
+        self.assertTrue(self.tracker.put_comment("LOC-1", "Run · done", ("sid", "session")))
+        self.assertEqual(self.read(path), before.replace("Run · running", "Run · done"))
+        self.assertEqual(self.tracker.find_comment("LOC-1", ("sid", "session")), "Run · done")
+
+    def test_put_comment_appends_when_absent(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.assertTrue(self.tracker.put_comment("LOC-1", "Run · running", ("sid", "session")))
+        self.assertIn("<!-- id=c1 key=sid:session -->\nRun · running\n", self.read(path))
+
+    def test_put_comment_escapes_the_body(self):
+        self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.put_comment("LOC-1", "a", ("sid", "session"))
+        self.tracker.put_comment("LOC-1", "b\r### History\u2028###", ("sid", "session"))
+        self.assertEqual(
+            LocalTracker(self.board, ()).find_comment("LOC-1", ("sid", "session")),
+            "b\n ### History\n ###",
+        )
+
+    def test_a_write_stamps_first(self):
+        path = self.write(
+            "pm/review",
+            "LOC-1",
+            comments="\n###\nplease redo\n",
+            history="- 2026-10-19 14:30 running self\n",
+        )
+        self.tracker.comment("LOC-1", "Seen.")
+        self.assertEqual(
+            self.read(path),
+            text(
+                "LOC-1",
+                comments="\n#### other · 2026-10-20 00:00\nplease redo\n\n#### self · 2026-10-20 09:30\nSeen.\n",
+                history="- 2026-10-19 14:30 running self\n" + STAMPED.format("review"),
+            ),
+        )
+
+    def test_link_adds_once(self):
+        path = self.write("pm/review", "LOC-1", history="- 2026-10-19 14:30 review self\n")
+        self.tracker.link("LOC-1", "https://x/pull/1", "PR")
+        self.assertEqual(self.tracker.links("LOC-1"), {"https://x/pull/1"})
+        self.unchanged(path, lambda: self.tracker.link("LOC-1", "https://x/pull/1", "PR again"))
+
+    def test_retitle(self):
+        self.write("pm/review", "LOC-1", history="- 2026-10-19 14:30 review self\n")
+        self.tracker.retitle("LOC-1", "PRD: 新")
+        self.assertEqual(self.tracker.issue("LOC-1").title, "PRD: 新")
+        self.assertEqual(LocalTracker(self.board, ()).issue("LOC-1").title, "PRD: 新")
+
+    def test_notify_subscribes_no_one(self):
+        self.write("pm/review", "LOC-1")
+        self.assertEqual(self.tracker.notify("LOC-1", ("a@example.com",)), "")
+
+    def test_unarchive(self):
+        path = self.write("pm/review", "LOC-1")
+        self.write("archive", "LOC-2", history="- 2026-10-19 14:30 done self\n")
+        self.unchanged(path, lambda: self.tracker.unarchive("LOC-1"))
+        with self.assertRaises(IssueError) as caught:
+            self.tracker.unarchive("LOC-2")
+        self.assertEqual(str(caught.exception), "LOC-2: archived")
+
+    def test_missing_and_archived_issues(self):
+        self.write("pm/done", "LOC-1")
+        self.write("archive", "LOC-2", history="- 2026-10-19 14:30 done self\n")
+        with self.assertRaises(IssueError) as caught:
+            self.tracker.move("LOC-404", IssueState.DONE)
+        self.assertEqual(str(caught.exception), "LOC-404: issue not found")
+        with self.assertRaises(IssueError) as caught:
+            self.tracker.move("LOC-2", IssueState.READY)
+        self.assertEqual(str(caught.exception), "LOC-2: archived")
+        self.tracker.comment("LOC-2", "Still readable.")
+        self.assertEqual(self.tracker.detail("LOC-2").comments[-1].body, "Still readable.")
+
+    def test_target_exists(self):
+        path = self.write("pm/ready", "LOC-1")
+        taken = self.write("pm/running", "LOC-9")
+        os.rename(taken, os.path.join(self.board, "pm/running/LOC-1 x.md"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.claim("LOC-1")
+        self.assertEqual(caught.exception.path, os.path.join(self.board, "pm/running/LOC-1 x.md"))
+        self.assertEqual(caught.exception.reason, "file exists")
+        self.assertTrue(os.path.exists(path))
+
+    def test_symlinked_state_dir(self):
+        path = self.write("pm/ready", "LOC-1")
+        self.tracker.read("LOC-1")  # scanned before the link: a scan refuses it
+        outside = os.path.join(self.home, "outside")
+        os.mkdir(outside)
+        os.symlink(outside, os.path.join(self.board, "pm/running"))
+        with self.assertRaises(TrackerFileError) as caught:
+            self.tracker.claim("LOC-1")
+        self.assertEqual(
+            (caught.exception.path, caught.exception.reason),
+            (os.path.join(self.board, "pm/running"), "not a directory"),
+        )
+        self.assertTrue(os.path.exists(path))
+        self.assertEqual(os.listdir(outside), [])
+
+    def racing(self, path, edits):
+        """os.fstat, which reading an issue file calls once it has its text, then a person's edit:
+        edits' next line appended (None: none)."""
+        real = os.fstat
+
+        def fstat(fd):
+            found = real(fd)
+            if (line := next(edits, None)) is not None:
+                with open(path, "a", encoding="utf-8") as file:
+                    file.write(line)
+            return found
+
+        return mock.patch("os.fstat", side_effect=fstat)
+
+    def test_a_changed_file_is_retried(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.read("LOC-1")
+        edit = "- 2026-10-19 15:00 running other\n"
+        with self.racing(path, iter([None, edit])):  # after the write's read, before its check
+            self.tracker.comment("LOC-1", "Seen.")
+        written = self.read(path)
+        self.assertIn(f"running self\n{edit}", written)
+        self.assertIn("Seen.", written)
+
+    def test_a_file_changed_three_times_is_refused(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.read("LOC-1")
+        edits = (f"- 2026-10-19 15:{n:02} running other\n" for n in range(60))
+        with self.racing(path, edits), self.assertRaises(TrackerFileError) as caught:
+            self.tracker.comment("LOC-1", "Seen.")
+        self.assertEqual(
+            (caught.exception.path, caught.exception.reason), (path, "changed while writing")
+        )
+        self.assertNotIn("Seen.", self.read(path))
+
     def test_writes_not_supported(self):
         t = self.tracker
         calls = {
@@ -542,21 +782,10 @@ class Writes(Board):
                 ("a",), home="", owner="pm", priority=0, title="t", description=""
             ),
             "relate": lambda: t.relate("LOC-1", "LOC-2"),
-            "comment": lambda: t.comment("LOC-1", "b"),
-            "move": lambda: t.move("LOC-1", IssueState.DONE),
-            "claim": lambda: t.claim("LOC-1"),
-            "comment_and_move": lambda: t.comment_and_move(
-                "LOC-1", "b", to=IssueState.REVIEW, frm=IssueState.RUNNING, notify=False
-            ),
-            "notify": lambda: t.notify("LOC-1", ()),
-            "link": lambda: t.link("LOC-1", "u", "t"),
-            "retitle": lambda: t.retitle("LOC-1", "t"),
             "archive": lambda: t.archive(
                 "LOC-1",
                 ArchivePlan("LOC-1", "LOC-1", "u", archived=False, descendants=(), unfinished=()),
             ),
-            "unarchive": lambda: t.unarchive("LOC-1"),
-            "put_comment": lambda: t.put_comment("LOC-1", "b", ("a",)),
         }
         for name, call in calls.items():
             with self.subTest(name), self.assertRaises(NotImplementedError) as caught:

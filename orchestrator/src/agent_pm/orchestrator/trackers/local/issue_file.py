@@ -1,10 +1,12 @@
 """A local issue file's text read into an IssueFile: front matter, then the Description, Comments and
-History sections (docs/board.md › Local board)."""
+History sections (docs/board.md › Local board); and the text edits a board write makes, each keeping
+every other line."""
 
 import json
 import re
 from datetime import datetime
 from enum import StrEnum
+from urllib.parse import quote
 
 from agent_pm.orchestrator.engine.flow.types import ISSUE_ID
 from agent_pm.orchestrator.engine.types import TrackerFileError
@@ -261,3 +263,124 @@ def _entry(line):
     except ValueError:
         pass
     raise _Bad(f"bad History line {line!r}")
+
+
+def ref_key(ref: tuple[str, ...]) -> str:
+    """A ref as a comment header's key: no whitespace, never `-->`."""
+    return quote(":".join(ref), safe=":/")
+
+
+def stamp(text: str, *, mtime: datetime, state: LocalState | None) -> str:
+    """A person's edits fixed at mtime: bare `###` comments get their header, and a directory state
+    (None: archived) other than the last History entry's its `other` move."""
+    lines, end = _split(text)
+    spans = _spans(lines, end)
+    for i in range(*spans.get(_Section.COMMENTS, (0, 0))):
+        if lines[i] == _BARE:
+            lines[i] = f"#### {Source.OTHER} · {_minute(mtime)}"
+    text = _join(lines)
+    if state is None:
+        return text
+    entries = sorted(
+        map(_entry, _filled(lines[slice(*spans.get(_Section.HISTORY, (0, 0)))])), key=lambda e: e.at
+    )
+    if entries and entries[-1].state == state:
+        return text
+    return add_history(text, at=mtime, state=state, source=Source.OTHER)
+
+
+def add_comment(text: str, *, at: datetime, body: str, ref_key: str | None = None) -> str:
+    """The engine's comment, last; with a ref key its hidden id (c<n>, the next) and key."""
+    lines, end = _split(text)
+    header = f"#### {Source.SELF} · {_minute(at)}"
+    if ref_key is not None:
+        ids = [int(m[1]) for line in lines[end:] if (m := _ID.search(line))]
+        header += f" <!-- id=c{max(ids, default=0) + 1} key={ref_key} -->"
+    return _join(_append(lines, end, _Section.COMMENTS, ["", header, *_body(body)]))
+
+
+def edit_comment(text: str, ref_key: str, body: str) -> str | None:
+    """The engine's comment with ref_key holding body; None: there is none."""
+    lines, end = _split(text)
+    first, last = _spans(lines, end).get(_Section.COMMENTS, (0, 0))
+    for i in range(first, last):
+        header = _HEADER.fullmatch(lines[i])
+        if header and header[1] == Source.SELF and header[3] == ref_key:
+            after = next(
+                (j for j in range(i + 1, last) if lines[j] == _BARE or _HEADED.match(lines[j])),
+                last,
+            )
+            return _join([*lines[: i + 1], *_body(body), "", *lines[after:]])
+    return None
+
+
+def add_history(text: str, *, at: datetime, state: LocalState, source: Source = Source.SELF) -> str:
+    lines, end = _split(text)
+    return _join(_append(lines, end, _Section.HISTORY, [f"- {_minute(at)} {state} {source}"]))
+
+
+def set_title(text: str, title: str) -> str:
+    lines, end = _split(text)
+    i = next(i for i in range(1, end) if lines[i].startswith(f"{_Key.TITLE}:"))
+    lines[i] = f"{_Key.TITLE}: {json.dumps(title)}"
+    return _join(lines)
+
+
+def add_link(text: str, *, title: str, url: str) -> str:
+    lines, end = _split(text)
+    pair = [f"  - title: {json.dumps(title)}", f"    url: {json.dumps(url)}"]
+    key = next((i for i in range(1, end) if lines[i].startswith(f"{_Key.LINKS}:")), None)
+    if key is None:
+        return _join([*lines[:end], f"{_Key.LINKS}:", *pair, *lines[end:]])
+    after = next((i for i in range(key + 1, end) if not lines[i].startswith(" ")), end)
+    return _join([*lines[:after], *pair, *lines[after:]])
+
+
+_ID = re.compile(r"^#{4} .* <!-- id=c(\d+) key=\S+ -->$")
+
+
+def _minute(at):
+    return at.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _split(text):
+    """Lines as the parser splits them, and the front matter's closing line's index."""
+    lines = text.splitlines()
+    return lines, lines.index("---", 1)
+
+
+def _join(lines):
+    return "\n".join(lines) + "\n"
+
+
+def _spans(lines, end):
+    """Each present section's (first, after) body line indexes."""
+    starts = [
+        (i, _Section(m[1]))
+        for i in range(end + 1, len(lines))
+        if (m := _SECTION.fullmatch(lines[i]))
+    ]
+    ends = [i for i, _ in starts[1:]] + [len(lines)] * bool(starts)
+    return {section: (i + 1, after) for (i, section), after in zip(starts, ends, strict=True)}
+
+
+def _append(lines, end, section, block):
+    """block after the section's last filled line, the section made (in _ORDER) if absent; a block
+    led by a blank line is one apart from the next section too."""
+    spans = _spans(lines, end)
+    if section not in spans:
+        later = [spans[s][0] - 1 for s in _ORDER[_ORDER.index(section) + 1 :] if s in spans]
+        at = later[0] if later else len(lines)
+        gap = [""] if at < len(lines) and block[0] == "" else []
+        return [*lines[:at], f"### {section.value}", *block, *gap, *lines[at:]]
+    first, after = spans[section]
+    last = max((i for i in range(first, after) if lines[i].strip()), default=first - 1)
+    return [*lines[: last + 1], *block, *lines[last + 1 :]]
+
+
+def _body(body):
+    """body's lines as the parser splits them, those it would read as structure indented a space."""
+    return [
+        f" {line}" if line == _BARE or _SECTION.fullmatch(line) or _HEADED.match(line) else line
+        for line in body.strip().splitlines()
+    ]
