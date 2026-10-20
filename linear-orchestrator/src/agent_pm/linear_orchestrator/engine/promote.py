@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
 
-from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
 
@@ -21,6 +21,7 @@ from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.prune import Pruner
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
+from agent_pm.linear_orchestrator.flow.handoff import handoff as handoff_text
 from agent_pm.linear_orchestrator.flow.types import Approved, Detail, IssueState, Ref
 from agent_pm.utils import one_line, parse_time
 
@@ -229,7 +230,7 @@ class Promoter:
         everything = sorted(
             (c for c in detail.comments if not c.run), key=lambda c: parse_time(c.at)
         )
-        return issues.handoff(
+        return handoff_text(
             src.ident,
             src.url,
             sources=list(src.sources),

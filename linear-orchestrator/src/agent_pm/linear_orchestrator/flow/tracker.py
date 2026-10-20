@@ -1,7 +1,7 @@
 """Issue reads and writes; the adapter's errors."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Literal
 
@@ -9,6 +9,8 @@ from agent_pm.linear_orchestrator.flow.types import (
     Approved,
     Detail,
     Finished,
+    Found,
+    Issue,
     IssueRecord,
     IssueState,
     Recheck,
@@ -24,6 +26,17 @@ class Tracker(ABC):
     @abstractmethod
     def read(self, ident: str) -> Snapshot | None:
         """None: no such issue."""
+
+    @abstractmethod
+    def issue(self, ident: str) -> Issue:
+        """Raises the adapter's error: none, or another's."""
+
+    @abstractmethod
+    def search(self, words: Sequence[str], idents: Sequence[str]) -> tuple[Found, ...]:
+        """Archived too; idents: this board's."""
+
+    @abstractmethod
+    def description(self, ident: str) -> str | None: ...
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:

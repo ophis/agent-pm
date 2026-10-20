@@ -35,7 +35,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:79`, `…/engine/related.py:177`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:151`, `manager/src/agent_pm/manager/engine/crew.py:541` |
+| Purpose | the orchestrator's target-repo check, docs fetch and duplicate search; the Delegate's ready gate (`gh pr ready`, `--undo`); `repo.py` clone, PR and API calls; the manager's PR reads | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/target.py:80`, `…/engine/related.py:130`, `delegate/src/agent_pm/delegate/engine/ready_gate.py:86`, `delegate/src/agent_pm/delegate/team/tools/repo.py:151`, `manager/src/agent_pm/manager/engine/crew.py:541` |
 | Minimum permission | an account that can push to and open pull requests on every target repo; `gh auth login`'s scopes (a classic token needs at least `repo`, `read:org`, `gist`) | [gh auth login] |
 | Stored at | the system credential store, else a plain-text file; `gh auth status` says which | [gh auth login] |
 | Readers | any process running as the user (`gh auth token`); never mounted into a container | [gh auth login]; [What a container cannot reach](#what-a-container-cannot-reach) |
@@ -68,8 +68,8 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1168`, `…/engine/promote.py:321`, `…/engine/prune.py:450`, `…/engine/writeback.py:105` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/ops.py:27`, `…/engine/linear_tracker.py:81`, `…/engine/linear_tracker.py:83`, `…/engine/linear_tracker.py:67`, `…/engine/ops.py:20`, `…/engine/linear_tracker.py:93`; [Linear API keys] |
+| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1170`, `…/engine/promote.py:322`, `…/engine/prune.py:452`, `…/engine/writeback.py:97` |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/ops.py:27`, `…/engine/linear_tracker.py:89`, `…/engine/linear_tracker.py:91`, `…/engine/linear_tracker.py:75`, `…/engine/ops.py:20`, `…/engine/linear_tracker.py:101`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `harness_key` | `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml:17` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
@@ -82,9 +82,9 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:98`, `…/engine/ops.py:27`, `…/engine/ops.py:30`, `…/engine/router.py:573` |
-| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/engine/linear_tracker.py:86`, `…/engine/linear_tracker.py:88`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:83`, `…/engine/router.py:647` |
+| Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:94`, `…/engine/ops.py:27`, `…/engine/ops.py:30`, `…/engine/router.py:574` |
+| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/engine/linear_tracker.py:94`, `…/engine/linear_tracker.py:96`; [Linear API keys] |
+| Stored at | a login keychain item whose service is `roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:83`, `…/engine/router.py:648` |
 | Readers | as the harness key | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |

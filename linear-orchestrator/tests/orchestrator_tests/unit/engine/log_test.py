@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import log, types
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError
+from agent_pm.linear_orchestrator.flow.types import ISSUE_ID
 from agent_pm.utils import one_line
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.clock import logs_at
@@ -19,9 +20,9 @@ from orchestrator_tests.unit.linear_fixtures import (
 
 class Helpers(Case):
     def test_issue_id_is_unanchored(self):
-        self.assertEqual(re.findall(types.ISSUE_ID, "see ENG-12, PM-3."), ["ENG-12", "PM-3"])
+        self.assertEqual(re.findall(ISSUE_ID, "see ENG-12, PM-3."), ["ENG-12", "PM-3"])
         for bad in ("task-7", "7-ENG", "ENG-", "ENG-7 "):
-            self.assertIsNone(re.fullmatch(types.ISSUE_ID, bad), bad)
+            self.assertIsNone(re.fullmatch(ISSUE_ID, bad), bad)
 
     def test_application_exception_text(self):
         self.assertEqual(one_line(LinearError("api error")), "LinearError: api error")

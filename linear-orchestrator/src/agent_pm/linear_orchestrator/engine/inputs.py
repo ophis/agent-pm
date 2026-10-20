@@ -11,7 +11,14 @@ from urllib.parse import quote, unquote
 from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.target import pr_title
-from agent_pm.linear_orchestrator.engine.types import Group, InputError, Related
+from agent_pm.linear_orchestrator.engine.types import (
+    InputError,
+    Related,
+)
+from agent_pm.linear_orchestrator.flow import handoff
+from agent_pm.linear_orchestrator.flow.types import (
+    Group,
+)
 from agent_pm.utils import SHORT, err_text, one_line, parse_time
 
 
@@ -72,7 +79,7 @@ def _design_dirs(docs):
 
 
 def _links(issue, docs):
-    urls = [m.group(0) for m in _link_re(docs).finditer(issues.head(issue.description))] + [
+    urls = [m.group(0) for m in _link_re(docs).finditer(handoff.head(issue.description))] + [
         a.url for a in issue.links
     ]
     found = {}
@@ -261,7 +268,7 @@ def _build(issue, sources, humans, target, docs):
     dirs = _design_dirs(docs)
     prd = next((d for d in sources.docs if d.path.startswith(dirs)), None)
     instructions = (
-        h.instructions if h else _join([issue.title, issues.head(issue.description).strip()])
+        h.instructions if h else _join([issue.title, handoff.head(issue.description).strip()])
     )
     head = [
         "Reference: " + issue.identifier,

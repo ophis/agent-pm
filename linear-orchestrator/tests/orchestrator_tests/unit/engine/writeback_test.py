@@ -9,13 +9,13 @@ import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.types import Begun, Finished, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
-    issues,
     log,
     ops,
     run_comments,
@@ -28,9 +28,12 @@ from agent_pm.linear_orchestrator.engine.types import (
     Claim,
     ConfigError,
     Invalid,
-    Issue,
     LinearError,
     Stopped,
+)
+from agent_pm.linear_orchestrator.flow import handoff
+from agent_pm.linear_orchestrator.flow.types import (
+    Issue,
 )
 from agent_pm.session import SessionStatus
 from agent_pm.utils import OutcomeStatus
@@ -193,7 +196,7 @@ def issue(description):
         (),
         (),
         (),
-        handoff=issues.parse_handoff(description),
+        handoff=handoff.parse_handoff(description),
     )
 
 
@@ -600,8 +603,7 @@ class WritebackContext(run_fixtures.Base):
                 ctx = writeback.context(
                     cfg,
                     "engineer",
-                    gql,
-                    key=cfg.roles["engineer"].key,
+                    **writeback.accounts(cfg, gql, cfg.roles["engineer"].key),
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -640,6 +642,18 @@ class WritebackContext(run_fixtures.Base):
                     timeout=run_comments.LIMIT,
                     c=ops.client_id(SID, "session"),
                 )
+
+    def test_a_run_writes_with_the_trackers_it_is_given(self):
+        cfg = config.load()
+        tracker, harness = object(), object()
+        spec = SimpleNamespace(issue=ID, uuid=UUID, sid=SID, mode="resume", project=PROJECT)
+        ctx = writeback.for_run(cfg, "engineer", spec, tracker=tracker, harness=harness)
+        self.assertIs(ctx.tracker, tracker)
+        self.assertIs(ctx.harness, harness)
+        self.assertEqual(
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.resume, ctx.project, ctx.target),
+            (ID, UUID, SID, True, PROJECT, None),
+        )
 
 
 class DurableRunNotes(Case):

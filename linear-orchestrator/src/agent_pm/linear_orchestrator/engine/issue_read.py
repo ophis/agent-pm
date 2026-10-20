@@ -6,7 +6,14 @@ import re
 from typing import TypeGuard
 
 from agent_pm.linear_orchestrator.engine import issue_refs
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, IssueError, LinearError
+from agent_pm.linear_orchestrator.engine.types import (
+    UUID_RE,
+    IssueError,
+    LinearError,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+)
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250

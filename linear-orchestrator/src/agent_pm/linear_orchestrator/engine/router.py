@@ -89,7 +89,6 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
-    issues,
     related,
     target,
     writeback,
@@ -119,7 +118,6 @@ from agent_pm.linear_orchestrator.engine.runs import (
     trim,
 )
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
     UUID_RE,
     ClientSource,
     ConfigError,
@@ -131,7 +129,10 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.linear_orchestrator.flow.types import IssueState
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+    IssueState,
+)
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -707,12 +708,13 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     build = config.TASKS[role].kind == "build"
+    reader = LinearTracker(gql, states=cfg.states, team_id=cfg.team)
     try:
-        issue = issues.read_issue(gql, a.issue)
+        issue = reader.issue(a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
-    ctx = writeback.for_run(cfg, role, gql, a)
+    ctx = writeback.for_run(cfg, role, a, **writeback.accounts(cfg, gql, key))
     workdir = cfg.issue_workdir(a.issue)
     delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
@@ -755,7 +757,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     found = None
     if a.mode == "new" and latest(parse_log(cfg.runs_log)).get(a.issue) is None:
         try:
-            found = related.search(gql, issue, cfg, target=repo, run=run)
+            found = related.search(reader, issue, cfg, target=repo, run=run)
         except (LinearError, Unavailable, InputError, OSError, subprocess.SubprocessError) as e:
             log("router", "related-skip", a.issue, reason=one_line(e))
     text = inputs.render(

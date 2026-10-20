@@ -9,7 +9,14 @@ from dataclasses import replace
 
 from agent_pm.delegate import Delegate, Spec
 from agent_pm.linear_orchestrator.engine import config, runs
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, Config, ConfigError
+from agent_pm.linear_orchestrator.engine.types import (
+    UUID_RE,
+    Config,
+    ConfigError,
+)
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+)
 from agent_pm.utils import Display, Record, Status
 
 

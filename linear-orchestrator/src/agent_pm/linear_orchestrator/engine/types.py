@@ -3,11 +3,15 @@
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from enum import IntEnum, StrEnum
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal
 
 from agent_pm import delegate
+from agent_pm.linear_orchestrator.flow.types import ISSUE_ID, Found
+
+# Linked kept only for tests reading types.Linked; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.flow.types import Linked as Linked
 from agent_pm.utils import Stopped as Stopped
 
 ClientSource = Literal["label", "default"]
@@ -170,74 +174,6 @@ class InputError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class Note:
-    body: str
-    at: str
-    email: str | None
-    name: str | None
-
-
-@dataclass(frozen=True)
-class Link:
-    url: str
-
-
-@dataclass(frozen=True)
-class Linked:
-    identifier: str
-    title: str
-    state: str
-
-
-@dataclass(frozen=True)
-class Handoff:
-    source: str
-    instructions: str
-    comments: str
-
-
-@dataclass(frozen=True)
-class Issue:
-    id: str
-    identifier: str
-    url: str
-    title: str
-    description: str
-    created_at: str
-    project_id: str | None
-    notes: tuple[Note, ...]
-    links: tuple[Link, ...]
-    linked: tuple[Linked, ...]
-
-    handoff: Handoff | None = field(kw_only=True)
-    labels: tuple[str, ...] = field(default=(), kw_only=True)
-
-
-class Group(IntEnum):
-    """A Related work issue's rank: its state's place in the section's order."""
-
-    DONE = 0
-    IN_REVIEW = 1
-    IN_PROGRESS = 2
-    TODO = 3
-    BACKLOG = 4
-    CANCELED = 5
-
-
-@dataclass(frozen=True)
-class Found:
-    """A first-claim search's issue candidate; last_comment only for a Canceled one."""
-
-    identifier: str
-    title: str
-    state: str
-    group: Group
-    urls: tuple[str, ...]
-    description: str
-    last_comment: str
-
-
-@dataclass(frozen=True)
 class Ref:
     """A first-claim search's doc or merged PR; owner: the Found it belongs to, if any."""
 
@@ -271,7 +207,6 @@ class Target:
     clone: str = ""
 
 
-ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 

@@ -1,5 +1,6 @@
 """The flow Tracker on Linear, from a gql callable: its states mapped to IssueState, its reads and
-writes in Linear's query text, and which of its comments and attachments are a run's."""
+writes in Linear's query text (a run's issue read included), and which of its comments and
+attachments are a run's."""
 
 import functools
 import re
@@ -7,7 +8,8 @@ from typing import TypeVar
 
 from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, client_id, last_move
-from agent_pm.linear_orchestrator.engine.types import UUID_RE, LinearError, State
+from agent_pm.linear_orchestrator.engine.types import UUID_RE, IssueError, LinearError, State
+from agent_pm.linear_orchestrator.flow.handoff import parse_handoff
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
@@ -15,9 +17,15 @@ from agent_pm.linear_orchestrator.flow.types import (
     Comment,
     Detail,
     Finished,
+    Found,
+    Group,
+    Issue,
     IssueState,
     Label,
+    Link,
+    Linked,
     Move,
+    Note,
     Recheck,
     Ref,
     Snapshot,
@@ -100,6 +108,36 @@ Q_RECHECK = (
     "labels { nodes { id name parent { id } } } } }"
 )
 Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + HISTORY + " } }"
+_NODES = (
+    "nodes { identifier title description state { id name type } "
+    "attachments(first: 20) { nodes { url } } comments(first: 1, orderBy: createdAt) { nodes { body } } }"
+)
+_FOUND = f"searchIssues(term: $t, filter: $f, first: 10, includeArchived: true) {{ {_NODES} }}"
+_NAMED = f"issues(filter: $n, first: 50, includeArchived: true) {{ {_NODES} }}"
+Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
+Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
+Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
+Q_UPSTREAM = "query($i: String!) { issue(id: $i) { identifier description } }"
+GROUP_BY_STATE = {
+    State.DONE: Group.DONE,
+    State.IN_REVIEW: Group.IN_REVIEW,
+    State.IN_PROGRESS: Group.IN_PROGRESS,
+    State.TODO: Group.TODO,
+    State.CANCELED: Group.CANCELED,
+}
+GROUP_BY_TYPE = {
+    "completed": Group.DONE,
+    "started": Group.IN_PROGRESS,
+    "unstarted": Group.TODO,
+    "canceled": Group.CANCELED,
+}
+Q_READ = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
+  project { id }
+  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
+  attachments(first: 50) { nodes { url } }
+  labels(first: 50) { nodes { id } }
+  relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
+  inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 
 
 def q_issues(fields=""):
@@ -264,6 +302,75 @@ class LinearTracker(Tracker):
         if found in (IssueState.DONE, IssueState.CANCELED):
             return Snapshot(found, finished_at(issue, ended))
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
+
+    def issue(self, ident):
+        node = self.gql(Q_READ, i=ident)["issue"]
+        if node is None:
+            raise IssueError(f"{ident}: issue not found")
+        if node["identifier"] != ident:
+            raise IssueError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
+        notes = sorted(
+            (
+                Note(
+                    c["body"],
+                    c["createdAt"],
+                    (c["user"] or {}).get("email"),
+                    (c["user"] or {}).get("name"),
+                )
+                for c in node["comments"]["nodes"]
+                if not is_comment(c)
+            ),
+            key=lambda n: parse_time(n.at),
+        )
+        linked = {}
+        for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [
+            x["issue"] for x in node["inverseRelations"]["nodes"]
+        ]:
+            linked.setdefault(
+                r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"])
+            )
+        description = node["description"] or ""
+        return Issue(
+            id=node["id"],
+            identifier=node["identifier"],
+            url=node["url"],
+            title=node["title"],
+            description=description,
+            handoff=parse_handoff(description),
+            created_at=node["createdAt"],
+            project_id=(node["project"] or {}).get("id"),
+            notes=tuple(notes),
+            links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
+            linked=tuple(linked.values()),
+            labels=tuple(n["id"] for n in node["labels"]["nodes"]),
+        )
+
+    def search(self, words, idents):
+        if not words and not idents:
+            return ()
+        f = {"team": {"id": {"eq": _need("team_id", self.team_id)}}}
+        n = {**f, "number": {"in": [int(i.rsplit("-", 1)[1]) for i in idents]}}
+        if words and idents:
+            data = self.gql(Q_SEARCH_IDS, t=" ".join(words), f=f, n=n)
+        elif words:
+            data = self.gql(Q_SEARCH, t=" ".join(words), f=f)
+        else:
+            data = self.gql(Q_IDS, n=n)
+        nodes = [
+            *data.get("searchIssues", {"nodes": []})["nodes"],
+            *data.get("issues", {"nodes": []})["nodes"],
+        ]
+        by_id = {_need("states", self.state_ids)[k]: g for k, g in GROUP_BY_STATE.items()}
+        return tuple(_found(n, by_id) for n in nodes)
+
+    def description(self, ident):
+        try:
+            node = self.gql(Q_UPSTREAM, i=ident)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            return None
+        return None if node is None else node["description"] or ""
 
     def finished(self, owners):
         states, team = _need("states", self.state_ids), _need("team_id", self.team_id)
@@ -458,3 +565,17 @@ def _need(name: str, value: T | None) -> T:
 
 def _sub_issues(nodes):
     return tuple(SubIssue(n["id"], n["identifier"], n["state"]["type"] in DONE) for n in nodes)
+
+
+def _found(n, by_id):
+    st, comments = n["state"], n["comments"]["nodes"]
+    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], Group.BACKLOG))
+    return Found(
+        n["identifier"],
+        n["title"],
+        st["name"],
+        group,
+        tuple(a["url"] for a in n["attachments"]["nodes"]),
+        n["description"] or "",
+        comments[0]["body"] if group == Group.CANCELED and comments else "",
+    )

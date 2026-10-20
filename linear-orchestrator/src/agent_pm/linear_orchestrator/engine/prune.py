@@ -52,12 +52,14 @@ from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.types import (
-    ISSUE_ID,
     ConfigError,
     LinearError,
     Unavailable,
 )
-from agent_pm.linear_orchestrator.flow.types import IssueState
+from agent_pm.linear_orchestrator.flow.types import (
+    ISSUE_ID,
+    IssueState,
+)
 from agent_pm.utils import (
     GUARD,
     SHORT,

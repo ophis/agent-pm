@@ -9,16 +9,18 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import (
+    issues,
     linear_tracker,
     ops,
     promote,
     prune,
+    related,
     router,
     run_comments,
     writeback,
 )
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import IssueError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
@@ -26,9 +28,16 @@ from agent_pm.linear_orchestrator.flow.types import (
     Comment,
     Detail,
     Finished,
+    Found,
+    Group,
+    Handoff,
+    Issue,
     IssueState,
     Label,
+    Link,
+    Linked,
     Move,
+    Note,
     Recheck,
     Ref,
     Snapshot,
@@ -56,12 +65,18 @@ BASE = {
     "Q_CHILD": "4fa2b83d88ba5fc7dd9a33223140644eb8647521ac24c8c19ba044602dbca7a1",
     "M_CREATE": "a67ba5a98ce64a1689f6842fca53f944e76ab2437837d95c7c5ce1940911b430",
     "M_RELATE": "6672d8a892ce59d43f46f25990e6867358dff5cf5e8f79438d77d09bb1e587d5",
+    "Q_READ": "a94647460768537b760c88ed1ac21bbfb27f3bcd1f6c52280e6a04fd90a03173",
+    "Q_SEARCH": "bda2e9a29af014b08f88961462a759452ec79f9c0a411933db1ec264595256ca",
+    "Q_SEARCH_IDS": "054d541ce9250a347a2c489c69ed5c6e7580f1244c43b79d71c01bad0cc741e0",
+    "Q_IDS": "fd0f74d3cdd0d0a34ba9f12805652c7ecedebd4d75e003bece27d4d9912f9b95",
+    "Q_UPSTREAM": "be140943c548c5d9b8dc0940cd9dd8c712469da812be4997e0d9ebc3fad38eda",
 }
 REEXPORTS = {
     prune: ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE"),
     promote: ("Q_HANDOFF", "Q_DETAIL", "Q_CHILD", "M_CREATE", "M_RELATE"),
     writeback: ("M_TITLE", "M_ATTACH", "M_UNARCHIVE", "Q_ATTACHED", "Q_ID"),
     run_comments: ("M_UPDATE",),
+    related: ("Q_SEARCH", "Q_SEARCH_IDS", "Q_IDS", "Q_UPSTREAM"),
 }
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 REF = (SID, "session")
@@ -165,6 +180,9 @@ class Queries(Case):
         for name, text in texts.items():
             with self.subTest(query=name):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
+
+    def test_the_run_issue_read_is_issues_q_issue(self):
+        self.assertIs(issues.Q_ISSUE, linear_tracker.Q_READ)
 
     def test_router_reexports_are_the_adapter_strings(self):
         for name in (*ROUTER, "q_issues", "blockers"):
@@ -861,6 +879,9 @@ class Interface(Case):
                 "ready",
                 "moved_at",
                 "recheck",
+                "issue",
+                "search",
+                "description",
             },
         )
         self.assertIsInstance(LinearTracker(None), Tracker)
@@ -1169,6 +1190,215 @@ class PromoteSeam(Case):
 class WritebackSeam(Case):
     def test_writeback_and_run_comments_reach_linear_only_through_the_tracker(self):
         for module in (writeback, run_comments):
+            with self.subTest(module=module.__name__):
+                tree = ast.parse(inspect.getsource(module))
+                found = [
+                    ast.unparse(n)
+                    for n in ast.walk(tree)
+                    if isinstance(n, ast.Constant)
+                    and isinstance(n.value, str)
+                    and ("query(" in n.value or "mutation(" in n.value)
+                    or isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id in ("gql", "call")
+                    or isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id == "ops"
+                    or isinstance(n, ast.ImportFrom)
+                    and (n.module or "").endswith(".ops")
+                    or isinstance(n, ast.alias)
+                    and n.name == "ops"
+                ]
+                self.assertEqual(found, [])
+
+
+def run_issue(**over):
+    node = {
+        "id": "uuid-7",
+        "identifier": "TASK-7",
+        "url": "https://linear.app/t/issue/TASK-7",
+        "title": "Build it",
+        "description": "Handoff from TASK-3: https://linear.app/t/issue/TASK-3\n\n## Instructions\nGo.",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "project": {"id": "p-1"},
+        "comments": {
+            "nodes": [
+                {"body": "later", "createdAt": "2026-09-03T00:00:00.000Z", "user": None},
+                {
+                    "body": f"Run {SID} · started",
+                    "createdAt": "2026-09-02T00:00:00.000Z",
+                    "user": {"email": "h@x.com", "name": "H", "isMe": True},
+                },
+                {
+                    "body": "first",
+                    "createdAt": "2026-09-01T12:00:00.000Z",
+                    "user": {"email": "ann@x.com", "name": "Ann", "isMe": False},
+                },
+            ]
+        },
+        "attachments": {"nodes": [{"url": "https://github.com/o/r/pull/1"}]},
+        "labels": {"nodes": [{"id": "l-1"}]},
+        "relations": {
+            "nodes": [
+                {
+                    "relatedIssue": {
+                        "identifier": "TASK-2",
+                        "title": "Two",
+                        "state": {"name": "Done"},
+                    }
+                }
+            ]
+        },
+        "inverseRelations": {
+            "nodes": [
+                {"issue": {"identifier": "TASK-2", "title": "Two", "state": {"name": "Done"}}},
+                {"issue": {"identifier": "TASK-4", "title": "Four", "state": {"name": "Todo"}}},
+            ]
+        },
+    }
+    return {"issue": node | over}
+
+
+class RunIssue(Case):
+    def test_one_read_by_identifier_parsed(self):
+        gql = Gql(Q_READ=run_issue())
+        got = LinearTracker(gql).issue("TASK-7")
+        self.assertEqual(gql.calls, [(linear_tracker.Q_READ, {"i": "TASK-7"})])
+        self.assertEqual(
+            got,
+            Issue(
+                "uuid-7",
+                "TASK-7",
+                "https://linear.app/t/issue/TASK-7",
+                "Build it",
+                run_issue()["issue"]["description"],
+                "2026-09-01T00:00:00.000Z",
+                "p-1",
+                (
+                    Note("first", "2026-09-01T12:00:00.000Z", "ann@x.com", "Ann"),
+                    Note("later", "2026-09-03T00:00:00.000Z", None, None),
+                ),
+                (Link("https://github.com/o/r/pull/1"),),
+                (Linked("TASK-2", "Two", "Done"), Linked("TASK-4", "Four", "Todo")),
+                handoff=Handoff("TASK-3", "Go.", ""),
+                labels=("l-1",),
+            ),
+        )
+
+    def test_null_description_and_project(self):
+        got = LinearTracker(Gql(Q_READ=run_issue(description=None, project=None))).issue("TASK-7")
+        self.assertEqual((got.description, got.project_id, got.handoff), ("", None, None))
+
+    def test_no_such_issue_or_another_raises(self):
+        cases = (
+            ({"issue": None}, "TASK-7: issue not found"),
+            (run_issue(identifier="TASK-8"), "Linear returned 'TASK-8' for TASK-7"),
+        )
+        for reply, message in cases:
+            with self.subTest(message=message), self.assertRaises(IssueError) as caught:
+                LinearTracker(Gql(Q_READ=reply)).issue("TASK-7")
+            self.assertEqual(str(caught.exception), message)
+
+    def test_issues_read_issue_is_the_adapters(self):
+        gql = Gql(Q_READ=run_issue())
+        self.assertEqual(issues.read_issue(gql, "TASK-7"), LinearTracker(gql).issue("TASK-7"))
+
+
+def candidate(ident, state, kind, *, urls=(), comment=None):
+    return {
+        "identifier": ident,
+        "title": f"{ident} title",
+        "description": None,
+        "state": {"id": state, "name": f"{ident} state", "type": kind},
+        "attachments": {"nodes": [{"url": u} for u in urls]},
+        "comments": {"nodes": [] if comment is None else [{"body": comment}]},
+    }
+
+
+TEAM_F = {"team": {"id": {"eq": TEAM}}}
+
+
+class Search(Case):
+    def search(self, words, idents, **replies):
+        gql = Gql(**replies)
+        return gql, LinearTracker(gql, states=STATES, team_id=TEAM).search(words, idents)
+
+    def test_the_query_follows_words_and_idents(self):
+        found = {"searchIssues": {"nodes": [candidate("TASK-3", STATES["done"], "completed")]}}
+        named = {"issues": {"nodes": [candidate("TASK-30", STATES["done"], "completed")]}}
+        both = found | named
+        numbers = {**TEAM_F, "number": {"in": [30, 4]}}
+        cases = (
+            (
+                ("a", "b"),
+                ("TASK-30", "TASK-4"),
+                {"Q_SEARCH_IDS": both},
+                "Q_SEARCH_IDS",
+                {"t": "a b", "f": TEAM_F, "n": numbers},
+                ["TASK-3", "TASK-30"],
+            ),
+            (("a",), (), {"Q_SEARCH": found}, "Q_SEARCH", {"t": "a", "f": TEAM_F}, ["TASK-3"]),
+            ((), ("TASK-30", "TASK-4"), {"Q_IDS": named}, "Q_IDS", {"n": numbers}, ["TASK-30"]),
+        )
+        for words, idents, replies, name, variables, idents_found in cases:
+            with self.subTest(query=name):
+                gql, got = self.search(words, idents, **replies)
+                self.assertEqual(gql.calls, [(getattr(linear_tracker, name), variables)])
+                self.assertEqual([f.identifier for f in got], idents_found)
+
+    def test_group_by_configured_state_then_type(self):
+        nodes = [
+            candidate("TASK-1", STATES["in_review"], "started"),
+            candidate("TASK-2", "other", "started"),
+            candidate("TASK-3", "other", "mystery"),
+            candidate("TASK-4", STATES["canceled"], "canceled", comment="Not needed."),
+            candidate("TASK-5", STATES["done"], "completed", comment="Shipped.", urls=["u\n"]),
+        ]
+        _, got = self.search(("a",), (), Q_SEARCH={"searchIssues": {"nodes": nodes}})
+        self.assertEqual(
+            got,
+            (
+                Found("TASK-1", "TASK-1 title", "TASK-1 state", Group.IN_REVIEW, (), "", ""),
+                Found("TASK-2", "TASK-2 title", "TASK-2 state", Group.IN_PROGRESS, (), "", ""),
+                Found("TASK-3", "TASK-3 title", "TASK-3 state", Group.BACKLOG, (), "", ""),
+                Found(
+                    "TASK-4", "TASK-4 title", "TASK-4 state", Group.CANCELED, (), "", "Not needed."
+                ),
+                Found("TASK-5", "TASK-5 title", "TASK-5 state", Group.DONE, ("u\n",), "", ""),
+            ),
+        )
+
+    def test_no_words_no_idents_no_call(self):
+        gql, got = self.search((), ())
+        self.assertEqual((got, gql.calls), ((), []))
+
+
+class Description(Case):
+    def describe(self, reply):
+        gql = Gql(Q_UPSTREAM=reply)
+        got = LinearTracker(gql).description("TASK-5")
+        self.assertEqual(gql.calls, [(linear_tracker.Q_UPSTREAM, {"i": "TASK-5"})])
+        return got
+
+    def test_its_description(self):
+        issue = {"identifier": "TASK-5", "description": "Research."}
+        self.assertEqual(self.describe({"issue": issue}), "Research.")
+        self.assertEqual(self.describe({"issue": issue | {"description": None}}), "")
+
+    def test_none_for_no_such_issue(self):
+        missing = LinearError("linear api error: [{'message': 'Entity not found: Issue'}]")
+        for reply in ({"issue": None}, missing):
+            with self.subTest(reply=reply):
+                self.assertIsNone(self.describe(reply))
+
+    def test_another_error_raises(self):
+        with self.assertRaises(LinearError):
+            self.describe(LinearError("linear api error: boom"))
+
+
+class RouterSeam(Case):
+    def test_the_router_and_its_start_path_build_no_linear_query(self):
+        for module in (router, related, issues):
             with self.subTest(module=module.__name__):
                 tree = ast.parse(inspect.getsource(module))
                 found = [
