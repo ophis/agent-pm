@@ -344,14 +344,14 @@ class Pruner:
         if ident in refused and self.trusted(refused[ident].read):
             self.say("prune-skip", ident, once=True, reason=refused[ident].reason)
             return
-        plan = None
+        plan, archived = None, True
         try:
             if self.dry:
                 plan = self.tracker.archive_plan(issue.key)
                 if plan.outcome == "changed":
                     self.budget.spend()  # the write a real tick sends
             else:
-                self.tracker.archive(issue.key)
+                archived = self.tracker.archive(issue.key)
         except ArchiveRefused as e:
             plan = e.plan
         except Unavailable:
@@ -366,7 +366,7 @@ class Pruner:
             self.say("prune-skip", ident, once=True, reason=_kept(plan))
         elif self.dry:
             self.say("prune-plan", ident, what="archive")
-        else:
+        elif archived:
             self.say("prune-archived", ident)
 
     def run(self):

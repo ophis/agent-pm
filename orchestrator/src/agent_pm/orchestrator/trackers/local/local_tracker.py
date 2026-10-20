@@ -376,8 +376,11 @@ class LocalTracker(Tracker):
             plan = self.archive_plan(key)
             if plan.outcome == "refused":
                 raise ArchiveRefused(plan)
+            if plan.outcome == "unchanged":
+                return False
             for each in (*reversed(plan.descendants), plan):
                 self._rewrite(each.key, change)
+        return True
 
     def _write(self, key, change):
         """Under the board lock, issue key's file read fresh and Stamped, then change(text, found):

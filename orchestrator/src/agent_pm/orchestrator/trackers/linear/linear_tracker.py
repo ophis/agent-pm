@@ -610,6 +610,7 @@ class LinearTracker(Tracker):
 
     def _write_archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
+        return True
 
     def approved(self, owners):
         _need("states", self.state_ids)

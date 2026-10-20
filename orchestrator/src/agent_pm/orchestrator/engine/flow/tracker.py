@@ -58,8 +58,8 @@ class Tracker(ABC):
         """A gone issue or an unreadable page raises the adapter's error."""
 
     @abstractmethod
-    def _write_archive(self, key: str) -> None:
-        """With its sub-issues; raises the adapter's error."""
+    def _write_archive(self, key: str) -> bool:
+        """With its sub-issues; False: archived meanwhile."""
 
     def archive(self, key: str, plan: ArchivePlan | None = None) -> bool:
         """Given a plan: writes only. False: already archived."""
@@ -68,8 +68,7 @@ class Tracker(ABC):
             raise ArchiveRefused(plan)
         if plan.outcome == "unchanged":
             return False
-        self._write_archive(plan.key)
-        return True
+        return self._write_archive(plan.key)
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:

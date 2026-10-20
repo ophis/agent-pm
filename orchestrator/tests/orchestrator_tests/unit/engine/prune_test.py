@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, SessionError
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import config, prune, prune_state
+from agent_pm.orchestrator.engine import config, log, prune, prune_state
 from agent_pm.orchestrator.engine.flow.types import IssueState, Snapshot
 from agent_pm.orchestrator.engine.types import Entry, LinearError, PruneState, Unavailable
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
@@ -1767,3 +1767,17 @@ class LocalBoardPrune(PruneScenario):
         path = self.issue("pm/done", "LOC-1")
         write(path, "nonsense\n")
         self.assertEqual(self.run_prune()[:2], (2, f"prune.py: {path}: no front matter\n"))
+
+    def test_archived_meanwhile_logs_nothing(self):
+        path = self.issue("pm/done", "LOC-1")
+        cfg = config.load(path=self.path)
+        log.use_logs(cfg.logs_dir)
+        board = cli.TRACKERS[cfg.tracker].board(None, cfg)
+        pruner = self.pruner(board, None, NOW, dry=False, work=cfg.workdirs, cfg=cfg)
+        pruner.tracker.read("LOC-1")  # scanned: LOC-1 done, not archived
+        os.makedirs(os.path.join(self.board, "archive"))
+        os.rename(path, os.path.join(self.board, "archive/LOC-1 x.md"))  # by another hand
+        self.assertEqual(pruner.run(), 0)
+        said = [show(e) for e in logged(self.logs) if e["src"] == "prune"]
+        self.assertNotIn("prune-archived LOC-1", said)
+        self.assertEqual(self.archived(), ["LOC-1 x.md"])

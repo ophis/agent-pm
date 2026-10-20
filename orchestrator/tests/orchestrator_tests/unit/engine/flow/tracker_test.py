@@ -31,8 +31,8 @@ class Adapter(Tracker):
 
     locals().update(dict.fromkeys(Tracker.__abstractmethods__, _unused))
 
-    def __init__(self, found):
-        self.found, self.reads, self.writes = found, [], []
+    def __init__(self, found, *, archives=True):
+        self.found, self.reads, self.writes, self.archives = found, [], [], archives
 
     def archive_plan(self, key):
         self.reads.append(key)
@@ -40,6 +40,7 @@ class Adapter(Tracker):
 
     def _write_archive(self, key):
         self.writes.append(key)
+        return self.archives
 
 
 class Outcome(Case):
@@ -59,6 +60,11 @@ class Archive(Case):
         adapter = Adapter(plan())
         self.assertTrue(adapter.archive("k-1"))
         self.assertEqual((adapter.reads, adapter.writes), (["k-1"], ["k-1"]))
+
+    def test_archived_meanwhile_reports_its_write(self):
+        adapter = Adapter(plan(), archives=False)
+        self.assertFalse(adapter.archive("k-1"))
+        self.assertEqual(adapter.writes, ["k-1"])
 
     def test_already_archived_writes_nothing(self):
         adapter = Adapter(plan(archived=True))

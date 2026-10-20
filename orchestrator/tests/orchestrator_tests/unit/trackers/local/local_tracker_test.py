@@ -1107,6 +1107,14 @@ class Archive(Written):
         self.assertEqual((caught.exception.path, caught.exception.reason), (taken, "file exists"))
         self.assertTrue(os.path.exists(path))
 
+    def test_archived_meanwhile_is_not_archived(self):
+        path = self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
+        plan = self.tracker.archive_plan("LOC-1")
+        self.assertEqual(plan.outcome, "changed")
+        os.mkdir(os.path.join(self.board, "archive"))
+        os.rename(path, path := os.path.join(self.board, "archive/LOC-1 x.md"))  # by another hand
+        self.assertFalse(self.unchanged(path, lambda: self.tracker.archive("LOC-1", plan)))
+
     def test_unarchive_follows_the_latest_archive(self):
         path = self.write("pm/done", "LOC-1", history="- 2026-10-19 14:30 done self\n")
         for owner in ("pm", "engineer", "pm"):
