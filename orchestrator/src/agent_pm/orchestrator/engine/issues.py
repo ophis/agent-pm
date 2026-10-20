@@ -7,8 +7,8 @@ from agent_pm.orchestrator.engine.flow import workflow
 from agent_pm.utils import parse_time
 
 
-def is_user(note, humans) -> bool:
-    return (note.account or "").lower() in humans
+def is_user(note) -> bool:
+    return note.origin == "other"
 
 
 def brief(issue) -> str:
@@ -23,10 +23,8 @@ def _build_started():
     return re.compile(rf"(?:{'|'.join(map(re.escape, leads))})\b")
 
 
-def build_cutoff(issue, humans) -> str:
+def build_cutoff(issue) -> str:
     started = [
-        n.at
-        for n in issue.notes
-        if not is_user(n, humans) and _build_started().match(n.body.strip())
+        n.at for n in issue.notes if not is_user(n) and _build_started().match(n.body.strip())
     ]
     return max(started, key=parse_time) if started else issue.created_at

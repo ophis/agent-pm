@@ -158,7 +158,7 @@ def _user(note):
 def _quoted(note):
     return "\n".join(
         [
-            f"- {note.name or 'integration'}, {note.at}:",
+            f"- {note.name or note.account}, {note.at}:",
             *(f"  > {line}" for line in note.body.splitlines()),
         ]
     )
@@ -200,8 +200,8 @@ def _join(blocks):
     return "\n\n".join(b for b in blocks if b)
 
 
-def _split(issue, humans):
-    user = [n for n in issue.notes if issues.is_user(n, humans)]
+def _split(issue):
+    user = [n for n in issue.notes if issues.is_user(n)]
     return user, [n for n in issue.notes if n not in user]
 
 
@@ -220,8 +220,8 @@ def _reference(issue, target):
     )
 
 
-def _research(issue, sources, humans, target, docs):
-    user, other = _split(issue, humans)
+def _research(issue, sources, target, docs):
+    user, other = _split(issue)
     e = sources.earlier
     return _join(
         [
@@ -236,8 +236,8 @@ def _research(issue, sources, humans, target, docs):
     )
 
 
-def _design(issue, sources, humans, target, docs):
-    user, other = _split(issue, humans)
+def _design(issue, sources, target, docs):
+    user, other = _split(issue)
     h, e = issue.handoff, sources.earlier
     return _join(
         [
@@ -260,10 +260,10 @@ def _design(issue, sources, humans, target, docs):
     )
 
 
-def _build(issue, sources, humans, target, docs):
+def _build(issue, sources, target, docs):
     h = issue.handoff
-    cutoff = parse_time(issues.build_cutoff(issue, humans))
-    new = [n for n in issue.notes if issues.is_user(n, humans) and parse_time(n.at) > cutoff]
+    cutoff = parse_time(issues.build_cutoff(issue))
+    new = [n for n in issue.notes if issues.is_user(n) and parse_time(n.at) > cutoff]
     old = [n for n in issue.notes if n not in new]
     dirs = _design_dirs(docs)
     prd = next((d for d in sources.docs if d.path.startswith(dirs)), None)
@@ -342,10 +342,9 @@ def render(
     role,
     sources,
     *,
-    humans,
     target,
     docs,
     related: Related | None = None,
 ) -> str:
     layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
-    return _join([layout(issue, sources, humans, target, docs), _related(related or Related())])
+    return _join([layout(issue, sources, target, docs), _related(related or Related())])

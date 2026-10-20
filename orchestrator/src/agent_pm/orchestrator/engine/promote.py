@@ -92,7 +92,7 @@ class Promoter:
         self.cfg, self.now, self.dry, self.wait = cfg, now, dry, wait
         self.tasks = tasks
         self.team, self.roles = team_and_roles(gql, cfg)
-        self.tracker = LinearTracker.of_team(gql, self.team, self.roles, humans=cfg.human_members)
+        self.tracker = LinearTracker.of_team(gql, cfg, self.team, self.roles)
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):
@@ -164,7 +164,7 @@ class Promoter:
             (
                 c
                 for c in detail.comments
-                if c.other and (cutoff is None or parse_time(c.at) > parse_time(cutoff))
+                if c.origin == "other" and (cutoff is None or parse_time(c.at) > parse_time(cutoff))
             ),
             key=lambda c: parse_time(c.at),
         )

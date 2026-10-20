@@ -23,6 +23,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Linked,
     Move,
     Note,
+    Origin,
     Recheck,
     Ref,
     Snapshot,
@@ -190,6 +191,14 @@ def _quiet(*_, **__):
     pass
 
 
+def _selves(roles):
+    return frozenset(r.account.lower() for r in roles.values())
+
+
+def _origin(user, selves) -> Origin:
+    return "self" if user.get("isMe") or (user.get("email") or "").lower() in selves else "other"
+
+
 def team_and_roles(gql, cfg):
     """The team (states, finished) and the role accounts' user ids promote and prune build their
     tracker from: the team read first."""
@@ -198,11 +207,13 @@ def team_and_roles(gql, cfg):
 
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
-    humans: human_members emails (comments' other, subscribed on notify); people: their user ids,
-    which connect reads and moved_at's by_people needs; say: the caller's logger. A method needing
-    one not given raises TypeError. service: the key each call is made as, with timeout when given; None:
-    gql as given. A comment's ref: its client id's parts. A home is a Linear project; a note's account
-    its user's email."""
+    humans: human_members emails, subscribed on notify; selves: the role accounts' emails, lowercased;
+    people: the human members' user ids, which moved_at's by_people needs; say: the caller's logger.
+    A method needing one not given raises TypeError. service: the key each call is made as, with
+    timeout when given; None: gql as given. A comment's ref: its client id's parts. A home is a Linear
+    project; a note's account its user's email. Origin self: the harness account (isMe: router,
+    promote and the run reader query with linear.harness_key) or a role account; other: any other
+    user. A comment with no user (an integration's, such as GitHub's) is not returned."""
 
     def __init__(
         self,
@@ -213,6 +224,7 @@ class LinearTracker(Tracker):
         finished=None,
         roles=None,
         humans=(),
+        selves=None,
         people=frozenset(),
         say=_quiet,
         service=None,
@@ -222,9 +234,8 @@ class LinearTracker(Tracker):
             bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
             gql = functools.partial(gql, **bound)
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
-        self.finished_ids, self.humans = finished, humans
+        self.finished_ids, self.humans, self.selves = finished, humans, selves
         self.people, self.say, self.hist = people, say, {}
-        self.others = {e.lower() for e in humans}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
         self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
@@ -248,12 +259,13 @@ class LinearTracker(Tracker):
             finished=found.finished,
             roles=ops.role_ids(gql, cfg.roles),
             humans=cfg.human_members,
+            selves=_selves(cfg.roles),
             people=people,
             say=say,
         )
 
     @classmethod
-    def of_team(cls, gql, team, roles, *, humans=()):
+    def of_team(cls, gql, cfg, team, roles):
         """From team_and_roles' reads."""
         return cls(
             gql,
@@ -261,8 +273,14 @@ class LinearTracker(Tracker):
             team_id=team.id,
             finished=team.finished,
             roles=roles,
-            humans=humans,
+            humans=cfg.human_members,
+            selves=_selves(cfg.roles),
         )
+
+    @classmethod
+    def reader(cls, gql, cfg):
+        """A run's issue read."""
+        return cls(gql, states=cfg.states, team_id=cfg.team, selves=_selves(cfg.roles))
 
     def role(self, issue):
         return _need("roles", self.roles)[issue["assignee"]["id"]]
@@ -323,6 +341,7 @@ class LinearTracker(Tracker):
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
 
     def issue(self, ident):
+        selves = _need("selves", self.selves)
         node = self.gql(Q_READ, i=ident)["issue"]
         if node is None:
             raise IssueError(f"{ident}: issue not found")
@@ -333,11 +352,12 @@ class LinearTracker(Tracker):
                 Note(
                     c["body"],
                     c["createdAt"],
-                    (c["user"] or {}).get("email"),
-                    (c["user"] or {}).get("name"),
+                    c["user"].get("email"),
+                    c["user"].get("name"),
+                    _origin(c["user"], selves),
                 )
                 for c in node["comments"]["nodes"]
-                if not is_comment(c)
+                if c["user"] and not is_comment(c)
             ),
             key=lambda n: parse_time(n.at),
         )
@@ -457,6 +477,7 @@ class LinearTracker(Tracker):
     def detail(self, key):
         _need("states", self.state_ids)
         _need("finished", self.finished_ids)
+        selves = _need("selves", self.selves)
         issue = self.gql(Q_DETAIL, i=key)["issue"]
         return Detail(
             self._state(issue["state"]["id"]),
@@ -468,11 +489,12 @@ class LinearTracker(Tracker):
                 Comment(
                     c["createdAt"],
                     c["body"],
-                    (c["user"] or {}).get("name", "integration"),
-                    other=bool(c["user"]) and (c["user"].get("email") or "").lower() in self.others,
+                    c["user"]["name"],
+                    _origin(c["user"], selves),
                     run=is_comment(c),
                 )
                 for c in issue["comments"]["nodes"]
+                if c["user"]
             ),
             frozenset(r["relatedIssue"]["id"] for r in issue["relations"]["nodes"])
             | {r["issue"]["id"] for r in issue["inverseRelations"]["nodes"]},

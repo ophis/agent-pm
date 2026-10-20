@@ -97,6 +97,7 @@ BACKLOG = "00000000-0000-4000-8000-000000000019"
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
+SELVES = frozenset({"pm@agents.test"})
 RULES = (
     gate,
     inputs,
@@ -171,6 +172,7 @@ def tracker(gql, team=TEAM_OBJ):
         finished=team.finished,
         roles=ROLES,
         humans=HUMANS,
+        selves=SELVES,
     )
 
 
@@ -646,7 +648,7 @@ class Connect(Case):
         )
         self.assertEqual((found.team_id, found.state_ids), (TEAM, STATES))
         self.assertEqual((found.roles, found.people), ({"u-pm": "pm"}, frozenset({"u-human"})))
-        self.assertEqual(found.humans, ("human@x.test",))
+        self.assertEqual((found.humans, found.selves), (("human@x.test",), SELVES))
 
     def test_errors_propagate(self):
         for replies, message in (
@@ -669,12 +671,23 @@ class TeamAndRoles(Case):
         self.assertEqual((found.id, found.states, roles), (TEAM, STATES, {"u-pm": "pm"}))
 
     def test_of_team_builds_from_the_team(self):
-        found = LinearTracker.of_team(Gql(), TEAM_OBJ, ROLES, humans=HUMANS)
+        found = LinearTracker.of_team(Gql(), board_cfg(), TEAM_OBJ, ROLES)
         self.assertEqual(
             (found.team_id, found.state_ids, found.finished_ids, found.roles, found.humans),
-            (TEAM_OBJ.id, TEAM_OBJ.states, TEAM_OBJ.finished, ROLES, HUMANS),
+            (TEAM_OBJ.id, TEAM_OBJ.states, TEAM_OBJ.finished, ROLES, ("human@x.test",)),
         )
-        self.assertEqual(LinearTracker.of_team(Gql(), TEAM_OBJ, ROLES).humans, ())
+        self.assertEqual(found.selves, SELVES)
+
+    def test_reader_from_the_config(self):
+        cfg = SimpleNamespace(
+            states=STATES, team=TEAM, roles={"pm": SimpleNamespace(account="PM@agents.test")}
+        )
+        found = LinearTracker.reader(Gql(), cfg)
+        self.assertEqual((found.state_ids, found.team_id, found.selves), (STATES, TEAM, SELVES))
+
+    def test_classifying_reads_need_selves(self):
+        with self.assertRaisesRegex(TypeError, "LinearTracker needs selves"):
+            LinearTracker(Gql(Q_READ=run_issue())).issue("TASK-7")
 
 
 def listed(state):
@@ -965,6 +978,42 @@ class ApprovedList(Case):
 
 
 class DetailRead(Case):
+    def test_detail_origin_self_other_and_userless_dropped(self):
+        """self: the harness (isMe) or a role account; other: anyone else, human_members or not;
+        a comment with no user (an integration's) is not returned."""
+        found = {
+            "state": {"id": STATES["handoff"]},
+            "history": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
+            "comments": {
+                "nodes": [
+                    {
+                        "body": "harness",
+                        "createdAt": "c1",
+                        "user": node(email="h@x", name="H", isMe=True),
+                    },
+                    {
+                        "body": "role",
+                        "createdAt": "c2",
+                        "user": node(email="pm@AGENTS.test", name="PM"),
+                    },
+                    {
+                        "body": "manager",
+                        "createdAt": "c3",
+                        "user": node(email="mgr@x.com", name="Mgr"),
+                    },
+                    {"body": "user", "createdAt": "c4", "user": node(email="me@x.com", name="Me")},
+                    {"body": "GitHub", "createdAt": "c5", "user": None},
+                ]
+            },
+            "relations": {"nodes": []},
+            "inverseRelations": {"nodes": []},
+        }
+        got = tracker(Gql(Q_DETAIL={"issue": found})).detail("id-DR-1")
+        self.assertEqual(
+            [(c.body, c.origin) for c in got.comments],
+            [("harness", "self"), ("role", "self"), ("manager", "other"), ("user", "other")],
+        )
+
     def test_states_moves_comments_related(self):
         review, handoff = STATES["in_review"], STATES["handoff"]
         run = "Run 00000000-0000-4000-8000-000000000099 · started"
@@ -1009,6 +1058,11 @@ class DetailRead(Case):
                         "user": node(email="h@x.com", name="H", isMe=True),
                     },
                     {"body": "no email", "createdAt": "c5", "user": node(email=None, name="N")},
+                    {
+                        "body": "as the role",
+                        "createdAt": "c6",
+                        "user": node(email="PM@agents.test", name="PM"),
+                    },
                 ]
             },
             "relations": {"nodes": [{"relatedIssue": {"id": "id-A"}}]},
@@ -1028,11 +1082,11 @@ class DetailRead(Case):
                     Move("t1", IssueState.DONE, None),
                 ),
                 (
-                    Comment("c1", "build X", "Me", other=True, run=False),
-                    Comment("c2", "hi", "Bot", other=False, run=False),
-                    Comment("c3", "synced", "integration", other=False, run=False),
-                    Comment("c4", run, "H", other=False, run=True),
-                    Comment("c5", "no email", "N", other=False, run=False),
+                    Comment("c1", "build X", "Me", "other", run=False),
+                    Comment("c2", "hi", "Bot", "other", run=False),
+                    Comment("c4", run, "H", "self", run=True),
+                    Comment("c5", "no email", "N", "other", run=False),
+                    Comment("c6", "as the role", "PM", "self", run=False),
                 ),
                 frozenset({"id-A", "id-B"}),
             ),
@@ -1154,6 +1208,11 @@ def run_issue(**over):
             "nodes": [
                 {"body": "later", "createdAt": "2026-09-03T00:00:00.000Z", "user": None},
                 {
+                    "body": "as the role",
+                    "createdAt": "2026-09-02T12:00:00.000Z",
+                    "user": {"email": "PM@agents.test", "name": "PM", "isMe": False},
+                },
+                {
                     "body": f"Run {SID} · started",
                     "createdAt": "2026-09-02T00:00:00.000Z",
                     "user": {"email": "h@x.com", "name": "H", "isMe": True},
@@ -1189,9 +1248,15 @@ def run_issue(**over):
 
 
 class RunIssue(Case):
+    def test_issue_notes_origin_and_userless_dropped(self):
+        notes = LinearTracker(Gql(Q_READ=run_issue()), selves=SELVES).issue("TASK-7").notes
+        self.assertEqual(
+            [(n.body, n.origin) for n in notes], [("first", "other"), ("as the role", "self")]
+        )
+
     def test_one_read_by_identifier_parsed(self):
         gql = Gql(Q_READ=run_issue())
-        got = LinearTracker(gql).issue("TASK-7")
+        got = LinearTracker(gql, selves=SELVES).issue("TASK-7")
         self.assertEqual(gql.calls, [(linear_tracker.Q_READ, {"i": "TASK-7"})])
         self.assertEqual(
             got,
@@ -1204,8 +1269,8 @@ class RunIssue(Case):
                 "2026-09-01T00:00:00.000Z",
                 "p-1",
                 (
-                    Note("first", "2026-09-01T12:00:00.000Z", "ann@x.com", "Ann"),
-                    Note("later", "2026-09-03T00:00:00.000Z", None, None),
+                    Note("first", "2026-09-01T12:00:00.000Z", "ann@x.com", "Ann", "other"),
+                    Note("as the role", "2026-09-02T12:00:00.000Z", "PM@agents.test", "PM", "self"),
                 ),
                 (Link("https://github.com/o/r/pull/1"),),
                 (Linked("TASK-2", "Two", "Done"), Linked("TASK-4", "Four", "Todo")),
@@ -1215,7 +1280,9 @@ class RunIssue(Case):
         )
 
     def test_null_description_and_project(self):
-        got = LinearTracker(Gql(Q_READ=run_issue(description=None, project=None))).issue("TASK-7")
+        got = LinearTracker(
+            Gql(Q_READ=run_issue(description=None, project=None)), selves=SELVES
+        ).issue("TASK-7")
         self.assertEqual((got.description, got.home, got.handoff), ("", None, None))
 
     def test_no_such_issue_or_another_raises(self):
@@ -1225,7 +1292,7 @@ class RunIssue(Case):
         )
         for reply, message in cases:
             with self.subTest(message=message), self.assertRaises(IssueError) as caught:
-                LinearTracker(Gql(Q_READ=reply)).issue("TASK-7")
+                LinearTracker(Gql(Q_READ=reply), selves=SELVES).issue("TASK-7")
             self.assertEqual(str(caught.exception), message)
 
 
