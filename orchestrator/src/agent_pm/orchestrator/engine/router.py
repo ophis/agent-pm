@@ -129,7 +129,7 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear.client import has_key, linear_gql
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
-from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
+from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -411,6 +411,9 @@ class Board:
         if sid and (replayed := self.replay(issue, sid)) is not None:
             self.replays[ident] = replayed
             return False
+        entered = (
+            self.tracker.moved_at(issue["id"], IssueState.RUNNING) if wait and not sid else None
+        )
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
             self.comment_and_move(
@@ -441,8 +444,14 @@ class Board:
                 self.comment_and_move(
                     issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
                 )
-        elif not wait or parse_time(issue["updatedAt"]) < self.now - STALE:
-            self.say("recover", ident, to="todo", reason="no session", updated=issue["updatedAt"])
+        elif not wait or entered is None or entered < self.now - STALE:
+            self.say(
+                "recover",
+                ident,
+                to="todo",
+                reason="no session",
+                entered=entered.isoformat() if entered else None,
+            )
             self.comment_and_move(
                 issue, INTERRUPTED, IssueState.READY, IssueState.RUNNING, "recover"
             )

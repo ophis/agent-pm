@@ -133,7 +133,6 @@ def issue(
     state,
     role=None,
     *,
-    updated=None,
     priority=0,
     created="2026-09-01T00:00:00Z",
     project=DR,
@@ -149,7 +148,6 @@ def issue(
         "assignee": who(role),
         "priority": priority,
         "createdAt": created,
-        "updatedAt": updated or ago(minutes=5),
         "inverseRelations": {"nodes": list(inverse)},
         "labels": list(labels),
     }

@@ -192,7 +192,9 @@ class LostClaim(FakeLinear):
         out = super().__call__(query, **v)
         if query == ops.M_STATE and self.lose:
             self.lose = False
-            self.issues[v["i"]]["updatedAt"] = ago(minutes=0)
+            self.history.setdefault(v["i"], []).append(
+                {"createdAt": ago(minutes=0), "actorId": AGENT, "toStateId": v["s"]}
+            )
             raise Unavailable("issueUpdate", reason="TimeoutError: timed out")
         return out
 
@@ -1028,7 +1030,7 @@ class RouterEntry(OuterBase):
             ),
             (
                 {"state": "In Progress"},
-                f"recover TASK-7 to=todo reason=no session updated={self.todo['updatedAt']}",
+                "recover TASK-7 to=todo reason=no session",
                 "Todo",
             ),
             (
@@ -1721,7 +1723,7 @@ class RouterOutages(TickBase):
                 self.assertEqual(
                     self.said(),
                     [
-                        f"recover TASK-1 to=todo reason=no session updated={ago(minutes=0)}",
+                        f"recover TASK-1 to=todo reason=no session entered={NOW.isoformat()}",
                         "plan mode=new queue=1",
                         "pick TASK-1 queue=1",
                         "claim TASK-1 role=researcher client=a client_source=default",
@@ -3372,9 +3374,9 @@ class ExplicitIssueRuns(TickBase):
             ),
             (
                 "no sid",
-                issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=5)),
-                lambda: None,
-                f"recover TASK-1 to=todo reason=no session updated={ago(minutes=5)}",
+                issue("TASK-1", "In Progress", "researcher"),
+                lambda: self.moved("TASK-1", 5),
+                "recover TASK-1 to=todo reason=no session",
                 "Todo",
                 router.INTERRUPTED,
             ),
@@ -3385,7 +3387,7 @@ class ExplicitIssueRuns(TickBase):
         self.limit("a", (NOW + timedelta(hours=1)).isoformat())
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)),
+            issue("TASK-1", "In Progress", "researcher"),
             issue("TASK-2", "In Progress", "researcher", priority=1),
             issue("TASK-3", "Todo", "researcher", priority=1),
             issue("TASK-4", "Todo", "engineer", priority=3, project=PD),
@@ -3688,7 +3690,7 @@ class ExplicitIssueRuns(TickBase):
                 issue("TASK-1", "In Review", "researcher"),
                 issue("TASK-2", "Todo", "someone"),
                 issue("TASK-3", "Todo"),
-                issue("TASK-4", "In Progress", "someone", updated=ago(hours=3)),
+                issue("TASK-4", "In Progress", "someone"),
                 issue("TASK-5", "Todo", "researcher", project=None),
             ]
         )
@@ -3878,7 +3880,7 @@ class RunPlanning(Base):
     def capped(self, hist):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
-            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))],
+            [issue("TASK-1", "In Progress", "researcher")],
             {"TASK-1": hist},
         )
         for i, sid in enumerate("abcd"):
@@ -3893,8 +3895,8 @@ class RunPlanning(Base):
             (
                 "other assignees not recovered",
                 [
-                    issue("TASK-1", "In Progress", "someone", updated=ago(hours=3)),
-                    issue("TASK-2", "In Progress", None, updated=ago(hours=3)),
+                    issue("TASK-1", "In Progress", "someone"),
+                    issue("TASK-2", "In Progress", None),
                 ],
                 "",
             ),
@@ -3907,7 +3909,7 @@ class RunPlanning(Base):
                 self.assertEqual(set(fake.services), {HARNESS})
 
     def test_attempt_cap_beats_resume(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=5)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "sid1", 300)
         for m in (200, 150, 100):
             self.add(kind="resume", ident="TASK-1", sid="sid1", minutes_ago=m)
@@ -3925,13 +3927,7 @@ class RunPlanning(Base):
             with self.subTest(out=out):
                 self.lines, self.hist = [], {}
                 fake = self.fake(
-                    issue(
-                        "TASK-1",
-                        "In Progress",
-                        "researcher",
-                        priority=1,
-                        updated=ago(hours=5),
-                    ),
+                    issue("TASK-1", "In Progress", "researcher", priority=1),
                     *others,
                 )
                 self.resumable("TASK-1", "a", 300)
@@ -3943,25 +3939,14 @@ class RunPlanning(Base):
 
     def test_live_session_issue_skipped_first_and_every_candidate_returned(self):
         fake = self.fake(
-            issue(
-                "TASK-1",
-                "In Progress",
-                "researcher",
-                priority=1,
-                updated=ago(hours=3),
-            ),
-            issue(
-                "TASK-2",
-                "In Progress",
-                "researcher",
-                priority=2,
-                updated=ago(hours=3),
-            ),
+            issue("TASK-1", "In Progress", "researcher", priority=1),
+            issue("TASK-2", "In Progress", "researcher", priority=2),
             issue("TASK-3", "In Progress", "researcher", priority=3),
             issue("TASK-4", "In Progress", "pm", priority=4, project=PD),
         )
         for m in (390, 380, 370, 360):
             self.add(kind="start", ident="TASK-1", sid=f"a{m}", minutes_ago=m)
+        self.moved("TASK-2", 180)
         self.resumable("TASK-3", "c", 100)
         self.resumable("TASK-4", "d", 200, "pm")
         cands = self.board(fake, lambda b: b.recover({"TASK-1"}))
@@ -3970,7 +3955,10 @@ class RunPlanning(Base):
             [("TASK-3", "c"), ("TASK-4", "d")],
         )
         self.assertEqual(
-            self.said(), [f"recover TASK-2 to=todo reason=no session updated={ago(hours=3)}"]
+            self.said(),
+            [
+                f"recover TASK-2 to=todo reason=no session entered={(NOW - timedelta(hours=3)).isoformat()}"
+            ],
         )
         self.assertEqual(
             {i: t["state"] for i, t in fake.issues.items()},
@@ -4073,7 +4061,7 @@ class RunPlanning(Base):
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=10)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.mutations, [])
@@ -4089,16 +4077,13 @@ class RunPlanning(Base):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
             [
-                issue(
-                    "TASK-1",
-                    "In Progress",
-                    "engineer",
-                    updated=ago(hours=3),
-                    project=PD,
-                ),
-                issue("TASK-2", "In Progress", "researcher", updated=ago(hours=1)),
-            ]
+                issue("TASK-1", "In Progress", "engineer", project=PD),
+                issue("TASK-2", "In Progress", "researcher"),
+            ],
+            self.hist,
         )
+        self.moved("TASK-1", 180)
+        self.moved("TASK-2", 60)
         self.plan(fake)
         t = fake.issues["TASK-1"]
         self.assertEqual(
@@ -4110,7 +4095,7 @@ class RunPlanning(Base):
         self.assertEqual(fake.issues["TASK-2"]["state"], "In Progress")
 
     def test_stale_sid_goes_to_two_hour_rule(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=220)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=400)
         self.touch("old", 400)
         self.moved("TASK-1", 220, actor=USER)
@@ -4136,7 +4121,7 @@ class RunPlanning(Base):
         )
 
     def test_no_current_sid_never_capped(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=1)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         for m in (600, 550, 500, 450):
             self.add(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m)
         self.moved("TASK-1", 60, actor=USER)
@@ -4186,16 +4171,7 @@ class RunPlanning(Base):
                 self.write_config(
                     (f"linear.human_members = {json.dumps(members)}\n" if members else "") + CONFIG
                 )
-                fake = FakeLinear(
-                    [
-                        issue(
-                            "TASK-1",
-                            "In Progress",
-                            "researcher",
-                            updated=ago(minutes=40),
-                        )
-                    ]
-                )
+                fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")])
                 self.lines = []
                 for i, sid in enumerate("abcd"):
                     self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50)
@@ -4251,9 +4227,11 @@ class RunPlanning(Base):
 
     def test_skipped_move_posts_no_comment(self):
         fake = Moved(
-            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))],
+            [issue("TASK-1", "In Progress", "researcher")],
             "In Review",
         )
+        fake.history = self.hist
+        self.moved("TASK-1", 180)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Review", []))
         self.assertNotIn("comments", fake.issues["TASK-1"])
@@ -4302,14 +4280,7 @@ class StaleRunRecovery(Base):
         ):
             with self.subTest(minutes=minutes):
                 self.lines, self.hist = [], {}
-                fake = self.fake(
-                    issue(
-                        "TASK-1",
-                        "In Progress",
-                        "researcher",
-                        updated=ago(hours=3),
-                    )
-                )
+                fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
                 self.resumable("TASK-1", "a", 60)
                 self.touch("a", minutes)
                 self.assertEqual(self.plan(fake), out)
@@ -4342,14 +4313,7 @@ class StaleRunRecovery(Base):
         for st in statuses:
             with self.subTest(st=st):
                 self.lines, self.hist = [], {}
-                fake = self.fake(
-                    issue(
-                        "TASK-1",
-                        "In Progress",
-                        "researcher",
-                        updated=ago(hours=3),
-                    )
-                )
+                fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
                 self.resumable("TASK-1", "a", 300)
                 self.api.statuses[self.sid("a")] = st
                 for again, said in (
@@ -4365,7 +4329,7 @@ class StaleRunRecovery(Base):
                     self.assertEqual(f.read(), "".join(f"{line}\n" for line in self.lines))
 
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 300)
         self.api.statuses[self.sid("a")] = SessionError("boom")
 
@@ -4378,7 +4342,7 @@ class StaleRunRecovery(Base):
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
 
     def test_a_kindless_row_is_a_bad_row_skipped_without_an_agent(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 300)
         kindless = json.loads(self.lines[-1])
         del kindless["delegate_kind"]
@@ -4403,6 +4367,56 @@ class StaleRunRecovery(Base):
         self.assertEqual(
             self.api.info, [("a", self.sid("a"), os.path.join(self.work, "work", "TASK-1"))]
         )
+
+
+class StaleByMoveIntoRunning(TickBase):
+    """A no-run In Progress issue returns to Todo 2 hours after its latest move into running; its
+    edits (history entries that move nothing) never count.
+    """
+
+    def given(self, entered, edited):
+        self.lines, self.hist = [], {}
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
+        self.moved("TASK-1", 600, state=STATES["Todo"], actor=USER)
+        if entered is not None:
+            self.moved("TASK-1", entered)
+        if edited is not None:
+            self.moved("TASK-1", edited, state=None, actor=USER)
+        return fake
+
+    def recovered(self, fake, said):
+        self.assertEqual(self.tick(fake, live=["agent-pm-researcher-TASK-5"]), 0)
+        self.assertEqual(self.said(), [said])
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["comments"]), ("Todo", [router.INTERRUPTED]))
+
+    def test_entered_over_two_hours_ago_recovers_whatever_the_edits(self):
+        entered = (NOW - timedelta(minutes=180)).isoformat()
+        for edited in (None, 1, 300):
+            with self.subTest(edited=edited):
+                self.recovered(
+                    self.given(180, edited),
+                    f"recover TASK-1 to=todo reason=no session entered={entered}",
+                )
+
+    def test_entered_within_two_hours_stays_whatever_the_edits(self):
+        for edited in (None, 1, 180):
+            with self.subTest(edited=edited):
+                fake = self.given(60, edited)
+                self.assertEqual(self.tick(fake), 0)
+                self.assertEqual((self.said(), fake.mutations), ([], []))
+                self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_no_move_into_running_recovers_at_once(self):
+        self.recovered(self.given(None, 1), "recover TASK-1 to=todo reason=no session")
+
+    def test_explicit_issue_recovers_at_once_reading_no_history(self):
+        fake = self.given(5, None)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 2)
+        self.assertEqual(self.said(), ["recover TASK-1 to=todo reason=no session"])
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["comments"]), ("Todo", [router.INTERRUPTED]))
+        self.assertNotIn("TASK-1", [v["i"] for q, v in fake.queries if "history" in q])
 
 
 class ClaimRechecks(Base):
@@ -4780,14 +4794,8 @@ class ScheduledRuns(TickScenario):
 
     def test_full_role_todo_not_claimed_and_non_live_in_progress_recovered(self):
         fake = self.fake(
-            issue(
-                "TASK-1",
-                "In Progress",
-                "engineer",
-                priority=1,
-                updated=ago(hours=3),
-            ),
-            issue("TASK-2", "In Progress", "engineer", updated=ago(hours=3)),
+            issue("TASK-1", "In Progress", "engineer", priority=1),
+            issue("TASK-2", "In Progress", "engineer"),
             issue("TASK-3", "In Progress", "engineer"),
             issue("TASK-4", "Todo", "engineer", priority=1),
             issue("TASK-5", "Todo", "pm", priority=3, project=PD),
@@ -4798,12 +4806,13 @@ class ScheduledRuns(TickScenario):
                 self.add(
                     kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m, role="engineer"
                 )
+        self.moved("TASK-2", 180)
         self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),
             [
                 "recover TASK-3 to=in_review reason=reached 4 attempts",
-                f"recover TASK-2 to=todo reason=no session updated={ago(hours=3)}",
+                f"recover TASK-2 to=todo reason=no session entered={(NOW - timedelta(hours=3)).isoformat()}",
                 'plan mode=new queue=1 live={"engineer": "1/1"}',
                 "pick TASK-5 queue=1",
                 "claim TASK-5 role=pm client=b client_source=default",
@@ -4855,7 +4864,7 @@ class ScheduledRuns(TickScenario):
         fake = FakeLinear(
             [
                 issue("TASK-1", "Todo", "engineer"),
-                issue("TASK-2", "In Progress", "engineer", updated=ago(hours=3)),
+                issue("TASK-2", "In Progress", "engineer"),
             ]
         )
         self.tick(fake, live=["agent-pm-engineer-TASK-2"])
@@ -5075,7 +5084,7 @@ class RecoverWriteBack(TickBase):
             os.path.join(self.workdir, "writeback.json"),
             json.dumps({self.sid("a"): {"steps": ["comment"]}}),
         )
-        self.linear = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.linear = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.linear.ids[self.ISSUE] = "TASK-1"
 
     def ended(self):
