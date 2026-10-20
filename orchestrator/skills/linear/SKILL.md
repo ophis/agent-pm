@@ -7,7 +7,7 @@ description: "Read, find, create and change Linear issues with fixed agent-pm-or
 
 Every common Linear issue operation is one `agent-pm-orchestrator issue` command: use it, never a raw GraphQL query or a Linear MCP tool. Only an operation the table lacks (editing a description, other entities) falls back to your own Linear tool, such as a personal `/linear`.
 
-Each command acts as the configured `harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. None is pre-approved: `read`, `list` and `lookup` write a file with `--full --output`. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-orchestrator`, writing `${CLAUDE_SKILL_DIR}` as this file's directory, an absolute path.
+Each command acts as the configured `[orchestrator.linear] harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. None is pre-approved: `read`, `list` and `lookup` write a file with `--full --output`. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-orchestrator`, writing `${CLAUDE_SKILL_DIR}` as this file's directory, an absolute path.
 
 ## Commands
 
@@ -43,7 +43,7 @@ agent-pm-orchestrator issue lookup teams --full --output teams.json
 ```
 
 - `list` filters all hold at once, within one team: `--team` (id, name or key), else the configured team. Archived issues only with `--include-archived`.
-- A value is an id or an exact name; `--assignee` also takes an email or `me` (the `harness_key` account). No match, several, or one outside the team exits 2 naming the candidates and the `lookup` command that lists them: pick an id from it, never the first match.
+- A value is an id or an exact name; `--assignee` also takes an email or `me` (the `[orchestrator.linear] harness_key` account). No match, several, or one outside the team exits 2 naming the candidates and the `lookup` command that lists them: pick an id from it, never the first match.
 - Pages: `--limit` 1–50 (default 20); `has_next_page` true → pass `next_cursor` as `--cursor` with the same options. `--full --output FILE` writes every page to FILE instead.
 
 ## Reading in full

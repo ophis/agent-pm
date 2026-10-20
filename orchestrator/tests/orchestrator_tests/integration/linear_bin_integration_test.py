@@ -122,7 +122,7 @@ class ConfigLayout(Command):
                 self.assertNotEqual(done.returncode, 0)
                 self.assertNotIn("orchestrator/config.toml:", done.stdout + done.stderr)
                 self.assertNotIn("config.local.toml:", done.stdout + done.stderr)
-        # the Keychain read: /usr/bin/security missing (Linux) or finding no item (macOS)
+        # the Keychain read's error names /usr/bin/security: missing (Linux) or finding no item (macOS)
         self.assertIn("/usr/bin/security", router.stderr)
         self.assertEqual((issue.returncode, issue.stdout), (2, ""))
         self.assertIn("linear.harness_key Keychain service 'linear-api-key'", issue.stderr)

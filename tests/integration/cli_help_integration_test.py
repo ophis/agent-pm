@@ -65,7 +65,7 @@ SURFACES = {
             "prompt",
         ],
     ),
-    "linear": (
+    "orchestrator": (
         "orchestrator",
         [
             "router",
