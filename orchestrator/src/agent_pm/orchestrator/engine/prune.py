@@ -440,6 +440,9 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
     except ConfigError as error:
         config.report_error("prune", error, dry=dry)
         return 1
+    if refused := config.linear_only(cfg, "prune"):
+        print(f"prune.py: {refused}", file=sys.stderr)
+        return 2
     event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     try:

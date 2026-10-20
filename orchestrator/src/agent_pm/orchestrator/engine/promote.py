@@ -303,6 +303,9 @@ def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
         return 1
+    if refused := config.linear_only(cfg, "promote"):
+        print(f"promote.py: {refused}", file=sys.stderr)
+        return 2
     event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)

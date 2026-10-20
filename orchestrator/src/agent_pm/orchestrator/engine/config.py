@@ -74,6 +74,13 @@ def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
         config_error(src, error, dry=dry)
 
 
+def linear_only(cfg: Config, command: str) -> str | None:
+    """Why command cannot run on cfg's tracker; None: it can."""
+    if cfg.tracker is TrackerKind.LINEAR:
+        return None
+    return f'{command} needs [orchestrator] tracker = "linear"'
+
+
 def load(*, path: str | None = None) -> Config:
     try:
         cfg = utils.read_resources(

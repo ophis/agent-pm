@@ -9,7 +9,7 @@ from dataclasses import replace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, SessionError
-from agent_pm.orchestrator.engine import prune
+from agent_pm.orchestrator.engine import config, prune
 from agent_pm.orchestrator.engine.types import LinearError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.utils import temp_dirs
@@ -982,6 +982,19 @@ class PruneCommand(PruneScenario):
         said = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
         rest = "".join(f"{line}\n" for line in lines if not line.startswith("{"))
         return code, out.getvalue(), rest, said
+
+    def test_a_local_board_is_refused_after_config(self):
+        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
+        write(os.path.join(self.agent_pm, "config.local.toml"), "[orchestrator]\n" + CORE_LOCAL)
+        path = os.path.join(self.root, "config.toml")
+        write(path, tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+        fake, out, err = tp.FakeLinear(), io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prune.main([], gql=fake, now=NOW, config_path=path)
+        self.assertEqual(
+            (code, out.getvalue(), err.getvalue(), fake.calls),
+            (2, "", 'prune.py: prune needs [orchestrator] tracker = "linear"\n', []),
+        )
 
     def test_a_tick_deletes_finished_checkouts_and_archives(self):
         clone = self.mkc("TASK-49")

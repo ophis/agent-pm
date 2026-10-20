@@ -113,7 +113,7 @@ dependencies = [
     "agent_pm.orchestrator.trackers.linear.client -> agent_pm.orchestrator.engine.types agent_pm.utils",
     "agent_pm.orchestrator.trackers.linear.ops -> agent_pm.orchestrator.engine.types agent_pm.utils",
     "agent_pm.orchestrator.trackers.local -> agent_pm.orchestrator.engine.flow.handoff agent_pm.orchestrator.engine.flow.tracker agent_pm.orchestrator.engine.flow.types agent_pm.orchestrator.engine.types",
-    "agent_pm.orchestrator.cli -> agent_pm.orchestrator.engine agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.trackers.linear agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.delegate agent_pm.utils",
+    "agent_pm.orchestrator.cli -> agent_pm.orchestrator.engine agent_pm.orchestrator.engine.log agent_pm.orchestrator.engine.issues agent_pm.orchestrator.engine.run_comments agent_pm.orchestrator.engine.types agent_pm.orchestrator.trackers.linear agent_pm.orchestrator.trackers.linear.client agent_pm.orchestrator.trackers.linear.ops agent_pm.orchestrator.trackers.local agent_pm.delegate agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]

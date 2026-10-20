@@ -218,6 +218,13 @@ class ConfigurationFailures(Base):
                 )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
 
+    def test_a_local_board_is_refused_after_config(self):
+        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
+        self.write_config(CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
+        self.assertEqual(self.run_main(), 2)
+        self.assertEqual(self.err, 'promote.py: promote needs [orchestrator] tracker = "linear"\n')
+        self.assertEqual((self.fake.calls, FakePruner.calls, self.out), ([], [], ""))
+
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write_local('work_dir = "w"\n')
         self.assertEqual(self.run_main(), 1)

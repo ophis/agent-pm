@@ -730,6 +730,9 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
+    if refused := config.linear_only(cfg, "issue"):
+        diagnose(err, refused)
+        return USAGE
     gql = functools.partial(gql, service=cfg.harness_key)
     try:
         data = _run(gql, args, cfg.team, body)
