@@ -19,8 +19,8 @@ def _lines(description):
 
 
 def _starts(lines):
-    # Only Instructions hold unquoted user text: Source is the first header (if before Instructions'
-    # first), Instructions the first after it, Comments the last after Instructions.
+    # Unquoted user text only under Instructions: Source = first header if before Instructions'
+    # first, Instructions = first after it, Comments = last after Instructions.
     source, instructions, comments = SECTIONS
 
     def find(header, after, *, last=False):

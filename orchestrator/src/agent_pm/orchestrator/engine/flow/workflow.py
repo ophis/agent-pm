@@ -1,4 +1,4 @@
-"""The workflow: each orchestrated role's Stage, from a file's [[stage]] tables."""
+"""Each role's Stage, from a file's [[stage]] tables."""
 
 import tomllib
 from collections.abc import Iterator, Mapping
@@ -8,7 +8,7 @@ from typing import get_args, get_type_hints
 from agent_pm.orchestrator.engine.flow.types import Stage
 
 PACKAGED = "orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml"
-# a Literal field's values, else its type
+# Literal: values; else type
 TYPES = {k: get_args(t) or t for k, t in get_type_hints(Stage).items()}
 
 
@@ -19,7 +19,7 @@ class Workflow(Mapping[str, Stage]):
     path: str = PACKAGED  # the stages' file, as errors name it
 
     def load(self, path: str | None = None) -> Mapping[str, Stage]:
-        """Read path (None: the packaged file); a ValueError, naming it, keeps the last read."""
+        """A ValueError names path (None: packaged) and keeps the last read."""
         shown = path or PACKAGED
         try:
             if path is None:
@@ -32,7 +32,7 @@ class Workflow(Mapping[str, Stage]):
                 with open(path, encoding="utf-8") as f:
                     text = f.read()
             data = tomllib.loads(text)
-        except (OSError, ValueError) as e:  # TOMLDecodeError is a ValueError
+        except (OSError, ValueError) as e:
             raise ValueError(f"{shown}: {e}") from None
         self._stages, self.path = _parse(data, shown), shown
         return self._stages

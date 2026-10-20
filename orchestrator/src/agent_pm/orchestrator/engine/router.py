@@ -84,7 +84,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
-from typing import Protocol
 
 from agent_pm import delegate
 from agent_pm.orchestrator.engine import (
@@ -95,7 +94,7 @@ from agent_pm.orchestrator.engine import (
     writeback,
 )
 from agent_pm.orchestrator.engine import log as event_log
-from agent_pm.orchestrator.engine.flow.tracker import Tracker
+from agent_pm.orchestrator.engine.flow.tracker import Connect
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
     IssueState,
@@ -232,12 +231,6 @@ def client_for(pick, default) -> tuple[str | None, ClientSource, str | None]:
     if pick.name is None:
         return default, "default", None
     return pick.name, "label", None
-
-
-class Connect(Protocol):
-    """A tracker kind's factory, as LinearTracker.connect."""
-
-    def __call__(self, gql, cfg, *, say: Callable[..., None]) -> Tracker: ...
 
 
 class Board:

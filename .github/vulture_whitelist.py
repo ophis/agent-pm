@@ -4,6 +4,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
+from agent_pm.orchestrator.engine.flow.tracker import Connect
 from agent_pm.orchestrator.trackers.local import store
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
@@ -60,6 +61,9 @@ _ = ClaudeClient, CodexClient, OpenCodeClient
 _ = Session.class_roots
 # TASK-506 routes sid-checked CLI closes through Session.retire; delete this entry then.
 _ = Session.retire
+# The router calls each Connect, passing its transport: Vulture reads a __call__ whose self is
+# positional-only as a function, and a Protocol's parameters as unused (this file is never run).
+_ = Connect.__call__, Connect.transport
 # TASK-794's writes take the board lock, replace issue files and number new ones; delete this entry then.
 _ = store.locked, store.replace, store.next_id
 # Only tests read it, but the session interface is frozen (tests/guard_checks/exports.py

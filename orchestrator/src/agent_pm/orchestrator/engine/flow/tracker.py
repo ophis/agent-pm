@@ -1,9 +1,9 @@
-"""Issue reads and writes; the adapter's errors."""
+"""The engine's board port."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
@@ -40,7 +40,7 @@ class Tracker(ABC):
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:
-        """Owners' done issues and all canceled ones; all pages read first (archiving shifts them)."""
+        """Owners' done and all canceled; pages all read first: archiving shifts them."""
 
     @abstractmethod
     def sub_issues(self, key: str) -> tuple[SubIssue, ...]:
@@ -135,3 +135,9 @@ class Tracker(ABC):
 
     @abstractmethod
     def recheck(self, key: str) -> Recheck: ...
+
+
+class Connect(Protocol):
+    """transport: its calls' client; say: a logger."""
+
+    def __call__(self, transport, cfg, /, *, say: Callable[..., None]) -> Tracker: ...
