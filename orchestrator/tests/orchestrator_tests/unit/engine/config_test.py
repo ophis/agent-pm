@@ -403,6 +403,14 @@ class ConfigurationLoading(ConfigFile, Case):
                 "linear.manager_key = 1\n" + PIPELINE,
                 "linear.manager_key must be a Keychain service name: 1",
             ),
+            (
+                "linear.manager_key = false\n" + PIPELINE,
+                "linear.manager_key must be a Keychain service name: False",
+            ),
+            (
+                "linear.manager_key = 0\n" + PIPELINE,
+                "linear.manager_key must be a Keychain service name: 0",
+            ),
             *[
                 (
                     text + f'[linear.task_labels]\n{task} = "{LABEL1}"\n',

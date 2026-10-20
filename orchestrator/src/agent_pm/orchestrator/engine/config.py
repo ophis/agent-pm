@@ -214,7 +214,7 @@ def _load(cfg, work, kind, delegates, index):
         team=linear["team"],
         human_members=tuple(linear.get("human_members") or ()),
         harness_key=linear["harness_key"],
-        manager_key=linear.get("manager_key") or "",
+        manager_key=linear.get("manager_key", ""),
         task_label_group=linear["task_label_group"],
         roles=MappingProxyType(roles),
         work_dir=work,
@@ -319,7 +319,7 @@ def _load_config(cfg, local):
 
 def _manager_key(linear):
     """Another account's than the harness's and the roles': the manager's writes are other."""
-    mk = linear.get("manager_key") or ""
+    mk = linear.get("manager_key", "")
     if not isinstance(mk, str):
         raise ConfigError(
             f"orchestrator/config.toml: linear.manager_key must be a Keychain service name: {mk!r}"
