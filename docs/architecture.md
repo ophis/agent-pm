@@ -20,6 +20,7 @@ flowchart TB
     WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
     LT["trackers/linear/linear_tracker.py<br>LinearTracker"]
+    LB["trackers/local/<br>LocalTracker · issue files · board lock"]
     FL["engine/flow/<br>Tracker · IssueState · Handoff grammar · workflow"]
     LC["engine/config.py<br>[core] overlay"]
   end
@@ -58,6 +59,7 @@ flowchart TB
   LCLI --> R & PP & WB & LR
   R & PP & WB --> LR
   PP & R --> LT --> FL
+  LCLI --> LB --> FL
   PP & R --> FL
   WB --> LT
   WB --> FL

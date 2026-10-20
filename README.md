@@ -126,7 +126,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | Page | Covers |
 |---|---|
 | [Customizing roles and tasks](docs/customizing-roles-and-tasks.md) | run settings, team dirs, role and task files, checks |
-| [Linear board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue) |
+| [Linear board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format) |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
 | [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions |
 | [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
