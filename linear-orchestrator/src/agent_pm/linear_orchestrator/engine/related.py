@@ -4,6 +4,7 @@ its description names match, minus its upstream chain; inputs.render lists them 
 
 import json
 import re
+from functools import cache
 
 from agent_pm.linear_orchestrator.engine import inputs, issues, ops
 from agent_pm.linear_orchestrator.engine.config import TASKS
@@ -85,12 +86,16 @@ GROUP_BY_TYPE = {
     "unstarted": Group.TODO,
     "canceled": Group.CANCELED,
 }
-PREFIX = re.compile(rf"^(?:{'|'.join(sorted(t.prefix for t in TASKS.values() if t.prefix))}): ")
+
+
+@cache
+def _prefix():
+    return re.compile(rf"^(?:{'|'.join(sorted(t.prefix for t in TASKS.values() if t.prefix))}): ")
 
 
 def keywords(title) -> list[str]:
     # a task's title prefix (`ENG: `, `PRD: `) is on every issue of its kind
-    text = re.sub(ISSUE_ID, " ", PREFIX.sub("", title))
+    text = re.sub(ISSUE_ID, " ", _prefix().sub("", title))
     words = []
     for w in re.findall(r"\w+", text.lower()):
         if len(w) > 1 and not w.isdigit() and w not in STOPWORDS and w not in words:

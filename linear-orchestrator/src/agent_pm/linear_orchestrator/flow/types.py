@@ -51,8 +51,10 @@ class Task:
     done: str = ""
     question: str = ""
     failed: str = ""
-    failed_new: str = "in_review"
+    failed_new: Literal["todo", "in_review"] = "in_review"
     retitle: bool = False
     approve: bool = False
     files: bool = False
     hint: str = ""
+    next: str = ""
+    require_instructions: bool = True
