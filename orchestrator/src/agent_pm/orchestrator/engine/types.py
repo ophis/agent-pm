@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Literal
 
 from agent_pm import delegate
-from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found
+from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState
 from agent_pm.utils import Stopped as Stopped
 
 ClientSource = Literal["label", "default"]
@@ -112,6 +112,18 @@ class State(StrEnum):
     DONE = "done"
     CANCELED = "canceled"
     BACKLOG = "backlog"
+
+
+# each State's IssueState
+MOVES = {
+    State.BACKLOG: IssueState.BACKLOG,
+    State.IN_REVIEW: IssueState.REVIEW,
+    State.HANDOFF: IssueState.APPROVED,
+    State.TODO: IssueState.READY,
+    State.IN_PROGRESS: IssueState.RUNNING,
+    State.DONE: IssueState.DONE,
+    State.CANCELED: IssueState.CANCELED,
+}
 
 
 class Resource(StrEnum):

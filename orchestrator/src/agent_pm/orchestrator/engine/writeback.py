@@ -29,6 +29,7 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import log
 from agent_pm.orchestrator.engine.types import (
+    MOVES,
     Claim,
     ConfigError,
     Invalid,
@@ -37,7 +38,7 @@ from agent_pm.orchestrator.engine.types import (
     Stopped,
     Unavailable,
 )
-from agent_pm.orchestrator.trackers.linear.linear_tracker import MOVES, LinearTracker
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,

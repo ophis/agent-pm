@@ -31,7 +31,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Snapshot,
     SubIssue,
 )
-from agent_pm.orchestrator.engine.types import UUID_RE, IssueError, LinearError, State
+from agent_pm.orchestrator.engine.types import MOVES, UUID_RE, IssueError, LinearError, State
 from agent_pm.orchestrator.trackers.linear import ops
 from agent_pm.orchestrator.trackers.linear.ops import DONE, HISTORY, call, client_id, last_move
 from agent_pm.utils import LOCAL, one_line, parse_time
@@ -39,17 +39,9 @@ from agent_pm.utils import LOCAL, one_line, parse_time
 T = TypeVar("T")
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
-STATES = {
-    State.BACKLOG: IssueState.BACKLOG,
-    State.IN_REVIEW: IssueState.REVIEW,
-    State.HANDOFF: IssueState.APPROVED,
-    State.TODO: IssueState.READY,
-    State.IN_PROGRESS: IssueState.RUNNING,
-}
+STATES = {s: v for s, v in MOVES.items() if s not in (State.DONE, State.CANCELED)}
 
 LISTED = {IssueState.READY: State.TODO, IssueState.RUNNING: State.IN_PROGRESS}
-
-MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
 
 URL = "https://agent-pm.invalid/run/"
 
