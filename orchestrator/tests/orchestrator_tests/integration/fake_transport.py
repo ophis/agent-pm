@@ -3,11 +3,39 @@
 import contextlib
 import json
 import os
+import shlex
 import subprocess
+import sys
 import urllib.request
 from unittest import mock
 
 ENV = "FAKE_LINEAR_TRANSPORT"
+SPAWNS = {"subprocess.Popen", "os.exec", "os.posix_spawn"}
+
+
+def _name(path):
+    return (
+        os.path.basename(os.fsdecode(path)) if isinstance(path, str | bytes | os.PathLike) else ""
+    )
+
+
+def refuse_keychain(event, args):
+    """Audit hook: under the fake no real `security` (the Keychain) starts, by any route: its
+    executable, argv[0] or a shell's -c command. The fake answers /usr/bin/security unspawned.
+    """
+    if event not in SPAWNS:
+        return
+    executable, argv = args[0], args[1]
+    argv = [argv] if isinstance(argv, str | bytes | os.PathLike) else list(argv or ())
+    first = argv[0] if argv else None
+    names = {_name(executable), _name(first)}
+    if "-c" in argv[1:-1]:
+        command = argv[argv.index("-c") + 1]
+        names.add(_name((shlex.split(os.fsdecode(command)) or [""])[0]))
+    if "security" in names:
+        message = f"fake_transport.py: refused a real Keychain call: {argv}"
+        print(message, file=sys.stderr)
+        raise RuntimeError(message)
 
 
 def install(path):

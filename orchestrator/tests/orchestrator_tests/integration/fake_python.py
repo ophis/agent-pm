@@ -8,7 +8,7 @@ import runpy
 import shlex
 import sys
 
-from orchestrator_tests.integration.fake_transport import install
+from orchestrator_tests.integration.fake_transport import install, refuse_keychain
 
 FAKE_PYTHON = os.path.abspath(__file__)
 TESTS = os.path.dirname(os.path.dirname(os.path.dirname(FAKE_PYTHON)))
@@ -33,6 +33,7 @@ def main(argv):
     if argv[:2] != ["-P", "-m"] or len(argv) < 3:
         sys.exit(f"fake_python.py: want -P -m MODULE [ARG ...], got {argv}")
     sys.argv = [argv[2], *argv[3:]]
+    sys.addaudithook(refuse_keychain)
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
         runpy.run_module(argv[2], run_name="__main__", alter_sys=True)
 

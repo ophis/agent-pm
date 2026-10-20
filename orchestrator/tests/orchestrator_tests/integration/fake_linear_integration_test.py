@@ -7,7 +7,10 @@ import os
 import time
 import urllib.request
 import uuid
+from contextlib import redirect_stderr
 from datetime import UTC, datetime, timedelta, timezone
+from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -24,7 +27,7 @@ from agent_pm.orchestrator.trackers.linear import (
 from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.fake_transport import install
+from orchestrator_tests.integration.fake_transport import install, refuse_keychain
 from orchestrator_tests.unit.board_ids import STATES, TASK_GROUP, TEAM
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
@@ -779,3 +782,46 @@ class GraphQLQueries(ServerCase):
             ops.last_move(finished["history"]["nodes"], {STATES["done"]}),
             parse_time(done),
         )
+
+
+class RefusedKeychain(Case):
+    """The fake transport's audit hook: no real `security` process starts under the fake."""
+
+    def refused(self, event, args):
+        err = StringIO()
+        with (
+            redirect_stderr(err),
+            self.assertRaisesRegex(RuntimeError, "refused a real Keychain call"),
+        ):
+            refuse_keychain(event, args)
+        self.assertIn("fake_transport.py: refused a real Keychain call", err.getvalue())
+
+    def test_a_security_spawn_is_refused_by_any_route(self):
+        argv = ["/usr/bin/security", "find-generic-password", "-s", "svc", "-w"]
+        for event, args in (
+            ("subprocess.Popen", ("/usr/bin/security", argv, None, None)),
+            ("subprocess.Popen", (None, ["security", "find-generic-password"], None, None)),
+            (
+                "subprocess.Popen",
+                (Path("/usr/bin/security"), [Path("/usr/bin/security")], None, None),
+            ),
+            (
+                "subprocess.Popen",
+                ("/bin/sh", ["/bin/sh", "-c", "security find-generic-password"], None, None),
+            ),
+            ("subprocess.Popen", (b"/usr/bin/security", [b"/usr/bin/security"], None, None)),
+            ("os.exec", ("/usr/bin/security", argv, None)),
+            ("os.posix_spawn", ("/usr/bin/security", argv, None)),
+        ):
+            with self.subTest(event=event, args=args):
+                self.refused(event, args)
+
+    def test_other_processes_and_events_pass(self):
+        for event, args in (
+            ("subprocess.Popen", ("/bin/echo", ["/bin/echo", "security"], None, None)),
+            ("subprocess.Popen", ("/usr/bin/git", ["git", "status"], None, None)),
+            ("os.exec", ("/bin/true", ["true"], None)),
+            ("open", ("/usr/bin/security", "r", 0)),
+        ):
+            with self.subTest(event=event, args=args):
+                self.assertIsNone(refuse_keychain(event, args))
