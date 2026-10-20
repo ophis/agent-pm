@@ -1,11 +1,6 @@
-"""agent-pm-orchestrator issue move and comment: move an issue of the configured team to an abstract
-state's configured id, read a body verbatim, write once and answer with a receipt; a write Linear
-never answered is WriteUnknown, never retried.
-"""
+"""agent-pm-orchestrator issue move and comment: one write each, never retried, and a receipt."""
 
-import sys
-
-from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
+from agent_pm.orchestrator.engine.types import Unavailable, WriteUnknown
 from agent_pm.orchestrator.trackers.linear import issue_names, issue_read, ops
 
 Q_MOVE = (
@@ -29,29 +24,6 @@ def move(gql, linear, ident, state):
         return receipt(node, "move", "unchanged", data["viewer"])
     write(gql, "move", ident, ops.M_STATE, "issueUpdate", i=node["id"], s=target)
     return receipt(node, "move", "changed", data["viewer"])
-
-
-def read_body(path, stdin=None):
-    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim but for a
-    leading byte order mark; IssueError when it cannot be read or holds only whitespace and byte
-    order marks.
-    """
-    try:
-        if path != "-":
-            with open(path, "rb") as f:
-                raw = f.read()
-        elif (stream := getattr(sys.stdin, "buffer", None) if stdin is None else stdin) is None:
-            raise IssueError("--body-file -: no stdin to read")
-        else:
-            raw = stream.read()
-        body = raw.decode("utf-8-sig")
-    except OSError as error:
-        raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
-    except UnicodeDecodeError:
-        raise IssueError(f"--body-file {path}: not UTF-8") from None
-    if not body.replace("\ufeff", "").strip():
-        raise IssueError(f"--body-file {path}: empty body")
-    return body
 
 
 def comment(gql, ident, body):

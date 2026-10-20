@@ -1,83 +1,49 @@
-"""agent-pm-orchestrator issue: fixed issue subcommands and the rules they share. stdout holds one JSON
-object of at most LIMIT UTF-8 bytes, a write's receipt at most RECEIPT; diagnostics go to stderr, as
-bounded; exit OK, FAILED (Linear failed, a write's result is unknown, a refusal, or create's
-relations partly failed, its report on stdout) or USAGE (usage, configuration or an unresolved
-reference).
+"""agent-pm-orchestrator issue: the fixed issue subcommands, parsed and checked here, then run over
+the configured tracker's backend; output.py holds the stdout, stderr and exit rules they share.
 """
 
 import argparse
-import contextlib
-import copy
 import functools
-import json
-import os
-import subprocess
 import sys
-import tempfile
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.orchestrator.engine import (
-    config,
-)
+from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS, ArchiveRefused, IssueState
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
     GraphQLErrors,
     IssueError,
-    KeychainError,
     LabelRefused,
     LinearError,
     RelationsFailed,
     Resource,
     Unavailable,
 )
-from agent_pm.orchestrator.trackers.linear import (
-    issue_archive,
-    issue_create,
-    issue_edit,
-    issue_label,
-    issue_list,
-    issue_lookup,
-    issue_page,
-    issue_read,
-    issue_relation,
-    issue_write,
+from agent_pm.orchestrator.issue.backend import Backend
+from agent_pm.orchestrator.issue.output import (
+    FAILED,
+    FULL,
+    MAX_PAGE,
+    OK,
+    PAGE,
+    PROG,
+    TEXTS,
+    USAGE,
+    compact,
+    diagnose,
+    dry_run,
+    encode,
+    fit,
+    fit_page,
+    receipt,
+    refusal,
+    write_full,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
+from agent_pm.orchestrator.trackers.linear.issues import LinearIssues
 
-OK, FAILED, USAGE = 0, 1, 2
-LIMIT, RECEIPT = 8192, 1024
-PAGE, MAX_PAGE = 20, 50
-PROG = "agent-pm-orchestrator issue"
-FULL = "--full --output FILE"
 STATES = [str(state) for state in IssueState]
 PRIORITIES = [str(priority) for priority in PRIORITY_NUMBERS]
-TEXTS = (
-    "title",
-    "description",
-    "parent.title",
-    "project.name",
-    "milestone.name",
-    "assignee.name",
-    "assignee.email",
-    "state.name",
-)
-# never shortened by fit_page
-REFS = frozenset(
-    (
-        "id",
-        "identifier",
-        "url",
-        "key",
-        "type",
-        "email",
-        "team_id",
-        "group_id",
-        "project_id",
-        "parent_id",
-    )
-)
 _RULES = (
     "Prerequisites and effects:\n"
     "  Reads Linear as the configured linear.manager_key account (Keychain); an\n"
@@ -386,124 +352,6 @@ class _Once(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
-def encode(payload):
-    # backslashreplace: a lone surrogate becomes its JSON escape
-    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return text.encode("utf-8", "backslashreplace") + b"\n"
-
-
-def fit(payload, tiers, texts, follow):
-    """payload encoded within LIMIT: drop the last item of its largest list in the first of tiers
-    (tuples of list fields) with one not empty, then halve its longest text at a dotted path in
-    texts, naming each cut in truncated, until it fits; continue is follow once anything is
-    truncated, absent when follow is None.
-    """
-    payload = copy.deepcopy(payload)
-    payload.setdefault("truncated", [])
-    while True:
-        if follow is not None:
-            payload["continue"] = follow if payload["truncated"] else None
-        data = encode(payload)
-        if len(data) <= LIMIT:
-            return data
-        if full := next((f for f in ([f for f in t if payload[f]] for t in tiers) if f), None):
-            field = max(full, key=lambda f: len(encode(payload[f])))
-            payload[field].pop()
-            kept = len(payload[field])
-            payload["truncated"] = [m for m in payload["truncated"] if not _gone(m, field, kept)]
-            _mark(payload, field)
-            continue
-        found = {path: text for path in texts if (text := _text(payload, path))}
-        if not found:
-            raise OverflowError(f"result exceeds {LIMIT} bytes: read it with {FULL}")
-        path = max(found, key=lambda p: len(encode(found[p])))
-        *parents, leaf = path.split(".")
-        node = functools.reduce(lambda d, k: d[k], parents, payload)
-        node[leaf] = found[path][: len(found[path]) // 2]
-        _mark(payload, path)
-
-
-def _gone(marker, field, kept):
-    # a marker inside an item fit dropped, such as comments.4.body once 4 comments remain
-    parts = marker.split(".")
-    return len(parts) > 2 and parts[0] == field and parts[1].isdigit() and int(parts[1]) >= kept
-
-
-def _mark(payload, field):
-    if field not in payload["truncated"]:
-        payload["truncated"].append(field)
-
-
-def _text(payload, path):
-    node = payload
-    for key in path.split("."):
-        node = node.get(key) if isinstance(node, dict) else None
-    return node if isinstance(node, str) else None
-
-
-def fit_page(rows, cursor):
-    """A page's rows [(item, cut fields, cursor), …] and the cursor after it (None: last page) as
-    {items, has_next_page, next_cursor, truncated} within LIMIT: trailing items drop, next_cursor
-    then following the last kept one; a lone item's longest text other than a reference halves;
-    each cut is items.<n>.<field>.
-    """
-    items = [copy.deepcopy(item) for item, _, _ in rows]
-    cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
-    while True:
-        page = {"items": items, "has_next_page": cursor is not None, "next_cursor": cursor}
-        data = encode({**page, "truncated": cut})
-        if len(data) <= LIMIT:
-            return data
-        if len(items) > 1:
-            items.pop()
-            cursor = rows[len(items) - 1][2]
-            cut = [m for m in cut if int(m.split(".")[1]) < len(items)]
-            continue
-        found = dict(_texts(items[0], ()))
-        if not found:
-            raise OverflowError(f"page exceeds {LIMIT} bytes: write it with {FULL}")
-        path = max(found, key=lambda p: len(encode(found[p])))
-        node = functools.reduce(lambda node, key: node[key], path[:-1], items[0])
-        node[path[-1]] = found[path][: len(found[path]) // 2]
-        if (marker := ".".join(map(str, ("items", 0, *path)))) not in cut:
-            cut.append(marker)
-
-
-def _texts(node, path):
-    # (path, text) of each non-empty string in node but a reference
-    pairs = node.items() if isinstance(node, dict) else enumerate(node)
-    for key, value in pairs:
-        if isinstance(value, (dict, list)):
-            yield from _texts(value, (*path, key))
-        elif isinstance(value, str) and value and key not in REFS:
-            yield (*path, key), value
-
-
-def write_full(path, payload):
-    """payload as normalized JSON in path, through a temp file renamed over it; its absolute path."""
-    path = os.path.abspath(path)
-    fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".issue-", suffix=".tmp")
-    try:
-        with open(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp, path)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp)
-        raise
-    return path
-
-
-def diagnose(err, message):
-    data = f"{PROG}: {message}".encode("utf-8", "backslashreplace")
-    if len(data) > LIMIT - 1:
-        kept = data[: LIMIT // 2].decode("utf-8", "ignore").encode()
-        data = kept + f" … ({len(data) - len(kept)} bytes omitted)".encode()
-    print(data.decode(), file=err)
-
-
 def _parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
@@ -743,52 +591,61 @@ def _usage(args):
     return None
 
 
-def receipt(payload):
-    """payload encoded within RECEIPT, its actor's name halved until it fits."""
-    actor = payload["actor"]
-    while len(data := encode(payload)) > RECEIPT and actor["name"]:
-        actor["name"] = actor["name"][: len(actor["name"]) // 2]
-    return data
+def read_body(path, stdin=None):
+    """The UTF-8 text of path, or for - of stdin (bytes; None: sys.stdin's), verbatim but for a
+    leading byte order mark; IssueError when it cannot be read or holds only whitespace and byte
+    order marks.
+    """
+    try:
+        if path != "-":
+            with open(path, "rb") as f:
+                raw = f.read()
+        elif (stream := getattr(sys.stdin, "buffer", None) if stdin is None else stdin) is None:
+            raise IssueError("--body-file -: no stdin to read")
+        else:
+            raw = stream.read()
+        body = raw.decode("utf-8-sig")
+    except OSError as error:
+        raise IssueError(f"--body-file {path}: {error.strerror or error}") from None
+    except UnicodeDecodeError:
+        raise IssueError(f"--body-file {path}: not UTF-8") from None
+    if not body.replace("﻿", "").strip():
+        raise IssueError(f"--body-file {path}: empty body")
+    return body
 
 
-def _run(gql, args, linear, body):
+def _run(board: Backend, args, body):
     if args.command == "move":
-        return receipt(issue_write.move(gql, linear, args.id, args.state))
+        return receipt(board.move(args.id, args.state))
     if args.command == "comment":
-        return receipt(issue_write.comment(gql, args.id, body))
+        return receipt(board.comment(args.id, body))
     if args.command == "edit":
-        return receipt(issue_edit.edit(gql, linear, args, body))
+        return receipt(board.edit(args, body))
     if args.command == "create":
-        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, linear, body)))
+        return receipt(board.create(args, body))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
-        return receipt(issue_relation.relation(gql, args.op, args.id, direction, other))
-    if args.command == "label":
-        return receipt(issue_label.swap(gql, args.id, args.old, args.new))
+        return receipt(board.relation(args.op, args.id, direction, other))
     if args.command == "archive" and args.dry_run:
-        plan = issue_archive.dry_run(LinearTracker(gql), gql, args.id)
+        plan = dry_run(board.archive_plan(args.id))
         return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
-        return receipt(issue_archive.archive(LinearTracker(gql), gql, args.id))
+        return receipt(board.archive(args.id))
     if args.command == "read":
-        view = issue_read.view(gql, args.id, full=args.full)
+        view = board.view(args.id, full=args.full)
         if args.full:
             return _written(args.output, view, {"identifier": view["identifier"]})
         return fit(
-            issue_read.compact(view),
+            compact(view),
             (("comments", "labels", "blocks", "blocked_by", "children"),),
             TEXTS,
             f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
         )
-    if args.command == "list":
-        source = issue_list.source(gql, args, linear)
-    else:
-        source = issue_lookup.source(gql, args, linear.team)
     if not args.full:
-        rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
+        rows, more, end = board.page(args, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
-    rows = issue_page.walk(gql, source)
+    rows = board.walk(args)
     cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
     payload = {"items": [item for item, _, _ in rows], "truncated": cut}
     return _written(args.output, payload, {})
@@ -813,7 +670,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     body = None
     if getattr(args, "body_file", None) is not None:
         try:
-            body = issue_write.read_body(args.body_file, stdin)
+            body = read_body(args.body_file, stdin)
         except IssueError as error:
             diagnose(err, error)
             return USAGE
@@ -830,17 +687,14 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     if not linear.manager_key:
         diagnose(err, "orchestrator/config.toml: linear.manager_key is unset")
         return USAGE
-    gql = functools.partial(gql, service=linear.manager_key)
+    issues = LinearIssues(functools.partial(gql, service=linear.manager_key), linear)
     try:
-        data = _run(gql, args, linear, body)
+        if args.command == "label":
+            data = receipt(issues.swap(args.id, args.old, args.new))
+        else:
+            data = _run(issues, args, body)
     except IssueError as error:
         diagnose(err, error)
-        return USAGE
-    except (subprocess.SubprocessError, OSError, KeychainError) as error:
-        diagnose(
-            err,
-            f"linear.manager_key Keychain service {linear.manager_key!r}: {type(error).__name__}",
-        )
         return USAGE
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))
@@ -849,7 +703,10 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         out.write(fit(error.report, (("done", "failed"), ("recover",)), (), None))
         diagnose(err, error)
         return FAILED
-    except (LinearError, Unavailable, OverflowError, ArchiveRefused, LabelRefused) as error:
+    except ArchiveRefused as refused:
+        diagnose(err, refusal(args.id, refused.plan))
+        return FAILED
+    except (LinearError, Unavailable, OverflowError, LabelRefused) as error:
         diagnose(err, error)
         return FAILED
     out.write(data)

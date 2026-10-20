@@ -34,7 +34,7 @@ OBJECT_EXPORT_MODULES = (f"{ORCH_FILES}__init__.py",)
 
 
 SUBPACKAGES = {
-    ORCH_PROJECT: {"trackers"},
+    ORCH_PROJECT: {"issue", "trackers"},
 }
 
 
@@ -95,7 +95,7 @@ CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 
 ENTRIES = (
     f"{ORCH_SRC}cli.py",
-    f"{ORCH_SRC}trackers/linear/issue.py",
+    f"{ORCH_SRC}issue/command.py",
     *(f"{ORCH_SRC}engine/{name}.py" for name in ("promote", "prune", "router")),
 )
 

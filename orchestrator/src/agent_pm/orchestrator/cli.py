@@ -30,10 +30,8 @@ from agent_pm.orchestrator.engine.types import (
     TrackerKind,
     Wiring,
 )
-from agent_pm.orchestrator.trackers.linear import (
-    client,
-    issue,
-)
+from agent_pm.orchestrator.issue import command as issue_command
+from agent_pm.orchestrator.trackers.linear import client
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
 from agent_pm.orchestrator.trackers.local.board import scan
 from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
@@ -122,7 +120,7 @@ def main(argv=None):
             "close finished issues' runs, delete their agent dirs, then archive",
         ),
         "issue": (
-            issue.main,
+            issue_command.main,
             "read, list, create, edit, move, comment on, archive, relate or relabel issues; "
             "look up Linear references",
         ),

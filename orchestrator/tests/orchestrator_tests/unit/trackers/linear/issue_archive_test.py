@@ -1,8 +1,9 @@
 """agent-pm-orchestrator issue archive: every unarchived descendant read over every page at every level,
-the archive only when all are finished, nothing written after a failed read.
+the archive only when all are finished, nothing written after a failed read; the plan alone for a
+dry run.
 """
 
-from agent_pm.orchestrator.engine.flow.types import ArchivePlan, ArchiveRefused
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
@@ -10,6 +11,7 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
+from agent_pm.orchestrator.issue.output import refusal
 from agent_pm.orchestrator.trackers.linear import issue_archive, linear_tracker
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from orchestrator_tests.case import Case
@@ -24,8 +26,8 @@ def archive(gql, ident="TASK-1"):
     return issue_archive.archive(LinearTracker(gql), gql, ident)
 
 
-def dry_run(gql, ident="TASK-1"):
-    return issue_archive.dry_run(LinearTracker(gql), gql, ident)
+def plan(gql, ident="TASK-1"):
+    return issue_archive.plan(LinearTracker(gql), gql, ident)
 
 
 class StuckGql(ArchiveGql):
@@ -74,8 +76,8 @@ class Archive(Case):
             ("sub-issue", tree("TASK-1", "completed", tree("TASK-2", "duplicate"))),
         ):
             with self.subTest(duplicate=name):
-                plan = dry_run(ArchiveGql(root))
-                self.assertEqual((plan["result"], plan["unfinished"]), ("changed", []))
+                found = plan(ArchiveGql(root))
+                self.assertEqual((found.outcome, found.unfinished), ("changed", ()))
                 gql = ArchiveGql(root)
                 self.assertEqual(archive(gql)["result"], "changed")
                 self.assertEqual(gql.writes, [(linear_tracker.M_ARCHIVE, {"i": "id-TASK-1"})])
@@ -104,25 +106,11 @@ class Archive(Case):
             gql = ArchiveGql(root)
             with self.subTest(name=name), self.assertRaises(ArchiveRefused) as cm:
                 archive(gql)
-            self.assertIn(unfinished, str(cm.exception))
+            text = refusal("TASK-1", cm.exception.plan)
+            self.assertIn(unfinished, text)
             self.assertIn(unfinished, [s.ident for s in cm.exception.plan.unfinished])
-            self.assertIn("agent-pm-orchestrator issue archive TASK-1 --dry-run", str(cm.exception))
+            self.assertIn("agent-pm-orchestrator issue archive TASK-1 --dry-run", text)
             self.assertEqual(gql.writes, [])
-
-    def test_the_refusal_text_and_its_plan(self):
-        gql = ArchiveGql(
-            tree("TASK-1", "completed", tree("TASK-2", "canceled", tree("TASK-3", "started")))
-        )
-        with self.assertRaises(ArchiveRefused) as cm:
-            archive(gql)
-        self.assertEqual(
-            str(cm.exception),
-            "archive TASK-1 refused, nothing archived: 1 unfinished of 3 (it and its unarchived "
-            "sub-issues): TASK-3 (Started); complete or cancel each first "
-            "(agent-pm-orchestrator issue archive TASK-1 --dry-run lists them)",
-        )
-        self.assertIsInstance(cm.exception.plan, ArchivePlan)
-        self.assertEqual(cm.exception.plan.ident, "TASK-1")
 
     def test_every_children_page_is_read_at_every_level(self):
         root = tree(
@@ -199,71 +187,3 @@ class Archive(Case):
                 archive(gql)
             self.assertIn(phrase, str(cm.exception))
             self.assertEqual(len(gql.writes), 1)
-
-    def test_a_long_refusal_names_the_first_ones_and_counts_the_rest(self):
-        gql = ArchiveGql(tree("TASK-1", "completed", *many(300, kind="started")))
-        with self.assertRaises(ArchiveRefused) as cm:
-            archive(gql)
-        text = str(cm.exception)
-        self.assertIn("300 unfinished", text)
-        self.assertIn("SUB-1 (Started)", text)
-        self.assertIn(f"and {300 - issue_archive.SHOWN} more", text)
-        self.assertNotIn(f"SUB-{issue_archive.SHOWN + 1} ", text)
-
-
-class DryRun(Case):
-    def test_the_plan_as_json(self):
-        root = tree("TASK-1", "started", tree("TASK-2", "canceled", tree("TASK-3", "unstarted")))
-        self.assertEqual(
-            dry_run(ArchiveGql(root)),
-            {
-                "issue": {
-                    "id": "id-TASK-1",
-                    "identifier": "TASK-1",
-                    "url": "https://linear.app/t/issue/TASK-1",
-                },
-                "operation": "archive",
-                "dry_run": True,
-                "result": "refused",
-                "descendant_count": 2,
-                "descendants": [
-                    {"id": "id-TASK-2", "identifier": "TASK-2", "state": "Canceled"},
-                    {"id": "id-TASK-3", "identifier": "TASK-3", "state": "Unstarted"},
-                ],
-                "unfinished_count": 2,
-                "unfinished": [
-                    {"id": "id-TASK-1", "identifier": "TASK-1", "state": "Started"},
-                    {"id": "id-TASK-3", "identifier": "TASK-3", "state": "Unstarted"},
-                ],
-            },
-        )
-
-    def test_lists_every_descendant_and_writes_nothing(self):
-        root = tree("TASK-1", "completed", *many(251), tree("TASK-2", "canceled", tree("TASK-3")))
-        gql = ArchiveGql(root)
-        plan = dry_run(gql)
-        self.assertEqual(gql.writes, [])
-        self.assertEqual(
-            (plan["operation"], plan["dry_run"], plan["result"]), ("archive", True, "changed")
-        )
-        self.assertEqual(plan["descendant_count"], 253)
-        self.assertEqual(
-            [d["identifier"] for d in plan["descendants"]][-3:], ["SUB-251", "TASK-2", "TASK-3"]
-        )
-        self.assertEqual(
-            plan["descendants"][-1],
-            {"id": "id-TASK-3", "identifier": "TASK-3", "state": "Completed"},
-        )
-        self.assertEqual((plan["unfinished_count"], plan["unfinished"]), (0, []))
-
-    def test_names_what_would_refuse(self):
-        root = tree("TASK-1", "started", *many(250), tree("TASK-9", "unstarted"))
-        plan = dry_run(ArchiveGql(root))
-        self.assertEqual((plan["result"], plan["unfinished_count"]), ("refused", 2))
-        self.assertEqual([u["identifier"] for u in plan["unfinished"]], ["TASK-1", "TASK-9"])
-
-    def test_an_archived_issue_is_unchanged(self):
-        plan = dry_run(ArchiveGql(tree("TASK-1", "started", archived="2026-10-01")))
-        self.assertEqual(
-            (plan["result"], plan["descendants"], plan["unfinished"]), ("unchanged", [], [])
-        )

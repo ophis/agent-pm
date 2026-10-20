@@ -10,9 +10,9 @@ import re
 from types import SimpleNamespace
 
 from agent_pm.orchestrator.engine.types import GraphQLErrors
+from agent_pm.orchestrator.issue import command as issue
 from agent_pm.orchestrator.trackers.linear import (
     client,
-    issue,
     issue_edit,
     issue_label,
     issue_read,

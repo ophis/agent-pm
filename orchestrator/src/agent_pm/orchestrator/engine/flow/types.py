@@ -78,8 +78,8 @@ class ArchivePlan:
 
 
 class ArchiveRefused(Exception):
-    def __init__(self, plan: ArchivePlan, message: str = ""):
-        super().__init__(message)
+    def __init__(self, plan: ArchivePlan):
+        super().__init__()
         self.plan = plan
 
 

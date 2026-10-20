@@ -1,14 +1,10 @@
-"""agent-pm-orchestrator issue read: one issue's fields, newest comments and relations as a view (view),
-cut to the default limits by compact, or with every page for --full.
-"""
+"""agent-pm-orchestrator issue read: one issue's fields, comments and relations, every page with full."""
 
 import re
 
 from agent_pm.orchestrator.engine.flow.types import (
     COLUMN,
-    COMMENT_CHARS,
     COMMENTS,
-    DESCRIPTION_CHARS,
     ISSUE_ID,
     ident_error,
 )
@@ -148,26 +144,3 @@ def _rel(node):
         "title": node["title"],
         "state": node["state"]["name"],
     }
-
-
-def compact(full):
-    """full cut to the default limits; truncated names each cut field, or one with more pages."""
-    out, pages, cuts = dict(full), set(full["truncated"]), []
-    if full["description"] is not None and len(full["description"]) > DESCRIPTION_CHARS:
-        out["description"] = full["description"][:DESCRIPTION_CHARS]
-        cuts.append("description")
-    if "comments" in pages or len(full["comments"]) > COMMENTS:
-        cuts.append("comments")
-    out["comments"] = [dict(c) for c in full["comments"][:COMMENTS]]
-    for i, c in enumerate(out["comments"]):
-        if len(c["body"]) > COMMENT_CHARS:
-            c["body"] = c["body"][:COMMENT_CHARS]
-            cuts.append(f"comments.{i}.body")
-    if "labels" in pages:
-        cuts.append("labels")
-    for column in ("blocks", "blocked_by", "children"):
-        out[column] = full[column][:COLUMN]
-        if column in pages or len(full[column]) > COLUMN:
-            cuts.append(column)
-    out["truncated"] = cuts
-    return out

@@ -1,4 +1,4 @@
-"""agent-pm-orchestrator issue read: the query, the view's fields and directions, and the compact limits."""
+"""agent-pm-orchestrator issue read: the query, the view's fields and directions."""
 
 from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError
 from agent_pm.orchestrator.trackers.linear import issue_read
@@ -141,47 +141,6 @@ class View(Case):
         other = LinearError("linear api error: [{'message': 'boom'}]")
         with self.assertRaises(LinearError):
             issue_read.view(Gql(None, fail=other), "TASK-2")
-
-
-class Compact(Case):
-    def test_default_limits_mark_every_cut(self):
-        node = issue_node(
-            description="d" * 601,
-            comments=conn([comment(n, body="b" * 301 if n == 6 else "ok") for n in range(1, 7)]),
-            children=conn([rel(f"TASK-{n}") for n in range(10, 21)]),
-            relations=conn(
-                [relation("blocks", "relatedIssue", f"TASK-{n}") for n in range(30, 41)]
-            ),
-            inverseRelations=conn(
-                [relation("blocks", "issue", f"TASK-{n}") for n in range(50, 61)]
-            ),
-        )
-        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
-        self.assertEqual(len(view["description"]), 600)
-        self.assertEqual([c["id"] for c in view["comments"]], ["c6", "c5", "c4", "c3", "c2"])
-        self.assertEqual(len(view["comments"][0]["body"]), 300)
-        for column in ("children", "blocks", "blocked_by"):
-            self.assertEqual(len(view[column]), 10, column)
-        self.assertEqual(
-            view["truncated"],
-            ["description", "comments", "comments.0.body", "blocks", "blocked_by", "children"],
-        )
-
-    def test_within_limits_nothing_is_cut(self):
-        node = issue_node(
-            description="d" * 600,
-            comments=conn([comment(n, body="b" * 300) for n in range(1, 6)]),
-            children=conn([rel(f"TASK-{n}") for n in range(10, 20)]),
-        )
-        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
-        self.assertEqual(view["truncated"], [])
-        self.assertEqual(len(view["description"]), 600)
-        self.assertEqual(len(view["comments"]), 5)
-
-    def test_a_page_mark_is_not_repeated(self):
-        node = issue_node(children=conn([rel(f"TASK-{n}") for n in range(10, 21)], more=True))
-        view = issue_read.compact(issue_read.view(Gql(node), "TASK-2"))
-        self.assertEqual(view["truncated"], ["children"])
 
 
 class Full(Case):

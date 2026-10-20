@@ -11,8 +11,9 @@ from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config
-from agent_pm.orchestrator.engine.types import GraphQLErrors, LinearError, Unavailable
-from agent_pm.orchestrator.trackers.linear import client, issue
+from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError, Unavailable
+from agent_pm.orchestrator.issue import command as issue
+from agent_pm.orchestrator.trackers.linear import client
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -44,6 +45,7 @@ from orchestrator_tests.unit.issue_fixtures import (
 )
 
 KEY = "lin_api_TESTSECRET0123456789"
+RAW_BODY = 'say "hi", `ls`, $HOME and ${x} \\n\nline two\n中文正文\n'
 
 
 class Help(Case):
@@ -1156,43 +1158,59 @@ class Full(IssueCase):
         self.assertFalse(os.path.exists(path))
 
 
-def row(n, name="x", cut=()):
-    return {"id": f"id-{n}", "name": name}, list(cut), f"cur-{n}"
+class ReadBody(Case):
+    def test_a_file_or_stdin_reads_verbatim(self):
+        path = os.path.join(self.home, "body.md")
+        with open(path, "wb") as f:
+            f.write(RAW_BODY.encode("utf-8"))
+        self.assertEqual(issue.read_body(path, io.BytesIO()), RAW_BODY)
+        self.assertEqual(issue.read_body("-", io.BytesIO(RAW_BODY.encode("utf-8"))), RAW_BODY)
 
+    def test_only_a_leading_byte_order_mark_is_dropped(self):
+        path = os.path.join(self.home, "bom-body.md")
+        data = b"\xef\xbb\xbf" + (RAW_BODY + "﻿").encode("utf-8")
+        with open(path, "wb") as f:
+            f.write(data)
+        self.assertEqual(issue.read_body(path, io.BytesIO()), RAW_BODY + "﻿")
+        self.assertEqual(issue.read_body("-", io.BytesIO(data)), RAW_BODY + "﻿")
 
-class FitPage(Case):
-    def test_within_the_limit_nothing_is_cut(self):
-        page = json.loads(issue.fit_page([row(1), row(2, cut=["team_ids"])], "end"))
-        self.assertEqual(page["next_cursor"], "end")
-        self.assertTrue(page["has_next_page"])
-        self.assertEqual(page["truncated"], ["items.1.team_ids"])
-        last = json.loads(issue.fit_page([], None))
-        self.assertEqual(
-            last, {"items": [], "truncated": [], "has_next_page": False, "next_cursor": None}
+    def test_an_unusable_body_is_refused(self):
+        blank, latin = os.path.join(self.home, "blank.md"), os.path.join(self.home, "latin.md")
+        with open(blank, "w", encoding="utf-8") as f:
+            f.write(" \n\t\n")
+        bom, bom_blank = os.path.join(self.home, "bom.md"), os.path.join(self.home, "bom-blank.md")
+        with open(bom, "wb") as f:
+            f.write(b"\xef\xbb\xbf")
+        with open(bom_blank, "wb") as f:
+            f.write(b"\xef\xbb\xbf \n")
+        with open(latin, "wb") as f:
+            f.write("café".encode("latin-1"))
+        cases = (
+            (os.path.join(self.home, "missing.md"), b"", "No such file"),
+            (self.home, b"", "directory"),
+            (latin, b"", "not UTF-8"),
+            (blank, b"", "empty"),
+            (bom, b"", "empty"),
+            (bom_blank, b"", "empty"),
+            ("-", b"\xef\xbb\xbf", "empty"),
+            ("-", b"", "empty"),
+            ("-", b"\xff", "not UTF-8"),
         )
+        for path, stdin, phrase in cases:
+            with self.subTest(phrase=phrase, path=path), self.assertRaises(IssueError) as cm:
+                issue.read_body(path, io.BytesIO(stdin))
+            self.assertIn(f"--body-file {path}", str(cm.exception))
+            self.assertIn(phrase, str(cm.exception))
 
-    def test_over_the_limit_trailing_items_drop_and_the_cursor_follows_the_last_kept(self):
-        rows = [row(n, "名" * 400, cut=["team_ids"]) for n in range(50)]
-        data = issue.fit_page(rows, None)
-        self.assertLessEqual(len(data), 8192)
-        page = json.loads(data)
-        kept = len(page["items"])
-        self.assertLess(kept, 50)
-        self.assertEqual((page["has_next_page"], page["next_cursor"]), (True, f"cur-{kept - 1}"))
-        self.assertEqual(page["truncated"], [f"items.{n}.team_ids" for n in range(kept)])
-        self.assertEqual(page["items"][-1]["name"], "名" * 400)
-
-    def test_a_lone_item_shortens_its_text_but_keeps_its_references(self):
-        item = {"id": "i" * 3000, "name": "n" * 9000, "labels": [{"id": "l1", "name": "m" * 3000}]}
-        page = json.loads(issue.fit_page([(item, [], "c")], None))
-        got = page["items"][0]
-        self.assertEqual((got["id"], got["labels"][0]["id"]), ("i" * 3000, "l1"))
-        self.assertLess(len(got["name"]), 9000)
-        self.assertTrue(("n" * 9000).startswith(got["name"]))
-        self.assertIn("items.0.name", page["truncated"])
-        self.assertIsNone(page["next_cursor"])
-
-    def test_references_alone_over_the_limit_fail(self):
-        item = {"id": "i" * 9000, "name": ""}
-        with self.assertRaises(OverflowError):
-            issue.fit_page([(item, [], "c")], None)
+    def test_stdin_is_read_only_for_dash(self):
+        path = os.path.join(self.home, "body.md")
+        with open(path, "wb") as f:
+            f.write(RAW_BODY.encode("utf-8"))
+        # no stdin at all: fd 0 closed (None) or a text layer without a byte stream
+        for stdin in (None, io.StringIO(RAW_BODY)):
+            with self.subTest(stdin=stdin), mock.patch("sys.stdin", stdin):
+                self.assertEqual(issue.read_body(path), RAW_BODY)
+                with self.assertRaisesRegex(IssueError, "--body-file -: no stdin"):
+                    issue.read_body("-")
+        with mock.patch("sys.stdin", mock.Mock(buffer=io.BytesIO(RAW_BODY.encode("utf-8")))):
+            self.assertEqual(issue.read_body("-"), RAW_BODY)
