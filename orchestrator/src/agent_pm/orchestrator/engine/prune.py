@@ -185,7 +185,7 @@ class Pruner:
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.views, self.classes, self.by_issue = 0, {}, {}, None
-        self.finished = None
+        self.finished, self.anchor, self.cold = None, None, False
         self.say = functools.partial(log, "prune", dry=dry)
         self.cache = os.path.join(cfg.logs_dir, CACHE)
         self.state, unreadable = prune_state.load(self.cache)
@@ -314,6 +314,7 @@ class Pruner:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
         self.finished = {issue.ident for issue in found}
+        self.see(issue.updated for issue in found)
         due = []
         for issue in found:
             if issue.since is None:
@@ -332,7 +333,8 @@ class Pruner:
                 self.archive_one(issue)
             except Spent:
                 if alone:  # its plan alone outgrows a tick: skipped like a refusal
-                    self.state.refused[issue.ident] = Refusal((), TOO_BIG, self.now)
+                    versions = {issue.ident: issue.updated}
+                    self.state.refused[issue.ident] = Refusal(versions, TOO_BIG, self.now)
                     self.say("prune-skip", issue.ident, once=True, reason=TOO_BIG)
                 if rest := len(due) - n - alone:
                     self.say("prune-deferred", archive=rest)
@@ -360,8 +362,8 @@ class Pruner:
             return
         refused.pop(ident, None)
         if plan is not None and plan.outcome == "refused":
-            unfinished = tuple(s.ident for s in plan.unfinished)
-            refused[ident] = Refusal(unfinished, _kept(plan), self.now)
+            versions = {ident: issue.updated} | {s.ident: s.updated for s in plan.unfinished}
+            refused[ident] = Refusal(versions, _kept(plan), self.now)
             self.say("prune-skip", ident, once=True, reason=_kept(plan))
         elif self.dry:
             self.say("prune-plan", ident, what="archive")
@@ -397,28 +399,38 @@ class Pruner:
             return None
 
     def sync(self):
-        """Drops what the change feed names, or everything when it is unknown, before any read, so
-        a change outlives a read that fails or waits."""
-        start, synced, changed = self.now, self.state.synced, None
+        """Before any read, drops what the feed names as changed since read, or all when it is
+        unknown. The cursor: the feed's latest time, not the host's."""
+        changes = None
         self.budget.limit(SYNC_PAGES)
-        if synced is not None and synced <= start:
+        if self.state.synced is not None:
             try:
-                changed = self.tracker.changed(synced - OVERLAP, SYNC_PAGES).issues
+                changes = self.tracker.changed(self.state.synced - OVERLAP, SYNC_PAGES)
             except Unavailable:
                 raise
             except LINEAR_ERRORS as e:
                 self.error(error=f"change feed: {one_line(e)}")
-        if changed is None:
-            self.state = PruneState(synced=start)
+            else:
+                self.anchor = changes.latest
+        if changes is None or changes.issues is None:
+            self.state, self.cold = PruneState(), True
             return
-        state = self.state
-        state.issues = {i: e for i, e in state.issues.items() if i not in changed}
+        named, state = changes.issues, self.state
+        state.issues = {
+            i: e
+            for i, e in state.issues.items()
+            if not _newer(named, i, e.snapshot and e.snapshot.updated)
+        }
         state.refused = {
             i: r
             for i, r in state.refused.items()
-            if i not in changed and changed.keys().isdisjoint(r.unfinished)
+            if not any(_newer(named, j, t) for j, t in r.versions.items())
         }
-        state.synced = start
+
+    def see(self, times):
+        """A cold tick's anchor: its first read carrying a time."""
+        if self.cold and self.anchor is None:
+            self.anchor = max(filter(None, times), default=None)
 
     def trusted(self, read):
         return read <= self.now and self.now - read < BACKSTOP
@@ -464,6 +476,7 @@ class Pruner:
             failed.update(idents)
             return {}
         self.state.issues |= {i: Entry(s, self.now) for i, s in got.items()}
+        self.see(s.updated for s in got.values() if s)
         return got
 
     def save(self, idents):
@@ -473,6 +486,7 @@ class Pruner:
             state.unbatched &= set(idents)
         if self.finished is not None:
             state.refused = {i: r for i, r in state.refused.items() if i in self.finished}
+        state.synced = max(filter(None, (state.synced, self.anchor)), default=None)
         try:
             prune_state.save(self.cache, state)
         except OSError as e:
@@ -587,6 +601,10 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
+
+
+def _newer(named, ident, version):
+    return ident in named and (version is None or named[ident] > version)
 
 
 def _kept(plan):

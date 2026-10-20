@@ -29,11 +29,20 @@ class Store(Case):
         state = PruneState(
             synced=NOW,
             issues={
-                "TASK-1": Entry(Snapshot(IssueState.DONE, NOW - timedelta(hours=3)), NOW),
+                "TASK-1": Entry(
+                    Snapshot(IssueState.DONE, NOW - timedelta(hours=3), NOW - timedelta(hours=1)),
+                    NOW,
+                ),
                 "TASK-2": Entry(Snapshot(None, None), NOW),
                 "TASK-3": Entry(None, NOW - timedelta(hours=1)),
             },
-            refused={"TASK-4": Refusal(("TASK-4", "TASK-5"), "archive: sub-issue TASK-5", NOW)},
+            refused={
+                "TASK-4": Refusal(
+                    {"TASK-4": NOW - timedelta(hours=2), "TASK-5": None},
+                    "archive: sub-issue TASK-5",
+                    NOW,
+                )
+            },
             unbatched={"OPS-7"},
         )
         prune_state.save(self.path, state)
@@ -45,7 +54,16 @@ class Store(Case):
 
     def test_unreadable_is_empty_with_why(self):
         good = {"synced": None, "issues": {}, "refused": {}, "unbatched": []}
-        entry = {"state": "done", "since": None, "gone": False, "read": NOW.isoformat()}
+        entry = {
+            "state": "done",
+            "since": None,
+            "updated": None,
+            "gone": False,
+            "read": NOW.isoformat(),
+        }
+        no_updated = {k: v for k, v in entry.items() if k != "updated"}
+        refusal = {"versions": {"TASK-1": None}, "reason": "x", "read": NOW.isoformat()}
+        old = {"unfinished": [], "reason": "x", "read": NOW.isoformat()}
         for name, text in (
             ("not json", "{"),
             ("not an object", "[]"),
@@ -57,16 +75,15 @@ class Store(Case):
             ("entry not an object", json.dumps(good | {"issues": {"TASK-1": 1}})),
             ("gone not a bool", json.dumps(good | {"issues": {"TASK-1": entry | {"gone": 1}}})),
             ("unbatched not a list", json.dumps(good | {"unbatched": "TASK-1"})),
+            ("entry without updated", json.dumps(good | {"issues": {"TASK-1": no_updated}})),
             (
                 "reason not text",
-                json.dumps(
-                    good
-                    | {
-                        "refused": {
-                            "TASK-1": {"unfinished": [], "reason": 1, "read": NOW.isoformat()}
-                        }
-                    }
-                ),
+                json.dumps(good | {"refused": {"TASK-1": refusal | {"reason": 1}}}),
+            ),
+            ("old unfinished list", json.dumps(good | {"refused": {"TASK-1": old}})),
+            (
+                "version not a time",
+                json.dumps(good | {"refused": {"TASK-1": refusal | {"versions": {"TASK-1": 1}}}}),
             ),
         ):
             with self.subTest(name):

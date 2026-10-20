@@ -1246,28 +1246,24 @@ class RequestBound(Bound):
         self.tick(inner)
         pages = []
 
+        burst = NOW + timedelta(hours=2)
+
         def gql(query, **v):
             if query != linear_tracker.Q_CHANGED:
                 return inner(query, **v)
             pages.append(v["c"])
+            node = {"identifier": f"TASK-{900 + len(pages)}", "updatedAt": burst.isoformat()}
             more = {"hasNextPage": True, "endCursor": str(len(pages))}
-            return {"issues": {"nodes": [], "pageInfo": more}}
+            return {"issues": {"nodes": [node], "pageInfo": more}}
 
         inner.calls.clear()
         inner.read.clear()
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(len(pages), prune.SYNC_PAGES)
         self.assertEqual(self.counts(inner), [1, 0])
-
-    def test_a_future_sync_starts_cold(self):
-        gql = gql_for(self.dirs(3), changed=())
-        self.tick(gql)
-        state = prune_state.load(self.cache())[0]
-        state.synced = NOW + timedelta(hours=1)
-        prune_state.save(self.cache(), state)
-        self.tick(gql)
-        self.assertNotIn(linear_tracker.Q_CHANGED, gql.calls)
-        self.assertEqual(self.counts(gql), [1, 0])
+        self.assertEqual(prune_state.load(self.cache())[0].synced, burst)
+        self.assertEqual(self.tick(inner), (0, ""))
+        self.assertEqual(inner.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
 
     def test_a_feed_error_trusts_nothing(self):
         inner = gql_for(self.dirs(3), changed=())
@@ -1285,6 +1281,91 @@ class RequestBound(Bound):
             (3, "prune-error error=change feed: LinearError: linear api error: feed down"),
         )
         self.assertEqual(self.counts(inner), [1, 0])
+
+    def synced(self):
+        return prune_state.load(self.cache())[0].synced
+
+    def test_a_host_clock_ahead_misses_no_reopen(self):
+        self.record("TASK-7", SID, [A])
+        issues = {"TASK-7": ("Done", [(30, "In Progress"), (0.5, "Done")])}
+        gql = gql_for(issues, changed="since")
+        ahead = NOW + timedelta(hours=1)
+        self.assertEqual(self.tick(gql, now=ahead), (0, ""))
+        issues["TASK-7"] = (
+            "In Progress",
+            [(30, "In Progress"), (0.5, "Done"), (-5 / 60, "In Progress")],
+        )
+        self.assertEqual(self.tick(gql, now=ahead + timedelta(minutes=10)), (0, ""))
+        self.assertEqual(gql.read, ["TASK-7"])
+        self.assertEqual(self.tick(gql, now=ahead + timedelta(minutes=40)), (0, ""))
+        self.assertEqual(gql.read, [])
+        self.assertEqual(self.closed(), [])
+        self.assertIsNotNone(self.checkouts("TASK-7"))
+        self.assertEqual(self.synced(), NOW + timedelta(minutes=5))
+
+    def test_a_host_clock_behind_still_runs_the_feed(self):
+        gql = gql_for(self.dirs(10), changed="since")
+        behind = NOW - timedelta(hours=1)
+        self.tick(gql, now=behind)
+        self.tick(gql, now=behind + timedelta(minutes=5))
+        self.assertEqual(gql.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
+
+    def test_the_cursor_is_the_ticks_anchor(self):
+        old = NOW - timedelta(hours=30)
+        for case in ("warm", "warm quiet", "cold", "cold with nothing"):
+            with self.subTest(case):
+                self.fresh()
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                if case == "cold with nothing":
+                    self.tick(gql_for({}, changed=()))
+                    self.assertIsNone(self.synced())
+                    continue
+                issues = self.dirs(2, state=("In Review", [(30, "In Review")]))
+                gql = gql_for(issues, changed=())
+                self.tick(gql)
+                self.assertEqual(self.synced(), old)
+                if case == "warm":
+                    gql.changed = {"TASK-100"}
+                    self.tick(gql)
+                    self.assertEqual(self.synced(), gql.clock)
+                elif case == "warm quiet":
+                    gql.issues["TASK-9"] = ("Canceled", [(-14 / 60, "Canceled")])
+                    self.tick(gql, now=NOW + prune.BACKSTOP)
+                    self.assertEqual(len(gql.read), 2)
+                    self.assertEqual(self.synced(), old)
+
+    def test_a_slow_tick_keeps_the_cursor_at_the_feed(self):
+        for case in ("a", "b"):
+            with self.subTest(case):
+                self.fresh()
+                if os.path.exists(self.cache()):
+                    os.remove(self.cache())
+                issues = self.dirs(2, state=("Done", [(1, "Done")]), start=7)
+                issues["TASK-8"] = ("In Review", [(2, "In Review")])
+                inner = gql_for(issues, owners={"TASK-9": "u-pm"}, changed="since")
+                self.tick(inner)
+                self.assertEqual(self.synced(), NOW - timedelta(hours=1))
+                if case == "a":
+                    issues["TASK-8"] = ("In Review", [(2, "In Review"), (0, "In Review")])
+
+                def gql(query, inner=inner, issues=issues, **v):
+                    if query == linear_tracker.Q_FINISHED and "TASK-9" not in issues:
+                        issues["TASK-7"] = ("In Progress", [(1, "Done"), (-1 / 60, "In Progress")])
+                        issues["TASK-9"] = ("Done", [(-14 / 60, "Done")])
+                    return inner(query, **v)
+
+                inner.calls.clear()
+                self.prune(gql)
+                self.assertEqual(self.synced(), NOW if case == "a" else NOW - timedelta(hours=1))
+                self.tick(inner)
+                self.assertIn("TASK-7", inner.read)
+
+    def test_a_named_issue_unchanged_since_its_read_is_not_read_again(self):
+        gql = gql_for(self.dirs(3, state=("In Review", [(0.1, "In Review")])), changed="since")
+        self.tick(gql)
+        self.assertEqual(self.tick(gql), (0, ""))
+        self.assertEqual(gql.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
 
     def test_a_day_old_entry_is_read_again(self):
         gql = gql_for(self.dirs(3), changed=())
@@ -1375,12 +1456,20 @@ class RequestBound(Bound):
 
     def test_a_gone_issue_is_skipped_and_not_read_again(self):
         os.makedirs(self.cfg.issue_workdir("TASK-7"))
-        gql = gql_for({}, changed=())
+        gql = gql_for(self.dirs(1), changed=())  # a live issue gives the cold tick its anchor
         self.assertEqual(self.tick(gql), (0, "prune-skip TASK-7 reason=not in Linear"))
         self.assertEqual(self.counts(gql), [1, 1])
         self.assertEqual(self.tick(gql), (0, ""))
         self.assertEqual(self.counts(gql), [0, 0])
         self.assertTrue(os.path.isdir(self.cfg.issue_workdir("TASK-7")))
+
+    def test_a_tick_seeing_no_time_stays_cold(self):
+        os.makedirs(self.cfg.issue_workdir("TASK-7"))
+        gql = gql_for({}, changed=())
+        self.tick(gql)
+        self.tick(gql)
+        self.assertNotIn(linear_tracker.Q_CHANGED, gql.calls)
+        self.assertEqual(self.counts(gql), [1, 1])
 
     def test_another_teams_finished_issue_is_pruned(self):
         self.record("OPS-7", SID, [A])

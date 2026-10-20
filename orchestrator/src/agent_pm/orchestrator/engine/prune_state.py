@@ -27,13 +27,18 @@ def save(path, state):
         i: {
             "state": None if e.snapshot is None else e.snapshot.state,
             "since": _iso(None if e.snapshot is None else e.snapshot.since),
+            "updated": _iso(None if e.snapshot is None else e.snapshot.updated),
             "gone": e.snapshot is None,
             "read": e.read.isoformat(),
         }
         for i, e in state.issues.items()
     }
     refused = {
-        i: {"unfinished": list(r.unfinished), "reason": r.reason, "read": r.read.isoformat()}
+        i: {
+            "versions": {j: _iso(t) for j, t in r.versions.items()},
+            "reason": r.reason,
+            "read": r.read.isoformat(),
+        }
         for i, r in state.refused.items()
     }
     data = {
@@ -60,22 +65,22 @@ def _state(data):
 
 
 def _entry(data):
-    data = _object(data, {"state", "since", "gone", "read"})
+    data = _object(data, {"state", "since", "updated", "gone", "read"})
     if not isinstance(data["gone"], bool):
         raise ValueError("gone is not a bool")
     state = None if data["state"] is None else IssueState(data["state"])
-    found = None if data["gone"] else Snapshot(state, _maybe(data["since"]))
+    found = (
+        None if data["gone"] else Snapshot(state, _maybe(data["since"]), _maybe(data["updated"]))
+    )
     return Entry(found, _time(data["read"]))
 
 
 def _refusal(data):
-    data = _object(data, {"unfinished", "reason", "read"})
-    unfinished = data["unfinished"]
-    if not isinstance(unfinished, list) or not all(isinstance(i, str) for i in unfinished):
-        raise ValueError("unfinished is not a list of idents")
+    data = _object(data, {"versions", "reason", "read"})
     if not isinstance(data["reason"], str):
         raise ValueError("reason is not text")
-    return Refusal(tuple(unfinished), data["reason"], _time(data["read"]))
+    versions = {i: _maybe(t) for i, t in _object(data["versions"]).items()}
+    return Refusal(versions, data["reason"], _time(data["read"]))
 
 
 def _object(data, keys=None):

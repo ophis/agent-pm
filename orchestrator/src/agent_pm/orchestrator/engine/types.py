@@ -346,7 +346,7 @@ class Entry:
 
 @dataclass(frozen=True)
 class Refusal:
-    unfinished: tuple[str, ...]
+    versions: Mapping[str, datetime | None]  # the candidate's and each unfinished sub-issue's
     reason: str
     read: datetime
 
