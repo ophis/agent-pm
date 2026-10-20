@@ -4,7 +4,13 @@ states mapped to IssueState, its reads and writes in Linear's query text."""
 from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
-from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
+from agent_pm.linear_orchestrator.flow.types import (
+    UNREADABLE,
+    Finished,
+    IssueState,
+    Snapshot,
+    SubIssue,
+)
 from agent_pm.utils import parse_time
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
@@ -39,6 +45,33 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
+RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
+Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
+Q_RECHECK = (
+    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
+    "labels { nodes { id name parent { id } } } } }"
+)
+Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + HISTORY + " } }"
+
+
+def q_issues(fields=""):
+    return (
+        (
+            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+            "updatedAt project { id name } assignee { id email } "
+        )
+        + fields
+        + " } } }"
+    )
+
+
+def blockers(issue):
+    nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
+    return [
+        n["issue"]["identifier"] if n.get("issue") else UNREADABLE
+        for n in nodes
+        if not n.get("issue") or n["issue"]["state"]["type"] not in DONE
+    ]
 
 
 def finished_at(issue, finished):

@@ -99,8 +99,16 @@ from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HISTORY as Q_HISTORY
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RECHECK as Q_RECHECK
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RELATIONS as Q_RELATIONS
+
+# Kept only for tests reading router.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import RELATIONS as RELATIONS
+from agent_pm.linear_orchestrator.engine.linear_tracker import blockers
+from agent_pm.linear_orchestrator.engine.linear_tracker import q_issues as q_issues
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import DONE, humans, role_ids, task_group, team
+from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
@@ -139,14 +147,6 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-UNREADABLE = "(unreadable)"
-RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
-Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
-Q_RECHECK = (
-    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
-    "labels { nodes { id name parent { id } } } } }"
-)
-Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + ops.HISTORY + " } }"
 
 
 @dataclass(frozen=True)
@@ -210,15 +210,6 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
-def blockers(issue):
-    nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
-    return [
-        n["issue"]["identifier"] if n.get("issue") else UNREADABLE
-        for n in nodes
-        if not n.get("issue") or n["issue"]["state"]["type"] not in DONE
-    ]
-
-
 def task_for(labels, group, role, role_tasks, label_tasks):
     found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
     if not found:
@@ -271,17 +262,6 @@ def client_for(
             ),
         )
     return client, "label", None
-
-
-def q_issues(fields=""):
-    return (
-        (
-            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-            "updatedAt project { id name } assignee { id email } "
-        )
-        + fields
-        + " } } }"
-    )
 
 
 class Board:

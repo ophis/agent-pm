@@ -1,4 +1,4 @@
-"""The Linear adapter of the flow Tracker: prune's query text and its reads and writes."""
+"""The Linear adapter of the flow Tracker: prune's and the router's query text and its reads and writes."""
 
 import ast
 import hashlib
@@ -6,7 +6,7 @@ import inspect
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, prune
+from agent_pm.linear_orchestrator.engine import linear_tracker, prune, router
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
@@ -21,6 +21,17 @@ BASE = {
     "Q_FINISHED": "d3001511732429ed7b87bfac7cc78c579737f209e410fced49a1a9030ed0bc37",
     "Q_CHILDREN": "115b789a59aec88fa1686fa993764aacae8f6af3cf0b01ec900ee82603f526fa",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
+}
+# the router's, on orchestrator-revamped; LISTS: q_issues(<fields>) by the fields' name
+ROUTER = {
+    "RELATIONS": "b443e58b5f277fc5edad3e11004a6af6f76beb96e1858ce1920077c9f20798a8",
+    "Q_RELATIONS": "c271398e2c19c59eb040a3f5988e3ddf0d7787ae9dbd824e63541dd45a4afc53",
+    "Q_RECHECK": "585cff398cb172d48816a2e46fe7fa611ed917ddae67fe1cf0678c9d42080572",
+    "Q_HISTORY": "478618723212a6dfd1b6e0d47f80b592daf40d85cf8a06329e30c0c7c6cb58f7",
+}
+LISTS = {
+    "": "3a5086418d895504931848eadf8243f03aad1cfc77f6391f1dc8ab357c034213",
+    "RELATIONS": "7d8c26493df3c7696386e34534445288717b64ace14ed4866316e03bb51463fa",
 }
 BACKLOG = "00000000-0000-4000-8000-000000000019"
 
@@ -78,6 +89,19 @@ class Queries(Case):
         for name in BASE:
             with self.subTest(query=name):
                 self.assertIs(getattr(prune, name), getattr(linear_tracker, name))
+
+    def test_router_text_is_the_base_text(self):
+        texts = {n: getattr(linear_tracker, n) for n in ROUTER}
+        texts |= {f"q_issues({f})": linear_tracker.q_issues(texts.get(f, "")) for f in LISTS}
+        digests = ROUTER | {f"q_issues({f})": d for f, d in LISTS.items()}
+        for name, text in texts.items():
+            with self.subTest(query=name):
+                self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
+
+    def test_router_reexports_are_the_adapter_strings(self):
+        for name in (*ROUTER, "q_issues"):
+            with self.subTest(query=name):
+                self.assertIs(getattr(router, name), getattr(linear_tracker, name))
 
 
 class Read(Case):
