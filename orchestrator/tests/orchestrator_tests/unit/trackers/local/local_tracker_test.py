@@ -26,7 +26,8 @@ from agent_pm.orchestrator.engine.flow.types import (
     SubIssue,
 )
 from agent_pm.orchestrator.engine.types import IssueError, TrackerFileError
-from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
+from agent_pm.orchestrator.trackers.local.local_tracker import ISSUE_STATES, LocalTracker
+from agent_pm.orchestrator.trackers.local.types import LocalState
 from orchestrator_tests.case import Case
 
 MTIME = datetime(2026, 10, 20, tzinfo=UTC)
@@ -66,6 +67,22 @@ class Board(Case):
             file.write(text(ident, **parts))
         os.utime(path, (MTIME.timestamp(), MTIME.timestamp()))
         return path
+
+
+class States(Case):
+    def test_issue_states(self):
+        """Backlog is outside the machine: no IssueState."""
+        self.assertEqual(
+            ISSUE_STATES,
+            {
+                LocalState.READY: IssueState.READY,
+                LocalState.RUNNING: IssueState.RUNNING,
+                LocalState.REVIEW: IssueState.REVIEW,
+                LocalState.APPROVED: IssueState.APPROVED,
+                LocalState.DONE: IssueState.DONE,
+                LocalState.CANCELED: IssueState.CANCELED,
+            },
+        )
 
 
 class Listing(Board):

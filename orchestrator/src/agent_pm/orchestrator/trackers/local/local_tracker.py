@@ -31,6 +31,15 @@ from agent_pm.orchestrator.engine.types import UUID_RE, IssueError
 from agent_pm.orchestrator.trackers.local.board import read_one, scan
 from agent_pm.orchestrator.trackers.local.types import Entry, LocalState, Source
 
+ISSUE_STATES = {
+    LocalState.READY: IssueState.READY,
+    LocalState.RUNNING: IssueState.RUNNING,
+    LocalState.REVIEW: IssueState.REVIEW,
+    LocalState.APPROVED: IssueState.APPROVED,
+    LocalState.DONE: IssueState.DONE,
+    LocalState.CANCELED: IssueState.CANCELED,
+}
+LOCAL_STATES = {issue: local for local, issue in ISSUE_STATES.items()}
 ENDED = frozenset({LocalState.DONE, LocalState.CANCELED})
 LISTED = frozenset({IssueState.READY, IssueState.RUNNING})
 GROUPS = {
@@ -89,7 +98,7 @@ class LocalTracker(Tracker):
     def assigned(self, state):
         if state not in LISTED:
             raise ValueError(f"no list of {state} issues")
-        return [_record(each) for each in self._in(LocalState(state.value))]
+        return [_record(each) for each in self._in(LOCAL_STATES[state])]
 
     def ready(self):
         """An id with no issue file blocks."""
@@ -309,7 +318,7 @@ def _stamp(at):
 
 
 def _state(local):
-    return None if local in (None, LocalState.BACKLOG) else IssueState(local.value)
+    return ISSUE_STATES.get(local) if local else None
 
 
 def _shown(issue):

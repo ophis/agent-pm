@@ -4,19 +4,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from agent_pm.orchestrator.engine.flow.types import IssueState
-
 
 class LocalState(StrEnum):
-    """A state dir's name: backlog, then IssueState's by value."""
+    """A state dir's name."""
 
+    APPROVED = "approved"
     BACKLOG = "backlog"
-    READY = IssueState.READY.value
-    RUNNING = IssueState.RUNNING.value
-    REVIEW = IssueState.REVIEW.value
-    APPROVED = IssueState.APPROVED.value
-    DONE = IssueState.DONE.value
-    CANCELED = IssueState.CANCELED.value
+    CANCELED = "canceled"
+    DONE = "done"
+    READY = "ready"
+    REVIEW = "review"
+    RUNNING = "running"
 
 
 class Source(StrEnum):
