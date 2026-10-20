@@ -39,7 +39,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
 
 | Job | Schedule |
 |---|---|
-| router | :00 and :30, with `--now` (drop it to run only 01:00–06:59) |
+| router | :00 and :30 |
 | promote | every 5 min |
 
 The plists hard-code this checkout's path and `~/.agent-pm` (launchd doesn't expand `~`). For another checkout or `work_dir`, edit them in `orchestrator/launchd/` and rerun step 4. To uninstall a job:
@@ -95,7 +95,7 @@ flowchart LR
 ```
 
 ```bash
-bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the hours, run limits and usage gates
+bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the run limits and usage gates
 bin/agent-pm-orchestrator router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
 bin/agent-pm-orchestrator status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
 bin/agent-pm-orchestrator attach-command <ID>         # the command that shows its agent run

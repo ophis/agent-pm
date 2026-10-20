@@ -153,7 +153,7 @@ def q_issues(fields=""):
     return (
         (
             "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-            "updatedAt project { id name } assignee { id email } "
+            "project { id name } assignee { id email } "
         )
         + fields
         + " } } }"
