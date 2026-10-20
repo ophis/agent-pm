@@ -235,7 +235,6 @@ class DryRun(Case):
                     {"id": "id-TASK-1", "identifier": "TASK-1", "state": "Started"},
                     {"id": "id-TASK-3", "identifier": "TASK-3", "state": "Unstarted"},
                 ],
-                "truncated": [],
             },
         )
 

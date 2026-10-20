@@ -686,6 +686,7 @@ class Create(IssueCase):
         self.assertEqual(code, 1)
         report = json.loads(out)
         self.assertEqual((report["result"], report["issue"]["identifier"]), ("partial", "TASK-9"))
+        self.assertEqual(report["truncated"], [])
         self.assertEqual(
             report["recover"], ["agent-pm-orchestrator issue relation add TASK-9 --blocks TASK-3"]
         )
@@ -800,6 +801,7 @@ class Archive(IssueCase):
                 self.assertEqual((plan["result"], plan["descendant_count"]), (result, 1))
                 self.assertEqual(plan["descendants"][0]["identifier"], "TASK-2")
                 self.assertNotIn("continue", plan)
+                self.assertEqual(plan["truncated"], [])
 
     def test_a_long_dry_run_stays_within_eight_kib_with_its_totals(self):
         kids = [tree(f"LONGTEAM-{i}", "started") for i in range(400)]

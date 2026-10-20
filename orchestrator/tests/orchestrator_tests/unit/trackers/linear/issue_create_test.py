@@ -198,6 +198,7 @@ class Create(Case):
         self.assertEqual(
             (report["issue"], report["operation"], report["result"]), (NEW, "create", "partial")
         )
+        self.assertNotIn("truncated", report)
         self.assertEqual(report["done"], [{"blocks": "TASK-3"}])
         self.assertEqual(
             [{k: f[k] for k in ("blocks", "blocked_by") if k in f} for f in report["failed"]],

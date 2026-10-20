@@ -43,7 +43,6 @@ def dry_run(tracker, gql, ident):
         "descendants": [_item(s) for s in plan.descendants],
         "unfinished_count": len(plan.unfinished),
         "unfinished": [_item(s) for s in plan.unfinished],
-        "truncated": [],
     }
 
 

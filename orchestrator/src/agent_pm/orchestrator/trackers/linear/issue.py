@@ -400,6 +400,7 @@ def fit(payload, tiers, texts, follow):
     truncated, absent when follow is None.
     """
     payload = copy.deepcopy(payload)
+    payload.setdefault("truncated", [])
     while True:
         if follow is not None:
             payload["continue"] = follow if payload["truncated"] else None

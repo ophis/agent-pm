@@ -126,5 +126,4 @@ def _report(receipt, done, failed):
         "done": done,
         "failed": [item for _, item in failed],
         "recover": recover,
-        "truncated": [],
     }
