@@ -5167,31 +5167,28 @@ class InsideAnAgentSession(RouterArguments):
                 self.assertEqual(self.main(["--help"]), (0, ""))
 
 
-class BoardReads(Base):
-    """Spec AC3: Board and run_issue read only through the Tracker; writes may still use ops."""
+class RouterLinear(Base):
+    """Spec AC1: the router reads and writes Linear only through the Tracker."""
 
-    def test_board_reads_only_through_tracker(self):
+    def test_router_reaches_linear_only_through_tracker(self):
         tree = ast.parse(inspect.getsource(router))
-        scopes = [
-            n
-            for n in tree.body
-            if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("Board", "run_issue")
-        ]
-        nodes = [n for scope in scopes for n in ast.walk(scope)]
+        reexports = {
+            id(n)
+            for i in tree.body
+            if isinstance(i, ast.ImportFrom) and i.module.endswith(".linear_tracker")
+            for n in ast.walk(i)
+        }
+        nodes = [n for n in ast.walk(tree) if id(n) not in reexports]
         names = {n.id for n in nodes if isinstance(n, ast.Name)}
+        names |= {n.attr for n in nodes if isinstance(n, ast.Attribute)}
+        names |= {n.asname or n.name for n in nodes if isinstance(n, ast.alias)}
         self.assertEqual(
-            {n for n in names if n.startswith("Q_") or n in ("q_issues", "RELATIONS")}, set()
+            {n for n in names if n.startswith(("Q_", "M_")) or n in ("q_issues", "RELATIONS")},
+            set(),
         )
+        self.assertEqual(names & {"ops"}, set())
         calls = {ast.unparse(n.func) for n in nodes if isinstance(n, ast.Call)}
         self.assertEqual(calls & {"self.gql", "gql", "board.gql"}, set())
-        from_ops = {
-            n.attr
-            for n in nodes
-            if isinstance(n, ast.Attribute)
-            and isinstance(n.value, ast.Name)
-            and n.value.id == "ops"
-        }
-        self.assertLessEqual(from_ops, {"comment_and_move", "call", "M_STATE"})
         self.assertEqual(
             [n for n in tree.body if isinstance(n, ast.ImportFrom) and n.module.endswith(".ops")],
             [],

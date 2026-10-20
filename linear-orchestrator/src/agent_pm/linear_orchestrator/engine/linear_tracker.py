@@ -396,6 +396,10 @@ class LinearTracker(Tracker):
             call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=self.ids[to])
         return None
 
+    def claim(self, key):
+        _need("states", self.state_ids)
+        call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=self.ids[IssueState.RUNNING])
+
     def comment_and_move(self, key, body, *, to, frm, notify):
         _need("states", self.state_ids)
         return ops.comment_and_move(
