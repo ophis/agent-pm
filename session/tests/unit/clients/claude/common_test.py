@@ -20,6 +20,7 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
+    Launch,
     Mode,
     Permission,
     SessionInfo,
@@ -559,6 +560,32 @@ class UsageProbeTest(Base):
             ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"),
         )
         self.assertEqual(launch.unset[: len(UNSET)], UNSET)
+
+    def test_each_account_probes_its_own_dir_and_never_an_inherited_one(self):
+        ambient = {"ANTHROPIC_API_KEY": "sk-1", "HOME": self.home, "CLAUDE_CONFIG_DIR": "/w"}
+        accounts = {"work": {"dir": "/w"}, "same": {}, "default": {"account": "me"}}
+        env = {"K": "v", "ANTHROPIC_AUTH_TOKEN": "x", "CLAUDE_CONFIG_DIR": "/acct"}
+        with mock.patch.dict(os.environ, ambient, clear=True):
+            client = ClaudeClient({"env": env, "accounts": accounts})
+            usual = client.usage_probe()
+            probes = client._usage_probes()
+        home = os.path.join(self.home, ".claude")
+        credentials = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+        own = Launch(
+            PROBE,
+            env={"K": "v", "DISABLE_AUTOUPDATER": "1"},
+            unset=(*UNSET, *credentials, "CLAUDE_CONFIG_DIR"),
+        )
+        work = Launch(
+            PROBE,
+            env={"K": "v", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CONFIG_DIR": "/w"},
+            unset=(*UNSET, *credentials),
+        )
+        self.assertEqual(
+            probes, {"default": (home, own), "same": (home, own), "work": ("/w", work)}
+        )
+        self.assertEqual(usual.env["CLAUDE_CONFIG_DIR"], "/acct")
+        self.assertEqual(usual.unset, (*UNSET, *credentials))
 
     def test_a_usage_panel_is_the_usage(self):
         for name, five, week in (

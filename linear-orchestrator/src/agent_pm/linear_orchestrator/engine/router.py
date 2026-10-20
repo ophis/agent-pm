@@ -97,7 +97,7 @@ from agent_pm.linear_orchestrator.engine import (
 )
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
-from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
+from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, read_usage
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
@@ -124,7 +124,16 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
+from agent_pm.utils import (
+    CLIENT_ENV,
+    EVENTS_ENV,
+    SID_ENV,
+    exhausted,
+    nested_start,
+    one_line,
+    parse_time,
+    summary,
+)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)

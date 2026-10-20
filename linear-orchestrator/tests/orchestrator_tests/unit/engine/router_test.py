@@ -1732,7 +1732,7 @@ class ClientUsage(Base):
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):
-        self.assertEqual((quota.MAX_5H, quota.BRAKE_5H, quota.MAX_WEEK), (90, 80, 100))
+        self.assertEqual(quota.BRAKE_5H, 80)
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),

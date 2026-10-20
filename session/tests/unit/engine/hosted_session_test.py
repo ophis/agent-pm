@@ -24,8 +24,8 @@ from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.codex.common import SessionStore
+from agent_pm.session.engine import hosted_session, worker
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine import worker
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -57,10 +57,12 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
 from agent_pm.session.viewer import hidden as hidden_store
-from agent_pm.utils import Record, StatusState, inode_lock, load_class
+from agent_pm.utils import ACCOUNT_ENV, Record, StatusState, exhausted, inode_lock, load_class
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
+from session.tests.fakes.container_host import HOMED as HOMED_HOST
+from session.tests.fakes.container_host import PATH as CONTAINER_HOST
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.terminal import MemoryHost, MemoryViewer, ScreenHost
 from session.tests.hosted_support import (
@@ -1214,6 +1216,120 @@ class WritablePathsTest(HostedTuiBase):
                 )
             self.assertEqual(session.info().cwd, self.dir)
             session.stop()
+
+
+class AccountPoolTest(Base):
+    """A client with two or more accounts on a Host running containers: Session.usage is the best
+    account's reading, and a start selecting none runs on it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.outputs = {"/d": "70,10", "/w": "20,30", "/x": "-1,-1"}
+        self.probe = mock.Mock(side_effect=lambda argv, **_: self.outputs[argv[-1]])
+        self.session_dependencies = {**self.session_dependencies, "probe": self.probe}
+        self.pool({"default": "/d", "work": "/w"})
+        self.cache = os.path.join(self.agent_pm, "usage", "pool.json")
+
+    def pool(self, accounts, *, container=True):
+        settings = {"implementation": CONTAINER_HOST} if container else None
+        self.configure("pool", settings, probe={"argv": ("probe-cmd", "/x")}, accounts=accounts)
+
+    def started_account(self, **env):
+        """The account a headless start with `env` hands its (recording) container Host."""
+        self.configure(
+            "pool",
+            {"implementation": HOMED_HOST},
+            probe={"argv": ("probe-cmd", "/x")},
+            accounts={"default": "/d", "work": "/w"},
+        )
+        spec = self.spec(client="pool", mode=Mode.HEADLESS, name="w1", env=env)
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(SessionError, "refused by the test Host"),
+        ):
+            self.session.start(spec)
+        (metadata,) = self.session.host().piped
+        return metadata.get("home_account")
+
+    def test_a_start_selecting_none_hands_the_host_the_best_account(self):
+        self.assertEqual(self.started_account(), "work")
+
+    def test_a_selected_account_reaches_the_host_unprobed(self):
+        self.assertEqual(self.started_account(**{ACCOUNT_ENV: "default"}), "default")
+        self.probe.assert_not_called()
+
+    def usage(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            found = self.session.usage("pool")
+        self.err = err.getvalue()
+        return found
+
+    def started_env(self, **env):
+        """The env a start of a spec with `env` hands its mode."""
+        setup = self.session._config()
+        spec = self.spec(client="pool", mode=Mode.HEADLESS, env=env)
+        client = setup.registry.client("pool")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            picked = hosted_session._picked(setup, spec, "pool", client, self.session.host())
+        self.err = err.getvalue()
+        return dict(picked.env)
+
+    def probed(self):
+        return sorted(call.args[0][-1] for call in self.probe.call_args_list)
+
+    def test_usage_is_the_reading_of_the_account_with_most_left(self):
+        self.assertEqual(self.usage(), Usage(Window(20, None), Window(30, None)))
+        self.assertEqual(self.probed(), ["/d", "/w"])
+        self.assertTrue(os.path.isfile(self.cache))
+
+    def test_an_account_over_a_threshold_is_passed_over(self):
+        self.outputs = {"/d": "92,5", "/w": "50,60"}
+        self.assertEqual(self.usage(), Usage(Window(50, None), Window(60, None)))
+
+    def test_every_account_over_is_an_exhausted_reading(self):
+        self.outputs = {"/d": "95,10", "/w": "10,100"}
+        self.assertTrue(exhausted(self.usage()))
+
+    def test_no_reading_known_is_none(self):
+        self.probe.side_effect = None
+        self.probe.return_value = None
+        self.assertIsNone(self.usage())
+
+    def test_a_second_reading_within_the_ttl_probes_nothing(self):
+        first = self.usage()
+        self.probe.reset_mock()
+        self.assertEqual(self.usage(), first)
+        self.probe.assert_not_called()
+
+    def test_a_start_selecting_none_runs_on_the_best_account(self):
+        self.assertEqual(self.started_env()[ACCOUNT_ENV], "work")
+        self.assertIn("pool account work: picked (five_hour=20% weekly=30%)", self.err)
+        self.probe.reset_mock()
+        self.assertEqual(self.started_env()[ACCOUNT_ENV], "work")
+        self.probe.assert_not_called()
+
+    def test_a_selected_account_is_kept_and_nothing_probed(self):
+        self.assertEqual(self.started_env(**{ACCOUNT_ENV: "default"})[ACCOUNT_ENV], "default")
+        self.probe.assert_not_called()
+
+    def test_with_no_reading_known_a_start_selects_none(self):
+        self.probe.side_effect = None
+        self.probe.return_value = None
+        self.assertNotIn(ACCOUNT_ENV, self.started_env())
+
+    def test_one_account_or_no_container_is_todays_single_probe(self):
+        for accounts, container in (
+            ({"default": "/d"}, True),
+            ({"default": "/d", "work": "/w"}, False),
+        ):
+            with self.subTest(accounts=accounts, container=container):
+                self.pool(accounts, container=container)
+                self.probe.reset_mock()
+                self.assertEqual(self.usage(), Usage(Window(-1, None), Window(-1, None)))
+                self.assertEqual(self.probed(), ["/x"])
+                self.assertNotIn(ACCOUNT_ENV, self.started_env())
+                self.assertFalse(os.path.exists(self.cache))
 
 
 class WritableDirsTest(Base):

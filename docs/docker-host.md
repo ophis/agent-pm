@@ -316,7 +316,20 @@ account = "me@work"      # a display string, e.g. its login email
 
 No other key and no secret. A name is 1–64 lowercase letters, digits, `.`, `_` or `-`, never `setup-token`.
 `default` is always registered, its `dir` `~/.claude` (never written; a `[…accounts.default]` table may set only
-`account`). Nothing reads `dir` yet (TASK-804's per-account usage probe).
+`account`). The usage probe reads `dir`: `claude -p /usage` on the host with `CLAUDE_CONFIG_DIR=<dir>`, unset for
+`default` and any account whose `dir` is `~/.claude`.
+
+With no selection and two or more accounts registered (`default` counts), a Docker Claude start picks one by usage
+left (100 minus the higher of its 5h and weekly used percent):
+
+1. the account under both usage-gate thresholds (5h below 90 %, weekly below 100 %) with the most left;
+2. none under: the account with the most left;
+3. no reading known: none (`default`).
+
+A tie goes to `default`, then name order. Each account's reading is cached in `~/.agent-pm/usage/claude.json` for
+5 minutes (a failed probe's for 30 seconds), so a start or gate check within that time probes nothing; each probe prints
+`claude usage: account <name>: five_hour=<p>% weekly=<p>%` (or `unknown`) to stderr, and the start
+`claude account <name>: picked (…)`. Resumes pick again.
 
 Select one:
 
@@ -347,9 +360,12 @@ any container:
 
 - Config picks the account; it is no access control: any process running as you can start a container with any
   logged-in account ([Credentials › Risks](credentials.md#risks)).
-- The usage gate probes the host's Claude login (the `[session.clients.claude]` table's), not the selected
-  account's, and the board's limit hold is per client: one account's usage limit holds every board run on Claude
-  (per account: TASK-804).
+- With two or more accounts on the Docker Host, the usage gate and `--brake` read the account a start with no
+  selection picks, so the gate skips Claude runs only when every account is over a threshold (`usage-skip`, reason
+  `usage`) or none has a reading (`usage unknown`). A worker's or role's selected account is gated the same way, not
+  by its own usage: that needs an account parameter on the frozen `Session.usage`. With one account, or on tmux, the
+  gate probes the host's Claude login (the `[session.clients.claude]` table's). The board's limit hold stays per
+  client: one account's usage limit holds every board run on Claude.
 - The tmux Host checks a selection as above, then ignores it: the session runs on your own Claude login.
 
 ### OpenCode

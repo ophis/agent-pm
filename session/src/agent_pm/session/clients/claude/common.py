@@ -17,6 +17,7 @@ from agent_pm.session.clients.claude import usage
 from agent_pm.session.clients.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
+    DEFAULT_ACCOUNT,
     ClientHome,
     ConfigError,
     Effort,
@@ -251,7 +252,6 @@ CHECKS = (
     ("accounts", lambda v: isinstance(v, Mapping), "a table of account tables"),
     *common.CHECKS,
 )
-DEFAULT_ACCOUNT = "default"
 ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 NOT_ACCOUNT = (
     "not an account name (1–64 lowercase letters, digits, '.', '_' or '-', starting with a letter"
@@ -672,14 +672,21 @@ class ClaudeCommon:
             *tail,
         )
 
-    def probe(self) -> Launch:
-        """The account's own env (CLAUDE_CONFIG_DIR), without API credentials that would pick
-        another account.
+    def probe(self, account: str | None = None) -> Launch:
+        """The configured account's env (CLAUDE_CONFIG_DIR), else registered `account`'s dir
+        (CLAUDE_CONFIG_DIR unset for ~/.claude), without API credentials that would pick another.
         """
         env = {k: v for k, v in self.env().items() if not _credential(k)}
         found = sorted(
             name for name in {*os.environ, "CLAUDE_CODE_OAUTH_TOKEN"} if _credential(name)
         )
+        if account is not None:
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            path = self.accounts[account].dir
+            if path == self.accounts[DEFAULT_ACCOUNT].dir:
+                found.append("CLAUDE_CONFIG_DIR")
+            else:
+                env["CLAUDE_CONFIG_DIR"] = path
         return Launch(
             self.PROBE,
             env={**env, "DISABLE_AUTOUPDATER": "1"},
