@@ -14,8 +14,6 @@ from agent_pm.linear_orchestrator.engine import (
     types,
     writeback,
 )
-from agent_pm.linear_orchestrator.engine.issue_refs import milestone
-from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.opencode import OpenCodeClient
@@ -31,8 +29,6 @@ _ = TeamKind.ROLES, TeamKind.TEMPLATES
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 # outcome.py parses AutopilotStatus(status).
 _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
-# engine/config.py and ops.py iterate State for the [states] keys.
-_ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # prune re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = prune.M_ARCHIVE, prune.Q_CHILDREN, prune.Q_FINISHED, prune.Q_ISSUE
 # promote re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
@@ -53,8 +49,8 @@ _ = (
     writeback.Q_ATTACHED,
     writeback.Q_ID,
 )
-# issues re-exports the run issue read, now linear_tracker's, and the Handoff parser, now
-# flow.handoff's, only for tests; 第 2 阶段删除.
+# issues re-exports the run issue read, now linear_tracker's (with project_id), and the Handoff
+# parser, now flow.handoff's, only for tests; 第 2 阶段删除.
 _ = issues.Q_ISSUE, issues.read_issue, issues.parse_handoff
 # related re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
 _ = related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS, related.Q_UPSTREAM
@@ -103,6 +99,3 @@ _ = Session.retire
 # Only tests read it, but the session interface is frozen (tests/guard_checks/exports.py
 # session_interface_snapshot; TASK-396).
 _ = SessionRow.last_lines
-
-# TASK-653's issue create resolves --milestone with it.
-_ = milestone

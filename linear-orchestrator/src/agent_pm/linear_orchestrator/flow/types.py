@@ -6,7 +6,7 @@ from enum import IntEnum, StrEnum
 from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
-IssueRecord = dict[str, Any]  # Linear's issue keys until 第 2 阶段
+IssueRecord = dict[str, Any]  # opaque until 第 2 阶段
 
 
 class IssueState(StrEnum):
@@ -62,8 +62,8 @@ class Approved:
     title: str
     priority: int
     created: str
-    project_key: str
-    project_name: str
+    home_key: str
+    home_name: str
     owner: str
     sources: tuple[tuple[str, str], ...]
 
@@ -105,7 +105,7 @@ class Label:
 class Recheck:
     ready: bool
     assignee: IssueRecord | None
-    project: IssueRecord | None
+    home: IssueRecord | None
     labels: tuple[Label, ...]
 
 
@@ -133,7 +133,7 @@ ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 class Note:
     body: str
     at: str
-    email: str | None
+    account: str | None
     name: str | None
 
 
@@ -164,7 +164,7 @@ class Issue:
     title: str
     description: str
     created_at: str
-    project_id: str | None
+    home: str | None
     notes: tuple[Note, ...]
     links: tuple[Link, ...]
     linked: tuple[Linked, ...]

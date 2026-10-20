@@ -1,5 +1,7 @@
 """The linear-orchestrator layer's guard data (tests/guard_data/__init__.py)."""
 
+import re
+
 from tests.guards import PKG
 
 ORCH = "linear_orchestrator"
@@ -123,3 +125,21 @@ PYTHON_CODE_ALLOWED = {
         "c839185c5ed8960ffac563941c624cae8e86f1a8bc4fef19597e9a9f2653ca5c",
     ): "Creating a pipeline run with a config-loaded external Delegate needs engine.config.load() and runs.note; no public loader.",
 }
+
+
+# flow, the engine subpackage, imports no Linear binding module: these, issue and issue_*, and any
+# engine module holding GraphQL text
+FLOW_CONTRACT = "flow imports no Linear binding module"
+
+
+FLOW_BINDING = ("client", "ops", "issues", "run_comments", "related")
+
+
+GRAPHQL = re.compile(r"\b(?:query|mutation)\s*(?:\w+\s*)?(?:\(\s*\$|\{)")
+
+
+# Linear concepts flow names none of, once the package's own name is dropped
+FLOW_LINEAR = re.compile(rf"{GRAPHQL.pattern}|linear|graphql|project|email|state id|label id", re.I)
+
+
+ORCH_NAMES = re.compile(r"linear[_-]orchestrator")

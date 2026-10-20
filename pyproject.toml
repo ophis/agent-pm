@@ -115,6 +115,30 @@ dependencies = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "flow imports no Linear binding module"
+type = "forbidden"
+source_modules = ["agent_pm.linear_orchestrator.flow"]
+forbidden_modules = [
+    "agent_pm.linear_orchestrator.engine.client",
+    "agent_pm.linear_orchestrator.engine.issue",
+    "agent_pm.linear_orchestrator.engine.issue_archive",
+    "agent_pm.linear_orchestrator.engine.issue_create",
+    "agent_pm.linear_orchestrator.engine.issue_label",
+    "agent_pm.linear_orchestrator.engine.issue_list",
+    "agent_pm.linear_orchestrator.engine.issue_lookup",
+    "agent_pm.linear_orchestrator.engine.issue_page",
+    "agent_pm.linear_orchestrator.engine.issue_read",
+    "agent_pm.linear_orchestrator.engine.issue_refs",
+    "agent_pm.linear_orchestrator.engine.issue_relation",
+    "agent_pm.linear_orchestrator.engine.issue_write",
+    "agent_pm.linear_orchestrator.engine.issues",
+    "agent_pm.linear_orchestrator.engine.linear_tracker",
+    "agent_pm.linear_orchestrator.engine.ops",
+    "agent_pm.linear_orchestrator.engine.related",
+    "agent_pm.linear_orchestrator.engine.run_comments",
+]
+
+[[tool.importlinter.contracts]]
 name = "linear_orchestrator tests respect layer ownership"
 type = "forbidden"
 source_modules = ["orchestrator_tests"]

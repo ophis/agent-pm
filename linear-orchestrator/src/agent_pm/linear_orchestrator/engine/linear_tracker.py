@@ -190,12 +190,19 @@ def _quiet(*_, **__):
     pass
 
 
+def team_and_roles(gql, cfg):
+    """The team (states, finished) and the role accounts' user ids promote and prune build their
+    tracker from: the team read first."""
+    return ops.team(gql, cfg), ops.role_ids(gql, cfg.roles)
+
+
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
     humans: human_members emails (comments' other, subscribed on notify); people: their user ids,
     which connect reads and moved_at's by_people needs; say: the caller's logger. A method needing
     one not given raises TypeError. service: the key each call is made as, with timeout when given; None:
-    gql as given. A comment's ref: its client id's parts."""
+    gql as given. A comment's ref: its client id's parts. A home is a Linear project; a note's account
+    its user's email."""
 
     def __init__(
         self,
@@ -243,6 +250,18 @@ class LinearTracker(Tracker):
             humans=cfg.human_members,
             people=people,
             say=say,
+        )
+
+    @classmethod
+    def of_team(cls, gql, team, roles, *, humans=()):
+        """From team_and_roles' reads."""
+        return cls(
+            gql,
+            states=team.states,
+            team_id=team.id,
+            finished=team.finished,
+            roles=roles,
+            humans=humans,
         )
 
     def role(self, issue):
@@ -338,7 +357,7 @@ class LinearTracker(Tracker):
             description=description,
             handoff=parse_handoff(description),
             created_at=node["createdAt"],
-            project_id=(node["project"] or {}).get("id"),
+            home=(node["project"] or {}).get("id"),
             notes=tuple(notes),
             links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
             linked=tuple(linked.values()),
@@ -463,7 +482,7 @@ class LinearTracker(Tracker):
         nodes = self.gql(Q_CHILD, c=client_id(*once))["issues"]["nodes"]
         return Ref(nodes[0]["id"], nodes[0]["identifier"]) if nodes else None
 
-    def create(self, once, *, project, owner, priority, title, description):
+    def create(self, once, *, home, owner, priority, title, description):
         _need("states", self.state_ids)
         made = call(
             self.gql,
@@ -473,7 +492,7 @@ class LinearTracker(Tracker):
                 "in": {
                     "id": client_id(*once),
                     "teamId": _need("team_id", self.team_id),
-                    "projectId": project,
+                    "projectId": home,
                     "assigneeId": self.users[owner],
                     "stateId": self.ids[IssueState.READY],
                     "priority": priority,

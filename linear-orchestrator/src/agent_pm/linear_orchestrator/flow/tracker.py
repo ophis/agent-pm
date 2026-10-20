@@ -52,7 +52,7 @@ class Tracker(ABC):
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:
-        """In a project."""
+        """Filed in a home."""
 
     @abstractmethod
     def detail(self, key: str) -> Detail: ...
@@ -66,7 +66,7 @@ class Tracker(ABC):
         self,
         once: tuple[str, ...],
         *,
-        project: str,
+        home: str,
         owner: str,
         priority: int,
         title: str,
@@ -82,7 +82,7 @@ class Tracker(ABC):
 
     @abstractmethod
     def move(self, key: str, to: IssueState, *, frm: IssueState | None = None) -> str | None:
-        """Without frm, from any state; None: moved, else its state id."""
+        """Without frm, from any state; None: moved, else its state, opaque."""
 
     @abstractmethod
     def claim(self, key: str) -> None:

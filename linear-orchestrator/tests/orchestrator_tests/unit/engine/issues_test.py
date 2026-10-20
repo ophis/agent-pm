@@ -3,6 +3,7 @@
 import dataclasses
 
 from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.flow import handoff
 from agent_pm.linear_orchestrator.flow.types import (
     Issue,
@@ -56,7 +57,7 @@ class FakeGql:
 
 
 def read(**over):
-    return issues.read_issue(FakeGql(payload(**over)), "ENG-7")
+    return LinearTracker(FakeGql(payload(**over))).issue("ENG-7")
 
 
 def note(body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="Agent"):
@@ -116,7 +117,7 @@ class ReadIssue(Case):
                 },
             )
         )
-        got = issues.read_issue(gql, "ENG-7")
+        got = LinearTracker(gql).issue("ENG-7")
         self.assertEqual(gql.calls, [(issues.Q_ISSUE, {"i": "ENG-7"})])
         self.assertEqual(
             got,
@@ -143,7 +144,7 @@ class ReadIssue(Case):
 
     def test_null_description_and_project(self):
         got = read(description=None, project=None)
-        self.assertEqual((got.description, got.project_id), ("", None))
+        self.assertEqual((got.description, got.home), ("", None))
 
     def test_notes_oldest_first(self):
         got = read(
@@ -218,7 +219,7 @@ class ReadIssue(Case):
 
     def test_missing_or_other_issue_raises_lookup_error(self):
         with self.assertRaises(LookupError):
-            issues.read_issue(FakeGql({"issue": None}), "ENG-7")
+            LinearTracker(FakeGql({"issue": None})).issue("ENG-7")
         with self.assertRaises(LookupError):
             read(identifier="ENG-70")
 
