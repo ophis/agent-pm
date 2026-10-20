@@ -777,7 +777,7 @@ class GraphQLQueries(ServerCase):
         )
         self.fake.move("TASK-9", "done", actor=self.harness, at=done)
         finished = self.gql(linear_tracker.Q_ISSUE, i="TASK-9")["issue"]
-        self.assertEqual(finished["state"], {"id": STATES["done"]})
+        self.assertEqual(finished["state"], {"id": STATES["done"], "type": "completed"})
         self.assertEqual(
             ops.last_move(finished["history"]["nodes"], {STATES["done"]}),
             parse_time(done),

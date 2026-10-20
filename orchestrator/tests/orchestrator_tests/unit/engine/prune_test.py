@@ -1351,6 +1351,28 @@ class RequestBound(Bound):
                 self.assertIn("prune-removed TASK-999 what=agent dir", out)
                 self.assertIsNone(self.checkouts("TASK-999"))
 
+    def test_a_batch_error_skips_its_issues(self):
+        inner = gql_for(self.dirs(60), changed=())
+        first = []
+
+        def gql(query, **v):
+            if query == linear_tracker.Q_SNAPSHOTS and not first:
+                first.append(v)
+                raise LinearError("linear api error: down")
+            return inner(query, **v)
+
+        code, out = self.prune(gql)
+        failed = [f"TASK-{n}" for n in range(100, 150)]
+        self.assertEqual(code, 3)
+        self.assertEqual(
+            out.splitlines(),
+            [f"prune-error {i} error=Linear: LinearError: linear api error: down" for i in failed],
+        )
+        self.assertEqual(sorted(inner.read), [f"TASK-{n}" for n in range(150, 160)])
+        self.assertEqual(sorted(prune_state.load(self.cache())[0].issues), inner.read)
+        self.assertEqual(self.tick(inner), (0, ""))
+        self.assertEqual(sorted(inner.read), failed)
+
     def test_a_gone_issue_is_skipped_and_not_read_again(self):
         os.makedirs(self.cfg.issue_workdir("TASK-7"))
         gql = gql_for({}, changed=())
@@ -1430,6 +1452,23 @@ class ArchiveBound(Bound):
         for _ in range(3):
             self.tick(gql)
         self.assertEqual(len(gql.archived), 30)
+
+    def test_an_issue_too_big_to_plan_lets_the_rest_go(self):
+        big = {f"SUB-{k}": "completed" for k in range(25)}
+        children = {"TASK-1": big} | {c: {f"LEAF-{c}": "completed"} for c in big}
+        gql = gql_for(
+            {"TASK-1": self.done, "TASK-2": self.done},
+            owners={"TASK-1": "u-pm", "TASK-2": "u-pm"},
+            children=children,
+            changed=(),
+        )
+        self.assertEqual(
+            self.tick(gql)[1].splitlines(),
+            [f"prune-skip TASK-1 reason={prune.TOO_BIG}", "prune-deferred archive=1"],
+        )
+        self.assertEqual(self.tick(gql), (0, "prune-archived TASK-2"))
+        self.assertEqual(gql.archived, ["id-TASK-2"])
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
 
     def test_a_finished_list_past_the_cap_waits(self):
         done, owners = self.candidates(30)

@@ -87,6 +87,7 @@ SYNC_PAGES, READ_REQUESTS, ARCHIVE_REQUESTS = 3, 10, 20  # a tick's Linear reque
 BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again after it
 OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
 CACHE = "prune.json"
+TOO_BIG = "archive: too many sub-issues to read in one tick"
 LINEAR_ERRORS = (LinearError, OSError, subprocess.SubprocessError)
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
@@ -127,9 +128,10 @@ Prerequisites and effects:
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
-  At most 33 Linear requests per run after its setup reads (3 change-feed
-  pages, 10 issue reads, 20 archive requests); work past a cap waits for a
-  later run. logs/prune.json caches what was read, read again when Linear
+  Past its team and role reads, at most 33 Linear requests per run: 3
+  change-feed pages, 10 issue reads, 20 archive requests; work past a cap
+  waits for a later run, and an issue whose sub-issues alone need more is
+  not archived. logs/prune.json caches what was read, read again when Linear
   reports a change or after a day (a dry run never writes it). An issue
   Linear no longer has is skipped; one moved to another team finishes by
   its state there.
@@ -317,11 +319,17 @@ class Pruner:
                 )
             elif self.now - issue.since >= QUARANTINE:
                 due.append(issue)
+        left = self.budget.left
         for n, issue in enumerate(due):
+            alone = self.budget.left == left
             try:
                 self.archive_one(issue)
             except Spent:
-                self.say("prune-deferred", archive=len(due) - n)
+                if alone:  # its plan alone outgrows a tick: skipped like a refusal
+                    self.state.refused[issue.ident] = Refusal((), TOO_BIG, self.now)
+                    self.say("prune-skip", issue.ident, once=True, reason=TOO_BIG)
+                if rest := len(due) - n - alone:
+                    self.say("prune-deferred", archive=rest)
                 return
 
     def archive_one(self, issue):
