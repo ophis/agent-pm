@@ -29,6 +29,12 @@ class Tracker(ABC):
     def read(self, ident: str) -> Snapshot | None:
         """None: no such issue."""
 
+    def snapshots(self, idents: Sequence[str]) -> dict[str, Snapshot | None]:
+        return {i: self.read(i) for i in idents}
+
+    def changed(self, since: datetime, pages: int) -> frozenset[str] | None:
+        return None
+
     @abstractmethod
     def issue(self, ident: str) -> Issue:
         """Raises the adapter's error: none, or another's."""

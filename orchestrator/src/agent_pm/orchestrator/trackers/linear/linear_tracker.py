@@ -47,11 +47,24 @@ URL = "https://agent-pm.invalid/run/"
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
-    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
+    "query($i: String!, $after: String) { issue(id: $i) { state { id type } "
     + STAMPS
     + " "
     + HISTORY
     + " } }"
+)
+SNAPSHOT_BATCH = 50  # Q_FINISHED's page: issues with their history
+Q_SNAPSHOTS = (
+    "query($f: IssueFilter, $after: String) { issues(filter: $f, includeArchived: true, "
+    f"first: {SNAPSHOT_BATCH}) {{ nodes {{ identifier state {{ id type }} "
+    + STAMPS
+    + " "
+    + HISTORY
+    + " } } }"
+)
+Q_CHANGED = (
+    "query($f: IssueFilter, $c: String) { issues(filter: $f, includeArchived: true, first: 100, "
+    "after: $c) { nodes { identifier } pageInfo { hasNextPage endCursor } } }"
 )
 CHILD_PAGE = "nodes { id identifier state { name type } } pageInfo { hasNextPage endCursor }"
 Q_ARCHIVE = (
@@ -388,15 +401,54 @@ class LinearTracker(Tracker):
 
     def read(self, ident):
         _need("states", self.state_ids)
-        ended = _need("finished", self.finished_ids)
-        issue = self.gql(Q_ISSUE, i=ident)["issue"]
-        if not issue:
+        _need("finished", self.finished_ids)
+        try:
+            issue = self.gql(Q_ISSUE, i=ident)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
             return None
-        state = issue["state"]["id"]
-        found = self._state(state)
+        return self._snapshot(issue) if issue else None
+
+    def snapshots(self, idents):
+        """Omits what read must resolve: one read per SNAPSHOT_BATCH, by this team and number,
+        lists no other team's (moved) or deleted issue."""
+        _need("states", self.state_ids)
+        _need("finished", self.finished_ids)
+        team = _need("team_id", self.team_id)
+        found = {}
+        for at in range(0, len(idents), SNAPSHOT_BATCH):
+            batch = idents[at : at + SNAPSHOT_BATCH]
+            numbers = [int(i.rsplit("-", 1)[1]) for i in batch]
+            f = {"team": {"id": {"eq": team}}, "number": {"in": numbers}}
+            nodes = {n["identifier"]: n for n in self.gql(Q_SNAPSHOTS, f=f)["issues"]["nodes"]}
+            found |= {i: self._snapshot(nodes[i]) for i in batch if i in nodes}
+        return found
+
+    def changed(self, since, pages):
+        """Idents updated after since, archived too; None: more than pages pages."""
+        f = {
+            "team": {"id": {"eq": _need("team_id", self.team_id)}},
+            "updatedAt": {"gt": since.isoformat()},
+        }
+        found, cursor, cursors = set(), None, set()
+        for _ in range(pages):
+            page = self.gql(Q_CHANGED, f=f, c=cursor)["issues"]
+            found.update(n["identifier"] for n in page["nodes"])
+            if not page["pageInfo"]["hasNextPage"]:
+                return frozenset(found)
+            cursor = ops.advance("changed issues", page["pageInfo"]["endCursor"], cursors)
+        return None
+
+    def _snapshot(self, issue):
+        """Another team's finished state by its type."""
+        state = issue["state"]
+        found = self._state(state["id"])
+        if found is None and state["type"] in DONE:
+            found = IssueState.DONE if state["type"] == "completed" else IssueState.CANCELED
         if found in (IssueState.DONE, IssueState.CANCELED):
-            return Snapshot(found, finished_at(issue, ended))
-        return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
+            return Snapshot(found, finished_at(issue, self.finished_ids))
+        return Snapshot(found, last_move(issue["history"]["nodes"], {state["id"]}))
 
     def issue(self, ident):
         selves = _need("selves", self.selves)

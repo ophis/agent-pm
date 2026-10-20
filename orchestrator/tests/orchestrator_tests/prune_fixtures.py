@@ -74,6 +74,8 @@ STATE_TYPES = {
 CHILDREN = 50  # LinearTracker's archive read pages sub-issues by 50
 PRUNE_QUERIES = (  # the queries gql_for answers
     linear_tracker.Q_ISSUE,
+    linear_tracker.Q_SNAPSHOTS,
+    linear_tracker.Q_CHANGED,
     linear_tracker.Q_FINISHED,
     linear_tracker.Q_ARCHIVE,
     linear_tracker.Q_CHILDREN,
@@ -82,11 +84,21 @@ PRUNE_QUERIES = (  # the queries gql_for answers
 
 
 def gql_for(
-    issues, owners=None, page=50, fail=(), refuse=(), *, children=None, stamps=None, reread=None
+    issues,
+    owners=None,
+    page=50,
+    fail=(),
+    refuse=(),
+    *,
+    children=None,
+    stamps=None,
+    reread=None,
+    changed=(),
 ):
     """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
     left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null);
-    reread: the state an issue's archive read finds, by issue (none: its own)."""
+    reread: the state an issue's archive read finds, by issue (none: its own); changed: the idents
+    the change feed lists (gql.changed, settable later)."""
     owners, children, stamps, reread = owners or {}, children or {}, stamps or {}, reread or {}
 
     def at(ident):
@@ -116,6 +128,14 @@ def gql_for(
             "archivedAt": NOW.isoformat() if ident in gql.gone else None,
             "state": {"name": state, "type": STATE_TYPES[state]},
             "children": subs(ident),
+        }
+
+    def snapshot(ident):
+        state = issues[ident][0]
+        return {
+            "state": {"id": STATE_IDS[state], "type": STATE_TYPES[state]},
+            "history": history(ident),
+            **at(ident),
         }
 
     def history(ident):
@@ -172,15 +192,28 @@ def gql_for(
             if ident not in refuse:
                 gql.gone.add(ident)
             return {"issueArchive": {"success": ident not in refuse}}
-        return {
-            "issue": {
-                "state": {"id": STATE_IDS[issues[v["i"]][0]]},
-                "history": history(v["i"]),
-                **at(v["i"]),
+        if query == linear_tracker.Q_SNAPSHOTS:
+            numbers = v["f"]["number"]["in"]
+            return {
+                "issues": {
+                    "nodes": [
+                        {"identifier": i, **snapshot(i)}
+                        for i in issues
+                        if int(i.rsplit("-", 1)[1]) in numbers
+                    ]
+                }
             }
-        }
+        if query == linear_tracker.Q_CHANGED:
+            return {
+                "issues": {
+                    "nodes": [{"identifier": i} for i in sorted(gql.changed)],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        return {"issue": snapshot(v["i"])}
 
     gql.calls, gql.finished, gql.archived, gql.gone, gql.subs = [], [], [], set(), []
+    gql.changed = set(changed)
     gql.issues = issues
     return gql
 

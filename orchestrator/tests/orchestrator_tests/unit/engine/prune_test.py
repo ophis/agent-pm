@@ -68,7 +68,7 @@ class RepositoryCleanup(PruneScenario):
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
         self.assertNotIn(ops.Q_TEAM, gql.calls)
-        self.assertIn("state { id }", linear_tracker.Q_ISSUE)
+        self.assertIn("state { id type }", linear_tracker.Q_ISSUE)
 
     def test_a_tick_reads_the_runs_log_once(self):
         idents = [f"TASK-{n}" for n in range(40, 46)]

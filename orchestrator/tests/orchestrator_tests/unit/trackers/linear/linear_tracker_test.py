@@ -61,7 +61,8 @@ from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TASK_GROUP, TEA
 # sha256 of each query's text (orchestrator-revamped's but the archive rule's): the fake Linear
 # pairs queries by text
 BASE = {
-    "Q_ISSUE": "caaea6b489b3a2fc9db26b44693fd8762fe1284b0001b9e7cad1846bd7deae5c",
+    # TASK-809: its state's type
+    "Q_ISSUE": "4fbcd85c850aec9d01999f6470af96e24a9708d43211ca81c691915e2a2a9f6e",
     "Q_FINISHED": "d3e6e6d4ad803579fbc6129d0f7a52dd3ec0eaa7b337641eb16ec71a3eb4011f",
     "Q_ARCHIVE": "57e18e04eabb1ba0bbcdd81020fdc7a89636a0d5ec41d26a67dba2c19370a0c4",
     "Q_CHILDREN": "a680fb0be5a504651be3e72cee452f02e850e63ef6c79c88b73d55b7b0f089e0",
@@ -100,6 +101,8 @@ LISTS = {
     "RELATIONS": "730acfcbed9ef3680074d0746fd8811b4f55621654e2be30148a7921dfcaabae",
 }
 TRIAGE = "00000000-0000-4000-8000-000000000019"
+OTHER = "00000000-0000-4000-8000-000000000099"  # another team's state
+NEW = ("Q_SNAPSHOTS", "Q_CHANGED")  # TASK-809's, not on orchestrator-revamped
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
@@ -129,9 +132,9 @@ def moves(*pairs):
     return {"nodes": [{"createdAt": ago(h).isoformat(), "toStateId": s} for h, s in pairs]}
 
 
-def issue(state, *pairs, canceled=None, completed=None):
+def issue(state, *pairs, canceled=None, completed=None, kind="started"):
     return {
-        "state": {"id": state},
+        "state": {"id": state, "type": kind},
         "canceledAt": canceled and ago(canceled).isoformat(),
         "completedAt": completed and ago(completed).isoformat(),
         "history": moves(*pairs),
@@ -165,7 +168,7 @@ def item(ident, kind="completed"):
 
 
 def names():
-    found = {getattr(linear_tracker, n): n for n in (*BASE, *ROUTER)}
+    found = {getattr(linear_tracker, n): n for n in (*BASE, *ROUTER, *NEW)}
     found |= {getattr(ops, n): n for n in ("Q_TEAM", "Q_TASK_GROUP", "Q_USER")} | OPS
     lists = linear_tracker.q_issues(), linear_tracker.q_issues(linear_tracker.RELATIONS)
     return found | dict(zip(lists, ("LIST", "LIST_RELATIONS"), strict=True))
@@ -289,6 +292,21 @@ class Read(Case):
     def test_missing_issue_is_none(self):
         self.assertIsNone(self.read(None))
 
+    def test_an_unknown_issue_is_none(self):
+        gone = LinearError("linear api error: [{'message': 'Entity not found: Issue'}]")
+        self.assertIsNone(tracker(Gql(Q_ISSUE=gone)).read("TASK-1"))
+
+    def test_another_teams_state_maps_by_its_type(self):
+        rows = (
+            (issue(OTHER, (9, OTHER), completed=3, kind="completed"), IssueState.DONE, ago(3)),
+            (issue(OTHER, canceled=4, kind="canceled"), IssueState.CANCELED, ago(4)),
+            (issue(OTHER, canceled=5, kind="duplicate"), IssueState.CANCELED, ago(5)),
+            (issue(OTHER, (6, OTHER), kind="started"), None, ago(6)),
+        )
+        for found, state, since in rows:
+            with self.subTest(state=state):
+                self.assertEqual(self.read(found), Snapshot(state, since))
+
     def test_errors_propagate(self):
         for error in (
             LinearError("linear api error: boom"),
@@ -298,6 +316,87 @@ class Read(Case):
             with self.subTest(error=error), self.assertRaises(type(error)) as raised:
                 tracker(Gql(Q_ISSUE=error)).read("TASK-1")
             self.assertIs(raised.exception, error)
+
+
+def feed(*nodes, cursor=None):
+    return {
+        "issues": {
+            "nodes": list(nodes),
+            "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor},
+        }
+    }
+
+
+class Snapshots(Case):
+    def test_one_list_read_per_batch_by_team_and_number(self):
+        idents = [f"TASK-{n}" for n in range(1, 52)]
+        first = [issue(STATES["done"], completed=2) | {"identifier": i} for i in idents[:50]]
+        last = issue(STATES["in_review"], (5, STATES["in_review"])) | {"identifier": "TASK-51"}
+        gql = Gql(Q_SNAPSHOTS=[{"issues": {"nodes": first}}, {"issues": {"nodes": [last]}}])
+        found = tracker(gql).snapshots(idents)
+        self.assertEqual(
+            gql.calls,
+            [
+                (
+                    linear_tracker.Q_SNAPSHOTS,
+                    {"f": {"team": {"id": {"eq": TEAM}}, "number": {"in": list(range(1, 51))}}},
+                ),
+                (
+                    linear_tracker.Q_SNAPSHOTS,
+                    {"f": {"team": {"id": {"eq": TEAM}}, "number": {"in": [51]}}},
+                ),
+            ],
+        )
+        self.assertEqual(found["TASK-1"], Snapshot(IssueState.DONE, ago(2)))
+        self.assertEqual(found["TASK-51"], Snapshot(IssueState.REVIEW, ago(5)))
+        self.assertEqual(len(found), 51)
+
+    def test_an_ident_naming_no_listed_issue_is_omitted(self):
+        node = issue(STATES["done"], completed=2) | {"identifier": "TASK-7"}
+        gql = Gql(Q_SNAPSHOTS={"issues": {"nodes": [node]}})
+        self.assertEqual(
+            tracker(gql).snapshots(["OPS-7", "TASK-8"]),
+            {},
+        )
+        self.assertEqual(gql.calls[0][1]["f"]["number"], {"in": [7, 8]})
+
+    def test_lists_archived_issues_by_one_batch(self):
+        self.assertIn("includeArchived: true", linear_tracker.Q_SNAPSHOTS)
+        self.assertIn(f"first: {linear_tracker.SNAPSHOT_BATCH}", linear_tracker.Q_SNAPSHOTS)
+
+    def test_none_reads_nothing(self):
+        gql = Gql()
+        self.assertEqual(tracker(gql).snapshots([]), {})
+        self.assertEqual(gql.calls, [])
+
+
+class Changed(Case):
+    def test_idents_updated_after_since_every_page(self):
+        pages = [
+            feed({"identifier": "TASK-1"}, {"identifier": "TASK-2"}, cursor="a"),
+            feed({"identifier": "TASK-2"}),
+        ]
+        gql = Gql(Q_CHANGED=pages)
+        self.assertEqual(tracker(gql).changed(ago(1), 3), frozenset({"TASK-1", "TASK-2"}))
+        f = {"team": {"id": {"eq": TEAM}}, "updatedAt": {"gt": ago(1).isoformat()}}
+        self.assertEqual(
+            gql.calls,
+            [
+                (linear_tracker.Q_CHANGED, {"f": f, "c": None}),
+                (linear_tracker.Q_CHANGED, {"f": f, "c": "a"}),
+            ],
+        )
+        self.assertIn("includeArchived: true", linear_tracker.Q_CHANGED)
+
+    def test_more_than_pages_is_none(self):
+        gql = Gql(Q_CHANGED=[feed(cursor="a"), feed(cursor="b"), feed()])
+        self.assertIsNone(tracker(gql).changed(ago(1), 2))
+        self.assertEqual(len(gql.calls), 2)
+
+    def test_a_repeated_cursor_raises(self):
+        gql = Gql(Q_CHANGED=[feed(cursor="a"), feed(cursor="a")])
+        with self.assertRaisesRegex(LinearError, "hasNextPage without a new endCursor"):
+            tracker(gql).changed(ago(1), 3)
 
 
 class FinishedIssues(Case):
