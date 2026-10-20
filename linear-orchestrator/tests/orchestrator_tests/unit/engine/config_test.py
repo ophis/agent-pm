@@ -5,6 +5,7 @@ import dataclasses
 import io
 import json
 import os
+import tempfile
 import tomllib
 from importlib.resources import files
 from pathlib import Path
@@ -13,6 +14,7 @@ from unittest import mock
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import State
+from agent_pm.linear_orchestrator.flow import workflow
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
@@ -777,6 +779,40 @@ class CommittedConfiguration(Case):
             },
         )
 
+    def test_a_local_flow_key_overrides_only_that_key(self):
+        local = HEADER + role("researcher") + role("engineer")
+        for pm, want in (
+            (role("pm", "require_instructions = true"), ("engineer", True)),
+            (role("pm", 'next = ""'), (None, False)),
+        ):
+            with self.subTest(pm):
+                cfg = self.load(local + pm)
+                self.assertEqual(
+                    {r: (x.next, x.require_instructions) for r, x in cfg.roles.items()},
+                    {"researcher": ("pm", True), "pm": want, "engineer": (None, True)},
+                )
+
+    def test_a_bad_workflow_stops_load(self):
+        local = HEADER + role("researcher") + role("pm") + role("engineer")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        flow = Path(tmp.name, "workflow.toml")
+        for text, message in (
+            ("[roles\n", "Expected ']'"),
+            ('[roles.pm]\nkind = "x"\n', "roles.pm.kind: want one of research, design, build: 'x'"),
+        ):
+            flow.write_text(text, encoding="utf-8")
+            with self.subTest(text):
+                with (
+                    mock.patch("importlib.resources.files", lambda _: Path(tmp.name)),
+                    self.assertRaises(config.ConfigError) as cm,
+                ):
+                    self.load(local)
+                self.assertTrue(str(cm.exception).startswith(f"{workflow.REL}: "), cm.exception)
+                self.assertIn(message, str(cm.exception))
+        # a bad read keeps the last good one
+        self.assertEqual(config.TASKS["pm"].prefix, "PRD")
+
     def test_local_lines_uncommented_set_every_required_key(self):
         with files("agent_pm.linear_orchestrator").joinpath("config.toml").open() as f:
             local = "".join(
@@ -1058,6 +1094,13 @@ class RunnableRoles(ConfigFile, Case):
         text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
 
+    def test_a_replaced_config_leaves_unset_flow_keys_unset(self):
+        roles = self.runs(HEADER + role("researcher") + role("pm") + role("engineer"))
+        self.assertEqual(
+            {r: (x.next, x.require_instructions) for r, x in roles.items()},
+            dict.fromkeys(("researcher", "pm", "engineer"), (None, True)),
+        )
+
     def test_tasks_by_role(self):
         self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
         self.assertEqual(
@@ -1150,7 +1193,7 @@ class ConfigurationRoot(ConfigFile, Case):
 
         return mock.patch.object(builtins, "open", side_effect=read)
 
-    def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
+    def test_reads_only_the_paths_passed_the_projects_config_files_and_the_workflow(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
         path = os.path.join(self.dir, "config.toml")
         local = os.path.join(self.agent_pm, "config.local.toml")
@@ -1185,7 +1228,11 @@ class ConfigurationRoot(ConfigFile, Case):
                 if str(c.args[0]).endswith(".toml")
             }
             - projects,
-            {path, local},
+            {
+                path,
+                local,
+                str(files("agent_pm.linear_orchestrator.flow").joinpath("workflow.toml")),
+            },
         )
         engineer = cfg.roles["engineer"]
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))

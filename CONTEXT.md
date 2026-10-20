@@ -108,6 +108,10 @@ _Avoid_: ticket, card, 票
 The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`linear-orchestrator/src/agent_pm/linear_orchestrator/flow/tracker.py`); its Linear adapter, `LinearTracker` (`engine/linear_tracker.py`). Prune, promote and write-back (session comments included) go through it so far.
 _Avoid_: backend
 
+**Workflow**:
+Each orchestrated role's stage data: the role promote hands its Handoff issues to, whether a Handoff needs instructions, its title prefix and its write-back comment leads. In code: the default workflow, `linear-orchestrator/src/agent_pm/linear_orchestrator/flow/workflow.toml`, read by `flow/workflow.py` on first use (`config.TASKS`).
+_Avoid_: pipeline, TASKS
+
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
 
