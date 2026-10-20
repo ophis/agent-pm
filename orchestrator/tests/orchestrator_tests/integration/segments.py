@@ -420,7 +420,11 @@ class Segment(TmuxFlow):
                 )
                 if outcome == "done" and task.retitle:
                     steps.append("retitle")
-                    changes["title"] = f"{task.title_prefix}: {report['title']}"
+                    changes["title"] = (
+                        f"{task.title_prefix}: {report['title']}"
+                        if task.title_prefix
+                        else report["title"]
+                    )
                 steps.append("comment")
                 comments += [(account, k) for k in p.script.texts.values()]
                 if outcome == "done" and url:

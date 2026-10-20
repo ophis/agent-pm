@@ -44,12 +44,17 @@ _FLOWS = tempfile.mkdtemp(prefix="agent-pm-test-workflows-")
 atexit.register(shutil.rmtree, _FLOWS, ignore_errors=True)
 
 
-def workflow_line(text):
-    """A top-level `workflow = "<file>"` line (put it before any table), the file holding text."""
+def workflow_file(text):
+    """A workflow file holding text: its path."""
     path = os.path.join(_FLOWS, hashlib.sha256(text.encode()).hexdigest()[:16] + ".toml")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    return f'workflow = "{path}"\n'
+    return path
+
+
+def workflow_line(text):
+    """A top-level `workflow = "<file>"` line (put it before any table), the file holding text."""
+    return f'workflow = "{workflow_file(text)}"\n'
 
 
 def role(name, *lines):

@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.orchestrator.engine import config
 from orchestrator_tests.case import REPO
-from orchestrator_tests.integration import flow_fixtures, segments
+from orchestrator_tests.integration import fake_linear, flow_fixtures, segments
 from orchestrator_tests.integration.flow_fixtures import BRANCH, DOCS
 from orchestrator_tests.integration.segments import INSTRUCTIONS, RESEARCH, Segment
 from orchestrator_tests.unit import run_fixtures
@@ -75,6 +75,9 @@ class CustomStage(Segment):
                 + f"\n[delegate.roles.{ROLE}.output]\n{output}"
             )
         self.ids[ACCOUNT] = self.fake.user(ACCOUNT, "Writer", KEY)
+        with open(self.seam, encoding="utf-8") as f:  # its keys: the users when it was written
+            url = json.load(f)["url"]
+        self.seam = fake_linear.seam(self, self.fake, url)
         for table, entry in (
             (flow_fixtures.ACCOUNTS, {ROLE: ACCOUNT}),
             (segments.ROLE_OF, {ACCOUNT: ROLE}),

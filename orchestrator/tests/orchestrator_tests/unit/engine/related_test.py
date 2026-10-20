@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-from agent_pm.orchestrator.engine import related
+from agent_pm.orchestrator.engine import config, related
 from agent_pm.orchestrator.engine.config import Docs
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.types import (
@@ -22,7 +22,7 @@ from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.orchestrator.trackers.linear.ops import NOT_FOUND
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import STATES, TEAM
+from orchestrator_tests.unit.board_ids import PACKAGED_FLOW, STATES, TEAM, workflow_file
 from orchestrator_tests.unit.target_fixtures import FakeRun, ok
 
 DOCS = Docs("ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"})
@@ -113,6 +113,11 @@ class Keywords(Case):
 
     def test_repeats_digits_and_single_letters_drop(self):
         self.assertEqual(related.keywords("Queue queue 59 x 查重搜索"), ["queue", "查重搜索"])
+
+    def test_a_workflow_prefix_is_matched_literally(self):
+        flow = PACKAGED_FLOW.replace('title_prefix = "ENG"', 'title_prefix = "[R&D (v2.0"')
+        config.TASKS.load(workflow_file(flow))
+        self.assertEqual(related.keywords("[R&D (v2.0: Queue survey"), ["queue", "survey"])
 
     def test_a_task_prefix_drops_another_word_and_colon_stays(self):
         self.assertEqual(related.keywords("PRD: Queue survey"), ["queue", "survey"])

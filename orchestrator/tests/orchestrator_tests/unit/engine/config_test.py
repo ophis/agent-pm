@@ -517,9 +517,9 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_a_stage_role_the_delegate_does_not_know(self):
         # reported before the stage's missing Linear account
         flow = os.path.join(self.dir, "flow.toml")
-        write(flow, '[[stage]]\nrole = "anlyst"\ninput = "research"\n')
+        write(flow, '[[stage]]\nrole = "ghostwriter"\ninput = "research"\n')
         self.fails(
-            f"{flow}: stage anlyst: not a role the Delegate knows (its charters: core and "
+            f"{flow}: stage ghostwriter: not a role the Delegate knows (its charters: core and "
             "[delegate] team_dirs)",
             HEADER + f'workflow = "{flow}"\n',
         )

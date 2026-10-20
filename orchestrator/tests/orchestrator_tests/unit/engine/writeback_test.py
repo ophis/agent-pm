@@ -1181,6 +1181,29 @@ class CompletionMessages(Base):
             {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]},
         )
 
+    def test_retitle_without_a_title_prefix_keeps_the_bare_title(self):
+        config.TASKS.load(
+            board_ids.workflow_file(board_ids.PACKAGED_FLOW.replace('title_prefix = "PRD"\n', ""))
+        )
+        gql = Gql()
+        ctx = replace(self.ctx("pm", gql=gql), target=None, project=PROJECT)
+        writeback.finish(
+            ctx,
+            Outcome(
+                status="done", title="Session Registry", summary="PRD for the registry.", url=PRD
+            ),
+        )
+        self.assertEqual(
+            gql.calls,
+            expect(
+                title="Session Registry",
+                body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE_MAPPED}",
+                state="in_review",
+                attach=PRD,
+                attach_title="Session Registry",
+            ),
+        )
+
 
 class CompletionMarker(Base):
     DONE = Outcome(status="failed", title="ENG-7: x", summary="push not permitted")

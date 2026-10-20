@@ -73,7 +73,7 @@ def _prefix():
 @cache
 def _prefix_re(prefixes):
     # keyed by the workflow's prefixes: a later load() is seen
-    return re.compile(rf"^(?:{'|'.join(prefixes)}): ")
+    return re.compile(rf"^(?:{'|'.join(map(re.escape, prefixes))}): ")
 
 
 def keywords(title) -> list[str]:

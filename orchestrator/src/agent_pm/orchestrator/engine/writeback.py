@@ -410,7 +410,9 @@ def _finish(ctx, o, steps=""):
         and _step(
             ctx,
             "retitle",
-            lambda: ctx.tracker.retitle(issue, f"{task.title_prefix}: {o.title}"),
+            lambda: ctx.tracker.retitle(
+                issue, f"{task.title_prefix}: {o.title}" if task.title_prefix else o.title
+            ),
         )
     ):
         return False

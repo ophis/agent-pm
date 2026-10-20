@@ -13,6 +13,7 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.trackers.linear import linear_tracker
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from orchestrator_tests.case import Case
+from orchestrator_tests.unit.board_ids import PACKAGED_FLOW, workflow_file
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
@@ -319,6 +320,16 @@ class BuildCutoff(Case):
                 self.assertEqual(
                     issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), want
                 )
+
+    def test_a_build_stage_without_a_start_lead_has_no_cutoff_comment(self):
+        config.TASKS.load(
+            workflow_file(PACKAGED_FLOW.replace('start = "Build started:"\n', 'start = ""\n'))
+        )
+        created, at = "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z"
+        notes = (note("Question: which store?", at), note("Build ready: done", at))
+        self.assertEqual(
+            issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), created
+        )
 
     def test_the_workflow_build_start_lead_is_the_cutoff(self):
         created, at = "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z"
