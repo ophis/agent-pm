@@ -7,11 +7,12 @@ from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
 from agent_pm.utils import parse_time
 
+# Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
-    State.TODO: IssueState.READY,
-    State.IN_PROGRESS: IssueState.RUNNING,
     State.IN_REVIEW: IssueState.REVIEW,
     State.HANDOFF: IssueState.APPROVED,
+    State.TODO: IssueState.READY,
+    State.IN_PROGRESS: IssueState.RUNNING,
 }
 
 STAMPS = "canceledAt completedAt"

@@ -3,11 +3,12 @@
 import ast
 import hashlib
 import inspect
+from dataclasses import replace
 from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import linear_tracker, prune
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
-from agent_pm.linear_orchestrator.engine.types import LinearError
+from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
 from orchestrator_tests.case import Case
@@ -121,11 +122,26 @@ class Read(Case):
         self.assertEqual(self.read(found), Snapshot(IssueState.REVIEW, ago(4)))
         self.assertEqual(self.read(issue(review)), Snapshot(IssueState.REVIEW, None))
 
+    def test_a_shared_todo_or_in_progress_id_stays_ready_or_running(self):
+        for key, active, abstract in (
+            ("handoff", "todo", IssueState.READY),
+            ("in_review", "in_progress", IssueState.RUNNING),
+        ):
+            with self.subTest(shared=(key, active)):
+                team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, key: STATES[active]})
+                gql = Gql(Q_ISSUE={"issue": issue(STATES[active], (3, STATES[active]))})
+                found = LinearTracker(gql, team, ROLES).read("TASK-1")
+                self.assertEqual(found, Snapshot(abstract, ago(3)))
+
     def test_missing_issue_is_none(self):
         self.assertIsNone(self.read(None))
 
     def test_errors_propagate(self):
-        for error in (LinearError("linear api error: boom"), OSError("keychain")):
+        for error in (
+            LinearError("linear api error: boom"),
+            Unavailable("issue", status=503),
+            OSError("keychain"),
+        ):
             with self.subTest(error=error), self.assertRaises(type(error)) as raised:
                 tracker(Gql(Q_ISSUE=error)).read("TASK-1")
             self.assertIs(raised.exception, error)

@@ -25,6 +25,8 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class SubIssue:
+    """key: the handle sub_issues and archive take; ident: the KEY-N read takes."""
+
     key: str
     ident: str
     finished: bool
@@ -32,6 +34,8 @@ class SubIssue:
 
 @dataclass(frozen=True)
 class Finished:
+    """key and ident as SubIssue's; since: None when unknown."""
+
     key: str
     ident: str
     since: datetime | None

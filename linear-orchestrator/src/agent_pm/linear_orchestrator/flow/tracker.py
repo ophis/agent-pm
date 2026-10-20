@@ -13,7 +13,7 @@ class Tracker(ABC):
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:
-        """Done ones only of owners' roles; every page read first: archiving shifts them."""
+        """Owners' done issues and every canceled one, all pages read first (archiving shifts them)."""
 
     @abstractmethod
     def sub_issues(self, key: str) -> tuple[SubIssue, ...]:

@@ -1,5 +1,5 @@
 """Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
-such as Duplicate: ops.Team.finished) at least 2 hours ago (finished_at; unknown: skipped) whose
+such as Duplicate: ops.Team.finished) at least 2 hours ago (linear_tracker.finished_at; unknown: skipped) whose
 workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
