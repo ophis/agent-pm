@@ -32,6 +32,13 @@ class Docs:
     dirs: Mapping[str, str]
 
 
+class TrackerKind(StrEnum):
+    """[orchestrator] tracker: where the board's issues live."""
+
+    LINEAR = "linear"
+    LOCAL = "local"
+
+
 @dataclass(frozen=True)
 class Config:
     team: str
@@ -47,6 +54,8 @@ class Config:
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]
+    tracker: TrackerKind
+    board: str | None  # the local board's realpath; None for Linear
     work_dir: str
     docs: Docs
     stages: Mapping[str, int]

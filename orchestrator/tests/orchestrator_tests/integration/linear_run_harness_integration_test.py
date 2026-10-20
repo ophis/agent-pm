@@ -5,7 +5,7 @@ import os
 from agent_pm.delegate import Delegate
 from agent_pm.orchestrator.engine import runs
 from agent_pm.orchestrator.engine.linear_run import LinearRun
-from agent_pm.orchestrator.engine.types import Config, Docs
+from agent_pm.orchestrator.engine.types import Config, Docs, TrackerKind
 from agent_pm.utils import load_class
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
@@ -38,6 +38,8 @@ class HarnessRun(HarnessCase):
             roles={},
             project_repos={},
             local_clones={},
+            tracker=TrackerKind.LINEAR,
+            board=None,
             work_dir=os.path.join(self.home, "pipeline"),
             docs=Docs("", "", {}),
             stages={},

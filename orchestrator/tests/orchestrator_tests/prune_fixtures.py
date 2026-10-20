@@ -17,7 +17,7 @@ from agent_pm.orchestrator.engine import (
     prune,
     runs,
 )
-from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.engine.types import LinearError, TrackerKind
 from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
     ops,
@@ -214,6 +214,8 @@ class PruneScenario(Case):
             roles={},
             project_repos={},
             local_clones={},
+            tracker=TrackerKind.LINEAR,
+            board=None,
             work_dir=self.root,
             docs=config.Docs("", "", {}),
             stages={},

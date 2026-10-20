@@ -261,6 +261,8 @@ class Commands(Case):
 
 class InsideAnAgentSession(Case):
     def test_resume_exits_2_before_config_and_status_still_runs(self):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write('[orchestrator]\ntracker = "linear"\n')
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
             for command, first in (
                 ("resume", "agent-pm-orchestrator: refused inside an agent session"),

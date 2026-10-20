@@ -15,7 +15,7 @@ from unittest import mock
 from agent_pm import delegate, utils
 from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow import workflow
-from agent_pm.orchestrator.engine.types import State
+from agent_pm.orchestrator.engine.types import State, TrackerKind
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
@@ -253,7 +253,7 @@ class ConfigurationLoading(ConfigFile, Case):
             (BASE.replace(f'"{TEAM}"', "5"), "linear.team must be a Linear team id (UUID): 5"),
             (BASE.replace(f'linear.team = "{TEAM}"\n', ""), missing("linear.team")),
             (
-                body,
+                'tracker = "linear"\n' + body,
                 missing(
                     "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
                     "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
@@ -747,8 +747,8 @@ class CommittedConfiguration(Case):
         with files("agent_pm.orchestrator").joinpath("config.toml").open("rb") as f:
             committed = tomllib.load(f)
         self.assertEqual(
-            {k: committed[k] for k in ("task_tiers", "local_clones", "work_dir")},
-            {"task_tiers": {}, "local_clones": {}, "work_dir": "~/.agent-pm"},
+            {k: committed[k] for k in ("tracker", "task_tiers", "local_clones", "work_dir")},
+            {"tracker": "local", "task_tiers": {}, "local_clones": {}, "work_dir": "~/.agent-pm"},
         )
         self.assertEqual(committed["linear"], LINEAR_DEFAULTS)
         self.assertEqual(
@@ -768,7 +768,7 @@ class CommittedConfiguration(Case):
 
     def test_without_local_names_what_is_missing(self):
         with self.assertRaises(config.ConfigError) as cm:
-            self.load()
+            self.load('tracker = "linear"\n')
         self.assertEqual(
             str(cm.exception),
             "orchestrator/config.toml: "
@@ -819,7 +819,7 @@ class CommittedConfiguration(Case):
         write(
             self.local,
             CORE_LOCAL
-            + '\n[orchestrator]\nwork_dir = "~/.agent-pm"\n'
+            + '\n[orchestrator]\ntracker = "linear"\nwork_dir = "~/.agent-pm"\n'
             + "[orchestrator.task_tiers]\nlight-build = 3\n"
             + "[orchestrator.client_max_runs]\nopencode = 1\n"
             + "[orchestrator.roles.engineer]\nmax_runs = 2\n"
@@ -955,6 +955,107 @@ class WorkDirectories(ConfigFile, Case):
             f"local_clones.ophis/x {home}: '~/.agent-pm'",
             PIPELINE + '[local_clones]\n"ophis/x" = "~"\n',
         )
+
+
+LOCAL_BOARD = (
+    HEADER[HEADER.index("delegates = ") :]
+    + '[roles.researcher]\nnext = "pm"\n[roles.pm]\nnext = "engineer"\n[roles.engineer]\n'
+)
+
+
+class TrackerChoice(ConfigFile, Case):
+    def setUp(self):
+        super().setUp()
+        self.board = os.path.join(os.path.realpath(self.home), "boards", "one")
+        env = mock.patch.dict(os.environ, {config.BOARD_ENV: self.board})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_tracker_defaults_to_local(self):
+        cfg = self.load(LOCAL_BOARD)
+        self.assertEqual((cfg.tracker, cfg.board), (TrackerKind.LOCAL, self.board))
+        self.assertEqual(self.load('tracker = "local"\n' + LOCAL_BOARD), cfg)
+
+    def test_tracker_linear(self):
+        cfg = self.load(PIPELINE)
+        self.assertEqual(
+            (cfg.tracker, cfg.board, cfg.work_dir, cfg.team),
+            (TrackerKind.LINEAR, None, os.path.realpath(self.agent_pm), TEAM),
+        )
+
+    def test_tracker_rejects_other(self):
+        for value, shown in (('"jira"', "'jira'"), ('"Linear"', "'Linear'"), ("5", "5")):
+            with self.subTest(value):
+                e = self.fails(
+                    f"orchestrator/config.toml: tracker: want one of linear, local: {shown}",
+                    f"tracker = {value}\n" + PIPELINE.replace('tracker = "linear"\n', ""),
+                )
+                self.assertIsNone(e.logs_dir)
+
+    def test_local_needs_no_linear_keys(self):
+        cfg = self.load(LOCAL_BOARD + '[linear]\nteam = "not-a-uuid"\nharness_key = ""\n')
+        self.assertEqual(
+            {r: (x.account, x.key) for r, x in cfg.roles.items()},
+            dict.fromkeys(("researcher", "pm", "engineer"), ("", "")),
+        )
+        self.assertEqual(
+            (cfg.team, cfg.states, cfg.task_labels, cfg.agent_labels, cfg.project_repos),
+            ("", {}, {}, {}, {}),
+        )
+        self.fails(
+            "orchestrator/config.toml: unknown keys in [linear]: bogus",
+            LOCAL_BOARD + "[linear]\nbogus = 1\n",
+        )
+
+    def test_board_from_env(self):
+        real = os.path.join(self.home, "real")
+        os.makedirs(real)
+        os.symlink(real, os.path.join(self.home, "link"))
+        for value, want in (
+            (os.path.join(self.home, "link"), real),
+            ("~/boards/two", os.path.join(os.path.realpath(self.home), "boards", "two")),
+        ):
+            with self.subTest(value), mock.patch.dict(os.environ, {config.BOARD_ENV: value}):
+                self.assertEqual(self.load(LOCAL_BOARD).board, want)
+
+    def test_board_default(self):
+        want = os.path.join(os.path.realpath(self.agent_pm), "board")
+        with mock.patch.dict(os.environ, {config.BOARD_ENV: ""}):
+            self.assertEqual(self.load(LOCAL_BOARD).board, want)
+        os.environ.pop(config.BOARD_ENV)
+        self.assertEqual(self.load(LOCAL_BOARD).board, want)
+
+    def test_board_rejects_relative(self):
+        for value in ("boards/one", "/boards/\none"):
+            with self.subTest(value), mock.patch.dict(os.environ, {config.BOARD_ENV: value}):
+                e = self.fails(
+                    f"AGENT_PM_BOARD_DIR must be a printable absolute or ~ path: {value!r}",
+                    LOCAL_BOARD,
+                )
+                self.assertIsNone(e.logs_dir)
+        with mock.patch.dict(os.environ, {config.BOARD_ENV: "boards/one"}):
+            self.assertEqual(self.load(PIPELINE).board, None)
+
+    def test_local_state_under_board(self):
+        state = os.path.join(self.board, ".state")
+        cfg = self.load('work_dir = "~/elsewhere"\n' + LOCAL_BOARD)
+        self.assertEqual(
+            (cfg.work_dir, cfg.runs_log, cfg.logs_dir, cfg.issue_workdir("LOC-1")),
+            (state, f"{state}/logs/runs.jsonl", f"{state}/logs", f"{state}/work/LOC-1"),
+        )
+        with mock.patch.dict(os.environ, {config.BOARD_ENV: self.board + "-two"}):
+            self.assertEqual(self.load(LOCAL_BOARD).work_dir, self.board + "-two/.state")
+        e = self.fails(
+            "orchestrator/config.toml: role 'ghost' is not in delegate/config.toml",
+            LOCAL_BOARD + "[roles.ghost]\n",
+        )
+        self.assertEqual(e.logs_dir, f"{state}/logs")
+        self.fails(
+            "orchestrator/config.toml: the board's .state must neither lie in nor contain "
+            f"local_clones.ophis/x {os.path.realpath(self.home)}: {state!r}",
+            LOCAL_BOARD + '[local_clones]\n"ophis/x" = "~"\n',
+        )
+        self.assertFalse(os.path.exists(self.board))
 
 
 class DelegateRegistry(ConfigFile, Case):
