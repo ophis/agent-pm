@@ -714,7 +714,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
-    ctx = writeback.for_run(cfg, role, gql, a)
+    ctx = writeback.for_run(cfg, role, a, **writeback.accounts(cfg, gql, key))
     workdir = cfg.issue_workdir(a.issue)
     delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:

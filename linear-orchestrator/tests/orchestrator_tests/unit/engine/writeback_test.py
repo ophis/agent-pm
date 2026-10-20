@@ -9,6 +9,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
@@ -602,8 +603,7 @@ class WritebackContext(run_fixtures.Base):
                 ctx = writeback.context(
                     cfg,
                     "engineer",
-                    gql,
-                    key=cfg.roles["engineer"].key,
+                    **writeback.accounts(cfg, gql, cfg.roles["engineer"].key),
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -642,6 +642,18 @@ class WritebackContext(run_fixtures.Base):
                     timeout=run_comments.LIMIT,
                     c=ops.client_id(SID, "session"),
                 )
+
+    def test_a_run_writes_with_the_trackers_it_is_given(self):
+        cfg = config.load()
+        tracker, harness = object(), object()
+        spec = SimpleNamespace(issue=ID, uuid=UUID, sid=SID, mode="resume", project=PROJECT)
+        ctx = writeback.for_run(cfg, "engineer", spec, tracker=tracker, harness=harness)
+        self.assertIs(ctx.tracker, tracker)
+        self.assertIs(ctx.harness, harness)
+        self.assertEqual(
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.resume, ctx.project, ctx.target),
+            (ID, UUID, SID, True, PROJECT, None),
+        )
 
 
 class DurableRunNotes(Case):

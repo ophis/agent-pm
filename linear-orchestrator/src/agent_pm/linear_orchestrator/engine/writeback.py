@@ -88,7 +88,17 @@ TURN_FAILED = "the client's turn failed: "
 NO_OUTCOME = "no-outcome:"
 
 
-def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, target):
+def accounts(cfg, gql, key) -> dict[str, Tracker]:
+    """context's tracker (key's) and harness (the session comment's)."""
+    return {
+        "tracker": LinearTracker(
+            gql, states=cfg.states, team_id=cfg.team, humans=cfg.human_members, service=key
+        ),
+        "harness": LinearTracker(gql, service=cfg.harness_key, timeout=run_comments.LIMIT),
+    }
+
+
+def context(cfg, role, *, tracker, harness, ident, issue_id, sid, resume, project, target):
     return Context(
         ident=ident,
         issue_id=issue_id,
@@ -97,23 +107,21 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         resume=resume,
         project=project,
         workdir=cfg.issue_workdir(ident),
-        tracker=LinearTracker(
-            gql, states=cfg.states, team_id=cfg.team, humans=cfg.human_members, service=key
-        ),
+        tracker=tracker,
         states=cfg.states,
         humans=tuple(e.lower() for e in cfg.human_members),
         repos=cfg.project_repos,
         target=target,
-        harness=LinearTracker(gql, service=cfg.harness_key, timeout=run_comments.LIMIT),
+        harness=harness,
     )
 
 
-def for_run(cfg, role, gql, spec: Spec):
+def for_run(cfg, role, spec: Spec, *, tracker, harness):
     return context(
         cfg,
         role,
-        gql,
-        key=cfg.roles[role].key,
+        tracker=tracker,
+        harness=harness,
         ident=spec.issue,
         issue_id=spec.uuid,
         sid=spec.sid,
@@ -129,8 +137,7 @@ def for_claim(cfg, claim: Claim, gql, *, attempt: int) -> Context:
         context(
             cfg,
             claim.role,
-            gql,
-            key=claim.key,
+            **accounts(cfg, gql, claim.key),
             ident=claim.issue,
             issue_id=claim.uuid,
             sid=claim.sid,
