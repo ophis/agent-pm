@@ -84,18 +84,22 @@ gate = "agent-pm-orchestrator router --brake researcher"
 #   team              local, required: the Linear team id
 #   human_members     local: the human users' emails; each is subscribed to every issue moved to In Review; [] → none
 #   harness_key       local, required: Keychain service of the harness account's Linear API key (router, promote, prune)
+#   manager_key       local: Keychain service of the manager's Linear API key, for agent-pm-orchestrator issue: an account
+#                     neither the harness nor a role, so its comments and moves count as the user's; "" → issue refuses
 #   task_label_group  local, required: Linear id of the `Tasks` label group; its labels pick an issue's task through
 #                     [linear.task_labels]
 [linear]
 team = ""
 human_members = []
 harness_key = ""
+manager_key = ""
 task_label_group = ""
 agent_label_group = ""
 # local: [orchestrator.linear]
 # local: team = "00000000-0000-0000-0000-000000000000"
 # local: human_members = ["you@example.com"]
 # local: harness_key = "linear-harness"
+# local: manager_key = "linear-manager"
 # local: task_label_group = "00000000-0000-0000-0000-000000000000"
 # local: agent_label_group = "00000000-0000-4000-8000-000000000101"
 
