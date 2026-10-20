@@ -13,6 +13,7 @@ from agent_pm.session.engine.types import DEFAULT_ACCOUNT, Launch, Usage, Window
 from agent_pm.utils import STATE, exhausted, file_lock, read_regular, save, summary
 
 TTL = 300  # seconds
+UNKNOWN_TTL = 30
 CACHE_DIR = f"{STATE}/usage"
 CACHE_MAX = 64 << 10
 
@@ -23,8 +24,8 @@ def readings(
     read: Callable[[Launch], Usage | None],
 ) -> dict[str, Usage | None]:
     """Each account's reading: its cached one when it reads the same identity and is under TTL
-    old, else `read` of its launch, once per identity, all concurrently, then cached; one process
-    at a time.
+    (UNKNOWN_TTL when unknown) old, else `read` of its launch, once per identity, all
+    concurrently, then cached; one process at a time.
     """
     path = os.path.join(os.path.expanduser(CACHE_DIR), f"{client}.json")
     with contextlib.ExitStack() as held:
@@ -46,7 +47,7 @@ def _readings(
     stale: dict[str, tuple[Launch, list[str]]] = {}
     for name, (identity, launch) in probes.items():
         entry = cached.get(name)
-        if entry is not None and entry[1] == identity and 0 <= now - entry[0] < TTL:
+        if entry is not None and entry[1] == identity and 0 <= now - entry[0] < _ttl(entry[2]):
             found[name] = entry[2]
         else:
             stale.setdefault(identity, (launch, []))[1].append(name)
@@ -62,6 +63,10 @@ def _readings(
                 print(f"{client} usage: account {name}: {summary(found[name])}", file=sys.stderr)
         _store(path, {name: cached[name] for name in probes})
     return {name: found[name] for name in probes}
+
+
+def _ttl(usage: Usage | None) -> int:
+    return UNKNOWN_TTL if usage is None else TTL
 
 
 def pick(found: Mapping[str, Usage | None]) -> str | None:

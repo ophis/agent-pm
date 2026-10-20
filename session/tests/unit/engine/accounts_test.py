@@ -113,6 +113,17 @@ class ReadingsTest(Case):
         self.assertIsNone(self.readings(NOW + 1)["work"])
         self.assertEqual(self.read, [])
 
+    def test_a_failed_reading_is_retried_after_the_unknown_ttl(self):
+        self.answers["/w"] = None
+        self.readings()
+        self.read.clear()
+        self.readings(NOW + accounts.UNKNOWN_TTL - 1)
+        self.assertEqual(self.read, [])
+        self.answers["/w"] = usage(20, 30)
+        self.assertEqual(self.readings(NOW + accounts.UNKNOWN_TTL)["work"], usage(20, 30))
+        self.assertEqual([launch.env["DIR"] for launch in self.read], ["/w"])
+        self.assertEqual(accounts.UNKNOWN_TTL, 30)
+
     def test_another_identity_misses(self):
         self.readings()
         self.read.clear()
