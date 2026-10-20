@@ -28,6 +28,7 @@ from agent_pm.linear_orchestrator.engine import (
 )
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
+from agent_pm.linear_orchestrator.flow.types import IssueState
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
@@ -4356,7 +4357,7 @@ class StaleRunRecovery(Base):
         self.api.statuses[self.sid("a")] = SessionError("boom")
 
         def use(b):
-            (found,) = b.issues("in_progress")
+            (found,) = b.tracker.assigned(IssueState.RUNNING)
             return b.settle(found, b.current_sid(found), wait=False)
 
         self.assertFalse(self.board(fake, use))

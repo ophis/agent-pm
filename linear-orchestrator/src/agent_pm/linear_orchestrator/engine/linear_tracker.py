@@ -1,7 +1,16 @@
 """The flow Tracker on Linear, from a gql callable, the team (ops.Team) and {user id: role}: its
 states mapped to IssueState, its reads and writes in Linear's query text."""
 
-from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, last_move
+from agent_pm.linear_orchestrator.engine.ops import (
+    DONE,
+    HISTORY,
+    call,
+    humans,
+    last_move,
+    role_ids,
+    task_group,
+    team,
+)
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
@@ -20,6 +29,7 @@ STATES = {
     State.TODO: IssueState.READY,
     State.IN_PROGRESS: IssueState.RUNNING,
 }
+LISTED = {IssueState.READY: State.TODO, IssueState.RUNNING: State.IN_PROGRESS}
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
@@ -83,10 +93,42 @@ def finished_at(issue, finished):
     return max(times, default=None)
 
 
+def _quiet(*_, **__):
+    pass
+
+
 class LinearTracker(Tracker):
-    def __init__(self, gql, team, roles):
-        self.gql, self.team, self.roles = gql, team, roles
+    """humans: the human members' user ids, which connect reads; say: the caller's logger."""
+
+    def __init__(self, gql, team, roles, humans=frozenset(), say=_quiet):
+        self.gql, self.team, self.roles, self.humans, self.say = gql, team, roles, humans, say
         self.states = {team.states[k]: v for k, v in STATES.items()}
+
+    @classmethod
+    def connect(cls, gql, cfg, *, say):
+        """Checks the team and task label group, then reads the human and role accounts."""
+        found = team(gql, cfg)
+        task_group(gql, cfg)
+        people = frozenset(humans(gql, cfg))
+        return cls(gql, found, role_ids(gql, cfg.roles), people, say)
+
+    def role(self, issue):
+        return self.roles[issue["assignee"]["id"]]
+
+    def assigned(self, state):
+        return self.listed(state)
+
+    def listed(self, state, fields=""):
+        """state's issues with a project, assigned to a role account; the first 100."""
+        if state not in LISTED:
+            raise ValueError(f"no list of {state} issues")
+        flt = {
+            "team": {"id": {"eq": self.team.id}},
+            "project": {"null": False},
+            "assignee": {"id": {"in": list(self.roles)}},
+            "state": {"id": {"eq": self.team.states[LISTED[state]]}},
+        }
+        return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
 
     def read(self, ident):
         issue = self.gql(Q_ISSUE, i=ident)["issue"]

@@ -5,15 +5,16 @@ import hashlib
 import inspect
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, prune, router
+from agent_pm.linear_orchestrator.engine import linear_tracker, ops, prune, router
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Snapshot, SubIssue
 from orchestrator_tests.case import Case
 from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ
-from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TEAM
+from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TASK_GROUP, TEAM, team_node
 
 # sha256 of each query's text on orchestrator-revamped: the fake Linear pairs queries by text
 BASE = {
@@ -58,15 +59,27 @@ def child(ident, kind):
     return {"id": f"id-{ident}", "identifier": ident, "state": {"type": kind}}
 
 
+def names():
+    found = {getattr(linear_tracker, n): n for n in (*BASE, *ROUTER)}
+    found |= {getattr(ops, n): n for n in ("Q_TEAM", "Q_TASK_GROUP", "Q_USER")}
+    lists = linear_tracker.q_issues(), linear_tracker.q_issues(linear_tracker.RELATIONS)
+    return found | dict(zip(lists, ("LIST", "LIST_RELATIONS"), strict=True))
+
+
 class Gql:
-    """Answers by query text from replies (a list is one reply per call); records every call."""
+    """Answers by query name from replies (a list is one reply per call); records every call."""
+
+    NAMES = names()
 
     def __init__(self, **replies):
         self.replies, self.calls = replies, []
 
+    def names(self):
+        return [self.NAMES[q] for q, _ in self.calls]
+
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
-        name = next(n for n in BASE if getattr(linear_tracker, n) == query)
+        name = self.NAMES[query]
         reply = self.replies[name]
         reply = reply.pop(0) if isinstance(reply, list) else reply
         if isinstance(reply, Exception):
@@ -267,9 +280,82 @@ class Archive(Case):
             tracker(gql).archive("id-TASK-1")
 
 
+def users(*ids):
+    return [{"users": {"nodes": [{"id": i}] if i else []}} for i in ids]
+
+
+def board_cfg():
+    return SimpleNamespace(
+        team=TEAM,
+        states=STATES,
+        task_label_group=TASK_GROUP,
+        task_labels={"light-research": "label-1"},
+        human_members=("human@x.test",),
+        roles={"pm": SimpleNamespace(account="pm@agents.test")},
+    )
+
+
+def connected(**replies):
+    group = {"issueLabel": {"isGroup": True, "children": {"nodes": [{"id": "label-1"}]}}}
+    replies = {"Q_TEAM": {"teams": {"nodes": [team_node()]}}, "Q_TASK_GROUP": group} | replies
+    return LinearTracker.connect(Gql(**replies), board_cfg(), say=None)
+
+
+class Connect(Case):
+    def test_reads_in_order(self):
+        found = connected(Q_USER=users("u-human", "u-pm"))
+        self.assertEqual(found.gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER", "Q_USER"])
+        self.assertEqual(
+            [v for _, v in found.gql.calls],
+            [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "human@x.test"}, {"e": "pm@agents.test"}],
+        )
+        self.assertEqual((found.team.id, found.team.states), (TEAM, STATES))
+        self.assertEqual((found.roles, found.humans), ({"u-pm": "pm"}, frozenset({"u-human"})))
+
+    def test_errors_propagate(self):
+        for replies, message in (
+            ({"Q_TEAM": {"teams": {"nodes": []}}}, f"team {TEAM} not found"),
+            ({"Q_USER": users(None)}, "human_members not found in Linear: human@x.test"),
+            ({"Q_USER": users("u-human", None)}, "account 'pm@agents.test' not found"),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(LinearError, message):
+                connected(**replies)
+
+
+def listed(state):
+    return {
+        "team": {"id": {"eq": TEAM}},
+        "project": {"null": False},
+        "assignee": {"id": {"in": list(ROLES)}},
+        "state": {"id": {"eq": STATES[state]}},
+    }
+
+
+class Assigned(Case):
+    def test_filter_per_state(self):
+        for state, key in ((IssueState.READY, "todo"), (IssueState.RUNNING, "in_progress")):
+            with self.subTest(state=state):
+                gql = Gql(LIST={"issues": {"nodes": [{"identifier": "TASK-1"}]}})
+                self.assertEqual(tracker(gql).assigned(state), [{"identifier": "TASK-1"}])
+                self.assertEqual(gql.calls, [(linear_tracker.q_issues(), {"f": listed(key)})])
+
+    def test_other_state_value_error(self):
+        for state in (IssueState.REVIEW, IssueState.APPROVED, IssueState.DONE):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                tracker(Gql()).assigned(state)
+
+
+class Role(Case):
+    def test_by_assignee_id(self):
+        self.assertEqual(tracker(Gql()).role({"assignee": {"id": "u-pm"}}), "pm")
+
+
 class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
-        self.assertEqual(Tracker.__abstractmethods__, {"read", "finished", "sub_issues", "archive"})
+        self.assertEqual(
+            Tracker.__abstractmethods__,
+            {"read", "finished", "sub_issues", "archive", "role", "assigned"},
+        )
         self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES), Tracker)
 
 

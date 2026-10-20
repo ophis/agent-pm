@@ -99,16 +99,15 @@ from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+
+# Q_*, RELATIONS and q_issues kept only for tests reading router.<query>; 第 2 阶段删除.
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HISTORY as Q_HISTORY
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RECHECK as Q_RECHECK
 from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RELATIONS as Q_RELATIONS
-
-# Kept only for tests reading router.<query>; 第 2 阶段删除.
 from agent_pm.linear_orchestrator.engine.linear_tracker import RELATIONS as RELATIONS
-from agent_pm.linear_orchestrator.engine.linear_tracker import blockers
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker, blockers
 from agent_pm.linear_orchestrator.engine.linear_tracker import q_issues as q_issues
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
@@ -132,6 +131,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
+from agent_pm.linear_orchestrator.flow.types import IssueState
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -274,28 +274,17 @@ class Board:
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
-        t = team(gql, cfg)
-        task_group(gql, cfg)
-        self.team, self.states = t.id, t.states
-        self.humans = set(humans(gql, cfg))
-        self.roles = role_ids(gql, cfg.roles)
-
-    def issues(self, state, fields=""):
-        flt = {
-            "team": {"id": {"eq": self.team}},
-            "project": {"null": False},
-            "assignee": {"id": {"in": list(self.roles)}},
-            "state": {"id": {"eq": self.states[state]}},
-        }
-        return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
+        self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
+        self.states = self.tracker.team.states
+        self.humans = self.tracker.humans
 
     def todo(self):
         if self.ready is None:
             try:
-                issues = self.issues("todo", RELATIONS)
+                issues = self.tracker.listed(IssueState.READY, RELATIONS)
             except LinearError as e:
                 self.say("todo-error", error=one_line(e))
-                issues = self.issues("todo")
+                issues = self.tracker.assigned(IssueState.READY)
                 for i in issues:
                     try:
                         i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
@@ -312,7 +301,7 @@ class Board:
         return ident in self.blocked
 
     def role(self, issue):
-        return self.roles[issue["assignee"]["id"]]
+        return self.tracker.role(issue)
 
     def available(self, issue, full):
         return issue["identifier"] not in self.live and self.role(issue) not in full
@@ -396,7 +385,7 @@ class Board:
         self.live = set(live_ids)
         mine = [
             (i, self.current_sid(i))
-            for i in self.issues("in_progress")
+            for i in self.tracker.assigned(IssueState.RUNNING)
             if i["identifier"] not in self.live
         ]
         mine.sort(
@@ -1047,7 +1036,8 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
         entries = parse_log(runs)
         board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)
         if issue := next(
-            (i for i in board.issues("in_progress") if i["identifier"] == ident), None
+            (i for i in board.tracker.assigned(IssueState.RUNNING) if i["identifier"] == ident),
+            None,
         ):
             sid = board.current_sid(issue)
             if not board.settle(issue, sid, wait=False):

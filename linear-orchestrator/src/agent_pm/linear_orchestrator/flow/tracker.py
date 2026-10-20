@@ -2,8 +2,11 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection
+from typing import Literal
 
-from agent_pm.linear_orchestrator.flow.types import Finished, Snapshot, SubIssue
+from agent_pm.linear_orchestrator.flow.types import Finished, IssueState, Record, Snapshot, SubIssue
+
+Listed = Literal[IssueState.READY, IssueState.RUNNING]
 
 
 class Tracker(ABC):
@@ -22,3 +25,9 @@ class Tracker(ABC):
     @abstractmethod
     def archive(self, key: str) -> None:
         """Its sub-issues too, as the tracker does."""
+
+    @abstractmethod
+    def role(self, issue: Record) -> str: ...
+
+    @abstractmethod
+    def assigned(self, state: Listed) -> list[Record]: ...
