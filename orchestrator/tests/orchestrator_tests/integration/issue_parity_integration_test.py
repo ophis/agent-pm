@@ -1,6 +1,7 @@
 """Parity of agent-pm-orchestrator issue on a local board and on FakeLinear (spec AC13, AC10):
 bin/agent-pm-orchestrator as a real process runs one sequence on each tracker; each step's exit
-code and stdout shape match. Linear-only forms exit 2 on a local board, writing nothing.
+code and stdout shape match, and so do its tracker-independent values. Linear-only forms exit 2
+on a local board, writing nothing.
 """
 
 import json
@@ -9,7 +10,9 @@ import subprocess
 import unittest
 
 from agent_pm.orchestrator.engine.config import BOARD_ENV
-from orchestrator_tests.integration.fake_linear import seam
+from agent_pm.orchestrator.engine.flow.types import IssueState
+from agent_pm.orchestrator.engine.types import MOVES, State
+from orchestrator_tests.integration.fake_linear import TITLES, seam
 from orchestrator_tests.integration.fake_python import write_shim
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -23,6 +26,10 @@ from orchestrator_tests.unit.issue_fixtures import CLIENT_GROUP, CLIENT_LABELS, 
 TASK, CLIENT = "light-research", "claude"
 ROLE = "researcher"  # TASK is one of its tasks
 VALUES = ("operation", "result", "dry_run", "title", "description")
+RELATIONS = ("blocks", "blocked_by", "children")
+# each tracker's state names: FakeLinear's titles, the local board's abstract names
+LINEAR_STATES = {TITLES[key]: MOVES[State(key)] for key in TITLES}
+LOCAL_STATES = {state.value: state for state in IssueState}
 LINEAR_ONLY = (
     ("lookup", ("lookup", "states")),
     ("label swap", ("label", "swap", "{seed}", "--from", "a", "--to", "b")),
@@ -50,14 +57,35 @@ def same_shape(case, left, right, path="$"):
             same_shape(case, a, b, f"{path}[{n}]")
 
 
-def values(payload):
-    """payload's tracker-independent values: VALUES at its top (a description as a local board's
-    file reads it, stripped), its items' titles as a set."""
+def abstract(name, states):
+    """name, a state name in states (a tracker's), as its IssueState; None stays None."""
+    return None if name is None else states[name]
+
+
+def related(entry, states):
+    """A relation column's entry as its title and abstract state."""
+    return entry["title"], abstract(entry["state"], states)
+
+
+def values(payload, states):
+    """payload's tracker-independent values, its state names read through states: VALUES at its
+    top (a description as a local board's file reads it, stripped); a read's state, comment
+    bodies (stripped, in order), relation columns and parent as titles and states; its items'
+    titles and states as a set."""
     found = {key: payload[key] for key in VALUES if key in payload}
     if found.get("description") is not None:
         found["description"] = found["description"].strip()
+    if "comments" in payload:
+        found["state"] = abstract(payload["state"] and payload["state"]["name"], states)
+        found["comments"] = [comment["body"].strip() for comment in payload["comments"]]
+        for key in RELATIONS:
+            found[key] = [related(entry, states) for entry in payload[key]]
+        found["parent"] = payload["parent"] and related(payload["parent"], states)
     if "items" in payload:
-        found["items"] = sorted(item["title"] for item in payload["items"])
+        found["items"] = sorted(
+            (item["title"], abstract(item["state"] and item["state"]["name"], states))
+            for item in payload["items"]
+        )
     return found
 
 
@@ -238,12 +266,13 @@ class Parity(Flow):
                     continue
                 linear, local = json.loads(left.stdout), json.loads(right.stdout)
                 same_shape(self, linear, local)
+                linear, local = values(linear, LINEAR_STATES), values(local, LOCAL_STATES)
                 if name.startswith("list page"):
-                    pages[name] = (values(linear).pop("items"), values(local).pop("items"))
-                    linear.pop("items"), local.pop("items")
-                self.assertEqual(values(linear), values(local))
-        self.assertEqual(sorted(sum((p[0] for p in pages.values()), [])), ["Parity A", "Seed 1"])
-        self.assertEqual(sorted(sum((p[1] for p in pages.values()), [])), ["Parity A", "Seed 1"])
+                    pages[name] = (linear.pop("items"), local.pop("items"))
+                self.assertEqual(linear, local)
+        ready = [("Parity A", IssueState.READY), ("Seed 1", IssueState.READY)]
+        self.assertEqual(sorted(sum((p[0] for p in pages.values()), [])), ready)
+        self.assertEqual(sorted(sum((p[1] for p in pages.values()), [])), ready)
         for ident, (_, steps) in zip(
             (on_linear[0], on_local[0]), (on_linear, on_local), strict=True
         ):
