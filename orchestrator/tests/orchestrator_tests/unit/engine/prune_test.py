@@ -976,10 +976,12 @@ class Stalled(PruneScenario):
         )
         self.assertEqual(self.api.order, [])
 
-    def test_a_backlog_issue_stalls_too(self):
-        workdir, gql = self.stalled(state="Backlog")
-        self.assertEqual(self.prune(gql), (0, "prune-removed TASK-7 what=scratch"))
-        self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
+    def test_a_backlog_or_unconfigured_state_issue_stalls_too(self):
+        for state in ("Backlog", "Triage"):
+            with self.subTest(state=state):
+                workdir, gql = self.stalled(state=state)
+                self.assertEqual(self.prune(gql), (0, "prune-removed TASK-7 what=scratch"))
+                self.assertEqual(os.listdir(os.path.join(workdir, "agent")), ["prd.md"])
 
     def test_recent_or_active_or_unknown_kept(self):
         issues = {}

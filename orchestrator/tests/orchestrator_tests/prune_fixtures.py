@@ -45,6 +45,7 @@ STATE_IDS = {
     "In Review": IDS_BY_KEY["in_review"],
     "Handoff": IDS_BY_KEY["handoff"],
     "Backlog": IDS_BY_KEY["backlog"],
+    "Triage": "00000000-0000-4000-8000-000000000019",  # no config key: read as state None
 }
 
 
@@ -68,6 +69,7 @@ STATE_TYPES = {
     "In Review": "started",
     "Handoff": "started",
     "Backlog": "backlog",
+    "Triage": "triage",
 }
 CHILDREN = 50  # LinearTracker's archive read pages sub-issues by 50
 PRUNE_QUERIES = (  # the queries gql_for answers
