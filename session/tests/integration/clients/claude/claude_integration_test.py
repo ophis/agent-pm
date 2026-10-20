@@ -22,11 +22,14 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import Session
+from agent_pm.session.engine.accounts import TTL
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
+    LOCAL_CONTEXT,
     Access,
     Activity,
     ConfigError,
+    Container,
     Exited,
     IdleTimeout,
     LimitHit,
@@ -39,6 +42,8 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Window,
 )
+from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.utils import exhausted
 
 from session.tests.case import PLUGIN_BIN, PY, Case, child_env
 from session.tests.integration.clients.claude import fake_claude
@@ -474,6 +479,61 @@ class UsageTest(Base):
                 if name == "no claude":
                     os.environ["PATH"] = self.dir
                 self.assertIsNone(self.session_cls.usage("claude"))
+
+
+def panel(five, week):
+    return f"Current session: {five}% used\nCurrent week (all models): {week}% used\n"
+
+
+class AccountUsageTest(Base):
+    """`default` and `work` on a Host running containers: the fake claude answers /usage by its
+    CLAUDE_CONFIG_DIR, and Session.usage is the reading of the account a start would pick.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.default = os.environ["CLAUDE_CONFIG_DIR"]
+        self.work = os.path.join(self.dir, "work-config")
+        self.configure_session({"claude": {**TABLE, "accounts": {"work": {"dir": self.work}}}})
+        container = Container("/opt/bin", "/usr/bin/python3", "/opt/src", "/run")
+        context = dataclasses.replace(LOCAL_CONTEXT, container=container)
+        patch = mock.patch.object(TmuxHost, "_client_context", return_value=context)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def usage(self, default, work, now=None):
+        self.scenario(usage={self.default: panel(*default), self.work: panel(*work)})
+        with contextlib.redirect_stderr(io.StringIO()):
+            if now is None:
+                return self.session_cls.usage("claude")
+            with mock.patch("time.time", return_value=now):
+                return self.session_cls.usage("claude")
+
+    def probed(self) -> list[str]:
+        return sorted(entry["config_dir"] for entry in self.logged())
+
+    def test_the_account_with_more_left_is_the_usage(self):
+        found = self.usage((70, 10), (20, 30))
+        self.assertEqual((found.five_hour.used_percent, found.weekly.used_percent), (20.0, 30.0))
+        self.assertEqual(self.probed(), sorted((self.default, self.work)))
+        self.assertTrue(all(entry["argv"] == PROBE for entry in self.logged()))
+
+    def test_an_account_over_a_threshold_loses(self):
+        found = self.usage((92, 5), (50, 60))
+        self.assertEqual((found.five_hour.used_percent, found.weekly.used_percent), (50.0, 60.0))
+
+    def test_every_account_over_is_exhausted(self):
+        self.assertTrue(exhausted(self.usage((95, 10), (10, 100))))
+
+    def test_a_reading_within_the_ttl_runs_no_probe(self):
+        now = time.time()
+        first = self.usage((70, 10), (20, 30), now)
+        self.assertEqual(len(self.logged()), 2)
+        self.assertEqual(self.usage((10, 10), (90, 90), now + TTL - 1), first)
+        self.assertEqual(len(self.logged()), 2)
+        found = self.usage((10, 10), (90, 90), now + TTL)
+        self.assertEqual((found.five_hour.used_percent, found.weekly.used_percent), (10.0, 10.0))
+        self.assertEqual(len(self.logged()), 4)
 
 
 class SessionInfoTest(Base):
