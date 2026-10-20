@@ -42,7 +42,12 @@ class RepliesTest(Case):
         env = self.server.env(CLAUDE_CONFIG_DIR=str(self.config), TZ="UTC")
         self.enterContext(mock.patch.dict(os.environ, {**env, fake_claude.ENV: str(self.scenario)}))
         clients = {"claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"}}
-        hosts = Host.parse_hosts({**HOSTS, "default": "tmux"})
+        hosts = Host.parse_hosts(
+            {
+                **HOSTS,
+                "default": "tmux",
+            }
+        )
         self.session_cls = HostedSession.configured(clients=clients, hosts=hosts)
         self.release = self.root / "release"
         steps = [{"kind": "queued", "answer": ANSWER}, {"kind": "pause", "file": str(self.release)}]

@@ -181,7 +181,7 @@ Each row's source holds the exact values.
 | Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
 | Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
 | Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
-| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
+| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `core.hooksPath = .githooks` (`/etc/gitconfig`: each checkout runs its own branch's `.githooks/`, none without one), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Refusals
 
@@ -517,6 +517,8 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
 - Every Docker session can push to any unprotected branch of every repo the App is installed on, `private_docs`'s
   `main` included.
 - The [audit log](#audit-log) is yours to change: it records what the broker did, not that nothing else happened.
+- Git in a container runs each checkout's own `.githooks/` (`core.hooksPath`), as `agent`, on its branch's
+  version: a target repo's hooks run with the container's GitHub tokens in reach.
 - Image builds trust the client vendors' npm packages ([Codex's policy](docker-codex.md#container-versions)).
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation; if it cannot read it, the
   resume fails rather than starting anew. Claude may show an onboarding prompt after a rebuild; the
