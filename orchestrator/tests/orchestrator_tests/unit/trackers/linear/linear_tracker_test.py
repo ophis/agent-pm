@@ -98,7 +98,7 @@ LISTS = {
     "": "3a5086418d895504931848eadf8243f03aad1cfc77f6391f1dc8ab357c034213",
     "RELATIONS": "7d8c26493df3c7696386e34534445288717b64ace14ed4866316e03bb51463fa",
 }
-BACKLOG = "00000000-0000-4000-8000-000000000019"
+TRIAGE = "00000000-0000-4000-8000-000000000019"
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
@@ -226,6 +226,7 @@ class Read(Case):
 
     def test_maps_each_configured_state(self):
         expected = {
+            STATES["backlog"]: IssueState.BACKLOG,
             STATES["todo"]: IssueState.READY,
             STATES["in_progress"]: IssueState.RUNNING,
             STATES["in_review"]: IssueState.REVIEW,
@@ -239,7 +240,7 @@ class Read(Case):
                 self.assertEqual(self.read(issue(state, (3, state))), Snapshot(abstract, ago(3)))
 
     def test_other_state_is_none(self):
-        self.assertEqual(self.read(issue(BACKLOG, (5, BACKLOG))), Snapshot(None, ago(5)))
+        self.assertEqual(self.read(issue(TRIAGE, (5, TRIAGE))), Snapshot(None, ago(5)))
 
     def test_finished_since_is_latest_stamp_or_move(self):
         done, canceled = STATES["done"], STATES["canceled"]
@@ -263,6 +264,7 @@ class Read(Case):
         for key, active, abstract in (
             ("handoff", "todo", IssueState.READY),
             ("in_review", "in_progress", IssueState.RUNNING),
+            ("backlog", "todo", IssueState.READY),
         ):
             with self.subTest(shared=(key, active)):
                 team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, key: STATES[active]})
@@ -641,7 +643,7 @@ class Moves(Case):
             with self.subTest(state=state):
                 gql = Texts(
                     {
-                        ops.Q_ISSUE_STATE: {"issue": {"state": {"id": BACKLOG}}},
+                        ops.Q_ISSUE_STATE: {"issue": {"state": {"id": TRIAGE}}},
                         ops.M_STATE: {"issueUpdate": {"success": True}},
                     }
                 )
@@ -1122,7 +1124,7 @@ class DetailRead(Case):
                     {
                         "createdAt": "t1",
                         "actorId": "a",
-                        "fromStateId": BACKLOG,
+                        "fromStateId": TRIAGE,
                         "toStateId": STATES["done"],
                     },
                 ],

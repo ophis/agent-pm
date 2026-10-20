@@ -232,7 +232,7 @@ Create these in the Linear team, then put each id in `~/.agent-pm/config.local.t
 | Create in Linear | Config key |
 |---|---|
 | the team | `linear.team` |
-| workflow states Todo, In Progress, In Review, Handoff, Done, Canceled | `linear.states.todo`, `linear.states.in_progress`, `linear.states.in_review`, `linear.states.handoff`, `linear.states.done`, `linear.states.canceled` |
+| workflow states Backlog, Todo, In Progress, In Review, Handoff, Done, Canceled | `linear.states.backlog`, `linear.states.todo`, `linear.states.in_progress`, `linear.states.in_review`, `linear.states.handoff`, `linear.states.done`, `linear.states.canceled` |
 | a `Tasks` label group, its id from `issueLabels { nodes { id name isGroup } }` | `linear.task_label_group` |
 | one label per task under `Tasks` (`build`, `light-build`, …), optional | `linear.task_labels` |
 | an `Agent` label group and one label per client, optional; set both or neither | `linear.agent_label_group`, `linear.agent_labels` |

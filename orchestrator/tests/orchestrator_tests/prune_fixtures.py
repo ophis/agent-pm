@@ -44,6 +44,7 @@ STATE_IDS = {
     "Todo": IDS_BY_KEY["todo"],
     "In Review": IDS_BY_KEY["in_review"],
     "Handoff": IDS_BY_KEY["handoff"],
+    "Backlog": IDS_BY_KEY["backlog"],
 }
 
 
@@ -66,6 +67,7 @@ STATE_TYPES = {
     "Todo": "unstarted",
     "In Review": "started",
     "Handoff": "started",
+    "Backlog": "backlog",
 }
 CHILDREN = 50  # LinearTracker's archive read pages sub-issues by 50
 PRUNE_QUERIES = (  # the queries gql_for answers

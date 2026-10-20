@@ -39,6 +39,7 @@ T = TypeVar("T")
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
+    State.BACKLOG: IssueState.BACKLOG,
     State.IN_REVIEW: IssueState.REVIEW,
     State.HANDOFF: IssueState.APPROVED,
     State.TODO: IssueState.READY,

@@ -10,6 +10,7 @@ IssueRecord = dict[str, Any]  # opaque until 第 2 阶段
 
 
 class IssueState(StrEnum):
+    BACKLOG = "backlog"
     READY = "ready"
     RUNNING = "running"
     REVIEW = "review"

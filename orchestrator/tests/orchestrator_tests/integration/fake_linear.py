@@ -50,9 +50,9 @@ class _Failure:
 
 KEY = "TASK"
 
-BACKLOG = "00000000-0000-4000-8000-000000000017"
+BACKLOG = STATES["backlog"]
 
-IDS = {**STATES, "backlog": BACKLOG}
+IDS = STATES
 
 TYPES = {
     "todo": "unstarted",

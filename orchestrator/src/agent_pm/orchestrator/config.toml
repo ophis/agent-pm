@@ -100,8 +100,9 @@ agent_label_group = ""
 # local: agent_label_group = "00000000-0000-4000-8000-000000000101"
 
 # The team's workflow states the code uses.
-#   <state>  local, required for each of todo, in_progress, in_review, handoff, done, canceled: its Linear state id
+#   <state>  local, required for each of backlog, todo, in_progress, in_review, handoff, done, canceled: its Linear state id
 [linear.states]
+backlog = ""
 todo = ""
 in_progress = ""
 in_review = ""
@@ -110,6 +111,7 @@ done = ""
 canceled = ""
 
 # local: [orchestrator.linear.states]
+# local: backlog     = "00000000-0000-0000-0000-000000000000"
 # local: todo        = "00000000-0000-0000-0000-000000000000"
 # local: in_progress = "00000000-0000-0000-0000-000000000000"
 # local: in_review   = "00000000-0000-0000-0000-000000000000"

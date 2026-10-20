@@ -2,7 +2,7 @@ TEAM = "00000000-0000-4000-8000-000000000001"
 STATES = {
     k: f"00000000-0000-4000-8000-0000000000{i:02d}"
     for i, k in enumerate(
-        ("todo", "in_progress", "in_review", "handoff", "done", "canceled"), start=11
+        ("todo", "in_progress", "in_review", "handoff", "done", "canceled", "backlog"), start=11
     )
 }
 # Not a config state: prune finds it by its type.
@@ -11,7 +11,7 @@ TYPES = {
     **dict(
         zip(
             STATES.values(),
-            ("unstarted", "started", "started", "started", "completed", "canceled"),
+            ("unstarted", "started", "started", "started", "completed", "canceled", "backlog"),
             strict=True,
         )
     ),

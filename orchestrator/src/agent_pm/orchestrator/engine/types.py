@@ -85,6 +85,7 @@ class State(StrEnum):
     HANDOFF = "handoff"
     DONE = "done"
     CANCELED = "canceled"
+    BACKLOG = "backlog"
 
 
 class Resource(StrEnum):
