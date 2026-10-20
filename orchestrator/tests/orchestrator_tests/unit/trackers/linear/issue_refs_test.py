@@ -40,7 +40,7 @@ class Team(Case):
             issue_refs.team(gql, uid(7))
         text = str(cm.exception)
         self.assertIn(f"no such team; candidates: {uid(1)} ENG 'team ENG';", text)
-        self.assertIn("agent-pm-linear issue lookup teams", text)
+        self.assertIn("agent-pm-orchestrator issue lookup teams", text)
         self.assertNotIn("--query", text)
         near = gql.sent("teams")[0]
         self.assertEqual((near["first"], near["f"]), (issue_refs.CANDIDATES, None))

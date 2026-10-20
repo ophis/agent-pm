@@ -1,4 +1,4 @@
-"""agent-pm-linear issue: fixed issue subcommands and the rules they share. stdout holds one JSON
+"""agent-pm-orchestrator issue: fixed issue subcommands and the rules they share. stdout holds one JSON
 object of at most LIMIT UTF-8 bytes, a write's receipt at most RECEIPT; diagnostics go to stderr, as
 bounded; exit OK, FAILED (Linear failed, a write's result is unknown, a refusal, or create's
 relations partly failed, its report on stdout) or USAGE (usage, configuration or an unresolved
@@ -47,7 +47,7 @@ from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
 OK, FAILED, USAGE = 0, 1, 2
 LIMIT, RECEIPT = 8192, 1024
 PAGE, MAX_PAGE = 20, 50
-PROG = "agent-pm-linear issue"
+PROG = "agent-pm-orchestrator issue"
 FULL = "--full --output FILE"
 TEXTS = (
     "title",
@@ -76,8 +76,8 @@ REFS = frozenset(
 )
 _RULES = (
     "Prerequisites and effects:\n"
-    "  Reads Linear as the configured harness_key account (Keychain); an issue\n"
-    "  needs no recorded run. Help needs no credentials or services.\n"
+    "  Reads Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
     "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
     "  2: usage, configuration, Keychain, or an issue or option value that\n"
@@ -90,23 +90,23 @@ _HELP = (
     "  write's result is unknown, for create also a relation that failed, for\n"
     "  archive and label swap also a refusal (their --help).\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue read TASK-1\n"
-    "  agent-pm-linear issue list --state 'In Progress' --assignee me\n"
-    "  agent-pm-linear issue lookup states --team TASK\n"
-    "  agent-pm-linear issue create --title 'Fix login' --body-file note.md --blocks TASK-1\n"
-    "  agent-pm-linear issue move TASK-1 --state Done\n"
-    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
-    "  agent-pm-linear issue archive TASK-1 --dry-run\n"
-    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n"
-    "  agent-pm-linear issue label swap TASK-1 --from todo --to doing\n\n"
+    "  agent-pm-orchestrator issue read TASK-1\n"
+    "  agent-pm-orchestrator issue list --state 'In Progress' --assignee me\n"
+    "  agent-pm-orchestrator issue lookup states --team TASK\n"
+    "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md --blocks TASK-1\n"
+    "  agent-pm-orchestrator issue move TASK-1 --state Done\n"
+    "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
+    "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
+    "  agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2\n"
+    "  agent-pm-orchestrator issue label swap TASK-1 --from todo --to doing\n\n"
     "Recovery and next help:\n"
-    "  Command details: agent-pm-linear issue read --help,\n"
-    "  agent-pm-linear issue list --help, agent-pm-linear issue lookup --help,\n"
-    "  agent-pm-linear issue create --help, agent-pm-linear issue move --help,\n"
-    "  agent-pm-linear issue comment --help, agent-pm-linear issue archive --help,\n"
-    "  agent-pm-linear issue relation add --help,\n"
-    "  agent-pm-linear issue label swap --help\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  Command details: agent-pm-orchestrator issue read --help,\n"
+    "  agent-pm-orchestrator issue list --help, agent-pm-orchestrator issue lookup --help,\n"
+    "  agent-pm-orchestrator issue create --help, agent-pm-orchestrator issue move --help,\n"
+    "  agent-pm-orchestrator issue comment --help, agent-pm-orchestrator issue archive --help,\n"
+    "  agent-pm-orchestrator issue relation add --help,\n"
+    "  agent-pm-orchestrator issue label swap --help\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _PAGES = (
     f"Pages: --limit N items, 1-{MAX_PAGE} (default {PAGE}); --cursor TOKEN, a page's\n"
@@ -129,19 +129,19 @@ _LIST_HELP = (
     "  recently updated first; archived ones only with --include-archived.\n"
     "  --query TEXT matches title or description in any case; --state, --label,\n"
     "  --project in the team, --label not a group or retired; --assignee a\n"
-    "  user's id, name, email or me (the harness_key account); --parent the\n"
+    "  user's id, name, email or me (the linear.harness_key account); --parent the\n"
     "  parent issue's identifier or id.\n"
     + _PAGES
     + "Examples (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue list --query 'linear issue'\n"
-    "  agent-pm-linear issue list --team TASK --state Todo --label bug\n"
-    "  agent-pm-linear issue list --assignee me --project 'Agent PM'\n"
-    "  agent-pm-linear issue list --parent TASK-1 --include-archived --limit 50\n"
-    "  agent-pm-linear issue list --cursor <next_cursor>\n"
-    "  agent-pm-linear issue list --label bug --full --output bugs.json\n\n"
+    "  agent-pm-orchestrator issue list --query 'linear issue'\n"
+    "  agent-pm-orchestrator issue list --team TASK --state Todo --label bug\n"
+    "  agent-pm-orchestrator issue list --assignee me --project 'Agent PM'\n"
+    "  agent-pm-orchestrator issue list --parent TASK-1 --include-archived --limit 50\n"
+    "  agent-pm-orchestrator issue list --cursor <next_cursor>\n"
+    "  agent-pm-orchestrator issue list --label bug --full --output bugs.json\n\n"
     "Recovery and next help:\n"
-    "  Option values: agent-pm-linear issue lookup --help\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  Option values: agent-pm-orchestrator issue lookup --help\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _LOOKUP_HELP = (
     _RULES + "Output items, every same-named entity its own:\n"
@@ -156,13 +156,13 @@ _LOOKUP_HELP = (
     "  --query TEXT keeps names holding TEXT in any case.\n"
     + _PAGES
     + "Examples (configured Linear access):\n"
-    "  agent-pm-linear issue lookup teams\n"
-    "  agent-pm-linear issue lookup labels --team TASK --query bug\n"
-    "  agent-pm-linear issue lookup milestones --project 'Agent PM' --limit 50\n"
-    "  agent-pm-linear issue lookup users --cursor <next_cursor>\n"
-    "  agent-pm-linear issue lookup states --full --output states.json\n\n"
+    "  agent-pm-orchestrator issue lookup teams\n"
+    "  agent-pm-orchestrator issue lookup labels --team TASK --query bug\n"
+    "  agent-pm-orchestrator issue lookup milestones --project 'Agent PM' --limit 50\n"
+    "  agent-pm-orchestrator issue lookup users --cursor <next_cursor>\n"
+    "  agent-pm-orchestrator issue lookup states --full --output states.json\n\n"
     "Recovery and next help:\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _READ_HELP = (
     _RULES + "Output: id, identifier, title, url, state, labels, project, milestone,\n"
@@ -178,17 +178,17 @@ _READ_HELP = (
     "  JSON to FILE and print only {identifier, output: FILE's absolute path};\n"
     "  either option alone is a usage error. A failed read writes no file.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue read TASK-1\n"
-    "  agent-pm-linear issue read TASK-1 --full --output TASK-1.json\n\n"
+    "  agent-pm-orchestrator issue read TASK-1\n"
+    "  agent-pm-orchestrator issue read TASK-1 --full --output TASK-1.json\n\n"
     "Recovery and next help:\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 
 _WRITE_RULES = (
     "Prerequisites and effects:\n"
-    "  Writes Linear as the configured harness_key account (Keychain); an issue\n"
-    "  needs no recorded run. Help needs no credentials or services.\n"
+    "  Writes Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
     "  operation, result (changed or unchanged), actor {id, name}%s.\n"
     "  It never echoes what was written or Linear's response. Diagnostics go to\n"
@@ -197,41 +197,41 @@ _WRITE_RULES = (
     "  false, HTTP) or the result is unknown; 2: usage, configuration, Keychain,\n"
     "  or an issue or value that does not resolve: nothing was written.\n"
     "  A timeout or outage during the write leaves the result unknown: check with\n"
-    "  agent-pm-linear issue read ID before running it again; nothing retries.\n\n"
+    "  agent-pm-orchestrator issue read ID before running it again; nothing retries.\n\n"
 )
 _CREATE_HELP = (
     _WRITE_RULES
     % ""
     + "Creates one issue in --team (default: the configured team), then its blocking\n"
-    "  relations. Every value resolves first, as agent-pm-linear issue list --help\n"
+    "  relations. Every value resolves first, as agent-pm-orchestrator issue list --help\n"
     "  describes; one that does not exits 2 with nothing created.\n"
     "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
     "  sent verbatim, minus a leading byte order mark; - reads stdin; blank or\n"
     "  unreadable exits 2.\n"
     "--label VALUE, repeatable: not a group or retired. --project VALUE: the\n"
     "  team's. --milestone VALUE: --project's, which it needs. --parent ID: an issue.\n"
-    "  --assignee VALUE: a user's id, name, email or me (the harness_key account).\n"
-    "  Each one not given stays unset.\n"
+    "  --assignee VALUE: a user's id, name, email or me (the linear.harness_key\n"
+    "  account). Each one not given stays unset.\n"
     f"--state VALUE: a workflow state of the team; default {issue_create.BACKLOG}. A team\n"
     f"  without a state named {issue_create.BACKLOG} exits 2: no other state is taken.\n"
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
     "  repeatable, repeats count once; one issue given to both exits 2.\n"
     "A timeout while creating leaves the result unknown: look for the issue with\n"
-    "  agent-pm-linear issue list --team TEAM --query=TITLE before creating it again.\n"
+    "  agent-pm-orchestrator issue list --team TEAM --query=TITLE before creating it again.\n"
     "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
     "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
     "  with its error), recover and truncated; done and failed are cut before\n"
     "  recover. Run only the recover commands\n"
-    "  (agent-pm-linear issue relation add …), never create again.\n\n"
+    "  (agent-pm-orchestrator issue relation add …), never create again.\n\n"
     "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
-    "  agent-pm-linear issue create --title 'Fix login' --body-file note.md\n"
-    "  agent-pm-linear issue create --title 'Fix login' --body-file - --label bug \\\n"
+    "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md\n"
+    "  agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug \\\n"
     "    --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me \\\n"
     "    --state Todo --blocks TASK-2 --blocked-by TASK-3 < note.md\n\n"
     "Recovery and next help:\n"
-    "  The new issue: agent-pm-linear issue read <identifier>\n"
-    "  Option values: agent-pm-linear issue lookup --help\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  The new issue: agent-pm-orchestrator issue read <identifier>\n"
+    "  Option values: agent-pm-orchestrator issue lookup --help\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _MOVE_HELP = (
     _WRITE_RULES
@@ -242,11 +242,11 @@ _MOVE_HELP = (
     "  holds twice: exit 2 listing the team's states (name and id). Already in\n"
     "  that state: result unchanged, nothing written.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue move TASK-1 --state Done\n"
-    "  agent-pm-linear issue move TASK-1 --state 'In Progress'\n\n"
+    "  agent-pm-orchestrator issue move TASK-1 --state Done\n"
+    "  agent-pm-orchestrator issue move TASK-1 --state 'In Progress'\n\n"
     "Recovery and next help:\n"
-    "  The issue's current state: agent-pm-linear issue read TASK-1\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  The issue's current state: agent-pm-orchestrator issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 _COMMENT_HELP = (
@@ -258,11 +258,11 @@ _COMMENT_HELP = (
     "  - reads stdin. Blank, unreadable or non-UTF-8, or --body-file given twice:\n"
     "  exit 2 before anything is written. Each run posts a new top-level comment.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue comment TASK-1 --body-file note.md\n"
-    "  agent-pm-linear issue comment TASK-1 --body-file - < note.md\n\n"
+    "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
+    "  agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md\n\n"
     "Recovery and next help:\n"
-    "  Whether a comment landed: agent-pm-linear issue read TASK-1\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  Whether a comment landed: agent-pm-orchestrator issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 _ARCHIVE_HELP = (
@@ -281,11 +281,11 @@ _ARCHIVE_HELP = (
     "  bytes, list items drop from the end, each such list named in truncated.\n"
     "  Exit 0 whatever result says.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue archive TASK-1 --dry-run\n"
-    "  agent-pm-linear issue archive TASK-1\n\n"
+    "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
+    "  agent-pm-orchestrator issue archive TASK-1\n\n"
     "Recovery and next help:\n"
-    "  An unfinished issue: agent-pm-linear issue move TASK-1 --state Done\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  An unfinished issue: agent-pm-orchestrator issue move TASK-1 --state Done\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 _RELATION_HELP = (
@@ -299,14 +299,14 @@ _RELATION_HELP = (
     "  reverse edge and relations of other types (related, duplicate) between\n"
     "  the two stay as they are. remove deletes every record of the edge; one\n"
     "  failing after others went exits 1 naming the deleted ids: check with\n"
-    "  agent-pm-linear issue read ID before running it again.\n\n"
+    "  agent-pm-orchestrator issue read ID before running it again.\n\n"
     "Example (configured Linear access, TASK-1 and TASK-2):\n"
-    "  agent-pm-linear issue relation add TASK-1 --blocks TASK-2\n"
-    "  agent-pm-linear issue relation remove TASK-1 --blocks TASK-2\n"
-    "  agent-pm-linear issue relation add TASK-2 --blocked-by TASK-1\n\n"
+    "  agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2\n"
+    "  agent-pm-orchestrator issue relation remove TASK-1 --blocks TASK-2\n"
+    "  agent-pm-orchestrator issue relation add TASK-2 --blocked-by TASK-1\n\n"
     "Recovery and next help:\n"
-    "  The issue's relations (blocks, blocked_by): agent-pm-linear issue read TASK-1\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  The issue's relations (blocks, blocked_by): agent-pm-orchestrator issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 _SWAP_HELP = (
@@ -321,12 +321,12 @@ _SWAP_HELP = (
     "  Refused (exit 1, nothing written): the issue carries neither, or NEW is in\n"
     "  a label group the issue already holds another label of.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-linear issue label swap TASK-1 --from todo --to doing\n"
-    "  agent-pm-linear issue label swap TASK-1 --from bug --to feature\n\n"
+    "  agent-pm-orchestrator issue label swap TASK-1 --from todo --to doing\n"
+    "  agent-pm-orchestrator issue label swap TASK-1 --from bug --to feature\n\n"
     "Recovery and next help:\n"
-    "  The issue's labels: agent-pm-linear issue read TASK-1\n"
-    "  Label names and ids: agent-pm-linear issue lookup labels --team TASK\n"
-    "  Configuration and command discovery: agent-pm-linear --help"
+    "  The issue's labels: agent-pm-orchestrator issue read TASK-1\n"
+    "  Label names and ids: agent-pm-orchestrator issue lookup labels --team TASK\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
 
@@ -690,7 +690,7 @@ def _run(gql, args, team_id, body):
             issue_read.compact(view),
             (("comments", "labels", "blocks", "blocked_by", "children"),),
             TEXTS,
-            f"agent-pm-linear issue read {view['identifier']} {FULL}",
+            f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
         )
     source = (issue_list if args.command == "list" else issue_lookup).source(gql, args, team_id)
     if not args.full:
@@ -737,7 +737,9 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, error)
         return USAGE
     except (subprocess.SubprocessError, OSError, KeychainError) as error:
-        diagnose(err, f"harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}")
+        diagnose(
+            err, f"linear.harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}"
+        )
         return USAGE
     except GraphQLErrors as error:
         diagnose(err, "linear api error: " + "; ".join(messages(error.errors)))

@@ -88,7 +88,7 @@ class State(StrEnum):
 
 
 class Resource(StrEnum):
-    """What agent-pm-linear issue lookup lists."""
+    """What agent-pm-orchestrator issue lookup lists."""
 
     TEAMS = "teams"
     STATES = "states"

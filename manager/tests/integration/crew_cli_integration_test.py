@@ -316,7 +316,7 @@ class Commands(Case):
         output = self.succeeded("attach", "--manager", "mgr")
         resume = shlex.join(("agent-pm-crew", "resume", "--manager", "mgr", "needs resume"))
         self.assertEqual(output.count(resume), 1)
-        self.assertNotIn("agent-pm-linear resume", output)
+        self.assertNotIn("agent-pm-orchestrator resume", output)
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
         self.assertIn(

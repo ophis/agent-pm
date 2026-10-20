@@ -1,5 +1,5 @@
 """A Linear issue's run, owned and recovered through its recorded Delegate implementation; its
-harness calls `agent-pm-linear writeback --issue ID --workdir <workdir>` on each event.
+harness calls `agent-pm-orchestrator writeback --issue ID --workdir <workdir>` on each event.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class LinearRun:
                 events=events,
             ),
             display=display,
-            callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
+            callback=["agent-pm-orchestrator", "writeback", "--issue", issue, "--workdir", workdir],
             overlays=(cfg.core,) if tier is None else (cfg.core, {"roles": {role: {"tier": tier}}}),
         )
 
@@ -111,8 +111,8 @@ class LinearRun:
             outer={
                 "kind": "pipeline",
                 "name": self.issue,
-                "ctl": ("agent-pm-linear",),
-                "resume": ("agent-pm-linear", "resume", self.issue),
+                "ctl": ("agent-pm-orchestrator",),
+                "resume": ("agent-pm-orchestrator", "resume", self.issue),
             }
         )
 

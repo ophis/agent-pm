@@ -11,7 +11,7 @@
 	<string>com.ophis.agent-pm.promote</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/francis/playground/agent-pm/bin/agent-pm-linear</string>
+		<string>/Users/francis/playground/agent-pm/bin/agent-pm-orchestrator</string>
 		<string>promote</string>
 	</array>
 	<key>StandardErrorPath</key>

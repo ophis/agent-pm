@@ -198,9 +198,9 @@ ENG_RUN = [
 
 OUTER = (
     HEADER
-    + 'human_members = ["Me@X.com"]\n'
+    + 'linear.human_members = ["Me@X.com"]\n'
     + CONFIG.removeprefix(HEADER)
-    + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
+    + f'[linear.project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
 )
 
 
@@ -714,7 +714,14 @@ class OuterBase(TickBase):
             options,
             {
                 "display": None,
-                "callback": ["agent-pm-linear", "writeback", "--issue", ID, "--workdir", self.rd],
+                "callback": [
+                    "agent-pm-orchestrator",
+                    "writeback",
+                    "--issue",
+                    ID,
+                    "--workdir",
+                    self.rd,
+                ],
                 "overlays": (self.cfg().core,)
                 + (() if tier is None else ({"roles": {role: {"tier": tier}}},)),
             },

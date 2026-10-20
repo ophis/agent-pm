@@ -61,12 +61,12 @@ dir = "Product Design/"
 def local(work):
     return (
         HEADER
-        + 'human_members = ["Me@X.com"]\n'
+        + 'linear.human_members = ["Me@X.com"]\n'
         + f'work_dir = "{work}"\n'
         + role("researcher")
         + role("pm")
         + role("engineer")
-        + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
+        + f'[linear.project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
     )
 
 

@@ -64,7 +64,7 @@ def spans(source: str) -> list[list[list[str]]]:
                 commands.append(command[: at + 1])
                 prefix = {
                     "worker": ["agent-pm-session", "start", key],
-                    "issue": ["agent-pm-linear", "router", "--issue", key, "--tui"],
+                    "issue": ["agent-pm-orchestrator", "router", "--issue", key, "--tui"],
                     "role": ["agent-pm-delegate", "run", "--role", key, "--detach"],
                 }[verb]
                 commands.append([*prefix, *tail])

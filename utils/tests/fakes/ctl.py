@@ -1,4 +1,4 @@
-"""The fake ctl, a fake Record's ctl and resume command, installed as agent-pm-linear (a ctl
+"""The fake ctl, a fake Record's ctl and resume command, installed as agent-pm-orchestrator (a ctl
 Record accepts) and run as `python3 -P ctl.py <dir> <sub> …`:
 status, show (exit 1: one cannot show) and close answer for the Records on stdin (a bad line:
 exit 2) from <dir>/sessions.json (name → alive, state, outcome, showable, hidden, display; an
@@ -17,7 +17,7 @@ import uuid
 from agent_pm.utils import files
 from agent_pm.utils.record import Record, RecordError, Status
 
-COMMAND = "agent-pm-linear"
+COMMAND = "agent-pm-orchestrator"
 SCRIPT = os.path.abspath(__file__)
 PYTHONPATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "src")
 SESSIONS = "sessions.json"

@@ -1,5 +1,5 @@
 """orchestrator/skills/linear/SKILL.md: every issue command it shows is one
-agent-pm-linear issue accepts, it shows every one, and it pre-approves none.
+agent-pm-orchestrator issue accepts, it shows every one, and it pre-approves none.
 """
 
 import contextlib
@@ -40,7 +40,7 @@ class LinearSkill(Case):
     def test_it_states_the_relation_direction_partial_create_and_archive_rules(self):
         text = body()
         for phrase in (
-            "--blocks B` is `agent-pm-linear issue relation add B --blocked-by A",
+            "--blocks B` is `agent-pm-orchestrator issue relation add B --blocked-by A",
             "recover",
             "never run `create` again",
             "--full --output",

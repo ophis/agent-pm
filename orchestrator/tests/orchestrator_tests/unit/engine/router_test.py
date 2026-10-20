@@ -103,19 +103,19 @@ CONFIG_ENG2 = (
     + OVERLAY
 )
 
-HUMANS = 'human_members = ["me@x.com"]\n'
+HUMANS = 'linear.human_members = ["me@x.com"]\n'
 
 FULL = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"]
 
 SESSIONS = []
 
 
-TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
+TASK_LABELS = f'[linear.task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
 AGENT_GROUP = "00000000-0000-4000-8000-000000000081"
 AGENT_A = "00000000-0000-4000-8000-000000000082"
 AGENT_B = "00000000-0000-4000-8000-000000000083"
-AGENT_TOP = f'agent_label_group = "{AGENT_GROUP}"\n'
-AGENT_LABELS = f'[agent_labels]\na = "{AGENT_A}"\nb = "{AGENT_B}"\n'
+AGENT_TOP = f'linear.agent_label_group = "{AGENT_GROUP}"\n'
+AGENT_LABELS = f'[linear.agent_labels]\na = "{AGENT_A}"\nb = "{AGENT_B}"\n'
 
 
 def reading(five=10.0, weekly=10.0):
@@ -797,7 +797,7 @@ class RouterEntry(OuterBase):
         self.assertEqual(self.detached(), self.expected(sid=self.last_run()[2]))
 
     def test_a_task_label_reaches_the_run_as_its_task(self):
-        self.write_config(OUTER + f'[task_labels]\nlight-build = "{LIGHT}"\n')
+        self.write_config(OUTER + f'[linear.task_labels]\nlight-build = "{LIGHT}"\n')
         self.todo["labels"] = [label("Light Build", LIGHT)]
         self.assertEqual(self.entry("--issue", ID), 0)
         sid = self.last_run()[2]
@@ -1238,7 +1238,7 @@ class AttendedEntry(OuterBase):
                 )
                 self.assertEqual(
                     (record.ctl, record.resume),
-                    (("agent-pm-linear",), ("agent-pm-linear", "resume", ID)),
+                    (("agent-pm-orchestrator",), ("agent-pm-orchestrator", "resume", ID)),
                 )
                 harness = f"agent-pm-engineer-{ID}"
                 self.assertEqual(
@@ -1368,10 +1368,18 @@ class AgentLabels(Base):
                 [label("One", AGENT_A, AGENT_GROUP), label("Two", AGENT_B, AGENT_GROUP)],
                 ("One", "Two"),
             ),
-            ([label("Unmapped", STRAY, AGENT_GROUP)], ("Unmapped", "[agent_labels]")),
+            (
+                [label("Unmapped", STRAY, AGENT_GROUP)],
+                ("Unmapped", "[orchestrator.linear.agent_labels]"),
+            ),
             (
                 [label("Unmapped", STRAY, AGENT_GROUP), label("Bad task", STRAY)],
-                ("Unmapped", "Bad task", "[agent_labels]", "[task_labels]"),
+                (
+                    "Unmapped",
+                    "Bad task",
+                    "[orchestrator.linear.agent_labels]",
+                    "[orchestrator.linear.task_labels]",
+                ),
             ),
         ):
             with self.subTest(labels=labels):
@@ -1494,6 +1502,7 @@ class LabelClients(TickBase):
         (comment,) = found["comments"]
         self.assertIn('Agent label selected client "a"', comment)
         self.assertIn("a: not installed", comment)
+        self.assertIn("Fix [orchestrator.linear.agent_labels] or the client", comment)
         self.assertNotIn("hidden details", comment)
         self.assertEqual(self.start.launches, [])
 
@@ -1568,7 +1577,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
+            "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
             "[--tui [--display D] [--events FILE]] | --brake ROLE",
         )
         for flag in ("--gate", "--split", "--manager"):
@@ -2475,7 +2484,7 @@ class TaskSelection(TaskLabelsScenario):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in ~/.agent-pm/config.local.toml's [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo."
         cases = (
             ([], (None, None)),
             (outside, (None, None)),
@@ -2715,7 +2724,7 @@ class ScheduledTaskSelection(TickBase):
         fake.group = {"isGroup": False}
         self.assertEqual(self.tick(fake), 1)
         self.assertIn(
-            f"config-error reason=orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
+            f"config-error reason=orchestrator/config.toml: linear.task_label_group {TASK_GROUP} is not a label group",
             self.said(),
         )
         self.assertEqual(
@@ -4180,7 +4189,7 @@ class RunPlanning(Base):
         for members in ([], ["me@x.com", "b@x.com"]):
             with self.subTest(members=members):
                 self.write_config(
-                    (f"human_members = {json.dumps(members)}\n" if members else "") + CONFIG
+                    (f"linear.human_members = {json.dumps(members)}\n" if members else "") + CONFIG
                 )
                 fake = FakeLinear(
                     [
@@ -4209,7 +4218,7 @@ class RunPlanning(Base):
                 self.assertEqual(fake.mutations[-2][1]["s"], STATES["In Review"])
 
     def test_unknown_human_fails_loud(self):
-        self.write_config('human_members = ["nobody@x.com"]\n' + CONFIG)
+        self.write_config('linear.human_members = ["nobody@x.com"]\n' + CONFIG)
         with self.assertRaises(LinearError) as e:
             self.plan(FakeLinear([]))
         self.assertIn("nobody@x.com", str(e.exception))

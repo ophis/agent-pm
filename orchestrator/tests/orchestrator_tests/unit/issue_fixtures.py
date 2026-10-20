@@ -1,4 +1,4 @@
-"""Linear issue nodes, as `agent-pm-linear issue read`, `move`, `comment`, `archive`, `relation` and
+"""Linear issue nodes, as `agent-pm-orchestrator issue read`, `move`, `comment`, `archive`, `relation` and
 `label swap` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
 by its root field; IssueCase runs issue.main against a test configuration.
 """
@@ -184,7 +184,7 @@ class Routes:
 
 
 def issue_row(ident, team_id=TEAM, **fields):
-    """An issue node as agent-pm-linear issue list queries it."""
+    """An issue node as agent-pm-orchestrator issue list queries it."""
     return {
         "id": f"id-{ident}",
         "identifier": ident,
@@ -210,7 +210,7 @@ def team(key="TASK", states=STATES, *, more=False, cursor=None):
 
 
 def write_issue(ident="TASK-2", *, state="s-todo", team_node=None):
-    """An issue as `agent-pm-linear issue move` and `comment` read it."""
+    """An issue as `agent-pm-orchestrator issue move` and `comment` read it."""
     return {
         "id": f"id-{ident}",
         "identifier": ident,
@@ -254,7 +254,7 @@ class WriteGql:
 
 
 def tree(ident="TASK-1", kind="completed", *children, archived=None):
-    """An issue as `agent-pm-linear issue archive` reads it, its unarchived sub-issues children."""
+    """An issue as `agent-pm-orchestrator issue archive` reads it, its unarchived sub-issues children."""
     return {
         "id": f"id-{ident}",
         "identifier": ident,
@@ -358,7 +358,7 @@ class CreateGql(Routes):
 class RelationGql:
     """A board of issues by identifier, each one's id id-<identifier> unless `ids` names it, and its
     relations, records [relation id, type, from identifier, to identifier]: answers
-    `agent-pm-linear issue relation`'s read with VIEWER and the issue's side in pages of
+    `agent-pm-orchestrator issue relation`'s read with VIEWER and the issue's side in pages of
     issue_read.PAGE (cursor: the next offset), an issue reference read, and each mutation by
     applying it to relations, or with `result`, raised when an exception. Records every (query,
     variables) call.
@@ -480,7 +480,7 @@ def _holds(node, match):
 
 class LabelGql:
     """The workspace's `catalog` of labels (label() nodes) and one issue, TASK-2 of team TEAM,
-    carrying the labels whose ids are `carried`: answers `agent-pm-linear issue label swap`'s read
+    carrying the labels whose ids are `carried`: answers `agent-pm-orchestrator issue label swap`'s read
     with VIEWER and the issue's labels in pages of issue_read.PAGE (cursor: the next offset), each
     label reference read from the catalog, and the mutation by applying it to carried, or with
     `result`, raised when an exception. Records every (query, variables) call.

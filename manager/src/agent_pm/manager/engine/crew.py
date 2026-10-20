@@ -270,7 +270,7 @@ class Crew:
             )
         elif kind == "issue":
             name = key
-            command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)
+            command = ("agent-pm-orchestrator", "router", "--issue", key, "--tui", *argv)
         elif kind == "role":
             name = name if name is not None else f"{key}-{sid[:8]}"
             command = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)

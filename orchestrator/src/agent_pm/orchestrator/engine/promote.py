@@ -32,7 +32,7 @@ class Promotion:
 
 HELP = """Promote Handoff issues to their configured next role, then prune finished work.
 
-Usage: agent-pm-linear promote [--dry-run] [--now]
+Usage: agent-pm-orchestrator promote [--dry-run] [--now]
 
 Arguments and options:
   --dry-run   Print the plan; no board changes, session closes or file deletion.
@@ -44,7 +44,8 @@ Arguments and options:
 
 Prerequisites and effects:
   Requires Python 3.11+, configured Linear/Delegate settings, Linear access and
-  the harness_key Keychain service. Configuration: agent-pm-linear --help
+  the linear.harness_key Keychain service.
+  Configuration: agent-pm-orchestrator --help
   For each Handoff issue in a project, assigned to a configured role with next:
   create that next role's issue in the same project, assigned to its account,
   in Todo with source links and human instructions; relate the issues and move
@@ -53,7 +54,7 @@ Prerequisites and effects:
   Every tick also prunes: close finished runs, delete agent files and archive
   finished issues (Done ones of pm/engineer only). This includes uncommitted
   agent work. Cleanup ages, safeguards and retention:
-  agent-pm-linear prune --help
+  agent-pm-orchestrator prune --help
   A prune failure is logged without breaking Handoff work.
   Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
   plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear
@@ -62,15 +63,15 @@ Prerequisites and effects:
   In Review with a comment.
 
 Example (configured Linear access and Handoff issues):
-  agent-pm-linear promote --dry-run --now
+  agent-pm-orchestrator promote --dry-run --now
   Preview promotion and cleanup without waiting for Handoff maturity.
 
 Recovery and next help:
-  Review the plan before executing: agent-pm-linear promote
+  Review the plan before executing: agent-pm-orchestrator promote
   Inspect logged Handoff errors and fix the reported configuration, credentials
   or missing human instructions before retrying.
-  Cleanup details: agent-pm-linear prune --help
-  Command discovery: agent-pm-linear --help
+  Cleanup details: agent-pm-orchestrator prune --help
+  Command discovery: agent-pm-orchestrator --help
 """
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)

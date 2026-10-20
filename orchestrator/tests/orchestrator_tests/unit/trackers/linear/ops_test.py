@@ -44,7 +44,7 @@ class RoleIds(Case):
         self.assertEqual(
             str(cm.exception),
             (
-                "orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear"
+                "orchestrator/config.toml [linear.roles.engineer]: account 'engineer@agents.test' not found in Linear"
             ),
         )
 
@@ -60,7 +60,7 @@ class Humans(Case):
             ops.humans(gql, SimpleNamespace(human_members=("a@b.c", "x@y.z")))
         self.assertEqual(
             str(cm.exception),
-            "orchestrator/config.toml: human_members not found in Linear: x@y.z",
+            "orchestrator/config.toml: linear.human_members not found in Linear: x@y.z",
         )
 
 
@@ -98,9 +98,9 @@ class TeamCheck(Case):
     def test_team_not_found_or_states_outside_team(self):
         other = [i for k, i in STATES.items() if k not in ("handoff", "done")]
         cases = {
-            f"team {TEAM} not found in Linear": [],
+            f"linear.team {TEAM} not found in Linear": [],
             (
-                f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}, done {STATES['done']}"
+                f"[linear.states] not workflow states of team 'Team': handoff {STATES['handoff']}, done {STATES['done']}"
             ): [team_node(other)],
         }
         for message, nodes in cases.items():
@@ -144,7 +144,7 @@ class TaskGroupCheck(Case):
 
     def test_fails(self):
         error = "linear api error: [{'message': 'Entity not found: IssueLabel'}]"
-        not_labels = f"[task_labels] not labels of task_label_group {TASK_GROUP}: "
+        not_labels = f"[linear.task_labels] not labels of linear.task_label_group {TASK_GROUP}: "
         cases = [
             (self.gql(self.group(LABEL1)), self.LABELS, not_labels + f"deep-research {LABEL2}"),
             (
@@ -155,14 +155,14 @@ class TaskGroupCheck(Case):
             (
                 self.gql(error=error),
                 self.LABELS,
-                f"task_label_group {TASK_GROUP} not found in Linear: {error}",
+                f"linear.task_label_group {TASK_GROUP} not found in Linear: {error}",
             ),
             (
                 self.gql(
                     {"isGroup": False, "children": {"nodes": [{"id": LABEL1}, {"id": LABEL2}]}}
                 ),
                 self.LABELS,
-                f"task_label_group {TASK_GROUP} is not a label group",
+                f"linear.task_label_group {TASK_GROUP} is not a label group",
             ),
         ]
         for gql, labels, message in cases:

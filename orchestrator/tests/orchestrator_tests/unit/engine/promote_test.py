@@ -460,7 +460,7 @@ class HandoffPromotion(Base):
         self.ready()
         self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
         self.assertEqual(self.run_main(), 1)
-        self.assertIn("[states] not workflow states of team 'Team': done", self.out)
+        self.assertIn("[linear.states] not workflow states of team 'Team': done", self.out)
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):

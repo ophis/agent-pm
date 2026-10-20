@@ -38,7 +38,7 @@ OTHER = {"email": "other@x.com", "name": "Other"}
 
 CONFIG = (
     HEADER
-    + 'human_members = ["me@x.com"]\n'
+    + 'linear.human_members = ["me@x.com"]\n'
     + role_table("researcher", 'next = "pm"')
     + role_table("pm")
     + role_table("engineer")

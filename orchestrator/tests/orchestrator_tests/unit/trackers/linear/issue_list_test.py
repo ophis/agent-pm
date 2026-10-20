@@ -1,4 +1,4 @@
-"""agent-pm-linear issue list through main: one team's issues, every filter at once, updated first,
+"""agent-pm-orchestrator issue list through main: one team's issues, every filter at once, updated first,
 archived only on request, each item only its fields.
 """
 

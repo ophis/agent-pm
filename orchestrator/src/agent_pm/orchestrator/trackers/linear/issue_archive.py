@@ -1,4 +1,4 @@
-"""agent-pm-linear issue archive: Linear archives an issue's sub-issues with it, so archive only when the
+"""agent-pm-orchestrator issue archive: Linear archives an issue's sub-issues with it, so archive only when the
 issue and every unarchived descendant are finished, read over every children page at every level
 first; a failed read raises before anything is written.
 """
@@ -117,5 +117,5 @@ def _refusal(ident, unfinished, descendants):
     return (
         f"archive {ident} refused, nothing archived: {len(unfinished)} unfinished of "
         f"{descendants + 1} (it and its unarchived sub-issues): {shown}{more}; complete or cancel "
-        f"each first (agent-pm-linear issue archive {ident} --dry-run lists them)"
+        f"each first (agent-pm-orchestrator issue archive {ident} --dry-run lists them)"
     )

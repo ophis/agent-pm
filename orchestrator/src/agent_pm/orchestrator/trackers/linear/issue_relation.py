@@ -1,4 +1,4 @@
-"""agent-pm-linear issue relation: add or remove one blocking edge, found from the given issue's own
+"""agent-pm-orchestrator issue relation: add or remove one blocking edge, found from the given issue's own
 side, so `A --blocks B` and `B --blocked-by A` name the same edge; any other relation stays.
 """
 
@@ -83,7 +83,7 @@ def _remove(gql, operation, ident, ids):
             raise kind(
                 f"{operation} {ident}: deleted {n} of {len(ids)} records of the edge "
                 f"({', '.join(ids[:n])}), then {record} failed: {cause}; check with "
-                f"agent-pm-linear issue read {ident} before running it again"
+                f"agent-pm-orchestrator issue read {ident} before running it again"
             ) from None
 
 

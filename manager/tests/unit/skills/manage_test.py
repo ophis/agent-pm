@@ -135,7 +135,7 @@ class Manage(Case):
         self.assertIn(issues, board)
         for literal in (
             "`/agent-pm:linear`",
-            "`agent-pm-linear issue`",
+            "`agent-pm-orchestrator issue`",
             "never a hand-written query",
         ):
             self.assertIn(literal, issues)

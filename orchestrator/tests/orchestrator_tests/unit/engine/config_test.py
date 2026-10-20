@@ -5,6 +5,7 @@ import dataclasses
 import io
 import json
 import os
+import plistlib
 import tempfile
 import tomllib
 from importlib.resources import files
@@ -40,7 +41,7 @@ AGENT_GROUP = "00000000-0000-4000-8000-000000000023"
 P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
 
 
-STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
+STATES_LINE = HEADER[HEADER.index("linear.states = ") : HEADER.index("linear.task_label_group")]
 
 
 def missing(keys):
@@ -136,19 +137,12 @@ class CatalogDelegate(FakeDelegate):
         )
 
 
-DEPLOYMENT = {
-    "team",
-    "states",
-    "human_members",
-    "harness_key",
-    "task_label_group",
-    "task_labels",
-    "task_tiers",
-    "agent_label_group",
-    "agent_labels",
-    "project_repos",
-    "local_clones",
-    "work_dir",
+LINEAR_DEFAULTS = {
+    **dict.fromkeys(("team", "harness_key", "task_label_group", "agent_label_group"), ""),
+    "states": dict.fromkeys(State, ""),
+    "human_members": [],
+    **dict.fromkeys(("task_labels", "agent_labels", "project_repos"), {}),
+    "roles": dict.fromkeys(("researcher", "pm", "engineer"), {"account": "", "key": ""}),
 }
 
 
@@ -168,12 +162,12 @@ class ConfigurationLoading(ConfigFile, Case):
         )
 
     def test_rejected(self):
-        body = BASE[BASE.index("[roles") :]
-        group = "task_label_group must be a Linear label group id (UUID): "
-        label = BASE + f'[task_labels]\nlight-research = "{LABEL1}"\n'
+        body = BASE[BASE.index("[linear.roles") :]
+        group = "linear.task_label_group must be a Linear label group id (UUID): "
+        label = BASE + f'[linear.task_labels]\nlight-research = "{LABEL1}"\n'
         upper = "ABCDEF00-0000-4000-8000-000000000021"
         solo = role("solo")
-        x = BASE + "[roles.x]\n"
+        x = BASE + "[roles.x]\n[linear.roles.x]\n"
         cases = [
             (
                 BASE + role("a", 'next = "b"') + role("b", 'next = "a"'),
@@ -198,22 +192,39 @@ class ConfigurationLoading(ConfigFile, Case):
                 BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")),
                 "[roles.solo] has unknown keys: read_only, tasks",
             ),
-            (x + 'key = "k-x"\n', missing("roles.x.account")),
-            (x + 'account = ""\nkey = "k-x"\n', missing("roles.x.account")),
+            (BASE + "[roles.x]\n", missing("linear.roles.x.account, linear.roles.x.key")),
+            (x + 'key = "k-x"\n', missing("linear.roles.x.account")),
+            (x + 'account = ""\nkey = "k-x"\n', missing("linear.roles.x.account")),
             (
                 x + 'account = 5\nkey = "k-x"\n',
-                "[roles.x] account must be the role's Linear email: 5",
+                "[linear.roles.x] account must be the role's Linear email: 5",
             ),
-            (x + 'account = "x@agents.test"\n', missing("roles.x.key")),
+            (x + 'account = "x@agents.test"\n', missing("linear.roles.x.key")),
             (
-                BASE + "[roles.x]\n[roles.y]\nkey = 'k-y'\n",
-                missing("roles.x.account, roles.y.account, roles.x.key"),
+                BASE + "[roles.x]\n[roles.y]\n[linear.roles.y]\nkey = 'k-y'\n",
+                missing("linear.roles.y.account, linear.roles.x.account, linear.roles.x.key"),
             ),
-            (x + 'account = "x@agents.test"\nkey = ""\n', missing("roles.x.key")),
+            (x + 'account = "x@agents.test"\nkey = ""\n', missing("linear.roles.x.key")),
             (
                 x + 'account = "x@agents.test"\nkey = ["k"]\n',
-                "[roles.x] key must be a Keychain service name: ['k']",
+                "[linear.roles.x] key must be a Keychain service name: ['k']",
             ),
+            (
+                x + 'account = "x@agents.test"\nkey = "k-x"\nmax_runs = 2\n',
+                "[linear.roles.x] has unknown keys: max_runs",
+            ),
+            (
+                BASE + '[linear.roles.ghost]\naccount = "g@agents.test"\nkey = "k-g"\n',
+                "[linear.roles.ghost] names no [roles.ghost]",
+            ),
+            (
+                BASE.replace(
+                    "[roles.solo]\n", '[roles.solo]\naccount = "s@agents.test"\nkey = "k"\n'
+                ),
+                "[roles.solo] has unknown keys: account, key",
+            ),
+            ("linear.typo = 1\nlinear.other = 2\n" + BASE, "unknown keys in [linear]: other, typo"),
+            (HEADER + "linear.roles = 5\n[roles.x]\n", "[linear.roles] must be a table"),
             *[
                 (
                     BASE + role("x", f"max_runs = {value}"),
@@ -227,45 +238,58 @@ class ConfigurationLoading(ConfigFile, Case):
                     "1.5": "1.5",
                 }.items()
             ],
-            (BASE.replace('harness_key = "linear-api-key"\n', ""), missing("harness_key")),
+            (
+                BASE.replace('linear.harness_key = "linear-api-key"\n', ""),
+                missing("linear.harness_key"),
+            ),
             (
                 BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"),
-                "harness_key must be a Keychain service name: 1",
+                "linear.harness_key must be a Keychain service name: 1",
             ),
             (
                 BASE.replace(TEAM, "Frank's Agents"),
-                'team must be a Linear team id (UUID): "Frank\'s Agents"',
+                'linear.team must be a Linear team id (UUID): "Frank\'s Agents"',
             ),
-            (BASE.replace(f'"{TEAM}"', "5"), "team must be a Linear team id (UUID): 5"),
-            (BASE.replace(f'team = "{TEAM}"\n', ""), missing("team")),
+            (BASE.replace(f'"{TEAM}"', "5"), "linear.team must be a Linear team id (UUID): 5"),
+            (BASE.replace(f'linear.team = "{TEAM}"\n', ""), missing("linear.team")),
             (
                 body,
                 missing(
-                    "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
-                    "states.handoff, states.done, states.canceled"
+                    "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
+                    "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
+                    "linear.states.done, linear.states.canceled"
                 ),
             ),
             (
                 BASE.replace(STATES_LINE, ""),
                 missing(
-                    "states.todo, states.in_progress, states.in_review, states.handoff, "
-                    "states.done, states.canceled"
+                    "linear.states.todo, linear.states.in_progress, linear.states.in_review, "
+                    "linear.states.handoff, linear.states.done, linear.states.canceled"
                 ),
             ),
             (
-                BASE.replace(STATES_LINE, 'states = "x"\n'),
+                BASE.replace(STATES_LINE, 'linear.states = "x"\n'),
                 missing(
-                    "states.todo, states.in_progress, states.in_review, "
-                    "states.handoff, states.done, states.canceled"
+                    "linear.states.todo, linear.states.in_progress, linear.states.in_review, "
+                    "linear.states.handoff, linear.states.done, linear.states.canceled"
                 ),
             ),
-            (BASE.replace(f', canceled = "{STATES["canceled"]}"', ""), missing("states.canceled")),
-            (BASE.replace(" }\n", ', backlog = "x" }\n', 1), "[states] has unknown keys: backlog"),
+            (
+                BASE.replace(f', canceled = "{STATES["canceled"]}"', ""),
+                missing("linear.states.canceled"),
+            ),
+            (
+                BASE.replace(" }\n", ', backlog = "x" }\n', 1),
+                "[linear.states] has unknown keys: backlog",
+            ),
             (
                 BASE.replace(STATES["done"], "Done"),
-                "states.done must be a Linear workflow state id (UUID): 'Done'",
+                "linear.states.done must be a Linear workflow state id (UUID): 'Done'",
             ),
-            (BASE.replace(f'task_label_group = "{TASK_GROUP}"\n', ""), missing("task_label_group")),
+            (
+                BASE.replace(f'linear.task_label_group = "{TASK_GROUP}"\n', ""),
+                missing("linear.task_label_group"),
+            ),
             (BASE.replace(TASK_GROUP, "not-a-uuid"), group + "'not-a-uuid'"),
             (
                 BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"),
@@ -274,15 +298,15 @@ class ConfigurationLoading(ConfigFile, Case):
             (BASE.replace(f'"{TASK_GROUP}"', "5"), group + "5"),
             *[
                 (
-                    HEADER + f"task_labels = {value}\n" + body,
-                    'task_labels must be a table of <task> = "<Linear label id>"',
+                    HEADER + f"linear.task_labels = {value}\n" + body,
+                    'linear.task_labels must be a table of <task> = "<Linear label id>"',
                 )
                 for value in ('"x"', "[1]", "5")
             ],
             *[
                 (
                     label + f"deep-research = {value}\n",
-                    f"task_labels.deep-research must be a Linear label id (UUID): {shown}",
+                    f"linear.task_labels.deep-research must be a Linear label id (UUID): {shown}",
                 )
                 for shown, value in {
                     "'Light Research'": '"Light Research"',
@@ -296,13 +320,14 @@ class ConfigurationLoading(ConfigFile, Case):
             (
                 label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
                 (
-                    f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}"
+                    f"linear.task_labels.light-research and linear.task_labels.deep-research have the "
+                    f"same label id {LABEL1}"
                 ),
             ),
             ('logs_dir = "/x"\n' + BASE, "unknown keys: logs_dir"),
             (
-                HEADER + 'project_repos = "x"\n' + body,
-                'project_repos must be a table of "<Linear project id>" = "<owner>/<name>"',
+                HEADER + 'linear.project_repos = "x"\n' + body,
+                'linear.project_repos must be a table of "<Linear project id>" = "<owner>/<name>"',
             ),
             *[
                 (
@@ -327,16 +352,18 @@ class ConfigurationLoading(ConfigFile, Case):
             ),
             (
                 PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
-                "[roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
+                "[linear.roles.pm] key 'linear-api-key-researcher' is also [linear.roles.researcher]'s",
             ),
             (
                 PIPELINE.replace("linear-api-key-engineer", "linear-api-key"),
-                "[roles.engineer] key 'linear-api-key' is harness_key",
+                "[linear.roles.engineer] key 'linear-api-key' is linear.harness_key",
             ),
             *[
                 (
-                    text + f'[task_labels]\n{task} = "{LABEL1}"\n',
-                    (f"task_labels.{task} is not a task of a role in orchestrator/config.toml"),
+                    text + f'[linear.task_labels]\n{task} = "{LABEL1}"\n',
+                    (
+                        f"linear.task_labels.{task} is not a task of a role in orchestrator/config.toml"
+                    ),
                 )
                 for task, text in (
                     ("echo", PIPELINE),
@@ -351,7 +378,7 @@ class ConfigurationLoading(ConfigFile, Case):
 
     def test_bad_table_entry_rejected(self):
         cases = [
-            ("project_repos", key, value)
+            ("linear.project_repos", key, value)
             for key, value in (
                 ("not-a-uuid", "ophis/x"),
                 (P1.upper(), "ophis/x"),
@@ -418,10 +445,13 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         self.assertEqual((cfg.roles["pm"].run.tier, cfg.roles["researcher"].run.tier), (1, 2))
         cfg = self.load(
-            PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n'
+            PIPELINE
+            + f'[linear.task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n'
         )
         self.assertEqual(cfg.task_labels, {"light-research": LABEL1, "deep-research": LABEL2})
-        cfg = self.load(PIPELINE + f'[project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n')
+        cfg = self.load(
+            PIPELINE + f'[linear.project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n'
+        )
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
 
     def test_task_tiers(self):
@@ -433,7 +463,7 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_task_tiers_rejected(self):
         cases = [
             (
-                PIPELINE.replace("[roles.", "task_tiers = 3\n[roles.", 1),
+                "task_tiers = 3\n" + PIPELINE,
                 "task_tiers must be a table of <task> = <tier 1-4>",
             ),
             *[
@@ -481,7 +511,7 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_client_max_runs_rejected(self):
         cases = [
             (
-                PIPELINE.replace("[roles.", "client_max_runs = 1\n[roles.", 1),
+                "client_max_runs = 1\n" + PIPELINE,
                 "client_max_runs must be a table of <client> = <whole number >= 1>",
             ),
             *[
@@ -505,10 +535,10 @@ class ConfigurationLoading(ConfigFile, Case):
     def test_agent_labels(self):
         for top, table, group, labels in (
             ("", "", "", {}),
-            ('agent_label_group = ""\n', "[agent_labels]\n", "", {}),
+            ('linear.agent_label_group = ""\n', "[linear.agent_labels]\n", "", {}),
             (
-                f'agent_label_group = "{AGENT_GROUP}"\n',
-                f'[agent_labels]\nfuture-client = "{LABEL1}"\nother = "{LABEL2}"\n',
+                f'linear.agent_label_group = "{AGENT_GROUP}"\n',
+                f'[linear.agent_labels]\nfuture-client = "{LABEL1}"\nother = "{LABEL2}"\n',
                 AGENT_GROUP,
                 {"future-client": LABEL1, "other": LABEL2},
             ),
@@ -520,36 +550,38 @@ class ConfigurationLoading(ConfigFile, Case):
                     cfg.agent_labels["new"] = LABEL1
 
     def test_agent_labels_rejected(self):
-        top = f'agent_label_group = "{AGENT_GROUP}"\n'
-        table = f'[agent_labels]\nfirst = "{LABEL1}"\n'
-        paired = "agent_label_group and [agent_labels] must both be set or both be empty"
+        top = f'linear.agent_label_group = "{AGENT_GROUP}"\n'
+        table = f'[linear.agent_labels]\nfirst = "{LABEL1}"\n'
+        paired = (
+            "linear.agent_label_group and [linear.agent_labels] must both be set or both be empty"
+        )
         cases = [
             (top + PIPELINE, paired),
             (
-                top + PIPELINE + f'[agent_labels]\n"" = "{LABEL1}"\n',
-                "[agent_labels] client names must not be empty",
+                top + PIPELINE + f'[linear.agent_labels]\n"" = "{LABEL1}"\n',
+                "[linear.agent_labels] client names must not be empty",
             ),
             (PIPELINE + table, paired),
-            (top + PIPELINE + "[agent_labels]\n", paired),
-            ('agent_label_group = ""\n' + PIPELINE + table, paired),
+            (top + PIPELINE + "[linear.agent_labels]\n", paired),
+            ('linear.agent_label_group = ""\n' + PIPELINE + table, paired),
             *[
                 (
-                    f"agent_label_group = {value}\n" + PIPELINE + table,
-                    f"agent_label_group must be a Linear label group id (UUID) or empty: {shown}",
+                    f"linear.agent_label_group = {value}\n" + PIPELINE + table,
+                    f"linear.agent_label_group must be a Linear label group id (UUID) or empty: {shown}",
                 )
                 for value, shown in (("5", "5"), ("false", "False"), ('"Agent"', "'Agent'"))
             ],
             *[
                 (
-                    top + f"agent_labels = {value}\n" + PIPELINE,
-                    'agent_labels must be a table of <client> = "<Linear label id>"',
+                    top + f"linear.agent_labels = {value}\n" + PIPELINE,
+                    'linear.agent_labels must be a table of <client> = "<Linear label id>"',
                 )
                 for value in ('"bad"', "[]", "false")
             ],
             *[
                 (
-                    top + PIPELINE + f"[agent_labels]\nfirst = {value}\n",
-                    f"agent_labels.first must be a Linear label id (UUID): {shown}",
+                    top + PIPELINE + f"[linear.agent_labels]\nfirst = {value}\n",
+                    f"linear.agent_labels.first must be a Linear label id (UUID): {shown}",
                 )
                 for value, shown in (
                     ('""', "''"),
@@ -564,15 +596,15 @@ class ConfigurationLoading(ConfigFile, Case):
             ],
             (
                 top + PIPELINE + table + f'second = "{LABEL1}"\n',
-                f"agent_labels.first and agent_labels.second have the same label id {LABEL1}",
+                f"linear.agent_labels.first and linear.agent_labels.second have the same label id {LABEL1}",
             ),
             (
-                f'agent_label_group = "{TASK_GROUP}"\n' + PIPELINE + table,
-                "agent_label_group and task_label_group must be different",
+                f'linear.agent_label_group = "{TASK_GROUP}"\n' + PIPELINE + table,
+                "linear.agent_label_group and linear.task_label_group must be different",
             ),
             (
-                top + PIPELINE + table + f'[task_labels]\nbuild = "{LABEL1}"\n',
-                f"agent_labels.first and task_labels.build have the same label id {LABEL1}",
+                top + PIPELINE + table + f'[linear.task_labels]\nbuild = "{LABEL1}"\n',
+                f"linear.agent_labels.first and linear.task_labels.build have the same label id {LABEL1}",
             ),
         ]
         for text, message in cases:
@@ -581,7 +613,9 @@ class ConfigurationLoading(ConfigFile, Case):
 
     def test_frozen(self):
         cfg = self.load(
-            'human_members = ["a@x.com"]\n' + PIPELINE + f'[task_labels]\nbuild = "{LABEL1}"\n'
+            'linear.human_members = ["a@x.com"]\n'
+            + PIPELINE
+            + f'[linear.task_labels]\nbuild = "{LABEL1}"\n'
         )
         for obj, attr in (
             (cfg, "team"),
@@ -633,8 +667,8 @@ class ConfigurationLoading(ConfigFile, Case):
         logs = os.path.join(os.path.realpath(self.agent_pm), "logs")
         for message, text in (
             (
-                "orchestrator/config.toml: " + missing("team"),
-                PIPELINE.replace(f'team = "{TEAM}"\n', ""),
+                "orchestrator/config.toml: " + missing("linear.team"),
+                PIPELINE.replace(f'linear.team = "{TEAM}"\n', ""),
             ),
             (
                 "orchestrator/config.toml: role 'ghost' is not in delegate/config.toml",
@@ -687,6 +721,19 @@ class CommittedConfiguration(Case):
         )
         self.assertIs(HARNESS_DELEGATE, delegate.HarnessDelegate)
 
+    def test_launchd_jobs_and_the_packaged_gate_run_agent_pm_orchestrator(self):
+        for job in ("router", "promote"):
+            plist = os.path.join(REPO, "orchestrator", "launchd", f"com.ophis.agent-pm.{job}.plist")
+            with open(plist, "rb") as f:
+                program = plistlib.load(f)["ProgramArguments"][0]
+            self.assertTrue(program.endswith("/bin/agent-pm-orchestrator"), program)
+        with files("agent_pm.orchestrator").joinpath("config.toml").open("rb") as source:
+            committed = tomllib.load(source)
+        self.assertEqual(
+            committed["core"]["roles"]["researcher"]["gate"],
+            "agent-pm-orchestrator router --brake researcher",
+        )
+
     def setUp(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.local = os.path.join(self.agent_pm, "config.local.toml")
@@ -700,23 +747,12 @@ class CommittedConfiguration(Case):
         with files("agent_pm.orchestrator").joinpath("config.toml").open("rb") as f:
             committed = tomllib.load(f)
         self.assertEqual(
-            {k: committed[k] for k in DEPLOYMENT},
-            {
-                **dict.fromkeys(
-                    ("team", "harness_key", "task_label_group", "agent_label_group"), ""
-                ),
-                "states": dict.fromkeys(State, ""),
-                "human_members": [],
-                **dict.fromkeys(
-                    ("task_labels", "task_tiers", "agent_labels", "project_repos", "local_clones"),
-                    {},
-                ),
-                "work_dir": "~/.agent-pm",
-            },
+            {k: committed[k] for k in ("task_tiers", "local_clones", "work_dir")},
+            {"task_tiers": {}, "local_clones": {}, "work_dir": "~/.agent-pm"},
         )
+        self.assertEqual(committed["linear"], LINEAR_DEFAULTS)
         self.assertEqual(
-            {r: {k: p[k] for k in ("account", "key")} for r, p in committed["roles"].items()},
-            dict.fromkeys(("researcher", "pm", "engineer"), {"account": "", "key": ""}),
+            committed["roles"], dict.fromkeys(("researcher", "pm", "engineer"), {"max_runs": 3})
         )
 
     def test_packaged_client_max_runs(self):
@@ -737,9 +773,11 @@ class CommittedConfiguration(Case):
             str(cm.exception),
             "orchestrator/config.toml: "
             + missing(
-                "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
-                "states.done, states.canceled, roles.researcher.account, roles.pm.account, roles.engineer.account, "
-                "roles.researcher.key, roles.pm.key, roles.engineer.key"
+                "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
+                "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
+                "linear.states.done, linear.states.canceled, linear.roles.researcher.account, "
+                "linear.roles.pm.account, linear.roles.engineer.account, linear.roles.researcher.key, "
+                "linear.roles.pm.key, linear.roles.engineer.key"
             ),
         )
 
@@ -770,6 +808,50 @@ class CommittedConfiguration(Case):
                 "researcher": (GATE, "", "Chinese"),
                 "pm": ("", "", "Chinese"),
                 "engineer": ("", "", "Chinese"),
+            },
+        )
+
+    def test_every_linear_key_under_orchestrator_linear_loads(self):
+        accounts = "".join(
+            f'[orchestrator.linear.roles.{r}]\naccount = "{r}@agents.test"\nkey = "linear-api-key-{r}"\n'
+            for r in ("researcher", "pm", "engineer")
+        )
+        write(
+            self.local,
+            CORE_LOCAL
+            + '\n[orchestrator]\nwork_dir = "~/.agent-pm"\n'
+            + "[orchestrator.task_tiers]\nlight-build = 3\n"
+            + "[orchestrator.client_max_runs]\nopencode = 1\n"
+            + "[orchestrator.roles.engineer]\nmax_runs = 2\n"
+            + f'[orchestrator.linear]\nteam = "{TEAM}"\nhuman_members = ["me@x.com"]\n'
+            + f'harness_key = "linear-api-key"\ntask_label_group = "{TASK_GROUP}"\n'
+            + f'agent_label_group = "{AGENT_GROUP}"\n'
+            + "[orchestrator.linear.states]\n"
+            + "".join(f'{k} = "{v}"\n' for k, v in STATES.items())
+            + f'[orchestrator.linear.task_labels]\nbuild = "{LABEL1}"\n'
+            + f'[orchestrator.linear.agent_labels]\nclaude = "{LABEL2}"\n'
+            + accounts
+            + f'[orchestrator.linear.project_repos]\n"{P1}" = "ophis/x"\n',
+        )
+        cfg = self.load()
+        self.assertEqual(
+            (cfg.team, cfg.human_members, cfg.harness_key, cfg.task_label_group, cfg.states),
+            (TEAM, ("me@x.com",), "linear-api-key", TASK_GROUP, STATES),
+        )
+        self.assertEqual(
+            (cfg.task_labels, cfg.agent_label_group, cfg.agent_labels, cfg.project_repos),
+            ({"build": LABEL1}, AGENT_GROUP, {"claude": LABEL2}, {P1: "ophis/x"}),
+        )
+        self.assertEqual(
+            (cfg.work_dir, cfg.task_tiers, cfg.client_max_runs, cfg.local_clones),
+            (os.path.realpath(self.agent_pm), {"light-build": 3}, {"opencode": 1}, {}),
+        )
+        self.assertEqual(
+            fields(cfg.roles),
+            {
+                "researcher": (*ROLES["researcher"][:3], 3, "pm"),
+                "pm": (*ROLES["pm"][:3], 3, "engineer"),
+                "engineer": (*ROLES["engineer"][:3], 2, None),
             },
         )
 
@@ -818,7 +900,7 @@ class CommittedConfiguration(Case):
         zero = "00000000-0000-0000-0000-000000000000"
         self.assertEqual(
             str(cm.exception),
-            f"orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
+            f"orchestrator/config.toml: linear.project_repos.{zero} must map a Linear project id "
             "(UUID) to <owner>/<name>: '<owner>/<name>'",
         )
 
@@ -830,14 +912,14 @@ class CommittedConfiguration(Case):
                     for line in source
                     if line.startswith("# local: ")
                 )
-            )["orchestrator"]
+            )["orchestrator"]["linear"]
         cfg = self.load(
-            f'agent_label_group = "{local["agent_label_group"]}"\n'
+            f'linear.agent_label_group = "{local["agent_label_group"]}"\n'
             + HEADER
             + role("researcher")
             + role("pm")
             + role("engineer")
-            + "[agent_labels]\n"
+            + "[linear.agent_labels]\n"
             + "".join(f'"{key}" = "{value}"\n' for key, value in local["agent_labels"].items())
         )
         self.assertEqual(
@@ -991,7 +1073,7 @@ class ExecutablePath(Case):
 
     def test_agent_pm_path_then_this_installations_bin_then_the_default(self):
         installed = os.path.join(REPO, "bin")
-        self.assertTrue(os.path.isfile(os.path.join(installed, "agent-pm-linear")))
+        self.assertTrue(os.path.isfile(os.path.join(installed, "agent-pm-orchestrator")))
         for home in (self.home, os.path.join(self.home, "other")):
             default = (
                 f"{installed}:/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
@@ -1085,7 +1167,7 @@ class RunnableRoles(ConfigFile, Case):
         self.assertEqual(
             [(r, x.max_runs) for r, x in roles.items()], [("engineer", 1), ("researcher", 3)]
         )
-        text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
+        text = PIPELINE + f'[linear.task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
 
     def test_a_replaced_config_leaves_unset_flow_keys_unset(self):
@@ -1353,18 +1435,24 @@ class ConfigurationRoot(ConfigFile, Case):
         self.fails(message, HEADER + role("engineer"))
 
 
+# A local table that stays empty is dropped (utils/src/agent_pm/utils/config_file.py), so a role
+# the replaced config.toml lacks needs a key in its local [roles.<role>].
+LOCAL_PIPELINE = PIPELINE.replace(role("engineer"), role("engineer", "max_runs = 1"))
+
+
 class LocalOverlay(ConfigFile, Case):
     def test_local_on_top(self):
         self.local(
             HEADER
-            + 'human_members = ["b@x.com"]\n'
+            + 'linear.human_members = ["b@x.com"]\n'
             + role("researcher", "max_runs = 2")
             + role("pm")
-            + f'[project_repos]\n"{P2}" = "ophis/y"\n'
+            + f'[linear.project_repos]\n"{P2}" = "ophis/y"\n'
         )
         cfg = self.load(
-            'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
-            f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
+            'linear.human_members = ["a@x.com", "c@x.com"]\n'
+            '[roles.researcher]\nnext = "pm"\nmax_runs = 3\n[roles.pm]\n'
+            f'[linear.project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
         )
         self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
         self.assertEqual(
@@ -1384,16 +1472,18 @@ class LocalOverlay(ConfigFile, Case):
         self.assertEqual(cfg.roles["pm"].run.tier, 1)
 
     def test_local_alone_and_no_local(self):
-        self.local(PIPELINE)
+        self.local(LOCAL_PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.assertEqual(self.load(PIPELINE).team, TEAM)
 
     def test_an_empty_local_role_table_adds_no_role(self):
-        self.local(PIPELINE)
+        self.local(LOCAL_PIPELINE)
         want = set(self.load("").roles)
-        self.local(PIPELINE + "[roles.ghost]\n")
+        self.local(LOCAL_PIPELINE + "[roles.ghost]\n")
         self.assertEqual(set(self.load("").roles), want)
+        self.local(LOCAL_PIPELINE + role("ghost"))
+        self.fails("orchestrator/config.toml: [linear.roles.ghost] names no [roles.ghost]", "")
 
     def test_a_bad_value_wrong_type_unknown_or_old_task_local_key_is_rejected_by_name(self):
         for local, text, message in (
@@ -1403,14 +1493,50 @@ class LocalOverlay(ConfigFile, Case):
                 old_key("tasks"),
             ),
             (
-                f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n',
+                f'linear.team = "{TEAM}"\nlinear.states = {{ done = "Done" }}\n',
                 BASE,
-                "orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
+                "orchestrator/config.toml: linear.states.done must be a Linear workflow state id (UUID): 'Done'",
             ),
             (
-                "harness_key = 1\n",
+                "linear.harness_key = 1\n",
                 BASE,
-                "orchestrator/config.toml: harness_key must be a Keychain service name: 1",
+                "orchestrator/config.toml: linear.harness_key must be a Keychain service name: 1",
+            ),
+            (
+                'linear = "x"\n',
+                BASE,
+                "orchestrator/config.toml: [linear] must be a table",
+            ),
+            (
+                "linear.typo = 1\n",
+                BASE,
+                "orchestrator/config.toml: unknown keys in [linear]: typo",
+            ),
+            (
+                "[linear.roles.pm]\ntypo = 1\n",
+                BASE,
+                "orchestrator/config.toml: [linear.roles.pm] has unknown keys: typo",
+            ),
+            *[
+                (
+                    flat,
+                    BASE,
+                    "orchestrator/config.toml: ~/.agent-pm/config.local.toml: unknown key "
+                    f"{key!r} in [orchestrator]",
+                )
+                for key, flat in (
+                    ("team", f'team = "{TEAM}"\n'),
+                    ("harness_key", 'harness_key = "linear-api-key"\n'),
+                    ("human_members", 'human_members = ["a@x.com"]\n'),
+                    ("states", f'[states]\ndone = "{STATES["done"]}"\n'),
+                    ("task_labels", f'[task_labels]\nbuild = "{LABEL1}"\n'),
+                    ("project_repos", f'[project_repos]\n"{P1}" = "ophis/x"\n'),
+                )
+            ],
+            (
+                '[roles.researcher]\naccount = "researcher@agents.test"\nkey = "k"\n',
+                BASE,
+                "orchestrator/config.toml: [roles.researcher] has unknown keys: account, key",
             ),
             (
                 role("researcher", 'max_runs = "2"'),

@@ -16,7 +16,7 @@ Developers: `AGENTS.md`.
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
 ```
 
 ## Five levels of mastering AI agents
@@ -100,10 +100,10 @@ How the sessions agent-pm starts load your settings, and why some commands refus
 
 | Command | Does |
 |---|---|
-| `ctmux <name>` | Open the commander's tmux session: native windows in iTerm2, a plain tmux attach in other terminals, a switch from inside tmux. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
+| `ctmux <name>` | Open the commander's tmux session: native windows in iTerm2, a plain tmux attach in other terminals, a switch from inside tmux. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-orchestrator` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
 | `/agent-pm:manage` | Launch and direct workers, role runs and pipeline runs, with the commander's guidelines. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Run a core role in this conversation. |
-| `/agent-pm:linear` | Read, find, create and change Linear issues with fixed `agent-pm-linear issue` commands. |
+| `/agent-pm:linear` | Read, find, create and change Linear issues with fixed `agent-pm-orchestrator issue` commands. |
 | `agent-pm-delegate run --list` | List every role and task. |
 
 ## Quick start

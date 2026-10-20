@@ -57,8 +57,8 @@ class Runs(RunCase):
             outer={
                 "kind": "pipeline",
                 "name": "TASK-1",
-                "ctl": ("agent-pm-linear",),
-                "resume": ("agent-pm-linear", "resume", "TASK-1"),
+                "ctl": ("agent-pm-orchestrator",),
+                "resume": ("agent-pm-orchestrator", "resume", "TASK-1"),
             }
         )
 
@@ -117,7 +117,7 @@ class Runs(RunCase):
             options,
             {
                 "display": "opaque:\nvalue",
-                "callback": ["agent-pm-linear", "writeback", "--issue", "TASK-1", "--workdir"]
+                "callback": ["agent-pm-orchestrator", "writeback", "--issue", "TASK-1", "--workdir"]
                 + [spec.workdir],
                 "overlays": (self.cfg.core,),
             },
@@ -125,8 +125,8 @@ class Runs(RunCase):
         self.assertEqual(record.display, "opaque:\nvalue")
         self.assertEqual((record.name, record.kind), ("TASK-1", "pipeline"))
         self.assertEqual(record.sessions, ("researcher-TASK-1-1234abcd",))
-        self.assertEqual(record.ctl, ("agent-pm-linear",))
-        self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
+        self.assertEqual(record.ctl, ("agent-pm-orchestrator",))
+        self.assertEqual(record.resume, ("agent-pm-orchestrator", "resume", "TASK-1"))
 
     def test_a_tier_overlays_its_role_after_core(self):
         for resume in (False, True):

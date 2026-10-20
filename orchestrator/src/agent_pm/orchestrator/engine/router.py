@@ -1,8 +1,8 @@
 """Claim or resume issue work with one scheduler tick or an explicit issue.
 
-Usage: agent-pm-linear router [--now] [--dry-run] [--issue ID]
+Usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID]
                              [--tui [--display D] [--events FILE]]
-       agent-pm-linear router --brake ROLE
+       agent-pm-orchestrator router --brake ROLE
 
 Arguments and options:
   (no mode)     One scheduled tick: local 01:00-06:59 hours, role max_runs,
@@ -29,9 +29,9 @@ Arguments and options:
   Valued options occur at most once; boolean flags may repeat with no change.
 
 Prerequisites and effects:
-  Requires configured team/states/roles, harness/role Keychain credentials,
+  Requires configured [linear] and roles, harness/role Keychain credentials,
   Linear access and the selected Delegate/client executable. See
-  agent-pm-linear --help for configuration, executable lookup and Record schema.
+  agent-pm-orchestrator --help for configuration, executable lookup and Record schema.
   Execution can claim/move issues, post comments or write back ended outcomes.
   A launch prepares input, records a runs.jsonl row and detaches a LinearRun;
   the router exits while the Delegate harness writes events back to the board.
@@ -52,20 +52,20 @@ Exit conditions:
   display/events (no usable placement, invalid Host value or unwritable file).
 
 Examples (configured Linear access, client and a claimable TASK-1):
-  agent-pm-linear router --issue TASK-1 --dry-run
+  agent-pm-orchestrator router --issue TASK-1 --dry-run
   Prints the issue plan; no claim or launch.
-  agent-pm-linear router --issue TASK-1 --tui --display none --events /tmp/demo-events.jsonl
+  agent-pm-orchestrator router --issue TASK-1 --tui --display none --events /tmp/demo-events.jsonl
   Starts attended but hidden; writes events and prints the Record.
-  agent-pm-linear router --brake engineer
+  agent-pm-orchestrator router --brake engineer
   Requires a configured engineer role; prints usage without starting work.
 
 Recovery and next help:
-  Busy: retry later. Live run: agent-pm-linear status TASK-1
-  View recovery: agent-pm-linear attach-command TASK-1
-  Interrupted run: agent-pm-linear resume --help
-  Termination: agent-pm-linear close --help
+  Busy: retry later. Live run: agent-pm-orchestrator status TASK-1
+  View recovery: agent-pm-orchestrator attach-command TASK-1
+  Interrupted run: agent-pm-orchestrator resume --help
+  Termination: agent-pm-orchestrator close --help
   Fix reported configuration/Keychain errors before retrying.
-  Command discovery: agent-pm-linear --help
+  Command discovery: agent-pm-orchestrator --help
   Role discovery: agent-pm-delegate run --list
 """
 
@@ -141,7 +141,7 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
 USAGE = (
-    "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
+    "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
     "[--tui [--display D] [--events FILE]] | --brake ROLE"
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
@@ -226,7 +226,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
         return (
             None,
             (
-                f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+                f'Task label "{name}" is not in {config.LOCAL}\'s [orchestrator.linear.task_labels]. Fix the label, then move the issue back to Todo.'
             ),
         )
     if task not in role_tasks:
@@ -256,7 +256,7 @@ def client_for(
             None,
             "label",
             (
-                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [agent_labels]. '
+                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [orchestrator.linear.agent_labels]. '
                 "Fix the label, then move the issue back to Todo."
             ),
         )
@@ -811,7 +811,7 @@ def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
     return (
         f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
-        "Fix [agent_labels] or the client configuration, then move this issue back to Todo."
+        "Fix [orchestrator.linear.agent_labels] or the client configuration, then move this issue back to Todo."
     )
 
 

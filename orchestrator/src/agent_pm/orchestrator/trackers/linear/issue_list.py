@@ -1,4 +1,4 @@
-"""agent-pm-linear issue list: the issue_page source of one team's issues that every given filter
+"""agent-pm-orchestrator issue list: the issue_page source of one team's issues that every given filter
 holds, most recently updated first; archived ones only with --include-archived.
 """
 

@@ -49,15 +49,15 @@ def _query_help(command):
         "status": "Use status before deciding whether to show, resume or close a run.",
         "show": (
             "Uses the saved display; no new --display is accepted. If no view opens,\n"
-            "run agent-pm-linear attach-command TASK-1 and run the printed command.\n"
+            "run agent-pm-orchestrator attach-command TASK-1 and run the printed command.\n"
             "Placement: agent-pm-session --help"
         ),
-        "hide": "To reopen its saved view: agent-pm-linear show TASK-1",
-        "close": "To recover interrupted work: agent-pm-linear resume TASK-1",
+        "hide": "To reopen its saved view: agent-pm-orchestrator show TASK-1",
+        "close": "To recover interrupted work: agent-pm-orchestrator resume TASK-1",
         "attach-command": (
             "Run the printed command yourself; this command does not attach. A headless\n"
             "or ended run may have no live showable session. Inspect it with\n"
-            "agent-pm-linear status TASK-1; recovery: agent-pm-linear resume --help"
+            "agent-pm-orchestrator status TASK-1; recovery: agent-pm-orchestrator resume --help"
         ),
         "resume": (
             "Live or completed runs retain their identity; interrupted runs restart.\n"
@@ -65,9 +65,9 @@ def _query_help(command):
             "--input is rejected: put pipeline answers on the issue board, then resume.\n"
             "Run outside an agent session. AGENT_PM_SID, if supplied, must match\n"
             "the recorded session and is read once and removed.\n"
-            "For a new board-driven attempt: agent-pm-linear router --help"
+            "For a new board-driven attempt: agent-pm-orchestrator router --help"
         ),
-        "content": "To inspect liveness and outcome: agent-pm-linear status TASK-1",
+        "content": "To inspect liveness and outcome: agent-pm-orchestrator status TASK-1",
     }
     count = (
         "Supply exactly one issue or one Record."
@@ -86,9 +86,9 @@ def _query_help(command):
         "  Exit 0: success; 1: operation failed; 2: usage/configuration error.\n"
         "  Batch failures retain other valid results; errors go to stderr.\n\n"
         "Example (TASK-1 has a configured recorded run):\n"
-        f"  agent-pm-linear {command} TASK-1\n\n"
+        f"  agent-pm-orchestrator {command} TASK-1\n\n"
         f"Recovery and next help:\n{details[command]}\n"
-        "Configuration and command discovery: agent-pm-linear --help\n"
+        "Configuration and command discovery: agent-pm-orchestrator --help\n"
         "Record schema: agent-pm-session --help"
     )
 
@@ -110,14 +110,15 @@ def main(argv=None):
         return entries[arguments[0]][0](arguments[1:])
     launcher_sid = os.environ.pop(SID_ENV, "") or None
     parser = argparse.ArgumentParser(
-        prog="agent-pm-linear",
+        prog="agent-pm-orchestrator",
         description="Route issue work to agents and control their recorded pipeline runs.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Prerequisites and effects:\n"
             "  Operational commands require configured orchestrator and Delegate\n"
-            "  settings. Board access uses the configured harness_key Keychain service;\n"
-            "  role keys identify the accounts used for issue work. Python 3.11+ is needed.\n"
+            "  settings. Board access uses the configured linear.harness_key Keychain\n"
+            "  service; role keys identify the accounts used for issue work. Python 3.11+\n"
+            "  is needed.\n"
             "  Router launches need the configured client/Delegate and its Host tools.\n"
             "  Router/promote/prune prepend AGENT_PM_PATH, then this installation's bin,\n"
             "  then default executable directories. Logs: work_dir/logs/orchestrator.jsonl;\n"
@@ -125,11 +126,11 @@ def main(argv=None):
             "  Query ISSUE values are identifiers such as TASK-1, not session names.\n"
             "  Omit them to read Records from stdin; Record schema: agent-pm-session --help\n\n"
             "Example (configured Linear access and TASK-1):\n"
-            "  agent-pm-linear router --issue TASK-1 --dry-run\n"
+            "  agent-pm-orchestrator router --issue TASK-1 --dry-run\n"
             "  Prints a plan without claiming or launching the issue.\n\n"
             "Recovery and next help:\n"
-            "  Start here: agent-pm-linear --help\n"
-            "  Command details: agent-pm-linear router --help\n"
+            "  Start here: agent-pm-orchestrator --help\n"
+            "  Command details: agent-pm-orchestrator router --help\n"
             "  Fix missing settings/Keychain services named in errors before retrying.\n"
             "  Role/task discovery: agent-pm-delegate run --list\n"
             "  Placement: agent-pm-session --help"
@@ -171,10 +172,10 @@ def main(argv=None):
             "  identity or configuration. Errors go to stderr. Let the harness retry an\n"
             "  incomplete delivery; fix the reported identity/input error first.\n\n"
             "Example invocation form (automation supplies ISSUE, WORKDIR and EVENT_FILE):\n"
-            "  agent-pm-linear writeback --issue ISSUE --workdir WORKDIR < EVENT_FILE\n\n"
+            "  agent-pm-orchestrator writeback --issue ISSUE --workdir WORKDIR < EVENT_FILE\n\n"
             "Recovery and next help:\n"
-            "  Configuration and run discovery: agent-pm-linear --help\n"
-            "  Inspect the matching run: agent-pm-linear status --help"
+            "  Configuration and run discovery: agent-pm-orchestrator --help\n"
+            "  Inspect the matching run: agent-pm-orchestrator status --help"
         ),
     )
     back.add_argument("--issue", required=True, metavar="ID", help="owning issue identifier")
@@ -183,10 +184,10 @@ def main(argv=None):
     )
     args = parser.parse_args(arguments)
     if args.command == "resume" and args.input is not None:
-        print("agent-pm-linear: pipeline answers belong on the issue board", file=sys.stderr)
+        print("agent-pm-orchestrator: pipeline answers belong on the issue board", file=sys.stderr)
         return 2
     if args.command == "resume" and (refused := nested_start()):
-        print(f"agent-pm-linear: {refused}", file=sys.stderr)
+        print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
         return 2
     ignored = []
     # writeback ignores config keys newer than this code: a run begun before an upgrade still writes back
@@ -199,7 +200,7 @@ def main(argv=None):
         try:
             cfg = load()
         except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
-            print(f"agent-pm-linear: {error}", file=sys.stderr)
+            print(f"agent-pm-orchestrator: {error}", file=sys.stderr)
             logs = getattr(error, "logs_dir", None)
             if args.command == "writeback" and logs:
                 event_log.use_logs(logs)
@@ -263,14 +264,14 @@ def main(argv=None):
         single=args.command in {"resume", "content"},
         usage=(ConfigError, DelegateConfigError, ValueError),
         failures=(SessionError, RuntimeError, OSError),
-        prog="agent-pm-linear",
+        prog="agent-pm-orchestrator",
         out=sys.stdout,
         err=sys.stderr,
     )
 
 
 def _ignored(ignored, error):
-    print(f"agent-pm-linear writeback: ignored: {error}", file=sys.stderr)
+    print(f"agent-pm-orchestrator writeback: ignored: {error}", file=sys.stderr)
     ignored.append(error)
 
 
@@ -288,7 +289,7 @@ def _writeback(cfg, issue, workdir):
         event = DelegateEvent.parse(lines[0])
         return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
     except (ValueError, ConfigError) as error:
-        print(f"agent-pm-linear writeback: {error}", file=sys.stderr)
+        print(f"agent-pm-orchestrator writeback: {error}", file=sys.stderr)
         _refused(issue, error)
         return 2
 

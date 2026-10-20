@@ -1,4 +1,4 @@
-"""Linear connections read by edge for agent-pm-linear issue list and lookup. A source is (query,
+"""Linear connections read by edge for agent-pm-orchestrator issue list and lookup. A source is (query,
 path, variables, shape): query takes $first and $after beside variables, its connection sits at the
 dotted path of the data, and shape maps a node to (item, cut fields) or None to skip it.
 """

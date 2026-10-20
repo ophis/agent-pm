@@ -125,11 +125,11 @@ class BinCommands(Sample):
             (
                 "config",
                 {
-                    config: '[core.roles.r]\ngate = "agent-pm-linear router --brake r"\ncommands = ["agent-pm-crew x *", "true"]\n'
+                    config: '[core.roles.r]\ngate = "agent-pm-orchestrator router --brake r"\ncommands = ["agent-pm-crew x *", "true"]\n'
                 },
                 [
                     f'{config}: runs "agent-pm-crew x *", not a bin/ command',
-                    f'{config}: runs "agent-pm-linear router --brake r", not a bin/ command',
+                    f'{config}: runs "agent-pm-orchestrator router --brake r", not a bin/ command',
                 ],
             ),
             *(

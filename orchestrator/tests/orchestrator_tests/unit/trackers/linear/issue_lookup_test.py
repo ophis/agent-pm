@@ -1,4 +1,4 @@
-"""agent-pm-linear issue lookup through main: each resource's fixed fields and scope, and the
+"""agent-pm-orchestrator issue lookup through main: each resource's fixed fields and scope, and the
 shared page options.
 """
 
@@ -207,5 +207,5 @@ class Pages(IssueCase):
                 gql = Routes()
                 code, out, err = self.run_main(["lookup", "teams", *argv], gql)
                 self.assertEqual((code, out, gql.calls), (2, b"", []))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
         self.assertFalse(os.path.exists(path))

@@ -1,5 +1,5 @@
 """v1 router behaviors, each against its v1 source (`v1-runtime`'s CLAUDE.md › Architecture or a v1
-test, named in the test's docstring), end to end: bin/agent-pm-linear router as a real process
+test, named in the test's docstring), end to end: bin/agent-pm-orchestrator router as a real process
 (BinFlow), fake_claude as client claude, FakeLinear over HTTP, the runs on a private tmux server.
 """
 
@@ -131,10 +131,10 @@ class MaxRuns(Parity):
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local) as f:
             text = f.read()
-        key = 'key = "linear-api-key-engineer"\n'
-        self.assertEqual(text.count(key), 1)
+        table = "[orchestrator.roles.engineer]\n"
+        self.assertEqual(text.count(table), 1)
         with open(local, "w") as f:
-            f.write(text.replace(key, key + "max_runs = 1\n"))
+            f.write(text.replace(table, table + "max_runs = 1\n"))
         self.seed(ID, "ENG: Session registry", priority=2)
         self.seed(OTHER, "ENG: Session index", priority=3)
 
@@ -332,7 +332,7 @@ class Refusals(Parity):
 
     def test_bad_task_labels_send_their_issues_to_in_review_unclaimed(self):
         """v1 CLAUDE.md › Architecture and v1 router_test.test_fr7_invalid_label_goes_to_review:
-        a Tasks label that is not one of the role's tasks, or not in [task_labels], is a
+        a Tasks label that is not one of the role's tasks, or not in [linear.task_labels], is a
         claim-skip: the issue goes to In Review with a comment saying what to fix, no agent run.
         """
         self.fake.label_group(TASK_GROUP, "Tasks", {MYSTERY: "Mystery"})

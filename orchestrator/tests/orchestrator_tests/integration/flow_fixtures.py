@@ -1,10 +1,10 @@
-"""The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
+"""The orchestrator's integration flows: the test's HOME with both local files ([linear.task_labels]
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
 accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
 router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
 server for the runs' harness and agent sessions (a command run as from MANAGER's pane too),
-fake_gh as `gh` with REPO a bare repo, and `agent-pm-linear` as entry.py under the fake transport,
-the harness's write-back callback. BinFlow runs router and promote as bin/agent-pm-linear by
+fake_gh as `gh` with REPO a bare repo, and `agent-pm-orchestrator` as entry.py under the fake transport,
+the harness's write-back callback. BinFlow runs router and promote as bin/agent-pm-orchestrator by
 absolute path, as launchd does (FR-25, FR-29).
 """
 
@@ -22,6 +22,7 @@ from urllib.parse import quote
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh, fake_linear
+from orchestrator_tests.integration.fake_python import write_shim
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.run_fixtures import ID, SID
 
@@ -32,33 +33,32 @@ from utils.tests.case import local_section
 
 ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
 
-BIN = os.path.join(WORKTREE, "bin", "agent-pm-linear")
+BIN = os.path.join(WORKTREE, "bin", "agent-pm-orchestrator")
 
-TESTS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-FAKE_PYTHON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_python.py")
 
 LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 
-TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
+TASK_LABELS = f'[linear.task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
 
 _CFG = tomllib.loads(run_fixtures.local("/") + TASK_LABELS)
 
+_LINEAR = _CFG["linear"]
+
 ROLES = tuple(_CFG["roles"])
 
-ACCOUNTS = {r: _CFG["roles"][r]["account"] for r in ROLES}
+ACCOUNTS = {r: _LINEAR["roles"][r]["account"] for r in ROLES}
 
-KEYS = {r: _CFG["roles"][r]["key"] for r in ROLES}
+KEYS = {r: _LINEAR["roles"][r]["key"] for r in ROLES}
 
-[HUMAN] = _CFG["human_members"]
+[HUMAN] = _LINEAR["human_members"]
 
-HARNESS, HARNESS_EMAIL = _CFG["harness_key"], "harness@agents.test"
+HARNESS, HARNESS_EMAIL = _LINEAR["harness_key"], "harness@agents.test"
 
 PROJECT = {"id": run_fixtures.PROJECT, "name": "Widgets"}
 
-REPO = _CFG["project_repos"][PROJECT["id"]]
+REPO = _LINEAR["project_repos"][PROJECT["id"]]
 
 _OUTPUTS = {
     r: o["output"] for r, o in tomllib.loads(run_fixtures.CORE_LOCAL)["delegate"]["roles"].items()
@@ -276,7 +276,7 @@ class TmuxFlow(Flow):
     github.com.
     """
 
-    SHIMS = ("claude", "gh", "agent-pm-linear")
+    SHIMS = ("claude", "gh", "agent-pm-orchestrator")
 
     def setUp(self):
         super().setUp()
@@ -290,7 +290,7 @@ class TmuxFlow(Flow):
         fake_gh.git_shim(self.bin, self.home)
         self.gh_scenario, self.gh = os.path.join(self.root, "gh.json"), copy.deepcopy(GH)
         self.write_gh()
-        with open(callback := os.path.join(self.bin, "agent-pm-linear"), "w") as f:
+        with open(callback := os.path.join(self.bin, "agent-pm-orchestrator"), "w") as f:
             f.write(
                 f"#!/bin/sh\nPYTHONPATH={shlex.quote(self.env()['PYTHONPATH'])} "
                 f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(ENTRY)} "$@"\n'
@@ -375,23 +375,16 @@ class TmuxFlow(Flow):
 
 
 class BinFlow(TmuxFlow):
-    """bin/agent-pm-linear by absolute path with a launchd-like PATH and no PYTHONPATH; its python3
+    """bin/agent-pm-orchestrator by absolute path with a launchd-like PATH and no PYTHONPATH; its python3
     is fake_python.py: this interpreter under the fake Linear transport with the test roots its
     fakes import, the only command added to PATH. The harness calls this installation's
-    `agent-pm-linear` back.
+    `agent-pm-orchestrator` back.
     """
 
     def setUp(self):
         super().setUp()
-        os.unlink(os.path.join(self.bin, "agent-pm-linear"))
-        self.python = os.path.join(self.root, "python")
-        os.mkdir(self.python)
-        with open(shim := os.path.join(self.python, "python3"), "w") as f:
-            f.write(
-                f'#!/bin/sh\nPYTHONPATH="$PYTHONPATH:{TESTS}:{WORKTREE}" '
-                f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(FAKE_PYTHON)} "$@"\n'
-            )
-        os.chmod(shim, 0o755)
+        os.unlink(os.path.join(self.bin, "agent-pm-orchestrator"))
+        self.python = write_shim(os.path.join(self.root, "python"))
 
     def bin_env(self):
         env = {k: v for k, v in self.env().items() if k != "PYTHONPATH"}
@@ -399,7 +392,7 @@ class BinFlow(TmuxFlow):
         return env
 
     def start(self, *argv):
-        """bin/agent-pm-linear argv, running: the test reads its output with communicate()."""
+        """bin/agent-pm-orchestrator argv, running: the test reads its output with communicate()."""
         proc = subprocess.Popen(
             [BIN, *argv],
             cwd=self.root,

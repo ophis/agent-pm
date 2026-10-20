@@ -27,31 +27,36 @@ REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 _ROLE_ISSUE = r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)"
 
 TOP_KEYS = {
+    "task_tiers",
+    "client_max_runs",
+    "roles",
+    "local_clones",
+    "core",
+    "work_dir",
+    "delegates",
+    "linear",
+}
+LINEAR_KEYS = {
     "team",
     "states",
     "human_members",
     "harness_key",
     "task_label_group",
     "task_labels",
-    "task_tiers",
     "agent_label_group",
     "agent_labels",
-    "client_max_runs",
     "roles",
     "project_repos",
-    "local_clones",
-    "core",
-    "work_dir",
-    "delegates",
 }
-ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
+ROLE_KEYS = {"next", "require_instructions", "max_runs"}
+LINEAR_ROLE_KEYS = {"account", "key"}
 REQUIRED = (
-    "team",
-    "harness_key",
-    "task_label_group",
-    *(f"states.{k}" for k in State),
-    "roles.*.account",
-    "roles.*.key",
+    "linear.team",
+    "linear.harness_key",
+    "linear.task_label_group",
+    *(f"linear.states.{k}" for k in State),
+    "linear.roles.*.account",
+    "linear.roles.*.key",
 )
 
 
@@ -112,7 +117,7 @@ def tui_name(role, issue, sid):
 
 def path():
     """The PATH the router, promote and their tools and runs get, read at call: AGENT_PM_PATH (if
-    set), this installation's bin/ (agent-pm-linear, the harness's write-back callback), then the
+    set), this installation's bin/ (agent-pm-orchestrator, the harness's write-back callback), then the
     default dirs.
     """
     [root] = utils.module_roots(types)
@@ -181,23 +186,20 @@ def _load(cfg, work):
     kind, delegates = _delegates(cfg)
     roles = _runnable(cfg, work, delegates[kind])
     docs = _docs(roles, LOCAL)
+    linear = cfg["linear"]
     frozen = {
-        k: MappingProxyType(dict(cfg[k]))
-        for k in (
-            "states",
-            "task_labels",
-            "task_tiers",
-            "agent_labels",
-            "client_max_runs",
-            "project_repos",
-            "local_clones",
+        k: MappingProxyType(dict(table[k]))
+        for table, keys in (
+            (linear, ("states", "task_labels", "agent_labels", "project_repos")),
+            (cfg, ("task_tiers", "client_max_runs", "local_clones")),
         )
+        for k in keys
     }
     return Config(
-        team=cfg["team"],
-        human_members=tuple(cfg.get("human_members") or ()),
-        harness_key=cfg["harness_key"],
-        task_label_group=cfg["task_label_group"],
+        team=linear["team"],
+        human_members=tuple(linear.get("human_members") or ()),
+        harness_key=linear["harness_key"],
+        task_label_group=linear["task_label_group"],
         roles=MappingProxyType(roles),
         work_dir=work,
         docs=docs,
@@ -205,7 +207,7 @@ def _load(cfg, work):
         states=frozen["states"],
         task_labels=frozen["task_labels"],
         task_tiers=frozen["task_tiers"],
-        agent_label_group=cfg["agent_label_group"],
+        agent_label_group=linear["agent_label_group"],
         agent_labels=frozen["agent_labels"],
         client_max_runs=frozen["client_max_runs"],
         project_repos=frozen["project_repos"],
@@ -244,63 +246,99 @@ def _uuid(v):
     return isinstance(v, str) and bool(UUID_RE.fullmatch(v))
 
 
-def _check_ids(cfg):
-    if not _uuid(cfg.get("team")):
+def _check_ids(linear):
+    if not _uuid(linear.get("team")):
         raise ConfigError(
-            f"orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}"
+            f"orchestrator/config.toml: linear.team must be a Linear team id (UUID): {linear.get('team')!r}"
         )
-    states = cfg["states"]
+    states = linear["states"]
     if extra := sorted(set(states) - set(State)):
         raise ConfigError(
-            f"orchestrator/config.toml: [states] has unknown keys: {', '.join(extra)}"
+            f"orchestrator/config.toml: [linear.states] has unknown keys: {', '.join(extra)}"
         )
     for k in State:
         if not _uuid(states[k]):
             raise ConfigError(
-                f"orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}"
+                f"orchestrator/config.toml: linear.states.{k} must be a Linear workflow state id (UUID): {states[k]!r}"
             )
-    if not _uuid(cfg.get("task_label_group")):
+    if not _uuid(linear.get("task_label_group")):
         raise ConfigError(
-            f"orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}"
+            f"orchestrator/config.toml: linear.task_label_group must be a Linear label group id (UUID): {linear.get('task_label_group')!r}"
         )
 
 
 def _load_config(cfg, local):
+    linear = cfg.setdefault("linear", {})
+    if not isinstance(linear, dict):
+        raise ConfigError("orchestrator/config.toml: [linear] must be a table")
+    accounts = linear.setdefault("roles", {})
+    if not isinstance(accounts, dict):
+        raise ConfigError("orchestrator/config.toml: [linear.roles] must be a table")
+    roles = cfg.setdefault("roles", {})
+    for name in roles:
+        accounts.setdefault(name, {})
     if missing := utils.unset(cfg, REQUIRED):
         raise ConfigError(
             f"orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} (orchestrator/config.toml's `# local:` lines)"
         )
-    _check_ids(cfg)
-    hk = cfg.get("harness_key")
+    _check_ids(linear)
+    hk = linear.get("harness_key")
     if not isinstance(hk, str) or not hk:
         raise ConfigError(
-            f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}"
+            f"orchestrator/config.toml: linear.harness_key must be a Keychain service name: {hk!r}"
         )
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise ConfigError(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
-    _role_fields(cfg)
-    _next_chains(cfg["roles"])
-    _project_repos(cfg)
+    if extra := sorted(set(linear) - LINEAR_KEYS):
+        raise ConfigError(f"orchestrator/config.toml: unknown keys in [linear]: {', '.join(extra)}")
+    _linear_roles(linear, roles)
+    _role_fields(roles)
+    _next_chains(roles)
+    _project_repos(linear)
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
-    _task_labels(cfg)
+    _task_labels(linear)
     _task_tiers(cfg)
-    _agent_labels(cfg)
+    _agent_labels(linear)
     _client_max_runs(cfg)
 
 
-def _role_fields(cfg):
-    roles = cfg.setdefault("roles", {})
+def _linear_roles(linear, roles):
+    """Each [linear.roles.<role>]: a [roles.<role>] role's account and a key no other account or
+    the harness uses."""
+    owner = {}
+    for name, p in linear["roles"].items():
+        if name not in roles:
+            raise ConfigError(
+                f"orchestrator/config.toml: [linear.roles.{name}] names no [roles.{name}]"
+            )
+        if extra := sorted(set(p) - LINEAR_ROLE_KEYS):
+            raise ConfigError(
+                f"orchestrator/config.toml: [linear.roles.{name}] has unknown keys: {', '.join(extra)}"
+            )
+        for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
+            if not isinstance(p.get(k), str) or not p[k]:
+                raise ConfigError(
+                    f"orchestrator/config.toml: [linear.roles.{name}] {k} must be {what}: {p.get(k)!r}"
+                )
+        key = p["key"]
+        if key == linear["harness_key"]:
+            raise ConfigError(
+                f"orchestrator/config.toml: [linear.roles.{name}] key {key!r} is linear.harness_key"
+            )
+        if key in owner:
+            raise ConfigError(
+                f"orchestrator/config.toml: [linear.roles.{name}] key {key!r} is also [linear.roles.{owner[key]}]'s"
+            )
+        owner[key] = name
+
+
+def _role_fields(roles):
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
             raise ConfigError(
                 f"orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}"
             )
-        for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
-            if not isinstance(p.get(k), str) or not p[k]:
-                raise ConfigError(
-                    f"orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}"
-                )
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
             raise ConfigError(
@@ -320,16 +358,16 @@ def _next_chains(roles):
             nxt = roles.get(nxt, {}).get("next")
 
 
-def _project_repos(cfg):
-    projects = cfg.setdefault("project_repos", {})
+def _project_repos(linear):
+    projects = linear.setdefault("project_repos", {})
     if not isinstance(projects, dict):
         raise ConfigError(
-            'orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'
+            'orchestrator/config.toml: linear.project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'
         )
     for k, v in projects.items():
         if not _uuid(k) or not utils.repo_slug(v):
             raise ConfigError(
-                f"orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
+                f"orchestrator/config.toml: linear.project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
             )
 
 
@@ -358,21 +396,21 @@ def _local_clones(cfg):
         clones[k] = os.path.realpath(os.path.expanduser(v))
 
 
-def _task_labels(cfg):
-    labels = cfg.setdefault("task_labels", {})
+def _task_labels(linear):
+    labels = linear.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise ConfigError(
-            'orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"'
+            'orchestrator/config.toml: linear.task_labels must be a table of <task> = "<Linear label id>"'
         )
     seen = {}
     for k, v in labels.items():
         if not _uuid(v):
             raise ConfigError(
-                f"orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}"
+                f"orchestrator/config.toml: linear.task_labels.{k} must be a Linear label id (UUID): {v!r}"
             )
         if v in seen:
             raise ConfigError(
-                f"orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
+                f"orchestrator/config.toml: linear.task_labels.{seen[v]} and linear.task_labels.{k} have the same label id {v}"
             )
         seen[v] = k
 
@@ -390,43 +428,43 @@ def _task_tiers(cfg):
             )
 
 
-def _agent_labels(cfg):
-    group = cfg.setdefault("agent_label_group", "")
-    labels = cfg.setdefault("agent_labels", {})
+def _agent_labels(linear):
+    group = linear.setdefault("agent_label_group", "")
+    labels = linear.setdefault("agent_labels", {})
     if group != "" and not _uuid(group):
         raise ConfigError(
-            f"orchestrator/config.toml: agent_label_group must be a Linear label group id (UUID) or empty: {group!r}"
+            f"orchestrator/config.toml: linear.agent_label_group must be a Linear label group id (UUID) or empty: {group!r}"
         )
     if not isinstance(labels, dict):
         raise ConfigError(
-            'orchestrator/config.toml: agent_labels must be a table of <client> = "<Linear label id>"'
+            'orchestrator/config.toml: linear.agent_labels must be a table of <client> = "<Linear label id>"'
         )
     if bool(group) != bool(labels):
         raise ConfigError(
-            "orchestrator/config.toml: agent_label_group and [agent_labels] must both be set or both be empty"
+            "orchestrator/config.toml: linear.agent_label_group and [linear.agent_labels] must both be set or both be empty"
         )
-    if group == cfg["task_label_group"]:
+    if group == linear["task_label_group"]:
         raise ConfigError(
-            "orchestrator/config.toml: agent_label_group and task_label_group must be different"
+            "orchestrator/config.toml: linear.agent_label_group and linear.task_label_group must be different"
         )
-    tasks = {v: k for k, v in cfg["task_labels"].items()}
+    tasks = {v: k for k, v in linear["task_labels"].items()}
     seen = {}
     for k, v in labels.items():
         if not k:
             raise ConfigError(
-                "orchestrator/config.toml: [agent_labels] client names must not be empty"
+                "orchestrator/config.toml: [linear.agent_labels] client names must not be empty"
             )
         if not _uuid(v):
             raise ConfigError(
-                f"orchestrator/config.toml: agent_labels.{k} must be a Linear label id (UUID): {v!r}"
+                f"orchestrator/config.toml: linear.agent_labels.{k} must be a Linear label id (UUID): {v!r}"
             )
         if v in seen:
             raise ConfigError(
-                f"orchestrator/config.toml: agent_labels.{seen[v]} and agent_labels.{k} have the same label id {v}"
+                f"orchestrator/config.toml: linear.agent_labels.{seen[v]} and linear.agent_labels.{k} have the same label id {v}"
             )
         if v in tasks:
             raise ConfigError(
-                f"orchestrator/config.toml: agent_labels.{k} and task_labels.{tasks[v]} have the same label id {v}"
+                f"orchestrator/config.toml: linear.agent_labels.{k} and linear.task_labels.{tasks[v]} have the same label id {v}"
             )
         seen[v] = k
 
@@ -454,13 +492,13 @@ def _runnable(cfg, work, delegate_cls):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
     out = _resolve_roles(cfg, cfg.get("core", {}), delegate_cls, index)
-    _role_links(cfg, out)
+    _role_links(out)
     _runnable_inputs(cfg, out)
     return out
 
 
 def _resolve_roles(cfg, overlay, delegate_cls, index):
-    out = {}
+    out, accounts = {}, cfg["linear"]["roles"]
     for name, p in cfg["roles"].items():
         if name not in index:
             raise ConfigError(
@@ -476,8 +514,8 @@ def _resolve_roles(cfg, overlay, delegate_cls, index):
         except delegate.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(
-            p["account"],
-            p["key"],
+            accounts[name]["account"],
+            accounts[name]["key"],
             tasks,
             p.get("max_runs", 1),
             p.get("next") or None,
@@ -487,18 +525,7 @@ def _resolve_roles(cfg, overlay, delegate_cls, index):
     return out
 
 
-def _role_links(cfg, out):
-    owner = {}
-    for name, r in out.items():
-        if r.key == cfg["harness_key"]:
-            raise ConfigError(
-                f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key"
-            )
-        if r.key in owner:
-            raise ConfigError(
-                f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s"
-            )
-        owner[r.key] = name
+def _role_links(out):
     for name, r in out.items():
         if not r.next:
             continue
@@ -514,8 +541,11 @@ def _role_links(cfg, out):
 
 def _runnable_inputs(cfg, roles):
     tasks = {t for r in roles.values() for t in r.tasks}
-    for table in ("task_labels", "task_tiers"):
-        for task in cfg[table]:
+    for table, entries in (
+        ("linear.task_labels", cfg["linear"]["task_labels"]),
+        ("task_tiers", cfg["task_tiers"]),
+    ):
+        for task in entries:
             if task not in tasks:
                 raise ConfigError(
                     f"orchestrator/config.toml: {table}.{task} is not a task of a role in orchestrator/config.toml"

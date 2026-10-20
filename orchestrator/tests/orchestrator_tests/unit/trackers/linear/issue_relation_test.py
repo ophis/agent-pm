@@ -1,4 +1,4 @@
-"""agent-pm-linear issue relation: one blocking edge, the same from either end, added or removed
+"""agent-pm-orchestrator issue relation: one blocking edge, the same from either end, added or removed
 once, every other relation left alone.
 """
 

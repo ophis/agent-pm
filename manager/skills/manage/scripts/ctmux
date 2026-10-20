@@ -7,7 +7,7 @@
 if [ "$1" = --install ]; then
   bin=$HOME/.agent-pm/bin
   mkdir -p "$bin" || exit
-  for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-linear; do
+  for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
     install -m 755 "$(dirname -- "$0")/launcher" "$bin/$name" && echo "$bin/$name" || exit
   done
   exit

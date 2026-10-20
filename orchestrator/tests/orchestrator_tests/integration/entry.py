@@ -1,7 +1,7 @@
 """Explicit subprocess wiring for the fake Linear transport: each entry runs under it. `launch`
 runs router.outer on a claimed or resumed run given by its Spec fields (--name VALUE); `tui ISSUE
 SID ROLE CLIENT DISPLAY INPUT` detaches a recorded run's LinearRun in tui mode at DISPLAY; `promote`
-and `router` run theirs; any other is an agent-pm-linear command (writeback, close, resume, ...).
+and `router` run theirs; any other is an agent-pm-orchestrator command (writeback, close, resume, ...).
 """
 
 import argparse
@@ -14,7 +14,7 @@ from agent_pm.orchestrator.engine import config, log, promote, router
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.types import Spec
 from agent_pm.orchestrator.trackers.linear import client
-from orchestrator_tests.integration.fake_transport import install
+from orchestrator_tests.integration.fake_transport import install, refuse_keychain
 
 
 def launch(argv):
@@ -52,6 +52,7 @@ def tui(argv):
 
 def main(argv):
     entry, *arguments = argv
+    sys.addaudithook(refuse_keychain)
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
         entries = {"launch": launch, "tui": tui, "promote": promote.main, "router": router.main}
         if entry in entries:

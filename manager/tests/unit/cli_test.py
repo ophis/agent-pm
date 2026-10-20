@@ -212,7 +212,7 @@ class Launch(CliCase):
             (
                 "issue",
                 "TASK-12",
-                ("agent-pm-linear", "router", "--issue", "TASK-12", "--tui"),
+                ("agent-pm-orchestrator", "router", "--issue", "TASK-12", "--tui"),
                 ("--display", "D", "--note", "belongs to layer", "--manager", "also layer"),
             ),
         ):
@@ -1028,14 +1028,14 @@ class Report(CliCase):
         pipeline = replace(
             self.delegate_record("TASK-12"),
             kind="pipeline",
-            ctl=("agent-pm-linear",),
-            resume=("agent-pm-linear", "resume", "TASK-12"),
+            ctl=("agent-pm-orchestrator",),
+            resume=("agent-pm-orchestrator", "resume", "TASK-12"),
         )
         self.launched("TASK-12", record=pipeline, alive=False, outcome="done")
         result, stdout, stderr = self.report()
         self.assertEqual((result, stderr), (0, ""))
         self.assertIn("\tpipeline\tdone\t", stdout)
-        self.assertNotIn(("agent-pm-linear", "outcome"), self.calls)
+        self.assertNotIn(("agent-pm-orchestrator", "outcome"), self.calls)
 
     def test_status_gh_and_outcome_failures_go_to_stderr_and_exit_0(self):
         self.launched("bad-gh", note=URL)
@@ -1245,7 +1245,7 @@ class HelpContracts(Case):
         for verb, owner in (
             ("worker", "agent-pm-session start --help"),
             ("reopen", "agent-pm-session start --help"),
-            ("issue", "agent-pm-linear router --help"),
+            ("issue", "agent-pm-orchestrator router --help"),
             ("role", "agent-pm-delegate run --help"),
         ):
             with self.subTest(verb=verb):

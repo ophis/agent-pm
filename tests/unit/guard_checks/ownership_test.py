@@ -77,7 +77,7 @@ class OrchestratorText(Sample):
     def test_agent_label_examples_in_the_packaged_config_name_no_client(self):
         path = f"{OPKG}/config.toml"
         text = (
-            "# local: [orchestrator.agent_labels]\n"
+            "# local: [orchestrator.linear.agent_labels]\n"
             '# local: codex = "00000000-0000-4000-8000-000000000083"\n'
         )
         root = self.wrap_orchestrator(self.tree({path: text}))
@@ -558,7 +558,7 @@ class ManagerBoundaries(Sample):
         root = self.tree(
             {
                 base: 'a = ("agent-pm-session", "start", key, *argv)\n'
-                'b = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)\n'
+                'b = ("agent-pm-orchestrator", "router", "--issue", key, "--tui", *argv)\n'
                 'c = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)\n'
             }
         )

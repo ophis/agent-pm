@@ -133,7 +133,7 @@ def humans(gql, cfg):
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
         raise LinearError(
-            f"orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}"
+            f"orchestrator/config.toml: linear.human_members not found in Linear: {', '.join(missing)}"
         )
     return ids
 
@@ -144,7 +144,7 @@ def role_ids(gql, roles):
         uid = user_id(gql, role.account)
         if not uid:
             raise LinearError(
-                f"orchestrator/config.toml [roles.{name}]: account {role.account!r} not found in Linear"
+                f"orchestrator/config.toml [linear.roles.{name}]: account {role.account!r} not found in Linear"
             )
         out[uid] = name
     return out
@@ -157,12 +157,12 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 def team(gql, cfg):
     nodes = gql(Q_TEAM, t=cfg.team)["teams"]["nodes"]
     if not nodes:
-        raise LinearError(f"orchestrator/config.toml: team {cfg.team} not found in Linear")
+        raise LinearError(f"orchestrator/config.toml: linear.team {cfg.team} not found in Linear")
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg.states[k]}" for k in State if cfg.states[k] not in ids]:
         raise LinearError(
-            f"orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
+            f"orchestrator/config.toml: [linear.states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
         )
     finished = {cfg.states[State.DONE], cfg.states[State.CANCELED]}
     finished |= {
@@ -185,14 +185,14 @@ def task_group(gql, cfg):
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
     except LinearError as e:
         raise LinearError(
-            f"orchestrator/config.toml: task_label_group {group} not found in Linear: {e}"
+            f"orchestrator/config.toml: linear.task_label_group {group} not found in Linear: {e}"
         ) from None
     if not label["isGroup"]:
         raise LinearError(
-            f"orchestrator/config.toml: task_label_group {group} is not a label group"
+            f"orchestrator/config.toml: linear.task_label_group {group} is not a label group"
         )
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
         raise LinearError(
-            f"orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}"
+            f"orchestrator/config.toml: [linear.task_labels] not labels of linear.task_label_group {group}: {', '.join(bad)}"
         )

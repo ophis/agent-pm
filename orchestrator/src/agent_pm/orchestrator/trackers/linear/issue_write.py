@@ -1,4 +1,4 @@
-"""agent-pm-linear issue move and comment: resolve the target within the issue's own team, read a
+"""agent-pm-orchestrator issue move and comment: resolve the target within the issue's own team, read a
 body verbatim, write once and answer with a receipt; a write Linear never answered is WriteUnknown,
 never retried.
 """
@@ -98,7 +98,7 @@ def write(gql, op, ident, query, field, **variables):
     except Unavailable as error:
         raise WriteUnknown(
             f"{op} {ident}: result unknown ({error}): "
-            f"check with agent-pm-linear issue read {ident} before retrying"
+            f"check with agent-pm-orchestrator issue read {ident} before retrying"
         ) from None
 
 

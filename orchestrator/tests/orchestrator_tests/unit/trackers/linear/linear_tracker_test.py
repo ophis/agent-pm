@@ -650,9 +650,12 @@ class Connect(Case):
 
     def test_errors_propagate(self):
         for replies, message in (
-            ({"Q_TEAM": {"teams": {"nodes": []}}}, f"team {TEAM} not found"),
-            ({"Q_USER": users(None)}, "human_members not found in Linear: human@x.test"),
-            ({"Q_USER": users("u-human", None)}, "account 'pm@agents.test' not found"),
+            ({"Q_TEAM": {"teams": {"nodes": []}}}, f"linear.team {TEAM} not found"),
+            ({"Q_USER": users(None)}, "linear.human_members not found in Linear: human@x.test"),
+            (
+                {"Q_USER": users("u-human", None)},
+                r"\[linear.roles.pm\]: account 'pm@agents.test' not found",
+            ),
         ):
             with self.subTest(message=message), self.assertRaisesRegex(LinearError, message):
                 connected(**replies)

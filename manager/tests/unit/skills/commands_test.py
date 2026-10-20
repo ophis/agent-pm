@@ -72,7 +72,7 @@ class Commands(Case):
                     self.assertFalse({"--sid", "--resume"} & set(flags(command)), command)
 
     def test_content_uses_crew_without_unused_layer_permissions(self):
-        for command in ("agent-pm-session", "agent-pm-delegate", "agent-pm-linear"):
+        for command in ("agent-pm-session", "agent-pm-delegate", "agent-pm-orchestrator"):
             self.assertNotIn(f"{command} content *", rules("manage"))
         self.assertIn("owning ctl", section("manage", "Events"))
 
@@ -220,7 +220,11 @@ class Flows(Case):
             "`agent-pm-crew release`",
         ):
             self.assertIn(phrase, direct)
-        for phrase in ("agent-pm-delegate hide", "agent-pm-linear hide", "agent-pm-session hide"):
+        for phrase in (
+            "agent-pm-delegate hide",
+            "agent-pm-orchestrator hide",
+            "agent-pm-session hide",
+        ):
             self.assertNotIn(phrase, direct)
 
     def test_color_is_left_to_the_session_but_a_start_dialog(self):

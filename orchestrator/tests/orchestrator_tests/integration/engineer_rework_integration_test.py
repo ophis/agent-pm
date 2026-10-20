@@ -1,7 +1,7 @@
 """An engineer rework from PR comments end to end, as v1 (`v1-runtime`'s core/team/roles/
 engineer.md: the user's own PR comments and reviews, `repo.py status`'s `user`, are requirements;
 core/team/tasks/light-build.md: a finished build and a user requirement start a new build): a built
-issue's user comments on its PR and moves it back to Todo; bin/agent-pm-linear router starts a new
+issue's user comments on its PR and moves it back to Todo; bin/agent-pm-orchestrator router starts a new
 session on the same branch, whose agent (fake_claude) runs the team's repo.py, which reads the PR's
 comments through fake_gh; its outcome is written back once more.
 """

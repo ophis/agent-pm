@@ -1,4 +1,4 @@
-"""agent-pm-linear issue label swap: replace one label of an issue by another in one update that
+"""agent-pm-orchestrator issue label swap: replace one label of an issue by another in one update that
 names only those two (addedLabelIds, removedLabelIds), so every other label stays; refused when the
 issue carries neither, or the new one would join a label group the issue already holds another of.
 """
@@ -38,7 +38,7 @@ def swap(gql, ident, old, new):
     if gone["id"] not in ids and added["id"] not in ids:
         raise LabelRefused(
             f"label swap {ident} refused, nothing written: it carries neither --from {old!r} nor "
-            f"--to {new!r}; its labels: agent-pm-linear issue read {ident}"
+            f"--to {new!r}; its labels: agent-pm-orchestrator issue read {ident}"
         )
     if gone["id"] not in ids or gone["id"] == added["id"]:
         return issue_write.receipt(node, "label swap", "unchanged", data["viewer"])

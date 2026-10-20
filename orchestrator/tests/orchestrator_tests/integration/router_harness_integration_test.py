@@ -1,6 +1,6 @@
-"""FR-25 and FR-29 end to end: bin/agent-pm-linear router by absolute path, a launchd-like PATH and
+"""FR-25 and FR-29 end to end: bin/agent-pm-orchestrator router by absolute path, a launchd-like PATH and
 no PYTHONPATH. The router claims, writes the start row and exits while the run's harness and agent
-go on; the harness finds `agent-pm-linear` in this installation's bin/ and calls it back on each
+go on; the harness finds `agent-pm-orchestrator` in this installation's bin/ and calls it back on each
 event, so the issue gets its session comment, progress and outcome once each.
 """
 

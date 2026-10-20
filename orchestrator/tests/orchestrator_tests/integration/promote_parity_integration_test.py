@@ -1,5 +1,5 @@
 """v1 promote bounces, each against v1's orchestrator/src/promote.py (`v1-runtime`), end to end:
-bin/agent-pm-linear promote as a real process (BinFlow) over FakeLinear. A Handoff issue promote
+bin/agent-pm-orchestrator promote as a real process (BinFlow) over FakeLinear. A Handoff issue promote
 cannot hand on goes back to In Review with a comment saying why, and no next-stage issue is made.
 """
 

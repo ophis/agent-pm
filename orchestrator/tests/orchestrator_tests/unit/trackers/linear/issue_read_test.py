@@ -1,4 +1,4 @@
-"""agent-pm-linear issue read: the query, the view's fields and directions, and the compact limits."""
+"""agent-pm-orchestrator issue read: the query, the view's fields and directions, and the compact limits."""
 
 from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError
 from agent_pm.orchestrator.trackers.linear import issue_read

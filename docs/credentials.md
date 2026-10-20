@@ -68,23 +68,23 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1168`, `…/engine/promote.py:315`, `…/engine/prune.py:446`, `…/engine/writeback.py:90` |
+| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1168`, `…/engine/promote.py:316`, `…/engine/prune.py:447`, `…/engine/writeback.py:90` |
 | Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/trackers/linear/ops.py:32`, `…/trackers/linear/linear_tracker.py:89`, `…/trackers/linear/linear_tracker.py:91`, `…/trackers/linear/linear_tracker.py:75`, `…/trackers/linear/ops.py:25`, `…/trackers/linear/linear_tracker.py:101`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `harness_key` | `orchestrator/src/agent_pm/orchestrator/config.toml:17` |
+| Stored at | a login keychain item whose service is `linear.harness_key` | `orchestrator/src/agent_pm/orchestrator/config.toml:92` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
 | Revoke | delete the key in Linear › Settings › Account › Security & Access, then `security delete-generic-password -s <service>` | [Linear API keys] |
 
 ### Linear role keys
 
-One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.key` for `roles.pm.account`,
-`roles.engineer.key` for `roles.engineer.account`.
+One per role: `linear.roles.researcher.key` for `linear.roles.researcher.account`, `linear.roles.pm.key` for
+`linear.roles.pm.account`, `linear.roles.engineer.key` for `linear.roles.engineer.account`.
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:32`, `…/trackers/linear/ops.py:35`, `…/engine/router.py:572` |
+| Purpose | write-back as the role: comments, state moves, subscribing `linear.human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:32`, `…/trackers/linear/ops.py:35`, `…/engine/router.py:572` |
 | Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/trackers/linear/linear_tracker.py:94`, `…/trackers/linear/linear_tracker.py:96`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:83`, `…/engine/router.py:646` |
+| Stored at | a login keychain item whose service is `linear.roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:142`, `…/engine/router.py:646` |
 | Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |
@@ -140,8 +140,8 @@ shows.
 | `agent-pm-revocations` | `pending` | — | tokens awaiting revocation | `<B> close`, `refresh` failures | the broker |
 | `agent-pm-codex` | `auth` | — | the full Codex login | `<B> login codex`; renewals at `start`, `refresh` | the broker |
 | `agent-pm-opencode` | provider name | `[session.clients.opencode.providers.<name>]` | that OpenCode provider's API key | `<B> login opencode <name>` | the broker |
-| the `harness_key` value | any | `harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
-| each `roles.<role>.key` value | the role's account | `roles.<role>.key` | role Linear API key | the user | any process running as the user |
+| the `linear.harness_key` value | any | `linear.harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
+| each `linear.roles.<role>.key` value | the role's account | `linear.roles.<role>.key` | role Linear API key | the user | any process running as the user |
 | Claude Code's own | — | — | local Claude login | Claude Code `/login` | Claude Code; service name not documented |
 | `gh`'s own | — | — | host `gh` token | `gh auth login` | `gh`; see `gh auth status` |
 | Codex's own, keyring mode only | — | — | local Codex login | `codex login` | Codex; service name not documented |
@@ -225,22 +225,23 @@ container's own tmux socket is not Docker's, so the socket search names `docker`
 
 ## Linear presets
 
-Create these in the Linear team, then put each id in `~/.agent-pm/config.local.toml` under `[orchestrator]`
-([Setup](board.md#setup)).
+Create these in the Linear team, then put each id in `~/.agent-pm/config.local.toml`: a `linear.<key>` under
+`[orchestrator.linear]` (`linear.states.todo` is `todo` in `[orchestrator.linear.states]`, `linear.roles.pm.key` is
+`key` in `[orchestrator.linear.roles.pm]`), `local_clones` under `[orchestrator]` ([Setup](board.md#setup)).
 
 | Create in Linear | Config key |
 |---|---|
-| the team | `team` |
-| workflow states Todo, In Progress, In Review, Handoff, Done, Canceled | `states.todo`, `states.in_progress`, `states.in_review`, `states.handoff`, `states.done`, `states.canceled` |
-| a `Tasks` label group, its id from `issueLabels { nodes { id name isGroup } }` | `task_label_group` |
-| one label per task under `Tasks` (`build`, `light-build`, …), optional | `task_labels` |
-| an `Agent` label group and one label per client, optional; set both or neither | `agent_label_group`, `agent_labels` |
-| one member account per role, a plus-alias such as `you+pm@example.com` | `roles.researcher.account`, `roles.pm.account`, `roles.engineer.account` |
-| the humans subscribed on In Review | `human_members` |
-| the Linear project of each product repo, optional | `project_repos` |
+| the team | `linear.team` |
+| workflow states Todo, In Progress, In Review, Handoff, Done, Canceled | `linear.states.todo`, `linear.states.in_progress`, `linear.states.in_review`, `linear.states.handoff`, `linear.states.done`, `linear.states.canceled` |
+| a `Tasks` label group, its id from `issueLabels { nodes { id name isGroup } }` | `linear.task_label_group` |
+| one label per task under `Tasks` (`build`, `light-build`, …), optional | `linear.task_labels` |
+| an `Agent` label group and one label per client, optional; set both or neither | `linear.agent_label_group`, `linear.agent_labels` |
+| one member account per role, a plus-alias such as `you+pm@example.com` | `linear.roles.researcher.account`, `linear.roles.pm.account`, `linear.roles.engineer.account` |
+| the humans subscribed on In Review | `linear.human_members` |
+| the Linear project of each product repo, optional | `linear.project_repos` |
 | — (local clones of target repos, optional) | `local_clones` |
-| the harness account's API key, a Keychain item (below) | `harness_key` |
-| each role account's API key, a Keychain item (below) | `roles.researcher.key`, `roles.pm.key`, `roles.engineer.key` |
+| the harness account's API key, a Keychain item (below) | `linear.harness_key` |
+| each role account's API key, a Keychain item (below) | `linear.roles.researcher.key`, `linear.roles.pm.key`, `linear.roles.engineer.key` |
 
 Keys, one per account:
 
@@ -251,11 +252,11 @@ Keys, one per account:
 3. Store each in the login keychain, then paste the key (nothing echoes):
 
    ```sh
-   security add-generic-password -s <roles.<role>.key> -a <roles.<role>.account> -w   # each role
-   security add-generic-password -s <harness_key> -a <harness account> -w
+   security add-generic-password -s <linear.roles.<role>.key> -a <linear.roles.<role>.account> -w   # each role
+   security add-generic-password -s <linear.harness_key> -a <harness account> -w
    ```
 
-4. `bin/agent-pm-linear router --dry-run` and `bin/agent-pm-linear promote --dry-run` report no config error.
+4. `bin/agent-pm-orchestrator router --dry-run` and `bin/agent-pm-orchestrator promote --dry-run` report no config error.
 
 ## Live checks
 

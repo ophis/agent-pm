@@ -18,7 +18,7 @@ Desarrolladores: [`AGENTS.md`](../../AGENTS.md).
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
 ```
 
 ## Arquitectura en capas
@@ -94,10 +94,10 @@ Cómo cargan tu configuración las sessions que inicia agent-pm, y por qué algu
 
 | Comando | Hace |
 |---|---|
-| `ctmux <name>` | Abre la session de tmux del commander: ventanas nativas en iTerm2, un tmux attach normal en otros terminales, un cambio de session desde dentro de tmux. `ctmux --install` pone ctmux y los cuatro comandos `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` y `agent-pm-linear` en `~/.agent-pm/bin/`: ejecútalos con esa ruta o añádela a `PATH`. Cada uno ejecuta ese comando desde el plugin instalado en el momento de ejecutarse (primero la instalación de Claude Code, luego la más reciente de Codex), así que una actualización no requiere reinstalar; vuelve a ejecutar `--install` para refrescarlos. |
+| `ctmux <name>` | Abre la session de tmux del commander: ventanas nativas en iTerm2, un tmux attach normal en otros terminales, un cambio de session desde dentro de tmux. `ctmux --install` pone ctmux y los cuatro comandos `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` y `agent-pm-orchestrator` en `~/.agent-pm/bin/`: ejecútalos con esa ruta o añádela a `PATH`. Cada uno ejecuta ese comando desde el plugin instalado en el momento de ejecutarse (primero la instalación de Claude Code, luego la más reciente de Codex), así que una actualización no requiere reinstalar; vuelve a ejecutar `--install` para refrescarlos. |
 | `/agent-pm:manage` | Lanza y dirige workers, role runs y pipeline runs, con las pautas del commander. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Ejecuta un role del núcleo en esta conversación. |
-| `/agent-pm:linear` | Lee, busca, crea y cambia issues de Linear con los comandos fijos `agent-pm-linear issue`. |
+| `/agent-pm:linear` | Lee, busca, crea y cambia issues de Linear con los comandos fijos `agent-pm-orchestrator issue`. |
 | `agent-pm-delegate run --list` | Lista todos los roles y tasks. |
 
 ## Inicio rápido
