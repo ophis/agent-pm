@@ -236,7 +236,7 @@ def _comments(lines, mtime):
     notes = []
     for line in lines:
         if line == _BARE:
-            notes.append([mtime, Source.OTHER, [], None])
+            notes.append([mtime.replace(second=0, microsecond=0), Source.OTHER, [], None])
         elif _HEADED.match(line) or (not notes and line.strip()):
             header = _HEADER.fullmatch(line)
             try:

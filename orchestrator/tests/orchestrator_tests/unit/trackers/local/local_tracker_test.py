@@ -957,6 +957,29 @@ class Create(Written):
                 self.assertEqual(self.tracker.issue(made.key).title, title)
 
 
+class Stamped(Written):
+    def test_derived_times_survive_a_stamp(self):
+        """promote's once key holds the derived move's time: a write's stamp must not change it."""
+        path = self.write(
+            "pm/approved",
+            "LOC-1",
+            comments="###\nGo on.\n",
+            history="- 2026-10-19 16:10 review self\n",
+        )
+        self.write("engineer/ready", "LOC-2")
+        late = MTIME.timestamp() + 27.5
+        os.utime(path, (late, late))
+        before = self.tracker.detail("LOC-1")
+        self.assertEqual(
+            (before.moves[-1].at, before.comments[0].at),
+            ("2026-10-20T00:00:00.000Z", "2026-10-20T00:00:00.000Z"),
+        )
+        self.tracker.relate("LOC-1", "LOC-2")
+        after = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+        self.assertEqual(after.moves, before.moves)
+        self.assertEqual(after.comments[0].at, before.comments[0].at)
+
+
 class Relate(Written):
     def test_adds_once(self):
         path = self.write("pm/done", "LOC-1", front="related: [LOC-7]\n")

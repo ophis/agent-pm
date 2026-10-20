@@ -1,7 +1,8 @@
-"""A local issue from review to archive (spec AC12): bin/agent-pm-orchestrator router, promote and
-prune as real processes with tracker = "local". A researcher's run reaches review; approved, it waits
-out promote's undo window, then becomes pm's issue once; that issue done, prune cleans the run and
-archives it flat, skipping it while a sub-issue is open.
+"""Local issues from review to archive (spec AC12): bin/agent-pm-orchestrator router, promote and prune
+as real processes with tracker = "local". A pm issue in review is approved, waits out promote's undo
+window, becomes engineer's issue once, and, done, is archived flat by prune, skipped while a
+sub-issue is open. A researcher's issue runs to review through the router first; promoted the same
+way, prune closes its run and deletes its agent files, its report staying unarchived.
 """
 
 import os
@@ -18,6 +19,13 @@ from delegate.tests.replies import block
 REPORT = "https://github.com/ophis/private_docs/blob/main/Research/queues.md"
 OUTCOME = {"status": "done", "title": "Queue survey", "summary": "Compared.", "url": REPORT}
 ROLES = ("researcher", "pm", "engineer")
+PM, RESEARCH = "LOC-5 Queue survey.md", "LOC-1 Queue survey.md"
+HISTORY = re.compile(r"- (\S+ \S+) (\w+) (self|other)\n")
+
+
+def ago(**delta):
+    """A History time as the processes (TZ=UTC) write it."""
+    return (datetime.now(UTC) - timedelta(**delta)).strftime("%Y-%m-%d %H:%M")
 
 
 def issue(ident, *, front="", history=""):
@@ -25,11 +33,6 @@ def issue(ident, *, front="", history=""):
         f'---\nid: {ident}\ntitle: "Queue survey"\ncreated: 2026-10-20T09:00:00+00:00\n{front}---\n'
         f"### Description\nSurvey the queues.\n### History\n{history}"
     )
-
-
-def minute(at):
-    """A History time as the processes (TZ=UTC) write it."""
-    return at.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
 
 
 class ReviewToArchive(BinFlow):
@@ -44,8 +47,13 @@ class ReviewToArchive(BinFlow):
         self.assertEqual(text.count('tracker = "linear"\n'), 1)
         with open(config, "w", encoding="utf-8") as f:
             f.write(text.replace('tracker = "linear"\n', 'tracker = "local"\n'))
-        self.put("researcher/ready/LOC-1 Queue survey.md", issue("LOC-1", front="parent: LOC-9\n"))
-        self.put("pm/backlog/LOC-3 Sub.md", issue("LOC-3", front="parent: LOC-10\n"))
+        self.reviewed = "".join(
+            f"- {ago(hours=h)} {s}\n"
+            for h, s in ((3, "ready other"), (2, "running self"), (1, "review self"))
+        )
+        self.put(f"pm/review/{PM}", issue("LOC-5", front="parent: LOC-8\n", history=self.reviewed))
+        self.put("pm/backlog/LOC-3 Sub.md", issue("LOC-3", front="parent: LOC-5\n"))
+        self.put(f"researcher/ready/{RESEARCH}", issue("LOC-1", front="parent: LOC-9\n"))
         self.put(".next-id", "10\n")
 
     def bin_env(self):
@@ -64,13 +72,19 @@ class ReviewToArchive(BinFlow):
             return f.read()
 
     def move(self, rel, to, *, age=None):
-        """A person's move of rel into to (a state dir), its mtime age ago when given."""
+        """A person's move of rel into the state dir to, its mtime age ago when given."""
         os.makedirs(self.at(to), exist_ok=True)
         os.rename(self.at(rel), target := os.path.join(self.at(to), os.path.basename(rel)))
         if age is not None:
-            when = (datetime.now(UTC) - age).timestamp()
-            os.utime(target, (when, when))
+            self.age(os.path.relpath(target, self.board), age)
         return os.path.relpath(target, self.board)
+
+    def age(self, rel, age):
+        when = (datetime.now(UTC) - age).timestamp()
+        os.utime(self.at(rel), (when, when))
+
+    def history(self, rel):
+        return [m.groups()[1:] for m in HISTORY.finditer(self.read(rel))]
 
     def files(self):
         """Every board file but its state root's, by path."""
@@ -84,10 +98,6 @@ class ReviewToArchive(BinFlow):
     def run_bin(self, *argv):
         res = self.linear(*argv)
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""), self.said())
-        return res
-
-    def tracker(self):
-        return LocalTracker(self.board, ROLES)
 
     def test_review_to_archive(self):
         with self.subTest("router: a researcher's run reaches review"):
@@ -95,71 +105,81 @@ class ReviewToArchive(BinFlow):
             self.run_bin("router", "--issue", "LOC-1")
             [row] = self.runs()
             self.wait_end(row["sid"], "LOC-1", role="researcher")
-            self.assertTrue(os.path.exists(self.at("researcher/review/LOC-1 Queue survey.md")))
+            self.assertTrue(os.path.exists(self.at(f"researcher/review/{RESEARCH}")))
             self.assertTrue(os.path.isdir(os.path.join(self.workdirs, "LOC-1")))
 
         with self.subTest("approved, inside the undo window: promote waits"):
-            source = self.move("researcher/review/LOC-1 Queue survey.md", "researcher/approved")
-            text = self.read(source)  # a person's comment: `###` last in Comments
-            self.put(
-                source, text.replace("\n### History\n", "\n###\nWrite the PRD.\n\n### History\n")
+            text = self.read(f"researcher/review/{RESEARCH}")  # its run back-dated an hour or more
+            said = (
+                f"\n#### other · {ago(minutes=30)}\nWrite the PRD.\n"  # the person's instructions
             )
+            head = text[: text.index("\n### History\n")]
+            self.put(f"researcher/review/{RESEARCH}", f"{head}{said}\n### History\n{self.reviewed}")
+            research = self.move(f"researcher/review/{RESEARCH}", "researcher/approved")
+            pm = self.move(f"pm/review/{PM}", "pm/approved")
             before = self.files()
             self.run_bin("promote")
             self.assertEqual(self.files(), before)
-            self.assertIn("promote handoff-wait LOC-1 reason=in Handoff under 10 min", self.said())
+            for ident in ("LOC-5", "LOC-1"):
+                self.assertIn(
+                    f"promote handoff-wait {ident} reason=in Handoff under 10 min", self.said()
+                )
 
-        with self.subTest("past the undo window: promote makes pm's issue once"):
-            back = (datetime.now(UTC) - timedelta(minutes=11)).timestamp()
-            os.utime(self.at(source), (back, back))
+        with self.subTest("past the undo window: promote makes each next issue once"):
+            self.age(pm, timedelta(minutes=12))
+            self.age(research, timedelta(minutes=11))
             self.run_bin("promote")
-            [made] = os.listdir(self.at("pm/ready"))
-            self.assertEqual(made, "LOC-10 PRD: Queue survey.md")
-            text = self.read(f"pm/ready/{made}")
-            self.assertIn("\nparent: LOC-9\n", text)
-            self.assertIn("\nCreated by promote.\n", text)
-            self.assertRegex(text, r"### History\n- \S+ \S+ ready self\n$")
-            done = "researcher/done/LOC-1 Queue survey.md"
-            self.assertIn("\nrelated: [LOC-10]\n", self.read(done))
-            history = re.findall(r"- \S+ \S+ (\w+) (self|other)", self.read(done))
-            self.assertEqual(history[-2:], [("approved", "other"), ("done", "self")])
-            self.assertEqual(
-                self.tracker().detail("LOC-1").comments[-1].body, "Promoted to LOC-10."
-            )
-            self.assertEqual(self.read(".next-id"), "11\n")
+            self.assertEqual(os.listdir(self.at("engineer/ready")), ["LOC-10 ENG: Queue survey.md"])
+            self.assertEqual(os.listdir(self.at("pm/ready")), ["LOC-11 PRD: Queue survey.md"])
+            for rel, parent in (
+                ("engineer/ready/LOC-10 ENG: Queue survey.md", "LOC-8"),
+                ("pm/ready/LOC-11 PRD: Queue survey.md", "LOC-9"),
+            ):
+                text = self.read(rel)
+                self.assertIn(f"\nparent: {parent}\n", text)
+                self.assertIn("\nCreated by promote.\n", text)
+                self.assertEqual(self.history(rel), [("ready", "self")])
+            pm, research = f"pm/done/{PM}", f"researcher/done/{RESEARCH}"
+            for rel, child in ((pm, "LOC-10"), (research, "LOC-11")):
+                self.assertIn(f"\nrelated: [{child}]\n", self.read(rel))
+                self.assertEqual(self.history(rel)[-2:], [("approved", "other"), ("done", "self")])
+            detail = LocalTracker(self.board, ROLES).detail("LOC-5")
+            self.assertEqual(detail.comments[-1].body, "Promoted to LOC-10.")
+            self.assertEqual(self.read(".next-id"), "12\n")
             before = self.files()
             self.run_bin("promote")
             self.assertEqual(self.files(), before)
 
         with self.subTest("done, a sub-issue open: prune cleans the run, archives nothing"):
-            three = timedelta(hours=3)
-            text = self.read(done)
-            line = re.findall(r"- \S+ \S+ done self\n", text)[-1]
-            self.put(done, text.replace(line, f"- {minute(datetime.now(UTC) - three)} done self\n"))
-            moved = self.move(f"pm/ready/{made}", "pm/done", age=three)
+            for rel in (pm, research):  # both done three hours back
+                text = self.read(rel)
+                line = HISTORY.findall(text)[-1]
+                self.assertEqual(line[1:], ("done", "self"))
+                self.put(
+                    rel, text.replace(f"- {line[0]} done self\n", f"- {ago(hours=3)} done self\n")
+                )
             self.run_bin("prune")
             said = self.said()
             self.assertIn(f"prune prune-closed LOC-1 session={row['sid']}", said)
             self.assertIn("prune prune-removed LOC-1 what=agent dir", said)
             self.assertIn(
-                "prune prune-skip LOC-10 reason=archive: sub-issue LOC-3 not finished", said
+                "prune prune-skip LOC-5 reason=archive: sub-issue LOC-3 not finished", said
             )
             self.assertFalse(os.path.exists(self.at("archive")))
 
-        with self.subTest("the sub-issue done: prune archives both flat"):
-            self.move("pm/backlog/LOC-3 Sub.md", "pm/done", age=three)
+        with self.subTest("the sub-issue done: prune archives the issue and it flat"):
+            self.move("pm/backlog/LOC-3 Sub.md", "pm/done", age=timedelta(hours=3))
             self.run_bin("prune")
-            self.assertIn("prune prune-archived LOC-10", self.said())
-            self.assertEqual(
-                sorted(os.listdir(self.at("archive"))),
-                ["LOC-10 PRD: Queue survey.md", "LOC-3 Sub.md"],
+            self.assertIn("prune prune-archived LOC-5", self.said())
+            self.assertEqual(sorted(os.listdir(self.at("archive"))), ["LOC-3 Sub.md", PM])
+            self.assertFalse(os.path.exists(self.at(pm)))
+            self.assertRegex(
+                self.read(f"archive/{PM}"),
+                r"<!-- id=c\d+ key=archived:pm -->\nArchived from pm/done/\.\n",
             )
-            self.assertFalse(os.path.exists(self.at(moved)))
-            self.assertIn(
-                "Archived from pm/done/.", self.read("archive/LOC-10 PRD: Queue survey.md")
-            )
-            self.assertTrue(os.path.exists(self.at(done)))  # a researcher's report stays
-            self.assertEqual(self.tracker().read("LOC-10").state.value, "done")
+            self.assertEqual(self.history(f"archive/{PM}")[-1], ("done", "self"))
+            self.assertTrue(os.path.exists(self.at(research)))  # a researcher's report stays
+            self.assertTrue(os.path.exists(self.at("engineer/ready/LOC-10 ENG: Queue survey.md")))
 
 
 if __name__ == "__main__":

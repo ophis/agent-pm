@@ -29,9 +29,8 @@ error, and no issue is pruned. Each step is logged (event_log.log, src prune); a
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
 
-A tick's requests past its setup reads: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at most,
-the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the tracker's
-time.
+A tick's requests past its setup: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at most, the
+rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the tracker's time.
 """
 
 import functools
@@ -53,9 +52,9 @@ from agent_pm.orchestrator.engine.flow.types import (
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.types import (
+    TRACKER_ERRORS,
     ConfigError,
     Entry,
-    IssueError,
     LinearError,
     PruneState,
     Refusal,
@@ -85,7 +84,6 @@ BACKSTOP = timedelta(days=1)  # an entry the feed never names is read again afte
 OVERLAP = timedelta(minutes=10)  # Linear's lists lag a change
 CACHE = "prune.json"
 TOO_BIG = "archive: too many sub-issues to read in one tick"
-TRACKER_ERRORS = (LinearError, IssueError, TrackerFileError, OSError, subprocess.SubprocessError)
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-orchestrator prune [--dry-run]

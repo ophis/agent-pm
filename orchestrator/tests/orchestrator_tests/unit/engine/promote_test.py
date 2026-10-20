@@ -7,12 +7,15 @@ import os
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config, promote
+from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow import workflow
 from agent_pm.orchestrator.engine.flow.types import IssueState
+from agent_pm.orchestrator.engine.types import IssueError
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.orchestrator.trackers.local.local_tracker import LocalTracker
 from orchestrator_tests.case import Case
@@ -878,3 +881,20 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.run_main(), 2)
         self.assertEqual(self.err, f"promote.py: {path}: no front matter\n")
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
+
+    def test_a_tracker_error_bouncing_is_logged(self):
+        """The source archived meanwhile: its bounce fails as a handoff-error, not a crash."""
+
+        class Archived:
+            def comment_and_move(self, *_, **__):
+                raise IssueError("LOC-1: archived")
+
+        cfg = config.load(path=self.config_path)
+        event_log.use_logs(cfg.logs_dir)
+        promoter = promote.Promoter(cfg, Archived(), NOW, dry=False, tasks=config.TASKS)
+        promoter.bounce_failed(SimpleNamespace(ident="LOC-1", key="LOC-1"), ValueError("x"), None)
+        [record] = logged(self.logs)
+        self.assertEqual(
+            (record["kind"], record["reason"], record["error"]),
+            ("handoff-error", "could not move to In Review", "IssueError: LOC-1: archived"),
+        )

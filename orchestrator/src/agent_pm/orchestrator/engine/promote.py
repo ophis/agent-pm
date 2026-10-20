@@ -1,6 +1,5 @@
 import functools
 import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,6 +12,7 @@ from agent_pm.orchestrator.engine.flow.types import Approved, Detail, IssueState
 from agent_pm.orchestrator.engine.log import linear_error, log
 from agent_pm.orchestrator.engine.prune import Pruner
 from agent_pm.orchestrator.engine.types import (
+    TRACKER_ERRORS,
     ConfigError,
     LinearError,
     TrackerFileError,
@@ -210,7 +210,7 @@ class Promoter:
         self.say("promote", src.ident, to=child.ident)
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child.ident}.")
-        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
+        except (*TRACKER_ERRORS, Unavailable) as e:
             self.say(
                 "handoff-error",
                 src.ident,
@@ -239,7 +239,7 @@ class Promoter:
                 self.say("handoff-failed", src.ident, to="in_review")
         except Unavailable:
             raise
-        except (LinearError, OSError, subprocess.SubprocessError) as e:
+        except TRACKER_ERRORS as e:
             self.say(
                 "handoff-error",
                 src.ident,
