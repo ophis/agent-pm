@@ -7,6 +7,7 @@ import functools
 import os
 import sys
 import uuid
+from collections.abc import Mapping
 from dataclasses import replace
 
 from agent_pm.delegate.composer import Composer, RunConfig
@@ -18,6 +19,9 @@ from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import thaw, under
+
+# agent_pm.session.engine.types.ACCOUNT_ENV, not importable here
+ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
 
 
 def _own(f):
@@ -74,7 +78,14 @@ def _refuse_overlap(label: str, path: str, layout: Layout) -> None:
 
 
 @_own
-def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -> Plan:
+def plan(
+    run: RunConfig,
+    spec: Spec,
+    *,
+    driver: Driver,
+    composition: Composer,
+    accounts: Mapping[str, str] | None = None,
+) -> Plan:
     if not driver.session_based and spec.resume:
         raise ConfigError("instruction has no session to resume")
     if spec.mode not in tuple(Mode):
@@ -141,6 +152,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
     flags, env = driver.policy(client)
     if docker:
         env = env | users_env(thaw(composition.config.values).get("users", []))
+    if account := (accounts or {}).get(client):
+        env = env | {ACCOUNT_ENV: account}
     session = SessionSpec(
         workdir=layout.run,
         client=client,
