@@ -310,13 +310,17 @@ class LocalTracker(Tracker):
     def _write(self, key, change):
         """Under the board lock, issue key's file read fresh and Stamped, then change(text, found):
         None, or (text, the state dir it moves to or None); written only when that differs from
-        the Stamped text and the file still holds what was read."""
+        the Stamped text and the file still holds what was read. A file a person moved or deleted
+        meanwhile is read again. Returns the file as the deciding change saw it."""
         with store.locked(self.board):
             for _ in range(TRIES):
                 found = read_one(self.board, self._need(key).path, key)
                 if found is None:
                     raise IssueError(f"{key}: issue not found")
-                text, mtime = read_text(found.path)
+                read = _read_if_there(found.path)
+                if read is None:
+                    continue
+                text, mtime = read
                 found = issue_file.parse(
                     found.path, text, assignee=found.assignee, state=found.state, mtime=mtime
                 )
@@ -326,10 +330,13 @@ class LocalTracker(Tracker):
                 changed = change(stamped, found)
                 if changed is None or changed[0] == stamped:
                     self._all()[key] = found
-                    return
-                if read_text(found.path)[0] != text:
+                    return found
+                again = _read_if_there(found.path)
+                if again is None or again[0] != text:
                     continue
                 path = found.path if changed[1] is None else self._rename(found, changed[1])
+                if path is None:
+                    continue
                 store.replace(path, changed[0])
                 text, mtime = read_text(path)
                 self._all()[key] = issue_file.parse(
@@ -339,11 +346,12 @@ class LocalTracker(Tracker):
                     state=changed[1] or found.state,
                     mtime=mtime,
                 )
-                return
+                return found
             raise TrackerFileError(found.path, "changed while writing")
 
     def _rename(self, issue, state):
-        """issue's file moved, its name kept, into its assignee's state dir, made if absent."""
+        """issue's file moved, its name kept, into its assignee's state dir, made if absent; None:
+        it was no longer there."""
         folder = os.path.join(self.board, issue.assignee, state.value)
         try:
             if not stat.S_ISDIR(os.lstat(folder).st_mode):
@@ -353,20 +361,21 @@ class LocalTracker(Tracker):
         target = os.path.join(folder, os.path.basename(issue.path))
         if os.path.lexists(target):
             raise TrackerFileError(target, "file exists")
-        os.rename(issue.path, target)
+        try:
+            os.rename(issue.path, target)
+        except FileNotFoundError:
+            if os.path.lexists(issue.path):
+                raise
+            return None
         return target
 
     def _move(self, key, to, frm, body=None):
         """None: moved (with body, a comment), or already in to with no frm; else its state."""
-        left = None
 
         def change(text, found):
-            nonlocal left
-            left = None
             if found.assignee is None:
                 raise IssueError(f"{key}: archived")
             if frm is not None and found.state != LOCAL_STATES[frm]:
-                left = found.state.value
                 return None
             if found.state == LOCAL_STATES[to]:
                 return None
@@ -376,8 +385,10 @@ class LocalTracker(Tracker):
                 LOCAL_STATES[to]
             )
 
-        self._write(key, change)
-        return left
+        state = self._write(key, change).state  # None only archived, which change refuses
+        if state is None or frm is None or state == LOCAL_STATES[frm]:
+            return None
+        return state.value
 
     def move(self, key, to, *, frm=None):
         return self._move(key, to, frm)
@@ -430,6 +441,16 @@ class LocalTracker(Tracker):
         """A live issue is on the board already; restoring an archived one is prune's."""
         if self._need(key).assignee is None:
             raise IssueError(f"{key}: archived")
+
+
+def _read_if_there(path):
+    """read_text's, or None when nothing is at path any more."""
+    try:
+        return read_text(path)
+    except TrackerFileError:
+        if os.path.lexists(path):
+            raise
+        return None
 
 
 def _unsupported(name) -> NoReturn:

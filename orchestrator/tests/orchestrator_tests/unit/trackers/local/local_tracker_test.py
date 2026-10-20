@@ -774,6 +774,60 @@ class Writes(Board):
         )
         self.assertNotIn("Seen.", self.read(path))
 
+    def test_a_file_moved_while_writing_is_found_again(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.read("LOC-1")
+        moved = os.path.join(self.board, "pm/review/LOC-1 x.md")
+        os.mkdir(os.path.dirname(moved))
+        real, calls = os.fstat, iter(range(100))
+
+        def fstat(fd):
+            found = real(fd)
+            if next(calls) == 1:  # the write's own read: a person moves it before the re-check
+                os.rename(path, moved)
+            return found
+
+        with mock.patch("os.fstat", side_effect=fstat):
+            self.tracker.comment("LOC-1", "Seen.")
+        self.assertFalse(os.path.exists(path))
+        self.assertIn("Seen.", self.read(moved))
+        self.assertIn(STAMPED.format("review"), self.read(moved))
+
+    def test_a_file_moved_before_its_rename_is_found_again(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.tracker.read("LOC-1")
+        moved = os.path.join(self.board, "pm/ready/LOC-1 x.md")
+        os.mkdir(os.path.dirname(moved))
+        real, raced = os.rename, []
+
+        def rename(src, dst):
+            if not raced:
+                raced.append(src)
+                real(src, moved)
+            return real(src, dst)
+
+        with mock.patch("os.rename", side_effect=rename):
+            left = self.tracker.move("LOC-1", IssueState.REVIEW, frm=IssueState.RUNNING)
+        self.assertEqual((left, raced), ("ready", [path]))
+        self.assertTrue(os.path.exists(moved))
+        self.assertFalse(os.path.exists(os.path.join(self.board, "pm/review/LOC-1 x.md")))
+
+    def test_a_file_deleted_while_writing(self):
+        path = self.write("pm/running", "LOC-1", history="- 2026-10-19 14:30 running self\n")
+        self.write("pm/done", "LOC-2")
+        self.tracker.read("LOC-1")
+        real, calls = os.fstat, iter(range(100))
+
+        def fstat(fd):
+            found = real(fd)
+            if next(calls) == 1:
+                os.unlink(path)
+            return found
+
+        with mock.patch("os.fstat", side_effect=fstat), self.assertRaises(IssueError) as caught:
+            self.tracker.comment("LOC-1", "Seen.")
+        self.assertEqual(str(caught.exception), "LOC-1: issue not found")
+
     def test_writes_not_supported(self):
         t = self.tracker
         calls = {
