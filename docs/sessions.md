@@ -33,6 +33,11 @@ A prompt over 100,000 bytes (measured JSON-encoded) never goes on the client's c
 
 Sessions run on `[session.hosts] default`: `tmux`, or `docker` ([Docker host](docker-host.md)).
 
+`start --account NAME` (also `agent-pm-crew worker`'s) runs a Claude session on a registered Claude account
+([Docker host › Claude accounts](docker-host.md#claude-accounts)). It sets `AGENT_PM_ACCOUNT` in the session's env,
+which the session checks and keeps for restart and resume, never passing it to the client or its container; `--env
+AGENT_PM_ACCOUNT=…` and a `[delegate.policy.<client>] env` naming it are refused (exit 2).
+
 `start --display none` starts a worker without a pane, still opened by the caller, and hidden. Hidden (from that, `hide`, or closing its pane by hand; not from losing the manager's window or detaching its viewer) lasts through `restart` and `resume` until `show`.
 
 Text sent to a Codex or Claude tui session mid-turn joins that turn. Codex takes it at once (a steer). Claude Code (measured on 2.1.304, a Docker Host worker) queues it, a `queue-operation` enqueue record in its transcript, and once the running tool returns joins it to the turn as a `queued_command` attachment: one turn, one Stop, one `done`. That `done` holds the answer only when the turn's last message does: an answer followed by more tool calls is in an earlier message alone. Text sent after a Claude turn ended starts a new turn with its own `done`.

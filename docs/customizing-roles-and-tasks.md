@@ -26,6 +26,7 @@ dir = "Research/"
 ```
 
 - **Client:** `client` picks it; `agent-pm-delegate run --client` overrides it for one run. The flags a role run passes its client: [Client policy](sessions.md#client-policy).
+- **Claude account:** `[delegate.roles.<role>.accounts]` `claude = "work"` runs the role's Docker Claude sessions on that registered account, keyed by client: [Docker host › Claude accounts](docker-host.md#claude-accounts).
 - **Destination:** `[output]` (`local`, `github`, `pull-request` or `orchestrator`); a lower level's `[output]` replaces the whole table.
 - **Access:** `read`, `write` and `commands` widen what the agent run may read, write and run; `templates` inlines templates into its prompt.
 - **Board runs:** the same keys under `[linear_orchestrator.core]` (e.g. `[linear_orchestrator.core.roles.engineer]`) apply to board runs only, after the `[delegate]` ones.

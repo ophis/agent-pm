@@ -62,7 +62,7 @@ flowchart LR
     D --> C[Save auth]
     C --> U[Verify saved auth and release lock]
 ```
-Sources: `broker/internal/broker/codex.go:147`, `broker/internal/broker/keychain.go:325`. The placeholder is
+Sources: `broker/internal/broker/codex.go:147`, `broker/internal/broker/keychain.go:341`. The placeholder is
 created only when the item is absent; the access steps run only when not yet in place, asking for the keychain
 password as `login github` does ([Log in](docker-host.md#log-in)).
 
