@@ -71,7 +71,7 @@ Example (configured Linear access and Handoff issues):
 Recovery and next help:
   Review the plan before executing: agent-pm-orchestrator promote
   Inspect logged Handoff errors and fix the reported configuration, credentials
-  or missing human instructions before retrying.
+  or missing instructions before retrying.
   Cleanup details: agent-pm-orchestrator prune --help
   Command discovery: agent-pm-orchestrator --help
 """
