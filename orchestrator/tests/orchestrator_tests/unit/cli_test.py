@@ -652,7 +652,7 @@ class Queries(RunCase):
 
 
 class OnALocalBoard(RunCase):
-    """Spec AC11 in cli: router reaches the local board; writeback and resume need Linear."""
+    """router, writeback and resume reach the local board; promote and prune need Linear."""
 
     def configure(self, default="fake"):
         self.board = os.path.join(os.path.realpath(self.home), "board")
@@ -663,31 +663,18 @@ class OnALocalBoard(RunCase):
         local.write_text(text.replace('tracker = "linear"', 'tracker = "local"'), encoding="utf-8")
         self.cfg = config.load()
 
-    def test_local_refuses_linear_commands(self):
+    def test_local_runs_writeback_and_resume_and_refuses_the_rest(self):
         self.assertEqual(self.cfg.tracker, "local")
-        for command, argv in (
-            ("writeback", ["--issue", "TASK-1", "--workdir", "/w"]),
-            ("resume", ["TASK-1"]),
-        ):
+        for argv in (["writeback", "--issue", "TASK-1", "--workdir", "/w"], ["resume", "TASK-1"]):
+            with self.subTest(argv[0]):
+                self.assertNotIn("needs [orchestrator]", _call(argv, stdin="{}\n")[2])
+        for command, argv in (("promote", []), ("prune", [])):
             with self.subTest(command):
-                refused = f'{command} needs [orchestrator] tracker = "linear"'
-                result, output, errors = _call([command, *argv], stdin="{}\n")
-                self.assertEqual(
-                    (result, output, errors), (2, "", f"agent-pm-orchestrator: {refused}\n")
+                result, output, errors = _call([command, *argv])
+                self.assertEqual((result, output), (2, ""))
+                self.assertTrue(
+                    errors.endswith(f'{command} needs [orchestrator] tracker = "linear"\n'), errors
                 )
-        self.assertEqual(
-            [{k: v for k, v in row.items() if k != "ts"} for row in logged(self.cfg.logs_dir)],
-            [
-                {
-                    "src": "writeback",
-                    "kind": "refused",
-                    "issue": "TASK-1",
-                    "reason": 'writeback needs [orchestrator] tracker = "linear"',
-                    "exit": 2,
-                }
-            ],
-        )
-        self.assertNotIn("needs [orchestrator]", _call(["status", "TASK-1"])[2])
 
     def test_router_dry_run_reads_the_local_board(self):
         missing = _call(["router", "--dry-run"])

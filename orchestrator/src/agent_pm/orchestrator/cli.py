@@ -19,7 +19,7 @@ from agent_pm.orchestrator.engine import (
     runs,
     writeback,
 )
-from agent_pm.orchestrator.engine.config import linear_settings, load
+from agent_pm.orchestrator.engine.config import load
 from agent_pm.orchestrator.engine.gate import Gate
 from agent_pm.orchestrator.engine.linear_run import LinearRun
 from agent_pm.orchestrator.engine.types import (
@@ -75,7 +75,6 @@ def _query_help(command):
             "--input is rejected: put pipeline answers on the issue board, then resume.\n"
             "Run outside an agent session. AGENT_PM_SID, if supplied, must match\n"
             "the recorded session and is read once and removed.\n"
-            'Needs [orchestrator] tracker = "linear"; a local board refuses it.\n'
             "For a new board-driven attempt: agent-pm-orchestrator router --help"
         ),
         "content": "To inspect liveness and outcome: agent-pm-orchestrator status TASK-1",
@@ -132,7 +131,7 @@ def main(argv=None):
             "  Operational commands require configured orchestrator and Delegate\n"
             '  settings. [orchestrator] tracker picks the board: "local" (the default)\n'
             "  reads the directory $AGENT_PM_BOARD_DIR (default ~/.agent-pm/board), where\n"
-            '  only router --dry-run and --brake run yet; "linear" reaches Linear through\n'
+            '  promote, prune and issue do not run yet; "linear" reaches Linear through\n'
             "  the linear.harness_key Keychain service (the issue commands:\n"
             "  linear.manager_key), role keys identifying the accounts used for issue\n"
             "  work. Python 3.11+ is needed.\n"
@@ -180,7 +179,7 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Prerequisites and effects:\n"
-            '  Requires tracker = "linear", configured Linear access, the run\'s existing\n'
+            "  Requires the configured board (Linear: its access), the run's existing\n"
             "  start row and matching issue/workdir/session identity. Read exactly one\n"
             "  DelegateEvent JSON line from stdin through EOF, not a Record or an event\n"
             "  stream. The Delegate harness supplies this callback; it may post comments,\n"
@@ -227,20 +226,11 @@ def main(argv=None):
                 _log_ignored(args.issue, ignored)
             return 2
         event_log.use_logs(cfg.logs_dir)
-        if args.command in {"writeback", "resume"}:
+        if args.command == "writeback":
             try:
-                linear_settings(cfg, args.command)
-            except ConfigError as refused:
-                print(f"agent-pm-orchestrator: {refused}", file=sys.stderr)
-                if args.command == "writeback":
-                    _refused(args.issue, refused)
-                    _log_ignored(args.issue, ignored)
-                return 2
-            if args.command == "writeback":
-                try:
-                    return _writeback(cfg, args.issue, args.workdir)
-                finally:
-                    _log_ignored(args.issue, ignored)
+                return _writeback(cfg, args.issue, args.workdir)
+            finally:
+                _log_ignored(args.issue, ignored)
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key

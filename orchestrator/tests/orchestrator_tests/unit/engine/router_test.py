@@ -2233,16 +2233,6 @@ class LocalBoard(TickBase):
         wiring = replace(cli.TRACKERS[TrackerKind.LOCAL], connect=self.connect)
         return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: wiring}, **kw)
 
-    def test_local_refuses_non_dry(self):
-        for argv in ([], ["--issue", "TASK-1"], ["--tui", "--events", "e"]):
-            with self.subTest(argv=argv):
-                fake = self.fake(issue("TASK-1", "Todo", "researcher"))
-                self.assertEqual(self.on_local(fake, *argv), 2)
-                self.assertEqual(
-                    self.err, 'router.py: tracker "local" runs only --dry-run and --brake\n'
-                )
-                self.assertEqual((self.connects, fake.queries, self.start.launches), ([], [], []))
-
     def test_brake_on_local(self):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.on_local(self.fake(), "--brake", "researcher"), 0)
@@ -2250,7 +2240,8 @@ class LocalBoard(TickBase):
         self.assertEqual(self.connects, [])
 
     def test_tracker_file_error_exit_2(self):
-        for argv in (["--dry-run"], ["--dry-run", "--issue", "TASK-1"]):
+        """A tick and --issue, run or dry, all read the board."""
+        for argv in ([], ["--issue", "TASK-1"], ["--dry-run"], ["--dry-run", "--issue", "TASK-1"]):
             with self.subTest(argv=argv):
                 self.connects = []
                 self.assertEqual(self.on_local(self.fake(), *argv), 2)
@@ -5268,12 +5259,13 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
 
-    def test_a_local_board_replays_nothing(self):
+    def test_a_local_board_replays_as_its_start_row(self):
+        """No early return on a local board: its replay reads the start row, here a Linear one."""
         self.ended()
         self.write_runs()
         cfg = replace(self.cfg(), tracker=TrackerKind.LOCAL, linear=None, board=self.tmp)
         sid = self.sid("a")
-        self.assertIsNotNone(router.LinearRun.attach("TASK-1", cfg=cfg, sid=sid).delegate.outcome())
+        said = []
         board = router.Board(
             None,
             [],
@@ -5282,8 +5274,14 @@ class RecoverWriteBack(TickBase):
             dry=True,
             keychain=None,
             wiring=replace(cli.TRACKERS[TrackerKind.LOCAL], connect=lambda *_, **__: None),
+            say=lambda *a, **kw: said.append((a, kw.get("reason", ""))),
         )
-        self.assertIsNone(board.replay({"identifier": "TASK-1"}, sid))
+        done = board.replay({"identifier": "TASK-1"}, sid)
+        self.assertIsNotNone(done)
+        self.assertFalse(done)
+        [(kind, reason)] = said
+        self.assertEqual(kind, ("recover-skip", "TASK-1"))
+        self.assertIn(f"session {sid}'s start row key:", reason)
         self.assertEqual(self.steps(), ["comment"])
 
     def test_a_dry_run_writes_nothing(self):

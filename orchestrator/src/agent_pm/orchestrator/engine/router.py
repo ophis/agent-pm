@@ -12,7 +12,7 @@ Arguments and options:
                 them).
   --dry-run     Print the plan without claiming issues or launching work;
                 a tick still performs usage checks. Not an offline preview:
-                read configuration, run inventory, credentials and Linear data.
+                read configuration, run inventory, credentials and board data.
 --tui         With either: each run it starts or resumes is attended (TUI (text user interface) mode), shown at D (opaque,
               its format: agent-pm-session --help; no D: the caller's place; none: started hidden,
               passed on as given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before
@@ -27,8 +27,8 @@ Arguments and options:
   Valued options occur at most once; boolean flags may repeat with no change.
 
 Prerequisites and effects:
-  Requires configured [linear] and roles, harness/role Keychain credentials,
-  Linear access and the selected Delegate/client executable. See
+  Requires configured roles and board (Linear: [linear], harness/role Keychain
+  credentials and access) and the selected Delegate/client executable. See
   agent-pm-orchestrator --help for configuration, executable lookup and Record schema.
   Execution can claim/move issues, post comments or write back ended outcomes.
   A launch prepares input, records a runs.jsonl row and detaches a LinearRun;
@@ -354,8 +354,6 @@ class Board:
         a resume (FR-41): None when there is none; else whether its write-back is now complete.
         """
         ident = issue["identifier"]
-        if self.cfg.linear is None:
-            return None  # a local board has no write-back
         try:
             outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.outcome()
         except (ConfigError, delegate.ConfigError, delegate.SessionError):
@@ -1150,11 +1148,6 @@ def main(
     if delegate_cls is not None:
         cfg = replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: delegate_cls})
     wiring = trackers[cfg.tracker]
-    if cfg.tracker == TrackerKind.LOCAL and starts:
-        print(
-            f'router.py: tracker "{cfg.tracker}" runs only --dry-run and --brake', file=sys.stderr
-        )
-        return 2
     if opts["brake"] is not None:
         role = opts["brake"]
         if role not in cfg.roles:
