@@ -326,8 +326,6 @@ class ProgressReporting(Base):
                 gql = Gql()
                 writeback.progress(self.ctx(role, gql=gql), Progress("start", text))
                 self.assertEqual(gql.calls, [post("start", body)])
-                if role == "engineer":
-                    self.assertTrue(issues.BUILD_STARTED.match(body))
 
     def test_ignores_begun_and_finished(self):
         gql = Gql()

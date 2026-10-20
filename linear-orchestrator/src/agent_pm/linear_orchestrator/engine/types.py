@@ -264,21 +264,6 @@ class Transient:
 
 
 @dataclass(frozen=True)
-class Task:
-    kind: Literal["research", "design", "build"]
-    prefix: str = ""
-    start: str = ""
-    done: str = ""
-    question: str = ""
-    failed: str = ""
-    failed_new: str = "in_review"
-    retitle: bool = False
-    approve: bool = False
-    files: bool = False
-    hint: str = ""
-
-
-@dataclass(frozen=True)
 class Target:
     owner: str
     name: str

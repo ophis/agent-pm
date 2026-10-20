@@ -1,8 +1,9 @@
-"""Abstract issue states and a Tracker's reads."""
+"""Abstract issue states, a Tracker's reads and a workflow's per-role Task."""
 
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 
 class IssueState(StrEnum):
@@ -88,3 +89,20 @@ class Detail:
     moves: tuple[Move, ...]
     comments: tuple[Comment, ...]
     related: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Task:
+    kind: Literal["research", "design", "build"]
+    prefix: str = ""
+    start: str = ""
+    done: str = ""
+    question: str = ""
+    failed: str = ""
+    failed_new: Literal["todo", "in_review"] = "in_review"
+    retitle: bool = False
+    approve: bool = False
+    files: bool = False
+    hint: str = ""
+    next: str = ""
+    require_instructions: bool = True
