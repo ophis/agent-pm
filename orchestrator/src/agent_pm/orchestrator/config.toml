@@ -46,8 +46,8 @@ implementation = "agent_pm.delegate:HarnessDelegate"
 #   max_runs              agent runs of this role at once; 3 unless config.local.toml sets it
 #   next                  local: overrides the workflow's: the role promote hands this role's Handoff issues to;
 #                         "" → the last stage (phase 4 removes it)
-#   require_instructions  local: overrides the workflow's: true → a Handoff issue with no linear.human_members comment
-#                         goes back to In Review (phase 4 removes it)
+#   require_instructions  local: overrides the workflow's: true → a Handoff issue with no comment by the user or manager
+#                         (anyone but the harness and role accounts) goes back to In Review (phase 4 removes it)
 [roles.researcher]
 max_runs = 3
 

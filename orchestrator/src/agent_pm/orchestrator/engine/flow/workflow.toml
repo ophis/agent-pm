@@ -4,7 +4,7 @@
 # file's (phase 4 removes them).
 #   kind                  research, design or build: the role's input layout and write-back
 #   next                  the role promote hands this role's Handoff issues to; "" → the last stage
-#   require_instructions  true → a Handoff issue with no human_members comment goes back to In Review
+#   require_instructions  true → a Handoff issue with no user's or manager's comment goes back to In Review
 #   prefix                the title prefix of this role's issues ("<prefix>: <title>"); a next role needs one
 #   start, done, question, failed  the lead of write-back's start, done, needs-input and failed comments
 #   failed_new            the state a failed first run's issue moves to: todo or in_review
