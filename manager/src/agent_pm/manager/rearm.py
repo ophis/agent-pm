@@ -1,6 +1,9 @@
 """The plugin's SessionStart command hook (manager/hooks/hooks.json): in a manager session under
 `agent-pm-crew hold`, prints the event-monitor re-arm prompt as additionalContext for the
 startup, resume, compact and clear sources; anything else prints nothing. Always exits 0.
+A manager session: a valid AGENT_PM_MANAGER, AGENT_PM_HOLDER_ID, no AGENT_PM_AGENT_SESSION, and
+AGENT_PM_HOLDER_PID, the hold's pid, among this process's ancestors. The variables alone leak (a
+tmux server started under a hold gives them to every later window); the process tree does not.
 Standalone: the standard library only, run by path.
 `--mode manual` replaces the monitoring tail with turn-based reads and a notifying-tool fallback.
 """
@@ -8,11 +11,14 @@ Standalone: the standard library only, run by path.
 import json
 import os
 import re
+import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 SOURCES = frozenset({"startup", "resume", "compact", "clear"})
 MANAGER_NAME = re.compile(r"[A-Za-z0-9_-]+")  # agent-pm-crew's own rule (cli.py _roster)
+HOLDER_PID = re.compile(r"[1-9][0-9]*")
+PS = ("ps", "-A", "-o", "pid=", "-o", "ppid=")  # one -o each: text after = is a header
 
 PROMPT = """\
 agent-pm: SessionStart `{source}` in manager `{name}`'s session (under \
@@ -57,11 +63,44 @@ repeat from step 1; without a notifying tool, keep Manual monitoring.
 """
 
 
+def _proc_parent(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            return int(f.read().rpartition(b")")[2].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _ps_parents() -> dict[int, int]:
+    try:
+        done = subprocess.run(PS, capture_output=True, timeout=2, check=False)
+        if done.returncode != 0:
+            return {}
+        rows = [line.split() for line in done.stdout.decode().splitlines()]
+        return {int(pid): int(ppid) for pid, ppid in rows}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+
+
+def ancestors(pid: int) -> set[int]:
+    """pid's ancestors above it, by /proc where it exists (Linux), else one ps table."""
+    parent: Callable[[int], int | None] = (
+        _proc_parent if os.path.isdir("/proc/self") else _ps_parents().get
+    )
+    found: set[int] = set()
+    while (pid := parent(pid) or 0) > 1 and pid not in found:
+        found.add(pid)
+    return found
+
+
 def manager(environ: Mapping[str, str]) -> str | None:
     name = environ.get("AGENT_PM_MANAGER", "")
+    hold = environ.get("AGENT_PM_HOLDER_PID", "")
     if not MANAGER_NAME.fullmatch(name) or not environ.get("AGENT_PM_HOLDER_ID"):
         return None
-    return None if "AGENT_PM_AGENT_SESSION" in environ else name
+    if "AGENT_PM_AGENT_SESSION" in environ or not HOLDER_PID.fullmatch(hold):
+        return None
+    return name if int(hold) in ancestors(os.getpid()) else None
 
 
 def prompt(name: str, source: str, *, manual: bool = False) -> str:

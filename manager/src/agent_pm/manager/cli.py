@@ -295,9 +295,11 @@ and identity line returned by a launch: agent-pm-session --help.
 
 Prerequisites and effects:
   Install agent-pm commands on PATH; configure the owning client/run layer.
-  hold gives its child AGENT_PM_MANAGER and the paired AGENT_PM_HOLDER_ID /
-  AGENT_PM_HOLDER_GENERATION. Keep that pair together. An active holder fences
-  ownership-sensitive roster updates; run those from its commander environment.
+  hold gives its child AGENT_PM_MANAGER, the paired AGENT_PM_HOLDER_ID /
+  AGENT_PM_HOLDER_GENERATION and AGENT_PM_HOLDER_PID, its own pid: the
+  SessionStart re-arm prompt goes only to a client in its process tree.
+  Keep the pair together. An active holder fences ownership-sensitive roster
+  updates; run those from its commander environment.
   AGENT_PM_AGENT_SESSION blocks hold/run/worker/reopen/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
   run/worker/reopen/issue/role give starters empty stdin; supply literal input.
