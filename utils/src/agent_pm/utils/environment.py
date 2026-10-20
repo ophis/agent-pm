@@ -4,6 +4,8 @@ import os
 from collections.abc import Mapping
 
 SID_ENV = "AGENT_PM_SID"
+# a session's client account
+ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
 EVENTS_ENV = "AGENT_PM_EVENTS"
 
 # a manager's roster lease: its holder's command alone carries it, no launch below it

@@ -25,6 +25,7 @@ from agent_pm.manager.engine.types import (
     StatusError,
 )
 from agent_pm.utils import (
+    ACCOUNT_ENV,
     EVENTS_ENV,
     LEASE_ENV,
     REPLY_ID,
@@ -104,7 +105,7 @@ def _reconciled(entry: Entry, status: Status) -> State:
 
 def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str, str]:
     """An issue run's role, client, session id, cwd, agent name, Host and account ("": none, the
-    session's AGENT_PM_ACCOUNT) from its run record,
+    session's ACCOUNT_ENV) from its run record,
     `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
     agent can append to.
     """
@@ -120,7 +121,7 @@ def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str
         cwd = session["access"]["cwd"]
         name, host = state["agent_name"], state["host"]
         env = session.get("env") or {}
-        account = env.get("AGENT_PM_ACCOUNT", "") if isinstance(env, dict) else None
+        account = env.get(ACCOUNT_ENV, "") if isinstance(env, dict) else None
         if not all(isinstance(value, str) and value for value in (name, host)):
             raise TypeError("no agent name or host")
         if not isinstance(account, str):

@@ -12,12 +12,12 @@ from unittest import mock
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.registry import Registry
-from agent_pm.session.engine import types
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes import base, headless, in_process, tui
 from agent_pm.session.modes.base import BaseMode, child_env, identity_drop
 from agent_pm.session.modes.client_adapters.headless import Headless
+from agent_pm.utils import ACCOUNT_ENV as ACCOUNT
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost
@@ -43,7 +43,6 @@ IDENTITIES = {
     "OTHER_SESSION",
     "OTHER_ID",
 }
-ACCOUNT = "AGENT_PM_ACCOUNT"
 
 
 class Launches(Headless):
@@ -193,10 +192,6 @@ class BaseModeTest(Case):
 class AccountTest(Case):
     def spec(self, client="claude", **env) -> Spec:
         return Spec(workdir="/w", access=Access(cwd="/w"), client=client, sid="s1", env=env)
-
-    def test_the_account_variable_is_one_session_constant(self):
-        self.assertEqual(types.ACCOUNT_ENV, ACCOUNT)
-        self.assertNotIn("ACCOUNT_ENV", types.__all__)
 
     def test_no_or_an_empty_selection_is_no_account_on_any_client(self):
         for client, env in itertools.product(

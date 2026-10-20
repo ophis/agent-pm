@@ -35,14 +35,13 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Piped
 from agent_pm.session.modes.base import POINTER
 from agent_pm.session.modes.headless import PUT_WAIT, QUEUE_MAX, HeadlessMode
+from agent_pm.utils import ACCOUNT_ENV as ACCOUNT
 from agent_pm.utils import over_argv
 
 from session.tests.case import PLUGIN_BIN
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 from utils.tests.process_fixtures import DEVNULL
-
-ACCOUNT = "AGENT_PM_ACCOUNT"
 
 
 class NoHeadless(StubClient):

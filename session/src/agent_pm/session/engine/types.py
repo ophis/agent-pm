@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import NamedTuple, Self
 
 from agent_pm.utils import (
+    ACCOUNT_ENV,
     StatusState,
     environment_ok,
     freeze,
@@ -233,7 +234,6 @@ SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_DISPLAY}"
 
 
 COMMAND = "agent-pm-session"
-ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
 ACCOUNT_SET_BY = f"{ACCOUNT_ENV} is set by --account or a role's accounts table"
 RESUME = (COMMAND, "resume")
 

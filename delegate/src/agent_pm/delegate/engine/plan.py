@@ -18,10 +18,7 @@ from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import thaw, under
-
-# agent_pm.session.engine.types.ACCOUNT_ENV, not importable here
-ACCOUNT_ENV = "AGENT_PM_ACCOUNT"
+from agent_pm.utils import ACCOUNT_ENV, thaw, under
 
 
 def _own(f):

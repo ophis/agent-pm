@@ -49,6 +49,7 @@ from agent_pm.session.engine.worker import WorkerState
 from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.modes import tui, tui_hook
 from agent_pm.session.modes.base import POINTER
+from agent_pm.utils import ACCOUNT_ENV as ACCOUNT
 from agent_pm.utils import StatusState, inode_lock, over_argv
 
 from session.tests import fake_client
@@ -57,7 +58,6 @@ from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.tmux_host_support import Base as TmuxBase
 
 NAME = "w1"
-ACCOUNT = "AGENT_PM_ACCOUNT"
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 

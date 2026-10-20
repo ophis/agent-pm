@@ -20,7 +20,6 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, Outcome, Spec
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine import plan as plan_module
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
@@ -38,7 +37,8 @@ from agent_pm.session import (
 )
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.session.engine.types import ACCOUNT_ENV, Liveness
+from agent_pm.session.engine.types import Liveness
+from agent_pm.utils import ACCOUNT_ENV
 
 from delegate.tests.fakes.harness_session import (
     FakeViewer,
@@ -916,9 +916,6 @@ class AccountsTest(HarnessCase):
 
     def env(self):
         return self.metadata()["plan"]["session"]["env"]
-
-    def test_the_delegates_variable_is_the_sessions(self):
-        self.assertEqual(plan_module.ACCOUNT_ENV, ACCOUNT_ENV)
 
     def test_create_takes_the_role_table_then_each_overlay(self):
         self.make()
