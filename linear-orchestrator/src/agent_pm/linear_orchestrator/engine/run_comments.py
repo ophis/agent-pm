@@ -74,13 +74,13 @@ def body(rec, rc=None, ended_at=None, *, outcome=None, limit=False):
     return f"Run {rec['sid']} · {line}" + ("" if cmd is None else f"\n\n```\n{cmd}\n```")
 
 
-def _bounded(call, limit):
+def _bounded(work, limit):
     # the thread bounds every call, key reads included
     out = {}
 
     def run():
         try:
-            out["value"] = call()
+            out["value"] = work()
         except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             out["error"] = e
 

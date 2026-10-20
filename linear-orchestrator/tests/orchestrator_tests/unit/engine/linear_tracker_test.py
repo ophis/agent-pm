@@ -364,11 +364,186 @@ class Account(Case):
         self.assertEqual(self.calls(), [(ops.Q_COMMENT, {"c": CID})])
 
 
+class Moves(Case):
+    def move(self, now, to, frm=None):
+        gql = Texts(
+            {
+                ops.Q_ISSUE_STATE: {"issue": {"state": {"id": STATES[now]}}},
+                ops.M_STATE: {"issueUpdate": {"success": True}},
+            }
+        )
+        args = (to,) if frm is None else (to, frm)
+        left = LinearTracker(gql, states=STATES).move("id-TASK-1", *args)
+        return left, [(q, v.get("s")) for q, v in gql.calls]
+
+    def test_guarded_move_moves_from_frm_only(self):
+        read = (ops.Q_ISSUE_STATE, None)
+        self.assertEqual(
+            self.move("in_progress", IssueState.REVIEW, IssueState.RUNNING),
+            (None, [read, (ops.M_STATE, STATES["in_review"])]),
+        )
+        self.assertEqual(
+            self.move("handoff", IssueState.REVIEW, IssueState.RUNNING),
+            (STATES["handoff"], [read]),
+        )
+        self.assertEqual(
+            self.move("done", IssueState.CANCELED, IssueState.RUNNING), (STATES["done"], [read])
+        )
+
+    def test_guarded_move_already_in_to_returns_none(self):
+        self.assertEqual(
+            self.move("in_review", IssueState.REVIEW, IssueState.RUNNING),
+            (None, [(ops.Q_ISSUE_STATE, None)]),
+        )
+
+    def test_move_without_frm_writes_only_when_elsewhere(self):
+        for now, writes in (("todo", True), ("in_review", True), ("in_progress", False)):
+            with self.subTest(now=now):
+                left, calls = self.move(now, IssueState.RUNNING)
+                self.assertIsNone(left)
+                write = [(ops.M_STATE, STATES["in_progress"])] if writes else []
+                self.assertEqual(calls, [(ops.Q_ISSUE_STATE, None), *write])
+
+    def test_every_state_maps_to_its_id(self):
+        for state, key in (
+            (IssueState.READY, "todo"),
+            (IssueState.RUNNING, "in_progress"),
+            (IssueState.REVIEW, "in_review"),
+            (IssueState.APPROVED, "handoff"),
+            (IssueState.DONE, "done"),
+            (IssueState.CANCELED, "canceled"),
+        ):
+            with self.subTest(state=state):
+                gql = Texts(
+                    {
+                        ops.Q_ISSUE_STATE: {"issue": {"state": {"id": BACKLOG}}},
+                        ops.M_STATE: {"issueUpdate": {"success": True}},
+                    }
+                )
+                LinearTracker(gql, states=STATES).move("id-TASK-1", state)
+                self.assertEqual(gql.calls[-1], (ops.M_STATE, {"i": "id-TASK-1", "s": STATES[key]}))
+
+    def test_without_states_raises(self):
+        with self.assertRaisesRegex(TypeError, "^LinearTracker needs states$"):
+            LinearTracker(Texts({})).move("id-TASK-1", IssueState.RUNNING)
+
+
+class Writes(Case):
+    def test_comment_ref_is_client_id(self):
+        gql = Texts(
+            {
+                ops.M_COMMENT: {"commentCreate": {"success": True}},
+                ops.M_COMMENT_ID: {"commentCreate": {"success": True}},
+            }
+        )
+        LinearTracker(gql).comment("id-TASK-7", "text")
+        LinearTracker(gql).comment("id-TASK-7", "text", REF)
+        self.assertEqual(
+            gql.calls,
+            [
+                (ops.M_COMMENT, {"i": "id-TASK-7", "b": "text"}),
+                (ops.M_COMMENT_ID, {"c": CID, "i": "id-TASK-7", "b": "text"}),
+            ],
+        )
+
+    def test_comment_success_false_raises(self):
+        gql = Texts({ops.M_COMMENT: {"commentCreate": {"success": False}}})
+        with self.assertRaisesRegex(LinearError, "^commentCreate: success: false$"):
+            LinearTracker(gql).comment("id-TASK-7", "text")
+
+    def test_notify_notes_failures(self):
+        gql = Texts(
+            {
+                ops.M_SUBSCRIBE: [
+                    {"issueSubscribe": {"success": True}},
+                    Unavailable("issueSubscribe", status=503),
+                    {"issueSubscribe": {"success": False}},
+                ]
+            }
+        )
+        notes = LinearTracker(gql).notify("id-TASK-7", ("a@x.com", "b@x.com", "c@x.com"))
+        self.assertEqual(
+            [v for _, v in gql.calls],
+            [{"i": "id-TASK-7", "e": e} for e in ("a@x.com", "b@x.com", "c@x.com")],
+        )
+        self.assertEqual(
+            notes,
+            "\n\nCould not subscribe b@x.com: Unavailable: issueSubscribe: HTTP 503"
+            "\n\nCould not subscribe c@x.com: LinearError: issueSubscribe: success: false",
+        )
+        self.assertEqual(LinearTracker(Texts({})).notify("id-TASK-7", ()), "")
+
+    def test_links_lists_urls(self):
+        nodes = [{"url": "https://a"}, {"url": "https://b"}]
+        gql = Texts({linear_tracker.Q_ATTACHED: {"issue": {"attachments": {"nodes": nodes}}}})
+        self.assertEqual(LinearTracker(gql).links("id-TASK-7"), {"https://a", "https://b"})
+        self.assertEqual(gql.calls, [(linear_tracker.Q_ATTACHED, {"i": "id-TASK-7"})])
+
+    def test_link_tolerates_already_linked(self):
+        for text in linear_tracker.ATTACHED:
+            with self.subTest(error=text):
+                gql = Texts({linear_tracker.M_ATTACH: LinearError(f"linear api error: {text}")})
+                self.assertIsNone(LinearTracker(gql).link("id-TASK-7", "https://pr", "PR"))
+                self.assertEqual(
+                    gql.calls,
+                    [(linear_tracker.M_ATTACH, {"i": "id-TASK-7", "u": "https://pr", "t": "PR"})],
+                )
+
+    def test_link_reraises_other_errors(self):
+        for reply in (
+            LinearError("linear api error: forbidden"),
+            {"attachmentLinkURL": {"success": False}},
+        ):
+            with self.subTest(reply=reply), self.assertRaises(LinearError):
+                LinearTracker(Texts({linear_tracker.M_ATTACH: reply})).link("i", "u", "t")
+
+    def test_retitle(self):
+        gql = Texts({linear_tracker.M_TITLE: {"issueUpdate": {"success": True}}})
+        self.assertIsNone(LinearTracker(gql).retitle("id-TASK-7", "PRD: Registry"))
+        self.assertEqual(
+            gql.calls, [(linear_tracker.M_TITLE, {"i": "id-TASK-7", "t": "PRD: Registry"})]
+        )
+        gql = Texts({linear_tracker.M_TITLE: {"issueUpdate": {"success": False}}})
+        with self.assertRaisesRegex(LinearError, "^issueUpdate: success: false$"):
+            LinearTracker(gql).retitle("id-TASK-7", "PRD: Registry")
+
+    def test_on_board_matches_team(self):
+        for found, key in (
+            ({"id": "id-TASK-3", "team": {"id": TEAM}}, "id-TASK-3"),
+            ({"id": "id-OPS-3", "team": {"id": "other-team"}}, None),
+            (None, None),
+        ):
+            with self.subTest(found=found):
+                gql = Texts({linear_tracker.Q_ID: {"issue": found}})
+                self.assertEqual(LinearTracker(gql, team_id=TEAM).on_board("TASK-3"), key)
+                self.assertEqual(gql.calls, [(linear_tracker.Q_ID, {"i": "TASK-3"})])
+
+    def test_unarchive(self):
+        gql = Texts({linear_tracker.M_UNARCHIVE: {"issueUnarchive": {"success": True}}})
+        self.assertIsNone(LinearTracker(gql).unarchive("id-TASK-3"))
+        self.assertEqual(gql.calls, [(linear_tracker.M_UNARCHIVE, {"i": "id-TASK-3"})])
+
+
 class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(
             Tracker.__abstractmethods__,
-            {"read", "finished", "sub_issues", "archive", "find_comment", "put_comment"},
+            {
+                "read",
+                "finished",
+                "sub_issues",
+                "archive",
+                "find_comment",
+                "put_comment",
+                "move",
+                "comment",
+                "notify",
+                "links",
+                "link",
+                "retitle",
+                "on_board",
+                "unarchive",
+            },
         )
         self.assertIsInstance(LinearTracker(None), Tracker)
 
@@ -398,3 +573,28 @@ class PruneSeam(Case):
             for a in n.names
         }
         self.assertEqual(from_ops, {"role_ids", "team"})
+
+
+class WritebackSeam(Case):
+    def test_writeback_and_run_comments_reach_linear_only_through_the_tracker(self):
+        for module in (writeback, run_comments):
+            with self.subTest(module=module.__name__):
+                tree = ast.parse(inspect.getsource(module))
+                found = [
+                    ast.unparse(n)
+                    for n in ast.walk(tree)
+                    if isinstance(n, ast.Constant)
+                    and isinstance(n.value, str)
+                    and ("query(" in n.value or "mutation(" in n.value)
+                    or isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id in ("gql", "call")
+                    or isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id == "ops"
+                    or isinstance(n, ast.ImportFrom)
+                    and (n.module or "").endswith(".ops")
+                    or isinstance(n, ast.alias)
+                    and n.name == "ops"
+                ]
+                self.assertEqual(found, [])

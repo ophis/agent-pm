@@ -838,7 +838,8 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             )
         except delegate.ConfigError as error:
             if a.mode == "new" and a.client_source == "label":
-                return _label_client_error(a, cfg, ctx.gql, error)
+                writer = functools.partial(gql, service=cfg.roles[role].key)
+                return _label_client_error(a, cfg, writer, error)
             raise
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)

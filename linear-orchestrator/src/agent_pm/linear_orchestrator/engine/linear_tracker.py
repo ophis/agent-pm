@@ -21,6 +21,8 @@ STATES = {
     State.IN_PROGRESS: IssueState.RUNNING,
 }
 
+MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
+
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
     "query($i: String!, $after: String) { issue(id: $i) { state { id } "
@@ -142,6 +144,41 @@ class LinearTracker(Tracker):
 
     def find_comment(self, key, ref):
         return ops.find_comment(self.gql, ops.client_id(ref), key)
+
+    def move(self, key, to, frm=None):
+        ids = {v: _need("states", self.ids)[k] for k, v in MOVES.items()}
+        if frm is not None:
+            now = ops.move(self.gql, key, ids[to], ids[frm])
+            return None if now in (None, ids[to]) else now
+        if self.gql(ops.Q_ISSUE_STATE, i=key)["issue"]["state"]["id"] != ids[to]:
+            call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=ids[to])
+        return None
+
+    def comment(self, key, body, ref=None):
+        ops.comment(self.gql, key, body, None if ref is None else ops.client_id(ref))
+
+    def notify(self, key, people):
+        return ops.subscribe(self.gql, key, people)
+
+    def links(self, key):
+        return {a["url"] for a in self.gql(Q_ATTACHED, i=key)["issue"]["attachments"]["nodes"]}
+
+    def link(self, key, url, title):
+        try:
+            call(self.gql, M_ATTACH, "attachmentLinkURL", i=key, u=url, t=title)
+        except LinearError as e:
+            if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
+                raise
+
+    def retitle(self, key, title):
+        call(self.gql, M_TITLE, "issueUpdate", i=key, t=title)
+
+    def on_board(self, ident):
+        issue = self.gql(Q_ID, i=ident)["issue"]
+        return issue["id"] if issue and issue["team"]["id"] == self.team_id else None
+
+    def unarchive(self, key):
+        call(self.gql, M_UNARCHIVE, "issueUnarchive", i=key)
 
     def put_comment(self, key, body, ref):
         cid = ops.client_id(ref)
