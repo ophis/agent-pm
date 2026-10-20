@@ -4,6 +4,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus
+from agent_pm.linear_orchestrator.engine import prune
 from agent_pm.linear_orchestrator.engine.issue_refs import milestone
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
@@ -23,6 +24,8 @@ _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 # engine/config.py and ops.py iterate State for the [states] keys.
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
+# prune re-exports its queries, now linear_tracker's, only for tests; 第 2 阶段删除.
+_ = prune.M_ARCHIVE, prune.Q_CHILDREN, prune.Q_FINISHED, prune.Q_ISSUE
 # Record checks ctl[0] against LayerCommand's values.
 _ = LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.
