@@ -862,7 +862,7 @@ class RouterEntry(OuterBase):
             self.said(),
             [
                 "plan TASK-7 mode=resume sid=s",
-                "transient TASK-7 reason=Linear: IssueError: TASK-7: issue not found",
+                "transient TASK-7 reason=issue read: IssueError: TASK-7: issue not found",
                 "launch TASK-7 exit=3",
             ],
         )
@@ -3174,7 +3174,7 @@ class RunLaunching(OuterBase):
             with self.subTest(reason=reason):
                 self.gql = gql
                 self.assertEqual(self.outer(), 3)
-                self.assertEqual(self.said(), [f"transient TASK-7 reason=Linear: {reason}"])
+                self.assertEqual(self.said(), [f"transient TASK-7 reason=issue read: {reason}"])
         self.assertEqual((self.api.detached, self.run_.calls), ([], []))
 
     def test_invalid_new_bounces_without_a_run(self):

@@ -695,7 +695,7 @@ def _outer(a, cfg, *, gql, run, keychain, wiring, now, attended):
     try:
         issue = reader.issue(a.issue)
     except writeback.ERRORS as e:
-        return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
+        return fail(a.issue, "transient", f"issue read: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
     accounts = wiring.accounts(gql, cfg, key)
     ctx = writeback.for_run(cfg, role, a, accounts)
