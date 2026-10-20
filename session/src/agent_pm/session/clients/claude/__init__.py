@@ -58,9 +58,11 @@ class ClaudeClient(Client):
         return self.common.probe()
 
     def _usage_probes(self):
-        names = sorted(self.common.accounts, key=lambda name: (name != DEFAULT_ACCOUNT, name))
-        launches = {name: self.common.probe(name) for name in names}
-        return {name: (self.common.config_dir(it.env), it) for name, it in launches.items()}
+        accounts = self.common.accounts
+        return {
+            name: (accounts[name].dir, self.common.probe(name))
+            for name in sorted(accounts, key=lambda name: (name != DEFAULT_ACCOUNT, name))
+        }
 
     def usage(self, output):
         return self.common.parse_usage(output)

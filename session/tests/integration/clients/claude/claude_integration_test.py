@@ -485,18 +485,18 @@ def panel(five, week):
 
 class AccountUsageTest(Base):
     """`default` and `work` on a Host running containers: the fake claude answers /usage by its
-    CLAUDE_CONFIG_DIR, and Session.usage is the reading of the account a start would pick.
+    CLAUDE_CONFIG_DIR (default's unset, whatever the caller's), and Session.usage is the reading of
+    the account a start would pick.
     """
 
     def setUp(self):
         super().setUp()
-        self.default = os.environ["CLAUDE_CONFIG_DIR"]
         self.work = os.path.join(self.dir, "work-config")
         table = {**TABLE, "accounts": {"work": {"dir": self.work}}}
         self.configure_session({"claude": table}, {"implementation": CONTAINER_HOST})
 
     def usage(self, default, work, now=None):
-        self.scenario(usage={self.default: panel(*default), self.work: panel(*work)})
+        self.scenario(usage={"": panel(*default), self.work: panel(*work)})
         with contextlib.redirect_stderr(io.StringIO()):
             if now is None:
                 return self.session_cls.usage("claude")
@@ -509,7 +509,7 @@ class AccountUsageTest(Base):
     def test_the_account_with_more_left_is_the_usage(self):
         found = self.usage((70, 10), (20, 30))
         self.assertEqual((found.five_hour.used_percent, found.weekly.used_percent), (20.0, 30.0))
-        self.assertEqual(self.probed(), sorted((self.default, self.work)))
+        self.assertEqual(self.probed(), ["", self.work])
         self.assertTrue(all(entry["argv"] == PROBE for entry in self.logged()))
 
     def test_an_account_over_a_threshold_loses(self):

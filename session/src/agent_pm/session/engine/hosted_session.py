@@ -63,6 +63,7 @@ from agent_pm.utils import (
     printable_abs,
     probe,
     sid_error,
+    summary,
     thaw,
 )
 
@@ -177,7 +178,7 @@ def _picked(setup: _Setup, spec: Spec, name: str, client: Client, host: Host) ->
         return spec
     if (account := accounts.best(pool)) is None:
         return spec
-    print(f"{name} account {account}: picked ({accounts.summary(pool[account])})", file=sys.stderr)
+    print(f"{name} account {account}: picked ({summary(pool[account])})", file=sys.stderr)
     return replace(spec, env={**spec.env, ACCOUNT_ENV: account})
 
 

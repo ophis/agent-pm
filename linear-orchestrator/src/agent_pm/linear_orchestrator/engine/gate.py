@@ -6,18 +6,9 @@ from collections.abc import Callable
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.runs import limits
-from agent_pm.utils import exhausted
+from agent_pm.utils import exhausted, summary
 
 BRAKE_5H = 80
-
-
-def summary(usage):
-    if usage is None:
-        return "unknown"
-    return " ".join(
-        f"{k}={'none' if w is None else f'{w.used_percent:g}%'}"
-        for k, w in (("five_hour", usage.five_hour), ("weekly", usage.weekly))
-    )
 
 
 def read_usage(role, cfg, *, client=None):

@@ -1,5 +1,6 @@
 """Per-account usage readings, cached on disk, and the account a start selecting none runs on."""
 
+import contextlib
 import json
 import math
 import os
@@ -9,9 +10,9 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
 from agent_pm.session.engine.types import Launch, Usage, Window
-from agent_pm.utils import STATE, exhausted, read_regular, save
+from agent_pm.utils import STATE, exhausted, file_lock, read_regular, save, summary
 
-TTL = 300  # seconds: the requirement's 4–5 minutes
+TTL = 300  # seconds
 CACHE_DIR = f"{STATE}/usage"
 CACHE_MAX = 64 << 10
 
@@ -22,9 +23,23 @@ def readings(
     read: Callable[[Launch], Usage | None],
 ) -> dict[str, Usage | None]:
     """Each account's reading: its cached one when it reads the same identity and is under TTL
-    old, else `read` of its launch, once per identity, all concurrently, then cached.
+    old, else `read` of its launch, once per identity, all concurrently, then cached; one process
+    at a time.
     """
     path = os.path.join(os.path.expanduser(CACHE_DIR), f"{client}.json")
+    with contextlib.ExitStack() as held:
+        with contextlib.suppress(OSError):
+            os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
+            held.enter_context(file_lock(path))
+        return _readings(client, path, probes, read)
+
+
+def _readings(
+    client: str,
+    path: str,
+    probes: Mapping[str, tuple[str, Launch]],
+    read: Callable[[Launch], Usage | None],
+) -> dict[str, Usage | None]:
     cached = _load(path)
     now = time.time()
     found: dict[str, Usage | None] = {}
@@ -68,15 +83,6 @@ def _left(usage: Usage) -> float:
     return 100 - max((w.used_percent for w in windows if w is not None), default=0)
 
 
-def summary(usage: Usage | None) -> str:
-    if usage is None:
-        return "unknown"
-    return " ".join(
-        f"{k}={'none' if w is None else f'{w.used_percent:g}%'}"
-        for k, w in (("five_hour", usage.five_hour), ("weekly", usage.weekly))
-    )
-
-
 def _load(path: str) -> dict[str, tuple[float, str, Usage | None]]:
     """The file's well-formed entries; anything else reads as no entry."""
     raw = read_regular(path, limit=CACHE_MAX + 1)
@@ -102,11 +108,8 @@ def _store(path: str, entries: Mapping[str, tuple[float, str, Usage | None]]) ->
         name: {"at": at, "identity": identity, "usage": _plain(usage)}
         for name, (at, identity, usage) in entries.items()
     }
-    try:
-        os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
+    with contextlib.suppress(OSError):
         save(path, json.dumps(table, sort_keys=True))
-    except OSError:
-        pass
 
 
 def _plain(usage: Usage | None):
