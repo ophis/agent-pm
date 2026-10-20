@@ -97,7 +97,7 @@ agent-pm 启动的 session 如何加载你的设置，以及为什么有些命�
 | `ctmux <name>` | 打开 commander 的 tmux session：在 iTerm2 中是原生窗口，在其他终端中是普通的 tmux attach，在 tmux 内部则是切换。`ctmux --install` 把 ctmux 和四个命令 `agent-pm-crew`、`agent-pm-session`、`agent-pm-delegate`、`agent-pm-orchestrator` 放进 `~/.agent-pm/bin/`：按该路径运行，或把它加到 `PATH`。每个命令运行时都从当时已安装的插件中执行（先找 Claude Code 的安装，再找 Codex 最新的），所以升级后无需重装；重新运行 `--install` 可刷新它们。 |
 | `/agent-pm:manage` | 按 commander 的准则启动并指挥 worker、role run 和 pipeline run。 |
 | `/agent-pm:act-as <role>[:<task>] <input>` | 在当前对话中运行一个核心 role。 |
-| `/agent-pm:linear` | 用固定的 `agent-pm-orchestrator issue` 命令读取、查找、创建和修改 Linear issue。 |
+| `/agent-pm:board` | 用固定的 `agent-pm-orchestrator issue` 命令读取、查找、创建、编辑、移动和归档看板上的 issue。 |
 | `agent-pm-delegate run --list` | 列出所有 role 和 task。 |
 
 ## 快速上手

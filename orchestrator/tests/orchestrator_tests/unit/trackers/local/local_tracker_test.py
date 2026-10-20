@@ -10,6 +10,7 @@ from unittest import mock
 from agent_pm.orchestrator.engine.flow.handoff import handoff, parse_handoff
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
+    ArchivePlan,
     Comment,
     Detail,
     Finished,
@@ -71,10 +72,10 @@ class Board(Case):
 
 class States(Case):
     def test_issue_states(self):
-        """Backlog is outside the machine: no IssueState."""
         self.assertEqual(
             ISSUE_STATES,
             {
+                LocalState.BACKLOG: IssueState.BACKLOG,
                 LocalState.READY: IssueState.READY,
                 LocalState.RUNNING: IssueState.RUNNING,
                 LocalState.REVIEW: IssueState.REVIEW,
@@ -277,7 +278,7 @@ class Moves(Board):
         self.write("pm/backlog", "LOC-30")
         self.assertEqual(
             LocalTracker(self.board, ("pm",)).detail("LOC-30").moves,
-            (Move("2026-10-20T00:00:00.000Z", None, None),),
+            (Move("2026-10-20T00:00:00.000Z", IssueState.BACKLOG, None),),
         )
         self.assertIsNone(self.tracker.detail("LOC-20").moves[0].frm)
         with self.assertRaises(IssueError):
@@ -291,7 +292,7 @@ class Moves(Board):
         self.write("unassigned/canceled", "LOC-5", history="- 2026-10-19 16:10 ready self\n")
         read = self.tracker.read
         self.assertEqual(read("LOC-1"), Snapshot(IssueState.REVIEW, at(16, 10)))
-        self.assertEqual(read("LOC-2"), Snapshot(None, MTIME))
+        self.assertEqual(read("LOC-2"), Snapshot(IssueState.BACKLOG, MTIME))
         self.assertEqual(read("LOC-3"), Snapshot(IssueState.DONE, at(16, 10)))
         self.assertEqual(read("LOC-4"), Snapshot(None, None))
         self.assertEqual(read("LOC-5"), Snapshot(IssueState.CANCELED, MTIME))
@@ -426,21 +427,53 @@ class Reads(Board):
         self.assertEqual(self.tracker.on_board("LOC-2"), "LOC-2")
         self.assertIsNone(self.tracker.on_board("LOC-404"))
 
-    def test_sub_issues(self):
-        self.write("pm/ready", "LOC-1")
+    def test_archive_plan_descendants_level_by_level(self):
+        root = self.write("pm/ready", "LOC-1")
         self.write("pm/done", "LOC-2", front="parent: LOC-1\n")
         self.write("engineer/ready", "LOC-3", front="parent: LOC-1\n")
         self.write("archive", "LOC-4", front="parent: LOC-1\n")
         self.write("me/canceled", "LOC-5", front="parent: LOC-1\n")
         self.write("pm/ready", "LOC-6", front="parent: LOC-3\n")
+        plan = self.tracker.archive_plan("LOC-1")
+        mine, done = (
+            SubIssue("LOC-1", "LOC-1", "ready", finished=False),
+            SubIssue("LOC-2", "LOC-2", "done", finished=True),
+        )
+        level = (
+            SubIssue("LOC-3", "LOC-3", "ready", finished=False),
+            SubIssue("LOC-5", "LOC-5", "canceled", finished=True),
+            done,
+        )
+        deeper = SubIssue("LOC-6", "LOC-6", "ready", finished=False)
         self.assertEqual(
-            self.tracker.sub_issues("LOC-1"),
-            (
-                SubIssue("LOC-3", "LOC-3", finished=False),
-                SubIssue("LOC-5", "LOC-5", finished=True),
-                SubIssue("LOC-2", "LOC-2", finished=True),
+            plan,
+            ArchivePlan(
+                "LOC-1",
+                "LOC-1",
+                Path(root).as_uri(),
+                archived=False,
+                descendants=(*level, deeper),
+                unfinished=(mine, level[0], deeper),
             ),
         )
+        self.assertEqual(plan.outcome, "refused")
+        self.assertEqual(self.tracker.archive_plan("LOC-2").outcome, "changed")
+
+    def test_archive_plan_archived_or_missing(self):
+        self.write("archive", "LOC-4", history="- 2026-10-19 16:10 ready self\n")
+        self.write("pm/ready", "LOC-5", front="parent: LOC-4\n")
+        plan = self.tracker.archive_plan("LOC-4")
+        self.assertEqual((plan.archived, plan.descendants, plan.unfinished), (True, (), ()))
+        self.assertEqual(plan.outcome, "unchanged")
+        with self.assertRaisesRegex(IssueError, "LOC-404: issue not found"):
+            self.tracker.archive_plan("LOC-404")
+
+    def test_archive_plan_survives_a_parent_cycle(self):
+        self.write("pm/done", "LOC-7", front="parent: LOC-8\n")
+        self.write("pm/done", "LOC-8", front="parent: LOC-7\n")
+        plan = self.tracker.archive_plan("LOC-7")
+        self.assertEqual(plan.descendants, (SubIssue("LOC-8", "LOC-8", "done", finished=True),))
+        self.assertEqual(plan.outcome, "changed")
 
     def test_finished(self):
         self.write("pm/done", "LOC-1", history="- 2026-10-19 16:10 done self\n")
@@ -458,10 +491,8 @@ class Reads(Board):
         self.assertEqual(
             self.tracker.finished({"pm"}),
             [
-                Finished("LOC-4", "LOC-4", MTIME, ()),
-                Finished(
-                    "LOC-1", "LOC-1", at(16, 10), (SubIssue("LOC-3", "LOC-3", finished=False),)
-                ),
+                Finished("LOC-4", "LOC-4", MTIME),
+                Finished("LOC-1", "LOC-1", at(16, 10)),
             ],
         )
 
@@ -520,7 +551,10 @@ class Writes(Board):
             "notify": lambda: t.notify("LOC-1", ()),
             "link": lambda: t.link("LOC-1", "u", "t"),
             "retitle": lambda: t.retitle("LOC-1", "t"),
-            "archive": lambda: t.archive("LOC-1"),
+            "archive": lambda: t.archive(
+                "LOC-1",
+                ArchivePlan("LOC-1", "LOC-1", "u", archived=False, descendants=(), unfinished=()),
+            ),
             "unarchive": lambda: t.unarchive("LOC-1"),
             "put_comment": lambda: t.put_comment("LOC-1", "b", ("a",)),
         }

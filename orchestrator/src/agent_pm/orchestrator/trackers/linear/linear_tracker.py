@@ -12,6 +12,7 @@ from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     UNREADABLE,
     Approved,
+    ArchivePlan,
     Comment,
     Detail,
     Finished,
@@ -39,6 +40,7 @@ T = TypeVar("T")
 
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
+    State.BACKLOG: IssueState.BACKLOG,
     State.IN_REVIEW: IssueState.REVIEW,
     State.HANDOFF: IssueState.APPROVED,
     State.TODO: IssueState.READY,
@@ -59,16 +61,22 @@ Q_ISSUE = (
     + HISTORY
     + " } }"
 )
-CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
-Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
+CHILD_PAGE = "nodes { id identifier state { name type } } pageInfo { hasNextPage endCursor }"
+Q_ARCHIVE = (
+    "query($i: String!) { issue(id: $i) { id identifier url archivedAt state { name type } "
+    "children(first: 50) { " + CHILD_PAGE + " } } }"
+)
+Q_CHILDREN = (
+    "query($i: String!, $c: String) { issue(id: $i) { children(first: 50, after: $c) { "
+    + CHILD_PAGE
+    + " } } }"
+)
 Q_FINISHED = (
     """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
   issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
   { state: { id: { in: $s } } }] }, first: 50, after: $c) {
   nodes { id identifier """
     + STAMPS
-    + " "
-    + CHILDREN
     + " "
     + HISTORY
     + """ }
@@ -489,20 +497,58 @@ class LinearTracker(Tracker):
             if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
                 break
             cursor = end
-        return [
-            Finished(
-                n["id"],
-                n["identifier"],
-                finished_at(n, ended),
-                _sub_issues(n["children"]["nodes"]),
-            )
-            for n in nodes
-        ]
+        return [Finished(n["id"], n["identifier"], finished_at(n, ended)) for n in nodes]
 
-    def sub_issues(self, key):
-        return _sub_issues(self.gql(Q_CHILDREN, i=key)["issue"]["children"]["nodes"])
+    def archive_plan(self, key):
+        """Unless archived, its descendants level by level (Linear lists no archived sub-issue)."""
+        try:
+            node = self.gql(Q_ARCHIVE, i=key)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            raise LinearError(f"{key}: issue not found") from e
+        if node is None:
+            raise LinearError(f"{key}: issue not found")
+        archived = node["archivedAt"] is not None
+        found = tuple(map(_sub_issue, [node, *([] if archived else self._descendants(node))]))
+        return ArchivePlan(
+            node["id"],
+            node["identifier"],
+            node["url"],
+            archived,
+            found[1:],
+            () if archived else tuple(s for s in found if not s.finished),
+        )
 
-    def archive(self, key):
+    def _descendants(self, root):
+        found, level, seen = [], [root], {root["id"]}
+        while level:
+            below = []
+            for parent in level:
+                for child in self._children(root, parent):
+                    if child["id"] not in seen:
+                        seen.add(child["id"])
+                        below.append(child)
+            found += below
+            level = below
+        return found
+
+    def _children(self, root, parent):
+        """Every page of parent's children; the root's first came with it."""
+        first = parent["children"] if parent is root else self._children_page(parent, None)
+        page, cursors = _checked(root, parent, first), set()
+        nodes = list(page["nodes"])
+        while page["pageInfo"]["hasNextPage"]:
+            where = f"{parent['identifier']} children"
+            after = ops.advance(where, page["pageInfo"]["endCursor"], cursors)
+            page = _checked(root, parent, self._children_page(parent, after))
+            nodes += page["nodes"]
+        return nodes
+
+    def _children_page(self, parent, after):
+        return (self.gql(Q_CHILDREN, i=parent["id"], c=after)["issue"] or {}).get("children")
+
+    def _write_archive(self, key):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
 
     def approved(self, owners):
@@ -662,8 +708,18 @@ def _need(name: str, value: T | None) -> T:
     return value
 
 
-def _sub_issues(nodes):
-    return tuple(SubIssue(n["id"], n["identifier"], n["state"]["type"] in DONE) for n in nodes)
+def _sub_issue(node):
+    state = node["state"]
+    return SubIssue(node["id"], node["identifier"], state["name"], state["type"] in DONE)
+
+
+def _checked(root, parent, page):
+    if ops.is_page(page):
+        return page
+    raise LinearError(
+        f"archive {root['identifier']}: sub-issues of {parent['identifier']} unreadable "
+        "(deleted or archived mid-read?): nothing archived"
+    )
 
 
 def _found(n, by_id):

@@ -6,6 +6,7 @@ dotted path of the data, and shape maps a node to (item, cut fields) or None to 
 import functools
 
 from agent_pm.orchestrator.engine.types import LinearError
+from agent_pm.orchestrator.trackers.linear import ops
 
 PAGE = 250
 PAGE_INFO = "pageInfo { hasNextPage endCursor }"
@@ -46,14 +47,4 @@ def walk(gql, source):
         rows += page
         if not more:
             return rows
-        after = advance(source[1], end, seen)
-
-
-def advance(where, end, seen):
-    """end, the cursor of the page after one claiming more, added to seen; LinearError when it is
-    empty or already read, which would read the same page forever.
-    """
-    if not end or end in seen:
-        raise LinearError(f"{where}: hasNextPage without a new endCursor ({end!r})")
-    seen.add(end)
-    return end
+        after = ops.advance(source[1], end, seen)

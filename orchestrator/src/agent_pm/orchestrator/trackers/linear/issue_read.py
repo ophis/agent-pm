@@ -3,7 +3,6 @@ cut to the default limits by compact, or with every page for --full.
 """
 
 import re
-from typing import TypeGuard
 
 from agent_pm.orchestrator.engine.flow.types import (
     ISSUE_ID,
@@ -13,7 +12,7 @@ from agent_pm.orchestrator.engine.types import (
     IssueError,
     LinearError,
 )
-from agent_pm.orchestrator.trackers.linear import issue_refs
+from agent_pm.orchestrator.trackers.linear import issue_refs, ops
 
 COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250
@@ -96,18 +95,9 @@ def view(gql, ident, *, full=False):
 
 def _later(gql, ident, issue_id, name, after):
     page = (gql(MORE[name], i=issue_id, c=after)["issue"] or {}).get(name)
-    if is_page(page):
+    if ops.is_page(page):
         return page
     raise LinearError(f"{ident}: {name} page missing: deleted or archived mid-read?")
-
-
-def is_page(page) -> TypeGuard[dict]:
-    """Whether page is a connection page: nodes and pageInfo."""
-    return (
-        isinstance(page, dict)
-        and isinstance(page.get("nodes"), list)
-        and isinstance(page.get("pageInfo"), dict)
-    )
 
 
 def _shape(node, nodes, truncated):

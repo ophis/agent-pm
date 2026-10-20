@@ -11,6 +11,7 @@ from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
+    ArchivePlan,
     Comment,
     Detail,
     Finished,
@@ -33,6 +34,7 @@ from agent_pm.orchestrator.trackers.local.board import read_one, scan
 from agent_pm.orchestrator.trackers.local.types import Entry, LocalState, Source
 
 ISSUE_STATES = {
+    LocalState.BACKLOG: IssueState.BACKLOG,
     LocalState.READY: IssueState.READY,
     LocalState.RUNNING: IssueState.RUNNING,
     LocalState.REVIEW: IssueState.REVIEW,
@@ -189,25 +191,42 @@ class LocalTracker(Tracker):
         return None if found is None else found.description
 
     def finished(self, owners):
-        children = self._children()
         return [
-            Finished(each.id, each.id, _last(each, each.state), children.get(each.id, ()))
+            Finished(each.id, each.id, _last(each, each.state))
             for each in self._in(LocalState.DONE, LocalState.CANCELED)
             if each.state == LocalState.CANCELED or each.assignee in owners
         ]
 
-    def sub_issues(self, key):
-        return self._children().get(key, ())
+    def archive_plan(self, key):
+        """Unless archived, its unarchived descendants level by level."""
+        found = self._need(key)
+        archived = found.assignee is None
+        below = () if archived else self._descendants(key)
+        mine = (_sub_issue(found), *below)
+        return ArchivePlan(
+            found.id,
+            found.id,
+            _url(found),
+            archived,
+            below,
+            () if archived else tuple(s for s in mine if not s.finished),
+        )
+
+    def _descendants(self, key):
+        children, found, level, seen = self._children(), [], [key], {key}
+        while level:
+            below = [s for k in level for s in children.get(k, ()) if s.key not in seen]
+            seen.update(s.key for s in below)
+            found += below
+            level = [s.key for s in below]
+        return tuple(found)
 
     def _children(self):
         """Unarchived issues by parent id."""
         found = {}
         for each in self._all().values():
             if each.assignee is not None and each.parent:
-                found[each.parent] = (
-                    *found.get(each.parent, ()),
-                    SubIssue(each.id, each.id, each.state in ENDED),
-                )
+                found[each.parent] = (*found.get(each.parent, ()), _sub_issue(each))
         return found
 
     def approved(self, owners):
@@ -296,7 +315,7 @@ class LocalTracker(Tracker):
     def retitle(self, key, title):
         _unsupported("retitle")
 
-    def archive(self, key):
+    def _write_archive(self, key):
         _unsupported("archive")
 
     def unarchive(self, key):
@@ -310,6 +329,10 @@ def _unsupported(name) -> NoReturn:
     raise NotImplementedError(f"local board: {name} is not supported yet")
 
 
+def _sub_issue(issue):
+    return SubIssue(issue.id, issue.id, _shown(issue), issue.state in ENDED)
+
+
 def _url(issue):
     return Path(issue.path).as_uri()
 
@@ -320,7 +343,7 @@ def _stamp(at):
 
 
 def _state(local):
-    return ISSUE_STATES.get(local) if local else None
+    return None if local is None else ISSUE_STATES[local]
 
 
 def _shown(issue):

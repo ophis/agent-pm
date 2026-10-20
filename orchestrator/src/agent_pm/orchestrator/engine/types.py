@@ -111,6 +111,7 @@ class State(StrEnum):
     HANDOFF = "handoff"
     DONE = "done"
     CANCELED = "canceled"
+    BACKLOG = "backlog"
 
 
 class Resource(StrEnum):
@@ -174,10 +175,6 @@ class TrackerFileError(Exception):
     def __init__(self, path: str, reason: str):
         super().__init__(f"{path}: {reason}")
         self.path, self.reason = path, reason
-
-
-class ArchiveRefused(Exception):
-    """An archive the issue's or a descendant's unfinished state blocks; nothing was written."""
 
 
 class LabelRefused(Exception):

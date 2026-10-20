@@ -12,7 +12,7 @@ MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
 SKILL_DIRS = ("skills", *(f"{project}/skills" for project in PROJECTS))
 
 
-SKILLS = ("act-as", "linear", "manage")
+SKILLS = ("act-as", "board", "manage")
 
 
 def _skills(repo, dirs):

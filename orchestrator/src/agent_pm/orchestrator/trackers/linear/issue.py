@@ -19,8 +19,8 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.orchestrator.engine import (
     config,
 )
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState
 from agent_pm.orchestrator.engine.types import (
-    ArchiveRefused,
     ConfigError,
     GraphQLErrors,
     IssueError,
@@ -34,21 +34,26 @@ from agent_pm.orchestrator.engine.types import (
 from agent_pm.orchestrator.trackers.linear import (
     issue_archive,
     issue_create,
+    issue_edit,
     issue_label,
     issue_list,
     issue_lookup,
+    issue_names,
     issue_page,
     issue_read,
     issue_relation,
     issue_write,
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 
 OK, FAILED, USAGE = 0, 1, 2
 LIMIT, RECEIPT = 8192, 1024
 PAGE, MAX_PAGE = 20, 50
 PROG = "agent-pm-orchestrator issue"
 FULL = "--full --output FILE"
+STATES = [str(state) for state in IssueState]
+PRIORITIES = [str(priority) for priority in issue_names.PRIORITIES]
 TEXTS = (
     "title",
     "description",
@@ -85,16 +90,28 @@ _RULES = (
 )
 _HELP = (
     _RULES.removesuffix("\n")
-    + "  create, move, comment, archive, relation and label swap write as that\n"
+    + "  create, edit, move, comment, archive, relation and label swap write as that\n"
     "  account and print a receipt instead; for them exit 1 also means the\n"
     "  write's result is unknown, for create also a relation that failed, for\n"
     "  archive and label swap also a refusal (their --help).\n\n"
+    "Values: abstract names, each the configured team's id.\n"
+    "  States: backlog, ready, running, review, approved, done, canceled.\n"
+    "  --role SPEC: a role of [orchestrator.linear.roles], me (the\n"
+    "  linear.manager_key account) or unassigned. --task NAME / --client NAME: a\n"
+    "  key of [orchestrator.linear.task_labels] / agent_labels.\n"
+    "  --priority NAME: none, urgent, high, medium, low.\n"
+    "  Splitting an issue: create --parent ID.\n"
+    "  Linear only: lookup, label swap, --label, --project, --milestone.\n\n"
     "Example (configured Linear access and TASK-1):\n"
     "  agent-pm-orchestrator issue read TASK-1\n"
-    "  agent-pm-orchestrator issue list --state 'In Progress' --assignee me\n"
-    "  agent-pm-orchestrator issue lookup states --team TASK\n"
-    "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md --blocks TASK-1\n"
-    "  agent-pm-orchestrator issue move TASK-1 --state Done\n"
+    "  agent-pm-orchestrator issue list --state running --role me\n"
+    "  agent-pm-orchestrator issue lookup labels --query bug\n"
+    "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md --task build \\\n"
+    "    --role engineer --priority high --blocks TASK-1\n"
+    "  agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
+    "    --parent TASK-1\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
+    "  agent-pm-orchestrator issue move TASK-1 done\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
     "  agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2\n"
@@ -102,9 +119,9 @@ _HELP = (
     "Recovery and next help:\n"
     "  Command details: agent-pm-orchestrator issue read --help,\n"
     "  agent-pm-orchestrator issue list --help, agent-pm-orchestrator issue lookup --help,\n"
-    "  agent-pm-orchestrator issue create --help, agent-pm-orchestrator issue move --help,\n"
-    "  agent-pm-orchestrator issue comment --help, agent-pm-orchestrator issue archive --help,\n"
-    "  agent-pm-orchestrator issue relation add --help,\n"
+    "  agent-pm-orchestrator issue create --help, agent-pm-orchestrator issue edit --help,\n"
+    "  agent-pm-orchestrator issue move --help, agent-pm-orchestrator issue comment --help,\n"
+    "  agent-pm-orchestrator issue archive --help, agent-pm-orchestrator issue relation add --help,\n"
     "  agent-pm-orchestrator issue label swap --help\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
@@ -118,29 +135,33 @@ _PAGES = (
     f"  {FULL}: every page, written as indented JSON {{items, truncated}}\n"
     "  to FILE; prints only {output: FILE's absolute path}; not with\n"
     "  --cursor or --limit.\n"
-    "References: an id or an exact name; a team also takes its key. Without\n"
-    "  --team, the configured team. No match, several, or one outside the team\n"
-    "  exits 2 naming candidates and the lookup command listing them.\n\n"
 )
 _LIST_HELP = (
     _RULES + "Output items: id, identifier, title, url, state {id, name}, labels\n"
     "  [{id, name}], assignee {id, name}, project {id, name}, parent_id; empty:\n"
-    "  null or []. Only the team's issues, every given filter holding, most\n"
+    "  null or []. The configured team's issues, every given filter holding, most\n"
     "  recently updated first; archived ones only with --include-archived.\n"
-    "  --query TEXT matches title or description in any case; --state, --label,\n"
-    "  --project in the team, --label not a group or retired; --assignee a\n"
-    "  user's id, name, email or me (the linear.manager_key account); --parent the\n"
-    "  parent issue's identifier or id.\n"
+    "  --query TEXT matches title or description in any case; --state STATE:\n"
+    "  backlog, ready, running, review, approved, done or canceled; --role SPEC:\n"
+    "  a configured role, me (the linear.manager_key account) or\n"
+    "  unassigned (no assignee); --task NAME, --client NAME: a configured task or\n"
+    "  client name; --priority NAME: none, urgent, high, medium or low; --parent\n"
+    "  ID: the parent issue's identifier or id. Linear only: --label (not a group\n"
+    "  or retired) and --project, each an id or exact name in the team.\n"
     + _PAGES
-    + "Examples (configured Linear access and TASK-1):\n"
+    + "References: no match, several, or one outside the team exits 2 naming\n"
+    "  candidates and the lookup command listing them; a name the configuration\n"
+    "  lacks exits 2 naming the configured ones.\n\n"
+    "Examples (configured Linear access and TASK-1):\n"
     "  agent-pm-orchestrator issue list --query 'linear issue'\n"
-    "  agent-pm-orchestrator issue list --team TASK --state Todo --label bug\n"
-    "  agent-pm-orchestrator issue list --assignee me --project 'Agent PM'\n"
+    "  agent-pm-orchestrator issue list --state ready --task build --priority high\n"
+    "  agent-pm-orchestrator issue list --role me --project 'Agent PM'\n"
+    "  agent-pm-orchestrator issue list --role unassigned --client <client> --label bug\n"
     "  agent-pm-orchestrator issue list --parent TASK-1 --include-archived --limit 50\n"
     "  agent-pm-orchestrator issue list --cursor <next_cursor>\n"
     "  agent-pm-orchestrator issue list --label bug --full --output bugs.json\n\n"
     "Recovery and next help:\n"
-    "  Option values: agent-pm-orchestrator issue lookup --help\n"
+    "  Label and project values: agent-pm-orchestrator issue lookup --help\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _LOOKUP_HELP = (
@@ -155,7 +176,10 @@ _LOOKUP_HELP = (
     "              users (--query matches name or email)\n"
     "  --query TEXT keeps names holding TEXT in any case.\n"
     + _PAGES
-    + "Examples (configured Linear access):\n"
+    + "References: an id or an exact name; a team also takes its key. Without\n"
+    "  --team, the configured team. No match, several, or one outside the team\n"
+    "  exits 2 naming candidates and the lookup command listing them.\n\n"
+    "Examples (configured Linear access):\n"
     "  agent-pm-orchestrator issue lookup teams\n"
     "  agent-pm-orchestrator issue lookup labels --team TASK --query bug\n"
     "  agent-pm-orchestrator issue lookup milestones --project 'Agent PM' --limit 50\n"
@@ -202,22 +226,26 @@ _WRITE_RULES = (
 _CREATE_HELP = (
     _WRITE_RULES
     % ""
-    + "Creates one issue in --team (default: the configured team), then its blocking\n"
+    + "Creates one issue in the configured team (linear.team), then its blocking\n"
     "  relations. Every value resolves first, as agent-pm-orchestrator issue list --help\n"
     "  describes; one that does not exits 2 with nothing created.\n"
     "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
     "  sent verbatim, minus a leading byte order mark; - reads stdin; blank or\n"
     "  unreadable exits 2.\n"
-    "--label VALUE, repeatable: not a group or retired. --project VALUE: the\n"
-    "  team's. --milestone VALUE: --project's, which it needs. --parent ID: an issue.\n"
-    "  --assignee VALUE: a user's id, name, email or me (the linear.manager_key\n"
-    "  account). Each one not given stays unset.\n"
-    f"--state VALUE: a workflow state of the team; default {issue_create.BACKLOG}. A team\n"
-    f"  without a state named {issue_create.BACKLOG} exits 2: no other state is taken.\n"
+    "--state STATE: backlog, ready, running, review, approved, done or canceled;\n"
+    "  default backlog.\n"
+    "--role SPEC: the assignee: a configured role's account, me (the\n"
+    "  linear.manager_key account) or unassigned (as without --role).\n"
+    "--task NAME / --client NAME: the configured task / client label.\n"
+    "--priority NAME: none, urgent, high, medium or low.\n"
+    "--parent ID: an issue, the new one its sub-issue: this splits an issue.\n"
+    "Linear only: --label VALUE, repeatable: not a group or retired. --project\n"
+    "  VALUE: the team's. --milestone VALUE: --project's, which it needs.\n"
+    "Any other option not given stays unset.\n"
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
     "  repeatable, repeats count once; one issue given to both exits 2.\n"
     "A timeout while creating leaves the result unknown: look for the issue with\n"
-    "  agent-pm-orchestrator issue list --team TEAM --query=TITLE before creating it again.\n"
+    "  agent-pm-orchestrator issue list --query=TITLE before creating it again.\n"
     "A relation that fails exits 1 once the others are tried, stdout holding, in\n"
     "  at most 8192 bytes, the receipt with result partial, done, failed (each\n"
     "  with its error), recover and truncated; done and failed are cut before\n"
@@ -225,27 +253,49 @@ _CREATE_HELP = (
     "  (agent-pm-orchestrator issue relation add …), never create again.\n\n"
     "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
     "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md\n"
+    "  agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
+    "    --parent TASK-1 --task build --role engineer --priority high\n"
     "  agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug \\\n"
-    "    --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me \\\n"
-    "    --state Todo --blocks TASK-2 --blocked-by TASK-3 < note.md\n\n"
+    "    --project 'Agent PM' --milestone M1 --role me --state ready \\\n"
+    "    --blocks TASK-2 --blocked-by TASK-3 < note.md\n\n"
     "Recovery and next help:\n"
     "  The new issue: agent-pm-orchestrator issue read <identifier>\n"
-    "  Option values: agent-pm-orchestrator issue lookup --help\n"
+    "  Label, project and milestone values: agent-pm-orchestrator issue lookup --help\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _MOVE_HELP = (
-    _WRITE_RULES
-    % ""
-    + "--state VALUE: the id or exact name (case-sensitive) of a workflow state of\n"
-    "  the issue's own team, so a name other teams share still means this team's.\n"
-    "  A state type such as completed is no name. No match, or a name the team\n"
-    "  holds twice: exit 2 listing the team's states (name and id). Already in\n"
-    "  that state: result unchanged, nothing written.\n\n"
+    _WRITE_RULES % "" + "STATE: backlog, ready, running, review, approved, done or canceled, the\n"
+    "  state [orchestrator.linear.states] backlog, todo, in_progress, in_review,\n"
+    "  handoff, done or canceled names, in that order; any other exits 2 listing\n"
+    "  them. Only an issue of the configured team (linear.team) moves: another\n"
+    "  team's exits 2 naming its team. Already in that state: result unchanged,\n"
+    "  nothing written.\n\n"
     "Example (configured Linear access and TASK-1):\n"
-    "  agent-pm-orchestrator issue move TASK-1 --state Done\n"
-    "  agent-pm-orchestrator issue move TASK-1 --state 'In Progress'\n\n"
+    "  agent-pm-orchestrator issue move TASK-1 approved\n"
+    "  agent-pm-orchestrator issue move TASK-1 running\n\n"
     "Recovery and next help:\n"
     "  The issue's current state: agent-pm-orchestrator issue read TASK-1\n"
+    "  Configuration and command discovery: agent-pm-orchestrator --help"
+)
+
+_EDIT_HELP = (
+    _WRITE_RULES % "" + "Changes the given fields of one issue in one update naming only what\n"
+    "  changes; give at least one of --title, --body-file, --task, --client,\n"
+    "  --priority. Every given value already so: result unchanged, nothing\n"
+    "  written. A name the configuration lacks exits 2 before anything is read.\n"
+    "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
+    "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
+    "  blank or unreadable exits 2.\n"
+    "--task NAME / --client NAME: a configured task / client name; its label\n"
+    "  replaces the issue's labels of that group: every other label stays. Only\n"
+    "  on an issue of the configured team (linear.team): another team's exits 2.\n"
+    "--priority NAME: none, urgent, high, medium or low.\n\n"
+    "Example (configured Linear access and TASK-1):\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n\n"
+    "Recovery and next help:\n"
+    "  The issue's fields and labels: agent-pm-orchestrator issue read TASK-1\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
@@ -284,7 +334,7 @@ _ARCHIVE_HELP = (
     "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
     "  agent-pm-orchestrator issue archive TASK-1\n\n"
     "Recovery and next help:\n"
-    "  An unfinished issue: agent-pm-orchestrator issue move TASK-1 --state Done\n"
+    "  An unfinished issue: agent-pm-orchestrator issue move TASK-1 done\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
@@ -350,6 +400,7 @@ def fit(payload, tiers, texts, follow):
     truncated, absent when follow is None.
     """
     payload = copy.deepcopy(payload)
+    payload.setdefault("truncated", [])
     while True:
         if follow is not None:
             payload["continue"] = follow if payload["truncated"] else None
@@ -474,23 +525,26 @@ def _parser():
     read.add_argument("--output", metavar="FILE", help="with --full: where the JSON goes")
     found = commands.add_parser(
         "list",
-        help="search one team's issues by text, state, label, project, assignee or parent",
-        description="List one team's issues that every given filter holds as JSON.",
+        help="search the configured team's issues by text, state, role, task, client, priority, "
+        "label, project or parent",
+        description="List the configured team's issues that every given filter holds as JSON.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_LIST_HELP,
     )
     found.add_argument("--query", metavar="TEXT", help="title or description holds TEXT, any case")
-    found.add_argument("--team", metavar="VALUE", help="team id, name or key (default: configured)")
-    found.add_argument("--state", metavar="VALUE", help="workflow state id or name")
-    found.add_argument("--label", metavar="VALUE", help="label id or name")
-    found.add_argument("--project", metavar="VALUE", help="project id or name")
-    found.add_argument("--assignee", metavar="VALUE", help="user id, name, email or me")
+    found.add_argument("--state", choices=STATES, metavar="STATE", help=", ".join(STATES))
+    found.add_argument("--role", metavar="SPEC", help="a configured role, me or unassigned")
+    found.add_argument("--task", metavar="NAME", help="a configured task name")
+    found.add_argument("--client", metavar="NAME", help="a configured client name")
+    found.add_argument("--priority", choices=PRIORITIES, metavar="NAME", help=", ".join(PRIORITIES))
+    found.add_argument("--label", metavar="VALUE", help="Linear only: label id or name")
+    found.add_argument("--project", metavar="VALUE", help="Linear only: project id or name")
     found.add_argument("--parent", metavar="ID", help="parent issue identifier (TASK-1) or id")
     found.add_argument("--include-archived", action="store_true", help="archived issues too")
     _paged(found)
     lookup = commands.add_parser(
         "lookup",
-        help="list teams, states, labels, projects, milestones or users with their ids",
+        help="Linear only: list teams, states, labels, projects, milestones or users with ids",
         description="List one kind of Linear entity, with its id and fixed fields, as JSON.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_LOOKUP_HELP,
@@ -510,9 +564,10 @@ def _parser():
     _paged(lookup)
     create = commands.add_parser(
         "create",
-        help="create one issue with labels, project, milestone, parent, assignee, state and "
-        "blocking relations",
-        description="Create one issue with its fields and blocking relations in one run.",
+        help="create one issue with state, role, task, client, priority, parent, labels, project, "
+        "milestone and blocking relations",
+        description="Create one issue in the configured team with its fields and blocking "
+        "relations in one run.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CREATE_HELP,
     )
@@ -520,18 +575,31 @@ def _parser():
     create.add_argument(
         "--body-file", required=True, action=_Once, metavar="FILE", help="UTF-8 Markdown; -: stdin"
     )
-    for option, what in (
-        ("--team", "team id, name or key (default: configured)"),
-        ("--project", "project id or name"),
-        ("--milestone", "milestone id or name, of --project"),
-        ("--parent", "parent issue identifier (TASK-1) or id"),
-        ("--assignee", "user id, name, email or me"),
-        ("--state", f"workflow state id or name (default: {issue_create.BACKLOG})"),
+    create.add_argument(
+        "--state",
+        action=_Once,
+        choices=STATES,
+        metavar="STATE",
+        help=", ".join(STATES) + " (default: backlog)",
+    )
+    for option, metavar, what in (
+        ("--role", "SPEC", "assignee: a configured role, me or unassigned"),
+        ("--task", "NAME", "a configured task name"),
+        ("--client", "NAME", "a configured client name"),
+        ("--parent", "ID", "parent issue identifier (TASK-1) or id: a split"),
+        ("--project", "VALUE", "Linear only: project id or name"),
+        ("--milestone", "VALUE", "Linear only: milestone id or name, of --project"),
     ):
-        metavar = "ID" if option == "--parent" else "VALUE"
         create.add_argument(option, action=_Once, metavar=metavar, help=what)
     create.add_argument(
-        "--label", action="append", default=[], metavar="VALUE", help="label id or name; repeatable"
+        "--priority", action=_Once, choices=PRIORITIES, metavar="NAME", help=", ".join(PRIORITIES)
+    )
+    create.add_argument(
+        "--label",
+        action="append",
+        default=[],
+        metavar="VALUE",
+        help="Linear only: label id or name; repeatable",
     )
     create.add_argument(
         "--blocks", action="extend", nargs="+", default=[], metavar="ID", help="issues it blocks"
@@ -544,17 +612,32 @@ def _parser():
         metavar="ID",
         help="issues blocking it",
     )
+    change = commands.add_parser(
+        "edit",
+        help="change one issue's title, description, task, client or priority",
+        description="Change the title, description, task, client or priority of one issue.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_EDIT_HELP,
+    )
+    change.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
+    change.add_argument("--title", action=_Once, metavar="TEXT", help="not blank")
+    change.add_argument(
+        "--body-file", action=_Once, metavar="FILE", help="the description, UTF-8; -: stdin"
+    )
+    change.add_argument("--task", action=_Once, metavar="NAME", help="a configured task name")
+    change.add_argument("--client", action=_Once, metavar="NAME", help="a configured client name")
+    change.add_argument(
+        "--priority", action=_Once, choices=PRIORITIES, metavar="NAME", help=", ".join(PRIORITIES)
+    )
     move = commands.add_parser(
         "move",
-        help="set one issue's workflow state by name, within its team",
-        description="Set one issue's workflow state by name or id, within the issue's team.",
+        help="set one issue's state, an abstract name",
+        description="Set the state of one issue of the configured team by its abstract name.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_MOVE_HELP,
     )
     move.add_argument("id", metavar="ID", help="issue identifier (TASK-1) or issue id")
-    move.add_argument(
-        "--state", required=True, action=_Once, metavar="VALUE", help="state name or id"
-    )
+    move.add_argument("state", choices=STATES, metavar="STATE", help=", ".join(STATES))
     comment = commands.add_parser(
         "comment",
         help="post a comment on one issue from a UTF-8 file or stdin",
@@ -603,7 +686,7 @@ def _parser():
             )
     labels = commands.add_parser(
         "label",
-        help="replace one label of an issue, keeping the rest",
+        help="Linear only: replace one label of an issue, keeping the rest",
         description="Change one issue's labels one at a time.",
     )
     swap = labels.add_subparsers(dest="op", required=True).add_parser(
@@ -643,8 +726,12 @@ def _limit(text):
 
 
 def _usage(args):
-    """The usage error in args' page options, or None."""
-    if args.command == "create" and not args.title.strip():
+    """The usage error in args' options, or None."""
+    if args.command == "edit" and (
+        (args.title, args.body_file, args.task, args.client, args.priority) == (None,) * 5
+    ):
+        return "edit: give at least one of --title, --body-file, --task, --client, --priority"
+    if args.command in ("create", "edit") and args.title is not None and not args.title.strip():
         return "--title: empty title"
     if "full" not in args:
         return None
@@ -665,13 +752,15 @@ def receipt(payload):
     return data
 
 
-def _run(gql, args, team_id, body):
+def _run(gql, args, linear, body):
     if args.command == "move":
-        return receipt(issue_write.move(gql, args.id, args.state))
+        return receipt(issue_write.move(gql, linear, args.id, args.state))
     if args.command == "comment":
         return receipt(issue_write.comment(gql, args.id, body))
+    if args.command == "edit":
+        return receipt(issue_edit.edit(gql, linear, args, body))
     if args.command == "create":
-        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, team_id, body)))
+        return receipt(issue_create.create(gql, *issue_create.plan(gql, args, linear, body)))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
@@ -679,9 +768,10 @@ def _run(gql, args, team_id, body):
     if args.command == "label":
         return receipt(issue_label.swap(gql, args.id, args.old, args.new))
     if args.command == "archive" and args.dry_run:
-        return fit(issue_archive.dry_run(gql, args.id), (("descendants", "unfinished"),), (), None)
+        plan = issue_archive.dry_run(LinearTracker(gql), gql, args.id)
+        return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
-        return receipt(issue_archive.archive(gql, args.id))
+        return receipt(issue_archive.archive(LinearTracker(gql), gql, args.id))
     if args.command == "read":
         view = issue_read.view(gql, args.id, full=args.full)
         if args.full:
@@ -692,7 +782,10 @@ def _run(gql, args, team_id, body):
             TEXTS,
             f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
         )
-    source = (issue_list if args.command == "list" else issue_lookup).source(gql, args, team_id)
+    if args.command == "list":
+        source = issue_list.source(gql, args, linear)
+    else:
+        source = issue_lookup.source(gql, args, linear.team)
     if not args.full:
         rows, more, end = issue_page.fetch(gql, source, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
@@ -719,7 +812,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         diagnose(err, usage)
         return USAGE
     body = None
-    if args.command in ("comment", "create"):
+    if getattr(args, "body_file", None) is not None:
         try:
             body = issue_write.read_body(args.body_file, stdin)
         except IssueError as error:
@@ -740,7 +833,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     gql = functools.partial(gql, service=linear.manager_key)
     try:
-        data = _run(gql, args, linear.team, body)
+        data = _run(gql, args, linear, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE

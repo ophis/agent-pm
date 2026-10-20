@@ -7,6 +7,8 @@ from typing import Literal, Protocol
 
 from agent_pm.orchestrator.engine.flow.types import (
     Approved,
+    ArchivePlan,
+    ArchiveRefused,
     Detail,
     Finished,
     Found,
@@ -17,7 +19,6 @@ from agent_pm.orchestrator.engine.flow.types import (
     Recheck,
     Ref,
     Snapshot,
-    SubIssue,
 )
 
 Listed = Literal[IssueState.READY, IssueState.RUNNING]
@@ -41,15 +42,25 @@ class Tracker(ABC):
 
     @abstractmethod
     def finished(self, owners: Collection[str]) -> list[Finished]:
-        """Owners' done and all canceled; pages all read first: archiving shifts them."""
+        """Owners' done, all canceled; every page read first: archiving shifts them."""
 
     @abstractmethod
-    def sub_issues(self, key: str) -> tuple[SubIssue, ...]:
-        """Direct ones, not archived."""
+    def archive_plan(self, key: str) -> ArchivePlan:
+        """A gone issue or an unreadable page raises the adapter's error."""
 
     @abstractmethod
-    def archive(self, key: str) -> None:
-        """Its sub-issues too, as the tracker does."""
+    def _write_archive(self, key: str) -> None:
+        """With its sub-issues; raises the adapter's error."""
+
+    def archive(self, key: str, plan: ArchivePlan | None = None) -> bool:
+        """Given a plan: writes only. False: already archived."""
+        plan = plan or self.archive_plan(key)
+        if plan.outcome == "refused":
+            raise ArchiveRefused(plan)
+        if plan.outcome == "unchanged":
+            return False
+        self._write_archive(plan.key)
+        return True
 
     @abstractmethod
     def approved(self, owners: Collection[str]) -> list[Approved]:
@@ -83,11 +94,11 @@ class Tracker(ABC):
 
     @abstractmethod
     def move(self, key: str, to: IssueState, *, frm: IssueState | None = None) -> str | None:
-        """Without frm, from any state; None: moved, else its state, opaque."""
+        """No frm: from any state; None: moved, else its state, opaque."""
 
     @abstractmethod
     def claim(self, key: str) -> None:
-        """To RUNNING, its state unread: the caller rechecked it."""
+        """To RUNNING, unread: the caller rechecked it."""
 
     @abstractmethod
     def comment_and_move(
