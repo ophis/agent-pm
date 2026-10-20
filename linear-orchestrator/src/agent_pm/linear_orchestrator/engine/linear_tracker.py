@@ -10,17 +10,20 @@ from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, client_
 from agent_pm.linear_orchestrator.engine.types import UUID_RE, LinearError, State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
+    UNREADABLE,
     Approved,
     Comment,
     Detail,
     Finished,
     IssueState,
+    Label,
     Move,
+    Recheck,
     Ref,
     Snapshot,
     SubIssue,
 )
-from agent_pm.utils import parse_time
+from agent_pm.utils import one_line, parse_time
 
 T = TypeVar("T")
 
@@ -31,6 +34,8 @@ STATES = {
     State.TODO: IssueState.READY,
     State.IN_PROGRESS: IssueState.RUNNING,
 }
+
+LISTED = {IssueState.READY: State.TODO, IssueState.RUNNING: State.IN_PROGRESS}
 
 MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
 
@@ -88,6 +93,37 @@ M_UPDATE = (
     "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
 )
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
+RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
+Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
+Q_RECHECK = (
+    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
+    "labels { nodes { id name parent { id } } } } }"
+)
+Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + HISTORY + " } }"
+
+
+def q_issues(fields=""):
+    return (
+        (
+            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+            "updatedAt project { id name } assignee { id email } "
+        )
+        + fields
+        + " } } }"
+    )
+
+
+def labels(nodes):
+    return tuple(Label(n["id"], n["name"], (n["parent"] or {}).get("id")) for n in nodes)
+
+
+def blockers(issue):
+    nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
+    return [
+        n["issue"]["identifier"] if n.get("issue") else UNREADABLE
+        for n in nodes
+        if not n.get("issue") or n["issue"]["state"]["type"] not in DONE
+    ]
 
 
 def is_record(attachment):
@@ -112,10 +148,15 @@ def finished_at(issue, finished):
     return max(times, default=None)
 
 
+def _quiet(*_, **__):
+    pass
+
+
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
-    humans: human_members emails (comments' other, subscribed on notify). A method needing one not
-    given raises TypeError. service: the key each call is made as, with timeout when given; None:
+    humans: human_members emails (comments' other, subscribed on notify); people: their user ids,
+    which connect reads and moved_at's by_people needs; say: the caller's logger. A method needing
+    one not given raises TypeError. service: the key each call is made as, with timeout when given; None:
     gql as given. A comment's ref: its client id's parts."""
 
     def __init__(
@@ -127,6 +168,8 @@ class LinearTracker(Tracker):
         finished=None,
         roles=None,
         humans=(),
+        people=frozenset(),
+        say=_quiet,
         service=None,
         timeout=None,
     ):
@@ -135,6 +178,7 @@ class LinearTracker(Tracker):
             gql = functools.partial(gql, **bound)
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
         self.finished_ids, self.humans = finished, humans
+        self.people, self.say, self.hist = people, say, {}
         self.others = {e.lower() for e in humans}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
@@ -145,6 +189,69 @@ class LinearTracker(Tracker):
         if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.finished_ids:
             return IssueState.DONE if sid == self.ids[IssueState.DONE] else IssueState.CANCELED
         return found
+
+    @classmethod
+    def connect(cls, gql, cfg, *, say):
+        """Checks the team and task label group, then reads the human and role accounts."""
+        found = ops.team(gql, cfg)
+        ops.task_group(gql, cfg)
+        people = frozenset(ops.humans(gql, cfg))
+        return cls(
+            gql,
+            states=found.states,
+            team_id=found.id,
+            finished=found.finished,
+            roles=ops.role_ids(gql, cfg.roles),
+            humans=cfg.human_members,
+            people=people,
+            say=say,
+        )
+
+    def role(self, issue):
+        return _need("roles", self.roles)[issue["assignee"]["id"]]
+
+    def assigned(self, state):
+        return self._listed(state)
+
+    def _listed(self, state, fields=""):
+        """state's issues with a project, assigned to a role account; the first 100."""
+        if state not in LISTED:
+            raise ValueError(f"no list of {state} issues")
+        flt = {
+            "team": {"id": {"eq": _need("team_id", self.team_id)}},
+            "project": {"null": False},
+            "assignee": {"id": {"in": list(_need("roles", self.roles))}},
+            "state": {"id": {"eq": _need("states", self.state_ids)[LISTED[state]]}},
+        }
+        return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
+
+    def ready(self):
+        """Relations come with the list; when that read fails, a logged todo-error, the plain list
+        and one read per issue, an unreadable one blocked by UNREADABLE."""
+        try:
+            issues = self._listed(IssueState.READY, RELATIONS)
+        except LinearError as e:
+            self.say("todo-error", error=one_line(e))
+            issues = self._listed(IssueState.READY)
+            for i in issues:
+                try:
+                    i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
+                except LinearError:
+                    i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
+        return [(i, tuple(blockers(i))) for i in issues]
+
+    def recheck(self, key):
+        """ready: in the configured Todo state id, whatever other key shares it."""
+        found = self.gql(Q_RECHECK, i=key)["issue"]
+        ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
+        return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
+
+    def moved_at(self, key, state, *, by_people=False):
+        """History read once per key; by_people: moves by the human members only."""
+        if key not in self.hist:
+            self.hist[key] = self.gql(Q_HISTORY, i=key)["issue"]["history"]["nodes"]
+        moved = {_need("states", self.state_ids)[LISTED[state]]}
+        return last_move(self.hist[key], moved, self.people if by_people else None)
 
     def read(self, ident):
         _need("states", self.state_ids)

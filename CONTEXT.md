@@ -105,7 +105,7 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Tracker**:
-The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`linear-orchestrator/src/agent_pm/linear_orchestrator/flow/tracker.py`); its Linear adapter, `LinearTracker` (`engine/linear_tracker.py`). Prune, promote and write-back (session comments included) go through it so far.
+The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`linear-orchestrator/src/agent_pm/linear_orchestrator/flow/tracker.py`); its Linear adapter, `LinearTracker` (`engine/linear_tracker.py`). Prune, promote, the router's `Board` reads and write-back (session comments included) go through it so far.
 _Avoid_: backend
 
 **Workflow**:
