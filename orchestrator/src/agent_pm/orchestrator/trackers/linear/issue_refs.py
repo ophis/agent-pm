@@ -1,6 +1,6 @@
 """Linear references for agent-pm-orchestrator issue options: each resource's connection as an
 issue_page source, and resolution of an option's value to the one entity it names in scope. A value
-is an id or an exact name (a team also takes its key, a user its email or `me`); no match, several or one out of scope raises
+is an id or an exact name (a team also takes its key); no match, several or one out of scope raises
 IssueError with the candidates and the lookup command that lists them, never guessing one.
 """
 
@@ -30,11 +30,8 @@ MILESTONE = "id name project { id }"
 USER = "id name email active"
 _PAGE = "$first: Int!, $after: String"
 Q_TEAM = f"query($id: String!) {{ team(id: $id) {{ {TEAM} }} }}"
-Q_STATE = f"query($id: String!) {{ workflowState(id: $id) {{ {STATE} }} }}"
 Q_LABEL = f"query($id: String!) {{ issueLabel(id: $id) {{ {LABEL} }} }}"
 Q_MILESTONE = f"query($id: String!) {{ projectMilestone(id: $id) {{ {MILESTONE} }} }}"
-Q_USER = f"query($id: String!) {{ user(id: $id) {{ {USER} }} }}"
-Q_ME = f"query {{ viewer {{ {USER} }} }}"
 SETTABLE = {"isGroup": {"eq": False}}
 Q_ISSUE = "query($id: String!) { issue(id: $id) { id identifier } }"
 Q_PROJECT = (
@@ -213,21 +210,6 @@ def project(gql, team_id, value):
     )
 
 
-def state(gql, team_id, value):
-    """The workflow state of team_id whose id or exact name is value; a type is no name."""
-    return resolve(
-        gql,
-        value,
-        option="--state",
-        what=f"workflow state of team {team_id}",
-        find=states(team_id, {"name": {"eq": value}}),
-        near=lambda text: states(team_id, named(text)),
-        get=(Q_STATE, "workflowState", {}),
-        scope=lambda node: node["team"]["id"] == team_id,
-        lookup=command("states", value, "--team", team_id),
-    )
-
-
 def _current(node):
     return None if node["retiredAt"] else (node, [])
 
@@ -274,25 +256,6 @@ def milestone(gql, project_id, value):
         get=(Q_MILESTONE, "projectMilestone", {}),
         scope=lambda node: node["project"]["id"] == project_id,
         lookup=command("milestones", value, "--project", project_id),
-    )
-
-
-def user(gql, value):
-    """The workspace user whose id, exact name or email (any case) is value; me is the account
-    agent-pm-orchestrator runs as.
-    """
-    if value == "me":
-        return gql(Q_ME)["viewer"]
-    return resolve(
-        gql,
-        value,
-        option="--assignee",
-        what="user",
-        find=users(None, {"or": [{"name": {"eq": value}}, {"email": {"eqIgnoreCase": value}}]}),
-        near=lambda text: users(None, user_text(text)),
-        get=(Q_USER, "user", {}),
-        scope=lambda _: True,
-        lookup=command("users", value),
     )
 
 

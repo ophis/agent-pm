@@ -15,7 +15,12 @@ from agent_pm.orchestrator.trackers.linear import client, issue
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, CompletedProcess, TimeoutExpired
 from orchestrator_tests.unit import promote_fixtures as tp
+from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES
 from orchestrator_tests.unit.issue_fixtures import (
+    CLIENT_LABELS,
+    OTHER_TEAM,
+    ROLE_USERS,
+    TASK_LABELS,
     ArchiveGql,
     Gql,
     IssueCase,
@@ -29,7 +34,6 @@ from orchestrator_tests.unit.issue_fixtures import (
     issue_node,
     label,
     rel,
-    team,
     tree,
     write_issue,
 )
@@ -91,15 +95,63 @@ class Help(Case):
             "parent_id",
             "most\n  recently updated first",
             "1-50 (default 20)",
-            "agent-pm-orchestrator issue list --assignee me",
+            "--role SPEC",
+            "unassigned (no assignee)",
+            "agent-pm-orchestrator issue list --role me",
+            "agent-pm-orchestrator issue list --state ready --task build --priority high",
             "agent-pm-orchestrator issue lookup --help",
             "8192",
         ):
             self.assertIn(phrase, text)
 
+    def test_help_names_abstract_values_and_marks_linear_only(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            cli.main(["issue", "--help"])
+        text = output.getvalue()
+        for phrase in (
+            "backlog, ready, running, review, approved, done, canceled",
+            "me (the\n  linear.harness_key account) or unassigned",
+            "none, urgent, high, medium, low",
+            "Linear only: lookup, label swap, --label, --project, --milestone.",
+            "agent-pm-orchestrator issue move TASK-1 done",
+            "agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
+            "    --parent TASK-1",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_no_help_names_a_removed_option(self):
+        for command in (
+            "",
+            "read",
+            "list",
+            "create",
+            "move",
+            "comment",
+            "archive",
+            "relation add",
+            "label swap",
+        ):
+            output = io.StringIO()
+            with (
+                self.subTest(command=command),
+                redirect_stdout(output),
+                self.assertRaises(SystemExit),
+            ):
+                cli.main(["issue", *command.split(), "--help"])
+            text = output.getvalue()
+            self.assertNotIn("--assignee", text)
+            if command in ("", "list", "create", "move"):
+                self.assertNotIn("--team", text)
+            self.assertNotIn("move TASK-1 --state", text)
+            self.assertNotIn("In Progress", text)
+
     def test_write_help_names_the_receipt_and_result_unknown(self):
         for command, phrases in (
-            ("move", ("--state VALUE", "issue's own team", "unchanged")),
+            (
+                "move",
+                ("STATE", "backlog", "handoff", "configured team (linear.team)", "unchanged"),
+            ),
             ("comment", ("--body-file FILE", "stdin", "comment_id", "verbatim")),
             (
                 "archive",
@@ -107,7 +159,18 @@ class Help(Case):
             ),
             (
                 "create",
-                ("--title TEXT", "--blocked-by", "Backlog", "relation add", "never create again"),
+                (
+                    "--title TEXT",
+                    "--blocked-by",
+                    "default backlog",
+                    "--role SPEC",
+                    "--task NAME",
+                    "--client NAME",
+                    "--priority NAME",
+                    "--parent ID: an issue, the new one its sub-issue",
+                    "relation add",
+                    "never create again",
+                ),
             ),
             ("relation add", ("--blocks OTHER", "--blocked-by OTHER", "same edge", "itself")),
             ("relation remove", ("--blocks OTHER", "other types", "unchanged")),
@@ -141,7 +204,22 @@ class Help(Case):
             ["read", "TASK-1", "TASK-2"],
             ["nope"],
             ["move", "TASK-1"],
-            ["move", "TASK-1", "--state", "Done", "--state", "Todo"],
+            ["move", "TASK-1", "done", "ready"],
+            ["move", "TASK-1", "Done"],
+            ["move", "TASK-1", "in_progress"],
+            ["move", "TASK-1", "--state", "done"],
+            ["move", "TASK-1", "done", "--state", "done"],
+            ["list", "--team", "TASK"],
+            ["list", "--assignee", "me"],
+            ["list", "--state", "Todo"],
+            ["list", "--priority", "2"],
+            ["create", "--title", "x", "--body-file", "a.md", "--team", "TASK"],
+            ["create", "--title", "x", "--body-file", "a.md", "--assignee", "me"],
+            ["create", "--title", "x", "--body-file", "a.md", "--state", "Backlog"],
+            ["create", "--title", "x", "--body-file", "a.md", "--priority", "p1"],
+            ["create", "--title", "x", "--body-file", "a.md", "--role", "me", "--role", "pm"],
+            ["create", "--title", "x", "--body-file", "a.md", "--task", "a", "--task", "b"],
+            ["create", "--title", "x", "--body-file", "a.md", "--client", "a", "--client", "b"],
             ["comment", "TASK-1"],
             ["comment", "TASK-1", "--body-file", "a.md", "--body-file", "b.md"],
             ["archive"],
@@ -149,7 +227,17 @@ class Help(Case):
             ["archive", "TASK-1", "--dry-run=yes"],
             ["create", "--body-file", "a.md"],
             ["create", "--title", "x"],
-            ["create", "--title", "x", "--body-file", "a.md", "--state", "A", "--state", "B"],
+            [
+                "create",
+                "--title",
+                "x",
+                "--body-file",
+                "a.md",
+                "--state",
+                "done",
+                "--state",
+                "ready",
+            ],
             ["create", "--title", "x", "--title", "y", "--body-file", "a.md"],
             ["create", "--title", "x", "--body-file", "a.md", "--body-file", "b.md"],
             ["create", "--title", "x", "--body-file", "a.md", "--blocks"],
@@ -288,13 +376,10 @@ class Read(IssueCase):
         self.assertEqual(json.loads(out)["truncated"], ["title"])
 
 
-DONE = (("s-todo", "Todo", "unstarted"), ("s-done", "Done", "completed"))
-
-
 class Move(IssueCase):
     def test_prints_the_receipt(self):
-        gql = mock.Mock(wraps=WriteGql(write_issue(team_node=team("TASK", DONE))))
-        code, out, err = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        gql = mock.Mock(wraps=WriteGql(write_issue()))
+        code, out, err = self.run_main(["move", "TASK-2", "approved"], gql)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(
             json.loads(out),
@@ -311,17 +396,17 @@ class Move(IssueCase):
         )
         self.assertTrue(out.endswith(b"\n"))
         self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+        self.assertEqual(gql.call_args.args[0].split("(")[0], "mutation")
+        self.assertEqual(gql.call_args.kwargs["s"], STATES["handoff"])
 
     def test_already_there_exits_zero_unchanged(self):
-        gql = WriteGql(write_issue(state="s-done", team_node=team("TASK", DONE)))
-        code, out, _ = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        gql = WriteGql(write_issue(state=STATES["done"]))
+        code, out, _ = self.run_main(["move", "TASK-2", "done"], gql)
         self.assertEqual((code, json.loads(out)["result"], gql.writes), (0, "unchanged", []))
 
     def test_a_long_actor_name_still_fits_one_kib(self):
-        gql = WriteGql(
-            write_issue(team_node=team("TASK", DONE)), viewer={"id": "u-me", "name": "名" * 2000}
-        )
-        code, out, _ = self.run_main(["move", "TASK-2", "--state", "Done"], gql)
+        gql = WriteGql(write_issue(), viewer={"id": "u-me", "name": "名" * 2000})
+        code, out, _ = self.run_main(["move", "TASK-2", "done"], gql)
         self.assertEqual(code, 0)
         self.assertLessEqual(len(out), 1024)
         receipt = json.loads(out.decode("utf-8"))
@@ -329,24 +414,23 @@ class Move(IssueCase):
         self.assertEqual(receipt["issue"]["identifier"], "TASK-2")
 
     def test_failures_print_no_receipt(self):
-        node = write_issue(team_node=team("TASK", DONE))
+        node = write_issue()
         cases = (
-            (WriteGql(node), "Shipped", 2, "Done (s-done)"),
-            (WriteGql(None), "Done", 2, "no such issue"),
-            (WriteGql(node, result={"success": False}), "Done", 1, "success: false"),
-            (WriteGql(node, result=GraphQLErrors([{"message": "boom"}])), "Done", 1, "boom"),
+            (WriteGql(write_issue(team_id=OTHER_TEAM)), 2, "is in team TASK"),
+            (WriteGql(None), 2, "no such issue"),
+            (WriteGql(node, result={"success": False}), 1, "success: false"),
+            (WriteGql(node, result=GraphQLErrors([{"message": "boom"}])), 1, "boom"),
             (
                 WriteGql(node, result=Unavailable("issueUpdate", reason="timed out")),
-                "Done",
                 1,
                 "result unknown",
             ),
-            (WriteGql(node, fail=Unavailable("issue", reason="timed out")), "Done", 1, "timed out"),
-            (WriteGql(node, fail=CalledProcessError(44, ["security"])), "Done", 2, "Keychain"),
+            (WriteGql(node, fail=Unavailable("issue", reason="timed out")), 1, "timed out"),
+            (WriteGql(node, fail=CalledProcessError(44, ["security"])), 2, "Keychain"),
         )
-        for gql, state, want, phrase in cases:
+        for gql, want, phrase in cases:
             with self.subTest(phrase=phrase):
-                code, out, err = self.run_main(["move", "TASK-2", "--state", state], gql)
+                code, out, err = self.run_main(["move", "TASK-2", "done"], gql)
                 self.assertEqual((code, out), (want, b""))
                 self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
@@ -450,12 +534,36 @@ class Create(IssueCase):
                 self.assertEqual((code, out, gql.calls), (2, b"", []))
                 self.assertIn("empty", err)
 
-    def test_an_unresolved_reference_exits_two_and_creates_nothing(self):
+    def test_abstract_names_resolve_from_the_configuration(self):
         gql = create_gql()
-        argv = ["create", "--title", "Fix", "--body-file", "-", "--state", "Shipped"]
-        code, out, err = self.run_main(argv, gql, b"body")
-        self.assertEqual((code, out, gql.writes), (2, b"", []))
-        self.assertIn("lookup states", err)
+        argv = ["create", "--title", "Fix", "--body-file", "-", "--state", "running"]
+        argv += ["--role", "engineer", "--task", "build", "--client", "codex", "--priority", "low"]
+        code, _, err = self.run_main(argv, gql, b"body")
+        self.assertEqual((code, err), (0, ""))
+        fields = gql.writes[0][1]["in"]
+        self.assertEqual(
+            (fields["stateId"], fields["labelIds"], fields["assigneeId"], fields["priority"]),
+            (
+                STATES["in_progress"],
+                [TASK_LABELS["build"], CLIENT_LABELS["codex"]],
+                ROLE_USERS[ACCOUNTS["engineer"]],
+                4,
+            ),
+        )
+
+    def test_an_unresolved_reference_exits_two_and_creates_nothing(self):
+        for argv, phrase in (
+            (["--task", "nope"], "build, light-build"),
+            (["--role", "nope"], "me, unassigned"),
+            (["--label", "nope"], "lookup labels"),
+        ):
+            gql = create_gql()
+            with self.subTest(argv=argv):
+                code, out, err = self.run_main(
+                    ["create", "--title", "Fix", "--body-file", "-", *argv], gql, b"body"
+                )
+                self.assertEqual((code, out, gql.writes), (2, b"", []))
+                self.assertIn(phrase, err)
 
     def test_a_failed_relation_exits_one_with_the_report_and_its_commands(self):
         gql = create_gql(relations=[GraphQLErrors([{"message": "boom"}])])
@@ -504,7 +612,7 @@ class Create(IssueCase):
         )
         self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
         self.assertIn("result unknown", err)
-        self.assertIn("issue list --team 00000000-0000-4000-8000-000000000001 --query=Fix", err)
+        self.assertIn("agent-pm-orchestrator issue list --query=Fix before", err)
 
 
 class Archive(IssueCase):

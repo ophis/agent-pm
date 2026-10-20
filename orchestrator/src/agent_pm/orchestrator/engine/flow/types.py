@@ -19,6 +19,14 @@ class IssueState(StrEnum):
     CANCELED = "canceled"
 
 
+class Priority(StrEnum):
+    NONE = "none"
+    URGENT = "urgent"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """state None: outside the machine; since: when it finished, else its latest move into its

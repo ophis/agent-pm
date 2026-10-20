@@ -1,6 +1,6 @@
-"""agent-pm-orchestrator issue create: every reference resolved before the one create, only the given
-fields set, Backlog by default, then each blocking relation; a failed relation reported with only
-the commands that add it.
+"""agent-pm-orchestrator issue create: every reference resolved before the one create in the configured
+team, only the given fields set, backlog by default, abstract names as the configured ids, then each
+blocking relation; a failed relation reported with only the commands that add it.
 """
 
 from types import SimpleNamespace
@@ -15,14 +15,17 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear import client, issue_create
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import TEAM
+from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TEAM
 from orchestrator_tests.unit.issue_fixtures import (
+    CLIENT_LABELS,
     NEW,
+    ROLE_USERS,
+    TASK_LABELS,
     VIEWER,
     by_name,
     create_gql,
-    edges,
-    state,
+    label,
+    names_cfg,
     uid,
 )
 
@@ -32,21 +35,24 @@ BODY = 'say "hi", `ls`, $HOME\n中文\n'
 def args(**given):
     defaults = {
         "title": "Fix login",
-        "team": None,
         "label": [],
         "project": None,
         "milestone": None,
         "parent": None,
-        "assignee": None,
-        "state": None,
+        "role": None,
+        "task": None,
+        "client": None,
+        "priority": None,
+        "state": "backlog",
         "blocks": [],
         "blocked_by": [],
     }
     return SimpleNamespace(**{**defaults, **given})
 
 
-def run(fake, **given):
-    return issue_create.create(fake, *issue_create.plan(fake, args(**given), TEAM, BODY))
+def run(fake, cfg=None, **given):
+    plan = issue_create.plan(fake, args(**given), cfg or names_cfg(), BODY)
+    return issue_create.create(fake, *plan)
 
 
 def relation(blocker, blocked):
@@ -62,8 +68,11 @@ class Create(Case):
             project="Agent PM",
             milestone="M1",
             parent="TASK-1",
-            assignee="Ann",
-            state="Todo",
+            role="engineer",
+            task="build",
+            client="codex",
+            priority="high",
+            state="ready",
             blocks=["TASK-3"],
             blocked_by=["TASK-4"],
         )
@@ -74,12 +83,13 @@ class Create(Case):
                 "teamId": TEAM,
                 "title": "Fix login",
                 "description": BODY,
-                "stateId": uid(3),
-                "labelIds": [uid(4), uid(5)],
+                "stateId": STATES["todo"],
+                "labelIds": [TASK_LABELS["build"], CLIENT_LABELS["codex"], uid(4), uid(5)],
                 "projectId": uid(7),
                 "projectMilestoneId": uid(8),
                 "parentId": "id-TASK-1",
-                "assigneeId": uid(9),
+                "assigneeId": ROLE_USERS[ACCOUNTS["engineer"]],
+                "priority": 2,
             },
         )
         self.assertEqual(
@@ -95,24 +105,44 @@ class Create(Case):
         run(fake)
         self.assertEqual(
             fake.writes[0][1]["in"],
-            {"teamId": TEAM, "title": "Fix login", "description": BODY, "stateId": uid(2)},
+            {
+                "teamId": TEAM,
+                "title": "Fix login",
+                "description": BODY,
+                "stateId": STATES["backlog"],
+            },
         )
         self.assertEqual(len(fake.writes), 1)
 
-    def test_a_given_team_is_resolved(self):
-        fake = create_gql(teams=edges([{"id": uid(1), "name": "Ops", "key": "OPS"}]))
-        run(fake, team="ops")
-        self.assertEqual(fake.writes[0][1]["in"]["teamId"], uid(1))
-        self.assertEqual(
-            fake.sent("workflowStates")[0]["f"]["and"][0], {"team": {"id": {"eq": uid(1)}}}
-        )
+    def test_each_abstract_state_is_its_configured_id(self):
+        for state, key in (("running", "in_progress"), ("approved", "handoff"), ("done", "done")):
+            fake = create_gql()
+            with self.subTest(state=state):
+                run(fake, state=state)
+                self.assertEqual(fake.writes[0][1]["in"]["stateId"], STATES[key])
 
-    def test_no_backlog_state_is_refused_never_another(self):
-        fake = create_gql(workflowStates=by_name(state(3, "Todo")))
-        with self.assertRaises(IssueError) as cm:
-            run(fake)
-        self.assertIn("Backlog", str(cm.exception))
-        self.assertEqual(fake.writes, [])
+    def test_role_me_is_the_viewer_and_unassigned_leaves_it_unassigned(self):
+        fake = create_gql()
+        run(fake, role="me")
+        self.assertEqual(fake.writes[0][1]["in"]["assigneeId"], VIEWER["id"])
+        fake = create_gql()
+        run(fake, role="unassigned")
+        self.assertNotIn("assigneeId", fake.writes[0][1]["in"])
+
+    def test_each_priority_is_its_linear_number(self):
+        for name, number in (("none", 0), ("urgent", 1), ("high", 2), ("medium", 3), ("low", 4)):
+            fake = create_gql()
+            with self.subTest(name=name):
+                run(fake, priority=name)
+                self.assertEqual(fake.writes[0][1]["in"]["priority"], number)
+
+    def test_task_and_client_labels_come_first_and_a_label_naming_one_counts_once(self):
+        fake = create_gql(issueLabels=by_name(label(0xB2, "Light build"), label(4, "bug")))
+        run(fake, task="light-build", client="claude", label=["bug", "Light build"])
+        self.assertEqual(
+            fake.writes[0][1]["in"]["labelIds"],
+            [TASK_LABELS["light-build"], CLIENT_LABELS["claude"], uid(4)],
+        )
 
     def test_any_unresolved_reference_creates_nothing(self):
         cases = (
@@ -123,8 +153,10 @@ class Create(Case):
             {"project": "Agent PM", "milestone": "M9"},
             {"parent": "NOPE-1"},
             {"parent": "not an id"},
-            {"assignee": "Bob"},
-            {"state": "backlog"},
+            {"role": "nobody"},
+            {"role": "pm", "label": ["nope"]},
+            {"task": "nope"},
+            {"client": "nope"},
             {"blocks": ["TASK-3", "NOPE-2"]},
             {"blocked_by": ["NOPE-3"]},
         )
@@ -193,18 +225,31 @@ class Create(Case):
         with self.assertRaises(WriteUnknown) as cm:
             run(fake, blocks=["TASK-3"])
         text = str(cm.exception)
-        for phrase in ("result unknown", "timed out", f"list --team {TEAM} --query='Fix login'"):
+        for phrase in ("result unknown", "timed out", "issue list --query='Fix login' before"):
             self.assertIn(phrase, text)
+        self.assertNotIn("--team", text)
         self.assertEqual(len(fake.writes), 1)
 
-    def test_the_outage_check_names_the_given_team_and_survives_a_dash_title(self):
-        fake = create_gql(
-            created=Unavailable("issueCreate", reason="timed out"),
-            teams=edges([{"id": uid(1), "name": "Ops", "key": "OPS"}]),
-        )
+    def test_the_outage_check_survives_a_dash_title(self):
+        fake = create_gql(created=Unavailable("issueCreate", reason="timed out"))
         with self.assertRaises(WriteUnknown) as cm:
-            run(fake, team="OPS", title="-x")
-        self.assertIn(f"issue list --team {uid(1)} --query=-x ", str(cm.exception))
+            run(fake, title="-x")
+        self.assertIn("issue list --query=-x before", str(cm.exception))
+
+    def test_unknown_names_resolve_before_any_read(self):
+        for given in ({"task": "nope"}, {"client": "nope"}, {"role": "nobody"}):
+            fake = create_gql()
+            with self.subTest(given=given), self.assertRaises(IssueError):
+                run(fake, label=["bug"], parent="TASK-1", **given)
+            self.assertEqual(fake.calls, [])
+
+    def test_a_client_without_client_labels_is_refused(self):
+        fake = create_gql()
+        cfg = names_cfg(agent_label_group="", agent_labels={})
+        with self.assertRaises(IssueError) as cm:
+            run(fake, cfg, client="codex")
+        self.assertIn("client labels are not configured", str(cm.exception))
+        self.assertEqual(fake.writes, [])
 
     def test_a_refused_create_fails_and_adds_no_relation(self):
         for created in ({"success": False, "issue": None}, GraphQLErrors([{"message": "boom"}])):

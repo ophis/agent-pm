@@ -17,10 +17,10 @@ The prefix `agent-pm-orchestrator issue` is left out. `ID` is an identifier (`TA
 |---|---|
 | `read ID` | fields, newest comments and the `blocks`, `blocked_by`, `parent`, `children` columns |
 | `read ID --full --output FILE` | every page and body, to FILE |
-| `list [filters]` | one team's issues, newest update first; also the search |
+| `list [filters]` | the configured team's issues, newest update first; also the search |
 | `lookup RESOURCE` | `teams`, `states`, `labels`, `projects`, `milestones` (`--project`), `users` with ids |
 | `create --title TEXT --body-file FILE` | one issue with its fields and blocking relations |
-| `move ID --state VALUE` | set its state, within its own team |
+| `move ID STATE` | set its state: `backlog`, `ready`, `running`, `review`, `approved`, `done` or `canceled` |
 | `comment ID --body-file FILE` | a new top-level comment |
 | `relation add ID --blocks OTHER` | one blocking edge; `remove` deletes it; `--blocked-by` for the other direction |
 | `label swap ID --from OLD --to NEW` | replace one label, keeping the rest |
@@ -31,8 +31,9 @@ Exit 0: success, or `"result": "unchanged"` (already so; nothing written). Exit 
 ## Finding issues and values
 
 ```bash
-agent-pm-orchestrator issue list --query 'login' --state Todo --label bug
-agent-pm-orchestrator issue list --assignee me --project 'Agent PM' --include-archived
+agent-pm-orchestrator issue list --query 'login' --state ready --label bug
+agent-pm-orchestrator issue list --role me --project 'Agent PM' --include-archived
+agent-pm-orchestrator issue list --role unassigned --task build --priority high
 agent-pm-orchestrator issue list --parent TASK-1 --limit 50
 agent-pm-orchestrator issue list --cursor <next_cursor>
 agent-pm-orchestrator issue lookup states --team TASK
@@ -42,8 +43,9 @@ agent-pm-orchestrator issue lookup users --query ada
 agent-pm-orchestrator issue lookup teams --full --output teams.json
 ```
 
-- `list` filters all hold at once, within one team: `--team` (id, name or key), else the configured team. Archived issues only with `--include-archived`.
-- A value is an id or an exact name; `--assignee` also takes an email or `me` (the `[orchestrator.linear] harness_key` account). No match, several, or one outside the team exits 2 naming the candidates and the `lookup` command that lists them: pick an id from it, never the first match.
+- `list` filters all hold at once, within the configured team. Archived issues only with `--include-archived`.
+- `--state` takes an abstract state; `--role` a configured role, `me` (the `[orchestrator.linear] harness_key` account) or `unassigned`; `--task` and `--client` a configured name; `--priority` `none`, `urgent`, `high`, `medium` or `low`.
+- A `--label`, `--project` or `--milestone` value is an id or an exact name. No match, several, or one outside the team exits 2 naming the candidates and the `lookup` command that lists them: pick an id from it, never the first match.
 - Pages: `--limit` 1–50 (default 20); `has_next_page` true → pass `next_cursor` as `--cursor` with the same options. `--full --output FILE` writes every page to FILE instead.
 
 ## Reading in full
@@ -62,15 +64,15 @@ Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim, minus 
 ```bash
 agent-pm-orchestrator issue comment TASK-1 --body-file note.md
 agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md
-agent-pm-orchestrator issue move TASK-1 --state 'In Progress'
+agent-pm-orchestrator issue move TASK-1 running
 agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md
-agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me --state Todo --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md
+agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug --project 'Agent PM' --milestone M1 --parent TASK-1 --role me --task build --priority high --state ready --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md
 agent-pm-orchestrator issue label swap TASK-1 --from todo --to doing
 ```
 
-- `create` resolves every value before writing; unset fields stay unset; `--state` defaults to Backlog. `--label`, `--blocks` and `--blocked-by` repeat.
+- `create` resolves every value before writing; unset fields stay unset; `--state` defaults to `backlog`; `--parent` makes it a sub-issue (a split). `--label`, `--blocks` and `--blocked-by` repeat.
 - A write prints a receipt: `issue`, `operation`, `result` (`changed` or `unchanged`), `actor`, and `comment_id` for `comment`. It never echoes the body.
-- `move --state` takes a state of the issue's own team, by exact name or id; a type such as `completed` is not a name.
+- `move` takes an abstract state, and only an issue of the configured team.
 - `label swap` refuses when the issue carries neither label, or when NEW's group already has another of its labels.
 
 ## Blocking relations
@@ -86,7 +88,7 @@ Each run adds or removes that one edge in that one direction; other relations st
 
 ## When a write fails
 
-- **Result unknown** (a timeout or outage mid-write, exit 1): `read` the issue before running the write again; nothing retries by itself. For `create`, first run the `list --team … --query=…` command its error prints, which searches the team it wrote to.
+- **Result unknown** (a timeout or outage mid-write, exit 1): `read` the issue before running the write again; nothing retries by itself. For `create`, first run the `list --query=…` command its error prints.
 - **Partial create** (exit 1, `"result": "partial"`): the issue exists; `done` and `failed` list its relations, and `recover` holds the `relation add` command for each failed one. A report too long for stdout cuts `done` and `failed` before `recover`, naming each cut in `truncated`. Run only the `recover` commands; never run `create` again.
 
 ## Archiving

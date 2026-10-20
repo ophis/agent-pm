@@ -1,11 +1,13 @@
 """Linear issue nodes, as `agent-pm-orchestrator issue read`, `move`, `comment`, `archive`, `relation` and
 `label swap` query them, and recording fake gqls; the lookup and list entities by edge with Routes, a fake gql answering each
-by its root field; IssueCase runs issue.main against a test configuration.
+by its root field; IssueCase runs issue.main against a test configuration, names_cfg is its
+abstract names' part.
 """
 
 import io
 import os
 import re
+from types import SimpleNamespace
 
 from agent_pm.orchestrator.engine.types import GraphQLErrors
 from agent_pm.orchestrator.trackers.linear import (
@@ -15,15 +17,54 @@ from agent_pm.orchestrator.trackers.linear import (
     issue_read,
     issue_refs,
     issue_relation,
-    issue_write,
     linear_tracker,
 )
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
-from orchestrator_tests.unit.board_ids import TEAM
+from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, STATES, TASK_GROUP, TEAM
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL
 
 OTHER_TEAM = "00000000-0000-4000-8000-0000000000f2"
+
+
+def uid(n):
+    return f"00000000-0000-4000-8000-{n:012x}"
+
+
+TASK_LABELS = {"build": uid(0xB1), "light-build": uid(0xB2)}
+CLIENT_GROUP = uid(0xC0)
+CLIENT_LABELS = {"codex": uid(0xC1), "claude": uid(0xC2)}
+# each role's account's Linear user id
+ROLE_USERS = {account: uid(0xA0 + n) for n, account in enumerate(ACCOUNTS.values())}
+CONFIG = tp.CONFIG.replace(
+    HEADER,
+    HEADER
+    + "linear.task_labels = { "
+    + ", ".join(f'{k} = "{v}"' for k, v in TASK_LABELS.items())
+    + f' }}\nlinear.agent_label_group = "{CLIENT_GROUP}"\nlinear.agent_labels = {{ '
+    + ", ".join(f'{k} = "{v}"' for k, v in CLIENT_LABELS.items())
+    + " }\n",
+)
+
+
+def names_cfg(**fields):
+    """The Config fields issue_names reads, as CONFIG loads them."""
+    cfg = {
+        "team": TEAM,
+        "states": dict(STATES),
+        "roles": {r: SimpleNamespace(account=a) for r, a in ACCOUNTS.items()},
+        "task_label_group": TASK_GROUP,
+        "task_labels": dict(TASK_LABELS),
+        "agent_label_group": CLIENT_GROUP,
+        "agent_labels": dict(CLIENT_LABELS),
+    }
+    return SimpleNamespace(**{**cfg, **fields})
+
+
+def role_users(variables):
+    """A Routes users answer to ops.Q_USER: the user of a role account, else none."""
+    found = ROLE_USERS.get(variables["e"])
+    return {"nodes": [{"id": found}] if found else []}
 
 
 class IssueCase(Case):
@@ -35,7 +76,7 @@ class IssueCase(Case):
             f.write(f'[orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL)
         self.config = os.path.join(self.root, "config.toml")
         with open(self.config, "w") as f:
-            f.write(tp.CONFIG)
+            f.write(CONFIG)
 
     def run_main(self, argv, gql, stdin=b""):
         out, err = io.BytesIO(), io.StringIO()
@@ -114,10 +155,6 @@ class Gql:
                     else {"issue": {name: page}}
                 )
         return {"issue": self.node}
-
-
-def uid(n):
-    return f"00000000-0000-4000-8000-{n:012x}"
 
 
 def edges(nodes, *, more=False, cursor=None):
@@ -201,29 +238,23 @@ def issue_row(ident, team_id=TEAM, **fields):
 
 
 VIEWER = {"id": "u-me", "name": "Me"}
-STATES = (("s-todo", "Todo", "unstarted"), ("s-doing", "In Progress", "started"))
 
 
-def team(key="TASK", states=STATES, *, more=False, cursor=None):
-    nodes = [{"id": i, "name": n, "type": t} for i, n, t in states]
-    return {"id": f"t-{key}", "key": key, "states": conn(nodes, more=more, cursor=cursor)}
-
-
-def write_issue(ident="TASK-2", *, state="s-todo", team_node=None):
+def write_issue(ident="TASK-2", *, state=STATES["todo"], team_id=TEAM):
     """An issue as `agent-pm-orchestrator issue move` and `comment` read it."""
     return {
         "id": f"id-{ident}",
         "identifier": ident,
         "url": f"https://linear.app/t/issue/{ident}",
         "state": {"id": state},
-        "team": team_node or team(ident.split("-")[0]),
+        "team": {"id": team_id, "key": ident.split("-")[0]},
     }
 
 
 class WriteGql:
-    """Answers a write's read with `issue` (None: no such issue) and VIEWER, each later page of
-    states from `pages` (in order), and each mutation with `result`, raised when an exception;
-    an exception in `fail` is raised by the read instead. Records every (query, variables) call.
+    """Answers a write's read with `issue` (None: no such issue) and VIEWER, and each mutation with
+    `result`, raised when an exception; an exception in `fail` is raised by the read instead.
+    Records every (query, variables) call.
     """
 
     DEFAULTS = {
@@ -231,9 +262,9 @@ class WriteGql:
         "commentCreate": {"success": True, "comment": {"id": "c-new"}},
     }
 
-    def __init__(self, issue, *, pages=(), result=None, fail=None, viewer=VIEWER):
+    def __init__(self, issue, *, result=None, fail=None, viewer=VIEWER):
         self.issue, self.result, self.fail, self.viewer = issue, result, fail, viewer
-        self.pages, self.calls = list(pages), []
+        self.calls = []
 
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
@@ -242,8 +273,6 @@ class WriteGql:
                 raise self.result
             field = client.operation(query)
             return {field: self.DEFAULTS[field] if self.result is None else self.result}
-        if query == issue_write.Q_STATES:
-            return {"team": {"states": self.pages.pop(0)}}
         if self.fail is not None:
             raise self.fail
         return {"viewer": self.viewer, "issue": self.issue}
@@ -452,17 +481,16 @@ def _issue_ref(variables):
 
 
 def create_gql(**overrides):
-    """A CreateGql knowing team TEAM's states Backlog and Todo, labels bug, ops (workspace) and old
-    (retired), project Agent PM with milestone M1, user Ann, and every issue but NOPE-*.
+    """A CreateGql knowing team TEAM's labels bug, ops (workspace) and old (retired), project
+    Agent PM with milestone M1, the role accounts' users, and every issue but NOPE-*.
     """
     routes = {
-        "workflowStates": by_name(state(2, "Backlog", "backlog"), state(3, "Todo")),
         "issueLabels": by_name(
             label(4, "bug"), label(5, "ops", None), label(6, "old", retired="2026-01-01")
         ),
         "team": lambda v: {"projects": by_name(project(7, "Agent PM"))(v)},
         "project": lambda v: {"projectMilestones": by_name(milestone(8, "M1", uid(7)))(v)},
-        "users": by_name(user(9, "Ann")),
+        "users": role_users,
         "issue": _issue_ref,
         "viewer": VIEWER,
     }

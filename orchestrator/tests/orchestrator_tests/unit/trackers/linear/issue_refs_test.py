@@ -13,10 +13,8 @@ from orchestrator_tests.unit.issue_fixtures import (
     label,
     milestone,
     project,
-    state,
     team_ref,
     uid,
-    user,
 )
 
 MISSING = GraphQLErrors([{"message": "Entity not found: Team"}])
@@ -137,28 +135,6 @@ class Filters(Case):
         )
 
 
-class State(Case):
-    def test_a_name_in_the_team_never_its_type(self):
-        gql = Routes(workflowStates=edges([state(3, "In Progress", "started")]))
-        self.assertEqual(issue_refs.state(gql, TEAM, "In Progress")["id"], uid(3))
-        want = {"and": [{"team": {"id": {"eq": TEAM}}}, {"name": {"eq": "In Progress"}}]}
-        self.assertEqual(gql.sent("workflowStates")[0]["f"], want)
-        none = Routes(workflowStates=[edges([]), edges([])])
-        with self.assertRaises(IssueError) as cm:
-            issue_refs.state(none, TEAM, "started")
-        self.assertIn(f"lookup states --team {TEAM} --query started", str(cm.exception))
-
-    def test_an_id_of_another_team_is_refused(self):
-        gql = Routes(
-            workflowState=state(3, "Todo", team_id=OTHER_TEAM),
-            workflowStates=edges([state(4, "Todo")]),
-        )
-        with self.assertRaises(IssueError) as cm:
-            issue_refs.state(gql, TEAM, uid(3))
-        self.assertIn(f"is not a workflow state of team {TEAM}", str(cm.exception))
-        self.assertIn(f"candidates: {uid(4)} 'Todo';", str(cm.exception))
-
-
 class Label(Case):
     def test_a_team_or_workspace_label(self):
         for node in (label(1, "bug"), label(2, "bug", None)):
@@ -229,30 +205,6 @@ class Milestone(Case):
         with self.assertRaises(IssueError) as cm:
             issue_refs.milestone(other, uid(5), uid(7))
         self.assertIn(f"lookup milestones --project {uid(5)}", str(cm.exception))
-
-
-class User(Case):
-    def test_me_is_the_account_it_runs_as(self):
-        gql = Routes(viewer=user(1, "Harness"))
-        self.assertEqual(issue_refs.user(gql, "me")["name"], "Harness")
-
-    def test_an_email_or_exact_name(self):
-        gql = Routes(users=edges([user(2, "Ann")]))
-        self.assertEqual(issue_refs.user(gql, "U2@example.com")["id"], uid(2))
-        want = {
-            "or": [
-                {"name": {"eq": "U2@example.com"}},
-                {"email": {"eqIgnoreCase": "U2@example.com"}},
-            ]
-        }
-        self.assertEqual(gql.sent("users")[0]["f"], want)
-        self.assertIn("includeDisabled: true", gql.calls[0][0])
-
-    def test_same_named_users_are_refused(self):
-        gql = Routes(users=edges([user(2, "Ann"), user(3, "Ann")]))
-        with self.assertRaises(IssueError) as cm:
-            issue_refs.user(gql, "Ann")
-        self.assertIn("lookup users --query Ann", str(cm.exception))
 
 
 class Parent(Case):
