@@ -30,7 +30,7 @@ from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
+from agent_pm.utils import EVENTS_ENV, MAX_5H, MAX_WEEK, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
     AGENT,
@@ -1732,7 +1732,7 @@ class ClientUsage(Base):
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):
-        self.assertEqual((quota.MAX_5H, quota.BRAKE_5H, quota.MAX_WEEK), (90, 80, 100))
+        self.assertEqual((MAX_5H, quota.BRAKE_5H, MAX_WEEK), (90, 80, 100))
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),
