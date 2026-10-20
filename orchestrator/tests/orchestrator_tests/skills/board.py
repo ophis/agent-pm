@@ -1,4 +1,4 @@
-"""orchestrator/skills/linear/SKILL.md as a commander reads it."""
+"""orchestrator/skills/board/SKILL.md as a commander reads it."""
 
 import os
 import re
@@ -6,7 +6,7 @@ import shlex
 
 from orchestrator_tests.case import REPO
 
-SKILL = os.path.join(REPO, "orchestrator", "skills", "linear", "SKILL.md")
+SKILL = os.path.join(REPO, "orchestrator", "skills", "board", "SKILL.md")
 RULES = re.compile(r"^  - Bash\((.+)\)$", re.M)
 EXAMPLE = re.compile(r"agent-pm-orchestrator issue [^`\n]*")
 SHELL = ("<", ">", "|", "&&", ";")

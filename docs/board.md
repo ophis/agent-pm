@@ -104,7 +104,7 @@ bin/agent-pm-orchestrator resume <ID>                 # resume an attended run w
 tmux ls                                         # running agent runs
 ```
 
-Run `bin/agent-pm-orchestrator` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-orchestrator issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([orchestrator/skills/linear/SKILL.md](../orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+Run `bin/agent-pm-orchestrator` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-orchestrator issue …`: read, list, create (`--parent` splits), edit, move, comment, relate, archive; on Linear also look up and swap a label), in abstract states, roles, task and client names: `/agent-pm:board` ([orchestrator/skills/board/SKILL.md](../orchestrator/skills/board/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
 
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
@@ -124,7 +124,7 @@ Both layers count the live runs in `runs.jsonl`, a run between rounds included, 
 
 ### Linear MCP off
 
-The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace its tools. Turn it off in the project you run the commander from, and only there:
+The commander needs no Linear MCP server: `/agent-pm:board`'s commands replace its tools. Turn it off in the project you run the commander from, and only there:
 
 1. Open Claude Code in that project's directory and run `/mcp`.
 2. Select the Linear entry and choose **Disable**. Claude Code records this for that project only ([Disable a server without removing it](https://code.claude.com/docs/en/mcp#disable-a-server-without-removing-it)); other servers and projects keep their settings. Never remove the server or edit its config by hand.
