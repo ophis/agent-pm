@@ -5,8 +5,8 @@ import re
 from agent_pm.orchestrator.engine.flow.types import (
     COLUMN,
     COMMENTS,
+    IDENT_ERROR,
     ISSUE_ID,
-    ident_error,
 )
 from agent_pm.orchestrator.engine.types import (
     UUID_RE,
@@ -70,7 +70,7 @@ def lookup(gql, query, ident):
     there.
     """
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
-        raise IssueError(ident_error(ident))
+        raise IssueError(IDENT_ERROR.format(ident=ident))
     data = issue_refs.found(gql, query, i=ident)
     if data is None or data["issue"] is None:
         raise IssueError(f"{ident}: no such issue")

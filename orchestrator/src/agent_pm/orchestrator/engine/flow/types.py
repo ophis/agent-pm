@@ -31,7 +31,7 @@ class Priority(StrEnum):
     LOW = "low"
 
 
-# a priority as Linear and a local issue file number it
+# a priority as an issue stores it
 PRIORITY_NUMBERS = MappingProxyType(
     {Priority.NONE: 0, Priority.URGENT: 1, Priority.HIGH: 2, Priority.MEDIUM: 3, Priority.LOW: 4}
 )
@@ -193,15 +193,11 @@ class Stage:
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 
 
-def ident_error(ident: str) -> str:
-    return f"{ident!r}: want an issue identifier such as TASK-1 or an issue id"
-
-
-def both_directions(identifier: str) -> str:
-    return (
-        f"{identifier}: given to both --blocks and --blocked-by; "
-        "an issue cannot both block the new one and be blocked by it"
-    )
+IDENT_ERROR = "{ident!r}: want an issue identifier such as TASK-1 or an issue id"
+BOTH_DIRECTIONS = (
+    "{identifier}: given to both --blocks and --blocked-by; "
+    "an issue cannot both block the new one and be blocked by it"
+)
 
 
 @dataclass(frozen=True)
