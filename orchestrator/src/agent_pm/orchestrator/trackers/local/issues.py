@@ -80,7 +80,7 @@ class LocalIssues:
         """Always whole: full changes nothing."""
         found, files = self._issue(ident), self.tracker.files()
         state, person = found.state, _person(found)
-        notes = [(n, note) for n, note in enumerate(found.comments, 1) if not _archive_note(note)]
+        notes = _numbered(found)
         notes.sort(key=lambda p: (p[1].at, p[0]), reverse=True)
         return {
             "id": found.id,
@@ -241,7 +241,7 @@ class LocalIssues:
             return issue_file.add_comment(text, at=now, body=body, source=Source.OTHER), None
 
         self.tracker.write(key, change)
-        count = len(self.tracker.files()[key].comments)
+        count = len(_numbered(self.tracker.files()[key]))
         return self._receipt(key, "comment", "changed", comment_id=f"{key}#{count}")
 
     def relation(self, op, ident, direction, other):
@@ -300,6 +300,11 @@ def _labels(found):
 def _archive_note(note):
     """The engine's bookkeeping, which Linear has no comment for."""
     return note.source == Source.SELF and (note.key or "").startswith(f"{ARCHIVED}:")
+
+
+def _numbered(found):
+    """(n, comment) of each comment but archive notes, which re-archiving moves, so ids never shift."""
+    return list(enumerate((n for n in found.comments if not _archive_note(n)), 1))
 
 
 def _comment(ident, n, note):

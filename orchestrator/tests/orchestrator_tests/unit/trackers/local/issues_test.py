@@ -212,7 +212,7 @@ class View(Board):
         self.assertIsNone(self.issues().view("LOC-3", full=False)["assignee"])
 
     def test_archive_note_left_out(self):
-        """The engine's archive note stays in the file, not in the view; ids keep file positions."""
+        """The engine's archive note stays in the file, out of the view and of the ids' count."""
         self.put(
             "archive",
             "LOC-1",
@@ -226,12 +226,45 @@ class View(Board):
         self.assertEqual(
             [(c["id"], c["author"]["id"], c["body"]) for c in view["comments"]],
             [
-                ("LOC-1#4", "other", "last"),
+                ("LOC-1#3", "other", "last"),
                 ("LOC-1#2", "self", "Build ready."),
                 ("LOC-1#1", "other", "first"),
             ],
         )
         self.assertEqual(view["assignee"], {"id": "engineer", "name": "engineer", "email": None})
+
+    def test_ids_stable_across_rearchive(self):
+        """Archive, restore, comment, archive again from the same and from another assignee: every
+        shown id stays; a restore goes to the latest archive's assignee."""
+        path = self.put(
+            "engineer/done",
+            "LOC-1",
+            comments="#### other · 2026-10-19 14:05\nfirst\n",
+            history="- 2026-10-19 14:02 done self\n",
+        )
+        name = os.path.basename(path)
+        issues = self.issues()
+
+        def ids():
+            return [(c["id"], c["body"]) for c in issues.view("LOC-1", full=True)["comments"]]
+
+        issues.archive("LOC-1")
+        self.assertEqual(ids(), [("LOC-1#1", "first")])
+        issues.tracker.unarchive("LOC-1")
+        self.assertEqual(issues.comment("LOC-1", "second").comment_id, "LOC-1#2")
+        shown = [("LOC-1#2", "second"), ("LOC-1#1", "first")]
+        self.assertEqual(ids(), shown)
+        issues.archive("LOC-1")
+        self.assertEqual(ids(), shown)
+        issues.tracker.unarchive("LOC-1")
+        os.makedirs(os.path.join(self.board, "pm", "done"))
+        os.rename(path, os.path.join(self.board, "pm", "done", name))
+        issues = self.issues()
+        issues.archive("LOC-1")
+        self.assertEqual(ids(), shown)
+        issues.tracker.unarchive("LOC-1")
+        self.assertTrue(os.path.isfile(os.path.join(self.board, "pm", "done", name)))
+        self.assertEqual(ids(), shown)
 
     def test_state_types(self):
         types = {
