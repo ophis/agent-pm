@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
+from types import MappingProxyType
 from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
@@ -28,6 +29,13 @@ class Priority(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+# a priority as Linear and a local issue file number it
+PRIORITY_NUMBERS = MappingProxyType(
+    {Priority.NONE: 0, Priority.URGENT: 1, Priority.HIGH: 2, Priority.MEDIUM: 3, Priority.LOW: 4}
+)
+COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 
 
 @dataclass(frozen=True)
@@ -183,6 +191,17 @@ class Stage:
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
+
+
+def ident_error(ident: str) -> str:
+    return f"{ident!r}: want an issue identifier such as TASK-1 or an issue id"
+
+
+def both_directions(identifier: str) -> str:
+    return (
+        f"{identifier}: given to both --blocks and --blocked-by; "
+        "an issue cannot both block the new one and be blocked by it"
+    )
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,12 @@ cut to the default limits by compact, or with every page for --full.
 import re
 
 from agent_pm.orchestrator.engine.flow.types import (
+    COLUMN,
+    COMMENT_CHARS,
+    COMMENTS,
+    DESCRIPTION_CHARS,
     ISSUE_ID,
+    ident_error,
 )
 from agent_pm.orchestrator.engine.types import (
     UUID_RE,
@@ -14,7 +19,6 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear import issue_refs, ops
 
-COMMENTS, COMMENT_CHARS, DESCRIPTION_CHARS, COLUMN = 5, 300, 600, 10
 PAGE = 250
 _REL = "id identifier title state { name }"
 CONNECTIONS = {
@@ -70,7 +74,7 @@ def lookup(gql, query, ident):
     there.
     """
     if not (re.fullmatch(ISSUE_ID, ident) or UUID_RE.fullmatch(ident)):
-        raise IssueError(f"{ident!r}: want an issue identifier such as TASK-1 or an issue id")
+        raise IssueError(ident_error(ident))
     data = issue_refs.found(gql, query, i=ident)
     if data is None or data["issue"] is None:
         raise IssueError(f"{ident}: no such issue")

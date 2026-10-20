@@ -3,6 +3,7 @@ task, client and priority; a task or client replaces the issue's labels of that 
 label staying. Every given value already so: unchanged, nothing written.
 """
 
+from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS
 from agent_pm.orchestrator.trackers.linear import issue_label, issue_names, issue_read, issue_write
 
 Q_READ = (
@@ -31,7 +32,7 @@ def edit(gql, linear, args, body):
         change["title"] = args.title
     if body is not None and body != node["description"]:
         change["description"] = body
-    priority = None if args.priority is None else issue_names.PRIORITIES[args.priority]
+    priority = None if args.priority is None else PRIORITY_NUMBERS[args.priority]
     if priority is not None and priority != node["priority"]:
         change["priority"] = priority
     if groups:

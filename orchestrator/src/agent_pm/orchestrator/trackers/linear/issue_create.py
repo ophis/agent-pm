@@ -7,7 +7,7 @@ made, and RelationsFailed names the commands that add only the failed ones.
 import shlex
 import subprocess
 
-from agent_pm.orchestrator.engine.flow.types import IssueState
+from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS, IssueState, both_directions
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
@@ -59,7 +59,7 @@ def plan(gql, args, linear, body):
     if who is not None:
         fields["assigneeId"] = who
     if args.priority is not None:
-        fields["priority"] = issue_names.PRIORITIES[args.priority]
+        fields["priority"] = PRIORITY_NUMBERS[args.priority]
     relations = _relations(gql, {"--blocks": args.blocks, "--blocked-by": args.blocked_by})
     return fields, relations, gql(Q_VIEWER)["viewer"]
 
@@ -72,10 +72,7 @@ def _relations(gql, given):
             node = issue_refs.issue(gql, value, option=option)
             first, _ = picked.setdefault(node["id"], (option, node))
             if first != option:
-                raise IssueError(
-                    f"{node['identifier']}: given to both --blocks and --blocked-by; "
-                    "an issue cannot both block the new one and be blocked by it"
-                )
+                raise IssueError(both_directions(node["identifier"]))
     return list(picked.values())
 
 

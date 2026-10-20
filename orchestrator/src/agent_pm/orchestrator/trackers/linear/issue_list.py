@@ -2,6 +2,7 @@
 given filter holds, most recently updated first; archived ones only with --include-archived.
 """
 
+from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS
 from agent_pm.orchestrator.trackers.linear import issue_names, issue_page, issue_refs
 
 LABELS = 50
@@ -32,7 +33,7 @@ def source(gql, args, linear):
     if args.client is not None:
         match.append({"labels": {"some": _id(issue_names.client_label(linear, args.client))}})
     if args.priority is not None:
-        match.append({"priority": {"eq": issue_names.PRIORITIES[args.priority]}})
+        match.append({"priority": {"eq": PRIORITY_NUMBERS[args.priority]}})
     if args.label is not None:
         match.append({"labels": {"some": _id(issue_refs.label(gql, team, args.label)["id"])}})
     if args.project is not None:
