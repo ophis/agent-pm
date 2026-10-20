@@ -17,6 +17,8 @@ from agent_pm.orchestrator.engine.types import (
     LinearError,
     RelationsFailed,
     Resource,
+    TrackerFileError,
+    TrackerKind,
     Unavailable,
 )
 from agent_pm.orchestrator.issue.backend import Backend
@@ -41,33 +43,40 @@ from agent_pm.orchestrator.issue.output import (
 )
 from agent_pm.orchestrator.trackers.linear.client import linear_gql, messages
 from agent_pm.orchestrator.trackers.linear.issues import LinearIssues
+from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 
 STATES = [str(state) for state in IssueState]
 PRIORITIES = [str(priority) for priority in PRIORITY_NUMBERS]
+_LINEAR_ONLY = '{}: Linear only, not on a local board ([orchestrator] tracker = "local")'
 _RULES = (
     "Prerequisites and effects:\n"
-    "  Reads Linear as the configured linear.manager_key account (Keychain); an\n"
-    "  issue needs no recorded run. Help needs no credentials or services.\n"
+    "  Reads the configured board: Linear as the linear.manager_key account\n"
+    "  (Keychain); a local board ($AGENT_PM_BOARD_DIR) directly, writing as other.\n"
+    "  An issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
-    "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
-    "  2: usage, configuration, Keychain, or an issue or option value that\n"
-    "  does not resolve.\n\n"
+    "  Exit 0: success; 1: the board failed (Linear: GraphQL errors, HTTP,\n"
+    "  timeout); 2: usage, configuration, Keychain, a board that cannot be\n"
+    "  scanned, or an issue or option value that does not resolve.\n\n"
 )
 _HELP = (
     _RULES.removesuffix("\n")
     + "  create, edit, move, comment, archive, relation and label swap write as that\n"
-    "  account and print a receipt instead; for them exit 1 also means the\n"
-    "  write's result is unknown, for create also a relation that failed, for\n"
-    "  archive and label swap also a refusal (their --help).\n\n"
-    "Values: abstract names, each the configured team's id.\n"
+    "  account (a local board: other) and print a receipt instead; for them exit\n"
+    "  1 also means the write failed or its result is unknown, for create also a\n"
+    "  relation that failed, for archive and label swap also a refusal (their\n"
+    "  --help).\n\n"
+    "Values: abstract names; on Linear each the configured team's id.\n"
     "  States: backlog, ready, running, review, approved, done, canceled.\n"
     "  --role SPEC: a role of [orchestrator.linear.roles], me (the\n"
-    "  linear.manager_key account) or unassigned. --task NAME / --client NAME: a\n"
-    "  key of [orchestrator.linear.task_labels] / agent_labels.\n"
+    "  linear.manager_key account) or unassigned; a local board: that directory.\n"
+    "  --task NAME / --client NAME: on Linear a key of\n"
+    "  [orchestrator.linear.task_labels] / agent_labels; a local board: a\n"
+    "  configured role's task / any client name.\n"
     "  --priority NAME: none, urgent, high, medium, low.\n"
     "  Splitting an issue: create --parent ID.\n"
-    "  Linear only: lookup, label swap, --label, --project, --milestone.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "  Linear only (a local board exits 2): lookup, label swap, --label, --project,\n"
+    "  --milestone.\n\n"
+    "Example (a configured board holding TASK-1; lookup and label swap: Linear):\n"
     "  agent-pm-orchestrator issue read TASK-1\n"
     "  agent-pm-orchestrator issue list --state running --role me\n"
     "  agent-pm-orchestrator issue lookup labels --query bug\n"
@@ -111,13 +120,14 @@ _LIST_HELP = (
     "  a configured role, me (the linear.manager_key account) or\n"
     "  unassigned (no assignee); --task NAME, --client NAME: a configured task or\n"
     "  client name; --priority NAME: none, urgent, high, medium or low; --parent\n"
-    "  ID: the parent issue's identifier or id. Linear only: --label (not a group\n"
-    "  or retired) and --project, each an id or exact name in the team.\n"
+    "  ID: the parent issue's identifier or id. Linear only (a local board exits\n"
+    "  2): --label (not a group or retired) and --project, each an id or exact\n"
+    "  name in the team.\n"
     + _PAGES
     + "References: no match, several, or one outside the team exits 2 naming\n"
     "  candidates and the lookup command listing them; a name the configuration\n"
     "  lacks exits 2 naming the configured ones.\n\n"
-    "Examples (configured Linear access and TASK-1):\n"
+    "Examples (a configured board holding TASK-1; --label and --project: Linear):\n"
     "  agent-pm-orchestrator issue list --query 'linear issue'\n"
     "  agent-pm-orchestrator issue list --state ready --task build --priority high\n"
     "  agent-pm-orchestrator issue list --role me --project 'Agent PM'\n"
@@ -143,7 +153,8 @@ _LOOKUP_HELP = (
     + _PAGES
     + "References: an id or an exact name; a team also takes its key. Without\n"
     "  --team, the configured team. No match, several, or one outside the team\n"
-    "  exits 2 naming candidates and the lookup command listing them.\n\n"
+    "  exits 2 naming candidates and the lookup command listing them.\n"
+    "  Linear only: a local board exits 2.\n\n"
     "Examples (configured Linear access):\n"
     "  agent-pm-orchestrator issue lookup teams\n"
     "  agent-pm-orchestrator issue lookup labels --team TASK --query bug\n"
@@ -166,7 +177,7 @@ _READ_HELP = (
     f"  {FULL}: read every page, keep every body, write the view as indented\n"
     "  JSON to FILE and print only {identifier, output: FILE's absolute path};\n"
     "  either option alone is a usage error. A failed read writes no file.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue read TASK-1\n"
     "  agent-pm-orchestrator issue read TASK-1 --full --output TASK-1.json\n\n"
     "Recovery and next help:\n"
@@ -176,24 +187,25 @@ _READ_HELP = (
 
 _WRITE_RULES = (
     "Prerequisites and effects:\n"
-    "  Writes Linear as the configured linear.manager_key account (Keychain); an\n"
+    "  Writes the configured board: Linear as the linear.manager_key account\n"
+    "  (Keychain); a local board ($AGENT_PM_BOARD_DIR) directly, as other. An\n"
     "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
     "  operation, result (changed or unchanged), actor {id, name}%s.\n"
-    "  It never echoes what was written or Linear's response. Diagnostics go to\n"
-    "  stderr.\n"
-    "  Exit 0: changed or unchanged; 1: Linear failed (GraphQL errors, success\n"
-    "  false, HTTP) or the result is unknown; 2: usage, configuration, Keychain,\n"
-    "  or an issue or value that does not resolve: nothing was written.\n"
+    "  It never echoes what was written or the board's response. Diagnostics go\n"
+    "  to stderr.\n"
+    "  Exit 0: changed or unchanged; 1: the board failed (Linear: GraphQL errors,\n"
+    "  success false, HTTP; a local board: a file write) or the result is\n"
+    "  unknown; 2: usage, configuration, Keychain, a board that cannot be\n"
+    "  scanned, or an issue or value that does not resolve: nothing was written.\n"
     "  A timeout or outage during the write leaves the result unknown: check with\n"
     "  agent-pm-orchestrator issue read ID before running it again; nothing retries.\n\n"
 )
 _CREATE_HELP = (
-    _WRITE_RULES
-    % ""
-    + "Creates one issue in the configured team (linear.team), then its blocking\n"
-    "  relations. Every value resolves first, as agent-pm-orchestrator issue list --help\n"
-    "  describes; one that does not exits 2 with nothing created.\n"
+    _WRITE_RULES % "" + "Creates one issue in the configured team (linear.team; a local board:\n"
+    "  <assignee>/<state>/<ID> <title>.md), then its blocking relations. Every\n"
+    "  value resolves first, as agent-pm-orchestrator issue list --help describes;\n"
+    "  one that does not exits 2 with nothing created.\n"
     "--title TEXT: not blank. --body-file FILE: the Markdown description, UTF-8,\n"
     "  sent verbatim, minus a leading byte order mark; - reads stdin; blank or\n"
     "  unreadable exits 2.\n"
@@ -204,8 +216,9 @@ _CREATE_HELP = (
     "--task NAME / --client NAME: the configured task / client label.\n"
     "--priority NAME: none, urgent, high, medium or low.\n"
     "--parent ID: an issue, the new one its sub-issue: this splits an issue.\n"
-    "Linear only: --label VALUE, repeatable: not a group or retired. --project\n"
-    "  VALUE: the team's. --milestone VALUE: --project's, which it needs.\n"
+    "Linear only (a local board exits 2): --label VALUE, repeatable: not a group\n"
+    "  or retired. --project VALUE: the team's. --milestone VALUE: --project's,\n"
+    "  which it needs.\n"
     "Any other option not given stays unset.\n"
     "--blocks ID… / --blocked-by ID…: issues the new one blocks / that block it;\n"
     "  repeatable, repeats count once; one issue given to both exits 2.\n"
@@ -216,7 +229,7 @@ _CREATE_HELP = (
     "  with its error), recover and truncated; done and failed are cut before\n"
     "  recover. Run only the recover commands\n"
     "  (agent-pm-orchestrator issue relation add …), never create again.\n\n"
-    "Example (configured Linear access, TASK-1, TASK-2 and TASK-3):\n"
+    "Example (TASK-1, TASK-2 and TASK-3 on the configured board; the last: Linear):\n"
     "  agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md\n"
     "  agent-pm-orchestrator issue create --title 'Split login' --body-file note.md \\\n"
     "    --parent TASK-1 --task build --role engineer --priority high\n"
@@ -229,13 +242,14 @@ _CREATE_HELP = (
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 _MOVE_HELP = (
-    _WRITE_RULES % "" + "STATE: backlog, ready, running, review, approved, done or canceled, the\n"
-    "  state [orchestrator.linear.states] backlog, todo, in_progress, in_review,\n"
-    "  handoff, done or canceled names, in that order; any other exits 2 listing\n"
-    "  them. Only an issue of the configured team (linear.team) moves: another\n"
-    "  team's exits 2 naming its team. Already in that state: result unchanged,\n"
-    "  nothing written.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    _WRITE_RULES % "" + "STATE: backlog, ready, running, review, approved, done or canceled: on\n"
+    "  Linear the state [orchestrator.linear.states] backlog, todo, in_progress,\n"
+    "  in_review, handoff, done or canceled names, in that order, and only an\n"
+    "  issue of the configured team (linear.team) moves: another team's exits 2\n"
+    "  naming its team; on a local board the file moves to <assignee>/<STATE>/,\n"
+    "  an archived issue exits 2. Any other STATE is a usage error. Already in\n"
+    "  that state: result unchanged, nothing written.\n\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue move TASK-1 approved\n"
     "  agent-pm-orchestrator issue move TASK-1 running\n\n"
     "Recovery and next help:\n"
@@ -251,11 +265,13 @@ _EDIT_HELP = (
     "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
     "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
     "  blank or unreadable exits 2.\n"
-    "--task NAME / --client NAME: a configured task / client name; its label\n"
-    "  replaces the issue's labels of that group: every other label stays. Only\n"
-    "  on an issue of the configured team (linear.team): another team's exits 2.\n"
+    "--task NAME / --client NAME: a configured task / client name (a local\n"
+    "  board: a configured role's task / any client name). On Linear its label\n"
+    "  replaces the issue's labels of that group: every other label stays, and\n"
+    "  only on an issue of the configured team (linear.team): another team's\n"
+    "  exits 2.\n"
     "--priority NAME: none, urgent, high, medium or low.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n\n"
@@ -272,7 +288,7 @@ _COMMENT_HELP = (
     "  leading byte order mark is dropped.\n"
     "  - reads stdin. Blank, unreadable or non-UTF-8, or --body-file given twice:\n"
     "  exit 2 before anything is written. Each run posts a new top-level comment.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file note.md\n"
     "  agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md\n\n"
     "Recovery and next help:\n"
@@ -295,7 +311,7 @@ _ARCHIVE_HELP = (
     "  identifier, state), unfinished_count, unfinished, truncated}; over 8192\n"
     "  bytes, list items drop from the end, each such list named in truncated.\n"
     "  Exit 0 whatever result says.\n\n"
-    "Example (configured Linear access and TASK-1):\n"
+    "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue archive TASK-1 --dry-run\n"
     "  agent-pm-orchestrator issue archive TASK-1\n\n"
     "Recovery and next help:\n"
@@ -315,7 +331,7 @@ _RELATION_HELP = (
     "  the two stay as they are. remove deletes every record of the edge; one\n"
     "  failing after others went exits 1 naming the deleted ids: check with\n"
     "  agent-pm-orchestrator issue read ID before running it again.\n\n"
-    "Example (configured Linear access, TASK-1 and TASK-2):\n"
+    "Example (a configured board holding TASK-1 and TASK-2):\n"
     "  agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2\n"
     "  agent-pm-orchestrator issue relation remove TASK-1 --blocks TASK-2\n"
     "  agent-pm-orchestrator issue relation add TASK-2 --blocked-by TASK-1\n\n"
@@ -355,7 +371,7 @@ class _Once(argparse.Action):
 def _parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Read and write Linear issues and look up what their options name.",
+        description="Read and write board issues and look up what their options name.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_HELP,
     )
@@ -660,6 +676,30 @@ def _written(output, payload, summary):
     return encode({**summary, "output": path})
 
 
+def _linear_only(args):
+    """What args ask of a local board that only Linear has, or None."""
+    if args.command == "lookup":
+        return "lookup"
+    if args.command == "label":
+        return "label swap"
+    if args.command not in ("list", "create"):
+        return None
+    given = {
+        "--label": args.label not in (None, []),
+        "--project": args.project is not None,
+        "--milestone": getattr(args, "milestone", None) is not None,
+    }
+    return next((option for option, is_set in given.items() if is_set), None)
+
+
+def _linear(cfg, gql):
+    """cfg's LinearIssues, as linear.manager_key."""
+    linear = config.linear_settings(cfg, "issue")
+    if not linear.manager_key:
+        raise ConfigError("orchestrator/config.toml: linear.manager_key is unset")
+    return LinearIssues(functools.partial(gql, service=linear.manager_key), linear)
+
+
 def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=None):
     args = _parser().parse_args(argv)
     out = sys.stdout.buffer if out is None else out
@@ -679,20 +719,23 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    try:
-        linear = config.linear_settings(cfg, "issue")
-    except ConfigError as refused:
-        diagnose(err, refused)
+    if cfg.tracker is TrackerKind.LOCAL and (what := _linear_only(args)):
+        diagnose(err, _LINEAR_ONLY.format(what))
         return USAGE
-    if not linear.manager_key:
-        diagnose(err, "orchestrator/config.toml: linear.manager_key is unset")
-        return USAGE
-    issues = LinearIssues(functools.partial(gql, service=linear.manager_key), linear)
     try:
-        if args.command == "label":
-            data = receipt(issues.swap(args.id, args.old, args.new))
+        board = (
+            LocalIssues(cfg.board, cfg.roles)
+            if cfg.tracker is TrackerKind.LOCAL
+            else _linear(cfg, gql)
+        )
+    except (ConfigError, TrackerFileError) as error:
+        diagnose(err, error)
+        return USAGE
+    try:
+        if isinstance(board, LinearIssues) and args.command == "label":
+            data = receipt(board.swap(args.id, args.old, args.new))
         else:
-            data = _run(issues, args, body)
+            data = _run(board, args, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE
@@ -706,7 +749,14 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except ArchiveRefused as refused:
         diagnose(err, refusal(args.id, refused.plan))
         return FAILED
-    except (LinearError, Unavailable, OverflowError, LabelRefused) as error:
+    except (
+        LinearError,
+        Unavailable,
+        OverflowError,
+        LabelRefused,
+        TrackerFileError,
+        OSError,
+    ) as error:
         diagnose(err, error)
         return FAILED
     out.write(data)

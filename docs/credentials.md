@@ -79,7 +79,7 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the manager's `agent-pm-orchestrator issue` commands (reads, comments, moves, creates, relations, labels, archives); an account neither the harness nor a role, so its comments are instructions and its moves to Todo restart the attempt count | `orchestrator/src/agent_pm/orchestrator/issue/command.py:690` |
+| Purpose | the manager's `agent-pm-orchestrator issue` commands (reads, comments, moves, creates, relations, labels, archives); an account neither the harness nor a role, so its comments are instructions and its moves to Todo restart the attempt count | `orchestrator/src/agent_pm/orchestrator/issue/command.py:700` |
 | Minimum permission | a personal API key of that account (a dedicated manager account or your own) limited to the team, with Read, Write, Create issues and Create comments; not live-tested | [Linear API keys] |
 | Stored at | a login keychain item whose service is `linear.manager_key`; unset, the `issue` commands refuse | `…/config.toml:93` |
 | Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |

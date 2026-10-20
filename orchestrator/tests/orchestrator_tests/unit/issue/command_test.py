@@ -1,5 +1,5 @@
 """agent-pm-orchestrator issue: help, the shared stdout/stderr/exit rules, and read, move, edit, comment,
-archive, relation and label swap through main.
+archive, relation and label swap through main; on a local board, its backend choice and refusals.
 """
 
 import io
@@ -11,7 +11,12 @@ from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config
-from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError, Unavailable
+from agent_pm.orchestrator.engine.types import (
+    GraphQLErrors,
+    IssueError,
+    LinearError,
+    Unavailable,
+)
 from agent_pm.orchestrator.issue import command as issue
 from agent_pm.orchestrator.trackers.linear import client
 from orchestrator_tests.case import Case
@@ -120,7 +125,9 @@ class Help(Case):
             "backlog, ready, running, review, approved, done, canceled",
             "me (the\n  linear.manager_key account) or unassigned",
             "none, urgent, high, medium, low",
-            "Linear only: lookup, label swap, --label, --project, --milestone.",
+            "Linear only (a local board exits 2): lookup, label swap, --label, --project,\n"
+            "  --milestone.",
+            "a local board ($AGENT_PM_BOARD_DIR) directly",
             "create, edit, move, comment, archive, relation and label swap write",
             "agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build",
             "agent-pm-orchestrator issue edit --help",
@@ -935,22 +942,6 @@ class LabelSwap(IssueCase):
 
 
 class Failures(IssueCase):
-    def test_a_local_board_is_refused_after_config(self):
-        os.environ[config.BOARD_ENV] = os.path.join(self.home, "board")
-        with open(self.config, "w", encoding="utf-8") as f:
-            f.write(tp.CONFIG.replace('tracker = "linear"', 'tracker = "local"'))
-        gql = Gql(None)
-        code, out, err = self.run_main(["read", "TASK-2"], gql)
-        self.assertEqual(
-            (code, out, err),
-            (
-                2,
-                b"",
-                'agent-pm-orchestrator issue: issue needs [orchestrator] tracker = "linear"\n',
-            ),
-        )
-        self.assertEqual(gql.calls, [])
-
     def test_exit_codes_and_stderr(self):
         cases = (
             (["read", "task-2"], Gql(None), 2, "task-2"),
@@ -1044,6 +1035,239 @@ class Failures(IssueCase):
         self.assertEqual(code, 1)
         self.assertIn("HTTP 401", err)
         self.assertNotIn(KEY, out.decode() + err)
+
+
+LOCAL = CONFIG.replace('tracker = "linear"\n', 'tracker = "local"\n')
+LINEAR_ONLY = 'Linear only, not on a local board ([orchestrator] tracker = "local")'
+
+
+class LocalCase(IssueCase):
+    """IssueCase on a local board in a temp $AGENT_PM_BOARD_DIR; its issue files by put."""
+
+    def setUp(self):
+        super().setUp()
+        self.board = os.path.join(os.path.realpath(self.home), "board")
+        os.environ[config.BOARD_ENV] = self.board
+        with open(self.config, "w", encoding="utf-8") as f:
+            f.write(LOCAL)
+
+    def put(self, rel_dir, ident, *, mtime=1_790_000_000, description="", comments=""):
+        path = os.path.join(self.board, rel_dir, f"{ident} x.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        body = f"### Description\n{description}\n" if description else ""
+        body += f"### Comments\n{comments}" if comments else ""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"---\nid: {ident}\ntitle: {ident} title\n"
+                f"created: 2026-10-19T14:02:00-04:00\n---\n{body}"
+            )
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def snapshot(self):
+        found = {}
+        for top, _, names in os.walk(self.board):
+            for name in names:
+                if name == ".lock":
+                    continue
+                with open(os.path.join(top, name), "rb") as f:
+                    found[os.path.join(top, name)] = f.read()
+        return found
+
+    def run_local(self, argv, stdin=b""):
+        return self.run_main(argv, Gql(None), stdin)
+
+
+class LinearOnlyOnLocal(LocalCase):
+    FORMS = (
+        (["lookup", "teams"], "lookup"),
+        (["lookup", "milestones", "--project", "P"], "lookup"),
+        (["label", "swap", "LOC-1", "--from", "a", "--to", "b"], "label swap"),
+        (["list", "--label", "bug"], "--label"),
+        (["list", "--project", "P"], "--project"),
+        (["list", "--project", "P", "--label", "bug"], "--label"),
+        (["list", "--label", "", "--full", "--output", "out.json"], "--label"),
+        (["create", "--title", "t", "--body-file", "-", "--label", "bug"], "--label"),
+        (["create", "--title", "t", "--body-file", "-", "--project", "P"], "--project"),
+        (["create", "--title", "t", "--body-file", "-", "--milestone", "M"], "--milestone"),
+        (
+            ["create", "--title", "t", "--body-file", "-", "--milestone", "M", "--label", "a"],
+            "--label",
+        ),
+    )
+
+    def test_each_linear_only_form_exits_two_writing_nothing(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        for argv, what in self.FORMS:
+            with self.subTest(argv=argv):
+                gql = Gql(None)
+                code, out, err = self.run_main(argv, gql, b"body")
+                self.assertEqual(
+                    (code, out, err),
+                    (2, b"", f"agent-pm-orchestrator issue: {what}: {LINEAR_ONLY}\n"),
+                )
+                self.assertEqual(gql.calls, [])
+                self.assertEqual(self.snapshot(), before)
+
+    def test_the_board_is_never_read(self):
+        for argv, what in self.FORMS:
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv, b"body")
+                self.assertEqual(
+                    (code, out, err),
+                    (2, b"", f"agent-pm-orchestrator issue: {what}: {LINEAR_ONLY}\n"),
+                )
+        self.assertFalse(os.path.exists(self.board))
+
+    def test_the_local_options_still_run(self):
+        self.put("pm/ready", "LOC-1")
+        code, out, err = self.run_local(["list", "--state", "ready", "--role", "pm"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual([item["id"] for item in json.loads(out)["items"]], ["LOC-1"])
+
+
+class LocalRead(LocalCase):
+    def test_a_read_is_cut_like_linears(self):
+        notes = "".join(f"#### other · 2026-10-19 14:0{n}\nnote {n}\n\n" for n in range(6))
+        self.put("pm/ready", "LOC-1", description="d" * 700, comments=notes)
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual((code, err), (0, ""))
+        view = json.loads(out)
+        self.assertEqual(view["identifier"], "LOC-1")
+        self.assertEqual(view["state"], {"id": "ready", "name": "ready", "type": "unstarted"})
+        self.assertEqual(sorted(view["truncated"]), ["comments", "description"])
+        self.assertEqual(len(view["comments"]), 5)
+        self.assertEqual(view["comments"][0]["body"], "note 5")
+        self.assertEqual(
+            view["continue"], "agent-pm-orchestrator issue read LOC-1 --full --output FILE"
+        )
+
+    def test_full_writes_the_uncut_view(self):
+        notes = "".join(f"#### other · 2026-10-19 14:0{n}\nnote {n}\n\n" for n in range(6))
+        self.put("pm/ready", "LOC-1", description="d" * 700, comments=notes)
+        path = os.path.join(self.root, "LOC-1.json")
+        code, out, err = self.run_local(["read", "LOC-1", "--full", "--output", path])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"identifier": "LOC-1", "output": path})
+        with open(path, encoding="utf-8") as f:
+            view = json.load(f)
+        self.assertEqual((view["description"], len(view["comments"])), ("d" * 700, 6))
+
+
+class LocalList(LocalCase):
+    def test_pages_most_recently_modified_first(self):
+        for n in range(1, 4):
+            self.put("pm/ready", f"LOC-{n}", mtime=1_790_000_000 + n)
+        code, out, err = self.run_local(["list", "--limit", "2"])
+        self.assertEqual((code, err), (0, ""))
+        page = json.loads(out)
+        self.assertEqual([item["id"] for item in page["items"]], ["LOC-3", "LOC-2"])
+        self.assertEqual((page["has_next_page"], page["next_cursor"]), (True, "LOC-2"))
+        code, out, err = self.run_local(["list", "--limit", "2", "--cursor", "LOC-2"])
+        self.assertEqual((code, err), (0, ""))
+        page = json.loads(out)
+        self.assertEqual([item["id"] for item in page["items"]], ["LOC-1"])
+        self.assertEqual((page["has_next_page"], page["next_cursor"]), (False, None))
+
+
+class LocalErrors(LocalCase):
+    def test_a_board_that_cannot_be_scanned_exits_two(self):
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual(
+            (code, out, err),
+            (2, b"", f"agent-pm-orchestrator issue: {self.board}: no such board directory\n"),
+        )
+        path = self.put("pm/ready", "LOC-1")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("no front matter\n")
+        code, out, err = self.run_local(["read", "LOC-1"])
+        self.assertEqual(
+            (code, out, err), (2, b"", f"agent-pm-orchestrator issue: {path}: no front matter\n")
+        )
+
+    def test_an_unresolved_value_exits_two(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        for argv, message in (
+            (["read", "LOC-9"], "LOC-9: no such issue"),
+            (["move", "LOC-9", "done"], "LOC-9: no such issue"),
+            (["list", "--role", "ghost"], "--role ghost: not a role"),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_local(argv)
+                self.assertEqual((code, out), (2, b""))
+                self.assertTrue(err.startswith(f"agent-pm-orchestrator issue: {message}"), err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_failed_write_exits_one_with_its_own_message(self):
+        self.put("pm/ready", "LOC-1")
+        before = self.snapshot()
+        with mock.patch("os.replace", side_effect=PermissionError(13, "Permission denied")):
+            code, out, err = self.run_local(["comment", "LOC-1", "--body-file", "-"], b"hi")
+        self.assertEqual(
+            (code, out, err),
+            (1, b"", "agent-pm-orchestrator issue: [Errno 13] Permission denied\n"),
+        )
+        self.assertNotIn("Keychain", err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_file_changed_while_writing_exits_one(self):
+        path = self.put("pm/ready", "LOC-1", description="Do it.")
+        real = os.fstat
+
+        def edited(fd):
+            """os.fstat, which reading an issue file calls once it has its text, then a person's
+            edit, every time."""
+            found = real(fd)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("More.\n")
+            return found
+
+        with mock.patch("os.fstat", side_effect=edited):
+            code, out, err = self.run_local(["move", "LOC-1", "done"])
+        self.assertEqual(
+            (code, out, err),
+            (1, b"", f"agent-pm-orchestrator issue: {path}: changed while writing\n"),
+        )
+
+    def test_a_state_outside_the_seven_is_a_usage_error(self):
+        self.put("pm/ready", "LOC-1")
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            self.run_local(["move", "LOC-1", "Ready"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("invalid choice: 'Ready'", err.getvalue())
+
+
+class HelpOnBothTrackers(LocalCase):
+    def test_help_is_the_same_text_on_a_local_and_a_linear_board(self):
+        for command in (
+            "",
+            "read",
+            "list",
+            "lookup",
+            "create",
+            "edit",
+            "move",
+            "comment",
+            "archive",
+            "relation add",
+            "relation remove",
+            "label swap",
+        ):
+            texts = []
+            for text in (LOCAL, CONFIG):
+                with open(self.config, "w", encoding="utf-8") as f:
+                    f.write(text)
+                output = io.StringIO()
+                with redirect_stdout(output), self.assertRaises(SystemExit) as cm:
+                    issue.main([*command.split(), "--help"], config_path=self.config)
+                self.assertEqual(cm.exception.code, 0)
+                texts.append(output.getvalue())
+            with self.subTest(command=command):
+                self.assertEqual(texts[0], texts[1])
+                self.assertIn("--help", texts[0])
 
 
 class Full(IssueCase):
