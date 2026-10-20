@@ -578,6 +578,7 @@ class UsageProbeTest(Base):
         self.assertEqual(
             probes, {"default": (home, usual), "same": (home, usual), "work": ("/w", work)}
         )
+        self.assertEqual(list(probes), ["default", "same", "work"])
         self.assertNotIn("CLAUDE_CONFIG_DIR", usual.env)
         self.assertEqual(
             usual.unset[len(UNSET) :], ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
