@@ -151,13 +151,20 @@ class ReviewToArchive(BinFlow):
             self.assertEqual(self.files(), before)
 
         with self.subTest("done, a sub-issue open: prune cleans the run, archives nothing"):
-            for rel in (pm, research):  # both done three hours back
-                text = self.read(rel)
-                line = HISTORY.findall(text)[-1]
-                self.assertEqual(line[1:], ("done", "self"))
-                self.put(
-                    rel, text.replace(f"- {line[0]} done self\n", f"- {ago(hours=3)} done self\n")
+            done = "".join(  # both done three hours back: their History as one past timeline
+                f"- {ago(minutes=m)} {s}\n"
+                for m, s in (
+                    (360, "ready other"),
+                    (300, "running self"),
+                    (240, "review self"),
+                    (190, "approved other"),
+                    (180, "done self"),
                 )
+            )
+            for rel in (pm, research):
+                text = self.read(rel)
+                self.assertEqual(self.history(rel)[-1], ("done", "self"))
+                self.put(rel, text[: text.index("### History\n")] + f"### History\n{done}")
             self.run_bin("prune")
             said = self.said()
             self.assertIn(f"prune prune-closed LOC-1 session={row['sid']}", said)
