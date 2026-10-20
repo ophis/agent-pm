@@ -48,9 +48,10 @@ Prerequisites and effects:
   Configuration: agent-pm-orchestrator --help
   For each Handoff issue in a project, assigned to a configured role with next:
   create that next role's issue in the same project, assigned to its account,
-  in Todo with source links and human instructions; relate the issues and move
-  the source to Done. Existing next-stage issues are reused. Required human
-  instructions absent: return the source to In Review with a comment.
+  in Todo with source links and the user's instructions (comments by anyone but
+  the harness and role accounts); relate the issues and move the source to
+  Done. Existing next-stage issues are reused. Required instructions absent:
+  return the source to In Review with a comment.
   Every tick also prunes: close finished runs, delete agent files and archive
   finished issues (Done ones of pm/engineer only). This includes uncommitted
   agent work. Cleanup ages, safeguards and retention:
