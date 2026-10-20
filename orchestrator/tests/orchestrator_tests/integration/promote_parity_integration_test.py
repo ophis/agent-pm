@@ -58,7 +58,7 @@ class Bounce(BinFlow):
         return body
 
     def test_a_handoff_without_instructions_goes_back_to_in_review(self):
-        """v1 promote.py: no human_members comment since the last In Review, the role's
+        """v1 promote.py: no user's or manager's comment since the last In Review, the role's
         require_instructions set → `handoff-bounce`: NO_INSTRUCTIONS, back to In Review.
         """
         child = self.handoff(ago=timedelta(minutes=20))

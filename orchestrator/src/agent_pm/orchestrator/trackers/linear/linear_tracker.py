@@ -108,7 +108,13 @@ Q_RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + HISTORY + " } }"
+# ops.HISTORY's nodes with their actors: nested objects there would multiply Q_FINISHED's complexity
+Q_HISTORY = (
+    "query($i: String!, $after: String) { issue(id: $i) { "
+    "history(first: 250, after: $after, orderBy: createdAt) { "
+    "nodes { createdAt toStateId actor { email isMe } botActor { type } } "
+    "pageInfo { hasNextPage endCursor } } } }"
+)
 _NODES = (
     "nodes { identifier title description state { id name type } "
     "attachments(first: 20) { nodes { url } } comments(first: 1, orderBy: createdAt) { nodes { body } } }"
@@ -199,6 +205,13 @@ def _origin(user, selves) -> Origin:
     return "self" if user.get("isMe") or (user.get("email") or "").lower() in selves else "other"
 
 
+def _move_origin(node, selves) -> Origin:
+    """Linear automation's (no actor, or a bot) is self."""
+    if node["botActor"] or not node["actor"]:
+        return "self"
+    return _origin(node["actor"], selves)
+
+
 def team_and_roles(gql, cfg):
     """The team (states, finished) and the role accounts' user ids promote and prune build their
     tracker from: the team read first."""
@@ -208,12 +221,12 @@ def team_and_roles(gql, cfg):
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
     humans: human_members emails, subscribed on notify; selves: the role accounts' emails, lowercased;
-    people: the human members' user ids, which moved_at's by_people needs; say: the caller's logger.
-    A method needing one not given raises TypeError. service: the key each call is made as, with
+    say: the caller's logger. A method needing one not given raises TypeError. service: the key each call is made as, with
     timeout when given; None: gql as given. A comment's ref: its client id's parts. A home is a Linear
     project; a note's account its user's email. Origin self: the harness account (isMe: router,
-    promote and the run reader query with linear.harness_key) or a role account; other: any other
-    user. A comment with no user (an integration's, such as GitHub's) is not returned."""
+    promote and the run reader query with linear.harness_key), a role account or Linear automation;
+    other: any other user. A comment with no user (an integration's, such as GitHub's) is not
+    returned."""
 
     def __init__(
         self,
@@ -225,7 +238,6 @@ class LinearTracker(Tracker):
         roles=None,
         humans=(),
         selves=None,
-        people=frozenset(),
         say=_quiet,
         service=None,
         timeout=None,
@@ -235,7 +247,7 @@ class LinearTracker(Tracker):
             gql = functools.partial(gql, **bound)
         self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
         self.finished_ids, self.humans, self.selves = finished, humans, selves
-        self.people, self.say, self.hist = people, say, {}
+        self.say, self.hist = say, {}
         self.users = {role: uid for uid, role in (roles or {}).items()}
         self.states = {states[k]: v for k, v in STATES.items()} if states else {}
         self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
@@ -248,10 +260,9 @@ class LinearTracker(Tracker):
 
     @classmethod
     def connect(cls, gql, cfg, *, say):
-        """Checks the team and task label group, then reads the human and role accounts."""
+        """Checks the team and task label group, then reads the role accounts."""
         found = ops.team(gql, cfg)
         ops.task_group(gql, cfg)
-        people = frozenset(ops.humans(gql, cfg))
         return cls(
             gql,
             states=found.states,
@@ -260,7 +271,6 @@ class LinearTracker(Tracker):
             roles=ops.role_ids(gql, cfg.roles),
             humans=cfg.human_members,
             selves=_selves(cfg.roles),
-            people=people,
             say=say,
         )
 
@@ -321,12 +331,14 @@ class LinearTracker(Tracker):
         ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
         return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
 
-    def moved_at(self, key, state, *, by_people=False):
-        """History read once per key; by_people: moves by the human members only."""
+    def moved_at(self, key, state, *, by=None):
+        """History read once per key."""
+        selves = _need("selves", self.selves)
         if key not in self.hist:
             self.hist[key] = self.gql(Q_HISTORY, i=key)["issue"]["history"]["nodes"]
         moved = {_need("states", self.state_ids)[LISTED[state]]}
-        return last_move(self.hist[key], moved, self.people if by_people else None)
+        keep = None if by is None else (lambda n: _move_origin(n, selves) == by)
+        return last_move(self.hist[key], moved, keep)
 
     def read(self, ident):
         _need("states", self.state_ids)

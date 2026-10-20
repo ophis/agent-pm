@@ -13,6 +13,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Issue,
     IssueRecord,
     IssueState,
+    Origin,
     Recheck,
     Ref,
     Snapshot,
@@ -131,7 +132,7 @@ class Tracker(ABC):
     def ready(self) -> list[tuple[IssueRecord, tuple[str, ...]]]: ...
 
     @abstractmethod
-    def moved_at(self, key: str, state: Listed, *, by_people: bool = False) -> datetime | None: ...
+    def moved_at(self, key: str, state: Listed, *, by: Origin | None = None) -> datetime | None: ...
 
     @abstractmethod
     def recheck(self, key: str) -> Recheck: ...

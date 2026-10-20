@@ -311,7 +311,7 @@ class Board:
             else attempt_count(
                 tried,
                 issue["identifier"],
-                self.tracker.moved_at(issue["id"], IssueState.READY, by_people=True),
+                self.tracker.moved_at(issue["id"], IssueState.READY, by="other"),
             )
         )
 

@@ -474,9 +474,9 @@ class GraphQLProjection(ServerCase):
             [
                 {
                     "createdAt": done,
-                    "actorId": self.harness,
-                    "fromStateId": STATES["in_progress"],
                     "toStateId": STATES["done"],
+                    "actor": {"email": HARNESS_EMAIL, "isMe": True},
+                    "botActor": None,
                 }
             ],
         )

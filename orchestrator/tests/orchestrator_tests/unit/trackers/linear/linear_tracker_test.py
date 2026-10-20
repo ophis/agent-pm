@@ -87,7 +87,8 @@ ROUTER = {
     "RELATIONS": "b443e58b5f277fc5edad3e11004a6af6f76beb96e1858ce1920077c9f20798a8",
     "Q_RELATIONS": "c271398e2c19c59eb040a3f5988e3ddf0d7787ae9dbd824e63541dd45a4afc53",
     "Q_RECHECK": "585cff398cb172d48816a2e46fe7fa611ed917ddae67fe1cf0678c9d42080572",
-    "Q_HISTORY": "478618723212a6dfd1b6e0d47f80b592daf40d85cf8a06329e30c0c7c6cb58f7",
+    # TASK-799: its nodes' actor and botActor
+    "Q_HISTORY": "94ed56d855233bdac06aa95986139dc4ed05aa3d50d442ed2cdd12777b61a463",
 }
 LISTS = {
     "": "3a5086418d895504931848eadf8243f03aad1cfc77f6391f1dc8ab357c034213",
@@ -640,22 +641,26 @@ def connected(**replies):
 
 class Connect(Case):
     def test_reads_in_order(self):
-        found = connected(Q_USER=users("u-human", "u-pm"))
-        self.assertEqual(found.gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER", "Q_USER"])
+        found = connected(Q_USER=users("u-pm"))
+        self.assertEqual(found.gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER"])
         self.assertEqual(
             [v for _, v in found.gql.calls],
-            [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "human@x.test"}, {"e": "pm@agents.test"}],
+            [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "pm@agents.test"}],
         )
         self.assertEqual((found.team_id, found.state_ids), (TEAM, STATES))
-        self.assertEqual((found.roles, found.people), ({"u-pm": "pm"}, frozenset({"u-human"})))
+        self.assertEqual(found.roles, {"u-pm": "pm"})
+
+    def test_connect_reads_no_human_ids(self):
+        """human_members only subscribe: one not in Linear stops nothing."""
+        found = connected(Q_USER=users("u-pm"))
+        self.assertNotIn({"e": "human@x.test"}, [v for _, v in found.gql.calls])
         self.assertEqual((found.humans, found.selves), (("human@x.test",), SELVES))
 
     def test_errors_propagate(self):
         for replies, message in (
             ({"Q_TEAM": {"teams": {"nodes": []}}}, f"linear.team {TEAM} not found"),
-            ({"Q_USER": users(None)}, "linear.human_members not found in Linear: human@x.test"),
             (
-                {"Q_USER": users("u-human", None)},
+                {"Q_USER": users(None)},
                 r"\[linear.roles.pm\]: account 'pm@agents.test' not found",
             ),
         ):
@@ -794,10 +799,24 @@ class Ready(Case):
         self.assertEqual(tracker(gql).ready()[0][1], ("TASK-6", UNREADABLE))
 
 
+ACTORS = {
+    "harness": {"email": "h@x.test", "isMe": True},
+    "pm": {"email": "PM@agents.test", "isMe": False},
+    "manager": {"email": "manager@x.test", "isMe": False},
+    "human": {"email": "me@x.com", "isMe": False},
+}
+
+
 def history(*moves):
-    """Q_HISTORY's reply: (hours ago, state key, actor) moves, newest first."""
+    """Q_HISTORY's reply: (hours ago, state key, actor) moves, newest first; actor an ACTORS key,
+    None (Linear automation) or ("bot", user) (an integration's, credited to user)."""
     nodes = [
-        {"createdAt": ago(h).isoformat(), "actorId": actor, "toStateId": STATES[key]}
+        {
+            "createdAt": ago(h).isoformat(),
+            "toStateId": STATES[key],
+            "actor": ACTORS.get(actor[1] if isinstance(actor, tuple) else actor),
+            "botActor": {"type": "github"} if isinstance(actor, tuple) else None,
+        }
         for h, key, actor in moves
     ]
     return {"issue": {"history": {"nodes": nodes}}}
@@ -806,13 +825,13 @@ def history(*moves):
 class MovedAt(Case):
     def tracker(self, *replies):
         gql = Gql(Q_HISTORY=list(replies))
-        return LinearTracker(gql, states=TEAM_OBJ.states, people=frozenset({"u-human"}))
+        return LinearTracker(gql, states=TEAM_OBJ.states, selves=SELVES)
 
     def test_cached_per_key(self):
-        found = self.tracker(history((2, "todo", "u-pm")), history((5, "todo", "u-pm")))
+        found = self.tracker(history((2, "todo", "pm")), history((5, "todo", "pm")))
         self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(2))
         self.assertIsNone(found.moved_at("id-TASK-1", IssueState.RUNNING))
-        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.READY, by_people=True))
+        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.READY, by="other"))
         self.assertEqual(found.moved_at("id-TASK-2", IssueState.READY), ago(5))
         self.assertEqual(
             found.gql.calls,
@@ -822,13 +841,28 @@ class MovedAt(Case):
             ],
         )
 
-    def test_by_people_filters_actors(self):
-        found = self.tracker(history((1, "todo", "u-pm"), (3, "todo", "u-human")))
+    def test_moved_at_by_other_skips_self_and_automation(self):
+        for name, actor, want in (
+            ("harness", "harness", "self"),
+            ("role account", "pm", "self"),
+            ("automation", None, "self"),
+            ("integration credited to a user", ("bot", "human"), "self"),
+            ("manager", "manager", "other"),
+            ("user", "human", "other"),
+        ):
+            with self.subTest(name):
+                found = self.tracker(history((1, "todo", actor)))
+                self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY, by=want), ago(1))
+                other = "other" if want == "self" else "self"
+                self.assertIsNone(found.moved_at("id-TASK-1", IssueState.READY, by=other))
+
+    def test_moved_at_by_none_any_move(self):
+        found = self.tracker(history((1, "todo", None), (3, "todo", "human")))
         self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(1))
-        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY, by_people=True), ago(3))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY, by="other"), ago(3))
 
     def test_state_ids(self):
-        moves = (1, "in_review", "u-pm"), (2, "in_progress", "u-pm"), (4, "todo", "u-human")
+        moves = (1, "in_review", "pm"), (2, "in_progress", "pm"), (4, "todo", "human")
         found = self.tracker(history(*moves))
         self.assertEqual(found.moved_at("id-TASK-1", IssueState.RUNNING), ago(2))
         self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(4))

@@ -637,7 +637,9 @@ class Segment(TmuxFlow):
 
     def moved_to_todo(self, ident):
         return ops.last_move(
-            self.issue(ident)["history"], {fake_linear.IDS["todo"]}, {self.ids[HUMAN]}
+            self.issue(ident)["history"],
+            {fake_linear.IDS["todo"]},
+            lambda n: n["actorId"] == self.ids[HUMAN],
         )
 
     def wait_next_second(self, ident):

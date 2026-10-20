@@ -109,12 +109,12 @@ def comment_and_move(gql, issue, body, *, to, frm, emails=()):
     return left
 
 
-def last_move(nodes, states, actors=None):
+def last_move(nodes, states, keep=None):
     return max(
         (
             parse_time(n["createdAt"])
             for n in nodes
-            if n["toStateId"] in states and (actors is None or n["actorId"] in actors)
+            if n["toStateId"] in states and (keep is None or keep(n))
         ),
         default=None,
     )
@@ -126,16 +126,6 @@ Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { 
 def user_id(gql, email):
     nodes = gql(Q_USER, e=email)["users"]["nodes"]
     return nodes[0]["id"] if nodes else None
-
-
-def humans(gql, cfg):
-    emails = cfg.human_members
-    ids = [user_id(gql, e) for e in emails]
-    if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
-        raise LinearError(
-            f"orchestrator/config.toml: linear.human_members not found in Linear: {', '.join(missing)}"
-        )
-    return ids
 
 
 def role_ids(gql, roles):
