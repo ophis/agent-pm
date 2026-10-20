@@ -12,9 +12,11 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    [delegate.roles.engineer]              # run settings
    tier = 2
 
-   [orchestrator.roles.engineer]   # board settings
-   account = "engineer@example.com"
+   [orchestrator.roles.engineer]          # board settings
    max_runs = 1
+
+   [orchestrator.linear.roles.engineer]   # Linear settings
+   account = "engineer@example.com"
    ```
 
 2. Create the Linear presets, accounts and Keychain items, and fill their keys: [Linear presets](credentials.md#linear-presets).
@@ -66,7 +68,7 @@ flowchart LR
     D & C -->|"Finish, 2 h later; Duplicate too"| X[cleaned up]
 ```
 
-- **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[project_repos]` entry.
+- **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[orchestrator.linear.project_repos]` entry.
 - **Order work:** the router claims by priority, then later role, then oldest. A blocked issue waits until its blockers are Done, Canceled or Duplicate.
 - **Duplicates:** on an issue's first claim the router searches the team's issues (archived too), the docs repo and the target repo's merged PRs by its title words and the issue ids its description names, and lists the matches, minus its Handoff chain, at the end of the agent's input under `## Related work`. A failed search logs `related-skip` and the run goes on.
 - **Linked documents:** the agent's input inlines the docs-repo documents an issue links, in order, up to 50,000 bytes in all; each one that no longer fits is listed by path and URL for the agent to read. A PRD and an earlier version are always inlined.
@@ -130,7 +132,7 @@ The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace 
 
 ### Agent label
 
-Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [orchestrator/config.toml](../orchestrator/src/agent_pm/orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, with one line per client in place of the `"<client>"` line, and the Agent group's and its child labels' ids in place of the example ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
+Copy `[orchestrator.linear]`'s `agent_label_group` and `[orchestrator.linear.agent_labels]` from the `# local:` examples in [orchestrator/config.toml](../orchestrator/src/agent_pm/orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, with one line per client in place of the `"<client>"` line, and the Agent group's and its child labels' ids in place of the example ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
 
 | Agent-group labels at claim recheck | New run |
 |---|---|
@@ -163,6 +165,6 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 
 1. Ollama and its model: [Docker host › OpenCode](docker-host.md#opencode).
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
-3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.agent_labels]`.
+3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
 The usage gate lets an OpenCode run start while the host's Ollama answers on `127.0.0.1:<ollama_port>`, else logs `usage-skip` with reason `usage unknown`. Every tier maps to the same model by default, so `[task_tiers]` changes nothing for OpenCode unless `[session.clients.opencode.tiers]` maps tiers to different models.

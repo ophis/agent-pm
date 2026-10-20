@@ -77,7 +77,7 @@ class OrchestratorText(Sample):
     def test_agent_label_examples_in_the_packaged_config_name_no_client(self):
         path = f"{OPKG}/config.toml"
         text = (
-            "# local: [orchestrator.agent_labels]\n"
+            "# local: [orchestrator.linear.agent_labels]\n"
             '# local: codex = "00000000-0000-4000-8000-000000000083"\n'
         )
         root = self.wrap_orchestrator(self.tree({path: text}))
