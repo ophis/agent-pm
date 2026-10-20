@@ -132,6 +132,17 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "trackers import no board rule"
+type = "forbidden"
+source_modules = ["agent_pm.orchestrator.trackers"]
+forbidden_modules = [
+    "agent_pm.orchestrator.engine.router",
+    "agent_pm.orchestrator.engine.promote",
+    "agent_pm.orchestrator.engine.prune",
+    "agent_pm.orchestrator.engine.writeback",
+]
+
+[[tool.importlinter.contracts]]
 name = "orchestrator tests respect layer ownership"
 type = "forbidden"
 source_modules = ["orchestrator_tests"]
