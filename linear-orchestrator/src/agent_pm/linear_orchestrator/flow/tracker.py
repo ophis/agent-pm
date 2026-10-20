@@ -2,16 +2,22 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection
+from datetime import datetime
+from typing import Literal
 
 from agent_pm.linear_orchestrator.flow.types import (
     Approved,
     Detail,
     Finished,
+    IssueRecord,
     IssueState,
+    Recheck,
     Ref,
     Snapshot,
     SubIssue,
 )
+
+Listed = Literal[IssueState.READY, IssueState.RUNNING]
 
 
 class Tracker(ABC):
@@ -70,3 +76,18 @@ class Tracker(ABC):
         self, key: str, body: str, *, to: IssueState, frm: IssueState, notify: bool
     ) -> str | None:
         """notify: subscribe others first."""
+
+    @abstractmethod
+    def role(self, issue: IssueRecord) -> str: ...
+
+    @abstractmethod
+    def assigned(self, state: Listed) -> list[IssueRecord]: ...
+
+    @abstractmethod
+    def ready(self) -> list[tuple[IssueRecord, tuple[str, ...]]]: ...
+
+    @abstractmethod
+    def moved_at(self, key: str, state: Listed, *, by_people: bool = False) -> datetime | None: ...
+
+    @abstractmethod
+    def recheck(self, key: str) -> Recheck: ...

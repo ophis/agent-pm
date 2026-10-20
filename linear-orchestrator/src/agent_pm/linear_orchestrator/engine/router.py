@@ -99,8 +99,16 @@ from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+
+# Q_*, RELATIONS, blockers and q_issues kept only for tests reading router.<name>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HISTORY as Q_HISTORY
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RECHECK as Q_RECHECK
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_RELATIONS as Q_RELATIONS
+from agent_pm.linear_orchestrator.engine.linear_tracker import RELATIONS as RELATIONS
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import blockers as blockers
+from agent_pm.linear_orchestrator.engine.linear_tracker import q_issues as q_issues
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import DONE, humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
@@ -124,6 +132,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
+from agent_pm.linear_orchestrator.flow.types import IssueState
 from agent_pm.utils import CLIENT_ENV, EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -139,14 +148,6 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-UNREADABLE = "(unreadable)"
-RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
-Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
-Q_RECHECK = (
-    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
-    "labels { nodes { id name parent { id } } } } }"
-)
-Q_HISTORY = "query($i: String!, $after: String) { issue(id: $i) { " + ops.HISTORY + " } }"
 
 
 @dataclass(frozen=True)
@@ -210,28 +211,19 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
-def blockers(issue):
-    nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
-    return [
-        n["issue"]["identifier"] if n.get("issue") else UNREADABLE
-        for n in nodes
-        if not n.get("issue") or n["issue"]["state"]["type"] not in DONE
-    ]
-
-
 def task_for(labels, group, role, role_tasks, label_tasks):
-    found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
+    found = [n for n in labels if n.group is not None and n.group == group]
     if not found:
         return None, None
     if len(found) > 1:
         return (
             None,
             (
-                f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+                f"Several task labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
             ),
         )
-    name = found[0]["name"]
-    task = label_tasks.get(found[0]["id"])
+    name = found[0].name
+    task = label_tasks.get(found[0].key)
     if task is None:
         return (
             None,
@@ -250,7 +242,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 def client_for(
     labels, group, label_clients, default
 ) -> tuple[str | None, ClientSource, str | None]:
-    found = [n for n in labels if group and n["parent"] and n["parent"]["id"] == group]
+    found = [n for n in labels if group and n.group is not None and n.group == group]
     if not found:
         return default, "default", None
     if len(found) > 1:
@@ -258,30 +250,19 @@ def client_for(
             None,
             "label",
             (
-                f"Several Agent labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+                f"Several Agent labels ({', '.join(n.name for n in found)}); keep one, then move the issue back to Todo."
             ),
         )
-    if (client := label_clients.get(found[0]["id"])) is None:
+    if (client := label_clients.get(found[0].key)) is None:
         return (
             None,
             "label",
             (
-                f'Agent label "{found[0]["name"]}" is not in {config.LOCAL}\'s [agent_labels]. '
+                f'Agent label "{found[0].name}" is not in {config.LOCAL}\'s [agent_labels]. '
                 "Fix the label, then move the issue back to Todo."
             ),
         )
     return client, "label", None
-
-
-def q_issues(fields=""):
-    return (
-        (
-            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-            "updatedAt project { id name } assignee { id email } "
-        )
-        + fields
-        + " } } }"
-    )
 
 
 class Board:
@@ -289,42 +270,21 @@ class Board:
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.keychain, self.gate = cfg, keychain, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
-        self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
+        self.ready, self.blocked, self.live, self.statuses = None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
-        t = team(gql, cfg)
-        task_group(gql, cfg)
-        self.team, self.states = t.id, t.states
-        self.humans = set(humans(gql, cfg))
-        self.roles = role_ids(gql, cfg.roles)
-
-    def issues(self, state, fields=""):
-        flt = {
-            "team": {"id": {"eq": self.team}},
-            "project": {"null": False},
-            "assignee": {"id": {"in": list(self.roles)}},
-            "state": {"id": {"eq": self.states[state]}},
-        }
-        return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
+        self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
+        self.states = self.tracker.team.states
 
     def todo(self):
         if self.ready is None:
-            try:
-                issues = self.issues("todo", RELATIONS)
-            except LinearError as e:
-                self.say("todo-error", error=one_line(e))
-                issues = self.issues("todo")
-                for i in issues:
-                    try:
-                        i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
-                    except LinearError:
-                        i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
-            self.blocked = {i["identifier"]: b for i in issues if (b := blockers(i))}
+            found = self.tracker.ready()
+            self.blocked = {i["identifier"]: list(b) for i, b in found if b}
             for ident, b in self.blocked.items():
                 self.say("blocked", ident, once=True, by=b)
-            self.ready = [i for i in issues if i["identifier"] not in self.blocked]
+            self.ready = [i for i, _ in found if i["identifier"] not in self.blocked]
         return self.ready
 
     def is_blocked(self, ident):
@@ -332,20 +292,13 @@ class Board:
         return ident in self.blocked
 
     def role(self, issue):
-        return self.roles[issue["assignee"]["id"]]
+        return self.tracker.role(issue)
 
     def available(self, issue, full):
         return issue["identifier"] not in self.live and self.role(issue) not in full
 
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
-
-    def last_move(self, issue, state, *, by_user=False):
-        if issue["id"] not in self.hist:
-            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
-        return ops.last_move(
-            self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
-        )
 
     def select_client(self, labels, role):
         return client_for(
@@ -359,7 +312,9 @@ class Board:
             n
             if n < CAP
             else attempt_count(
-                tried, issue["identifier"], self.last_move(issue, "todo", by_user=True)
+                tried,
+                issue["identifier"],
+                self.tracker.moved_at(issue["id"], IssueState.READY, by_people=True),
             )
         )
 
@@ -367,7 +322,7 @@ class Board:
         sid = latest_sid(self.entries, issue["identifier"])
         if not sid:
             return None
-        moved = self.last_move(issue, "in_progress")
+        moved = self.tracker.moved_at(issue["id"], IssueState.RUNNING)
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
     def comment_and_move(self, issue, body, state, frm, step):
@@ -416,7 +371,7 @@ class Board:
         self.live = set(live_ids)
         mine = [
             (i, self.current_sid(i))
-            for i in self.issues("in_progress")
+            for i in self.tracker.assigned(IssueState.RUNNING)
             if i["identifier"] not in self.live
         ]
         mine.sort(
@@ -546,7 +501,7 @@ class Board:
         client. Invalid Agent or task labels keep the resume.
         """
         ident, role, resumed = issue["identifier"], self.role(issue), client_of(self.entries, sid)
-        labels = self.gql(Q_RECHECK, i=issue["id"])["issue"]["labels"]["nodes"]
+        labels = self.tracker.recheck(issue["id"]).labels
         client, source, client_error = self.select_client(labels, role)
         task, task_error = task_for(
             labels, self.cfg.task_label_group, role, self.cfg.roles[role].tasks, self.label_tasks
@@ -604,15 +559,15 @@ class Board:
     def claim(self, issue, full, clients=()):
         ident = issue["identifier"]
         # re-check right before claiming so a concurrent change isn't overwritten
-        current = self.gql(Q_RECHECK, i=issue["id"])["issue"]
-        role = config.role_for(self.cfg.roles, (current["assignee"] or {}).get("email"))
-        if current["state"]["id"] != self.states["todo"]:
+        current = self.tracker.recheck(issue["id"])
+        role = config.role_for(self.cfg.roles, (current.assignee or {}).get("email"))
+        if not current.ready:
             skip = "no longer Todo"
         elif role is None:
             skip = "not assigned to a role"
         elif role in full:
             skip = f"{role} is full"
-        elif current["project"] is None:
+        elif current.project is None:
             skip = "no project"
         elif not self.keychain(key := self.cfg.roles[role].key):
             skip = f"no Keychain item for role key {key}"
@@ -621,7 +576,7 @@ class Board:
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        labels = current["labels"]["nodes"]
+        labels = current.labels
         task, task_error = task_for(
             labels,
             self.cfg.task_label_group,
@@ -653,7 +608,7 @@ class Board:
             return None
         if self.gated(issue, role, client, source):
             return None
-        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
+        taken = {**issue, "assignee": current.assignee, "project": current.project}
         if self.dry:
             return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
@@ -1067,7 +1022,8 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
         entries = parse_log(runs)
         board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)
         if issue := next(
-            (i for i in board.issues("in_progress") if i["identifier"] == ident), None
+            (i for i in board.tracker.assigned(IssueState.RUNNING) if i["identifier"] == ident),
+            None,
         ):
             sid = board.current_sid(issue)
             if not board.settle(issue, sid, wait=False):

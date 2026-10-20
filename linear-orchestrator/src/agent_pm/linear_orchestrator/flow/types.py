@@ -3,7 +3,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
+
+UNREADABLE = "(unreadable)"
+IssueRecord = dict[str, Any]  # Linear's issue keys until 第 2 阶段
 
 
 class IssueState(StrEnum):
@@ -89,6 +92,21 @@ class Detail:
     moves: tuple[Move, ...]
     comments: tuple[Comment, ...]
     related: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Label:
+    key: str
+    name: str
+    group: str | None
+
+
+@dataclass(frozen=True)
+class Recheck:
+    ready: bool
+    assignee: IssueRecord | None
+    project: IssueRecord | None
+    labels: tuple[Label, ...]
 
 
 @dataclass(frozen=True)

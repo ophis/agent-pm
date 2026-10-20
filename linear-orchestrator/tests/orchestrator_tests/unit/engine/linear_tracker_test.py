@@ -1,29 +1,42 @@
-"""The Linear adapter of the flow Tracker: prune's and promote's query text and its reads and writes."""
+"""The Linear adapter of the flow Tracker: prune's, promote's and the router's query text and its reads
+and writes."""
 
 import ast
 import hashlib
 import inspect
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, ops, promote, prune, run_comments
+from agent_pm.linear_orchestrator.engine import (
+    linear_tracker,
+    ops,
+    promote,
+    prune,
+    router,
+    run_comments,
+)
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
+    UNREADABLE,
     Approved,
     Comment,
     Detail,
     Finished,
     IssueState,
+    Label,
     Move,
+    Recheck,
     Ref,
     Snapshot,
     SubIssue,
 )
+from agent_pm.utils import one_line
 from orchestrator_tests.case import Case
 from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ
-from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TEAM
+from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TASK_GROUP, TEAM, team_node
 
 # sha256 of each query's text on orchestrator-revamped: the fake Linear pairs queries by text
 BASE = {
@@ -39,6 +52,17 @@ BASE = {
 }
 PRUNE = ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE")
 PROMOTE = ("Q_HANDOFF", "Q_DETAIL", "Q_CHILD", "M_CREATE", "M_RELATE")
+# the router's, on orchestrator-revamped; LISTS: q_issues(<fields>) by the fields' name
+ROUTER = {
+    "RELATIONS": "b443e58b5f277fc5edad3e11004a6af6f76beb96e1858ce1920077c9f20798a8",
+    "Q_RELATIONS": "c271398e2c19c59eb040a3f5988e3ddf0d7787ae9dbd824e63541dd45a4afc53",
+    "Q_RECHECK": "585cff398cb172d48816a2e46fe7fa611ed917ddae67fe1cf0678c9d42080572",
+    "Q_HISTORY": "478618723212a6dfd1b6e0d47f80b592daf40d85cf8a06329e30c0c7c6cb58f7",
+}
+LISTS = {
+    "": "3a5086418d895504931848eadf8243f03aad1cfc77f6391f1dc8ab357c034213",
+    "RELATIONS": "7d8c26493df3c7696386e34534445288717b64ace14ed4866316e03bb51463fa",
+}
 BACKLOG = "00000000-0000-4000-8000-000000000019"
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
@@ -67,15 +91,27 @@ def child(ident, kind):
     return {"id": f"id-{ident}", "identifier": ident, "state": {"type": kind}}
 
 
+def names():
+    found = {getattr(linear_tracker, n): n for n in (*BASE, *ROUTER)}
+    found |= {getattr(ops, n): n for n in ("Q_TEAM", "Q_TASK_GROUP", "Q_USER")} | OPS
+    lists = linear_tracker.q_issues(), linear_tracker.q_issues(linear_tracker.RELATIONS)
+    return found | dict(zip(lists, ("LIST", "LIST_RELATIONS"), strict=True))
+
+
 class Gql:
-    """Answers by query text from replies (a list is one reply per call); records every call."""
+    """Answers by query name from replies (a list is one reply per call); records every call."""
+
+    NAMES = names()
 
     def __init__(self, **replies):
         self.replies, self.calls = replies, []
 
+    def names(self):
+        return [self.NAMES[q] for q, _ in self.calls]
+
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
-        name = next((n for n in BASE if getattr(linear_tracker, n) == query), None) or OPS[query]
+        name = self.NAMES[query]
         reply = self.replies[name]
         reply = reply.pop(0) if isinstance(reply, list) else reply
         if isinstance(reply, Exception):
@@ -103,6 +139,19 @@ class Queries(Case):
         for name in PROMOTE:
             with self.subTest(query=name):
                 self.assertIs(getattr(promote, name), getattr(linear_tracker, name))
+
+    def test_router_text_is_the_base_text(self):
+        texts = {n: getattr(linear_tracker, n) for n in ROUTER}
+        texts |= {f"q_issues({f})": linear_tracker.q_issues(texts.get(f, "")) for f in LISTS}
+        digests = ROUTER | {f"q_issues({f})": d for f, d in LISTS.items()}
+        for name, text in texts.items():
+            with self.subTest(query=name):
+                self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
+
+    def test_router_reexports_are_the_adapter_strings(self):
+        for name in (*ROUTER, "q_issues", "blockers"):
+            with self.subTest(query=name):
+                self.assertIs(getattr(router, name), getattr(linear_tracker, name))
 
 
 class Read(Case):
@@ -268,13 +317,243 @@ class Archive(Case):
             tracker(gql).archive("id-TASK-1")
 
 
+def users(*ids):
+    return [{"users": {"nodes": [{"id": i}] if i else []}} for i in ids]
+
+
+def board_cfg():
+    return SimpleNamespace(
+        team=TEAM,
+        states=STATES,
+        task_label_group=TASK_GROUP,
+        task_labels={"light-research": "label-1"},
+        human_members=("human@x.test",),
+        roles={"pm": SimpleNamespace(account="pm@agents.test")},
+    )
+
+
+def connected(**replies):
+    group = {"issueLabel": {"isGroup": True, "children": {"nodes": [{"id": "label-1"}]}}}
+    replies = {"Q_TEAM": {"teams": {"nodes": [team_node()]}}, "Q_TASK_GROUP": group} | replies
+    return LinearTracker.connect(Gql(**replies), board_cfg(), say=None)
+
+
+class Connect(Case):
+    def test_reads_in_order(self):
+        found = connected(Q_USER=users("u-human", "u-pm"))
+        self.assertEqual(found.gql.names(), ["Q_TEAM", "Q_TASK_GROUP", "Q_USER", "Q_USER"])
+        self.assertEqual(
+            [v for _, v in found.gql.calls],
+            [{"t": TEAM}, {"i": TASK_GROUP}, {"e": "human@x.test"}, {"e": "pm@agents.test"}],
+        )
+        self.assertEqual((found.team.id, found.team.states), (TEAM, STATES))
+        self.assertEqual((found.roles, found.people), ({"u-pm": "pm"}, frozenset({"u-human"})))
+        self.assertEqual(found.humans, ("human@x.test",))
+
+    def test_errors_propagate(self):
+        for replies, message in (
+            ({"Q_TEAM": {"teams": {"nodes": []}}}, f"team {TEAM} not found"),
+            ({"Q_USER": users(None)}, "human_members not found in Linear: human@x.test"),
+            ({"Q_USER": users("u-human", None)}, "account 'pm@agents.test' not found"),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(LinearError, message):
+                connected(**replies)
+
+
+def listed(state):
+    return {
+        "team": {"id": {"eq": TEAM}},
+        "project": {"null": False},
+        "assignee": {"id": {"in": list(ROLES)}},
+        "state": {"id": {"eq": STATES[state]}},
+    }
+
+
+class Assigned(Case):
+    def test_filter_per_state(self):
+        for state, key in ((IssueState.READY, "todo"), (IssueState.RUNNING, "in_progress")):
+            with self.subTest(state=state):
+                gql = Gql(LIST={"issues": {"nodes": [{"identifier": "TASK-1"}]}})
+                self.assertEqual(tracker(gql).assigned(state), [{"identifier": "TASK-1"}])
+                self.assertEqual(gql.calls, [(linear_tracker.q_issues(), {"f": listed(key)})])
+
+    def test_other_state_value_error(self):
+        for state in (IssueState.REVIEW, IssueState.APPROVED, IssueState.DONE):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                tracker(Gql()).assigned(state)
+
+
+def todo(ident, *inverse):
+    found = {"id": f"id-{ident}", "identifier": ident}
+    return found | ({"inverseRelations": {"nodes": list(inverse)}} if inverse else {})
+
+
+def rel(kind, ident=None, state="started"):
+    return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
+
+
+def relations(*inverse):
+    return {"issue": {"inverseRelations": {"nodes": list(inverse)}}}
+
+
+class Ready(Case):
+    def test_one_read_with_relations(self):
+        nodes = [todo("TASK-1", rel("related", "TASK-9")), todo("TASK-2", rel("blocks", "TASK-7"))]
+        gql = Gql(LIST_RELATIONS={"issues": {"nodes": nodes}})
+        found = tracker(gql).ready()
+        query = linear_tracker.q_issues(linear_tracker.RELATIONS)
+        self.assertEqual(gql.calls, [(query, {"f": listed("todo")})])
+        self.assertEqual(found, [(nodes[0], ()), (nodes[1], ("TASK-7",))])
+
+    def fallback(self, *replies):
+        said, error = [], LinearError("linear api error: boom")
+        plain = {"issues": {"nodes": [todo("TASK-1"), todo("TASK-2")]}}
+        gql = Gql(LIST_RELATIONS=error, LIST=plain, Q_RELATIONS=list(replies))
+        found = LinearTracker(
+            gql, TEAM_OBJ, ROLES, HUMANS, say=lambda *a, **f: said.append((len(gql.calls), a, f))
+        ).ready()
+        self.assertEqual(said, [(1, ("todo-error",), {"error": one_line(error)})])
+        self.assertEqual(gql.names(), ["LIST_RELATIONS", "LIST", "Q_RELATIONS", "Q_RELATIONS"])
+        self.assertEqual([v for _, v in gql.calls[2:]], [{"i": "id-TASK-1"}, {"i": "id-TASK-2"}])
+        return found
+
+    def test_fallback_logs_then_reads_each(self):
+        found = self.fallback(relations(rel("blocks", "TASK-7")), relations())
+        self.assertEqual(
+            found,
+            [
+                (todo("TASK-1", rel("blocks", "TASK-7")), ("TASK-7",)),
+                ({**todo("TASK-2"), "inverseRelations": {"nodes": []}}, ()),
+            ],
+        )
+
+    def test_unreadable_relations_block(self):
+        found = self.fallback(LinearError("linear api error: gone"), relations())
+        self.assertEqual(found[0], (todo("TASK-1", rel("blocks")), (UNREADABLE,)))
+        self.assertEqual(found[1][1], ())
+
+    def test_unavailable_propagates(self):
+        error = Unavailable("issues", status=503)
+        for replies in (
+            {"LIST_RELATIONS": error},
+            {
+                "LIST_RELATIONS": LinearError("linear api error: boom"),
+                "LIST": {"issues": {"nodes": [todo("TASK-1")]}},
+                "Q_RELATIONS": error,
+            },
+        ):
+            with self.subTest(fallback="LIST" in replies), self.assertRaises(Unavailable) as raised:
+                tracker(Gql(**replies)).ready()
+            self.assertIs(raised.exception, error)
+
+    def test_blockers_open_and_unreadable_only(self):
+        inverse = [
+            rel("blocks", "TASK-3", "completed"),
+            rel("blocks", "TASK-4", "canceled"),
+            rel("blocks", "TASK-5", "duplicate"),
+            rel("blocks", "TASK-6", "started"),
+            rel("related", "TASK-8", "started"),
+            rel("duplicate", None),
+            rel("blocks"),
+        ]
+        gql = Gql(LIST_RELATIONS={"issues": {"nodes": [todo("TASK-1", *inverse)]}})
+        self.assertEqual(tracker(gql).ready()[0][1], ("TASK-6", UNREADABLE))
+
+
+def history(*moves):
+    """Q_HISTORY's reply: (hours ago, state key, actor) moves, newest first."""
+    nodes = [
+        {"createdAt": ago(h).isoformat(), "actorId": actor, "toStateId": STATES[key]}
+        for h, key, actor in moves
+    ]
+    return {"issue": {"history": {"nodes": nodes}}}
+
+
+class MovedAt(Case):
+    def tracker(self, *replies):
+        gql = Gql(Q_HISTORY=list(replies))
+        return LinearTracker(gql, TEAM_OBJ, ROLES, HUMANS, people=frozenset({"u-human"}))
+
+    def test_cached_per_key(self):
+        found = self.tracker(history((2, "todo", "u-pm")), history((5, "todo", "u-pm")))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(2))
+        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.RUNNING))
+        self.assertIsNone(found.moved_at("id-TASK-1", IssueState.READY, by_people=True))
+        self.assertEqual(found.moved_at("id-TASK-2", IssueState.READY), ago(5))
+        self.assertEqual(
+            found.gql.calls,
+            [
+                (linear_tracker.Q_HISTORY, {"i": "id-TASK-1"}),
+                (linear_tracker.Q_HISTORY, {"i": "id-TASK-2"}),
+            ],
+        )
+
+    def test_by_people_filters_actors(self):
+        found = self.tracker(history((1, "todo", "u-pm"), (3, "todo", "u-human")))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(1))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY, by_people=True), ago(3))
+
+    def test_state_ids(self):
+        moves = (1, "in_review", "u-pm"), (2, "in_progress", "u-pm"), (4, "todo", "u-human")
+        found = self.tracker(history(*moves))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.RUNNING), ago(2))
+        self.assertEqual(found.moved_at("id-TASK-1", IssueState.READY), ago(4))
+
+
+def rechecked(state, *, assignee=None, project=None, labels=()):
+    issue = {"state": {"id": state}, "assignee": assignee, "project": project}
+    return {"issue": issue | {"labels": {"nodes": list(labels)}}}
+
+
+class Rechecks(Case):
+    def test_maps_state_labels_and_parts(self):
+        pm, project = (
+            {"id": "u-pm", "email": "pm@agents.test"},
+            {"id": "p-1", "name": "Deep Research"},
+        )
+        nodes = [
+            {"id": "l-1", "name": "Light Research", "parent": {"id": TASK_GROUP}},
+            {"id": "l-2", "name": "Urgent", "parent": None},
+        ]
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"], assignee=pm, project=project, labels=nodes))
+        self.assertEqual(
+            tracker(gql).recheck("id-TASK-1"),
+            Recheck(
+                ready=True,
+                assignee=pm,
+                project=project,
+                labels=(Label("l-1", "Light Research", TASK_GROUP), Label("l-2", "Urgent", None)),
+            ),
+        )
+        self.assertEqual(gql.calls, [(linear_tracker.Q_RECHECK, {"i": "id-TASK-1"})])
+
+    def test_ready_only_in_the_todo_state(self):
+        for key in ("in_progress", "in_review", "handoff", "done", "canceled"):
+            with self.subTest(state=key):
+                found = tracker(Gql(Q_RECHECK=rechecked(STATES[key]))).recheck("id-TASK-1")
+                self.assertEqual(
+                    found, Recheck(ready=False, assignee=None, project=None, labels=())
+                )
+
+    def test_a_todo_id_shared_with_another_key_stays_ready(self):
+        team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
+        gql = Gql(Q_RECHECK=rechecked(STATES["todo"]))
+        self.assertTrue(LinearTracker(gql, team, ROLES, HUMANS).recheck("id-TASK-1").ready)
+
+
+class Role(Case):
+    def test_by_assignee_id(self):
+        self.assertEqual(tracker(Gql()).role({"assignee": {"id": "u-pm"}}), "pm")
+
+
 class Interface(Case):
     def test_linear_tracker_implements_every_method(self):
         self.assertEqual(
             Tracker.__abstractmethods__,
             {"read", "finished", "sub_issues", "archive"}
             | {"approved", "detail", "created", "create", "relate", "comment", "move"}
-            | {"comment_and_move"},
+            | {"comment_and_move"}
+            | {"role", "assigned", "ready", "moved_at", "recheck"},
         )
         self.assertIsInstance(LinearTracker(None, TEAM_OBJ, ROLES, HUMANS), Tracker)
 
