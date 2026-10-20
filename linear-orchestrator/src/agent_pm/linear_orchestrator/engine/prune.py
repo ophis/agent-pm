@@ -1,5 +1,5 @@
 """Prune, for each finished issue (Done, Canceled, or any other state of type canceled or duplicate,
-such as Duplicate: ops.Team.finished) at least 2 hours ago (finished_at; unknown: skipped) whose
+such as Duplicate: ops.Team.finished) at least 2 hours ago (linear_tracker.finished_at; unknown: skipped) whose
 workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
@@ -42,15 +42,22 @@ from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+
+# Kept only for tests reading prune.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_ARCHIVE as M_ARCHIVE
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILDREN as Q_CHILDREN
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_FINISHED as Q_FINISHED
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ISSUE as Q_ISSUE
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move, role_ids, team
-from agent_pm.linear_orchestrator.engine.router import DONE
+from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     ConfigError,
     LinearError,
     Unavailable,
 )
+from agent_pm.linear_orchestrator.flow.types import IssueState
 from agent_pm.utils import (
     GUARD,
     SHORT,
@@ -58,7 +65,6 @@ from agent_pm.utils import (
     StatusState,
     common_dir,
     one_line,
-    parse_time,
     remove_tree,
     under,
 )
@@ -70,30 +76,6 @@ STALL = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_agent's scratch
 ARCHIVE_ROLES = ("pm", "engineer")
-STAMPS = "canceledAt completedAt"
-Q_ISSUE = (
-    "query($i: String!, $after: String) { issue(id: $i) { state { id } "
-    + STAMPS
-    + " "
-    + HISTORY
-    + " } }"
-)
-CHILDREN = "children(first: 250) { nodes { id identifier state { type } } }"
-Q_CHILDREN = "query($i: String!) { issue(id: $i) { " + CHILDREN + " } }"
-Q_FINISHED = (
-    """query($t: ID, $d: [ID!], $s: [ID!], $a: [ID!], $c: String, $after: String) {
-  issues(filter: { team: { id: { eq: $t } }, or: [{ state: { id: { in: $d } }, assignee: { id: { in: $a } } },
-  { state: { id: { in: $s } } }] }, first: 50, after: $c) {
-  nodes { id identifier """
-    + STAMPS
-    + " "
-    + CHILDREN
-    + " "
-    + HISTORY
-    + """ }
-  pageInfo { hasNextPage endCursor } } }"""
-)
-M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
 Usage: agent-pm-linear prune [--dry-run]
@@ -151,8 +133,8 @@ Recovery and next help:
 
 class Pruner:
     def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, writable=None):
-        self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles = team, roles
+        self.now, self.dry, self.work, self.roles = now, dry, work, roles
+        self.tracker = LinearTracker(gql, team, roles)
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
@@ -267,48 +249,25 @@ class Pruner:
         self.say("prune-closed", ident, session=view.sid)
         return True
 
-    def finished_issues(self, finished):
-        """Done issues of ARCHIVE_ROLES and other finished ones of anyone."""
-        ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
-        done = sorted(finished & {self.team.states["done"]})
-        # Every page before any archive: archiving shifts the pages.
-        nodes, cursor = [], None
-        while True:
-            page = self.gql(
-                Q_FINISHED,
-                t=self.team.id,
-                d=done,
-                s=sorted(finished.difference(done)),
-                a=ids,
-                c=cursor,
-            )["issues"]
-            nodes += page["nodes"]
-            end = page["pageInfo"]["endCursor"]
-            if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
-                break
-            cursor = end
-        return nodes
-
-    def archive(self, finished):
+    def archive(self):
         try:
-            nodes = self.finished_issues(finished)
+            found = self.tracker.finished(ARCHIVE_ROLES)
         except Unavailable:
             raise
         except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
-        for node in nodes:
-            ident = node["identifier"]
-            since = finished_at(node, finished)
+        for issue in found:
+            ident, since = issue.ident, issue.since
             if since is None:
                 self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
                 continue
             if self.now - since < QUARANTINE:
                 continue
             try:
-                open_child = self.open_descendant(node["children"]["nodes"])
+                open_child = self.open_descendant(issue.children)
                 if open_child is None and not self.dry:
-                    call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
+                    self.tracker.archive(issue.key)
             except Unavailable:
                 raise
             except (LinearError, OSError, subprocess.SubprocessError) as e:
@@ -328,18 +287,16 @@ class Pruner:
 
     def open_descendant(self, children):
         """The first unfinished one of children and, recursively, their sub-issues; None: all
-        finished or archived (Linear lists no archived sub-issue)."""
+        finished or archived (the tracker lists no archived sub-issue)."""
         for child in children:
-            if child["state"]["type"] not in DONE:
-                return child["identifier"]
+            if not child.finished:
+                return child.ident
         for child in children:
-            sub = self.gql(Q_CHILDREN, i=child["id"])["issue"]["children"]["nodes"]
-            if found := self.open_descendant(sub):
+            if found := self.open_descendant(self.tracker.sub_issues(child.key)):
                 return found
         return None
 
     def run(self):
-        finished = self.team.finished
         found = self.inventory()
         self.views = found or {}
         if found is None:
@@ -354,27 +311,24 @@ class Pruner:
             except OSError:
                 idents = []
             for ident in idents:
-                self.prune_issue(ident, finished)
-        self.archive(finished)
+                self.prune_issue(ident)
+        self.archive()
         return 3 if self.errors else 0
 
-    def prune_issue(self, ident, finished):
+    def prune_issue(self, ident):
         try:
-            issue = self.gql(Q_ISSUE, i=ident)["issue"]
+            found = self.tracker.read(ident)
         except Unavailable:
             raise
         except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
-        if not issue:
+        if found is None or found.state in (IssueState.READY, IssueState.RUNNING):
             return
-        state = issue["state"]["id"]
-        if state in (self.team.states["todo"], self.team.states["in_progress"]):
+        if found.state not in (IssueState.DONE, IssueState.CANCELED):
+            self.prune_stalled(ident, found.since)
             return
-        if state not in finished:
-            self.prune_stalled(ident, last_move(issue["history"]["nodes"], {state}))
-            return
-        since = finished_at(issue, finished)
+        since = found.since
         if since is None:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
         elif self.has_agent(ident, quiet=True):
@@ -474,15 +428,6 @@ class Pruner:
             self.say("prune-removed", ident, what="scratch" if scratch else "agent dir")
         for common in sorted(commons):
             self.clean_clone(ident, common, branches=not scratch)
-
-
-def finished_at(issue, finished):
-    """The latest of issue's move into finished and its canceledAt and completedAt (the history
-    read can lack a move into Duplicate that canceledAt holds); None: unknown."""
-    times = [parse_time(issue[k]) for k in ("canceledAt", "completedAt") if issue[k]]
-    if moved := last_move(issue["history"]["nodes"], finished):
-        times.append(moved)
-    return max(times, default=None)
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):

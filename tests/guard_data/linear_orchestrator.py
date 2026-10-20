@@ -31,6 +31,11 @@ ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delega
 OBJECT_EXPORT_MODULES = (f"{ORCH_FILES}__init__.py",)
 
 
+SUBPACKAGES = {
+    ORCH_PROJECT: {"flow"},
+}
+
+
 # FR-25: the router only triggers a run; its Delegate's harness runs it and calls write-back back
 ORCH_ABSENT = ("engine/run.py",)
 

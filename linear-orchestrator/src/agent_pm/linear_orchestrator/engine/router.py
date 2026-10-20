@@ -100,7 +100,7 @@ from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
-from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
+from agent_pm.linear_orchestrator.engine.ops import DONE, humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
@@ -139,7 +139,6 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"

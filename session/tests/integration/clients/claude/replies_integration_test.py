@@ -1,5 +1,5 @@
 """A Claude tui session's mid-turn answer: a `reply <id>` events line, before the turn's `done`,
-whose stored text is the answer, on the tmux and pty Hosts, with fake Claude and a live hook.
+whose stored text is the answer, on the tmux Host, with fake Claude and a live hook.
 """
 
 import glob
@@ -42,13 +42,7 @@ class RepliesTest(Case):
         env = self.server.env(CLAUDE_CONFIG_DIR=str(self.config), TZ="UTC")
         self.enterContext(mock.patch.dict(os.environ, {**env, fake_claude.ENV: str(self.scenario)}))
         clients = {"claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"}}
-        hosts = Host.parse_hosts(
-            {
-                **HOSTS,
-                "pty": {"implementation": "agent_pm.session.hosts.pty:PtyHost"},
-                "default": "tmux",
-            }
-        )
+        hosts = Host.parse_hosts({**HOSTS, "default": "tmux"})
         self.session_cls = HostedSession.configured(clients=clients, hosts=hosts)
         self.release = self.root / "release"
         steps = [{"kind": "queued", "answer": ANSWER}, {"kind": "pause", "file": str(self.release)}]
@@ -125,7 +119,3 @@ class RepliesTest(Case):
         self.assertLessEqual(time.monotonic() - sent, 10)
         self.assertNotIn("done", [w[1] for w in self.words()])
         self.release.touch()
-
-
-class PtyRepliesTest(RepliesTest):
-    host = "pty"
