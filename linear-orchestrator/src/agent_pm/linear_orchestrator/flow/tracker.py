@@ -72,6 +72,10 @@ class Tracker(ABC):
         """Without frm, from any state; None: moved, else its state id."""
 
     @abstractmethod
+    def claim(self, key: str) -> None:
+        """To RUNNING, its state unread: the caller rechecked it."""
+
+    @abstractmethod
     def comment_and_move(
         self, key: str, body: str, *, to: IssueState, frm: IssueState, notify: bool
     ) -> str | None:

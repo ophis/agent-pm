@@ -846,6 +846,7 @@ class Interface(Case):
                 "relate",
                 "comment",
                 "move",
+                "claim",
                 "comment_and_move",
                 "find_comment",
                 "put_comment",
@@ -1070,6 +1071,15 @@ class Writes(Case):
                 moved = tracker(gql).move("id-A", IssueState.DONE, frm=IssueState.APPROVED)
                 self.assertEqual(moved, left)
                 self.assertEqual(gql.calls, [(ops.Q_ISSUE_STATE, {"i": "id-A"}), *sent])
+
+    def test_claim_updates_without_reading(self):
+        gql = Gql(M_STATE={"issueUpdate": {"success": True}})
+        tracker(gql).claim("id-A")
+        self.assertEqual(gql.calls, [(ops.M_STATE, {"i": "id-A", "s": STATES["in_progress"]})])
+
+    def test_claim_without_states_raises(self):
+        with self.assertRaisesRegex(TypeError, "^LinearTracker needs states$"):
+            LinearTracker(Gql()).claim("id-A")
 
     def test_comment_and_move_subscribes_then_moves_then_comments(self):
         for notify, subscribed in ((True, list(HUMANS)), (False, [])):

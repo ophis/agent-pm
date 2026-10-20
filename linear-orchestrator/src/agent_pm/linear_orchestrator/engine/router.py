@@ -612,7 +612,7 @@ class Board:
         if self.dry:
             return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
-        ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
+        self.tracker.claim(issue["id"])
         return taken, task, role, client, source
 
 
