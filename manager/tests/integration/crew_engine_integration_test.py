@@ -532,7 +532,7 @@ class CrewTest(Case):
         ctl.set_session(self.ctl_dir, "role", alive=False)
         with self.listed():
             table = self.crew.attach()
-        self.assertNotIn("resume role: agent-pm-linear resume role", table)
+        self.assertNotIn("resume role: agent-pm-orchestrator resume role", table)
         self.assertIn(f"role\tfake\t{original.sid}\tgone\t", table)
         record = self.crew.resume("role")
         self.assertEqual(record.display, "opaque")

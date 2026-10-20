@@ -1,4 +1,4 @@
-"""`agent-pm-linear writeback` as a subprocess, one DelegateEvent line on stdin per call, FakeLinear
+"""`agent-pm-orchestrator writeback` as a subprocess, one DelegateEvent line on stdin per call, FakeLinear
 over HTTP: the run's claim comes from its runs.jsonl start row, each step is written once however
 often its event arrives.
 """
@@ -109,7 +109,9 @@ class BegunAndProgress(Writeback):
     def test_no_start_row_exits_2_and_writes_nothing(self):
         res = self.feed("begun")
         self.assertEqual((res.returncode, res.stdout), (2, ""))
-        self.assertRegex(res.stderr, rf"agent-pm-linear writeback: {re.escape(ID)}: no start row")
+        self.assertRegex(
+            res.stderr, rf"agent-pm-orchestrator writeback: {re.escape(ID)}: no start row"
+        )
         self.assertEqual((self.requests(), self.ledger(ID)), ([], {}))
 
 

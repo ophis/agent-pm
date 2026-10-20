@@ -149,6 +149,6 @@ max_runs = 3
 #              task-level keys is an error
 [core.roles.researcher]
 # the gate is this installation's bin/ command: the router puts that bin/ on its runs' PATH
-gate = "agent-pm-linear router --brake researcher"
+gate = "agent-pm-orchestrator router --brake researcher"
 # local: [orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"

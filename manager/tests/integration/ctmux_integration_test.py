@@ -20,7 +20,13 @@ from session.tests import live_tmux
 
 CTMUX = os.path.join(REPO, "manager", "skills", "manage", "scripts", "ctmux")
 LAUNCHER = os.path.join(REPO, "manager", "skills", "manage", "scripts", "launcher")
-COMMANDS = ("ctmux", "agent-pm-crew", "agent-pm-session", "agent-pm-delegate", "agent-pm-linear")
+COMMANDS = (
+    "ctmux",
+    "agent-pm-crew",
+    "agent-pm-session",
+    "agent-pm-delegate",
+    "agent-pm-orchestrator",
+)
 USAGE = "usage: ctmux <session-name> | ctmux --install"
 FAKE = """#!{python} -I
 import json, os, sys

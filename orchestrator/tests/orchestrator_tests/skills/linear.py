@@ -8,7 +8,7 @@ from orchestrator_tests.case import REPO
 
 SKILL = os.path.join(REPO, "orchestrator", "skills", "linear", "SKILL.md")
 RULES = re.compile(r"^  - Bash\((.+)\)$", re.M)
-EXAMPLE = re.compile(r"agent-pm-linear issue [^`\n]*")
+EXAMPLE = re.compile(r"agent-pm-orchestrator issue [^`\n]*")
 SHELL = ("<", ">", "|", "&&", ";")
 
 
@@ -30,7 +30,7 @@ def rules() -> list[str]:
 
 
 def examples() -> list[list[str]]:
-    """Each agent-pm-linear issue command the body shows, as its argv after `issue`, up to any shell
+    """Each agent-pm-orchestrator issue command the body shows, as its argv after `issue`, up to any shell
     redirection or pipe."""
     found = []
     for line in EXAMPLE.findall(body()):

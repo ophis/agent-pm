@@ -255,7 +255,7 @@ Keys, one per account:
    security add-generic-password -s <harness_key> -a <harness account> -w
    ```
 
-4. `bin/agent-pm-linear router --dry-run` and `bin/agent-pm-linear promote --dry-run` report no config error.
+4. `bin/agent-pm-orchestrator router --dry-run` and `bin/agent-pm-orchestrator promote --dry-run` report no config error.
 
 ## Live checks
 

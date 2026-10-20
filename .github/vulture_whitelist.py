@@ -20,7 +20,7 @@ _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 # outcome.py parses AutopilotStatus(status).
 _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 # Record checks ctl[0] against LayerCommand's values.
-_ = LayerCommand.LINEAR, LayerCommand.SESSION
+_ = LayerCommand.ORCHESTRATOR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.
 _ = Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX
 # Spec checks its tier, and clients/common.py a tiers table's keys, against Tier's values.

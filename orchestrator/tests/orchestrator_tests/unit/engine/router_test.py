@@ -1238,7 +1238,7 @@ class AttendedEntry(OuterBase):
                 )
                 self.assertEqual(
                     (record.ctl, record.resume),
-                    (("agent-pm-linear",), ("agent-pm-linear", "resume", ID)),
+                    (("agent-pm-orchestrator",), ("agent-pm-orchestrator", "resume", ID)),
                 )
                 harness = f"agent-pm-engineer-{ID}"
                 self.assertEqual(
@@ -1568,7 +1568,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
+            "usage: agent-pm-orchestrator router [--now] [--dry-run] [--issue ID] "
             "[--tui [--display D] [--events FILE]] | --brake ROLE",
         )
         for flag in ("--gate", "--split", "--manager"):

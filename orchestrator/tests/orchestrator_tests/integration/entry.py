@@ -1,7 +1,7 @@
 """Explicit subprocess wiring for the fake Linear transport: each entry runs under it. `launch`
 runs router.outer on a claimed or resumed run given by its Spec fields (--name VALUE); `tui ISSUE
 SID ROLE CLIENT DISPLAY INPUT` detaches a recorded run's LinearRun in tui mode at DISPLAY; `promote`
-and `router` run theirs; any other is an agent-pm-linear command (writeback, close, resume, ...).
+and `router` run theirs; any other is an agent-pm-orchestrator command (writeback, close, resume, ...).
 """
 
 import argparse

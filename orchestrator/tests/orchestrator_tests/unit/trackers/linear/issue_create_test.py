@@ -1,4 +1,4 @@
-"""agent-pm-linear issue create: every reference resolved before the one create, only the given
+"""agent-pm-orchestrator issue create: every reference resolved before the one create, only the given
 fields set, Backlog by default, then each blocking relation; a failed relation reported with only
 the commands that add it.
 """
@@ -176,8 +176,8 @@ class Create(Case):
         self.assertEqual(
             report["recover"],
             [
-                "agent-pm-linear issue relation add TASK-9 --blocks TASK-5",
-                "agent-pm-linear issue relation add TASK-9 --blocked-by TASK-4",
+                "agent-pm-orchestrator issue relation add TASK-9 --blocks TASK-5",
+                "agent-pm-orchestrator issue relation add TASK-9 --blocked-by TASK-4",
             ],
         )
         text = str(cm.exception)

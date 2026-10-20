@@ -75,7 +75,7 @@ class FakeCtl(Installed):
         return [Status.parse(line) for line in done.stdout.splitlines()]
 
     def test_start_prints_one_record_whose_ctl_and_resume_name_the_fake(self):
-        self.assertEqual(self.ctl, "agent-pm-linear")
+        self.assertEqual(self.ctl, "agent-pm-orchestrator")
         started = self.start("w1", "--display", "d")
         self.assertEqual(started, record("w1", "d", sid=started.sid))
         self.assertEqual(str(uuid.UUID(started.sid)), started.sid)
@@ -141,7 +141,7 @@ class FakeCtl(Installed):
         self.start("w1")
         self.assertIsNone(self.status(record("w1"))[0].attach)
         ctl.set_session(self.state, "w1", showable=True)
-        self.assertEqual(self.status(record("w1"))[0].attach, "agent-pm-linear attach w1")
+        self.assertEqual(self.status(record("w1"))[0].attach, "agent-pm-orchestrator attach w1")
         ctl.set_session(self.state, "w1", alive=False)
         self.assertIsNone(self.status(record("w1"))[0].attach)
         with self.assertRaises(TypeError):

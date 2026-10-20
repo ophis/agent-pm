@@ -1,4 +1,4 @@
-"""agent-pm-linear issue label swap: one label replaced by another in a single update that names
+"""agent-pm-orchestrator issue label swap: one label replaced by another in a single update that names
 only those two, every other label kept, a label group never holding two.
 """
 
@@ -166,7 +166,7 @@ class Refused(Case):
         for phrase in (
             uid(8),
             uid(9),
-            f"list them: agent-pm-linear issue lookup labels --team {TEAM}",
+            f"list them: agent-pm-orchestrator issue lookup labels --team {TEAM}",
         ):
             self.assertIn(phrase, text)
         self.assertEqual(gql.writes, [])

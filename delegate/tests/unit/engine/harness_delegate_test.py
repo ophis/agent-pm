@@ -281,8 +281,8 @@ class OuterTest(HarnessCase):
         outer = {
             "kind": "pipeline",
             "name": "TASK-1",
-            "ctl": ("agent-pm-linear",),
-            "resume": ("agent-pm-linear", "resume", "TASK-1"),
+            "ctl": ("agent-pm-orchestrator",),
+            "resume": ("agent-pm-orchestrator", "resume", "TASK-1"),
         }
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = self.make(spec=spec).detach(outer=outer)
@@ -987,11 +987,11 @@ class ResumeInputTest(HarnessCase):
         outer = {
             "kind": "pipeline",
             "name": "TASK-1",
-            "ctl": ("agent-pm-linear",),
-            "resume": ("agent-pm-linear", "resume", "TASK-1"),
+            "ctl": ("agent-pm-orchestrator",),
+            "resume": ("agent-pm-orchestrator", "resume", "TASK-1"),
         }
         view, record = self.waiting(outer=outer)
-        self.assertEqual(view.ctl(), ("agent-pm-linear",))
+        self.assertEqual(view.ctl(), ("agent-pm-orchestrator",))
         before, launches = self.metadata(), len(harness_launches())
 
         class Bound(HarnessDelegate):
@@ -1014,7 +1014,7 @@ class ResumeInputTest(HarnessCase):
             self.assertIn("pipeline", err.getvalue())
             self.assertEqual(self.metadata(), before)
             self.assertEqual(len(harness_launches()), launches)
-        self.assertEqual(view.resume(input="answer").ctl, ("agent-pm-linear",))
+        self.assertEqual(view.resume(input="answer").ctl, ("agent-pm-orchestrator",))
 
 
 class ResumeModeTest(HarnessCase):

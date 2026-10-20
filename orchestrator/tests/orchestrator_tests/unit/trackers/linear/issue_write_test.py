@@ -1,4 +1,4 @@
-"""agent-pm-linear issue move and comment: the state resolved in the issue's own team, the body read
+"""agent-pm-orchestrator issue move and comment: the state resolved in the issue's own team, the body read
 verbatim, one write, the receipt.
 """
 

@@ -1,4 +1,4 @@
-"""agent-pm-linear issue archive: every unarchived descendant read over every page at every level,
+"""agent-pm-orchestrator issue archive: every unarchived descendant read over every page at every level,
 the archive only when all are finished, nothing written after a failed read.
 """
 
@@ -87,7 +87,7 @@ class Archive(Case):
             with self.subTest(name=name), self.assertRaises(ArchiveRefused) as cm:
                 issue_archive.archive(gql, "TASK-1")
             self.assertIn(unfinished, str(cm.exception))
-            self.assertIn("agent-pm-linear issue archive TASK-1 --dry-run", str(cm.exception))
+            self.assertIn("agent-pm-orchestrator issue archive TASK-1 --dry-run", str(cm.exception))
             self.assertEqual(gql.writes, [])
 
     def test_every_children_page_is_read_at_every_level(self):

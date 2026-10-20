@@ -1,5 +1,5 @@
 """v1 router behaviors, each against its v1 source (`v1-runtime`'s CLAUDE.md › Architecture or a v1
-test, named in the test's docstring), end to end: bin/agent-pm-linear router as a real process
+test, named in the test's docstring), end to end: bin/agent-pm-orchestrator router as a real process
 (BinFlow), fake_claude as client claude, FakeLinear over HTTP, the runs on a private tmux server.
 """
 

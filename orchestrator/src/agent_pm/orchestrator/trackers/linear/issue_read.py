@@ -1,4 +1,4 @@
-"""agent-pm-linear issue read: one issue's fields, newest comments and relations as a view (view),
+"""agent-pm-orchestrator issue read: one issue's fields, newest comments and relations as a view (view),
 cut to the default limits by compact, or with every page for --full.
 """
 

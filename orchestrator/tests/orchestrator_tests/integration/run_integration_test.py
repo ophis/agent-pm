@@ -1,5 +1,5 @@
 """A claimed run launched by router.outer (entry.py launch), headless: its harness on a private tmux
-server, fake_claude as client `claude`, each event written back by agent-pm-linear writeback over
+server, fake_claude as client `claude`, each event written back by agent-pm-orchestrator writeback over
 FakeLinear's HTTP. Done runs write back as writeback_test pins them, plus the session comment by
 its session id; a run with no outcome; a usage limit (FR-59) and its resume; a resume after a lost
 ledger write (FR-54).

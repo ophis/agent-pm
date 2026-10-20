@@ -6,7 +6,7 @@ The Linear orchestrator runs the core from a Linear board: set it up once, then 
 
 Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator runs this checkout's scripts, not the plugin. `<work_dir>` is `orchestrator.work_dir`.
 
-1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. A required key left `""` stops every `agent-pm-linear` command.
+1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. A required key left `""` stops every `agent-pm-orchestrator` command.
 
    ```toml
    [delegate.roles.engineer]              # run settings
@@ -20,8 +20,8 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
 2. Create the Linear presets, accounts and Keychain items, and fill their keys: [Linear presets](credentials.md#linear-presets).
 3. Dry-run each job:
    ```bash
-   bin/agent-pm-linear router --dry-run
-   bin/agent-pm-linear promote --dry-run
+   bin/agent-pm-orchestrator router --dry-run
+   bin/agent-pm-orchestrator promote --dry-run
    ```
 4. Install the launchd jobs:
    ```bash
@@ -86,23 +86,23 @@ A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`.
 
 ```mermaid
 flowchart LR
-    L[launchd] -->|every 30 min| R["agent-pm-linear router: claim or resume, render the input"] -->|"detach its LinearRun, exit"| I["harness: Delegate, claude"]
+    L[launchd] -->|every 30 min| R["agent-pm-orchestrator router: claim or resume, render the input"] -->|"detach its LinearRun, exit"| I["harness: Delegate, claude"]
     Y[you] -->|"--issue"| R
-    I -->|"each event: agent-pm-linear writeback"| W["writeback.py → Linear, as the role"]
-    L -->|every 5 min| P[agent-pm-linear promote] --> X[prune]
+    I -->|"each event: agent-pm-orchestrator writeback"| W["writeback.py → Linear, as the role"]
+    L -->|every 5 min| P[agent-pm-orchestrator promote] --> X[prune]
 ```
 
 ```bash
-bin/agent-pm-linear router --issue <ID>         # run one issue now, skipping the hours, run limits and usage gates
-bin/agent-pm-linear router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
-bin/agent-pm-linear status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
-bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
-bin/agent-pm-linear close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
-bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
+bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the hours, run limits and usage gates
+bin/agent-pm-orchestrator router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
+bin/agent-pm-orchestrator status <ID>                 # alive: its run; once that ends, state is its open TUI's (done, working, blocked), gone once none is open
+bin/agent-pm-orchestrator attach-command <ID>         # the command that shows its agent run
+bin/agent-pm-orchestrator close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
+bin/agent-pm-orchestrator resume <ID>                 # resume an attended run where it was shown
 tmux ls                                         # running agent runs
 ```
 
-Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-linear issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([orchestrator/skills/linear/SKILL.md](../orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+Run `bin/agent-pm-orchestrator` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-orchestrator issue …`: read, list, look up, create, move, comment, relate, swap a label, archive): `/agent-pm:linear` ([orchestrator/skills/linear/SKILL.md](../orchestrator/skills/linear/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
 
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
@@ -126,7 +126,7 @@ The commander needs no Linear MCP server: `/agent-pm:linear`'s commands replace 
 
 1. Open Claude Code in that project's directory and run `/mcp`.
 2. Select the Linear entry and choose **Disable**. Claude Code records this for that project only ([Disable a server without removing it](https://code.claude.com/docs/en/mcp#disable-a-server-without-removing-it)); other servers and projects keep their settings. Never remove the server or edit its config by hand.
-3. Start a new session there and check: `/mcp` shows the Linear entry disabled, no Linear MCP tool is offered, `bin/agent-pm-linear issue read <ID>` still prints the issue, and every other server there keeps its earlier state. Another project's `/mcp` still shows the Linear entry as before.
+3. Start a new session there and check: `/mcp` shows the Linear entry disabled, no Linear MCP tool is offered, `bin/agent-pm-orchestrator issue read <ID>` still prints the issue, and every other server there keeps its earlier state. Another project's `/mcp` still shows the Linear entry as before.
 
 ### Agent label
 
@@ -155,7 +155,7 @@ flowchart LR
     C --> D[Enable scheduled ticks]
 ```
 
-Use the installed `agent-pm-linear` absolute path. `--issue` skips the usage gate; it starts a real run. Use `--dry-run --issue ID` first to inspect label selection without starting a run.
+Use the installed `agent-pm-orchestrator` absolute path. `--issue` skips the usage gate; it starts a real run. Use `--dry-run --issue ID` first to inspect label selection without starting a run.
 
 ### OpenCode
 

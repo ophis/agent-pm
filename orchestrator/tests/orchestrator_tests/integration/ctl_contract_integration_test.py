@@ -16,7 +16,7 @@ from utils.tests.contracts.ctl import CtlContract
 
 
 class LinearCtlContract(CtlContract, TmuxFlow):
-    command = "agent-pm-linear"
+    command = "agent-pm-orchestrator"
 
     def setUp(self):
         super().setUp()

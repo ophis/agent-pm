@@ -1,17 +1,17 @@
 ---
 name: linear
-description: "Read, find, create and change Linear issues with fixed agent-pm-linear issue commands: no hand-written GraphQL."
+description: "Read, find, create and change Linear issues with fixed agent-pm-orchestrator issue commands: no hand-written GraphQL."
 ---
 
 # linear
 
-Every common Linear issue operation is one `agent-pm-linear issue` command: use it, never a raw GraphQL query or a Linear MCP tool. Only an operation the table lacks (editing a description, other entities) falls back to your own Linear tool, such as a personal `/linear`.
+Every common Linear issue operation is one `agent-pm-orchestrator issue` command: use it, never a raw GraphQL query or a Linear MCP tool. Only an operation the table lacks (editing a description, other entities) falls back to your own Linear tool, such as a personal `/linear`.
 
-Each command acts as the configured `harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. None is pre-approved: `read`, `list` and `lookup` write a file with `--full --output`. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-linear`, writing `${CLAUDE_SKILL_DIR}` as this file's directory, an absolute path.
+Each command acts as the configured `harness_key` account (Keychain), needs no run on the issue, and prints one compact JSON object; diagnostics go to stderr. `<subcommand> --help` gives every option, default and output field. None is pre-approved: `read`, `list` and `lookup` write a file with `--full --output`. A client without this plugin's `bin/` on its PATH (Codex) runs `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-orchestrator`, writing `${CLAUDE_SKILL_DIR}` as this file's directory, an absolute path.
 
 ## Commands
 
-The prefix `agent-pm-linear issue` is left out. `ID` is an identifier (`TASK-1`) or an issue id.
+The prefix `agent-pm-orchestrator issue` is left out. `ID` is an identifier (`TASK-1`) or an issue id.
 
 | Command | Does |
 |---|---|
@@ -31,15 +31,15 @@ Exit 0: success, or `"result": "unchanged"` (already so; nothing written). Exit 
 ## Finding issues and values
 
 ```bash
-agent-pm-linear issue list --query 'login' --state Todo --label bug
-agent-pm-linear issue list --assignee me --project 'Agent PM' --include-archived
-agent-pm-linear issue list --parent TASK-1 --limit 50
-agent-pm-linear issue list --cursor <next_cursor>
-agent-pm-linear issue lookup states --team TASK
-agent-pm-linear issue lookup labels --query bug
-agent-pm-linear issue lookup milestones --project 'Agent PM'
-agent-pm-linear issue lookup users --query ada
-agent-pm-linear issue lookup teams --full --output teams.json
+agent-pm-orchestrator issue list --query 'login' --state Todo --label bug
+agent-pm-orchestrator issue list --assignee me --project 'Agent PM' --include-archived
+agent-pm-orchestrator issue list --parent TASK-1 --limit 50
+agent-pm-orchestrator issue list --cursor <next_cursor>
+agent-pm-orchestrator issue lookup states --team TASK
+agent-pm-orchestrator issue lookup labels --query bug
+agent-pm-orchestrator issue lookup milestones --project 'Agent PM'
+agent-pm-orchestrator issue lookup users --query ada
+agent-pm-orchestrator issue lookup teams --full --output teams.json
 ```
 
 - `list` filters all hold at once, within one team: `--team` (id, name or key), else the configured team. Archived issues only with `--include-archived`.
@@ -49,8 +49,8 @@ agent-pm-linear issue lookup teams --full --output teams.json
 ## Reading in full
 
 ```bash
-agent-pm-linear issue read TASK-1
-agent-pm-linear issue read TASK-1 --full --output TASK-1.json
+agent-pm-orchestrator issue read TASK-1
+agent-pm-orchestrator issue read TASK-1 --full --output TASK-1.json
 ```
 
 `read` keeps 5 comments of 300 characters, 600 of the description and 10 issues per relation column. A non-empty `truncated` names what it cut; `continue` then holds the `--full --output` read that keeps everything. Read FILE for the rest.
@@ -60,12 +60,12 @@ agent-pm-linear issue read TASK-1 --full --output TASK-1.json
 Bodies come from a UTF-8 Markdown file, or stdin with `-`, sent verbatim, minus a leading byte order mark: quotes, backticks, `$` and newlines need no escaping.
 
 ```bash
-agent-pm-linear issue comment TASK-1 --body-file note.md
-agent-pm-linear issue comment TASK-1 --body-file - < note.md
-agent-pm-linear issue move TASK-1 --state 'In Progress'
-agent-pm-linear issue create --title 'Fix login' --body-file note.md
-agent-pm-linear issue create --title 'Fix login' --body-file - --label bug --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me --state Todo --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md
-agent-pm-linear issue label swap TASK-1 --from todo --to doing
+agent-pm-orchestrator issue comment TASK-1 --body-file note.md
+agent-pm-orchestrator issue comment TASK-1 --body-file - < note.md
+agent-pm-orchestrator issue move TASK-1 --state 'In Progress'
+agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md
+agent-pm-orchestrator issue create --title 'Fix login' --body-file - --label bug --project 'Agent PM' --milestone M1 --parent TASK-1 --assignee me --state Todo --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md
+agent-pm-orchestrator issue label swap TASK-1 --from todo --to doing
 ```
 
 - `create` resolves every value before writing; unset fields stay unset; `--state` defaults to Backlog. `--label`, `--blocks` and `--blocked-by` repeat.
@@ -75,11 +75,11 @@ agent-pm-linear issue label swap TASK-1 --from todo --to doing
 
 ## Blocking relations
 
-`agent-pm-linear issue relation add A --blocks B` is `agent-pm-linear issue relation add B --blocked-by A`: one edge, A blocks B. `read`'s `blocks` lists the issues it blocks, `blocked_by` the issues blocking it.
+`agent-pm-orchestrator issue relation add A --blocks B` is `agent-pm-orchestrator issue relation add B --blocked-by A`: one edge, A blocks B. `read`'s `blocks` lists the issues it blocks, `blocked_by` the issues blocking it.
 
 ```bash
-agent-pm-linear issue relation add TASK-1 --blocks TASK-2
-agent-pm-linear issue relation remove TASK-2 --blocked-by TASK-1
+agent-pm-orchestrator issue relation add TASK-1 --blocks TASK-2
+agent-pm-orchestrator issue relation remove TASK-2 --blocked-by TASK-1
 ```
 
 Each run adds or removes that one edge in that one direction; other relations stay.
@@ -92,8 +92,8 @@ Each run adds or removes that one edge in that one direction; other relations st
 ## Archiving
 
 ```bash
-agent-pm-linear issue archive TASK-1 --dry-run
-agent-pm-linear issue archive TASK-1
+agent-pm-orchestrator issue archive TASK-1 --dry-run
+agent-pm-orchestrator issue archive TASK-1
 ```
 
 Archiving takes every sub-issue with it. `archive` reads all of them, at every depth, and archives only when the issue and each unarchived sub-issue are completed, canceled or duplicate (state type). Otherwise it exits 1 naming the unfinished ones; there is no override. `--dry-run` lists what would go, writing nothing, and exits 0 whatever it finds: read its `result` (`refused` when anything blocks) and `unfinished`. It closes no run and deletes no file.

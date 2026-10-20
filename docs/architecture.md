@@ -14,7 +14,7 @@ flowchart TB
     MC --> HO["engine/holder.py<br>lease while a command runs"] --> RS
   end
   subgraph LO[agent_pm.orchestrator]
-    LCLI["cli.py<br>agent-pm-linear"]
+    LCLI["cli.py<br>agent-pm-orchestrator"]
     R["engine/router.py<br>pick · usage gate · trigger"]
     LR["engine/linear_run.py<br>Delegate ownership · queries"]
     WB["engine/writeback.py<br>one event's write-back"]
@@ -63,7 +63,7 @@ flowchart TB
   WB --> FL
   R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
-  H -.->|"each event: agent-pm-linear writeback"| LCLI
+  H -.->|"each event: agent-pm-orchestrator writeback"| LCLI
   LC -->|"Delegate class methods"| HD
   W -.-> CC
   D & H --> HD

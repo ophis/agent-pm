@@ -1,3 +1,3 @@
 """Shared expectations for orchestrator configuration."""
 
-GATE = "agent-pm-linear router --brake researcher"
+GATE = "agent-pm-orchestrator router --brake researcher"

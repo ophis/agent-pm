@@ -1,4 +1,4 @@
-"""agent-pm-linear issue lookup RESOURCE: the issue_page source listing a resource's entities with
+"""agent-pm-orchestrator issue lookup RESOURCE: the issue_page source listing a resource's entities with
 their fixed fields, every same-named one its own item; labels only those an issue can carry.
 """
 

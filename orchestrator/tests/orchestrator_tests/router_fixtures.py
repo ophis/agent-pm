@@ -714,7 +714,14 @@ class OuterBase(TickBase):
             options,
             {
                 "display": None,
-                "callback": ["agent-pm-linear", "writeback", "--issue", ID, "--workdir", self.rd],
+                "callback": [
+                    "agent-pm-orchestrator",
+                    "writeback",
+                    "--issue",
+                    ID,
+                    "--workdir",
+                    self.rd,
+                ],
                 "overlays": (self.cfg().core,)
                 + (() if tier is None else ({"roles": {role: {"tier": tier}}},)),
             },

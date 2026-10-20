@@ -3,8 +3,8 @@ included), FakeLinear over HTTP through test-only transport with the harness, ro
 accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
 router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
 server for the runs' harness and agent sessions (a command run as from MANAGER's pane too),
-fake_gh as `gh` with REPO a bare repo, and `agent-pm-linear` as entry.py under the fake transport,
-the harness's write-back callback. BinFlow runs router and promote as bin/agent-pm-linear by
+fake_gh as `gh` with REPO a bare repo, and `agent-pm-orchestrator` as entry.py under the fake transport,
+the harness's write-back callback. BinFlow runs router and promote as bin/agent-pm-orchestrator by
 absolute path, as launchd does (FR-25, FR-29).
 """
 
@@ -32,7 +32,7 @@ from utils.tests.case import local_section
 
 ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
 
-BIN = os.path.join(WORKTREE, "bin", "agent-pm-linear")
+BIN = os.path.join(WORKTREE, "bin", "agent-pm-orchestrator")
 
 TESTS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -276,7 +276,7 @@ class TmuxFlow(Flow):
     github.com.
     """
 
-    SHIMS = ("claude", "gh", "agent-pm-linear")
+    SHIMS = ("claude", "gh", "agent-pm-orchestrator")
 
     def setUp(self):
         super().setUp()
@@ -290,7 +290,7 @@ class TmuxFlow(Flow):
         fake_gh.git_shim(self.bin, self.home)
         self.gh_scenario, self.gh = os.path.join(self.root, "gh.json"), copy.deepcopy(GH)
         self.write_gh()
-        with open(callback := os.path.join(self.bin, "agent-pm-linear"), "w") as f:
+        with open(callback := os.path.join(self.bin, "agent-pm-orchestrator"), "w") as f:
             f.write(
                 f"#!/bin/sh\nPYTHONPATH={shlex.quote(self.env()['PYTHONPATH'])} "
                 f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(ENTRY)} "$@"\n'
@@ -375,15 +375,15 @@ class TmuxFlow(Flow):
 
 
 class BinFlow(TmuxFlow):
-    """bin/agent-pm-linear by absolute path with a launchd-like PATH and no PYTHONPATH; its python3
+    """bin/agent-pm-orchestrator by absolute path with a launchd-like PATH and no PYTHONPATH; its python3
     is fake_python.py: this interpreter under the fake Linear transport with the test roots its
     fakes import, the only command added to PATH. The harness calls this installation's
-    `agent-pm-linear` back.
+    `agent-pm-orchestrator` back.
     """
 
     def setUp(self):
         super().setUp()
-        os.unlink(os.path.join(self.bin, "agent-pm-linear"))
+        os.unlink(os.path.join(self.bin, "agent-pm-orchestrator"))
         self.python = os.path.join(self.root, "python")
         os.mkdir(self.python)
         with open(shim := os.path.join(self.python, "python3"), "w") as f:
@@ -399,7 +399,7 @@ class BinFlow(TmuxFlow):
         return env
 
     def start(self, *argv):
-        """bin/agent-pm-linear argv, running: the test reads its output with communicate()."""
+        """bin/agent-pm-orchestrator argv, running: the test reads its output with communicate()."""
         proc = subprocess.Popen(
             [BIN, *argv],
             cwd=self.root,

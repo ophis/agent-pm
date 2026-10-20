@@ -112,7 +112,7 @@ def tui_name(role, issue, sid):
 
 def path():
     """The PATH the router, promote and their tools and runs get, read at call: AGENT_PM_PATH (if
-    set), this installation's bin/ (agent-pm-linear, the harness's write-back callback), then the
+    set), this installation's bin/ (agent-pm-orchestrator, the harness's write-back callback), then the
     default dirs.
     """
     [root] = utils.module_roots(types)

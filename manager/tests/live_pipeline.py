@@ -30,8 +30,8 @@ from manager.tests.live_crew import MANAGER, LiveCrew
 from utils.tests.case import local_section
 
 ID = "TASK-7"
-ROUTER = ("agent-pm-linear", "router", "--issue", ID, "--tui")
-CTL, RESUME = ("agent-pm-linear",), ("agent-pm-linear", "resume", ID)
+ROUTER = ("agent-pm-orchestrator", "router", "--issue", ID, "--tui")
+CTL, RESUME = ("agent-pm-orchestrator",), ("agent-pm-orchestrator", "resume", ID)
 TESTS = os.path.join(REPO, "orchestrator", "tests")
 FAKE_PYTHON = os.path.abspath(fake_python.__file__)
 PR = f"https://github.com/{PROJECT_REPO}/pull/1"

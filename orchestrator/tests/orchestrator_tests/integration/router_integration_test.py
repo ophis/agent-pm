@@ -1,5 +1,5 @@
 """router.py as a subprocess: it detaches the run's LinearRun, whose harness runs on a private tmux
-server and calls back agent-pm-linear writeback; fake_claude as client claude, FakeLinear over HTTP.
+server and calls back agent-pm-orchestrator writeback; fake_claude as client claude, FakeLinear over HTTP.
 A claim runs to In Review; a crash resumes the same session; a Linear failure mid write-back fails
 its callback, and Recover then writes the outcome back in process, without an agent; a Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
 SIGTERM'd harness ends its run and its agent; the researcher's gate runs on a session's PYTHONPATH.

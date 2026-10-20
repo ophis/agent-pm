@@ -17,7 +17,7 @@ from utils.tests.sandbox import reap
 
 STARTER = """
 import os, pathlib, subprocess, sys, time
-record = subprocess.run(['agent-pm-linear', 'start', 'actual'], check=True, capture_output=True, text=True).stdout
+record = subprocess.run(['agent-pm-orchestrator', 'start', 'actual'], check=True, capture_output=True, text=True).stdout
 sys.stdout.write(record)
 sys.stdout.flush()
 pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))

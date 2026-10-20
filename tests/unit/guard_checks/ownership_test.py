@@ -558,7 +558,7 @@ class ManagerBoundaries(Sample):
         root = self.tree(
             {
                 base: 'a = ("agent-pm-session", "start", key, *argv)\n'
-                'b = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)\n'
+                'b = ("agent-pm-orchestrator", "router", "--issue", key, "--tui", *argv)\n'
                 'c = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)\n'
             }
         )

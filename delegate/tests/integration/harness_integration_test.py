@@ -286,8 +286,8 @@ class Views(HarnessCase):
         record = delegate.detach(
             outer={
                 "kind": "outer",
-                "ctl": ["agent-pm-linear"],
-                "resume": ["agent-pm-linear", "resume", "id"],
+                "ctl": ["agent-pm-orchestrator"],
+                "resume": ["agent-pm-orchestrator", "resume", "id"],
             }
         )
         before = self.metadata()
@@ -862,8 +862,8 @@ class Names(HarnessCase):
 class Outer(HarnessCase):
     OUTER = {
         "kind": "pipeline",
-        "ctl": ("agent-pm-linear",),
-        "resume": ("agent-pm-linear", "resume", "TASK-1"),
+        "ctl": ("agent-pm-orchestrator",),
+        "resume": ("agent-pm-orchestrator", "resume", "TASK-1"),
     }
 
     def test_the_default_record_is_a_role_run_answered_by_agent_pm_delegate(self):

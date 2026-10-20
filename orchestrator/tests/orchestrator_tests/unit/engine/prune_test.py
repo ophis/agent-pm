@@ -955,7 +955,7 @@ class Stalled(PruneScenario):
 
 
 class PruneCommand(PruneScenario):
-    """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
+    """agent-pm-orchestrator prune: one prune tick alone, as promote's tick runs it."""
 
     def command(self, prune_gql, *argv):
         write(
@@ -1032,4 +1032,4 @@ class PruneCommand(PruneScenario):
             with self.subTest(argv=argv):
                 code, out, err, said = self.command(gql_for({}), *argv)
                 self.assertEqual((code, out, said), (2, "", ""))
-                self.assertIn("agent-pm-linear prune", err)
+                self.assertIn("agent-pm-orchestrator prune", err)

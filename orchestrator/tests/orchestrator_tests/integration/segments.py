@@ -374,7 +374,7 @@ class Segment(TmuxFlow):
         )
         self.assertEqual(
             (record.ctl, record.resume),
-            (("agent-pm-linear",), ("agent-pm-linear", "resume", ident)),
+            (("agent-pm-orchestrator",), ("agent-pm-orchestrator", "resume", ident)),
         )
         self.assertIn(f"router.py: {ident}: attach: tmux attach -t '={sessions[1]}'\n", res.stderr)
         for name in sessions:

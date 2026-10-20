@@ -313,7 +313,7 @@ Examples:
 Next help:
   agent-pm-session --help          workers, clients, hosts and placement
   agent-pm-delegate run --help     roles and tasks
-  agent-pm-linear router --help    issue runs
+  agent-pm-orchestrator router --help    issue runs
 """,
     )
     common = argparse.ArgumentParser(add_help=False)
@@ -442,7 +442,7 @@ Examples:
             "issue",
             "ISSUE",
             "Start an attended issue run and track its Record",
-            f"{LayerCommand.LINEAR} router",
+            f"{LayerCommand.ORCHESTRATOR} router",
             """ISSUE is a configured board issue identifier and the roster entry name.
 Crew supplies router --issue ISSUE --tui, a session identity and events file.
 Requires board credentials, a configured role/client and an eligible issue;

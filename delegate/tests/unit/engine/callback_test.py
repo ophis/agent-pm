@@ -210,12 +210,13 @@ class Delivery(Case):
 
     def test_a_nonzero_exit_names_its_last_stderr_line_and_keeps_its_tail(self):
         Child.outcome = 2
-        Child.stderr = "warning: x\nagent-pm-linear: config.local.toml: unknown key 'k'\n\n"
+        Child.stderr = "warning: x\nagent-pm-orchestrator: config.local.toml: unknown key 'k'\n\n"
         with mock.patch("sys.stderr", new_callable=io.StringIO) as harness:
             self.assertIsNone(self.callback(Begun(SID)))
         (row,) = self.errors()
         self.assertEqual(
-            row["error"], "callback exited 2: agent-pm-linear: config.local.toml: unknown key 'k'"
+            row["error"],
+            "callback exited 2: agent-pm-orchestrator: config.local.toml: unknown key 'k'",
         )
         self.assertEqual(row["stderr"], Child.stderr)
         self.assertEqual(harness.getvalue(), Child.stderr)

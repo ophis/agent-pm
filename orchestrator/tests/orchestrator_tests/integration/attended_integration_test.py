@@ -3,8 +3,8 @@ claim or a --now tick prints the run's one pipeline Record and its sessions and 
 (FR-28); its harness and TUI live, the TUI in MANAGER's grid, the harness listed by MANAGER's
 `agent-pm-session ls --here`; written back as a headless run is; the events file gets the TUI's
 turn ends, one outcome and the harness's exit; an idle tick prints nothing. Ending the harness
-(kill-session, or `agent-pm-linear close ID`) ends the TUI and leaves the issue In Progress for the
-next router.py --issue to resume. `agent-pm-linear resume ID` brings a closed TUI's run back attended
+(kill-session, or `agent-pm-orchestrator close ID`) ends the TUI and leaves the issue In Progress for the
+next router.py --issue to resume. `agent-pm-orchestrator resume ID` brings a closed TUI's run back attended
 at its display, its Record unchanged. No place for the TUI, a bad display or events file, or none:
 exit 2 before any Linear request, starting nothing.
 """

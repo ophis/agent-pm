@@ -1,4 +1,4 @@
-"""agent-pm-linear issue: help, the shared stdout/stderr/exit rules, and read, move, comment, archive,
+"""agent-pm-orchestrator issue: help, the shared stdout/stderr/exit rules, and read, move, comment, archive,
 relation and label swap through main.
 """
 
@@ -51,7 +51,7 @@ class Help(Case):
                 cli.main(argv)
             self.assertEqual(cm.exception.code, 0)
             text = output.getvalue()
-            for phrase in ("agent-pm-linear issue read TASK-1", "8192", "Exit 0", "--help"):
+            for phrase in ("agent-pm-orchestrator issue read TASK-1", "8192", "Exit 0", "--help"):
                 self.assertIn(phrase, text)
 
     def test_lookup_help_names_resources_fields_pages_and_examples(self):
@@ -70,7 +70,7 @@ class Help(Case):
             "1-50 (default 20)",
             "next_cursor",
             "--full --output FILE",
-            "agent-pm-linear issue lookup milestones --project",
+            "agent-pm-orchestrator issue lookup milestones --project",
             "8192",
             "Exit 0",
         ):
@@ -91,8 +91,8 @@ class Help(Case):
             "parent_id",
             "most\n  recently updated first",
             "1-50 (default 20)",
-            "agent-pm-linear issue list --assignee me",
-            "agent-pm-linear issue lookup --help",
+            "agent-pm-orchestrator issue list --assignee me",
+            "agent-pm-orchestrator issue lookup --help",
             "8192",
         ):
             self.assertIn(phrase, text)
@@ -191,7 +191,9 @@ class Read(IssueCase):
         view = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(view["truncated"], ["comments"])
-        self.assertEqual(view["continue"], "agent-pm-linear issue read TASK-2 --full --output FILE")
+        self.assertEqual(
+            view["continue"], "agent-pm-orchestrator issue read TASK-2 --full --output FILE"
+        )
 
     def test_stdout_stays_within_eight_kib_as_valid_json(self):
         wide = "界" * 255
@@ -270,7 +272,9 @@ class Read(IssueCase):
             (view["id"], view["identifier"], view["url"], view["parent"]["identifier"]),
             ("id-TASK-2", "TASK-2", "https://linear.app/t/issue/TASK-2", "TASK-9"),
         )
-        self.assertEqual(view["continue"], "agent-pm-linear issue read TASK-2 --full --output FILE")
+        self.assertEqual(
+            view["continue"], "agent-pm-orchestrator issue read TASK-2 --full --output FILE"
+        )
         for path, value in (
             ("parent.title", view["parent"]["title"]),
             ("project.name", view["project"]["name"]),
@@ -344,7 +348,7 @@ class Move(IssueCase):
             with self.subTest(phrase=phrase):
                 code, out, err = self.run_main(["move", "TASK-2", "--state", state], gql)
                 self.assertEqual((code, out), (want, b""))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
                 self.assertLessEqual(len(gql.writes), 1)
 
@@ -385,7 +389,7 @@ class Comment(IssueCase):
                     ["comment", "TASK-2", "--body-file", path], gql, stdin
                 )
                 self.assertEqual((code, out, gql.calls), (2, b"", []))
-                self.assertTrue(err.startswith("agent-pm-linear issue: --body-file"), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: --body-file"), err)
 
     def test_a_file_body_needs_no_stdin(self):
         path = os.path.join(self.root, "body.md")
@@ -408,7 +412,7 @@ class Comment(IssueCase):
         code, out, err = self.run_main(["comment", "TASK-2", "--body-file", "-"], gql, b"hi")
         self.assertEqual((code, out, len(gql.writes)), (1, b"", 1))
         self.assertIn("result unknown", err)
-        self.assertIn("agent-pm-linear issue read TASK-2", err)
+        self.assertIn("agent-pm-orchestrator issue read TASK-2", err)
 
 
 class Create(IssueCase):
@@ -461,7 +465,7 @@ class Create(IssueCase):
         report = json.loads(out)
         self.assertEqual((report["result"], report["issue"]["identifier"]), ("partial", "TASK-9"))
         self.assertEqual(
-            report["recover"], ["agent-pm-linear issue relation add TASK-9 --blocks TASK-3"]
+            report["recover"], ["agent-pm-orchestrator issue relation add TASK-9 --blocks TASK-3"]
         )
         self.assertIn("relation add TASK-9 --blocks TASK-3", err)
         self.assertIn("not run create again", err)
@@ -477,7 +481,7 @@ class Create(IssueCase):
         self.assertTrue(json.loads(out)["truncated"])
 
     def test_done_and_failed_give_way_before_any_recover_command(self):
-        many = [f"TASK-{n}" for n in range(100, 220)]
+        many = [f"TASK-{n}" for n in range(100, 205)]
         failed = [LinearError("x" * 300)] * (len(many) - 2)
         gql = create_gql(relations=[{"success": True}] * 2 + failed)
         argv = ["create", "--title", "Fix", "--body-file", "-", "--blocks", *many]
@@ -487,7 +491,7 @@ class Create(IssueCase):
         report = json.loads(out)
         self.assertEqual(
             report["recover"],
-            [f"agent-pm-linear issue relation add TASK-9 --blocks {n}" for n in many[2:]],
+            [f"agent-pm-orchestrator issue relation add TASK-9 --blocks {n}" for n in many[2:]],
         )
         self.assertEqual(report["done"], [{"blocks": "TASK-100"}, {"blocks": "TASK-101"}])
         self.assertLess(len(report["failed"]), len(failed))
@@ -556,7 +560,7 @@ class Archive(IssueCase):
             with self.subTest(phrase=phrase):
                 code, out, err = self.run_main(["archive", "TASK-1"], gql)
                 self.assertEqual((code, out), (want, b""))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
                 self.assertLessEqual(len(err.encode("utf-8")), 8192)
         self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 0, 0, 1, 1])
@@ -637,7 +641,7 @@ class Relation(IssueCase):
                     ["relation", "add", "TASK-1", "--blocks", other], gql
                 )
                 self.assertEqual((code, out), (want, b""))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
         self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1, 1])
 
@@ -696,7 +700,7 @@ class LabelSwap(IssueCase):
                     ["label", "swap", "TASK-2", "--from", "bug", "--to", new], gql
                 )
                 self.assertEqual((code, out), (want, b""))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
         self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1])
 
@@ -726,7 +730,7 @@ class Failures(IssueCase):
             with self.subTest(phrase=phrase):
                 code, out, err = self.run_main(argv, gql)
                 self.assertEqual((code, out), (want, b""))
-                self.assertTrue(err.startswith("agent-pm-linear issue: "), err)
+                self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
 
     def test_configuration_errors_exit_two(self):
@@ -755,7 +759,9 @@ class Failures(IssueCase):
         ]
         code, out, err = self.run_main(["read", "TASK-2"], Gql(None, fail=GraphQLErrors(raw)))
         self.assertEqual((code, out), (1, b""))
-        self.assertEqual(err, "agent-pm-linear issue: linear api error: boom (INPUT_ERROR); two\n")
+        self.assertEqual(
+            err, "agent-pm-orchestrator issue: linear api error: boom (INPUT_ERROR); two\n"
+        )
 
     def test_many_graphql_messages_stay_capped(self):
         raw = [{"message": "错" * 1000, "extensions": {"code": "E"}} for _ in range(50)]
@@ -877,7 +883,9 @@ class Full(IssueCase):
         code, out, err = self.run_main(["read", "TASK-2", "--full", "--output", path], gql)
         self.assertEqual((code, out), (1, b""))
         self.assertEqual(err.count("\n"), 1)
-        self.assertTrue(err.startswith("agent-pm-linear issue: TASK-2: children page missing"), err)
+        self.assertTrue(
+            err.startswith("agent-pm-orchestrator issue: TASK-2: children page missing"), err
+        )
         self.assertNotIn("Traceback", err)
         self.assertFalse(os.path.exists(path))
 

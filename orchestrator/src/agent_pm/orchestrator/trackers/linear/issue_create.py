@@ -1,4 +1,4 @@
-"""agent-pm-linear issue create: plan resolves every reference before anything is written; create
+"""agent-pm-orchestrator issue create: plan resolves every reference before anything is written; create
 makes the issue with only the given fields (the team's Backlog state unless --state), then each
 blocking relation. Creating the issue is never retried; a relation that fails leaves the issue
 made, and RelationsFailed names the commands that add only the failed ones.
@@ -20,7 +20,7 @@ from agent_pm.orchestrator.trackers.linear.client import messages
 
 BACKLOG = "Backlog"
 ERROR_CHARS = 200
-RELATION = "agent-pm-linear issue relation add"
+RELATION = "agent-pm-orchestrator issue relation add"
 M_CREATE = (
     "mutation($in: IssueCreateInput!) { issueCreate(input: $in) "
     "{ success issue { id identifier url } } }"
@@ -89,7 +89,7 @@ def create(gql, fields, relations, viewer):
         check = f"--team {fields['teamId']} --query={shlex.quote(fields['title'])}"
         raise WriteUnknown(
             f"create: result unknown ({error}): look for it with "
-            f"agent-pm-linear issue list {check} before creating it again"
+            f"agent-pm-orchestrator issue list {check} before creating it again"
         ) from None
     done, failed = [], []
     for option, other in relations:

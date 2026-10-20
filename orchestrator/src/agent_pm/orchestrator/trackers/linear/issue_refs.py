@@ -1,4 +1,4 @@
-"""Linear references for agent-pm-linear issue options: each resource's connection as an
+"""Linear references for agent-pm-orchestrator issue options: each resource's connection as an
 issue_page source, and resolution of an option's value to the one entity it names in scope. A value
 is an id or an exact name (a team also takes its key, a user its email or `me`); no match, several or one out of scope raises
 IssueError with the candidates and the lookup command that lists them, never guessing one.
@@ -21,7 +21,7 @@ from agent_pm.orchestrator.trackers.linear.client import messages
 
 NOT_FOUND = "Entity not found"
 CANDIDATES = 10
-LOOKUP = "agent-pm-linear issue lookup"
+LOOKUP = "agent-pm-orchestrator issue lookup"
 TEAM = "id name key"
 STATE = "id name type team { id }"
 LABEL = "id name isGroup retiredAt team { id } parent { id }"
@@ -279,7 +279,7 @@ def milestone(gql, project_id, value):
 
 def user(gql, value):
     """The workspace user whose id, exact name or email (any case) is value; me is the account
-    agent-pm-linear runs as.
+    agent-pm-orchestrator runs as.
     """
     if value == "me":
         return gql(Q_ME)["viewer"]

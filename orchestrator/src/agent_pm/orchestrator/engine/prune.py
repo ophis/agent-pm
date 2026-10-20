@@ -26,7 +26,7 @@ Delegate's clean finds no live run (its refusal skips it). An issue without agen
 attached; one of a kind no longer configured is neither queried nor logged. Run inventory unknown: an
 error, and no issue is pruned. Each step is logged (event_log.log, src prune); a failure is logged
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
-ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
+ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
 """
 
 import functools
@@ -73,7 +73,7 @@ DELETES = {False: "agent dir", True: "checkouts and temp files"}  # by remove_ag
 ARCHIVE_ROLES = ("pm", "engineer")
 HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
-Usage: agent-pm-linear prune [--dry-run]
+Usage: agent-pm-orchestrator prune [--dry-run]
 
 Arguments and options:
   --dry-run   Print the cleanup plan without closing, deleting or archiving.
@@ -85,7 +85,7 @@ Arguments and options:
 Prerequisites and effects:
   Requires configured Linear/Delegate settings, Linear access, harness_key
   Keychain credentials and access to the configured work_dir/local clones.
-  Configuration and executable lookup: agent-pm-linear --help
+  Configuration and executable lookup: agent-pm-orchestrator --help
   For issues Done/Canceled/Duplicate (any canceled-type state) at least 2
   hours (the latest of their move into one and Linear's canceledAt and
   completedAt; unknown age is skipped), close recorded runs and
@@ -115,14 +115,14 @@ Prerequisites and effects:
   Promote also runs this cleanup after each tick.
 
 Example (configured Linear access and finished issues):
-  agent-pm-linear prune --dry-run
-  Inspect the plan before running agent-pm-linear prune to delete/archive.
+  agent-pm-orchestrator prune --dry-run
+  Inspect the plan before running agent-pm-orchestrator prune to delete/archive.
 
 Recovery and next help:
   Resolve logged close/cleanup refusals or unavailable inventory, then retry
   the preview. Back up agent work before allowing cleanup.
-  Promotion and its cleanup: agent-pm-linear promote --help
-  Command discovery: agent-pm-linear --help
+  Promotion and its cleanup: agent-pm-orchestrator promote --help
+  Command discovery: agent-pm-orchestrator --help
 """
 
 

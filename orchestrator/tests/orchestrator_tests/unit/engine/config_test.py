@@ -5,6 +5,7 @@ import dataclasses
 import io
 import json
 import os
+import plistlib
 import tempfile
 import tomllib
 from importlib.resources import files
@@ -687,6 +688,19 @@ class CommittedConfiguration(Case):
         )
         self.assertIs(HARNESS_DELEGATE, delegate.HarnessDelegate)
 
+    def test_launchd_jobs_and_the_packaged_gate_run_agent_pm_orchestrator(self):
+        for job in ("router", "promote"):
+            plist = os.path.join(REPO, "orchestrator", "launchd", f"com.ophis.agent-pm.{job}.plist")
+            with open(plist, "rb") as f:
+                program = plistlib.load(f)["ProgramArguments"][0]
+            self.assertTrue(program.endswith("/bin/agent-pm-orchestrator"), program)
+        with files("agent_pm.orchestrator").joinpath("config.toml").open("rb") as source:
+            committed = tomllib.load(source)
+        self.assertEqual(
+            committed["core"]["roles"]["researcher"]["gate"],
+            "agent-pm-orchestrator router --brake researcher",
+        )
+
     def setUp(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.local = os.path.join(self.agent_pm, "config.local.toml")
@@ -991,7 +1005,7 @@ class ExecutablePath(Case):
 
     def test_agent_pm_path_then_this_installations_bin_then_the_default(self):
         installed = os.path.join(REPO, "bin")
-        self.assertTrue(os.path.isfile(os.path.join(installed, "agent-pm-linear")))
+        self.assertTrue(os.path.isfile(os.path.join(installed, "agent-pm-orchestrator")))
         for home in (self.home, os.path.join(self.home, "other")):
             default = (
                 f"{installed}:/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"

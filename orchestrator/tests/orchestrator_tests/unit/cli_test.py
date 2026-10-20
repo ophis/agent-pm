@@ -119,9 +119,9 @@ class Commands(Case):
                             result = error.code
                     self.assertEqual((result, errors.getvalue()), (0, ""))
                     text = output.getvalue()
-                    self.assertIn("agent-pm-linear", text)
+                    self.assertIn("agent-pm-orchestrator", text)
                     self.assertIn("Example", text)
-                    self.assertIn("agent-pm-linear --help", text)
+                    self.assertIn("agent-pm-orchestrator --help", text)
 
     def test_run_control_help_explains_selection_effects_and_recovery(self):
         expected = {
@@ -213,7 +213,9 @@ class Commands(Case):
     def test_resume_input_is_refused_before_loading_config(self):
         result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
         self.assertEqual((result, output), (2, ""))
-        self.assertEqual(errors, "agent-pm-linear: pipeline answers belong on the issue board\n")
+        self.assertEqual(
+            errors, "agent-pm-orchestrator: pipeline answers belong on the issue board\n"
+        )
 
     def test_help_lists_only_existing_commands(self):
         output = io.StringIO()
@@ -237,7 +239,7 @@ class Commands(Case):
                     with redirect_stdout(output), redirect_stderr(errors):
                         self.assertEqual(cli.main([command, flag]), 0)
                     self.assertEqual(errors.getvalue(), "")
-                    self.assertIn(f"agent-pm-linear {command}", output.getvalue())
+                    self.assertIn(f"agent-pm-orchestrator {command}", output.getvalue())
                     for option in options:
                         self.assertIn(option, output.getvalue())
 
@@ -254,15 +256,15 @@ class Commands(Case):
                 with redirect_stderr(output), self.assertRaises(SystemExit) as raised:
                     cli.main(arguments)
                 self.assertEqual(raised.exception.code, 2)
-                self.assertIn("agent-pm-linear", output.getvalue())
+                self.assertIn("agent-pm-orchestrator", output.getvalue())
 
 
 class InsideAnAgentSession(Case):
     def test_resume_exits_2_before_config_and_status_still_runs(self):
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
             for command, first in (
-                ("resume", "agent-pm-linear: refused inside an agent session"),
-                ("status", "agent-pm-linear: orchestrator/config.toml: required, unset:"),
+                ("resume", "agent-pm-orchestrator: refused inside an agent session"),
+                ("status", "agent-pm-orchestrator: orchestrator/config.toml: required, unset:"),
             ):
                 errors = io.StringIO()
                 with self.subTest(command=command), redirect_stderr(errors):
@@ -285,14 +287,14 @@ def plist(job):
 
 class LaunchdJobs(Case):
     def test_each_job_runs_its_command_from_the_deploy_checkout(self):
-        self.assertTrue(os.access(os.path.join(REPO, "bin", "agent-pm-linear"), os.X_OK))
+        self.assertTrue(os.access(os.path.join(REPO, "bin", "agent-pm-orchestrator"), os.X_OK))
         for job, flags in JOBS.items():
             with self.subTest(job=job):
                 job_plist = plist(job)
                 self.assertEqual(job_plist["Label"], f"com.ophis.agent-pm.{job}")
                 self.assertEqual(
                     job_plist["ProgramArguments"],
-                    [f"{DEPLOY}/bin/agent-pm-linear", job, *flags],
+                    [f"{DEPLOY}/bin/agent-pm-orchestrator", job, *flags],
                 )
 
     def test_path_finds_claude_tmux_and_homebrew_python_before_the_system_one(self):
@@ -511,7 +513,9 @@ class Queries(RunCase):
         for tty in (False, True):
             result, output, errors = _call(["resume", "TASK-1"], tty=tty)
             self.assertEqual((result, output), (1, ""))
-            self.assertEqual(errors, "agent-pm-linear: TASK-1: resume blocked by usage gate\n")
+            self.assertEqual(
+                errors, "agent-pm-orchestrator: TASK-1: resume blocked by usage gate\n"
+            )
         self.assertEqual(ReadyDelegate.usage_calls, [])
         self.assertFalse(FakeDelegate.attach(self.cfg.issue_workdir("TASK-1")).alive())
 
@@ -537,7 +541,7 @@ class Queries(RunCase):
             result, output, errors = _call([command, "TASK-2"])
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(len(errors.splitlines()), 1)
-            self.assertTrue(errors.startswith("agent-pm-linear: TASK-2: "))
+            self.assertTrue(errors.startswith("agent-pm-orchestrator: TASK-2: "))
 
     def test_invalid_or_duplicate_input_has_no_control_effect(self):
         owner, record = self.start()
@@ -559,7 +563,7 @@ class Queries(RunCase):
         result, output, errors = _call(["status", "TASK-8", "TASK-1"])
         self.assertEqual(result, 2)
         self.assertEqual(Status.parse(output).name, "TASK-1")
-        self.assertEqual(errors, "agent-pm-linear: TASK-8: TASK-8: no recorded run\n")
+        self.assertEqual(errors, "agent-pm-orchestrator: TASK-8: TASK-8: no recorded run\n")
 
 
 class WritebackUsage(RunCase):
@@ -601,7 +605,7 @@ class WritebackUsage(RunCase):
                     ["writeback", "--issue", "TASK-1", "--workdir", workdir_arg], stdin=stdin
                 )
                 self.assertEqual((result, output), (2, ""))
-                self.assertIn("agent-pm-linear writeback: ", errors)
+                self.assertIn("agent-pm-orchestrator writeback: ", errors)
                 self.assertIn(error, errors)
                 row = logged(self.cfg.logs_dir)[-1]
                 self.assertEqual(
@@ -627,8 +631,8 @@ class WritebackUsage(RunCase):
         self.assertEqual(
             errors.splitlines(),
             [
-                f"agent-pm-linear writeback: ignored: {unknown}",
-                f"agent-pm-linear writeback: TASK-1: no start row for session {other}",
+                f"agent-pm-orchestrator writeback: ignored: {unknown}",
+                f"agent-pm-orchestrator writeback: TASK-1: no start row for session {other}",
             ],
         )
         self.assertEqual(
@@ -650,7 +654,7 @@ class WritebackUsage(RunCase):
         refused = (
             "orchestrator/config.toml: [client_max_runs] opencode must be a whole number >= 1: 0"
         )
-        self.assertEqual((result, output, errors), (2, "", f"agent-pm-linear: {refused}\n"))
+        self.assertEqual((result, output, errors), (2, "", f"agent-pm-orchestrator: {refused}\n"))
         row = logged(self.cfg.logs_dir)[-1]
         self.assertEqual(
             {k: v for k, v in row.items() if k != "ts"},
@@ -667,5 +671,5 @@ class WritebackUsage(RunCase):
         self.append_local("\nnot = [toml\n")
         result, _, errors = _call(["writeback", "--issue", "TASK-1", "--workdir", "/w"])
         self.assertEqual(result, 2)
-        self.assertTrue(errors.startswith("agent-pm-linear: "), errors)
+        self.assertTrue(errors.startswith("agent-pm-orchestrator: "), errors)
         self.assertEqual(logged(self.cfg.logs_dir), [])

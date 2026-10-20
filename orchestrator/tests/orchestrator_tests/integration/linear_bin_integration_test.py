@@ -1,4 +1,4 @@
-"""bin/agent-pm-linear run by absolute path from a temp cwd, no PYTHONPATH, a minimal PATH."""
+"""bin/agent-pm-orchestrator run by absolute path from a temp cwd, no PYTHONPATH, a minimal PATH."""
 
 import os
 import re
@@ -9,7 +9,7 @@ import tempfile
 
 from orchestrator_tests.case import REPO, Case
 
-BIN = os.path.join(REPO, "bin", "agent-pm-linear")
+BIN = os.path.join(REPO, "bin", "agent-pm-orchestrator")
 MINIMAL = "/usr/bin:/bin"
 COMMANDS = [
     "router",
@@ -77,13 +77,13 @@ class Command(Case):
     def test_router_help_exits_0(self):
         done = self.run_bin(self.minimal(), "router", "--help")
         self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertIn("agent-pm-linear router", done.stdout)
+        self.assertIn("agent-pm-orchestrator router", done.stdout)
 
     def test_it_sets_pythonpath_to_four_roots_and_puts_its_dir_first_on_path(self):
         repo = os.path.join(self.tmp, "repo")
         bin_dir = os.path.join(repo, "bin")
         os.makedirs(bin_dir)
-        copy = os.path.join(bin_dir, "agent-pm-linear")
+        copy = os.path.join(bin_dir, "agent-pm-orchestrator")
         shutil.copy2(BIN, copy)
         probe = os.path.join(bin_dir, "python3")
         with open(probe, "w", encoding="utf-8") as f:
