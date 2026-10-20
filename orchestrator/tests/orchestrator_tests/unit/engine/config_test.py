@@ -874,10 +874,10 @@ class CommittedConfiguration(Case):
         self.addCleanup(tmp.cleanup)
         flow = Path(tmp.name, "workflow.toml")
         for text, message in (
-            ("[roles\n", "Expected ']'"),
+            ("[[stage]\n", "Expected ']]'"),
             (
-                '[roles.pm]\ninput = "x"\n',
-                "roles.pm.input: want one of research, design, build: 'x'",
+                '[[stage]]\nrole = "pm"\ninput = "x"\n',
+                "stage pm: input: want one of research, design, build: 'x'",
             ),
         ):
             flow.write_text(text, encoding="utf-8")
@@ -887,7 +887,9 @@ class CommittedConfiguration(Case):
                     self.assertRaises(config.ConfigError) as cm,
                 ):
                     self.load(local)
-                self.assertTrue(str(cm.exception).startswith(f"{workflow.REL}: "), cm.exception)
+                self.assertTrue(
+                    str(cm.exception).startswith(f"{workflow.PACKAGED}: "), cm.exception
+                )
                 self.assertIn(message, str(cm.exception))
         # a bad read keeps the last good one
         self.assertEqual(config.TASKS["pm"].title_prefix, "PRD")
