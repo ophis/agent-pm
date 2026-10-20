@@ -292,6 +292,7 @@ def tree(ident="TASK-1", kind="completed", *children, archived=None):
         "identifier": ident,
         "url": f"https://linear.app/t/issue/{ident}",
         "archivedAt": archived,
+        "updatedAt": "2026-10-01T00:00:00+00:00",
         "state": {"name": kind.title(), "type": kind},
         "kids": list(children),
     }
@@ -322,7 +323,7 @@ class ArchiveGql:
             return None
         kids = node["kids"][offset : offset + self.CHILDREN]
         more = offset + self.CHILDREN < len(node["kids"])
-        nodes = [{k: kid[k] for k in ("id", "identifier", "state")} for kid in kids]
+        nodes = [{k: kid[k] for k in ("id", "identifier", "updatedAt", "state")} for kid in kids]
         return conn(nodes, more=more, cursor=str(offset + self.CHILDREN) if more else None)
 
     def _plan(self, key):

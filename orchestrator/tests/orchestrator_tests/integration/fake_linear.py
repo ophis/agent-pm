@@ -521,6 +521,7 @@ class FakeLinear:
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
             },
             "archivedAt": stamp() if rec["archived"] else None,
+            "updatedAt": max([rec["createdAt"], *(h["createdAt"] for h in rec["history"])]),
             "history": {
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},

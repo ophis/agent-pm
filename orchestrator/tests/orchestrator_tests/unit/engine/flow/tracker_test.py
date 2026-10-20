@@ -7,6 +7,7 @@ from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
     ArchivePlan,
     ArchiveRefused,
+    Changes,
     IssueState,
     Snapshot,
     SubIssue,
@@ -96,4 +97,6 @@ class Defaults(Case):
         self.assertEqual(adapter.reads, ["TASK-1", "TASK-2"])
 
     def test_no_change_feed(self):
-        self.assertIsNone(Reader({}).changed(datetime(2026, 1, 1, tzinfo=UTC), 3))
+        self.assertEqual(
+            Reader({}).changed(datetime(2026, 1, 1, tzinfo=UTC), 3), Changes(None, None)
+        )

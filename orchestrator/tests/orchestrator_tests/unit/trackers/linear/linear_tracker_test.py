@@ -29,6 +29,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
     ArchiveRefused,
+    Changes,
     Comment,
     Detail,
     Finished,
@@ -61,12 +62,13 @@ from orchestrator_tests.unit.board_ids import DUPLICATE, STATES, TASK_GROUP, TEA
 # sha256 of each query's text (orchestrator-revamped's but the archive rule's): the fake Linear
 # pairs queries by text
 BASE = {
-    # TASK-809: its state's type
-    "Q_ISSUE": "4fbcd85c850aec9d01999f6470af96e24a9708d43211ca81c691915e2a2a9f6e",
-    "Q_FINISHED": "d3e6e6d4ad803579fbc6129d0f7a52dd3ec0eaa7b337641eb16ec71a3eb4011f",
-    # TASK-809: each sub-issue's first child, so a leaf is not read
-    "Q_ARCHIVE": "500828f8d1a38fe25516de7caf6b04dd2ee838309c196bd0ce62e33ef924e736",
-    "Q_CHILDREN": "e687760a79592679d72265b9f4a762c262a06f2524d59e1400ba747f98ee5af3",
+    # TASK-809: its state's type and updatedAt
+    "Q_ISSUE": "176947979d752d5bbfd43f0a6fae9d57b76222c1d68b91c67fc4db0ecf00bb52",
+    # TASK-809: updatedAt
+    "Q_FINISHED": "f85255549025f0ccbfd2cd450dcf6b041e41d9c2baf838fd4a7a3d9a451e6633",
+    # TASK-809: each sub-issue's first child, so a leaf is not read, and updatedAt
+    "Q_ARCHIVE": "0a19726cff83adff30e527ac21e2832ea2ed120ec6880e03772006c3b899a209",
+    "Q_CHILDREN": "91955ba5094f94357fc88a229f81f5b6f79249d3d3154a460514a787f610b7c5",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
     "M_TITLE": "1b74f5b2bb7775a1147c8a6bac7f50c09a196de9122da2c52e7cd64eaf45d7be",
     "M_ATTACH": "8db2cfd3ed91f6b4daf1aeed80183275d14953ff02982847658243be789af1f4",
@@ -128,6 +130,9 @@ def ago(hours):
     return NOW - timedelta(hours=hours)
 
 
+UPDATED = ago(0.25)  # every node's updatedAt
+
+
 def moves(*pairs):
     """History nodes, newest first as Linear lists them: (hours ago, state id)."""
     return {"nodes": [{"createdAt": ago(h).isoformat(), "toStateId": s} for h, s in pairs]}
@@ -136,6 +141,7 @@ def moves(*pairs):
 def issue(state, *pairs, canceled=None, completed=None, kind="started"):
     return {
         "state": {"id": state, "type": kind},
+        "updatedAt": UPDATED.isoformat(),
         "canceledAt": canceled and ago(canceled).isoformat(),
         "completedAt": completed and ago(completed).isoformat(),
         "history": moves(*pairs),
@@ -143,7 +149,13 @@ def issue(state, *pairs, canceled=None, completed=None, kind="started"):
 
 
 def sub(ident, kind="completed"):
-    return {"id": f"id-{ident}", "identifier": ident, "state": {"name": kind.title(), "type": kind}}
+    state = {"name": kind.title(), "type": kind}
+    return {
+        "id": f"id-{ident}",
+        "identifier": ident,
+        "updatedAt": UPDATED.isoformat(),
+        "state": state,
+    }
 
 
 def kids(*nodes, cursor=None):
@@ -165,7 +177,7 @@ def later(page):
 
 
 def item(ident, kind="completed"):
-    return SubIssue(f"id-{ident}", ident, kind.title(), kind in ops.DONE)
+    return SubIssue(f"id-{ident}", ident, kind.title(), kind in ops.DONE, UPDATED)
 
 
 def names():
@@ -249,10 +261,12 @@ class Read(Case):
         }
         for state, abstract in expected.items():
             with self.subTest(state=abstract, id=state):
-                self.assertEqual(self.read(issue(state, (3, state))), Snapshot(abstract, ago(3)))
+                self.assertEqual(
+                    self.read(issue(state, (3, state))), Snapshot(abstract, ago(3), UPDATED)
+                )
 
     def test_other_state_is_none(self):
-        self.assertEqual(self.read(issue(TRIAGE, (5, TRIAGE))), Snapshot(None, ago(5)))
+        self.assertEqual(self.read(issue(TRIAGE, (5, TRIAGE))), Snapshot(None, ago(5), UPDATED))
 
     def test_finished_since_is_latest_stamp_or_move(self):
         done, canceled = STATES["done"], STATES["canceled"]
@@ -269,8 +283,8 @@ class Read(Case):
     def test_open_since_is_latest_move_into_its_state(self):
         review = STATES["in_review"]
         found = issue(review, (1, STATES["handoff"]), (4, review), (10, review))
-        self.assertEqual(self.read(found), Snapshot(IssueState.REVIEW, ago(4)))
-        self.assertEqual(self.read(issue(review)), Snapshot(IssueState.REVIEW, None))
+        self.assertEqual(self.read(found), Snapshot(IssueState.REVIEW, ago(4), UPDATED))
+        self.assertEqual(self.read(issue(review)), Snapshot(IssueState.REVIEW, None, UPDATED))
 
     def test_a_shared_todo_or_in_progress_id_stays_ready_or_running(self):
         for key, active, abstract in (
@@ -282,7 +296,7 @@ class Read(Case):
                 team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, key: STATES[active]})
                 gql = Gql(Q_ISSUE={"issue": issue(STATES[active], (3, STATES[active]))})
                 found = tracker(gql, team).read("TASK-1")
-                self.assertEqual(found, Snapshot(abstract, ago(3)))
+                self.assertEqual(found, Snapshot(abstract, ago(3), UPDATED))
 
     def test_without_finished_raises(self):
         gql = Gql()
@@ -306,7 +320,7 @@ class Read(Case):
         )
         for found, state, since in rows:
             with self.subTest(state=state):
-                self.assertEqual(self.read(found), Snapshot(state, since))
+                self.assertEqual(self.read(found), Snapshot(state, since, UPDATED))
 
     def test_errors_propagate(self):
         for error in (
@@ -348,8 +362,8 @@ class Snapshots(Case):
                 ),
             ],
         )
-        self.assertEqual(found["TASK-1"], Snapshot(IssueState.DONE, ago(2)))
-        self.assertEqual(found["TASK-51"], Snapshot(IssueState.REVIEW, ago(5)))
+        self.assertEqual(found["TASK-1"], Snapshot(IssueState.DONE, ago(2), UPDATED))
+        self.assertEqual(found["TASK-51"], Snapshot(IssueState.REVIEW, ago(5), UPDATED))
         self.assertEqual(len(found), 51)
 
     def test_an_ident_naming_no_listed_issue_is_omitted(self):
@@ -371,14 +385,25 @@ class Snapshots(Case):
         self.assertEqual(gql.calls, [])
 
 
+def at(minutes):
+    return {"updatedAt": (NOW + timedelta(minutes=minutes)).isoformat()}
+
+
 class Changed(Case):
-    def test_idents_updated_after_since_every_page(self):
+    def test_idents_and_times_updated_after_since_every_page(self):
         pages = [
-            feed({"identifier": "TASK-1"}, {"identifier": "TASK-2"}, cursor="a"),
-            feed({"identifier": "TASK-2"}),
+            feed({"identifier": "TASK-1"} | at(1), {"identifier": "TASK-2"} | at(2), cursor="a"),
+            feed({"identifier": "TASK-2"} | at(5)),
         ]
         gql = Gql(Q_CHANGED=pages)
-        self.assertEqual(tracker(gql).changed(ago(1), 3), frozenset({"TASK-1", "TASK-2"}))
+        found = tracker(gql).changed(ago(1), 3)
+        self.assertEqual(
+            found,
+            Changes(
+                {"TASK-1": NOW + timedelta(minutes=1), "TASK-2": NOW + timedelta(minutes=5)},
+                NOW + timedelta(minutes=5),
+            ),
+        )
         f = {"team": {"id": {"eq": TEAM}}, "updatedAt": {"gt": ago(1).isoformat()}}
         self.assertEqual(
             gql.calls,
@@ -388,11 +413,16 @@ class Changed(Case):
             ],
         )
         self.assertIn("includeArchived: true", linear_tracker.Q_CHANGED)
+        self.assertIn("orderBy: updatedAt", linear_tracker.Q_CHANGED)
 
-    def test_more_than_pages_is_none(self):
-        gql = Gql(Q_CHANGED=[feed(cursor="a"), feed(cursor="b"), feed()])
-        self.assertIsNone(tracker(gql).changed(ago(1), 2))
+    def test_more_than_pages_keeps_the_latest_time(self):
+        pages = [feed({"identifier": "TASK-1"} | at(9), cursor="a"), feed(cursor="b"), feed()]
+        gql = Gql(Q_CHANGED=pages)
+        self.assertEqual(tracker(gql).changed(ago(1), 2), Changes(None, NOW + timedelta(minutes=9)))
         self.assertEqual(len(gql.calls), 2)
+
+    def test_none_listed_has_no_time(self):
+        self.assertEqual(tracker(Gql(Q_CHANGED=feed())).changed(ago(1), 3), Changes({}, None))
 
     def test_a_repeated_cursor_raises(self):
         gql = Gql(Q_CHANGED=[feed(cursor="a"), feed(cursor="a")])
@@ -405,6 +435,7 @@ class FinishedIssues(Case):
         return {
             "id": f"id-{ident}",
             "identifier": ident,
+            "updatedAt": UPDATED.isoformat(),
             "canceledAt": None,
             "completedAt": ago(completed).isoformat(),
             "history": moves(),
@@ -432,7 +463,10 @@ class FinishedIssues(Case):
         )
         self.assertEqual(
             found,
-            [Finished("id-TASK-1", "TASK-1", ago(2)), Finished("id-TASK-2", "TASK-2", ago(3))],
+            [
+                Finished("id-TASK-1", "TASK-1", ago(2), UPDATED),
+                Finished("id-TASK-2", "TASK-2", ago(3), UPDATED),
+            ],
         )
 
     def test_stops_on_repeated_or_empty_cursor(self):

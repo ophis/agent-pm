@@ -9,6 +9,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Approved,
     ArchivePlan,
     ArchiveRefused,
+    Changes,
     Detail,
     Finished,
     Found,
@@ -32,8 +33,8 @@ class Tracker(ABC):
     def snapshots(self, idents: Sequence[str]) -> dict[str, Snapshot | None]:
         return {i: self.read(i) for i in idents}
 
-    def changed(self, since: datetime, pages: int) -> frozenset[str] | None:
-        return None
+    def changed(self, since: datetime, pages: int) -> Changes:
+        return Changes(None, None)
 
     @abstractmethod
     def issue(self, ident: str) -> Issue:

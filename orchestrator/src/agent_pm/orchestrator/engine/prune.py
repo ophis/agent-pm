@@ -403,7 +403,7 @@ class Pruner:
         self.budget.limit(SYNC_PAGES)
         if synced is not None and synced <= start:
             try:
-                changed = self.tracker.changed(synced - OVERLAP, SYNC_PAGES)
+                changed = self.tracker.changed(synced - OVERLAP, SYNC_PAGES).issues
             except Unavailable:
                 raise
             except LINEAR_ERRORS as e:
@@ -416,7 +416,7 @@ class Pruner:
         state.refused = {
             i: r
             for i, r in state.refused.items()
-            if i not in changed and changed.isdisjoint(r.unfinished)
+            if i not in changed and changed.keys().isdisjoint(r.unfinished)
         }
         state.synced = start
 

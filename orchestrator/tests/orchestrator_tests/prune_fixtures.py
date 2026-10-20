@@ -22,6 +22,7 @@ from agent_pm.orchestrator.trackers.linear import (
     linear_tracker,
     ops,
 )
+from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import DUPLICATE, FINISHED, TEAM, team_node
@@ -34,6 +35,7 @@ from delegate.tests.fakes.delegate import FakeDelegate
 from delegate.tests.workdir import checkout_path
 
 NOW = tp.NOW
+OLD = NOW - timedelta(hours=1000)  # updatedAt of an issue with no move or stamp
 
 
 STATE_IDS = {
@@ -101,8 +103,10 @@ def gql_for(
     """children: sub-issue state types by parent, any depth, as Linear lists them (archived ones
     left out); stamps: canceledAt and completedAt, hours before NOW, by issue (none: null);
     reread: the state an issue's archive read finds, by issue (none: its own); changed: the idents
-    the change feed lists (gql.changed, settable later; None: every issue); elsewhere: issues the
-    batched read leaves out (another team's). gql.read: the idents read, in order."""
+    the change feed lists (gql.changed, settable later; None: every issue), each updated just now,
+    or "since": those updated after the feed's updatedAt.gt, at their time; an issue's updatedAt:
+    its latest move or stamp, else OLD; elsewhere: issues the batched read leaves out (another
+    team's). gql.read: the idents read, in order."""
     owners, children, stamps, reread = owners or {}, children or {}, stamps or {}, reread or {}
 
     def at(ident):
@@ -112,6 +116,11 @@ def gql_for(
             for k in ("canceledAt", "completedAt")
         }
 
+    def updated(ident):
+        moves = [h for h, _ in issues[ident][1]] if ident in issues else []
+        hours = [*moves, *stamps.get(ident, {}).values()]
+        return (NOW - timedelta(hours=min(hours)) if hours else OLD).isoformat()
+
     def subs(ident, after=None):
         kids, start = list(children.get(ident, {}).items()), int(after or 0)
         more = start + CHILDREN < len(kids)
@@ -120,6 +129,7 @@ def gql_for(
                 {
                     "id": f"id-{c}",
                     "identifier": c,
+                    "updatedAt": OLD.isoformat(),
                     "state": {"name": t.title(), "type": t},
                     "children": {"nodes": [{"id": "x"}] if children.get(c) else []},
                 }
@@ -134,6 +144,7 @@ def gql_for(
             "id": f"id-{ident}",
             "identifier": ident,
             "url": f"https://linear.app/t/issue/{ident}",
+            "updatedAt": updated(ident),
             "archivedAt": NOW.isoformat() if ident in gql.gone else None,
             "state": {"name": state, "type": STATE_TYPES[state]},
             "children": subs(ident),
@@ -143,6 +154,7 @@ def gql_for(
         state = issues[ident][0]
         return {
             "state": {"id": STATE_IDS[state], "type": STATE_TYPES[state]},
+            "updatedAt": updated(ident),
             "history": history(ident),
             **at(ident),
         }
@@ -177,6 +189,7 @@ def gql_for(
                         {
                             "id": f"id-{i}",
                             "identifier": i,
+                            "updatedAt": updated(i),
                             "history": history(i),
                             **at(i),
                         }
@@ -207,10 +220,20 @@ def gql_for(
             gql.read += hits
             return {"issues": {"nodes": [{"identifier": i, **snapshot(i)} for i in hits]}}
         if query == linear_tracker.Q_CHANGED:
-            listed = issues if gql.changed is None else gql.changed
+            if gql.changed == "since":
+                after = parse_time(v["f"]["updatedAt"]["gt"])
+                nodes = [
+                    {"identifier": i, "updatedAt": updated(i)}
+                    for i in issues
+                    if parse_time(updated(i)) > after
+                ]
+            else:
+                gql.clock += timedelta(seconds=1)
+                listed = sorted(issues if gql.changed is None else gql.changed)
+                nodes = [{"identifier": i, "updatedAt": gql.clock.isoformat()} for i in listed]
             return {
                 "issues": {
-                    "nodes": [{"identifier": i} for i in sorted(listed)],
+                    "nodes": nodes,
                     "pageInfo": {"hasNextPage": False, "endCursor": None},
                 }
             }
@@ -220,7 +243,8 @@ def gql_for(
         return {"issue": snapshot(v["i"])}
 
     gql.calls, gql.finished, gql.archived, gql.gone, gql.subs = [], [], [], set(), []
-    gql.changed, gql.read = None if changed is None else set(changed), []
+    gql.changed = changed if changed in (None, "since") else set(changed)
+    gql.read, gql.clock = [], NOW + timedelta(hours=1000)
     gql.issues = issues
     return gql
 
