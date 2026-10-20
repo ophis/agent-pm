@@ -6,7 +6,7 @@ import inspect
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import linear_tracker, prune
+from agent_pm.linear_orchestrator.engine import linear_tracker, promote, prune
 from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
@@ -21,7 +21,14 @@ BASE = {
     "Q_FINISHED": "d3001511732429ed7b87bfac7cc78c579737f209e410fced49a1a9030ed0bc37",
     "Q_CHILDREN": "115b789a59aec88fa1686fa993764aacae8f6af3cf0b01ec900ee82603f526fa",
     "M_ARCHIVE": "86a7493d87b61ff2c087cf86df51894a9c04f95a6fa6d1d22be15947967ca1d3",
+    "Q_HANDOFF": "d5f85ca23fbe967486bc4ddfab203a172d029c0533575e9ea5d74a5a92e141b9",
+    "Q_DETAIL": "b2e26faf4a8f91935fd12b5c84aa12b6bd23ed8781de3db8d13214e5cff469a5",
+    "Q_CHILD": "4fa2b83d88ba5fc7dd9a33223140644eb8647521ac24c8c19ba044602dbca7a1",
+    "M_CREATE": "a67ba5a98ce64a1689f6842fca53f944e76ab2437837d95c7c5ce1940911b430",
+    "M_RELATE": "6672d8a892ce59d43f46f25990e6867358dff5cf5e8f79438d77d09bb1e587d5",
 }
+PRUNE = ("Q_ISSUE", "Q_FINISHED", "Q_CHILDREN", "M_ARCHIVE")
+PROMOTE = ("Q_HANDOFF", "Q_DETAIL", "Q_CHILD", "M_CREATE", "M_RELATE")
 BACKLOG = "00000000-0000-4000-8000-000000000019"
 
 
@@ -75,9 +82,14 @@ class Queries(Case):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
 
     def test_prune_reexports_are_the_adapter_strings(self):
-        for name in BASE:
+        for name in PRUNE:
             with self.subTest(query=name):
                 self.assertIs(getattr(prune, name), getattr(linear_tracker, name))
+
+    def test_promote_reexports_are_the_adapter_strings(self):
+        for name in PROMOTE:
+            with self.subTest(query=name):
+                self.assertIs(getattr(promote, name), getattr(linear_tracker, name))
 
 
 class Read(Case):

@@ -10,6 +10,13 @@ from typing import Any
 from agent_pm.linear_orchestrator.engine import config, issues, ops, run_comments
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
+
+# Kept only for tests reading promote.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_CREATE as M_CREATE
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_RELATE as M_RELATE
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_CHILD as Q_CHILD
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_DETAIL as Q_DETAIL
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_HANDOFF as Q_HANDOFF
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import role_ids, team
 from agent_pm.linear_orchestrator.engine.prune import Pruner
@@ -74,24 +81,6 @@ Recovery and next help:
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
-
-Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
-  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
-  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
-Q_DETAIL = (
-    """query($i: String!, $after: String) { issue(id: $i) { state { id }
-  """
-    + ops.HISTORY
-    + """
-  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
-  relations(first: 250) { nodes { relatedIssue { id } } }
-  inverseRelations(first: 250) { nodes { issue { id } } } } }"""
-)
-Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
-M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
-M_RELATE = (
-    "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
-)
 
 
 def child_title(prefix, src_prefix, title):

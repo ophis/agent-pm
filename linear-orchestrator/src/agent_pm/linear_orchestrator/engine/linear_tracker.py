@@ -39,6 +39,23 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
+Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
+  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
+  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
+Q_DETAIL = (
+    """query($i: String!, $after: String) { issue(id: $i) { state { id }
+  """
+    + HISTORY
+    + """
+  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
+  relations(first: 250) { nodes { relatedIssue { id } } }
+  inverseRelations(first: 250) { nodes { issue { id } } } } }"""
+)
+Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
+M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
+M_RELATE = (
+    "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
+)
 
 
 def finished_at(issue, finished):
