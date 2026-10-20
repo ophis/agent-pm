@@ -584,7 +584,6 @@ class UsageProbeTest(Base):
         self.assertEqual(
             probes, {"default": (home, own), "same": (home, own), "work": ("/w", work)}
         )
-        self.assertEqual(list(probes), ["default", "same", "work"])
         self.assertEqual(usual.env["CLAUDE_CONFIG_DIR"], "/acct")
         self.assertEqual(usual.unset, (*UNSET, *credentials))
 

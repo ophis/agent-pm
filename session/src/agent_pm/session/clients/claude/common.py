@@ -17,6 +17,7 @@ from agent_pm.session.clients.claude import usage
 from agent_pm.session.clients.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
+    DEFAULT_ACCOUNT,
     ClientHome,
     ConfigError,
     Effort,
@@ -251,7 +252,6 @@ CHECKS = (
     ("accounts", lambda v: isinstance(v, Mapping), "a table of account tables"),
     *common.CHECKS,
 )
-DEFAULT_ACCOUNT = "default"
 ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 NOT_ACCOUNT = (
     "not an account name (1–64 lowercase letters, digits, '.', '_' or '-', starting with a letter"

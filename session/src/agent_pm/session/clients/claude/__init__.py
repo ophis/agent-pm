@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from agent_pm.session.clients.base import Client
-from agent_pm.session.clients.claude.common import DEFAULT_ACCOUNT, ClaudeCommon, added_dirs
+from agent_pm.session.clients.claude.common import ClaudeCommon, added_dirs
 from agent_pm.session.clients.claude.headless import ClaudeHeadless
 from agent_pm.session.clients.claude.tui import ClaudeTui
 from agent_pm.session.engine.types import SessionInfo, Spec
@@ -59,10 +59,7 @@ class ClaudeClient(Client):
 
     def _usage_probes(self):
         accounts = self.common.accounts
-        return {
-            name: (accounts[name].dir, self.common.probe(name))
-            for name in sorted(accounts, key=lambda name: (name != DEFAULT_ACCOUNT, name))
-        }
+        return {name: (accounts[name].dir, self.common.probe(name)) for name in accounts}
 
     def usage(self, output):
         return self.common.parse_usage(output)
