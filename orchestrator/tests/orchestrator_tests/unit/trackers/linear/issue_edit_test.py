@@ -3,8 +3,7 @@ replaces the issue's label of that group, every other label staying; nothing cha
 nothing.
 """
 
-from types import SimpleNamespace
-
+from agent_pm.orchestrator.engine.flow.types import Priority
 from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
 from agent_pm.orchestrator.trackers.linear import issue_edit, issue_label, issue_read
 from orchestrator_tests.case import Case
@@ -16,6 +15,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     TASK_LABELS,
     VIEWER,
     EditGql,
+    issue_change,
     label,
     names_cfg,
 )
@@ -27,13 +27,9 @@ CATALOG = (BUILD, LIGHT, CODEX, CLAUDE, KEEP)
 BODY = 'say "hi", `ls`, $HOME\n中文\n'
 
 
-def args(**given):
-    defaults = {"id": "TASK-2", "title": None, "task": None, "client": None, "priority": None}
-    return SimpleNamespace(**{**defaults, **given})
-
-
 def edit(gql, body=None, cfg=None, **given):
-    return issue_edit.edit(gql, cfg or names_cfg(), args(**given), body)
+    change = issue_change(**{"ident": "TASK-2", **given, "body": body})
+    return issue_edit.edit(gql, cfg or names_cfg(), change)
 
 
 class Edit(Case):
@@ -41,8 +37,8 @@ class Edit(Case):
         for given, body, want in (
             ({"title": "New"}, None, {"title": "New"}),
             ({}, BODY, {"description": BODY}),
-            ({"priority": "high"}, None, {"priority": 2}),
-            ({"priority": "none"}, None, {"priority": 0}),
+            ({"priority": Priority.HIGH}, None, {"priority": 2}),
+            ({"priority": Priority.NONE}, None, {"priority": 0}),
         ):
             gql = EditGql(CATALOG, [KEEP["id"]], fields={"priority": 3})
             with self.subTest(given=given, body=body):
@@ -64,7 +60,7 @@ class Edit(Case):
 
     def test_every_field_at_once_is_one_write(self):
         gql = EditGql(CATALOG, [BUILD["id"], CODEX["id"], KEEP["id"]])
-        edit(gql, BODY, title="New", task="light-build", client="claude", priority="low")
+        edit(gql, BODY, title="New", task="light-build", client="claude", priority=Priority.LOW)
         self.assertEqual(
             gql.writes,
             [
@@ -119,7 +115,9 @@ class Edit(Case):
             [BUILD["id"], CODEX["id"]],
             fields={"title": "Same", "description": BODY, "priority": 2},
         )
-        receipt = edit(gql, BODY, title="Same", task="build", client="codex", priority="high")
+        receipt = edit(
+            gql, BODY, title="Same", task="build", client="codex", priority=Priority.HIGH
+        )
         self.assertEqual(
             (receipt["result"], receipt["operation"], gql.writes), ("unchanged", "edit", [])
         )
@@ -148,7 +146,7 @@ class Edit(Case):
     def test_no_such_issue_writes_nothing(self):
         gql = EditGql(CATALOG, [])
         with self.assertRaises(IssueError) as cm:
-            edit(gql, id="TASK-3", title="New")
+            edit(gql, ident="TASK-3", title="New")
         self.assertIn("no such issue", str(cm.exception))
         self.assertEqual(gql.writes, [])
 

@@ -2,10 +2,10 @@
 the frame maps to an exit code, translating its tracker's own failures into them.
 """
 
-from argparse import Namespace
 from typing import Any, Protocol
 
 from agent_pm.orchestrator.engine.flow.types import ArchivePlan
+from agent_pm.orchestrator.engine.types import IssueEdit, ListQuery, NewIssue
 
 Row = tuple[dict[str, Any], list[str], str]
 
@@ -16,18 +16,18 @@ class Backend(Protocol):
         ...
 
     def page(
-        self, args: Namespace, first: int, cursor: str | None
+        self, query: ListQuery, first: int, cursor: str | None
     ) -> tuple[list[Row], bool, str | None]:
-        """list or lookup's page after cursor: (rows, has_next_page, the last row's cursor)."""
+        """list's page after cursor: (rows, has_next_page, the last row's cursor)."""
         ...
 
-    def walk(self, args: Namespace) -> list[Row]: ...
+    def walk(self, query: ListQuery) -> list[Row]: ...
 
-    def create(self, args: Namespace, body: str) -> dict[str, Any]:
+    def create(self, new: NewIssue) -> dict[str, Any]:
         """The receipt; RelationsFailed when a blocking relation failed."""
         ...
 
-    def edit(self, args: Namespace, body: str | None) -> dict[str, Any]: ...
+    def edit(self, change: IssueEdit) -> dict[str, Any]: ...
 
     def move(self, ident: str, state: str) -> dict[str, Any]: ...
 

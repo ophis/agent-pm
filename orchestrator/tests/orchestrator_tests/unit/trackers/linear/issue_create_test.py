@@ -3,8 +3,7 @@ team, only the given fields set, backlog by default, abstract names as the confi
 blocking relation; a failed relation reported with only the commands that add it.
 """
 
-from types import SimpleNamespace
-
+from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
@@ -26,33 +25,16 @@ from orchestrator_tests.unit.issue_fixtures import (
     create_gql,
     label,
     names_cfg,
+    new_issue,
     uid,
 )
 
 BODY = 'say "hi", `ls`, $HOME\n中文\n'
 
 
-def args(**given):
-    defaults = {
-        "title": "Fix login",
-        "label": [],
-        "project": None,
-        "milestone": None,
-        "parent": None,
-        "role": None,
-        "task": None,
-        "client": None,
-        "priority": None,
-        "state": "backlog",
-        "blocks": [],
-        "blocked_by": [],
-    }
-    return SimpleNamespace(**{**defaults, **given})
-
-
 def run(fake, cfg=None, **given):
-    plan = issue_create.plan(fake, args(**given), cfg or names_cfg(), BODY)
-    return issue_create.create(fake, *plan)
+    new = new_issue(**{"title": "Fix login", "body": BODY, "state": IssueState.BACKLOG, **given})
+    return issue_create.create(fake, *issue_create.plan(fake, new, cfg or names_cfg()))
 
 
 def relation(blocker, blocked):
@@ -64,7 +46,7 @@ class Create(Case):
         fake = create_gql()
         receipt = run(
             fake,
-            label=["bug", "ops"],
+            labels=("bug", "ops"),
             project="Agent PM",
             milestone="M1",
             parent="TASK-1",
@@ -73,8 +55,8 @@ class Create(Case):
             client="codex",
             priority="high",
             state="ready",
-            blocks=["TASK-3"],
-            blocked_by=["TASK-4"],
+            blocks=("TASK-3",),
+            blocked_by=("TASK-4",),
         )
         created, *related = fake.writes
         self.assertEqual(
@@ -118,7 +100,7 @@ class Create(Case):
         for state, key in (("running", "in_progress"), ("approved", "handoff"), ("done", "done")):
             fake = create_gql()
             with self.subTest(state=state):
-                run(fake, state=state)
+                run(fake, state=IssueState(state))
                 self.assertEqual(fake.writes[0][1]["in"]["stateId"], STATES[key])
 
     def test_role_me_is_the_viewer_and_unassigned_leaves_it_unassigned(self):
@@ -133,12 +115,12 @@ class Create(Case):
         for name, number in (("none", 0), ("urgent", 1), ("high", 2), ("medium", 3), ("low", 4)):
             fake = create_gql()
             with self.subTest(name=name):
-                run(fake, priority=name)
+                run(fake, priority=Priority(name))
                 self.assertEqual(fake.writes[0][1]["in"]["priority"], number)
 
     def test_task_and_client_labels_come_first_and_a_label_naming_one_counts_once(self):
         fake = create_gql(issueLabels=by_name(label(0xB2, "Light build"), label(4, "bug")))
-        run(fake, task="light-build", client="claude", label=["bug", "Light build"])
+        run(fake, task="light-build", client="claude", labels=("bug", "Light build"))
         self.assertEqual(
             fake.writes[0][1]["in"]["labelIds"],
             [TASK_LABELS["light-build"], CLIENT_LABELS["claude"], uid(4)],
@@ -146,19 +128,19 @@ class Create(Case):
 
     def test_any_unresolved_reference_creates_nothing(self):
         cases = (
-            {"label": ["bug", "nope"]},
-            {"label": ["old"]},
+            {"labels": ("bug", "nope")},
+            {"labels": ("old",)},
             {"project": "Nope"},
             {"milestone": "M1"},
             {"project": "Agent PM", "milestone": "M9"},
             {"parent": "NOPE-1"},
             {"parent": "not an id"},
             {"role": "nobody"},
-            {"role": "pm", "label": ["nope"]},
+            {"role": "pm", "labels": ("nope",)},
             {"task": "nope"},
             {"client": "nope"},
-            {"blocks": ["TASK-3", "NOPE-2"]},
-            {"blocked_by": ["NOPE-3"]},
+            {"blocks": ("TASK-3", "NOPE-2")},
+            {"blocked_by": ("NOPE-3",)},
         )
         for given in cases:
             fake = create_gql()
@@ -168,7 +150,7 @@ class Create(Case):
 
     def test_repeated_labels_and_dependencies_count_once(self):
         fake = create_gql()
-        run(fake, label=["bug", "bug"], blocks=["TASK-3", "TASK-3"], blocked_by=["TASK-4"] * 2)
+        run(fake, labels=("bug", "bug"), blocks=("TASK-3", "TASK-3"), blocked_by=("TASK-4",) * 2)
         created, *related = fake.writes
         self.assertEqual(created[1]["in"]["labelIds"], [uid(4)])
         self.assertEqual(
@@ -179,7 +161,7 @@ class Create(Case):
     def test_one_issue_in_both_directions_is_refused(self):
         fake = create_gql()
         with self.assertRaises(IssueError) as cm:
-            run(fake, blocks=["TASK-3"], blocked_by=["TASK-3"])
+            run(fake, blocks=("TASK-3",), blocked_by=("TASK-3",))
         self.assertIn("TASK-3", str(cm.exception))
         self.assertIn("--blocks and --blocked-by", str(cm.exception))
         self.assertEqual(fake.writes, [])
@@ -193,7 +175,7 @@ class Create(Case):
             ]
         )
         with self.assertRaises(RelationsFailed) as cm:
-            run(fake, blocks=["TASK-3", "TASK-5"], blocked_by=["TASK-4"])
+            run(fake, blocks=("TASK-3", "TASK-5"), blocked_by=("TASK-4",))
         report = cm.exception.report
         self.assertEqual(
             (report["issue"], report["operation"], report["result"]), (NEW, "create", "partial")
@@ -224,7 +206,7 @@ class Create(Case):
     def test_a_create_outage_is_result_unknown_and_never_retried(self):
         fake = create_gql(created=Unavailable("issueCreate", reason="timed out"))
         with self.assertRaises(WriteUnknown) as cm:
-            run(fake, blocks=["TASK-3"])
+            run(fake, blocks=("TASK-3",))
         text = str(cm.exception)
         for phrase in ("result unknown", "timed out", "issue list --query='Fix login' before"):
             self.assertIn(phrase, text)
@@ -241,7 +223,7 @@ class Create(Case):
         for given in ({"task": "nope"}, {"client": "nope"}, {"role": "nobody"}):
             fake = create_gql()
             with self.subTest(given=given), self.assertRaises(IssueError):
-                run(fake, label=["bug"], parent="TASK-1", **given)
+                run(fake, labels=("bug",), parent="TASK-1", **given)
             self.assertEqual(fake.calls, [])
 
     def test_a_client_without_client_labels_is_refused(self):
@@ -256,6 +238,6 @@ class Create(Case):
         for created in ({"success": False, "issue": None}, GraphQLErrors([{"message": "boom"}])):
             fake = create_gql(created=created)
             with self.subTest(created=created), self.assertRaises(LinearError) as cm:
-                run(fake, blocks=["TASK-3"])
+                run(fake, blocks=("TASK-3",))
             self.assertNotIsInstance(cm.exception, WriteUnknown)
             self.assertEqual(len(fake.writes), 1)

@@ -11,10 +11,16 @@ from unittest import mock
 
 from agent_pm.orchestrator import cli
 from agent_pm.orchestrator.engine import config
+from agent_pm.orchestrator.engine.flow.types import IssueState, Priority
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
+    IssueEdit,
     IssueError,
     LinearError,
+    ListQuery,
+    LookupQuery,
+    NewIssue,
+    Resource,
     Unavailable,
 )
 from agent_pm.orchestrator.issue import command as issue
@@ -1438,3 +1444,101 @@ class ReadBody(Case):
                     issue.read_body("-")
         with mock.patch("sys.stdin", mock.Mock(buffer=io.BytesIO(RAW_BODY.encode("utf-8")))):
             self.assertEqual(issue.read_body("-"), RAW_BODY)
+
+
+class Requests(Case):
+    """The frame's typed requests: one parse of list, lookup, create or edit, every option in place."""
+
+    def request(self, *argv, body=None):
+        return issue._request(issue._parser().parse_args(argv), body)
+
+    def test_list(self):
+        argv = ("list", "--query", "q", "--state", "ready", "--role", "me", "--task", "build")
+        argv += ("--client", "c", "--priority", "high", "--label", "bug", "--project", "P")
+        got = self.request(*argv, "--parent", "TASK-1", "--include-archived")
+        want = ListQuery(
+            query="q",
+            state=IssueState.READY,
+            role="me",
+            task="build",
+            client="c",
+            priority=Priority.HIGH,
+            parent="TASK-1",
+            include_archived=True,
+            label="bug",
+            project="P",
+        )
+        self.assertEqual(got, want)
+        self.assertEqual((type(got.state), type(got.priority)), (IssueState, Priority))
+        none = dict.fromkeys(("query", "state", "role", "task", "client", "priority", "parent"))
+        self.assertEqual(
+            self.request("list"),
+            ListQuery(**none, include_archived=False, label=None, project=None),
+        )
+
+    def test_lookup(self):
+        argv = ("lookup", "milestones", "--query", "m", "--team", "TASK", "--project", "P")
+        self.assertEqual(
+            self.request(*argv, "--limit", "5"),
+            LookupQuery(resource=Resource.MILESTONES, query="m", team="TASK", project="P"),
+        )
+        self.assertEqual(
+            self.request("lookup", "teams"),
+            LookupQuery(resource=Resource.TEAMS, query=None, team=None, project=None),
+        )
+
+    def test_create(self):
+        argv = ("create", "--title", "T", "--body-file", "f", "--state", "running")
+        argv += ("--role", "engineer", "--task", "build", "--client", "c", "--priority", "urgent")
+        argv += ("--parent", "TASK-1", "--label", "a", "--label", "b", "--project", "P")
+        argv += ("--milestone", "M", "--blocks", "TASK-2", "TASK-3", "--blocked-by", "TASK-4")
+        got = self.request(*argv, body="B")
+        want = NewIssue(
+            title="T",
+            body="B",
+            state=IssueState.RUNNING,
+            role="engineer",
+            task="build",
+            client="c",
+            priority=Priority.URGENT,
+            parent="TASK-1",
+            labels=("a", "b"),
+            project="P",
+            milestone="M",
+            blocks=("TASK-2", "TASK-3"),
+            blocked_by=("TASK-4",),
+        )
+        self.assertEqual(got, want)
+        self.assertEqual((type(got.state), type(got.priority)), (IssueState, Priority))
+        none = dict.fromkeys(("state", "role", "task", "client", "priority", "parent"))
+        self.assertEqual(
+            self.request("create", "--title", "T", "--body-file", "f", body="B"),
+            NewIssue(
+                title="T",
+                body="B",
+                **none,
+                labels=(),
+                project=None,
+                milestone=None,
+                blocks=(),
+                blocked_by=(),
+            ),
+        )
+
+    def test_edit(self):
+        argv = ("edit", "TASK-1", "--title", "T", "--body-file", "f", "--task", "build")
+        got = self.request(*argv, "--client", "c", "--priority", "low", body="B")
+        want = IssueEdit(
+            id="TASK-1", title="T", body="B", task="build", client="c", priority=Priority.LOW
+        )
+        self.assertEqual(got, want)
+        self.assertIs(type(got.priority), Priority)
+        self.assertEqual(
+            self.request("edit", "TASK-1", "--task", "build"),
+            IssueEdit(id="TASK-1", title=None, body=None, task="build", client=None, priority=None),
+        )
+
+    def test_the_other_commands_carry_none(self):
+        for argv in (("read", "TASK-1"), ("move", "TASK-1", "done"), ("archive", "TASK-1")):
+            with self.subTest(argv=argv):
+                self.assertIsNone(self.request(*argv))

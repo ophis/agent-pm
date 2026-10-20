@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from agent_pm import delegate
 from agent_pm.orchestrator.engine.flow.tracker import Connect, Tracker
-from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState, Snapshot
+from agent_pm.orchestrator.engine.flow.types import ISSUE_ID, Found, IssueState, Priority, Snapshot
 from agent_pm.utils import Stopped as Stopped
 
 ClientSource = Literal["label", "default"]
@@ -181,6 +181,63 @@ class Resource(StrEnum):
     PROJECTS = "projects"
     MILESTONES = "milestones"
     USERS = "users"
+
+
+@dataclass(frozen=True)
+class ListQuery:
+    """issue list's filters."""
+
+    query: str | None
+    state: IssueState | None
+    role: str | None
+    task: str | None
+    client: str | None
+    priority: Priority | None
+    parent: str | None
+    include_archived: bool
+    label: str | None
+    project: str | None
+
+
+@dataclass(frozen=True)
+class LookupQuery:
+    """issue lookup's query."""
+
+    resource: Resource
+    query: str | None
+    team: str | None
+    project: str | None
+
+
+@dataclass(frozen=True)
+class NewIssue:
+    """issue create's fields."""
+
+    title: str
+    body: str
+    state: IssueState | None
+    role: str | None
+    task: str | None
+    client: str | None
+    priority: Priority | None
+    parent: str | None
+    labels: tuple[str, ...]
+    project: str | None
+    milestone: str | None
+    blocks: tuple[str, ...]
+    blocked_by: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IssueEdit:
+    """issue edit's fields."""
+
+    id: str
+    title: str | None
+    body: str | None
+    task: str | None
+    client: str | None
+    priority: Priority | None
 
 
 class FinishedType(StrEnum):

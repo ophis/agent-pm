@@ -37,34 +37,34 @@ Q_VIEWER = "query { viewer { id name } }"
 DIRECTIONS = (("--blocks", "blocks"), ("--blocked-by", "blocked_by"))
 
 
-def plan(gql, args, linear, body):
-    """args resolved as (IssueCreateInput, [(option, {id, identifier}) of each relation], viewer);
+def plan(gql, new, linear):
+    """new resolved as (IssueCreateInput, [(option, {id, identifier}) of each relation], viewer);
     IssueError for any value that does not resolve, before anything is written; abstract names
     first.
     """
     team = linear.team
-    fields = {"teamId": team, "title": args.title, "description": body}
-    fields["stateId"] = issue_names.state_id(linear, args.state or IssueState.BACKLOG)
-    labels = [] if args.task is None else [issue_names.task_label(linear, args.task)]
-    if args.client is not None:
-        labels.append(issue_names.client_label(linear, args.client))
-    who = None if args.role is None else issue_names.assignee(gql, linear, args.role)
-    labels += (issue_refs.label(gql, team, value)["id"] for value in dict.fromkeys(args.label))
+    fields = {"teamId": team, "title": new.title, "description": new.body}
+    fields["stateId"] = issue_names.state_id(linear, new.state or IssueState.BACKLOG)
+    labels = [] if new.task is None else [issue_names.task_label(linear, new.task)]
+    if new.client is not None:
+        labels.append(issue_names.client_label(linear, new.client))
+    who = None if new.role is None else issue_names.assignee(gql, linear, new.role)
+    labels += (issue_refs.label(gql, team, value)["id"] for value in dict.fromkeys(new.labels))
     if labels:
         fields["labelIds"] = list(dict.fromkeys(labels))
-    project = None if args.project is None else issue_refs.project(gql, team, args.project)
+    project = None if new.project is None else issue_refs.project(gql, team, new.project)
     if project is not None:
         fields["projectId"] = project["id"]
-    if args.milestone is not None:
+    if new.milestone is not None:
         project_id = None if project is None else project["id"]
-        fields["projectMilestoneId"] = issue_refs.milestone(gql, project_id, args.milestone)["id"]
-    if args.parent is not None:
-        fields["parentId"] = issue_refs.issue(gql, args.parent)["id"]
+        fields["projectMilestoneId"] = issue_refs.milestone(gql, project_id, new.milestone)["id"]
+    if new.parent is not None:
+        fields["parentId"] = issue_refs.issue(gql, new.parent)["id"]
     if who is not None:
         fields["assigneeId"] = who
-    if args.priority is not None:
-        fields["priority"] = PRIORITY_NUMBERS[args.priority]
-    relations = _relations(gql, {"--blocks": args.blocks, "--blocked-by": args.blocked_by})
+    if new.priority is not None:
+        fields["priority"] = PRIORITY_NUMBERS[new.priority]
+    relations = _relations(gql, {"--blocks": new.blocks, "--blocked-by": new.blocked_by})
     return fields, relations, gql(Q_VIEWER)["viewer"]
 
 

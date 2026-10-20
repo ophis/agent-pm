@@ -11,12 +11,15 @@ from agent_pm.orchestrator.engine.flow.types import (
     BOTH_DIRECTIONS,
     IDENT_ERROR,
     ArchiveRefused,
+    IssueState,
+    Priority,
     SubIssue,
 )
 from agent_pm.orchestrator.engine.types import IssueError, RelationsFailed, TrackerFileError
-from agent_pm.orchestrator.issue import command, output
+from agent_pm.orchestrator.issue import output
 from agent_pm.orchestrator.trackers.local.issues import LocalIssues
 from orchestrator_tests.case import Case
+from orchestrator_tests.unit.issue_fixtures import issue_change, list_query, new_issue
 
 NOW = datetime(2026, 10, 20, 9, 30, tzinfo=UTC)
 MTIME = datetime(2026, 10, 20, tzinfo=UTC)
@@ -30,10 +33,6 @@ NOTE = (
     "#### self · 2026-10-19 15:00 <!-- id=c1 key=archived:engineer -->\nArchived from engineer.\n"
 )
 CLIENT = "want a client name: no whitespace, control character or leading quote"
-
-
-def parsed(*argv):
-    return command._parser().parse_args(argv)
 
 
 def text(ident, *, front="", description="", comments="", history=""):
@@ -50,7 +49,7 @@ def rel(ident, state):
 def by_id(issues, ident):
     return {
         "view": lambda: issues.view(ident, full=False),
-        "edit": lambda: issues.edit(parsed("edit", ident, "--title", "t"), None),
+        "edit": lambda: issues.edit(issue_change(ident, title="t")),
         "move": lambda: issues.move(ident, "done"),
         "comment": lambda: issues.comment(ident, "body"),
         "relation": lambda: issues.relation("add", ident, "blocks", "LOC-1"),
@@ -59,15 +58,13 @@ def by_id(issues, ident):
     }
 
 
-def by_option(issues, argv):
+def by_option(issues, **given):
     calls = {
-        "create": lambda: issues.create(
-            parsed("create", "--title", "t", "--body-file", "b", *argv), "b"
-        ),
-        "list": lambda: issues.page(parsed("list", *argv), 20, None),
-        "edit": lambda: issues.edit(parsed("edit", "LOC-1", *argv), None),
+        "create": lambda: issues.create(new_issue(**given)),
+        "list": lambda: issues.page(list_query(**given), 20, None),
+        "edit": lambda: issues.edit(issue_change("LOC-1", **given)),
     }
-    if argv[0] == "--role":
+    if "role" in given:
         del calls["edit"]
     return calls
 
@@ -277,40 +274,40 @@ class Pages(Board):
             history="- 2026-10-19 14:02 done self\n",
         )
 
-    def ids(self, *argv):
-        return [item["identifier"] for item, _, _ in self.issues().walk(parsed("list", *argv))]
+    def ids(self, **given):
+        return [item["identifier"] for item, _, _ in self.issues().walk(list_query(**given))]
 
     def test_order_and_archived(self):
         self.assertEqual(self.ids(), ["LOC-2", "LOC-4", "LOC-3", "LOC-1"])
         self.assertEqual(
-            self.ids("--include-archived"), ["LOC-5", "LOC-2", "LOC-4", "LOC-3", "LOC-1"]
+            self.ids(include_archived=True), ["LOC-5", "LOC-2", "LOC-4", "LOC-3", "LOC-1"]
         )
 
     def test_each_filter(self):
-        for argv, want in (
-            (("--query", "parser"), ["LOC-1"]),
-            (("--query", "loc-3 TITLE"), ["LOC-3"]),
-            (("--state", "backlog"), ["LOC-2", "LOC-3"]),
-            (("--state", "done"), []),
-            (("--state", "done", "--include-archived"), ["LOC-5"]),
-            (("--role", "engineer"), ["LOC-1"]),
-            (("--role", "engineer", "--include-archived"), ["LOC-5", "LOC-1"]),
-            (("--role", "me"), ["LOC-4"]),
-            (("--role", "unassigned"), ["LOC-3"]),
-            (("--role", "pm"), ["LOC-2"]),
-            (("--task", "build"), ["LOC-1"]),
-            (("--task", "plan"), []),
-            (("--client", "claude"), ["LOC-1"]),
-            (("--priority", "high"), ["LOC-1"]),
-            (("--priority", "none"), ["LOC-2", "LOC-4", "LOC-3"]),
-            (("--parent", "LOC-1"), ["LOC-2"]),
-            (("--state", "backlog", "--role", "pm"), ["LOC-2"]),
+        for given, want in (
+            ({"query": "parser"}, ["LOC-1"]),
+            ({"query": "loc-3 TITLE"}, ["LOC-3"]),
+            ({"state": IssueState.BACKLOG}, ["LOC-2", "LOC-3"]),
+            ({"state": IssueState.DONE}, []),
+            ({"state": IssueState.DONE, "include_archived": True}, ["LOC-5"]),
+            ({"role": "engineer"}, ["LOC-1"]),
+            ({"role": "engineer", "include_archived": True}, ["LOC-5", "LOC-1"]),
+            ({"role": "me"}, ["LOC-4"]),
+            ({"role": "unassigned"}, ["LOC-3"]),
+            ({"role": "pm"}, ["LOC-2"]),
+            ({"task": "build"}, ["LOC-1"]),
+            ({"task": "plan"}, []),
+            ({"client": "claude"}, ["LOC-1"]),
+            ({"priority": Priority.HIGH}, ["LOC-1"]),
+            ({"priority": Priority.NONE}, ["LOC-2", "LOC-4", "LOC-3"]),
+            ({"parent": "LOC-1"}, ["LOC-2"]),
+            ({"state": IssueState.BACKLOG, "role": "pm"}, ["LOC-2"]),
         ):
-            with self.subTest(argv=argv):
-                self.assertEqual(self.ids(*argv), want)
+            with self.subTest(given=given):
+                self.assertEqual(self.ids(**given), want)
 
     def test_items(self):
-        rows = self.issues().walk(parsed("list", "--include-archived"))
+        rows = self.issues().walk(list_query(include_archived=True))
         items = {item["identifier"]: item for item, _, _ in rows}
         self.assertEqual([(cut, cursor) for _, cut, cursor in rows][0], ([], "LOC-5"))
         self.assertEqual(
@@ -335,15 +332,15 @@ class Pages(Board):
         )
 
     def test_cursor_pages(self):
-        issues, args = self.issues(), parsed("list")
-        page, more, end = issues.page(args, 2, None)
+        issues, query = self.issues(), list_query()
+        page, more, end = issues.page(query, 2, None)
         self.assertEqual(([c for _, _, c in page], more, end), (["LOC-2", "LOC-4"], True, "LOC-4"))
-        page, more, end = issues.page(args, 2, end)
+        page, more, end = issues.page(query, 2, end)
         self.assertEqual(([c for _, _, c in page], more, end), (["LOC-3", "LOC-1"], False, "LOC-1"))
-        self.assertEqual(issues.page(args, 2, "LOC-1"), ([], False, None))
-        self.assertEqual(issues.page(args, 2, "LOC-4")[0], page)
+        self.assertEqual(issues.page(query, 2, "LOC-1"), ([], False, None))
+        self.assertEqual(issues.page(query, 2, "LOC-4")[0], page)
         self.refused(
-            lambda: issues.page(args, 2, "LOC-5"), "--cursor LOC-5: not a cursor of this list"
+            lambda: issues.page(query, 2, "LOC-5"), "--cursor LOC-5: not a cursor of this list"
         )
 
 
@@ -357,9 +354,7 @@ class Create(Board):
         )
 
     def test_defaults(self):
-        got = self.issues().create(
-            parsed("create", "--title", "A: b/c", "--body-file", "b"), "Body\n"
-        )
+        got = self.issues().create(new_issue(title="A: b/c", body="Body\n"))
         path = os.path.join(self.board, "unassigned/backlog/LOC-4 A: b-c.md")
         self.assertEqual(got, self.receipt("LOC-4", path, "create", "changed"))
         self.assertEqual(
@@ -370,10 +365,19 @@ class Create(Board):
 
     def test_fields_and_blocks(self):
         issues = self.issues()
-        argv = ("--title", "T", "--body-file", "b", "--role", "engineer", "--state", "ready")
-        argv += ("--task", "light-build", "--client", 'ac"me', "--priority", "high")
-        argv += ("--parent", "LOC-1", "--blocked-by", "LOC-2", "--blocks", "LOC-3", "LOC-3")
-        got = issues.create(parsed("create", *argv), "Body")
+        new = new_issue(
+            title="T",
+            body="Body",
+            role="engineer",
+            state=IssueState.READY,
+            task="light-build",
+            client='ac"me',
+            priority=Priority.HIGH,
+            parent="LOC-1",
+            blocked_by=("LOC-2",),
+            blocks=("LOC-3", "LOC-3"),
+        )
+        got = issues.create(new)
         path = os.path.join(self.board, "engineer/ready/LOC-4 T.md")
         self.assertEqual(got, self.receipt("LOC-4", path, "create", "changed"))
         self.assertEqual(
@@ -401,12 +405,12 @@ class Create(Board):
                 raise PermissionError(13, "Permission denied")
             real(src, dst)
 
-        argv = ("create", "--title", "T", "--body-file", "b", "--blocks", "LOC-1", "LOC-3")
+        new = new_issue(title="T", body="Body", blocks=("LOC-1", "LOC-3"), blocked_by=("LOC-2",))
         with (
             mock.patch("os.replace", replace),
             self.assertRaises(RelationsFailed) as cm,
         ):
-            self.issues().create(parsed(*argv, "--blocked-by", "LOC-2"), "Body")
+            self.issues().create(new)
         path = os.path.join(self.board, "unassigned/backlog/LOC-4 T.md")
         self.assertEqual(
             cm.exception.report,
@@ -424,9 +428,9 @@ class Create(Board):
         )
 
     def test_one_issue_in_both_directions(self):
-        argv = ("create", "--title", "T", "--body-file", "b", "--blocks", "LOC-2")
+        new = new_issue(title="T", body="Body", blocks=("LOC-2",), blocked_by=("LOC-2",))
         self.refused(
-            lambda: self.issues().create(parsed(*argv, "--blocked-by", "LOC-2"), "Body"),
+            lambda: self.issues().create(new),
             BOTH_DIRECTIONS.format(identifier="LOC-2"),
         )
 
@@ -434,9 +438,15 @@ class Create(Board):
 class Edit(Board):
     def test_each_field(self):
         path = self.put("pm/ready", "LOC-1", description="Old.", history=READY)
-        argv = ("edit", "LOC-1", "--title", "New", "--body-file", "b", "--task", "build")
-        argv += ("--client", 'x"y', "--priority", "urgent")
-        got = self.issues().edit(parsed(*argv), "New text\n")
+        change = issue_change(
+            "LOC-1",
+            title="New",
+            body="New text\n",
+            task="build",
+            client='x"y',
+            priority=Priority.URGENT,
+        )
+        got = self.issues().edit(change)
         self.assertEqual(got, self.receipt("LOC-1", path, "edit", "changed"))
         self.assertEqual(
             self.read(path),
@@ -457,15 +467,22 @@ class Edit(Board):
             description="Old.",
             history=READY,
         )
-        argv = ("edit", "LOC-1", "--title", "LOC-1 title", "--task", "build", "--client", "claude")
+        change = issue_change(
+            "LOC-1",
+            title="LOC-1 title",
+            body="\nOld.\n",
+            task="build",
+            client="claude",
+            priority=Priority.MEDIUM,
+        )
         before = self.snapshot()
-        got = self.issues().edit(parsed(*argv, "--priority", "medium"), "\nOld.\n")
+        got = self.issues().edit(change)
         self.assertEqual(got, self.receipt("LOC-1", path, "edit", "unchanged"))
         self.assertEqual(self.snapshot(), before)
 
     def test_an_archived_issue_stays_archived(self):
         path = self.put("archive", "LOC-1", history="- 2026-10-19 14:02 done self\n")
-        got = self.issues().edit(parsed("edit", "LOC-1", "--title", "New"), None)
+        got = self.issues().edit(issue_change("LOC-1", title="New"))
         self.assertEqual(got, self.receipt("LOC-1", path, "edit", "changed"))
         self.assertIn('title: "New"\n', self.read(path))
 
@@ -626,23 +643,22 @@ class Errors(Board):
 
     def test_unresolved_options(self):
         issues = self.issues()
-        create = ("create", "--title", "t", "--body-file", "b")
         malformed = "'bad': want an issue identifier such as TASK-1 or an issue id"
         for call, message in (
             (
-                lambda: issues.create(parsed(*create, "--parent", "LOC-9"), "b"),
+                lambda: issues.create(new_issue(parent="LOC-9")),
                 "--parent LOC-9: no such issue",
             ),
             (
-                lambda: issues.create(parsed(*create, "--blocks", "LOC-1", "LOC-9"), "b"),
+                lambda: issues.create(new_issue(blocks=("LOC-1", "LOC-9"))),
                 "--blocks LOC-9: no such issue",
             ),
             (
-                lambda: issues.create(parsed(*create, "--blocked-by", "bad"), "b"),
+                lambda: issues.create(new_issue(blocked_by=("bad",))),
                 f"--blocked-by {malformed}",
             ),
             (
-                lambda: issues.walk(parsed("list", "--parent", "LOC-9")),
+                lambda: issues.walk(list_query(parent="LOC-9")),
                 "--parent LOC-9: no such issue",
             ),
             (
@@ -658,16 +674,16 @@ class Errors(Board):
         issues = self.issues()
         role = "--role ghost: not a role: pm, engineer, me, unassigned"
         task = "--task nope: not a configured task: plan, build, light-build"
-        for argv, message in (
-            (("--role", "ghost"), role),
-            (("--task", "nope"), task),
+        for given, message in (
+            ({"role": "ghost"}, role),
+            ({"task": "nope"}, task),
             *(
-                (("--client", value), f"--client {value!r}: {CLIENT}")
+                ({"client": value}, f"--client {value!r}: {CLIENT}")
                 for value in ("", "a b", "a\nb", '"a', "a\x07", "a\x85")
             ),
         ):
-            for name, call in by_option(issues, argv).items():
-                with self.subTest(argv=argv, method=name):
+            for name, call in by_option(issues, **given).items():
+                with self.subTest(given=given, method=name):
                     self.refused(call, message)
 
     def test_board_errors(self):

@@ -18,9 +18,8 @@ from unittest import mock
 from agent_pm.orchestrator.engine import (
     types,
 )
-from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState, Linked
+from agent_pm.orchestrator.engine.flow.types import ArchiveRefused, IssueState, Linked, Priority
 from agent_pm.orchestrator.engine.types import LinearError
-from agent_pm.orchestrator.issue import command
 from agent_pm.orchestrator.trackers.linear import (
     client,
     issue_archive,
@@ -46,6 +45,8 @@ from orchestrator_tests.unit.issue_fixtures import (
     CLIENT_GROUP,
     CLIENT_LABELS,
     TASK_LABELS,
+    issue_change,
+    list_query,
     names_cfg,
 )
 
@@ -841,10 +842,6 @@ class GraphQLQueries(ServerCase):
         )
 
 
-def parsed(*argv):
-    return command._parser().parse_args(argv)
-
-
 def pages(page):
     return {"hasNextPage": False, "endCursor": page[-1]["id"] if page else None}
 
@@ -863,8 +860,8 @@ class IssueOps(ServerCase):
     def ops(self):
         return [r.op for r in self.fake.requests]
 
-    def listed(self, *argv):
-        return sorted(row[0]["identifier"] for row in self.issues.walk(parsed("list", *argv)))
+    def listed(self, **given):
+        return sorted(row[0]["identifier"] for row in self.issues.walk(list_query(**given)))
 
     def test_the_viewer(self):
         self.assertEqual(self.gql(issue_create.Q_VIEWER), {"viewer": self.me})
@@ -1030,7 +1027,7 @@ class IssueOps(ServerCase):
             ([e["node"]["identifier"] for e in rest["edges"]], rest["pageInfo"]),
             (["TASK-7"], {"hasNextPage": False, "endCursor": self.task7["id"]}),
         )
-        rows, more, end = self.issues.page(parsed("list"), 1, eight["id"])
+        rows, more, end = self.issues.page(list_query(), 1, eight["id"])
         self.assertEqual(
             ([r[0]["identifier"] for r in rows], more, end), (["TASK-9"], True, nine["id"])
         )
@@ -1051,24 +1048,24 @@ class IssueOps(ServerCase):
         )
         gone = self.fake.issue("Archived widget", assignee=self.engineer)
         ops.call(self.gql, linear_tracker.M_ARCHIVE, "issueArchive", i=gone["id"])
-        for argv, want in (
-            ((), ["TASK-7", "TASK-8", "TASK-9"]),
-            (("--include-archived",), ["TASK-10", "TASK-7", "TASK-8", "TASK-9"]),
-            (("--query", "widget"), ["TASK-8", "TASK-9"]),
-            (("--query", "widget", "--include-archived"), ["TASK-10", "TASK-8", "TASK-9"]),
-            (("--state", "ready"), ["TASK-8", "TASK-9"]),
-            (("--state", "running"), ["TASK-7"]),
-            (("--role", "engineer"), ["TASK-7", "TASK-8"]),
-            (("--role", "unassigned"), ["TASK-9"]),
-            (("--task", "build"), ["TASK-8"]),
-            (("--client", "codex"), ["TASK-9"]),
-            (("--priority", "high"), ["TASK-8"]),
-            (("--priority", "urgent"), ["TASK-9"]),
-            (("--parent", "TASK-7"), ["TASK-9"]),
-            (("--state", "ready", "--role", "engineer"), ["TASK-8"]),
+        for given, want in (
+            ({}, ["TASK-7", "TASK-8", "TASK-9"]),
+            ({"include_archived": True}, ["TASK-10", "TASK-7", "TASK-8", "TASK-9"]),
+            ({"query": "widget"}, ["TASK-8", "TASK-9"]),
+            ({"query": "widget", "include_archived": True}, ["TASK-10", "TASK-8", "TASK-9"]),
+            ({"state": IssueState.READY}, ["TASK-8", "TASK-9"]),
+            ({"state": IssueState.RUNNING}, ["TASK-7"]),
+            ({"role": "engineer"}, ["TASK-7", "TASK-8"]),
+            ({"role": "unassigned"}, ["TASK-9"]),
+            ({"task": "build"}, ["TASK-8"]),
+            ({"client": "codex"}, ["TASK-9"]),
+            ({"priority": Priority.HIGH}, ["TASK-8"]),
+            ({"priority": Priority.URGENT}, ["TASK-9"]),
+            ({"parent": "TASK-7"}, ["TASK-9"]),
+            ({"state": IssueState.READY, "role": "engineer"}, ["TASK-8"]),
         ):
-            with self.subTest(argv):
-                self.assertEqual(self.listed(*argv), want)
+            with self.subTest(given):
+                self.assertEqual(self.listed(**given), want)
 
     def test_edit_reads_labels_and_updates_fields_and_labels(self):
         build, codex = TASK_LABELS["build"], CLIENT_LABELS["codex"]
@@ -1093,17 +1090,15 @@ class IssueOps(ServerCase):
                 },
             },
         )
-        argv = (
-            "--title",
-            "Edited",
-            "--priority",
-            "high",
-            "--task",
-            "light-build",
-            "--client",
-            "claude",
+        change = issue_change(
+            "TASK-8",
+            title="Edited",
+            body="New",
+            task="light-build",
+            client="claude",
+            priority=Priority.HIGH,
         )
-        receipt = self.issues.edit(parsed("edit", "TASK-8", *argv), "New")
+        receipt = self.issues.edit(change)
         self.assertEqual((receipt["result"], receipt["actor"]), ("changed", self.me))
         self.assertEqual(
             self.fake.requests[-1].variables["in"],

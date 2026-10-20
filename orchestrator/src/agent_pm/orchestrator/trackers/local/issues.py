@@ -67,12 +67,12 @@ class LocalIssues:
             return spec
         raise IssueError(f"--role {spec}: not a role: {', '.join([*self.roles, 'me', UNASSIGNED])}")
 
-    def _names(self, args):
-        if args.task is not None and args.task not in self.tasks:
-            raise IssueError(f"--task {args.task}: not a configured task: {', '.join(self.tasks)}")
-        if args.client is not None and (not args.client or _BAD_CLIENT.search(args.client)):
+    def _names(self, task, client):
+        if task is not None and task not in self.tasks:
+            raise IssueError(f"--task {task}: not a configured task: {', '.join(self.tasks)}")
+        if client is not None and (not client or _BAD_CLIENT.search(client)):
             raise IssueError(
-                f"--client {args.client!r}: want a client name: no whitespace, control character "
+                f"--client {client!r}: want a client name: no whitespace, control character "
                 "or leading quote"
             )
 
@@ -115,8 +115,8 @@ class LocalIssues:
             column.append({"id": ident, "identifier": ident, "title": title, "state": state})
         return column
 
-    def page(self, args, first, cursor):
-        rows = self.walk(args)
+    def page(self, query, first, cursor):
+        rows = self.walk(query)
         if cursor is not None:
             at = next((n for n, row in enumerate(rows) if row[2] == cursor), None)
             if at is None:
@@ -125,63 +125,63 @@ class LocalIssues:
         page = rows[:first]
         return page, len(rows) > first, page[-1][2] if page else None
 
-    def walk(self, args):
-        keep = self._filters(args)
+    def walk(self, query):
+        keep = self._filters(query)
         found = [each for each in self.tracker.files().values() if all(k(each) for k in keep)]
         found.sort(key=lambda each: (each.mtime, _number(each.id)), reverse=True)
         return [(_item(each), [], each.id) for each in found]
 
-    def _filters(self, args):
-        self._names(args)
-        keep = [] if args.include_archived else [lambda each: each.assignee is not None]
-        if args.query:
-            text = args.query.lower()
+    def _filters(self, query):
+        self._names(query.task, query.client)
+        keep = [] if query.include_archived else [lambda each: each.assignee is not None]
+        if query.query:
+            text = query.query.lower()
             keep.append(lambda each: text in each.title.lower() or text in each.description.lower())
-        if args.state is not None:
-            keep.append(lambda each: each.state == args.state)
-        if args.role is not None:
-            folder = self._folder(args.role)
+        if query.state is not None:
+            keep.append(lambda each: each.state == query.state)
+        if query.role is not None:
+            folder = self._folder(query.role)
             keep.append(lambda each: _dir(each) == folder)
-        if args.task is not None:
-            keep.append(lambda each: each.task == args.task)
-        if args.client is not None:
-            keep.append(lambda each: each.client == args.client)
-        if args.priority is not None:
-            keep.append(lambda each: each.priority == PRIORITY_NUMBERS[args.priority])
-        if args.parent is not None:
-            parent = self._issue(args.parent, "--parent").id
+        if query.task is not None:
+            keep.append(lambda each: each.task == query.task)
+        if query.client is not None:
+            keep.append(lambda each: each.client == query.client)
+        if query.priority is not None:
+            keep.append(lambda each: each.priority == PRIORITY_NUMBERS[query.priority])
+        if query.parent is not None:
+            parent = self._issue(query.parent, "--parent").id
             keep.append(lambda each: each.parent == parent)
         return keep
 
-    def create(self, args, body):
-        owner = self._folder(UNASSIGNED if args.role is None else args.role)
-        self._names(args)
-        priority = 0 if args.priority is None else PRIORITY_NUMBERS[args.priority]
-        parent = None if args.parent is None else self._issue(args.parent, "--parent").id
+    def create(self, new):
+        owner = self._folder(UNASSIGNED if new.role is None else new.role)
+        self._names(new.task, new.client)
+        priority = 0 if new.priority is None else PRIORITY_NUMBERS[new.priority]
+        parent = None if new.parent is None else self._issue(new.parent, "--parent").id
         picked = {}
-        for option, values in (("--blocks", args.blocks), ("--blocked-by", args.blocked_by)):
+        for option, values in (("--blocks", new.blocks), ("--blocked-by", new.blocked_by)):
             for value in dict.fromkeys(values):
                 found = self._issue(value, option)
                 if picked.setdefault(found.id, option) != option:
                     raise IssueError(BOTH_DIRECTIONS.format(identifier=found.id))
-        state = LocalState(args.state or LocalState.BACKLOG)
+        state = LocalState(new.state or LocalState.BACKLOG)
 
         def render(ident):
             return issue_file.new(
                 ident=ident,
-                title=args.title,
+                title=new.title,
                 priority=priority,
                 created=self.tracker.now(),
                 parent=parent,
-                description=body,
+                description=new.body,
                 state=state,
-                task=args.task,
-                client=args.client,
+                task=new.task,
+                client=new.client,
                 blocked_by=[i for i, option in picked.items() if option == "--blocked-by"],
                 source=Source.OTHER,
             )
 
-        key = self.tracker.add(owner, state, args.title, render).key
+        key = self.tracker.add(owner, state, new.title, render).key
         done, failed = [], []
         for other, option in picked.items():
             if option == "--blocked-by":
@@ -201,26 +201,26 @@ class LocalIssues:
             raise RelationsFailed({**report, "recover": recover})
         return receipt
 
-    def edit(self, args, body):
-        self._names(args)
-        key = self._issue(args.id).id
+    def edit(self, change):
+        self._names(change.task, change.client)
+        key = self._issue(change.id).id
 
-        def change(text, found):
+        def rewrite(text, found):
             edited = text
-            if args.title is not None and args.title != found.title:
-                edited = issue_file.set_title(edited, args.title)
-            if body is not None and body.strip() != found.description:
-                edited = issue_file.set_description(edited, body)
-            if args.task is not None and args.task != found.task:
-                edited = issue_file.set_front(edited, "task", args.task)
-            if args.client is not None and args.client != found.client:
-                edited = issue_file.set_front(edited, "client", args.client)
-            priority = None if args.priority is None else PRIORITY_NUMBERS[args.priority]
+            if change.title is not None and change.title != found.title:
+                edited = issue_file.set_title(edited, change.title)
+            if change.body is not None and change.body.strip() != found.description:
+                edited = issue_file.set_description(edited, change.body)
+            if change.task is not None and change.task != found.task:
+                edited = issue_file.set_front(edited, "task", change.task)
+            if change.client is not None and change.client != found.client:
+                edited = issue_file.set_front(edited, "client", change.client)
+            priority = None if change.priority is None else PRIORITY_NUMBERS[change.priority]
             if priority is not None and priority != found.priority:
                 edited = issue_file.set_front(edited, "priority", priority)
             return None if edited == text else (edited, None)
 
-        return self._receipt(key, "edit", self._write(key, change))
+        return self._receipt(key, "edit", self._write(key, rewrite))
 
     def move(self, ident, state):
         key, target = self._issue(ident).id, LocalState(state)

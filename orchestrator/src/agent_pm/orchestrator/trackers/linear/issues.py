@@ -37,28 +37,32 @@ class LinearIssues:
         with self._keychain():
             return issue_read.view(self.gql, ident, full=full)
 
-    def page(self, args, first, cursor):
+    def page(self, query, first, cursor):
         with self._keychain():
-            return issue_page.fetch(self.gql, self._source(args), first, cursor)
+            source = issue_list.source(self.gql, query, self.linear)
+            return issue_page.fetch(self.gql, source, first, cursor)
 
-    def walk(self, args):
+    def walk(self, query):
         with self._keychain():
-            return issue_page.walk(self.gql, self._source(args))
+            return issue_page.walk(self.gql, issue_list.source(self.gql, query, self.linear))
 
-    def _source(self, args):
-        if args.command == "list":
-            return issue_list.source(self.gql, args, self.linear)
-        return issue_lookup.source(self.gql, args, self.linear.team)
-
-    def create(self, args, body):
+    def lookup_page(self, query, first, cursor):
+        """lookup's page, as page is list's."""
         with self._keychain():
-            return issue_create.create(
-                self.gql, *issue_create.plan(self.gql, args, self.linear, body)
-            )
+            source = issue_lookup.source(self.gql, query, self.linear.team)
+            return issue_page.fetch(self.gql, source, first, cursor)
 
-    def edit(self, args, body):
+    def lookup_walk(self, query):
         with self._keychain():
-            return issue_edit.edit(self.gql, self.linear, args, body)
+            return issue_page.walk(self.gql, issue_lookup.source(self.gql, query, self.linear.team))
+
+    def create(self, new):
+        with self._keychain():
+            return issue_create.create(self.gql, *issue_create.plan(self.gql, new, self.linear))
+
+    def edit(self, change):
+        with self._keychain():
+            return issue_edit.edit(self.gql, self.linear, change)
 
     def move(self, ident, state):
         with self._keychain():

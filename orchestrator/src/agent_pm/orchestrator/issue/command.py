@@ -8,13 +8,22 @@ import sys
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.orchestrator.engine import config
-from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS, ArchiveRefused, IssueState
+from agent_pm.orchestrator.engine.flow.types import (
+    PRIORITY_NUMBERS,
+    ArchiveRefused,
+    IssueState,
+    Priority,
+)
 from agent_pm.orchestrator.engine.types import (
     ConfigError,
     GraphQLErrors,
+    IssueEdit,
     IssueError,
     LabelRefused,
     LinearError,
+    ListQuery,
+    LookupQuery,
+    NewIssue,
     RelationsFailed,
     Resource,
     TrackerFileError,
@@ -630,15 +639,74 @@ def read_body(path, stdin=None):
     return body
 
 
-def _run(board: Backend, args, body):
+def _request(args, body):
+    """The typed request of list, lookup, create or edit from args (body: the read --body-file);
+    None for the other commands.
+    """
+    if args.command == "list":
+        return ListQuery(
+            query=args.query,
+            state=_state(args.state),
+            role=args.role,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+            parent=args.parent,
+            include_archived=args.include_archived,
+            label=args.label,
+            project=args.project,
+        )
+    if args.command == "lookup":
+        return LookupQuery(
+            resource=args.resource, query=args.query, team=args.team, project=args.project
+        )
+    if args.command == "create":
+        return NewIssue(
+            title=args.title,
+            body=body,
+            state=_state(args.state),
+            role=args.role,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+            parent=args.parent,
+            labels=tuple(args.label),
+            project=args.project,
+            milestone=args.milestone,
+            blocks=tuple(args.blocks),
+            blocked_by=tuple(args.blocked_by),
+        )
+    if args.command == "edit":
+        return IssueEdit(
+            id=args.id,
+            title=args.title,
+            body=body,
+            task=args.task,
+            client=args.client,
+            priority=_priority(args.priority),
+        )
+    return None
+
+
+def _state(name):
+    return None if name is None else IssueState(name)
+
+
+def _priority(name):
+    return None if name is None else Priority(name)
+
+
+def _run(
+    board: Backend, args, request: ListQuery | LookupQuery | NewIssue | IssueEdit | None, body
+):
     if args.command == "move":
         return receipt(board.move(args.id, args.state))
     if args.command == "comment":
         return receipt(board.comment(args.id, body))
-    if args.command == "edit":
-        return receipt(board.edit(args, body))
-    if args.command == "create":
-        return receipt(board.create(args, body))
+    if isinstance(request, IssueEdit):
+        return receipt(board.edit(request))
+    if isinstance(request, NewIssue):
+        return receipt(board.create(request))
     if args.command == "relation":
         direction = "blocks" if args.blocks is not None else "blocked_by"
         other = getattr(args, direction)
@@ -648,20 +716,27 @@ def _run(board: Backend, args, body):
         return fit(plan, (("descendants", "unfinished"),), (), None)
     if args.command == "archive":
         return receipt(board.archive(args.id))
-    if args.command == "read":
-        view = board.view(args.id, full=args.full)
-        if args.full:
-            return _written(args.output, view, {"identifier": view["identifier"]})
-        return fit(
-            compact(view),
-            (("comments", "labels", "blocks", "blocked_by", "children"),),
-            TEXTS,
-            f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
-        )
+    if isinstance(request, ListQuery):
+        return _listed(board.page, board.walk, request, args)
+    view = board.view(args.id, full=args.full)
+    if args.full:
+        return _written(args.output, view, {"identifier": view["identifier"]})
+    return fit(
+        compact(view),
+        (("comments", "labels", "blocks", "blocked_by", "children"),),
+        TEXTS,
+        f"agent-pm-orchestrator issue read {view['identifier']} {FULL}",
+    )
+
+
+def _listed(page, walk, query, args):
+    """list or lookup: page(query, …)'s page under args' --limit and --cursor, or with --full
+    walk(query)'s every row written to --output.
+    """
     if not args.full:
-        rows, more, end = board.page(args, args.limit or PAGE, args.cursor)
+        rows, more, end = page(query, args.limit or PAGE, args.cursor)
         return fit_page(rows, end if more else None)
-    rows = board.walk(args)
+    rows = walk(query)
     cut = [f"items.{n}.{field}" for n, (_, fields, _) in enumerate(rows) for field in fields]
     payload = {"items": [item for item, _, _ in rows], "truncated": cut}
     return _written(args.output, payload, {})
@@ -676,19 +751,22 @@ def _written(output, payload, summary):
     return encode({**summary, "output": path})
 
 
-def _linear_only(args):
-    """What args ask of a local board that only Linear has, or None."""
-    if args.command == "lookup":
+def _linear_only(command, request):
+    """What command and its request ask of a local board that only Linear has, or None."""
+    if command == "lookup":
         return "lookup"
-    if args.command == "label":
+    if command == "label":
         return "label swap"
-    if args.command not in ("list", "create"):
+    if isinstance(request, ListQuery):
+        given = {"--label": request.label is not None, "--project": request.project is not None}
+    elif isinstance(request, NewIssue):
+        given = {
+            "--label": bool(request.labels),
+            "--project": request.project is not None,
+            "--milestone": request.milestone is not None,
+        }
+    else:
         return None
-    given = {
-        "--label": args.label not in (None, []),
-        "--project": args.project is not None,
-        "--milestone": getattr(args, "milestone", None) is not None,
-    }
     return next((option for option, is_set in given.items() if is_set), None)
 
 
@@ -719,7 +797,8 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    if cfg.tracker is TrackerKind.LOCAL and (what := _linear_only(args)):
+    request = _request(args, body)
+    if cfg.tracker is TrackerKind.LOCAL and (what := _linear_only(args.command, request)):
         diagnose(err, _LINEAR_ONLY.format(what))
         return USAGE
     try:
@@ -734,8 +813,10 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     try:
         if isinstance(board, LinearIssues) and args.command == "label":
             data = receipt(board.swap(args.id, args.old, args.new))
+        elif isinstance(board, LinearIssues) and isinstance(request, LookupQuery):
+            data = _listed(board.lookup_page, board.lookup_walk, request, args)
         else:
-            data = _run(board, args, body)
+            data = _run(board, args, request, body)
     except IssueError as error:
         diagnose(err, error)
         return USAGE

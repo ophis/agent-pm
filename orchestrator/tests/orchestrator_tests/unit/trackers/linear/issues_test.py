@@ -1,9 +1,14 @@
-"""The issue command's Linear backend: list and lookup pages by subcommand, and each method's Keychain
-or process failure as the IssueError naming the manager key's service.
+"""The issue command's Linear backend: list and lookup pages, and each method's Keychain or process
+failure as the IssueError naming the manager key's service.
 """
 
-from agent_pm.orchestrator.engine.types import IssueError, KeychainError, LinearError
-from agent_pm.orchestrator.issue import command
+from agent_pm.orchestrator.engine.types import (
+    IssueError,
+    KeychainError,
+    LinearError,
+    LookupQuery,
+    Resource,
+)
 from agent_pm.orchestrator.trackers.linear.issues import LinearIssues
 from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CalledProcessError, TimeoutExpired
@@ -12,14 +17,15 @@ from orchestrator_tests.unit.issue_fixtures import (
     Gql,
     Routes,
     edges,
+    issue_change,
     issue_row,
+    list_query,
     names_cfg,
+    new_issue,
     team_ref,
 )
 
-
-def parsed(*argv):
-    return command._parser().parse_args(argv)
+TEAMS = LookupQuery(resource=Resource.TEAMS, query=None, team=None, project=None)
 
 
 def backend(gql):
@@ -28,13 +34,14 @@ def backend(gql):
 
 def calls(issues):
     """Each method, with arguments that reach Linear before anything else."""
-    create = parsed("create", "--title", "t", "--body-file", "b")
     return {
         "view": lambda: issues.view("TASK-2", full=False),
-        "page": lambda: issues.page(parsed("list"), 20, None),
-        "walk": lambda: issues.walk(parsed("lookup", "teams")),
-        "create": lambda: issues.create(create, "body"),
-        "edit": lambda: issues.edit(parsed("edit", "TASK-2", "--title", "t"), None),
+        "page": lambda: issues.page(list_query(), 20, None),
+        "walk": lambda: issues.walk(list_query()),
+        "lookup_page": lambda: issues.lookup_page(TEAMS, 20, None),
+        "lookup_walk": lambda: issues.lookup_walk(TEAMS),
+        "create": lambda: issues.create(new_issue(body="body")),
+        "edit": lambda: issues.edit(issue_change("TASK-2", title="t")),
         "move": lambda: issues.move("TASK-2", "done"),
         "comment": lambda: issues.comment("TASK-2", "body"),
         "relation": lambda: issues.relation("add", "TASK-2", "blocks", "TASK-3"),
@@ -74,8 +81,12 @@ class Pages(Case):
     def test_list_reads_issues_and_lookup_its_resource(self):
         gql = Routes(issues=edges([issue_row("TASK-1")]), teams=edges([team_ref(1, "TASK")]))
         issues = backend(gql)
-        rows, more, _ = issues.page(parsed("list"), 20, None)
+        rows, more, _ = issues.page(list_query(), 20, None)
         self.assertEqual(([item["identifier"] for item, _, _ in rows], more), (["TASK-1"], False))
-        rows = issues.walk(parsed("lookup", "teams"))
-        self.assertEqual([item["key"] for item, _, _ in rows], ["TASK"])
-        self.assertEqual((len(gql.sent("issues")), len(gql.sent("teams"))), (1, 1))
+        self.assertEqual(
+            [item["identifier"] for item, _, _ in issues.walk(list_query())], ["TASK-1"]
+        )
+        rows, more, _ = issues.lookup_page(TEAMS, 20, None)
+        self.assertEqual(([item["key"] for item, _, _ in rows], more), (["TASK"], False))
+        self.assertEqual([item["key"] for item, _, _ in issues.lookup_walk(TEAMS)], ["TASK"])
+        self.assertEqual((len(gql.sent("issues")), len(gql.sent("teams"))), (2, 2))
