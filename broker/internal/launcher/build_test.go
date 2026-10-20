@@ -345,6 +345,7 @@ func TestWorkerImageHasItsScripts(t *testing.T) {
 		"ln -s /opt/agent-pm/lib/git-credential-agent-pm /opt/agent-pm/bin/git-credential-agent-pm",
 		" /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \\\n",
 		`printf '%s\n' '[credential]' 'helper = /opt/agent-pm/bin/git-credential-agent-pm' 'useHttpPath = true' >> /etc/gitconfig`,
+		`printf '%s\n' '[core]' 'hooksPath = .githooks' >> /etc/gitconfig`,
 		"ENV PATH=/opt/agent-pm/bin:",
 		`printf '%s\n' 'PATH=/opt/agent-pm/bin:$PATH' > /etc/profile.d/agent-pm.sh`,
 		"COPY delegate/src /opt/agent-pm/delegate/src\n",

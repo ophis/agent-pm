@@ -28,8 +28,10 @@ the result and fails the commit on lint ruff cannot fix. Unstaged edits stay out
 working tree. Its ruff is CI's: the `ruff==` pin in `.github/workflows/test.yml` (keep every pin there
 equal); `ruff` on `PATH` at that version, else `uvx ruff@<version>` (or `uv tool run`); with neither,
 it prints a hint and commits.
-Agent checkouts: a tmux Host worktree of a `[local_clones]` clone shares the clone's setting; a fresh
-clone (an unlisted repo, every Docker Host run) has none, and CI's Ruff step still catches it.
+Agent checkouts: every Docker Host checkout runs it, the worker image's `/etc/gitconfig` setting
+`core.hooksPath = .githooks` ([What a container gets](docker-host.md#what-a-container-gets)); a tmux Host
+worktree of a `[local_clones]` clone shares the clone's setting; a fresh tmux Host clone (an unlisted repo)
+has none, and CI's Ruff step still catches it.
 
 | Suite | Command |
 |---|---|
