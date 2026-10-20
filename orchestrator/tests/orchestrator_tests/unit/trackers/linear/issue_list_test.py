@@ -7,6 +7,7 @@ import os
 
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.issue_fixtures import (
+    MANAGER_KEY,
     OTHER_TEAM,
     IssueCase,
     Routes,
@@ -49,7 +50,7 @@ class Filters(IssueCase):
         query, variables = gql.calls[0]
         self.assertIn("orderBy: updatedAt", query)
         want = {"first": 20, "after": None, "f": {"team": {"id": {"eq": TEAM}}}, "a": False}
-        self.assertEqual(variables, {**want, "service": "linear-api-key"})
+        self.assertEqual(variables, {**want, "service": MANAGER_KEY})
 
     def test_another_team_by_key(self):
         nodes = [issue_row("TASK-1"), issue_row("OPS-1", OTHER_TEAM)]

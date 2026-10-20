@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 UNREADABLE = "(unreadable)"
 IssueRecord = dict[str, Any]  # opaque until 第 2 阶段
+# self: the engine; other: user or manager
+Origin = Literal["self", "other"]
 
 
 class IssueState(StrEnum):
@@ -77,12 +79,12 @@ class Move:
 
 @dataclass(frozen=True)
 class Comment:
-    """other: a human's; run: a run's."""
+    """run: a run's."""
 
     at: str
     body: str
-    author: str | None
-    other: bool
+    author: str
+    origin: Origin
     run: bool
 
 
@@ -138,6 +140,7 @@ class Note:
     at: str
     account: str | None
     name: str | None
+    origin: Origin
 
 
 @dataclass(frozen=True)

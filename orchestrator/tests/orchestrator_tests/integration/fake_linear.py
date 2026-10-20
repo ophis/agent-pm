@@ -253,9 +253,10 @@ class FakeLinear:
                 raise ValueError(f"user {user} not seeded")
             return self._comment(self._get(issue), user, body, stamp(at))
 
-    def move(self, issue, to, *, actor, at=None):
+    def move(self, issue, to, *, actor, at=None, bot=False):
+        """actor None: Linear automation's; bot: an integration's, credited to actor."""
         with self.lock:
-            self._move(self._get(issue), IDS[to], actor, stamp(at))
+            self._move(self._get(issue), IDS[to], actor, stamp(at), bot=bot)
 
     def relate(self, type, issue, related):
         with self.lock:
@@ -435,11 +436,15 @@ class FakeLinear:
         rec["comments"].append({"id": cid, "body": body, "createdAt": at, "user": user})
         return cid
 
-    def _move(self, rec, state, actor, at):
+    def _move(self, rec, state, actor, at, *, bot=False):
         if state != rec["state"]:
-            rec["history"].append(
-                {"createdAt": at, "actorId": actor, "fromStateId": rec["state"], "toStateId": state}
-            )
+            move = {
+                "createdAt": at,
+                "actorId": actor,
+                "fromStateId": rec["state"],
+                "toStateId": state,
+            }
+            rec["history"].append(move | ({"bot": True} if bot else {}))
             rec["state"] = state
 
     def _entered(self, rec, kind):
@@ -593,10 +598,17 @@ class FakeLinear:
             }
         }
 
-    def _history(self, _caller, v):
+    def _history(self, caller, v):
         found = _newest(self._get(v["i"])["history"])
         start = int(v.get("after") or 0)
-        page = found[start : start + 250]
+        page = [
+            h
+            | {
+                "actor": self._person(h["actorId"], caller),
+                "botActor": {"type": "github"} if h.get("bot") else None,
+            }
+            for h in found[start : start + 250]
+        ]
         return {
             "issue": {
                 "history": {

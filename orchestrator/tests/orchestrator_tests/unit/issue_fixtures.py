@@ -25,6 +25,9 @@ from orchestrator_tests.unit.run_fixtures import CORE_LOCAL
 
 OTHER_TEAM = "00000000-0000-4000-8000-0000000000f2"
 
+MANAGER_KEY = "linear-api-key-manager"
+CONFIG = f'linear.manager_key = "{MANAGER_KEY}"\n' + tp.CONFIG
+
 
 class IssueCase(Case):
     def setUp(self):
@@ -35,7 +38,7 @@ class IssueCase(Case):
             f.write(f'[orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL)
         self.config = os.path.join(self.root, "config.toml")
         with open(self.config, "w") as f:
-            f.write(tp.CONFIG)
+            f.write(CONFIG)
 
     def run_main(self, argv, gql, stdin=b""):
         out, err = io.BytesIO(), io.StringIO()

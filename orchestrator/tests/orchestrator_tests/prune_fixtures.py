@@ -205,6 +205,7 @@ class PruneScenario(Case):
             states=dict(IDS_BY_KEY),
             human_members=(),
             harness_key="harness",
+            manager_key="",
             task_label_group="",
             task_labels={},
             task_tiers={},

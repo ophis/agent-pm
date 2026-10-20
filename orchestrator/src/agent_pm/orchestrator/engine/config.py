@@ -42,6 +42,7 @@ LINEAR_KEYS = {
     "states",
     "human_members",
     "harness_key",
+    "manager_key",
     "task_label_group",
     "task_labels",
     "agent_label_group",
@@ -213,6 +214,7 @@ def _load(cfg, work, kind, delegates, index):
         team=linear["team"],
         human_members=tuple(linear.get("human_members") or ()),
         harness_key=linear["harness_key"],
+        manager_key=linear.get("manager_key", ""),
         task_label_group=linear["task_label_group"],
         roles=MappingProxyType(roles),
         work_dir=work,
@@ -304,6 +306,7 @@ def _load_config(cfg, local):
     if extra := sorted(set(linear) - LINEAR_KEYS):
         raise ConfigError(f"orchestrator/config.toml: unknown keys in [linear]: {', '.join(extra)}")
     _linear_roles(linear)
+    _manager_key(linear)
     _role_fields(roles)
     _project_repos(linear)
     _local_clones(cfg)
@@ -312,6 +315,20 @@ def _load_config(cfg, local):
     _task_tiers(cfg)
     _agent_labels(linear)
     _client_max_runs(cfg)
+
+
+def _manager_key(linear):
+    """Another account's than the harness's and the roles': the manager's writes are other."""
+    mk = linear.get("manager_key", "")
+    if not isinstance(mk, str):
+        raise ConfigError(
+            f"orchestrator/config.toml: linear.manager_key must be a Keychain service name: {mk!r}"
+        )
+    taken = {linear["harness_key"]: "linear.harness_key"} | {
+        p["key"]: f"[linear.roles.{n}]'s key" for n, p in linear["roles"].items()
+    }
+    if mk in taken:
+        raise ConfigError(f"orchestrator/config.toml: linear.manager_key {mk!r} is {taken[mk]}")
 
 
 def _stage_roles(cfg, linear):

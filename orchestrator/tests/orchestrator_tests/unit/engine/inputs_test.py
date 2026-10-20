@@ -32,9 +32,9 @@ DOCS = config.Docs(
 
 BASE = "https://github.com/ophis/private_docs/blob/main/"
 
-HUMANS = ("ann@example.com", "bob@example.com")
-
 ANN = ("ann@example.com", "Ann")
+
+MANAGER = ("manager@example.com", "Manager")
 
 AGENT = ("agent@example.com", "Researcher")
 
@@ -59,7 +59,8 @@ NOT_FOUND = ok(code=1, stderr="gh: Not Found (HTTP 404)")
 
 
 def note(body, at, who=AGENT):
-    return Note(body, at, who[0] if who else None, who[1] if who else None)
+    """AGENT's: self; anyone else's: other, the user's side."""
+    return Note(body, at, *who, "self" if who is AGENT else "other")
 
 
 def issue(
@@ -100,7 +101,6 @@ def research_issue():
     ns = (
         note("Research started: https://x/y\nsecond line", "2026-09-01T10:00:00.000Z"),
         note("Focus on cost.", "2026-09-02T00:00:00.000Z", ANN),
-        note("Deploy ok", "2026-09-01T11:00:00.000Z", (None, None)),
     )
     return issue(desc, notes=sorted(ns, key=lambda n: n.at))
 
@@ -147,7 +147,7 @@ class BuildInputs(Case):
             note("at the cutoff", "2026-09-04T00:00:00.000Z", ANN),
             note("Question: which?", "2026-09-05T00:00:00.000Z"),
             note("Use Redis.", "2026-09-06T00:00:00.000Z", ANN),
-            note("bot late", "2026-09-07T00:00:00.000Z", (None, None)),
+            note("Manager says", "2026-09-07T00:00:00.000Z", MANAGER),
             note("Bob says more", "2026-09-08T00:00:00.000Z", ("bob@example.com", "Bob")),
         )
 
@@ -163,7 +163,7 @@ class BuildInputs(Case):
         src = inputs.Sources(
             (inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None
         )
-        got = inputs.render(iss, "engineer", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
+        got = inputs.render(iss, "engineer", src, target=self.TARGET, docs=DOCS)
         self.assertEqual(
             got,
             lines(
@@ -179,7 +179,9 @@ class BuildInputs(Case):
                 "## The user's requirements since the last build",
                 "",
                 (
-                    "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\nBob, 2026-09-08T00:00:00.000Z:\nBob says more"
+                    "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\n"
+                    "Manager, 2026-09-07T00:00:00.000Z:\nManager says\n\n"
+                    "Bob, 2026-09-08T00:00:00.000Z:\nBob says more"
                 ),
                 "",
                 "## The user's instructions",
@@ -210,8 +212,6 @@ class BuildInputs(Case):
                 "  > at the cutoff",
                 "- Researcher, 2026-09-05T00:00:00.000Z:",
                 "  > Question: which?",
-                "- integration, 2026-09-07T00:00:00.000Z:",
-                "  > bot late",
             ),
         )
 
@@ -248,7 +248,6 @@ class BuildInputs(Case):
                     issue(d, ident="ENG-7", title="ENG: Registry"),
                     "engineer",
                     inputs.Sources((), None),
-                    humans=HUMANS,
                     target=t,
                     docs=DOCS,
                 )
@@ -282,7 +281,6 @@ class BuildInputs(Case):
             issue(d, ident="ENG-7"),
             "engineer",
             src,
-            humans=HUMANS,
             target=self.TARGET,
             docs=DOCS,
         )
@@ -310,7 +308,6 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report, self.PRD, other), None),
-            humans=HUMANS,
             target=self.TARGET,
             docs=DOCS,
         )
@@ -326,7 +323,6 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report,), None),
-            humans=HUMANS,
             target=self.TARGET,
             docs=DOCS,
         )
@@ -339,7 +335,6 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((prd,), None),
-            humans=HUMANS,
             target=self.TARGET,
             docs=DOCS,
         )
@@ -355,7 +350,6 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7", notes=ns),
             "engineer",
             inputs.Sources((), None),
-            humans=HUMANS,
             target=self.TARGET,
             docs=DOCS,
         )
@@ -396,7 +390,6 @@ class HandoffComments(Case):
             iss,
             "engineer",
             src,
-            humans=HUMANS,
             target=BuildInputs.TARGET,
             docs=DOCS,
         )
@@ -413,7 +406,6 @@ class InputCheckout(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((), None),
-            humans=HUMANS,
             target=t,
             docs=DOCS,
         )
@@ -646,7 +638,6 @@ class DocumentGathering(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             src,
-            humans=HUMANS,
             target=target.Target("o", "r", "ENG-7-x"),
             docs=DOCS,
         )
@@ -817,7 +808,6 @@ class ResearchInputs(Case):
             iss,
             "researcher",
             src,
-            humans=HUMANS,
             target=target.Target("ophis", "agent-pm"),
             docs=DOCS,
         )
@@ -845,8 +835,6 @@ class ResearchInputs(Case):
                 "- Researcher, 2026-09-01T10:00:00.000Z:",
                 "  > Research started: https://x/y",
                 "  > second line",
-                "- integration, 2026-09-01T11:00:00.000Z:",
-                "  > Deploy ok",
                 "",
                 "## Linked documents (context)",
                 "",
@@ -875,7 +863,6 @@ class ResearchInputs(Case):
                     issue(description),
                     "researcher",
                     inputs.Sources((), None),
-                    humans=HUMANS,
                     target=t,
                     docs=DOCS,
                 )
@@ -895,16 +882,15 @@ class ResearchInputs(Case):
                     ),
                 )
 
-    def test_user_notes_are_matched_case_insensitively_and_use_email_without_name(self):
+    def test_user_notes_are_the_other_ones_and_use_email_without_name(self):
         ns = (
-            Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None),
-            Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
+            Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None, "other"),
+            Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob", "other"),
         )
         got = inputs.render(
             issue("Q", notes=ns),
             "researcher",
             inputs.Sources((), None),
-            humans=HUMANS,
             target=None,
             docs=DOCS,
         )
@@ -922,7 +908,6 @@ class ResearchInputs(Case):
             issue("Q"),
             "researcher",
             src,
-            humans=HUMANS,
             target=None,
             docs=DOCS,
         )
@@ -940,7 +925,6 @@ class DocumentFences(Case):
             issue("Q"),
             "researcher",
             src,
-            humans=HUMANS,
             target=None,
             docs=DOCS,
         )
@@ -972,7 +956,6 @@ class LinkedDocumentBudget(Case):
             issue("Q", ident="ENG-7" if role == "engineer" else "RES-4"),
             role,
             inputs.Sources(tuple(docs), earlier),
-            humans=HUMANS,
             target=BuildInputs.TARGET if role == "engineer" else None,
             docs=DOCS,
         )
@@ -1067,7 +1050,7 @@ class DesignInputs(Case):
                 "# Mine",
             ),
         )
-        got = inputs.render(iss, "pm", src, humans=HUMANS, target=None, docs=DOCS)
+        got = inputs.render(iss, "pm", src, target=None, docs=DOCS)
         self.assertEqual(
             got,
             lines(
@@ -1126,7 +1109,6 @@ class DesignInputs(Case):
                     issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"),
                     "pm",
                     inputs.Sources((), None),
-                    humans=HUMANS,
                     target=t,
                     docs=DOCS,
                 )
@@ -1156,7 +1138,6 @@ class DesignInputs(Case):
             issue("Desc", ident="PM-9", notes=ns),
             "pm",
             src,
-            humans=HUMANS,
             target=None,
             docs=DOCS,
         )
@@ -1180,7 +1161,6 @@ class DesignInputs(Case):
             issue(d, ident="PM-9"),
             "pm",
             inputs.Sources((), None),
-            humans=HUMANS,
             target=None,
             docs=DOCS,
         )
@@ -1212,7 +1192,6 @@ class RelatedSection(Case):
             issue("Do it.", ident=ident),
             role,
             self.SRC,
-            humans=HUMANS,
             target=tgt,
             docs=DOCS,
             **({} if r is None else {"related": r}),
