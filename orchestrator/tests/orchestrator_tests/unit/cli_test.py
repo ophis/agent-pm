@@ -147,7 +147,6 @@ class Commands(Case):
             "router": (
                 "--display",
                 "--events",
-                "--issue and --now",
                 "at most once",
                 "repeat",
                 "Keychain",
@@ -193,7 +192,7 @@ class Commands(Case):
                 },
             ),
             (["--brake", "engineer"], {"brake": "engineer"}),
-            (["--now", "--now", "--dry-run", "--dry-run"], {"now": True, "dry": True}),
+            (["--dry-run", "--dry-run"], {"dry": True}),
         )
         for arguments, expected in fixtures:
             with self.subTest(arguments=arguments):
@@ -202,7 +201,6 @@ class Commands(Case):
                 for key, value in expected.items():
                     self.assertEqual(actual[key], value)
         for arguments in (
-            ["--issue", "TASK-1", "--now"],
             ["--events", "/tmp/demo-events.jsonl"],
             ["--issue", "TASK-1", "--issue", "TASK-2"],
             ["--brake", "engineer", "--dry-run"],
@@ -229,7 +227,7 @@ class Commands(Case):
 
     def test_router_promote_and_prune_help_exits_0_naming_their_options(self):
         for command, options in (
-            ("router", ("--now", "--dry-run", "--issue ID", "--brake ROLE")),
+            ("router", ("--dry-run", "--issue ID", "--brake ROLE")),
             ("promote", ("--dry-run", "--now")),
             ("prune", ("--dry-run",)),
         ):
@@ -274,7 +272,7 @@ class InsideAnAgentSession(Case):
 
 DEPLOY = "/Users/francis/playground/agent-pm"
 LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
-JOBS = {"router": ["--now"], "promote": []}
+JOBS = {"router": [], "promote": []}
 
 
 def plist(job):

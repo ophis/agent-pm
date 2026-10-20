@@ -63,7 +63,7 @@ class Parity(BinFlow):
         )
 
     def tick(self):
-        res = self.router("--now")
+        res = self.router()
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""), self.said())
 
     def routed(self):
@@ -88,7 +88,7 @@ class Lock(Parity):
         """A tick in the router lock, its first Linear call (the team) answered HOLD s late."""
         self.fake.fail("linear.Q_TEAM", "hang", seconds=HOLD)
         self.scene([START, DONE], usage=usage(0.5))
-        first = self.start("router", "--now")
+        first = self.start("router")
         live_tmux.wait(self.requests, TIMEOUT, "the first router's team query")
         return first
 
@@ -110,7 +110,7 @@ class Lock(Parity):
         another router → one `skip` event, nothing else.
         """
         first = self.hold()
-        res = self.router("--now")
+        res = self.router()
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
         self.assert_skipped(first, f"router skip reason={BUSY}")
 

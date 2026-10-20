@@ -91,8 +91,8 @@ ROUTER = {
     "Q_HISTORY": "94ed56d855233bdac06aa95986139dc4ed05aa3d50d442ed2cdd12777b61a463",
 }
 LISTS = {
-    "": "3a5086418d895504931848eadf8243f03aad1cfc77f6391f1dc8ab357c034213",
-    "RELATIONS": "7d8c26493df3c7696386e34534445288717b64ace14ed4866316e03bb51463fa",
+    "": "497ec35294c8fc0894d43e9f3925801b8dcfe6af7a961e18b39f92e03fdec959",
+    "RELATIONS": "730acfcbed9ef3680074d0746fd8811b4f55621654e2be30148a7921dfcaabae",
 }
 BACKLOG = "00000000-0000-4000-8000-000000000019"
 # ops queries the adapter delegates to
@@ -191,6 +191,11 @@ class Queries(Case):
         for name, text in texts.items():
             with self.subTest(query=name):
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digests[name])
+
+    def test_lists_select_no_updated_at(self):
+        for fields in ("", linear_tracker.RELATIONS):
+            with self.subTest(fields=fields):
+                self.assertNotIn("updatedAt", linear_tracker.q_issues(fields))
 
 
 class Read(Case):
