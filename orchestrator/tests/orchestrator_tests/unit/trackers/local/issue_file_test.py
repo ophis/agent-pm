@@ -154,6 +154,12 @@ class Parse(Case):
             got.comments, (Note(MTIME, Source.OTHER, "plan:\n#### Steps\n1. read", None),)
         )
 
+    def test_heading_with_other_word_in_comment_body(self):
+        got = parse(FRONT + "### Comments\n###\nplan:\n#### Design · v2\n1. read\n")
+        self.assertEqual(
+            got.comments, (Note(MTIME, Source.OTHER, "plan:\n#### Design · v2\n1. read", None),)
+        )
+
     def test_bad_header_after_a_comment(self):
         self.refuses(
             FRONT + "### Comments\n###\nhi\n#### other · 2026-13-19 14:05\nyo\n",

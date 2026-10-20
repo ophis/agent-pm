@@ -47,7 +47,7 @@ _SECTION = re.compile(r"#{3} (Description|Comments|History)")
 _TIME = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"
 _SOURCE = "(" + "|".join(Source) + ")"
 _HEADER = re.compile(rf"#{{4}} {_SOURCE} · {_TIME}(?: <!-- id=\S+ key=(\S+) -->)?")
-_HEADED = re.compile(r"#{4} \S+ · ")  # header-shaped; other #### lines are body text
+_HEADED = re.compile(rf"#{{4}} {_SOURCE} · ")  # header-shaped; other #### lines are body text
 _BARE = "###"
 _HISTORY = re.compile(rf"- {_TIME} (\w+) {_SOURCE}")
 
