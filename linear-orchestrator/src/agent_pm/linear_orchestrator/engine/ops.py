@@ -36,6 +36,7 @@ HISTORY = (
     "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } }"
 )
 NOT_FOUND = "Entity not found"
+DONE = {"completed", "canceled", "duplicate"}  # Linear state types an issue is finished in
 
 
 def call(gql, query, field, **v):
