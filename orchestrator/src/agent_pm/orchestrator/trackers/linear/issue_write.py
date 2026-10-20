@@ -1,38 +1,33 @@
-"""agent-pm-orchestrator issue move and comment: resolve the target within the issue's own team, read a
-body verbatim, write once and answer with a receipt; a write Linear never answered is WriteUnknown,
-never retried.
+"""agent-pm-orchestrator issue move and comment: move an issue of the configured team to an abstract
+state's configured id, read a body verbatim, write once and answer with a receipt; a write Linear
+never answered is WriteUnknown, never retried.
 """
 
 import sys
 
 from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
-from agent_pm.orchestrator.trackers.linear import issue_read, ops
-
-
-def _states_page(after=""):
-    return f"states(first: 250{after}) {{ nodes {{ id name type }} pageInfo {{ hasNextPage endCursor }} }}"
-
+from agent_pm.orchestrator.trackers.linear import issue_names, issue_read, ops
 
 Q_MOVE = (
     "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url state { id } "
-    f"team {{ id key {_states_page()} }} }} }}"
+    "team { id key } } }"
 )
 Q_COMMENT = "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url } }"
 M_COMMENT = (
     "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) "
     "{ success comment { id } } }"
 )
-Q_STATES = f"query($t: String!, $c: String) {{ team(id: $t) {{ {_states_page(', after: $c')} }} }}"
 
 
-def move(gql, ident, value):
-    """Move ident to the state of its team whose id or exact name is value."""
+def move(gql, cfg, ident, state):
+    """Move ident, an issue of the configured team, to the abstract state's configured id."""
     data = issue_read.lookup(gql, Q_MOVE, ident)
     node = data["issue"]
-    state = _state(_states(gql, node["team"]), value, node["team"]["key"])
-    if node["state"]["id"] == state["id"]:
+    issue_names.in_team(cfg, node, "move")
+    target = issue_names.state_id(cfg, state)
+    if node["state"]["id"] == target:
         return receipt(node, "move", "unchanged", data["viewer"])
-    write(gql, "move", ident, ops.M_STATE, "issueUpdate", i=node["id"], s=state["id"])
+    write(gql, "move", ident, ops.M_STATE, "issueUpdate", i=node["id"], s=target)
     return receipt(node, "move", "changed", data["viewer"])
 
 
@@ -66,29 +61,6 @@ def comment(gql, ident, body):
     out = write(gql, "comment", ident, M_COMMENT, "commentCreate", i=node["id"], b=body)
     comment_id = (out.get("comment") or {}).get("id")
     return receipt(node, "comment", "changed", data["viewer"], comment_id=comment_id)
-
-
-def _states(gql, team):
-    page = team["states"]
-    states = list(page["nodes"])
-    while page["pageInfo"]["hasNextPage"]:
-        page = gql(Q_STATES, t=team["id"], c=page["pageInfo"]["endCursor"])["team"]["states"]
-        states += page["nodes"]
-    return states
-
-
-def _state(states, value, key):
-    found = [s for s in states if value in (s["id"], s["name"])]
-    if len(found) == 1:
-        return found[0]
-    if found:
-        why = "is ambiguous"
-    elif any(s["type"] == value for s in states):
-        why = "is a state type, not a state name"
-    else:
-        why = "is not a state"
-    names = ", ".join(f"{s['name']} ({s['id']})" for s in found or states)
-    raise IssueError(f"state {value!r} {why} of team {key}: {names}")
 
 
 def write(gql, op, ident, query, field, **variables):

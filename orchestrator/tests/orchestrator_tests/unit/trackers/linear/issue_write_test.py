@@ -1,11 +1,12 @@
-"""agent-pm-orchestrator issue move and comment: the state resolved in the issue's own team, the body read
-verbatim, one write, the receipt.
+"""agent-pm-orchestrator issue move and comment: an abstract state as the configured team's state id,
+the body read verbatim, one write, the receipt.
 """
 
 import io
 import os
 from unittest import mock
 
+from agent_pm.orchestrator.engine.flow.types import IssueState
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
@@ -15,29 +16,45 @@ from agent_pm.orchestrator.engine.types import (
 )
 from agent_pm.orchestrator.trackers.linear import issue_write, ops
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.issue_fixtures import VIEWER, WriteGql, conn, team, write_issue
+from orchestrator_tests.unit.board_ids import STATES
+from orchestrator_tests.unit.issue_fixtures import (
+    OTHER_TEAM,
+    VIEWER,
+    WriteGql,
+    names_cfg,
+    write_issue,
+)
 
-DONE = (("s-todo", "Todo", "unstarted"), ("s-done", "Done", "completed"))
 BODY = 'say "hi", `ls`, $HOME and ${x} \\n\nline two\n中文正文\n'
+KEYS = {
+    IssueState.BACKLOG: "backlog",
+    IssueState.READY: "todo",
+    IssueState.RUNNING: "in_progress",
+    IssueState.REVIEW: "in_review",
+    IssueState.APPROVED: "handoff",
+    IssueState.DONE: "done",
+    IssueState.CANCELED: "canceled",
+}
+
+
+def move(gql, state, ident="TASK-2"):
+    return issue_write.move(gql, names_cfg(), ident, state)
 
 
 class Move(Case):
-    def test_a_name_resolves_within_the_issue_team(self):
-        # both teams name a state Done; each issue moves to its own team's
-        for ident, want in (("TASK-2", "s-task-done"), ("OPS-3", "s-ops-done")):
-            key = ident.split("-")[0]
-            states = (("s-todo", "Todo", "unstarted"), (want, "Done", "completed"))
-            gql = WriteGql(write_issue(ident, team_node=team(key, states)))
-            with self.subTest(ident=ident):
-                receipt = issue_write.move(gql, ident, "Done")
-                self.assertEqual(gql.writes, [(ops.M_STATE, {"i": f"id-{ident}", "s": want})])
+    def test_each_abstract_state_writes_its_configured_id(self):
+        for state, key in KEYS.items():
+            gql = WriteGql(write_issue(state=STATES["backlog" if key != "backlog" else "todo"]))
+            with self.subTest(state=state):
+                receipt = move(gql, state)
+                self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": STATES[key]})])
                 self.assertEqual(
                     receipt,
                     {
                         "issue": {
-                            "id": f"id-{ident}",
-                            "identifier": ident,
-                            "url": f"https://linear.app/t/issue/{ident}",
+                            "id": "id-TASK-2",
+                            "identifier": "TASK-2",
+                            "url": "https://linear.app/t/issue/TASK-2",
                         },
                         "operation": "move",
                         "result": "changed",
@@ -45,70 +62,41 @@ class Move(Case):
                     },
                 )
 
-    def test_a_state_id_of_the_issue_team_resolves(self):
-        gql = WriteGql(write_issue(team_node=team("TASK", DONE)))
-        self.assertEqual(issue_write.move(gql, "TASK-2", "s-done")["result"], "changed")
-        self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": "s-done"})])
-
     def test_already_in_the_state_is_unchanged_and_writes_nothing(self):
-        for value in ("Done", "s-done"):
-            gql = WriteGql(write_issue(state="s-done", team_node=team("TASK", DONE)))
-            with self.subTest(value=value):
-                receipt = issue_write.move(gql, "TASK-2", value)
-                self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
-                self.assertEqual(receipt["actor"], VIEWER)
+        gql = WriteGql(write_issue(state=STATES["handoff"]))
+        receipt = move(gql, IssueState.APPROVED)
+        self.assertEqual((receipt["result"], gql.writes), ("unchanged", []))
+        self.assertEqual(receipt["actor"], VIEWER)
 
-    def test_an_unresolved_state_writes_nothing_and_lists_the_team_states(self):
-        cases = (
-            ("Shipped", "not a state", ("Todo (s-todo)", "Done (s-done)")),
-            ("done", "not a state", ("Done (s-done)",)),
-            ("completed", "a state type", ("Done (s-done)",)),
-            ("s-elsewhere", "not a state", ("Todo (s-todo)",)),
-        )
-        for value, reason, candidates in cases:
-            gql = WriteGql(write_issue(team_node=team("TASK", DONE)))
-            with self.subTest(value=value), self.assertRaises(IssueError) as cm:
-                issue_write.move(gql, "TASK-2", value)
-            text = str(cm.exception)
-            self.assertIn(f"{value!r}", text)
-            self.assertIn(reason, text)
-            self.assertIn("team TASK", text)
-            for candidate in candidates:
-                self.assertIn(candidate, text)
-            self.assertEqual(gql.writes, [])
-
-    def test_a_name_twice_in_the_team_is_ambiguous(self):
-        states = (("s-a", "Done", "completed"), ("s-b", "Done", "canceled"))
-        gql = WriteGql(write_issue(team_node=team("TASK", states)))
+    def test_an_issue_of_another_team_writes_nothing(self):
+        gql = WriteGql(write_issue("OPS-3", team_id=OTHER_TEAM))
         with self.assertRaises(IssueError) as cm:
-            issue_write.move(gql, "TASK-2", "Done")
-        self.assertIn("ambiguous", str(cm.exception))
-        self.assertIn("Done (s-a)", str(cm.exception))
-        self.assertIn("Done (s-b)", str(cm.exception))
+            move(gql, IssueState.DONE, "OPS-3")
+        text = str(cm.exception)
+        for phrase in ("OPS-3", "team OPS", "move", names_cfg().team):
+            self.assertIn(phrase, text)
         self.assertEqual(gql.writes, [])
 
-    def test_later_state_pages_are_read(self):
-        first = team("TASK", (("s-todo", "Todo", "unstarted"),), more=True, cursor="p-1")
-        later = conn([{"id": "s-done", "name": "Done", "type": "completed"}])
-        gql = WriteGql(write_issue(team_node=first), pages=[later])
-        self.assertEqual(issue_write.move(gql, "TASK-2", "Done")["result"], "changed")
-        self.assertIn((issue_write.Q_STATES, {"t": "t-TASK", "c": "p-1"}), gql.calls)
-        self.assertEqual(gql.writes, [(ops.M_STATE, {"i": "id-TASK-2", "s": "s-done"})])
+    def test_the_read_asks_for_the_team_and_state_ids(self):
+        gql = WriteGql(write_issue())
+        move(gql, IssueState.DONE)
+        query, variables = gql.calls[0]
+        self.assertEqual((query, variables), (issue_write.Q_MOVE, {"i": "TASK-2"}))
+        self.assertIn("team { id key }", query)
+        self.assertIn("state { id }", query)
+        self.assertNotIn("states", query)
 
     def test_no_such_issue_writes_nothing(self):
         gql = WriteGql(None)
         with self.assertRaises(IssueError) as cm:
-            issue_write.move(gql, "TASK-2", "Done")
+            move(gql, IssueState.DONE)
         self.assertIn("no such issue", str(cm.exception))
         self.assertEqual(gql.writes, [])
 
     def test_a_write_outage_is_result_unknown_and_never_retried(self):
-        gql = WriteGql(
-            write_issue(team_node=team("TASK", DONE)),
-            result=Unavailable("issueUpdate", reason="timed out"),
-        )
+        gql = WriteGql(write_issue(), result=Unavailable("issueUpdate", reason="timed out"))
         with self.assertRaises(WriteUnknown) as cm:
-            issue_write.move(gql, "TASK-2", "Done")
+            move(gql, IssueState.DONE)
         text = str(cm.exception)
         for phrase in ("move TASK-2", "result unknown", "timed out", "issue read TASK-2"):
             self.assertIn(phrase, text)
@@ -116,9 +104,9 @@ class Move(Case):
 
     def test_a_refused_write_fails_and_is_not_unknown(self):
         for result in ({"success": False}, GraphQLErrors([{"message": "boom"}])):
-            gql = WriteGql(write_issue(team_node=team("TASK", DONE)), result=result)
+            gql = WriteGql(write_issue(), result=result)
             with self.subTest(result=result), self.assertRaises(LinearError) as cm:
-                issue_write.move(gql, "TASK-2", "Done")
+                move(gql, IssueState.DONE)
             self.assertNotIsInstance(cm.exception, WriteUnknown)
             self.assertEqual(len(gql.writes), 1)
 

@@ -68,9 +68,9 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1166`, `…/engine/promote.py:316`, `…/engine/prune.py:447`, `…/engine/writeback.py:90` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/trackers/linear/ops.py:32`, `…/trackers/linear/linear_tracker.py:90`, `…/trackers/linear/linear_tracker.py:92`, `…/trackers/linear/linear_tracker.py:76`, `…/trackers/linear/ops.py:25`, `…/trackers/linear/linear_tracker.py:102`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `linear.harness_key` | `orchestrator/src/agent_pm/orchestrator/config.toml:94` |
+| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1168`, `…/engine/promote.py:309`, `…/engine/prune.py:443`, `…/engine/writeback.py:90` |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/trackers/linear/ops.py:33`, `…/trackers/linear/linear_tracker.py:98`, `…/trackers/linear/linear_tracker.py:100`, `…/trackers/linear/linear_tracker.py:84`, `…/trackers/linear/ops.py:26`, `…/trackers/linear/linear_tracker.py:110`; [Linear API keys] |
+| Stored at | a login keychain item whose service is `linear.harness_key` | `orchestrator/src/agent_pm/orchestrator/config.toml:92` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
 | Revoke | delete the key in Linear › Settings › Account › Security & Access, then `security delete-generic-password -s <service>` | [Linear API keys] |
@@ -79,9 +79,9 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the manager's `agent-pm-orchestrator issue` commands (reads, comments, moves, creates, relations, labels, archives); an account neither the harness nor a role, so its comments are instructions and its moves to Todo restart the attempt count | `orchestrator/src/agent_pm/orchestrator/trackers/linear/issue.py:736` |
+| Purpose | the manager's `agent-pm-orchestrator issue` commands (reads, comments, moves, creates, relations, labels, archives); an account neither the harness nor a role, so its comments are instructions and its moves to Todo restart the attempt count | `orchestrator/src/agent_pm/orchestrator/trackers/linear/issue.py:829` |
 | Minimum permission | a personal API key of that account (a dedicated manager account or your own) limited to the team, with Read, Write, Create issues and Create comments; not live-tested | [Linear API keys] |
-| Stored at | a login keychain item whose service is `linear.manager_key`; unset, the `issue` commands refuse | `…/config.toml:95` |
+| Stored at | a login keychain item whose service is `linear.manager_key`; unset, the `issue` commands refuse | `…/config.toml:93` |
 | Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |
@@ -93,9 +93,9 @@ One per role: `linear.roles.researcher.key` for `linear.roles.researcher.account
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | write-back as the role: comments, state moves, subscribing `linear.human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:32`, `…/trackers/linear/ops.py:35`, `…/engine/router.py:579` |
-| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/trackers/linear/linear_tracker.py:95`, `…/trackers/linear/linear_tracker.py:97`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `linear.roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:146`, `…/engine/router.py:653` |
+| Purpose | write-back as the role: comments, state moves, subscribing `linear.human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:33`, `…/trackers/linear/ops.py:36`, `…/engine/router.py:581` |
+| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/trackers/linear/linear_tracker.py:103`, `…/trackers/linear/linear_tracker.py:105`; [Linear API keys] |
+| Stored at | a login keychain item whose service is `linear.roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:146`, `…/engine/router.py:655` |
 | Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |
@@ -244,7 +244,7 @@ Create these in the Linear team, then put each id in `~/.agent-pm/config.local.t
 | Create in Linear | Config key |
 |---|---|
 | the team | `linear.team` |
-| workflow states Todo, In Progress, In Review, Handoff, Done, Canceled | `linear.states.todo`, `linear.states.in_progress`, `linear.states.in_review`, `linear.states.handoff`, `linear.states.done`, `linear.states.canceled` |
+| workflow states Backlog, Todo, In Progress, In Review, Handoff, Done, Canceled | `linear.states.backlog`, `linear.states.todo`, `linear.states.in_progress`, `linear.states.in_review`, `linear.states.handoff`, `linear.states.done`, `linear.states.canceled` |
 | a `Tasks` label group, its id from `issueLabels { nodes { id name isGroup } }` | `linear.task_label_group` |
 | one label per task under `Tasks` (`build`, `light-build`, …), optional | `linear.task_labels` |
 | an `Agent` label group and one label per client, optional; set both or neither | `linear.agent_label_group`, `linear.agent_labels` |

@@ -4,6 +4,7 @@ import hashlib
 import subprocess
 import uuid
 from dataclasses import dataclass
+from typing import TypeGuard
 
 from agent_pm.orchestrator.engine.types import (
     FinishedType,
@@ -42,6 +43,25 @@ HISTORY = (
 )
 NOT_FOUND = "Entity not found"
 DONE = {"completed", "canceled", "duplicate"}  # Linear state types an issue is finished in
+
+
+def is_page(page) -> TypeGuard[dict]:
+    """Whether page is a connection page: nodes and pageInfo."""
+    return (
+        isinstance(page, dict)
+        and isinstance(page.get("nodes"), list)
+        and isinstance(page.get("pageInfo"), dict)
+    )
+
+
+def advance(where, end, seen):
+    """end, the cursor of the page after one claiming more, added to seen; LinearError when it is
+    empty or already read, which would read the same page forever.
+    """
+    if not end or end in seen:
+        raise LinearError(f"{where}: hasNextPage without a new endCursor ({end!r})")
+    seen.add(end)
+    return end
 
 
 def call(gql, query, field, **v):

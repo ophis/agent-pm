@@ -1,12 +1,13 @@
 """agent-pm-orchestrator issue create: plan resolves every reference before anything is written; create
-makes the issue with only the given fields (the team's Backlog state unless --state), then each
-blocking relation. Creating the issue is never retried; a relation that fails leaves the issue
+makes the issue in the configured team with only the given fields (backlog unless --state), then
+each blocking relation. Creating the issue is never retried; a relation that fails leaves the issue
 made, and RelationsFailed names the commands that add only the failed ones.
 """
 
 import shlex
 import subprocess
 
+from agent_pm.orchestrator.engine.flow.types import IssueState
 from agent_pm.orchestrator.engine.types import (
     GraphQLErrors,
     IssueError,
@@ -15,10 +16,9 @@ from agent_pm.orchestrator.engine.types import (
     Unavailable,
     WriteUnknown,
 )
-from agent_pm.orchestrator.trackers.linear import issue_refs, issue_write, ops
+from agent_pm.orchestrator.trackers.linear import issue_names, issue_refs, issue_write, ops
 from agent_pm.orchestrator.trackers.linear.client import messages
 
-BACKLOG = "Backlog"
 ERROR_CHARS = 200
 RELATION = "agent-pm-orchestrator issue relation add"
 M_CREATE = (
@@ -33,16 +33,21 @@ Q_VIEWER = "query { viewer { id name } }"
 DIRECTIONS = (("--blocks", "blocks"), ("--blocked-by", "blocked_by"))
 
 
-def plan(gql, args, team_id, body):
+def plan(gql, args, cfg, body):
     """args resolved as (IssueCreateInput, [(option, {id, identifier}) of each relation], viewer);
-    IssueError for any value that does not resolve, before anything is written.
+    IssueError for any value that does not resolve, before anything is written; abstract names
+    first.
     """
-    team = issue_refs.team(gql, args.team)["id"] if args.team is not None else team_id
+    team = cfg.team
     fields = {"teamId": team, "title": args.title, "description": body}
-    fields["stateId"] = _state(gql, team, args.state)["id"]
-    if args.label:
-        found = (issue_refs.label(gql, team, value)["id"] for value in dict.fromkeys(args.label))
-        fields["labelIds"] = list(dict.fromkeys(found))
+    fields["stateId"] = issue_names.state_id(cfg, args.state or IssueState.BACKLOG)
+    labels = [] if args.task is None else [issue_names.task_label(cfg, args.task)]
+    if args.client is not None:
+        labels.append(issue_names.client_label(cfg, args.client))
+    who = None if args.role is None else issue_names.assignee(gql, cfg, args.role)
+    labels += (issue_refs.label(gql, team, value)["id"] for value in dict.fromkeys(args.label))
+    if labels:
+        fields["labelIds"] = list(dict.fromkeys(labels))
     project = None if args.project is None else issue_refs.project(gql, team, args.project)
     if project is not None:
         fields["projectId"] = project["id"]
@@ -51,19 +56,12 @@ def plan(gql, args, team_id, body):
         fields["projectMilestoneId"] = issue_refs.milestone(gql, project_id, args.milestone)["id"]
     if args.parent is not None:
         fields["parentId"] = issue_refs.issue(gql, args.parent)["id"]
-    if args.assignee is not None:
-        fields["assigneeId"] = issue_refs.user(gql, args.assignee)["id"]
+    if who is not None:
+        fields["assigneeId"] = who
+    if args.priority is not None:
+        fields["priority"] = issue_names.PRIORITIES[args.priority]
     relations = _relations(gql, {"--blocks": args.blocks, "--blocked-by": args.blocked_by})
     return fields, relations, gql(Q_VIEWER)["viewer"]
-
-
-def _state(gql, team, value):
-    if value is not None:
-        return issue_refs.state(gql, team, value)
-    try:
-        return issue_refs.state(gql, team, BACKLOG)
-    except IssueError as error:
-        raise IssueError(f"without --state create sets {BACKLOG}, never another: {error}") from None
 
 
 def _relations(gql, given):
@@ -86,10 +84,9 @@ def create(gql, fields, relations, viewer):
     try:
         node = ops.call(gql, M_CREATE, "issueCreate", **{"in": fields})["issue"]
     except Unavailable as error:
-        check = f"--team {fields['teamId']} --query={shlex.quote(fields['title'])}"
         raise WriteUnknown(
-            f"create: result unknown ({error}): look for it with "
-            f"agent-pm-orchestrator issue list {check} before creating it again"
+            f"create: result unknown ({error}): look for it with agent-pm-orchestrator issue "
+            f"list --query={shlex.quote(fields['title'])} before creating it again"
         ) from None
     done, failed = [], []
     for option, other in relations:
@@ -129,5 +126,4 @@ def _report(receipt, done, failed):
         "done": done,
         "failed": [item for _, item in failed],
         "recover": recover,
-        "truncated": [],
     }

@@ -12,12 +12,21 @@ Origin = Literal["self", "other"]
 
 
 class IssueState(StrEnum):
+    BACKLOG = "backlog"
     READY = "ready"
     RUNNING = "running"
     REVIEW = "review"
     APPROVED = "approved"
     DONE = "done"
     CANCELED = "canceled"
+
+
+class Priority(StrEnum):
+    NONE = "none"
+    URGENT = "urgent"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 @dataclass(frozen=True)
@@ -31,11 +40,36 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class SubIssue:
-    """key: the handle sub_issues and archive take; ident: the KEY-N read takes."""
+    """key: archive's handle; ident: read's KEY-N; state: its name."""
 
     key: str
     ident: str
+    state: str
     finished: bool
+
+
+@dataclass(frozen=True)
+class ArchivePlan:
+    """unfinished: it first; descendants: any depth, none if archived."""
+
+    key: str
+    ident: str
+    url: str
+    archived: bool
+    descendants: tuple[SubIssue, ...]
+    unfinished: tuple[SubIssue, ...]
+
+    @property
+    def outcome(self) -> Literal["unchanged", "refused", "changed"]:
+        if self.archived:
+            return "unchanged"
+        return "refused" if self.unfinished else "changed"
+
+
+class ArchiveRefused(Exception):
+    def __init__(self, plan: ArchivePlan, message: str = ""):
+        super().__init__(message)
+        self.plan = plan
 
 
 @dataclass(frozen=True)
@@ -45,7 +79,6 @@ class Finished:
     key: str
     ident: str
     since: datetime | None
-    children: tuple[SubIssue, ...]
 
 
 @dataclass(frozen=True)

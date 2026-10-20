@@ -295,21 +295,21 @@ class ConfigurationLoading(ConfigFile, Case):
                 missing(
                     "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
                     "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
-                    "linear.states.done, linear.states.canceled"
+                    "linear.states.done, linear.states.canceled, linear.states.backlog"
                 ),
             ),
             (
                 BASE.replace(STATES_LINE, ""),
                 missing(
                     "linear.states.todo, linear.states.in_progress, linear.states.in_review, "
-                    "linear.states.handoff, linear.states.done, linear.states.canceled"
+                    "linear.states.handoff, linear.states.done, linear.states.canceled, linear.states.backlog"
                 ),
             ),
             (
                 BASE.replace(STATES_LINE, 'linear.states = "x"\n'),
                 missing(
                     "linear.states.todo, linear.states.in_progress, linear.states.in_review, "
-                    "linear.states.handoff, linear.states.done, linear.states.canceled"
+                    "linear.states.handoff, linear.states.done, linear.states.canceled, linear.states.backlog"
                 ),
             ),
             (
@@ -317,8 +317,12 @@ class ConfigurationLoading(ConfigFile, Case):
                 missing("linear.states.canceled"),
             ),
             (
-                BASE.replace(" }\n", ', backlog = "x" }\n', 1),
-                "[linear.states] has unknown keys: backlog",
+                BASE.replace(f', backlog = "{STATES["backlog"]}"', ""),
+                missing("linear.states.backlog"),
+            ),
+            (
+                BASE.replace(" }\n", ', triage = "x" }\n', 1),
+                "[linear.states] has unknown keys: triage",
             ),
             (
                 BASE.replace(STATES["done"], "Done"),
@@ -891,7 +895,8 @@ class CommittedConfiguration(Case):
             + missing(
                 "linear.team, linear.harness_key, linear.task_label_group, linear.states.todo, "
                 "linear.states.in_progress, linear.states.in_review, linear.states.handoff, "
-                "linear.states.done, linear.states.canceled, linear.roles.researcher.account, "
+                "linear.states.done, linear.states.canceled, linear.states.backlog, "
+                "linear.roles.researcher.account, "
                 "linear.roles.pm.account, linear.roles.engineer.account, linear.roles.researcher.key, "
                 "linear.roles.pm.key, linear.roles.engineer.key"
             ),

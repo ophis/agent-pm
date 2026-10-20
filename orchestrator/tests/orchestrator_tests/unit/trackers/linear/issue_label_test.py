@@ -92,6 +92,12 @@ class Swap(Case):
         )
         self.assertEqual(gql.writes[0][1]["r"], [BUG["id"]])
 
+    def test_a_labels_page_repeating_its_cursor_raises(self):
+        page = {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "c-1"}}
+        node = {"id": "id-TASK-2", "labels": page}
+        with self.assertRaisesRegex(LinearError, "hasNextPage without a new endCursor"):
+            issue_label.carried_labels(lambda _q, **_v: {"issue": {"labels": page}}, "TASK-2", node)
+
     def test_the_old_label_is_looked_for_on_the_issue_first(self):
         # a workspace and a team label share the name; only the workspace one is carried
         twin = label(6, "chore")

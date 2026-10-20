@@ -10,7 +10,7 @@ from agent_pm.orchestrator.engine.types import (
     LinearError,
     WriteUnknown,
 )
-from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write
+from agent_pm.orchestrator.trackers.linear import issue_read, issue_refs, issue_write, ops
 from agent_pm.orchestrator.trackers.linear.client import messages
 
 # direction: the issue's connection holding the edge, and the field naming its other end
@@ -94,7 +94,7 @@ def _all(gql, ident, node, direction):
     while page["pageInfo"]["hasNextPage"]:
         after = page["pageInfo"]["endCursor"]
         page = (gql(Q_MORE[direction], i=node["id"], c=after)["issue"] or {}).get(name)
-        if not issue_read.is_page(page):
+        if not ops.is_page(page):
             raise LinearError(f"{ident}: {name} page missing: deleted mid-read?")
         records += page["nodes"]
     return records

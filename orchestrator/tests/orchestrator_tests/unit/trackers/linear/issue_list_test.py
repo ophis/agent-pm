@@ -1,22 +1,25 @@
-"""agent-pm-orchestrator issue list through main: one team's issues, every filter at once, updated first,
-archived only on request, each item only its fields.
+"""agent-pm-orchestrator issue list through main: the configured team's issues, every filter at once,
+abstract names as the configured ids, updated first, archived only on request, each item only its
+fields.
 """
 
 import json
 import os
 
-from orchestrator_tests.unit.board_ids import TEAM
+from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TEAM
 from orchestrator_tests.unit.issue_fixtures import (
+    CLIENT_LABELS,
     MANAGER_KEY,
     OTHER_TEAM,
+    ROLE_USERS,
+    TASK_LABELS,
     IssueCase,
     Routes,
     edges,
     issue_row,
     label,
     project,
-    state,
-    team_ref,
+    role_users,
     uid,
     user,
 )
@@ -42,7 +45,7 @@ class Filters(IssueCase):
         self.assertLessEqual(len(out), 8192)
         return json.loads(out)
 
-    def test_only_the_configured_team_by_default_updated_first_without_archived(self):
+    def test_only_the_configured_team_updated_first_without_archived(self):
         nodes = [issue_row("TASK-1"), issue_row("OPS-1", OTHER_TEAM, title="title TASK-1")]
         gql = Routes(issues=of_team(nodes))
         page = self.run_list([], gql)
@@ -52,23 +55,17 @@ class Filters(IssueCase):
         want = {"first": 20, "after": None, "f": {"team": {"id": {"eq": TEAM}}}, "a": False}
         self.assertEqual(variables, {**want, "service": MANAGER_KEY})
 
-    def test_another_team_by_key(self):
-        nodes = [issue_row("TASK-1"), issue_row("OPS-1", OTHER_TEAM)]
-        gql = Routes(teams=edges([{**team_ref(0, "OPS"), "id": OTHER_TEAM}]), issues=of_team(nodes))
-        page = self.run_list(["--team", "ops"], gql)
-        self.assertEqual([i["identifier"] for i in page["items"]], ["OPS-1"])
-
     def test_every_filter_holds_at_once(self):
         gql = Routes(
-            workflowStates=edges([state(3, "Todo")]),
             issueLabels=edges([label(4, "bug")]),
             team={"projects": edges([project(5, "Agent PM")])},
-            viewer=user(6, "Harness"),
+            users=role_users,
             issue={"id": uid(7), "identifier": "TASK-7"},
             issues=edges([]),
         )
-        argv = ["--query", "lookup", "--state", "Todo", "--label", "bug", "--project", "Agent PM"]
-        page = self.run_list([*argv, "--assignee", "me", "--parent", "TASK-7"], gql)
+        argv = ["--query", "lookup", "--state", "ready", "--role", "engineer", "--task", "build"]
+        argv += ["--client", "codex", "--priority", "urgent", "--label", "bug"]
+        page = self.run_list([*argv, "--project", "Agent PM", "--parent", "TASK-7"], gql)
         self.assertEqual(
             page, {"items": [], "has_next_page": False, "next_cursor": None, "truncated": []}
         )
@@ -77,14 +74,40 @@ class Filters(IssueCase):
             "and": [
                 {"team": {"id": {"eq": TEAM}}},
                 {"or": [{"title": text}, {"description": text}]},
-                {"state": {"id": {"eq": uid(3)}}},
+                {"state": {"id": {"eq": STATES["todo"]}}},
+                {"assignee": {"id": {"eq": ROLE_USERS[ACCOUNTS["engineer"]]}}},
+                {"labels": {"some": {"id": {"eq": TASK_LABELS["build"]}}}},
+                {"labels": {"some": {"id": {"eq": CLIENT_LABELS["codex"]}}}},
+                {"priority": {"eq": 1}},
                 {"labels": {"some": {"id": {"eq": uid(4)}}}},
                 {"project": {"id": {"eq": uid(5)}}},
-                {"assignee": {"id": {"eq": uid(6)}}},
                 {"parent": {"id": {"eq": uid(7)}}},
             ]
         }
         self.assertEqual(gql.sent("issues")[0]["f"], want)
+
+    def test_each_state_and_priority_by_its_configured_id_and_number(self):
+        for argv, want in (
+            (["--state", "backlog"], {"state": {"id": {"eq": STATES["backlog"]}}}),
+            (["--state", "review"], {"state": {"id": {"eq": STATES["in_review"]}}}),
+            (["--state", "canceled"], {"state": {"id": {"eq": STATES["canceled"]}}}),
+            (["--priority", "none"], {"priority": {"eq": 0}}),
+            (["--priority", "low"], {"priority": {"eq": 4}}),
+        ):
+            gql = Routes(issues=edges([]))
+            with self.subTest(argv=argv):
+                self.run_list(argv, gql)
+                self.assertEqual(gql.sent("issues")[0]["f"]["and"][1], want)
+
+    def test_role_me_is_the_viewer_and_unassigned_no_assignee(self):
+        for spec, want in (
+            ("me", {"assignee": {"id": {"eq": uid(6)}}}),
+            ("unassigned", {"assignee": {"null": True}}),
+        ):
+            gql = Routes(viewer=user(6, "Harness"), issues=edges([]))
+            with self.subTest(spec=spec):
+                self.run_list(["--role", spec], gql)
+                self.assertEqual(gql.sent("issues")[0]["f"]["and"][1], want)
 
     def test_archived_issues_only_when_asked(self):
         gql = Routes(issues=edges([issue_row("TASK-1")]))
@@ -143,19 +166,16 @@ class Filters(IssueCase):
 class Unresolved(IssueCase):
     def test_an_unresolved_filter_exits_two_before_listing(self):
         cases = (
-            (["--state", "Nope"], Routes(workflowStates=[edges([]), edges([])]), "lookup states"),
             (
                 ["--label", "Type"],
                 Routes(issueLabels=edges([label(4, "Type", is_group=True)])),
                 "label group",
             ),
-            (
-                ["--assignee", "Ann"],
-                Routes(users=edges([user(1, "Ann"), user(2, "Ann")])),
-                "2 match",
-            ),
+            (["--role", "Ann"], Routes(), "--role Ann: not a role: researcher, pm, engineer, me"),
+            (["--role", "pm"], Routes(users={"nodes": []}), ACCOUNTS["pm"]),
+            (["--task", "nope"], Routes(), "build, light-build"),
+            (["--client", "nope"], Routes(), "codex, claude"),
             (["--parent", "nope"], Routes(), "want an issue identifier"),
-            (["--team", "X"], Routes(teams=[edges([]), edges([])]), "lookup teams --query X"),
         )
         for argv, gql, phrase in cases:
             with self.subTest(argv=argv):

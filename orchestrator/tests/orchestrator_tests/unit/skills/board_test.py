@@ -1,5 +1,6 @@
-"""orchestrator/skills/linear/SKILL.md: every issue command it shows is one
-agent-pm-orchestrator issue accepts, it shows every one, and it pre-approves none.
+"""orchestrator/skills/board/SKILL.md: every issue command it shows is one
+agent-pm-orchestrator issue accepts, it shows every one, it pre-approves none, and only its Linear
+section names Linear.
 """
 
 import contextlib
@@ -7,7 +8,7 @@ import io
 
 from agent_pm.orchestrator.trackers.linear import issue
 from orchestrator_tests.case import Case
-from orchestrator_tests.skills.linear import body, examples, front, rules
+from orchestrator_tests.skills.board import body, examples, front, rules
 
 
 def _commands(parser):
@@ -20,7 +21,7 @@ def _commands(parser):
     return found
 
 
-class LinearSkill(Case):
+class BoardSkill(Case):
     def test_every_example_parses_without_a_usage_error(self):
         self.assertGreater(len(examples()), 15)
         for argv in examples():
@@ -46,9 +47,16 @@ class LinearSkill(Case):
             "--full --output",
             "--body-file -",
             "completed, canceled or duplicate",
+            "`create --parent`",
         ):
             self.assertIn(phrase, text)
 
+    def test_only_its_linear_section_names_linear(self):
+        general, linear = body().split("\n## Linear\n", 1)
+        self.assertNotIn("linear", (front() + general).lower())
+        self.assertNotIn("\n## ", linear)
+        self.assertIn("lookup", linear)
+
     def test_the_commander_can_load_it(self):
-        self.assertIn("name: linear\n", front())
+        self.assertIn("name: board\n", front())
         self.assertNotIn("disable-model-invocation", front())

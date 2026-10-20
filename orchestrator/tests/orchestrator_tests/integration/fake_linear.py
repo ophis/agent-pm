@@ -50,9 +50,9 @@ class _Failure:
 
 KEY = "TASK"
 
-BACKLOG = "00000000-0000-4000-8000-000000000017"
+BACKLOG = STATES["backlog"]
 
-IDS = {**STATES, "backlog": BACKLOG}
+IDS = STATES
 
 TYPES = {
     "todo": "unstarted",
@@ -516,7 +516,11 @@ class FakeLinear:
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
-            "children": {"nodes": []},  # the fake has no sub-issues
+            "children": {  # the fake has no sub-issues
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            },
+            "archivedAt": stamp() if rec["archived"] else None,
             "history": {
                 "nodes": _newest(rec["history"]),
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -792,6 +796,7 @@ OPS = {
     "promote.M_RELATE": FakeLinear._relate,
     "prune.Q_ISSUE": FakeLinear._issue,
     "prune.Q_FINISHED": FakeLinear._finished,
+    "prune.Q_ARCHIVE": FakeLinear._issue,
     "prune.Q_CHILDREN": FakeLinear._issue,
     "prune.M_ARCHIVE": FakeLinear._archive,
     "related.Q_SEARCH": FakeLinear._related,

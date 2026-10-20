@@ -105,7 +105,7 @@ A Linear issue: the unit of work the Linear orchestrator claims for one role, an
 _Avoid_: ticket, card, 票
 
 **Tracker**:
-The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. In code: `Tracker` (`orchestrator/src/agent_pm/orchestrator/engine/flow/tracker.py`); its Linear adapter, `LinearTracker` (`trackers/linear/linear_tracker.py`). Prune, promote, the router (its run's issue read and Related work search included) and write-back (session comments included) go through it; `engine/` imports nothing under `trackers/` but the Linear wiring its `pyproject.toml` contract lists, and `engine/flow/` names no Linear concept.
+The interface the Linear orchestrator's engine reads and writes issues through, in abstract states (backlog, ready, running, review, approved, done, canceled), so its rules never build a tracker's queries. Its archive capability holds the archive rule prune and `agent-pm-orchestrator issue archive` share: an issue archives only when it and every sub-issue are finished. In code: `Tracker` (`orchestrator/src/agent_pm/orchestrator/engine/flow/tracker.py`); its Linear adapter, `LinearTracker` (`trackers/linear/linear_tracker.py`). Prune, promote, the router (its run's issue read and Related work search included) and write-back (session comments included) go through it; `engine/` imports nothing under `trackers/` but the Linear wiring its `pyproject.toml` contract lists, and `engine/flow/` names no Linear concept.
 _Avoid_: backend
 
 **Workflow**:

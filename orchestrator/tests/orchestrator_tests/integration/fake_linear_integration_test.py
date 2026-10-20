@@ -520,8 +520,8 @@ class FixtureOperations(Case):
             with self.subTest(**kw), self.assertRaises(ValueError):
                 fake.issue(**kw)
 
-    def test_backlog_is_a_state_outside_the_config(self):
-        self.assertNotIn(fake_linear.BACKLOG, STATES.values())
+    def test_backlog_is_a_configured_state(self):
+        self.assertEqual(fake_linear.BACKLOG, STATES["backlog"])
         self.assertEqual(
             (fake_linear.NAMES[fake_linear.BACKLOG], fake_linear.TYPES["backlog"]),
             ("backlog", "backlog"),
