@@ -129,7 +129,7 @@ def gql_for(
                 {
                     "id": f"id-{c}",
                     "identifier": c,
-                    "updatedAt": OLD.isoformat(),
+                    "updatedAt": updated(c),
                     "state": {"name": t.title(), "type": t},
                     "children": {"nodes": [{"id": "x"}] if children.get(c) else []},
                 }

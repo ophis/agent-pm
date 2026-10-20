@@ -30,7 +30,8 @@ and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes 
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
 
 A tick's Linear requests after team_and_roles: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at
-most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json (sync, fresh).
+most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the
+tracker's time (sync).
 """
 
 import functools

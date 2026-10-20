@@ -1607,6 +1607,22 @@ class ArchiveBound(Bound):
         self.tick(gql, now=NOW + prune.BACKSTOP)
         self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
 
+    def test_a_refusal_named_again_unchanged_is_kept(self):
+        issues = {"TASK-1": self.done, "TASK-3": ("In Progress", [(0.1, "In Progress")])}
+        gql = gql_for(
+            issues,
+            owners={"TASK-1": "u-pm"},
+            children={"TASK-1": {"TASK-3": "started"}},
+            changed="since",
+        )
+        self.tick(gql)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
+        self.tick(gql)
+        self.assertEqual(gql.calls, [linear_tracker.Q_CHANGED, linear_tracker.Q_FINISHED])
+        issues["TASK-3"] = ("In Progress", [(0.1, "In Progress"), (0.05, "In Progress")])
+        self.tick(gql)
+        self.assertEqual(gql.calls.count(linear_tracker.Q_ARCHIVE), 1)
+
     def test_a_now_finished_sub_issue_lets_the_parent_go(self):
         children = {"TASK-1": {"TASK-3": "started"}}
         gql = gql_for(
