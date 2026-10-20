@@ -101,7 +101,7 @@ Archiving takes every sub-issue with it. `archive` reads all of them, at every d
 
 ## Linear
 
-On Linear (`[orchestrator.linear]`), the commands act as the `harness_key` account (Keychain), `me` is that account, a role is its `[orchestrator.linear.roles.<role>]` account, a task or client is its label in `task_labels` or `agent_labels`, and a state is its `[orchestrator.linear.states]` id. `read` and `list` show Linear's state names; finished means a state of type completed, canceled or duplicate. These exist only on Linear:
+On Linear (`[orchestrator.linear]`), the commands act as the `manager_key` account (Keychain), neither the harness nor a role account, so your comments and moves count as the user's; `me` is that account, a role is its `[orchestrator.linear.roles.<role>]` account, a task or client is its label in `task_labels` or `agent_labels`, and a state is its `[orchestrator.linear.states]` id. `read` and `list` show Linear's state names; finished means a state of type completed, canceled or duplicate. These exist only on Linear:
 
 ```bash
 agent-pm-orchestrator issue lookup states

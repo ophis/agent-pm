@@ -27,6 +27,8 @@ from orchestrator_tests.unit.run_fixtures import CORE_LOCAL
 
 OTHER_TEAM = "00000000-0000-4000-8000-0000000000f2"
 
+MANAGER_KEY = "linear-api-key-manager"
+
 
 def uid(n):
     return f"00000000-0000-4000-8000-{n:012x}"
@@ -37,7 +39,7 @@ CLIENT_GROUP = uid(0xC0)
 CLIENT_LABELS = {"codex": uid(0xC1), "claude": uid(0xC2)}
 # each role's account's Linear user id
 ROLE_USERS = {account: uid(0xA0 + n) for n, account in enumerate(ACCOUNTS.values())}
-CONFIG = tp.CONFIG.replace(
+CONFIG = f'linear.manager_key = "{MANAGER_KEY}"\n' + tp.CONFIG.replace(
     HEADER,
     HEADER
     + "linear.task_labels = { "

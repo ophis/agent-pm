@@ -15,6 +15,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Issue,
     IssueRecord,
     IssueState,
+    Origin,
     Recheck,
     Ref,
     Snapshot,
@@ -49,10 +50,10 @@ class Tracker(ABC):
 
     @abstractmethod
     def _write_archive(self, key: str) -> None:
-        """With its sub-issues; failure: the adapter's error."""
+        """With its sub-issues; raises the adapter's error."""
 
     def archive(self, key: str, plan: ArchivePlan | None = None) -> bool:
-        """Given plan (just read): only writes. False: was archived."""
+        """Given a plan: writes only. False: already archived."""
         plan = plan or self.archive_plan(key)
         if plan.outcome == "refused":
             raise ArchiveRefused(plan)
@@ -142,7 +143,7 @@ class Tracker(ABC):
     def ready(self) -> list[tuple[IssueRecord, tuple[str, ...]]]: ...
 
     @abstractmethod
-    def moved_at(self, key: str, state: Listed, *, by_people: bool = False) -> datetime | None: ...
+    def moved_at(self, key: str, state: Listed, *, by: Origin | None = None) -> datetime | None: ...
 
     @abstractmethod
     def recheck(self, key: str) -> Recheck: ...

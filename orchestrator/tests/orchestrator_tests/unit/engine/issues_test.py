@@ -17,7 +17,7 @@ from orchestrator_tests.unit.board_ids import PACKAGED_FLOW, workflow_file
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
-HUMANS = ("ann@example.com", "bob@example.com")
+SELVES = frozenset({"agent@example.com"})
 
 URL = "https://linear.app/t/issue/ENG-7"
 
@@ -59,11 +59,13 @@ class FakeGql:
 
 
 def read(**over):
-    return LinearTracker(FakeGql(payload(**over))).issue("ENG-7")
+    return LinearTracker(FakeGql(payload(**over)), selves=SELVES).issue("ENG-7")
 
 
-def note(body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="Agent"):
-    return Note(body, at, email, name)
+def note(
+    body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="Agent", origin="self"
+):
+    return Note(body, at, email, name, origin)
 
 
 def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
@@ -119,7 +121,7 @@ class ReadIssue(Case):
                 },
             )
         )
-        got = LinearTracker(gql).issue("ENG-7")
+        got = LinearTracker(gql, selves=SELVES).issue("ENG-7")
         self.assertEqual(gql.calls, [(linear_tracker.Q_READ, {"i": "ENG-7"})])
         self.assertEqual(
             got,
@@ -148,7 +150,7 @@ class ReadIssue(Case):
         got = read(description=None, project=None)
         self.assertEqual((got.description, got.home), ("", None))
 
-    def test_notes_oldest_first(self):
+    def test_notes_oldest_first_userless_dropped(self):
         got = read(
             comments={
                 "nodes": [
@@ -172,9 +174,8 @@ class ReadIssue(Case):
         self.assertEqual(
             got.notes,
             (
-                Note("early", "2026-09-01T12:00:00.000Z", "ann@example.com", "Ann"),
-                Note("mid", "2026-09-02T00:00:00.000Z", None, None),
-                Note("late", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
+                Note("early", "2026-09-01T12:00:00.000Z", "ann@example.com", "Ann", "other"),
+                Note("late", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob", "other"),
             ),
         )
 
@@ -221,7 +222,7 @@ class ReadIssue(Case):
 
     def test_missing_or_other_issue_raises_lookup_error(self):
         with self.assertRaises(LookupError):
-            LinearTracker(FakeGql({"issue": None})).issue("ENG-7")
+            LinearTracker(FakeGql({"issue": None}), selves=SELVES).issue("ENG-7")
         with self.assertRaises(LookupError):
             read(identifier="ENG-70")
 
@@ -236,15 +237,9 @@ class ReadIssue(Case):
 
 class IsUser(Case):
     def test_is_user(self):
-        for email, want in (
-            ("ANN@Example.com", True),
-            ("bob@example.com", True),
-            ("agent@example.com", False),
-            (None, False),
-            ("", False),
-        ):
-            with self.subTest(email=email):
-                self.assertIs(issues.is_user(note("x", email=email), HUMANS), want)
+        for origin, want in (("other", True), ("self", False)):
+            with self.subTest(origin=origin):
+                self.assertIs(issues.is_user(note("x", origin=origin)), want)
 
 
 class Brief(Case):
@@ -290,7 +285,12 @@ class BuildCutoff(Case):
                 "user notes ignored",
                 (
                     note("Build started: a", "2026-09-02T00:00:00.000Z"),
-                    note("Build started", "2026-09-03T00:00:00.000Z", email="ANN@example.com"),
+                    note(
+                        "Build started",
+                        "2026-09-03T00:00:00.000Z",
+                        email="mgr@x.com",
+                        origin="other",
+                    ),
                 ),
                 "2026-09-02T00:00:00.000Z",
             ),
@@ -317,9 +317,7 @@ class BuildCutoff(Case):
         ]
         for name, notes, want in cases:
             with self.subTest(name):
-                self.assertEqual(
-                    issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), want
-                )
+                self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes)), want)
 
     def test_a_build_stage_without_a_start_lead_has_no_cutoff_comment(self):
         config.TASKS.load(
@@ -327,12 +325,10 @@ class BuildCutoff(Case):
         )
         created, at = "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z"
         notes = (note("Question: which store?", at), note("Build ready: done", at))
-        self.assertEqual(
-            issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), created
-        )
+        self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes)), created)
 
     def test_the_workflow_build_start_lead_is_the_cutoff(self):
         created, at = "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z"
         [start] = [t.start for t in config.TASKS.values() if t.input == "build"]
         notes = (note(f"{start} first build of the PRD", at),)
-        self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), at)
+        self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes)), at)

@@ -81,7 +81,7 @@ REFS = frozenset(
 )
 _RULES = (
     "Prerequisites and effects:\n"
-    "  Reads Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  Reads Linear as the configured linear.manager_key account (Keychain); an\n"
     "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one JSON object of at most 8192 bytes; diagnostics go to stderr.\n"
     "  Exit 0: success; 1: Linear failed (GraphQL errors, HTTP, timeout);\n"
@@ -97,7 +97,7 @@ _HELP = (
     "Values: abstract names, each the configured team's id.\n"
     "  States: backlog, ready, running, review, approved, done, canceled.\n"
     "  --role SPEC: a role of [orchestrator.linear.roles], me (the\n"
-    "  linear.harness_key account) or unassigned. --task NAME / --client NAME: a\n"
+    "  linear.manager_key account) or unassigned. --task NAME / --client NAME: a\n"
     "  key of [orchestrator.linear.task_labels] / agent_labels.\n"
     "  --priority NAME: none, urgent, high, medium, low.\n"
     "  Splitting an issue: create --parent ID.\n"
@@ -143,7 +143,7 @@ _LIST_HELP = (
     "  recently updated first; archived ones only with --include-archived.\n"
     "  --query TEXT matches title or description in any case; --state STATE:\n"
     "  backlog, ready, running, review, approved, done or canceled; --role SPEC:\n"
-    "  a configured role, me (the linear.harness_key account) or\n"
+    "  a configured role, me (the linear.manager_key account) or\n"
     "  unassigned (no assignee); --task NAME, --client NAME: a configured task or\n"
     "  client name; --priority NAME: none, urgent, high, medium or low; --parent\n"
     "  ID: the parent issue's identifier or id. Linear only: --label (not a group\n"
@@ -211,7 +211,7 @@ _READ_HELP = (
 
 _WRITE_RULES = (
     "Prerequisites and effects:\n"
-    "  Writes Linear as the configured linear.harness_key account (Keychain); an\n"
+    "  Writes Linear as the configured linear.manager_key account (Keychain); an\n"
     "  issue needs no recorded run. Help needs no credentials or services.\n"
     "  stdout: one receipt of at most 1024 bytes: issue {id, identifier, url},\n"
     "  operation, result (changed or unchanged), actor {id, name}%s.\n"
@@ -235,7 +235,7 @@ _CREATE_HELP = (
     "--state STATE: backlog, ready, running, review, approved, done or canceled;\n"
     "  default backlog.\n"
     "--role SPEC: the assignee: a configured role's account, me (the\n"
-    "  linear.harness_key account) or unassigned (as without --role).\n"
+    "  linear.manager_key account) or unassigned (as without --role).\n"
     "--task NAME / --client NAME: the configured task / client label.\n"
     "--priority NAME: none, urgent, high, medium or low.\n"
     "--parent ID: an issue, the new one its sub-issue: this splits an issue.\n"
@@ -823,7 +823,10 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         diagnose(err, error)
         return USAGE
-    gql = functools.partial(gql, service=cfg.harness_key)
+    if not cfg.manager_key:
+        diagnose(err, "orchestrator/config.toml: linear.manager_key is unset")
+        return USAGE
+    gql = functools.partial(gql, service=cfg.manager_key)
     try:
         data = _run(gql, args, cfg, body)
     except IssueError as error:
@@ -831,7 +834,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     except (subprocess.SubprocessError, OSError, KeychainError) as error:
         diagnose(
-            err, f"linear.harness_key Keychain service {cfg.harness_key!r}: {type(error).__name__}"
+            err, f"linear.manager_key Keychain service {cfg.manager_key!r}: {type(error).__name__}"
         )
         return USAGE
     except GraphQLErrors as error:

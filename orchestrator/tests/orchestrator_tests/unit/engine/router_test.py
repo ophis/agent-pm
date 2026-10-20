@@ -39,6 +39,7 @@ from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
     AGENT,
+    BOT,
     CONFIG,
     DEEP,
     DESIGN_LISTING,
@@ -51,6 +52,7 @@ from orchestrator_tests.router_fixtures import (
     LIGHT,
     LISTING,
     LS_REMOTE,
+    MANAGER,
     NO,
     NOW,
     ORPHAN_LABEL,
@@ -104,6 +106,12 @@ CONFIG_ENG2 = (
 )
 
 HUMANS = 'linear.human_members = ["me@x.com"]\n'
+
+
+def move(minutes, actor, state="Todo"):
+    to = STATES.get(state) or IDS_BY_KEY[state.lower()]
+    return {"createdAt": ago(minutes=minutes), "actorId": actor, "toStateId": to}
+
 
 FULL = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"]
 
@@ -4188,35 +4196,13 @@ class RunPlanning(Base):
                 )
                 self.assertEqual(fake.mutations[-2][1]["s"], STATES["In Review"])
 
-    def test_unknown_human_fails_loud(self):
+    def test_unknown_human_member_stops_nothing(self):
         self.write_config('linear.human_members = ["nobody@x.com"]\n' + CONFIG)
-        with self.assertRaises(LinearError) as e:
-            self.plan(FakeLinear([]))
-        self.assertIn("nobody@x.com", str(e.exception))
+        fake = FakeLinear([])
+        self.assertEqual(self.plan(fake), "")
+        self.assertNotIn({"e": "nobody@x.com"}, [v for _, v in fake.queries])
 
-    def test_attempt_cap_reset_only_by_a_human_members_move_to_todo(self):
-        def move(m, actor, state="Todo"):
-            return {"createdAt": ago(minutes=m), "actorId": actor, "toStateId": STATES[state]}
-
-        rows = (
-            (
-                "user",
-                [move(380, USER)],
-                "resume TASK-1 d https://linear.app/x/TASK-1 Deep Research",
-                "In Progress",
-            ),
-            (
-                "not a human member",
-                [
-                    move(380, AGENT),
-                    move(375, "role-account"),
-                    move(370, USER, "In Progress"),
-                    move(360, None),
-                ],
-                "",
-                "In Review",
-            ),
-        )
+    def capped_rows(self, rows):
         for name, hist, out, state in rows:
             with self.subTest(name):
                 self.lines = []
@@ -4224,6 +4210,36 @@ class RunPlanning(Base):
                 self.assertEqual((got, fake.issues["TASK-1"]["state"]), (out, state))
                 if state == "In Progress":
                     self.assertEqual(fake.mutations, [])
+
+    def test_manager_move_to_todo_resets_attempts(self):
+        resumed = "resume TASK-1 d https://linear.app/x/TASK-1 Deep Research"
+        self.capped_rows(
+            (
+                ("user", [move(380, USER)], resumed, "In Progress"),
+                ("manager", [move(380, MANAGER)], resumed, "In Progress"),
+            )
+        )
+
+    def test_automation_moves_do_not_reset_attempts(self):
+        """Self's moves: the harness's, a role account's, Linear automation's (to Done, then back
+        to Todo) and an integration's credited to the user."""
+        self.capped_rows(
+            (
+                (
+                    "self",
+                    [
+                        move(380, AGENT),
+                        move(375, "u-pm"),
+                        move(372, None, "Done"),
+                        move(371, None),
+                        move(368, BOT),
+                        move(365, USER, "In Progress"),
+                    ],
+                    "",
+                    "In Review",
+                ),
+            )
+        )
 
     def test_skipped_move_posts_no_comment(self):
         fake = Moved(

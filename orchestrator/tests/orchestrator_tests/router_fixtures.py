@@ -59,7 +59,7 @@ NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
 
 
-AGENT, USER = "agent", "user"
+AGENT, USER, MANAGER, BOT = "agent", "user", "manager", "bot"
 
 
 STATES = {
@@ -79,6 +79,22 @@ IDS = {DR: "p-dr", PD: "p-pd"}
 
 
 ROLE = ACCOUNTS
+
+# history actor ids as users: the harness (isMe), the user, the manager and the role accounts;
+# None: Linear automation; BOT: an integration's move, credited to the user
+ACTORS = {
+    AGENT: {"email": "agent@x.com", "isMe": True},
+    USER: {"email": "Me@X.com", "isMe": False},
+    MANAGER: {"email": "manager@x.com", "isMe": False},
+    BOT: {"email": "Me@X.com", "isMe": False},
+    **{f"u-{r}": {"email": a, "isMe": False} for r, a in ACCOUNTS.items()},
+}
+
+
+def with_actor(node):
+    """A stored history node as Q_HISTORY reads it."""
+    bot = {"type": "github"} if node["actorId"] == BOT else None
+    return node | {"actor": ACTORS.get(node["actorId"]), "botActor": bot}
 
 
 CLIENTS = {"researcher": "a", "pm": "b", "engineer": "a"}
@@ -280,7 +296,7 @@ class FakeLinear:
             return {
                 "issue": {
                     "history": {
-                        "nodes": found[start : start + 250],
+                        "nodes": [with_actor(n) for n in found[start : start + 250]],
                         "pageInfo": {
                             "hasNextPage": start + 250 < len(found),
                             "endCursor": str(start + 250),

@@ -18,6 +18,8 @@ from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TASK_GROUP
 from orchestrator_tests.unit.issue_fixtures import (
     CLIENT_LABELS,
+    CONFIG,
+    MANAGER_KEY,
     OTHER_TEAM,
     ROLE_USERS,
     TASK_LABELS,
@@ -113,7 +115,7 @@ class Help(Case):
         text = output.getvalue()
         for phrase in (
             "backlog, ready, running, review, approved, done, canceled",
-            "me (the\n  linear.harness_key account) or unassigned",
+            "me (the\n  linear.manager_key account) or unassigned",
             "none, urgent, high, medium, low",
             "Linear only: lookup, label swap, --label, --project, --milestone.",
             "create, edit, move, comment, archive, relation and label swap write",
@@ -301,7 +303,7 @@ class Read(IssueCase):
         self.assertEqual(view["parent"]["identifier"], "TASK-9")
         self.assertIsNone(view["continue"])
         self.assertFalse(os.path.exists(os.path.join(self.root, "logs", "runs.jsonl")))
-        self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+        self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
 
     def test_cut_fields_name_the_full_read(self):
         node = issue_node("TASK-2", comments=conn([comment(n) for n in range(1, 7)]))
@@ -425,7 +427,7 @@ class Move(IssueCase):
             },
         )
         self.assertTrue(out.endswith(b"\n"))
-        self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+        self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
         self.assertEqual(gql.call_args.args[0].split("(")[0], "mutation")
         self.assertEqual(gql.call_args.kwargs["s"], STATES["handoff"])
 
@@ -509,7 +511,7 @@ class Edit(IssueCase):
                 )
                 self.assertEqual(gql.call_args.kwargs["in"], want)
                 self.assertNotIn("中文".encode(), out)
-                self.assertEqual(gql.call_args.kwargs["service"], "linear-api-key")
+                self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
 
     def test_unchanged_exits_zero(self):
         gql = EditGql((self.BUILD,), [], fields={"title": "Same"})
@@ -945,7 +947,7 @@ class Failures(IssueCase):
                 ["read", "TASK-2"],
                 Gql(None, fail=CalledProcessError(44, ["security"])),
                 2,
-                "linear.harness_key Keychain service 'linear-api-key': CalledProcessError",
+                "linear.manager_key Keychain service 'linear-api-key-manager': CalledProcessError",
             ),
             (["read", "TASK-2"], Gql(None, fail=FileNotFoundError("security")), 2, "Keychain"),
             (["read", "TASK-2"], Gql(None, fail=TimeoutExpired("security", 30)), 2, "Keychain"),
@@ -959,10 +961,18 @@ class Failures(IssueCase):
 
     def test_configuration_errors_exit_two(self):
         with open(self.config, "w") as f:
-            f.write(tp.CONFIG.replace('linear.harness_key = "linear-api-key"\n', ""))
+            f.write(CONFIG.replace('linear.harness_key = "linear-api-key"\n', ""))
         code, out, err = self.run_main(["read", "TASK-2"], Gql(issue_node()))
         self.assertEqual((code, out), (2, b""))
         self.assertIn("required, unset: linear.harness_key:", err)
+
+    def test_unset_manager_key_exits_two_before_any_call(self):
+        with open(self.config, "w") as f:
+            f.write(tp.CONFIG)
+        gql = Gql(issue_node())
+        code, out, err = self.run_main(["read", "TASK-2"], gql)
+        self.assertEqual((code, out, gql.calls), (2, b"", []))
+        self.assertIn("linear.manager_key is unset", err)
 
     def test_diagnostics_stay_within_eight_kib(self):
         gql = Gql(None, fail=LinearError("linear api error: " + "错" * 9000))

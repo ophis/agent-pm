@@ -18,6 +18,7 @@ from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.promote_fixtures import (
     AGENT,
     CONFIG,
+    MANAGER,
     NOW,
     OTHER,
     PM_NEXT,
@@ -500,13 +501,14 @@ class HandoffPromotion(Base):
         (child,) = self.fake.children.values()
         self.assertEqual(
             instructions(child["description"]),
-            f"## Instructions\nMe, {ago(46)}:\nmine\n\nMe, {ago(45)}:\ncaps",
+            f"## Instructions\nOther, {ago(49)}:\nother\n\nMe, {ago(46)}:\nmine\n\n"
+            f"Me, {ago(45)}:\ncaps",
         )
         self.assertNotIn("## Source", child["description"])
         comments = child["description"].split("## Comments\n")[1]
-        for body in ("before cutoff", "agent", "other", "bot", "mine", "caps"):
+        for body in ("before cutoff", "agent", "other", "mine", "caps"):
             self.assertIn(f"  > {body}", comments)
-        self.assertIn(f"- integration, {ago(48)}:", comments)
+        self.assertNotIn("bot", comments)
 
     def test_session_comments_left_out_of_comments(self):
         run = "Run 0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d · running · 2026-09-27T10:00:00+08:00"
@@ -552,6 +554,33 @@ class HandoffPromotion(Base):
         self.assertEqual(
             instructions(child["description"]), f"## Instructions\nMe, {ago(500)}:\nold"
         )
+
+    def test_manager_instruction_promotes(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 60, "In Review")
+        self.fake.said("DR-1", 45, user=MANAGER, body="write the PRD")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(
+            instructions(child["description"]),
+            f"## Instructions\nManager, {ago(45)}:\nwrite the PRD",
+        )
+        self.assertEqual(src["state"], "Done")
+
+    def test_integration_or_role_comment_is_not_an_instruction(self):
+        for user in (None, AGENT):
+            with self.subTest(user=user):
+                self.fake = FakeLinear()
+                src = self.fake.add("DR-1")
+                self.fake.moved("DR-1", 60, "In Review")
+                self.fake.said("DR-1", 45, user=user, body="Linked PR #12")
+                self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+                self.run_main()
+                self.assertEqual(self.fake.children, {})
+                self.assertEqual(
+                    (src["state"], src["posted"]), ("In Review", [promote.NO_INSTRUCTIONS])
+                )
 
     def test_no_instructions_bounces(self):
         self.write_config(CONFIG.replace('["me@x.com"]', '["me@x.com", "b@x.com"]'))

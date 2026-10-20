@@ -68,12 +68,23 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1168`, `…/engine/promote.py:316`, `…/engine/prune.py:445`, `…/engine/writeback.py:90` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/trackers/linear/ops.py:33`, `…/trackers/linear/linear_tracker.py:97`, `…/trackers/linear/linear_tracker.py:99`, `…/trackers/linear/linear_tracker.py:83`, `…/trackers/linear/ops.py:26`, `…/trackers/linear/linear_tracker.py:109`; [Linear API keys] |
+| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `orchestrator/src/agent_pm/orchestrator/engine/router.py:1168`, `…/engine/promote.py:309`, `…/engine/prune.py:443`, `…/engine/writeback.py:90` |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/trackers/linear/ops.py:33`, `…/trackers/linear/linear_tracker.py:98`, `…/trackers/linear/linear_tracker.py:100`, `…/trackers/linear/linear_tracker.py:84`, `…/trackers/linear/ops.py:26`, `…/trackers/linear/linear_tracker.py:110`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `linear.harness_key` | `orchestrator/src/agent_pm/orchestrator/config.toml:92` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
 | Revoke | delete the key in Linear › Settings › Account › Security & Access, then `security delete-generic-password -s <service>` | [Linear API keys] |
+
+### Linear manager key
+
+| Field | Value | Source |
+|---|---|---|
+| Purpose | the manager's `agent-pm-orchestrator issue` commands (reads, comments, moves, creates, relations, labels, archives); an account neither the harness nor a role, so its comments are instructions and its moves to Todo restart the attempt count | `orchestrator/src/agent_pm/orchestrator/trackers/linear/issue.py:829` |
+| Minimum permission | a personal API key of that account (a dedicated manager account or your own) limited to the team, with Read, Write, Create issues and Create comments; not live-tested | [Linear API keys] |
+| Stored at | a login keychain item whose service is `linear.manager_key`; unset, the `issue` commands refuse | `…/config.toml:93` |
+| Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
+| Lifetime | as the harness key | [Linear API keys] |
+| Revoke | as the harness key | [Linear API keys] |
 
 ### Linear role keys
 
@@ -82,9 +93,9 @@ One per role: `linear.roles.researcher.key` for `linear.roles.researcher.account
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | write-back as the role: comments, state moves, subscribing `linear.human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:33`, `…/trackers/linear/ops.py:36`, `…/engine/router.py:572` |
-| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/trackers/linear/linear_tracker.py:102`, `…/trackers/linear/linear_tracker.py:104`; [Linear API keys] |
-| Stored at | a login keychain item whose service is `linear.roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:142`, `…/engine/router.py:646` |
+| Purpose | write-back as the role: comments, state moves, subscribing `linear.human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:87`, `…/trackers/linear/ops.py:33`, `…/trackers/linear/ops.py:36`, `…/engine/router.py:581` |
+| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/trackers/linear/linear_tracker.py:103`, `…/trackers/linear/linear_tracker.py:105`; [Linear API keys] |
+| Stored at | a login keychain item whose service is `linear.roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:146`, `…/engine/router.py:655` |
 | Readers | as the harness key | `orchestrator/src/agent_pm/orchestrator/trackers/linear/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |
 | Revoke | as the harness key | [Linear API keys] |
@@ -141,6 +152,7 @@ shows.
 | `agent-pm-codex` | `auth` | — | the full Codex login | `<B> login codex`; renewals at `start`, `refresh` | the broker |
 | `agent-pm-opencode` | provider name | `[session.clients.opencode.providers.<name>]` | that OpenCode provider's API key | `<B> login opencode <name>` | the broker |
 | the `linear.harness_key` value | any | `linear.harness_key` | harness Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
+| the `linear.manager_key` value | the manager's account | `linear.manager_key` | manager Linear API key | the user ([Linear presets](#linear-presets)) | any process running as the user |
 | each `linear.roles.<role>.key` value | the role's account | `linear.roles.<role>.key` | role Linear API key | the user | any process running as the user |
 | Claude Code's own | — | — | local Claude login | Claude Code `/login` | Claude Code; service name not documented |
 | `gh`'s own | — | — | host `gh` token | `gh auth login` | `gh`; see `gh auth status` |
@@ -241,6 +253,7 @@ Create these in the Linear team, then put each id in `~/.agent-pm/config.local.t
 | the Linear project of each product repo, optional | `linear.project_repos` |
 | — (local clones of target repos, optional) | `local_clones` |
 | the harness account's API key, a Keychain item (below) | `linear.harness_key` |
+| the manager's API key, of an account neither the harness nor a role (yours, or one more member), a Keychain item (below) | `linear.manager_key` |
 | each role account's API key, a Keychain item (below) | `linear.roles.researcher.key`, `linear.roles.pm.key`, `linear.roles.engineer.key` |
 
 Keys, one per account:
@@ -254,6 +267,7 @@ Keys, one per account:
    ```sh
    security add-generic-password -s <linear.roles.<role>.key> -a <linear.roles.<role>.account> -w   # each role
    security add-generic-password -s <linear.harness_key> -a <harness account> -w
+   security add-generic-password -s <linear.manager_key> -a <manager account> -w
    ```
 
 4. `bin/agent-pm-orchestrator router --dry-run` and `bin/agent-pm-orchestrator promote --dry-run` report no config error.

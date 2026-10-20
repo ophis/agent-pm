@@ -24,7 +24,7 @@ def state_id(cfg, state: IssueState) -> str:
 
 
 def assignee(gql, cfg, spec) -> str | None:
-    """The user --role spec names: a role's account, me (the harness_key account) or unassigned."""
+    """The user --role spec names: a role's account, me (the manager_key account) or unassigned."""
     if spec in cfg.roles:
         account = cfg.roles[spec].account
         if (found := ops.user_id(gql, account)) is None:

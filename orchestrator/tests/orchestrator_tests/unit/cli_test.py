@@ -223,6 +223,16 @@ class Commands(Case):
             errors, "agent-pm-orchestrator: pipeline answers belong on the issue board\n"
         )
 
+    def test_help_names_each_commands_board_key(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn(
+            "Board access uses the configured linear.harness_key Keychain service (the issue"
+            " commands: linear.manager_key)",
+            " ".join(output.getvalue().split()),
+        )
+
     def test_help_lists_only_existing_commands(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:

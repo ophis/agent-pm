@@ -29,6 +29,7 @@ class HarnessRun(HarnessCase):
             states={},
             human_members=(),
             harness_key="",
+            manager_key="",
             task_label_group="",
             task_labels={},
             task_tiers={},

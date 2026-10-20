@@ -49,21 +49,6 @@ class RoleIds(Case):
         )
 
 
-class Humans(Case):
-    def test_humans(self):
-        def gql(_q, **v):
-            return {"users": {"nodes": [{"id": "u-" + v["e"]}] if v["e"] != "x@y.z" else []}}
-
-        self.assertEqual(ops.humans(gql, SimpleNamespace(human_members=("a@b.c",))), ["u-a@b.c"])
-        self.assertEqual(ops.humans(gql, SimpleNamespace(human_members=())), [])
-        with self.assertRaises(LinearError) as cm:
-            ops.humans(gql, SimpleNamespace(human_members=("a@b.c", "x@y.z")))
-        self.assertEqual(
-            str(cm.exception),
-            "orchestrator/config.toml: linear.human_members not found in Linear: x@y.z",
-        )
-
-
 class TeamCheck(Case):
     def cfg(self):
         return SimpleNamespace(team=TEAM, states=dict(STATES))
@@ -217,7 +202,9 @@ class Writes(Case):
             f"{module.__name__}.{name}": value
             for module in (linear_tracker,)
             for name, value in vars(module).items()
-            if isinstance(value, str) and ops.HISTORY in value and value != ops.HISTORY
+            if isinstance(value, str)
+            and "history(first: 250, after: $after" in value
+            and value != ops.HISTORY
         }
         self.assertEqual(len(found), 4)
         for name, query in found.items():
@@ -432,7 +419,7 @@ class LastMove(Case):
         {"createdAt": "2026-09-27T13:00:00.000Z", "actorId": None, "toStateId": IN_PROGRESS},
     ]
 
-    def test_latest_move_into_the_states_by_actors(self):
+    def test_latest_move_into_the_states_kept(self):
         at = parse_time
         for nodes, states, actors, want in (
             (self.NODES, {TODO}, None, at("2026-09-27T12:00:00.000Z")),
@@ -445,4 +432,5 @@ class LastMove(Case):
             (self.NODES, {TODO}, set(), None),
         ):
             with self.subTest(states=states, actors=actors, nodes=len(nodes)):
-                self.assertEqual(ops.last_move(nodes, states, actors), want)
+                keep = None if actors is None else (lambda n, a=actors: n["actorId"] in a)
+                self.assertEqual(ops.last_move(nodes, states, keep), want)
