@@ -979,6 +979,33 @@ class Stamped(Written):
         self.assertEqual(after.moves, before.moves)
         self.assertEqual(after.comments[0].at, before.comments[0].at)
 
+    def test_derived_times_survive_a_stamp_in_a_dst_fold(self):
+        """01:30 New York time twice on 2026-11-01: a derived time is the one its History line reads."""
+        zone = mock.patch.dict(os.environ, {"TZ": "America/New_York"})
+        zone.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(zone.stop)
+        time.tzset()
+        for at in ("2026-11-01T06:30:20+00:00", "2026-11-01T05:30:20+00:00"):  # EST, then EDT
+            with self.subTest(at=at):
+                shutil.rmtree(self.board)
+                os.mkdir(self.board)
+                path = self.write(
+                    "pm/approved",
+                    "LOC-1",
+                    comments="###\nGo on.\n",
+                    history="- 2026-10-31 12:00 review self\n",
+                )
+                self.write("engineer/ready", "LOC-2")
+                when = datetime.fromisoformat(at).timestamp()
+                os.utime(path, (when, when))
+                before = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+                LocalTracker(self.board, ("pm", "engineer")).relate("LOC-1", "LOC-2")
+                after = LocalTracker(self.board, ("pm", "engineer")).detail("LOC-1")
+                self.assertIn(" approved other\n", self.read(path))
+                self.assertEqual(after.moves, before.moves)
+                self.assertEqual(after.comments[0].at, before.comments[0].at)
+
 
 class Relate(Written):
     def test_adds_once(self):

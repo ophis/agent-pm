@@ -598,8 +598,7 @@ def _moves(issue):
     """History, then the derived move: a person's move to where the file sits, unrecorded."""
     moves = list(issue.history)
     if issue.state is not None and (not moves or moves[-1].state != issue.state):
-        moved = issue.mtime.replace(second=0, microsecond=0)  # as a stamp records it
-        moves.append(Entry(moved, issue.state, Source.OTHER))
+        moves.append(Entry(issue_file.minute(issue.mtime), issue.state, Source.OTHER))
     return moves
 
 

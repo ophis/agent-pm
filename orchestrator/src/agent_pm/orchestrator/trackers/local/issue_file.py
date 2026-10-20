@@ -236,7 +236,7 @@ def _comments(lines, mtime):
     notes = []
     for line in lines:
         if line == _BARE:
-            notes.append([mtime.replace(second=0, microsecond=0), Source.OTHER, [], None])
+            notes.append([minute(mtime), Source.OTHER, [], None])
         elif _HEADED.match(line) or (not notes and line.strip()):
             header = _HEADER.fullmatch(line)
             try:
@@ -389,6 +389,11 @@ def add_link(text: str, *, title: str, url: str) -> str:
 
 
 _ID = re.compile(r"^#{4} .* <!-- id=c(\d+) key=\S+ -->$")
+
+
+def minute(at: datetime) -> datetime:
+    """at as a stamp records it: through its History text."""
+    return _local(_minute(at))
 
 
 def _minute(at):
