@@ -58,6 +58,8 @@ flowchart TB
   LCLI --> R & PP & WB & LR
   R & PP & WB --> LR
   PP --> LT --> FL
+  WB --> LT
+  WB --> FL
   PP --> FL
   R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
