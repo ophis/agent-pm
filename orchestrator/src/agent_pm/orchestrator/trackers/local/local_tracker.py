@@ -184,7 +184,7 @@ class LocalTracker(Tracker):
             notes=tuple(sorted(notes, key=lambda n: n.at)),
             links=tuple(Link(each.url) for each in found.links),
             linked=tuple(
-                Linked(i, files[i].title, shown(files[i]))
+                Linked(i, files[i].title, _shown(files[i]))
                 for i in self._related(found)
                 if i in files
             ),
@@ -572,7 +572,7 @@ def _name(title):
 
 
 def _sub_issue(issue):
-    return SubIssue(issue.id, issue.id, shown(issue), issue.state in ENDED)
+    return SubIssue(issue.id, issue.id, _shown(issue), issue.state in ENDED)
 
 
 def url(issue):
@@ -588,7 +588,7 @@ def _state(local):
     return None if local is None else ISSUE_STATES[local]
 
 
-def shown(issue):
+def _shown(issue):
     return issue.state.value if issue.state else ARCHIVED
 
 
@@ -628,7 +628,7 @@ def _found(issue):
     return Found(
         issue.id,
         issue.title,
-        shown(issue),
+        _shown(issue),
         GROUPS.get(issue.state, Group.BACKLOG),
         tuple(each.url for each in issue.links),
         issue.description,
