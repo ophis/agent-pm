@@ -4,8 +4,10 @@ every other line."""
 
 import json
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from urllib.parse import quote
 
 from agent_pm.orchestrator.engine.flow.types import ISSUE_ID
@@ -288,14 +290,19 @@ def stamp(text: str, *, mtime: datetime, state: LocalState | None) -> str:
     return add_history(text, at=mtime, state=state, source=Source.OTHER)
 
 
-def add_comment(text: str, *, at: datetime, body: str, ref_key: str | None = None) -> str:
-    """The engine's comment, last; with a ref key its hidden id (c<n>, the next) and key."""
+def add_comment(
+    text: str, *, at: datetime, body: str, ref_key: str | None = None, source: Source = Source.SELF
+) -> str:
+    """A comment, last; with a ref key its hidden id (c<n>, the next) and key."""
     lines, end = _split(text)
-    header = f"#### {Source.SELF} · {_minute(at)}"
-    if ref_key is not None:
-        ids = [int(m[1]) for line in lines[end:] if (m := _ID.search(line))]
-        header += f" <!-- id=c{max(ids, default=0) + 1} key={ref_key} -->"
+    ids = [int(m[1]) for line in lines[end:] if (m := _ID.search(line))]
+    header = _header(source, at, ref_key, max(ids, default=0) + 1)
     return _join(_append(lines, end, _Section.COMMENTS, ["", header, *_body(body)]))
+
+
+def _header(source, at, ref_key, n):
+    header = f"#### {source} · {_minute(at)}"
+    return header if ref_key is None else f"{header} <!-- id=c{n} key={ref_key} -->"
 
 
 def edit_comment(text: str, ref_key: str, body: str) -> str | None:
@@ -343,6 +350,40 @@ def set_title(text: str, title: str) -> str:
     return _join(lines)
 
 
+def set_description(text: str, body: str) -> str:
+    """Description holding body, the blank lines around it kept; the section made if absent."""
+    lines, end = _split(text)
+    if _Section.DESCRIPTION not in (spans := _spans(lines, end)):
+        return _join(_append(lines, end, _Section.DESCRIPTION, _body(body)))
+    first, after = spans[_Section.DESCRIPTION]
+    filled = [i for i in range(first, after) if lines[i].strip()]
+    start, stop = (filled[0], filled[-1] + 1) if filled else (first, first)
+    return _join([*lines[:start], *_body(body), *lines[stop:]])
+
+
+def set_front(
+    text: str,
+    key: Literal["task", "client", "priority", "blocked_by"],
+    value: str | int | Sequence[str] | None,
+) -> str:
+    """key's line replaced in place or added last, a str as JSON (one line); a task or client None
+    or empty drops it."""
+    lines, end = _split(text)
+    line = [] if value is None or value == "" else [f"{key}: {_written(value)}"]
+    i = next((i for i in range(1, end) if lines[i].startswith(f"{key}:")), None)
+    if i is None:
+        return _join([*lines[:end], *line, *lines[end:]])
+    return _join([*lines[:i], *line, *lines[i + 1 :]])
+
+
+def _written(value):
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    return f"[{', '.join(value)}]"
+
+
 def add_related(text: str, ident: str) -> str:
     lines, end = _split(text)
     key = next((i for i in range(1, end) if lines[i].startswith(f"{_Key.RELATED}:")), None)
@@ -361,19 +402,34 @@ def new(
     created: datetime,
     parent: str | None,
     description: str,
-    note_at: datetime,
-    note: str,
-    note_key: str,
     state: LocalState,
+    note: str | None = None,
+    note_at: datetime | None = None,
+    note_key: str | None = None,
+    task: str | None = None,
+    client: str | None = None,
+    blocked_by: Sequence[str] = (),
+    source: Source = Source.SELF,
 ) -> str:
-    """Its first comment the engine's, keyed note_key, and one History line, both at note_at."""
+    """With a note, its first comment the engine's, keyed note_key; one History line by source;
+    both at note_at, else created."""
+    at = note_at or created
     front = [
         f"{_Key.ID}: {ident}",
         f"{_Key.TITLE}: {json.dumps(title)}",
+        *([f"{_Key.TASK}: {json.dumps(task)}"] if task else []),
+        *([f"{_Key.CLIENT}: {json.dumps(client)}"] if client else []),
         f"{_Key.PRIORITY}: {priority}",
         f"{_Key.CREATED}: {created.isoformat()}",
+        *([f"{_Key.BLOCKED_BY}: {_written(blocked_by)}"] if blocked_by else []),
         *([f"{_Key.PARENT}: {parent}"] if parent else []),
     ]
+    comments = (
+        []
+        if note is None
+        else ["", f"### {_Section.COMMENTS.value}", "", _header(Source.SELF, at, note_key, 1)]
+        + _body(note)
+    )
     return _join(
         [
             "---",
@@ -382,14 +438,10 @@ def new(
             "",
             f"### {_Section.DESCRIPTION.value}",
             *_body(description),
-            "",
-            f"### {_Section.COMMENTS.value}",
-            "",
-            f"#### {Source.SELF} · {_minute(note_at)} <!-- id=c1 key={note_key} -->",
-            *_body(note),
+            *comments,
             "",
             f"### {_Section.HISTORY.value}",
-            f"- {_minute(note_at)} {state} {Source.SELF}",
+            f"- {_minute(at)} {state} {source}",
         ]
     )
 
@@ -444,7 +496,7 @@ def _append(lines, end, section, block):
     if section not in spans:
         later = [spans[s][0] - 1 for s in _ORDER[_ORDER.index(section) + 1 :] if s in spans]
         at = later[0] if later else len(lines)
-        gap = [""] if at < len(lines) and block[0] == "" else []
+        gap = [""] if at < len(lines) and block[:1] == [""] else []
         return [*lines[:at], f"### {section.value}", *block, *gap, *lines[at:]]
     first, after = spans[section]
     last = max((i for i in range(first, after) if lines[i].strip()), default=first - 1)

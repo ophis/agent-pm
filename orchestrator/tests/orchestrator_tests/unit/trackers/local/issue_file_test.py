@@ -432,6 +432,96 @@ class Edits(Zoned):
         empty = FRONT.replace("title: x\n", "title: x\nrelated: []\n")
         self.assertEqual(parse(issue_file.add_related(empty, "LOC-3")).related, ("LOC-3",))
 
+    def test_add_comment_as_other(self):
+        text = issue_file.add_comment(FRONT, at=at(9, 5), body="mine", source=Source.OTHER)
+        self.assertEqual(text, FRONT + "### Comments\n\n#### other · 2026-10-19 09:05\nmine\n")
+        self.assertEqual(parse(text).comments, (Note(at(9, 5), Source.OTHER, "mine", None),))
+
+    def test_set_description_replaces_the_body(self):
+        text = (
+            FRONT
+            + "\n### Description\n\nold\n\nlines\n\n### History\n- 2026-10-19 09:00 ready other\n"
+        )
+        edited = issue_file.set_description(text, "new\n### History\nend")
+        self.assertEqual(edited, text.replace("old\n\nlines", "new\n ### History\nend"))
+        self.assertEqual(parse(edited).description, "new\n ### History\nend")
+        self.assertEqual(len(parse(edited).history), 1)
+        cleared = issue_file.set_description(text, "")
+        self.assertEqual(cleared, text.replace("old\n\nlines\n", ""))
+        self.assertEqual(parse(cleared).description, "")
+
+    def test_set_description_fills_an_empty_section(self):
+        text = FRONT + "### Description\n\n### History\n"
+        self.assertEqual(
+            issue_file.set_description(text, "d"), FRONT + "### Description\nd\n\n### History\n"
+        )
+
+    def test_set_description_makes_the_section(self):
+        history = "### History\n- 2026-10-19 09:00 ready other\n"
+        made = issue_file.set_description(FRONT + history, "d\ne")
+        self.assertEqual(made, FRONT + "### Description\nd\ne\n" + history)
+        self.assertEqual(parse(made).description, "d\ne")
+        self.assertEqual(issue_file.set_description(FRONT, "d"), FRONT + "### Description\nd\n")
+        self.assertEqual(
+            issue_file.set_description(FRONT + history, ""),
+            FRONT + "### Description\n" + history,
+        )
+
+    def test_set_front_adds_each_key(self):
+        text = issue_file.set_front(FRONT, "task", "light-build")
+        text = issue_file.set_front(text, "client", "claude")
+        text = issue_file.set_front(text, "priority", 3)
+        text = issue_file.set_front(text, "blocked_by", ["LOC-1", "LOC-2"])
+        self.assertEqual(
+            text,
+            FRONT.replace(
+                "\n---\n",
+                '\ntask: "light-build"\nclient: "claude"\npriority: 3\n'
+                "blocked_by: [LOC-1, LOC-2]\n---\n",
+            ),
+        )
+        found = parse(text)
+        self.assertEqual(
+            (found.task, found.client, found.priority, found.blocked_by),
+            ("light-build", "claude", 3, ("LOC-1", "LOC-2")),
+        )
+
+    def test_set_front_replaces_in_place(self):
+        text = FRONT.replace(
+            "title: x\n", "title: x\ntask: build\nclient: x\npriority: 1\nblocked_by: [LOC-1]\n"
+        )
+        edited = issue_file.set_front(text, "task", "review")
+        edited = issue_file.set_front(edited, "client", "codex")
+        edited = issue_file.set_front(edited, "priority", 0)
+        edited = issue_file.set_front(edited, "blocked_by", [])
+        self.assertEqual(
+            edited,
+            FRONT.replace(
+                "title: x\n",
+                'title: x\ntask: "review"\nclient: "codex"\npriority: 0\nblocked_by: []\n',
+            ),
+        )
+        found = parse(edited)
+        self.assertEqual(
+            (found.task, found.client, found.priority, found.blocked_by),
+            ("review", "codex", 0, ()),
+        )
+
+    def test_set_front_removes_task_and_client(self):
+        text = FRONT.replace("title: x\n", "title: x\ntask: build\nclient: x\n")
+        cleared = issue_file.set_front(issue_file.set_front(text, "task", None), "client", "")
+        self.assertEqual(cleared, FRONT)
+        self.assertEqual((parse(cleared).task, parse(cleared).client), (None, None))
+        self.assertEqual(issue_file.set_front(FRONT, "task", None), FRONT)
+
+    def test_set_front_values_stay_on_one_line(self):
+        for client in ("acme\nparent: LOC-1", '"acme', "a\x85b c\r"):
+            with self.subTest(client=client):
+                text = issue_file.set_front(FRONT, "client", client)
+                self.assertEqual(len(text.splitlines()), len(FRONT.splitlines()) + 1)
+                found = parse(text)
+                self.assertEqual((found.client, found.parent), (client, None))
+
 
 class New(Zoned):
     """A new issue's text: front matter, Description, its first comment and History."""
@@ -483,6 +573,59 @@ class New(Zoned):
         found = parse(text)
         self.assertEqual(found.description, "top\n ### Comments\n #### self · x\n ###\nend")
         self.assertEqual(len(found.comments), 1)
+
+    def test_text(self):
+        self.assertEqual(
+            self.new(),
+            '---\nid: LOC-12\ntitle: "ENG: \\u65b0 x"\npriority: 2\n'
+            "created: 2026-10-19T09:30:00-03:00\nparent: LOC-5\n---\n\n"
+            "### Description\nHandoff from LOC-1: file:///b\n\nBuild it.\n\n"
+            "### Comments\n\n"
+            "#### self · 2026-10-19 09:30 <!-- id=c1 key=LOC-1:engineer:2026-10-19T12:00:00.000Z -->\n"
+            "Created by promote.\n\n"
+            "### History\n- 2026-10-19 09:30 ready self\n",
+        )
+
+    def test_without_a_note(self):
+        text = issue_file.new(
+            ident="LOC-12",
+            title="x",
+            priority=0,
+            created=at(9, 30),
+            parent=None,
+            description="d",
+            state=LocalState.BACKLOG,
+            source=Source.OTHER,
+        )
+        self.assertEqual(
+            text,
+            '---\nid: LOC-12\ntitle: "x"\npriority: 0\ncreated: 2026-10-19T09:30:00-03:00\n---\n\n'
+            "### Description\nd\n\n### History\n- 2026-10-19 09:30 backlog other\n",
+        )
+        found = parse(text)
+        self.assertEqual((found.description, found.comments), ("d", ()))
+        self.assertEqual(found.history, (Entry(at(9, 30), LocalState.BACKLOG, Source.OTHER),))
+
+    def test_task_client_and_blockers(self):
+        text = self.new(task="light-build", client="claude", blocked_by=("LOC-1", "LOC-3"))
+        self.assertIn(
+            '\ntitle: "ENG: \\u65b0 x"\ntask: "light-build"\nclient: "claude"\npriority: 2\n'
+            "created: 2026-10-19T09:30:00-03:00\nblocked_by: [LOC-1, LOC-3]\nparent: LOC-5\n---\n",
+            text,
+        )
+        found = parse(text)
+        self.assertEqual(
+            (found.task, found.client, found.blocked_by, found.parent),
+            ("light-build", "claude", ("LOC-1", "LOC-3"), "LOC-5"),
+        )
+
+    def test_client_stays_on_one_line(self):
+        for client in ("acme\nparent: LOC-1", '"acme'):
+            with self.subTest(client=client):
+                text = self.new(parent=None, client=client)
+                self.assertEqual(text.split("\n---\n")[0].count("\n"), 5)
+                found = parse(text)
+                self.assertEqual((found.client, found.parent), (client, None))
 
     def test_new_comment_ids_follow(self):
         text = issue_file.add_comment(self.new(), at=at(9, 31), body="b", ref_key="s:a")
