@@ -99,7 +99,14 @@ class Promoter:
         self.tasks = tasks
         self.team = team(gql, cfg)
         self.roles = role_ids(gql, cfg.roles)
-        self.tracker = LinearTracker(gql, self.team, self.roles, cfg.human_members)
+        self.tracker = LinearTracker(
+            gql,
+            states=self.team.states,
+            team_id=self.team.id,
+            finished=self.team.finished,
+            roles=self.roles,
+            humans=cfg.human_members,
+        )
         self.say = functools.partial(log, "promote", dry=dry)
 
     def pending(self):

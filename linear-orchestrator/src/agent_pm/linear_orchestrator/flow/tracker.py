@@ -65,17 +65,44 @@ class Tracker(ABC):
     def relate(self, key: str, other: str) -> None: ...
 
     @abstractmethod
-    def comment(self, key: str, body: str) -> None: ...
+    def comment(self, key: str, body: str, ref: tuple[str, ...] | None = None) -> None: ...
 
     @abstractmethod
-    def move(self, key: str, to: IssueState, *, frm: IssueState) -> str | None:
-        """Only from frm; None: moved, else its state id."""
+    def move(self, key: str, to: IssueState, *, frm: IssueState | None = None) -> str | None:
+        """Without frm, from any state; None: moved, else its state id."""
 
     @abstractmethod
     def comment_and_move(
         self, key: str, body: str, *, to: IssueState, frm: IssueState, notify: bool
     ) -> str | None:
         """notify: subscribe others first."""
+
+    @abstractmethod
+    def notify(self, key: str, people: Collection[str]) -> str:
+        """Notes for failures."""
+
+    @abstractmethod
+    def links(self, key: str) -> set[str]: ...
+
+    @abstractmethod
+    def link(self, key: str, url: str, title: str) -> None: ...
+
+    @abstractmethod
+    def retitle(self, key: str, title: str) -> None: ...
+
+    @abstractmethod
+    def on_board(self, ident: str) -> str | None:
+        """Its key if on this board."""
+
+    @abstractmethod
+    def unarchive(self, key: str) -> None: ...
+
+    @abstractmethod
+    def find_comment(self, key: str, ref: tuple[str, ...]) -> str | None: ...
+
+    @abstractmethod
+    def put_comment(self, key: str, body: str, ref: tuple[str, ...]) -> bool:
+        """False: refused."""
 
     @abstractmethod
     def role(self, issue: IssueRecord) -> str: ...

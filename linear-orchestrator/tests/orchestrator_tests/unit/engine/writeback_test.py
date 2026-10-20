@@ -23,6 +23,7 @@ from agent_pm.linear_orchestrator.engine import (
     writeback,
 )
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
 from agent_pm.linear_orchestrator.engine.types import (
     Claim,
     ConfigError,
@@ -245,6 +246,10 @@ class Gql:
         return {FIELDS[name]: {"success": r is not False}}
 
 
+def tracker(gql):
+    return LinearTracker(gql, states=STATES, team_id=board_ids.TEAM)
+
+
 class Base(Case):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -253,6 +258,7 @@ class Base(Case):
 
     def ctx(self, role="engineer", *, gql=None):
         workdir = tempfile.mkdtemp(dir=self.tmp)
+        gql = gql or Gql()
         return writeback.Context(
             ident=ID,
             issue_id=UUID,
@@ -261,12 +267,12 @@ class Base(Case):
             resume=False,
             project=None,
             workdir=workdir,
-            gql=gql or Gql(),
+            tracker=tracker(gql),
             humans=HUMANS,
             states=STATES,
             repos=REPOS,
-            team=board_ids.TEAM,
             target=TARGET,
+            harness=LinearTracker(gql),
         )
 
     def write(self, ctx, rel, text):
@@ -360,7 +366,7 @@ class ProgressReporting(Base):
             self.lines(), [f"step-error {ID} step=start error=LinearError: linear api error: down"]
         )
         ok = Gql()
-        writeback.progress(replace(ctx, gql=ok), START)
+        writeback.progress(replace(ctx, tracker=tracker(ok)), START)
         self.assertEqual(ok.calls, [post("start", "Build started: x")])
 
     def test_signal_exit_passes_through(self):
@@ -611,16 +617,29 @@ class WritebackContext(run_fixtures.Base):
                     resume=resume,
                     project=PROJECT,
                     workdir=os.path.join(self.work, "work", ID),
-                    gql=ctx.gql,
+                    tracker=ctx.tracker,
                     humans=("me@x.com",),
                     states=cfg.states,
                     repos={PROJECT: "ophis/agent-pm"},
-                    team=cfg.team,
                     target=target,
+                    harness=ctx.harness,
                 )
                 self.assertEqual(ctx, want)
-                ctx.gql("q", i=UUID)
-                gql.assert_called_with("q", service=run_fixtures.KEY, i=UUID)
+                self.assertEqual(
+                    (ctx.tracker.state_ids, ctx.tracker.team_id), (cfg.states, cfg.team)
+                )
+                gql.return_value = {"comment": None}
+                ctx.tracker.find_comment(UUID, (SID, "start"))
+                gql.assert_called_with(
+                    ops.Q_COMMENT, service=run_fixtures.KEY, c=ops.client_id(SID, "start")
+                )
+                ctx.harness.find_comment(UUID, (SID, "session"))
+                gql.assert_called_with(
+                    ops.Q_COMMENT,
+                    service=run_fixtures.HARNESS,
+                    timeout=run_comments.LIMIT,
+                    c=ops.client_id(SID, "session"),
+                )
 
 
 class DurableRunNotes(Case):
@@ -794,7 +813,7 @@ class OutcomeFiles(Base):
     def finish_with(self, ctx, path):
         gql = Gql()
         writeback.finish(
-            replace(ctx, gql=gql),
+            replace(ctx, tracker=tracker(gql)),
             Outcome(
                 status="failed", title="ENG-7: x", summary="push not permitted", files=list([path])
             ),
@@ -1159,7 +1178,7 @@ class CompletionMarker(Base):
         self.assertFalse(writeback.finish(ctx, self.DONE))
         self.assertEqual(self.steps(ctx), {SID: ["comment"]})
         again = Gql()
-        self.assertTrue(writeback.finish(replace(ctx, gql=again), self.DONE))
+        self.assertTrue(writeback.finish(replace(ctx, tracker=tracker(again)), self.DONE))
         self.assertEqual(again.calls[-2:], [reread(), move("in_review")])
         self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
 
@@ -1178,7 +1197,7 @@ class CompletionLedger(Base):
         )
         self.assertTrue(writeback.finish(ctx, done))
         again = Gql()
-        self.assertTrue(writeback.finish(replace(ctx, gql=again), done))
+        self.assertTrue(writeback.finish(replace(ctx, tracker=tracker(again)), done))
         self.assertEqual(again.calls, [READ, sub(HUMANS[0]), sub(HUMANS[1])])
 
     def test_stops_at_first_error_and_resumes_there(self):
@@ -1199,7 +1218,7 @@ class CompletionLedger(Base):
             f"step-error {ID} step=comment error=LinearError: commentCreate: success: false",
         )
         again = Gql()
-        self.assertTrue(writeback.finish(replace(ctx, gql=again), done))
+        self.assertTrue(writeback.finish(replace(ctx, tracker=tracker(again)), done))
         self.assertEqual(
             again.calls,
             expect(
@@ -1231,7 +1250,7 @@ class CompletionLedger(Base):
         )
         gql = Gql()
         writeback.finish(
-            replace(ctx, gql=gql),
+            replace(ctx, tracker=tracker(gql)),
             Outcome(status="failed", title="ENG-7: x", summary="push not permitted"),
         )
         self.assertEqual(
@@ -1285,7 +1304,7 @@ class CompletionLedger(Base):
         with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
             writeback.progress(ctx, START)
         self.assertEqual(self.lines(), [f"step-error {ID} step=start error=OSError: disk full"])
-        self.assertEqual(ctx.gql.calls, [post("start", "Build started: x")])
+        self.assertEqual(ctx.tracker.gql.calls, [post("start", "Build started: x")])
         self.assertEqual(os.listdir(ctx.workdir), [])
 
 
@@ -1314,7 +1333,7 @@ class ResumedComments(Base):
         writeback.progress(ctx, START)
         self.assertTrue(writeback.finish(ctx, done))
         again = Gql()
-        resumed = replace(ctx, gql=again, resume=True)
+        resumed = replace(ctx, tracker=tracker(again), resume=True)
         writeback.progress(resumed, START)
         self.assertTrue(writeback.finish(resumed, done))
         self.assertEqual(again.calls, [READ, sub(HUMANS[0]), sub(HUMANS[1])])
@@ -1362,7 +1381,7 @@ class ResumedComments(Base):
         done = Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
         self.assertFalse(writeback.finish(ctx, done))
         again = Gql()
-        self.assertTrue(writeback.finish(replace(ctx, gql=again, resume=True), done))
+        self.assertTrue(writeback.finish(replace(ctx, tracker=tracker(again), resume=True), done))
         self.assertEqual(
             again.calls,
             expect(body="Build failed: push not permitted", state="in_review", resume=True),
@@ -1593,7 +1612,7 @@ class ForClaim(RunCase):
 
         self.assertNotEqual(self.cfg.roles["engineer"].key, CLAIM_KEY)
         ctx = writeback.for_claim(self.cfg, CLAIM, services, attempt=1)
-        ctx.gql("query", i=UUID)
+        ctx.tracker.gql("query", i=UUID)
         self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
         self.assertEqual(
             (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target),

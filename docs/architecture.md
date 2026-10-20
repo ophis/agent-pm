@@ -59,6 +59,8 @@ flowchart TB
   R & PP & WB --> LR
   PP & R --> LT --> FL
   PP & R --> FL
+  WB --> LT
+  WB --> FL
   R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
   H -.->|"each event: agent-pm-linear writeback"| LCLI

@@ -68,8 +68,8 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1186`, `…/engine/promote.py:366`, `…/engine/prune.py:467`, `…/engine/writeback.py:451` |
-| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/promote.py:90`, `…/engine/prune.py:76`, `…/engine/ops.py:20`, `…/engine/run_comments.py:108`; [Linear API keys] |
+| Purpose | the harness account's access for router (claims, bounces), promote (creates the next role's issue, relates it, moves to Done), prune (archives) and run comments | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py:1167`, `…/engine/promote.py:321`, `…/engine/prune.py:450`, `…/engine/writeback.py:103` |
+| Minimum permission | a personal API key of the harness account limited to the team, with Read, Write, Create issues and Create comments (from the mutations it sends: `issueUpdate`, `issueCreate`, `issueRelationCreate`, `issueArchive`, `commentCreate`, `commentUpdate`); not live-tested | `…/engine/ops.py:27`, `…/engine/linear_tracker.py:81`, `…/engine/linear_tracker.py:83`, `…/engine/linear_tracker.py:67`, `…/engine/ops.py:20`, `…/engine/linear_tracker.py:93`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `harness_key` | `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml:17` |
 | Readers | any process running as the user: read through `/usr/bin/security`, which an item made by `security add-generic-password` without `-T` trusts | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | no expiry documented | [Linear API keys] |
@@ -82,8 +82,8 @@ One per role: `roles.researcher.key` for `roles.researcher.account`, `roles.pm.k
 
 | Field | Value | Source |
 |---|---|---|
-| Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:101`, `…/engine/ops.py:27`, `…/engine/ops.py:30`, `…/engine/router.py:606` |
-| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/engine/writeback.py:76`, `…/engine/writeback.py:78`; [Linear API keys] |
+| Purpose | write-back as the role: comments, state moves, subscribing `human_members`, attachments, retitles; the router checks the item exists before a claim | `…/engine/writeback.py:98`, `…/engine/ops.py:27`, `…/engine/ops.py:30`, `…/engine/router.py:572` |
+| Minimum permission | a personal API key of the role account limited to the team, with Read, Write and Create comments (from the mutations above); not live-tested | `…/engine/linear_tracker.py:86`, `…/engine/linear_tracker.py:88`; [Linear API keys] |
 | Stored at | a login keychain item whose service is `roles.<role>.key`; the router records the key's service in each run's start row | `…/config.toml:83`, `…/engine/router.py:676` |
 | Readers | as the harness key | `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/client.py:14` |
 | Lifetime | as the harness key | [Linear API keys] |

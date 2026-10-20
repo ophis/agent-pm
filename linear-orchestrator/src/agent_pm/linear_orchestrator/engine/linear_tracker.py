@@ -1,10 +1,13 @@
-"""The flow Tracker on Linear, from a gql callable, the team (ops.Team), {user id: role} and the
-human_members emails (comments' other, subscribed on notify): its states mapped to IssueState, its
-reads and writes in Linear's query text."""
+"""The flow Tracker on Linear, from a gql callable: its states mapped to IssueState, its reads and
+writes in Linear's query text, and which of its comments and attachments are a run's."""
 
-from agent_pm.linear_orchestrator.engine import ops, run_comments
+import functools
+import re
+from typing import TypeVar
+
+from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.ops import DONE, HISTORY, call, client_id, last_move
-from agent_pm.linear_orchestrator.engine.types import LinearError, State
+from agent_pm.linear_orchestrator.engine.types import UUID_RE, LinearError, State
 from agent_pm.linear_orchestrator.flow.tracker import Tracker
 from agent_pm.linear_orchestrator.flow.types import (
     UNREADABLE,
@@ -22,6 +25,8 @@ from agent_pm.linear_orchestrator.flow.types import (
 )
 from agent_pm.utils import one_line, parse_time
 
+T = TypeVar("T")
+
 # Last wins where two keys share an id, so todo and in_progress skip it as before.
 STATES = {
     State.IN_REVIEW: IssueState.REVIEW,
@@ -29,7 +34,12 @@ STATES = {
     State.TODO: IssueState.READY,
     State.IN_PROGRESS: IssueState.RUNNING,
 }
+
 LISTED = {IssueState.READY: State.TODO, IssueState.RUNNING: State.IN_PROGRESS}
+
+MOVES = {**STATES, State.DONE: IssueState.DONE, State.CANCELED: IssueState.CANCELED}
+
+URL = "https://agent-pm.invalid/run/"
 
 STAMPS = "canceledAt completedAt"
 Q_ISSUE = (
@@ -72,6 +82,17 @@ M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success
 M_RELATE = (
     "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
 )
+M_TITLE = (
+    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
+)
+M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
+Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
+Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
+M_UPDATE = (
+    "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
+)
+ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
 Q_RECHECK = (
@@ -105,6 +126,19 @@ def blockers(issue):
     ]
 
 
+def is_record(attachment):
+    # the URL alone identifies one: a source may be titled "Run rate analysis"
+    return attachment["url"].startswith(URL)
+
+
+def is_comment(comment):
+    # isMe means the harness account because callers query with its key
+    return (
+        bool((comment["user"] or {}).get("isMe"))
+        and re.match(f"Run {UUID_RE.pattern} · ", comment["body"]) is not None
+    )
+
+
 def finished_at(issue, finished):
     """The latest of issue's move into finished and its canceledAt and completedAt (the history
     read can lack a move into Duplicate that canceledAt holds); None: unknown."""
@@ -119,24 +153,41 @@ def _quiet(*_, **__):
 
 
 class LinearTracker(Tracker):
-    """humans: the human members' emails; people: their user ids, which connect reads and
-    moved_at's by_people needs; say: the caller's logger."""
+    """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
+    humans: human_members emails (comments' other, subscribed on notify); people: their user ids,
+    which connect reads and moved_at's by_people needs; say: the caller's logger. A method needing
+    one not given raises TypeError. service: the key each call is made as, with timeout when given; None:
+    gql as given. A comment's ref: its client id's parts."""
 
-    def __init__(self, gql, team, roles, humans, *, people=frozenset(), say=_quiet):
-        self.gql, self.team, self.roles, self.humans = gql, team, roles, humans
+    def __init__(
+        self,
+        gql,
+        *,
+        states=None,
+        team_id=None,
+        finished=None,
+        roles=None,
+        humans=(),
+        people=frozenset(),
+        say=_quiet,
+        service=None,
+        timeout=None,
+    ):
+        if service is not None:
+            bound = {"service": service} | ({} if timeout is None else {"timeout": timeout})
+            gql = functools.partial(gql, **bound)
+        self.gql, self.state_ids, self.team_id, self.roles = gql, states, team_id, roles
+        self.finished_ids, self.humans = finished, humans
         self.people, self.say, self.hist = people, say, {}
         self.others = {e.lower() for e in humans}
-        self.users = {role: uid for uid, role in roles.items()}
-        self.states = {team.states[k]: v for k, v in STATES.items()}
-        self.ids = {v: team.states[k] for k, v in STATES.items()} | {
-            IssueState.DONE: team.states[State.DONE],
-            IssueState.CANCELED: team.states[State.CANCELED],
-        }
+        self.users = {role: uid for uid, role in (roles or {}).items()}
+        self.states = {states[k]: v for k, v in STATES.items()} if states else {}
+        self.ids = {v: states[k] for k, v in MOVES.items()} if states else {}
 
     def _state(self, sid):
         found = self.states.get(sid)
-        if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.team.finished:
-            return IssueState.DONE if sid == self.team.states[State.DONE] else IssueState.CANCELED
+        if found not in (IssueState.READY, IssueState.RUNNING) and sid in self.finished_ids:
+            return IssueState.DONE if sid == self.ids[IssueState.DONE] else IssueState.CANCELED
         return found
 
     @classmethod
@@ -145,11 +196,19 @@ class LinearTracker(Tracker):
         found = ops.team(gql, cfg)
         ops.task_group(gql, cfg)
         people = frozenset(ops.humans(gql, cfg))
-        roles = ops.role_ids(gql, cfg.roles)
-        return cls(gql, found, roles, cfg.human_members, people=people, say=say)
+        return cls(
+            gql,
+            states=found.states,
+            team_id=found.id,
+            finished=found.finished,
+            roles=ops.role_ids(gql, cfg.roles),
+            humans=cfg.human_members,
+            people=people,
+            say=say,
+        )
 
     def role(self, issue):
-        return self.roles[issue["assignee"]["id"]]
+        return _need("roles", self.roles)[issue["assignee"]["id"]]
 
     def assigned(self, state):
         return self._listed(state)
@@ -159,10 +218,10 @@ class LinearTracker(Tracker):
         if state not in LISTED:
             raise ValueError(f"no list of {state} issues")
         flt = {
-            "team": {"id": {"eq": self.team.id}},
+            "team": {"id": {"eq": _need("team_id", self.team_id)}},
             "project": {"null": False},
-            "assignee": {"id": {"in": list(self.roles)}},
-            "state": {"id": {"eq": self.team.states[LISTED[state]]}},
+            "assignee": {"id": {"in": list(_need("roles", self.roles))}},
+            "state": {"id": {"eq": _need("states", self.state_ids)[LISTED[state]]}},
         }
         return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
 
@@ -184,36 +243,40 @@ class LinearTracker(Tracker):
     def recheck(self, key):
         """ready: in the configured Todo state id, whatever other key shares it."""
         found = self.gql(Q_RECHECK, i=key)["issue"]
-        ready = found["state"]["id"] == self.team.states[State.TODO]
+        ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
         return Recheck(ready, found["assignee"], found["project"], labels(found["labels"]["nodes"]))
 
     def moved_at(self, key, state, *, by_people=False):
         """History read once per key; by_people: moves by the human members only."""
         if key not in self.hist:
             self.hist[key] = self.gql(Q_HISTORY, i=key)["issue"]["history"]["nodes"]
-        moved = {self.team.states[LISTED[state]]}
+        moved = {_need("states", self.state_ids)[LISTED[state]]}
         return last_move(self.hist[key], moved, self.people if by_people else None)
 
     def read(self, ident):
+        _need("states", self.state_ids)
+        ended = _need("finished", self.finished_ids)
         issue = self.gql(Q_ISSUE, i=ident)["issue"]
         if not issue:
             return None
         state = issue["state"]["id"]
         found = self._state(state)
         if found in (IssueState.DONE, IssueState.CANCELED):
-            return Snapshot(found, finished_at(issue, self.team.finished))
+            return Snapshot(found, finished_at(issue, ended))
         return Snapshot(found, last_move(issue["history"]["nodes"], {state}))
 
     def finished(self, owners):
-        ids = [uid for uid, role in self.roles.items() if role in owners]
-        done = sorted(self.team.finished & {self.team.states[State.DONE]})
+        states, team = _need("states", self.state_ids), _need("team_id", self.team_id)
+        roles, ended = _need("roles", self.roles), _need("finished", self.finished_ids)
+        ids = [uid for uid, role in roles.items() if role in owners]
+        done = sorted(ended & {states[State.DONE]})
         nodes, cursor = [], None
         while True:
             page = self.gql(
                 Q_FINISHED,
-                t=self.team.id,
+                t=team,
                 d=done,
-                s=sorted(self.team.finished.difference(done)),
+                s=sorted(ended.difference(done)),
                 a=ids,
                 c=cursor,
             )["issues"]
@@ -226,7 +289,7 @@ class LinearTracker(Tracker):
             Finished(
                 n["id"],
                 n["identifier"],
-                finished_at(n, self.team.finished),
+                finished_at(n, ended),
                 _sub_issues(n["children"]["nodes"]),
             )
             for n in nodes
@@ -239,11 +302,13 @@ class LinearTracker(Tracker):
         call(self.gql, M_ARCHIVE, "issueArchive", i=key)
 
     def approved(self, owners):
+        _need("states", self.state_ids)
+        roles = _need("roles", self.roles)
         nodes = self.gql(
             Q_HANDOFF,
-            t=self.team.id,
+            t=_need("team_id", self.team_id),
             s=self.ids[IssueState.APPROVED],
-            a=[uid for uid, role in self.roles.items() if role in owners],
+            a=[uid for uid, role in roles.items() if role in owners],
         )["issues"]["nodes"]
         return [
             Approved(
@@ -255,17 +320,17 @@ class LinearTracker(Tracker):
                 n["createdAt"],
                 n["project"]["id"],
                 n["project"]["name"],
-                self.roles[n["assignee"]["id"]],
+                roles[n["assignee"]["id"]],
                 tuple(
-                    (a["title"], a["url"])
-                    for a in n["attachments"]["nodes"]
-                    if not run_comments.is_record(a)
+                    (a["title"], a["url"]) for a in n["attachments"]["nodes"] if not is_record(a)
                 ),
             )
             for n in nodes
         ]
 
     def detail(self, key):
+        _need("states", self.state_ids)
+        _need("finished", self.finished_ids)
         issue = self.gql(Q_DETAIL, i=key)["issue"]
         return Detail(
             self._state(issue["state"]["id"]),
@@ -279,7 +344,7 @@ class LinearTracker(Tracker):
                     c["body"],
                     (c["user"] or {}).get("name", "integration"),
                     other=bool(c["user"]) and (c["user"].get("email") or "").lower() in self.others,
-                    run=run_comments.is_comment(c),
+                    run=is_comment(c),
                 )
                 for c in issue["comments"]["nodes"]
             ),
@@ -292,6 +357,7 @@ class LinearTracker(Tracker):
         return Ref(nodes[0]["id"], nodes[0]["identifier"]) if nodes else None
 
     def create(self, once, *, project, owner, priority, title, description):
+        _need("states", self.state_ids)
         made = call(
             self.gql,
             M_CREATE,
@@ -299,7 +365,7 @@ class LinearTracker(Tracker):
             **{
                 "in": {
                     "id": client_id(*once),
-                    "teamId": self.team.id,
+                    "teamId": _need("team_id", self.team_id),
                     "projectId": project,
                     "assigneeId": self.users[owner],
                     "stateId": self.ids[IssueState.READY],
@@ -319,13 +385,19 @@ class LinearTracker(Tracker):
             **{"in": {"type": "related", "issueId": key, "relatedIssueId": other}},
         )
 
-    def comment(self, key, body):
-        ops.comment(self.gql, key, body)
+    def comment(self, key, body, ref=None):
+        ops.comment(self.gql, key, body, None if ref is None else client_id(*ref))
 
-    def move(self, key, to, *, frm):
-        return ops.move(self.gql, key, self.ids[to], self.ids[frm])
+    def move(self, key, to, *, frm=None):
+        _need("states", self.state_ids)
+        if frm is not None:
+            return ops.move(self.gql, key, self.ids[to], self.ids[frm])
+        if self.gql(ops.Q_ISSUE_STATE, i=key)["issue"]["state"]["id"] != self.ids[to]:
+            call(self.gql, ops.M_STATE, "issueUpdate", i=key, s=self.ids[to])
+        return None
 
     def comment_and_move(self, key, body, *, to, frm, notify):
+        _need("states", self.state_ids)
         return ops.comment_and_move(
             self.gql,
             key,
@@ -334,6 +406,50 @@ class LinearTracker(Tracker):
             frm=self.ids[frm],
             emails=self.humans if notify else (),
         )
+
+    def notify(self, key, people):
+        return ops.subscribe(self.gql, key, people)
+
+    def links(self, key):
+        return {a["url"] for a in self.gql(Q_ATTACHED, i=key)["issue"]["attachments"]["nodes"]}
+
+    def link(self, key, url, title):
+        try:
+            call(self.gql, M_ATTACH, "attachmentLinkURL", i=key, u=url, t=title)
+        except LinearError as e:
+            if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
+                raise
+
+    def retitle(self, key, title):
+        call(self.gql, M_TITLE, "issueUpdate", i=key, t=title)
+
+    def on_board(self, ident):
+        issue = self.gql(Q_ID, i=ident)["issue"]
+        return issue["id"] if issue and issue["team"]["id"] == self.team_id else None
+
+    def unarchive(self, key):
+        call(self.gql, M_UNARCHIVE, "issueUnarchive", i=key)
+
+    def find_comment(self, key, ref):
+        return ops.find_comment(self.gql, client_id(*ref), key)
+
+    def put_comment(self, key, body, ref):
+        cid = client_id(*ref)
+        try:
+            done = self.gql(M_UPDATE, c=cid, b=body)["commentUpdate"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            done = None
+        if done is None:
+            done = self.gql(ops.M_COMMENT_ID, c=cid, i=key, b=body)["commentCreate"]
+        return done["success"]
+
+
+def _need(name: str, value: T | None) -> T:
+    if value is None:
+        raise TypeError(f"LinearTracker needs {name}")
+    return value
 
 
 def _sub_issues(nodes):

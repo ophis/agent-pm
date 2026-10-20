@@ -276,7 +276,7 @@ class Board:
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
         self.tracker = LinearTracker.connect(gql, cfg, say=self.say)
-        self.states = self.tracker.team.states
+        self.states = cfg.states
 
     def todo(self):
         if self.ready is None:
@@ -793,7 +793,8 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             )
         except delegate.ConfigError as error:
             if a.mode == "new" and a.client_source == "label":
-                return _label_client_error(a, cfg, ctx.gql, error)
+                writer = functools.partial(gql, service=cfg.roles[role].key)
+                return _label_client_error(a, cfg, writer, error)
             raise
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)

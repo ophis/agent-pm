@@ -1,7 +1,7 @@
-"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and
-moves, each step once per session id (the ledger; comment steps by client id, found again on
-resume); `deliver`, one DelegateEvent's write-back; `replay`, Recover's of an ended run's outcome;
-bounce, the router's repo-check report.
+"""Write-back: an agent run's progress, outcome and usage limit as tracker comments, links and
+moves through the flow Tracker (its Linear adapter), each step once per session id (the ledger;
+comment steps by ref (sid, step), found again on resume); `deliver`, one DelegateEvent's
+write-back; `replay`, Recover's of an ended run's outcome; bounce, the router's repo-check report.
 """
 
 import contextlib
@@ -12,24 +12,24 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from traceback import format_exception
 
 from agent_pm.delegate import DelegateEvent, Outcome, Progress
-from agent_pm.linear_orchestrator.engine import ops, run_comments, runs
+from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+
+# Kept only for tests reading writeback.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_ATTACH as M_ATTACH
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_TITLE as M_TITLE
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_UNARCHIVE as M_UNARCHIVE
+from agent_pm.linear_orchestrator.engine.linear_tracker import MOVES, LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ATTACHED as Q_ATTACHED
+from agent_pm.linear_orchestrator.engine.linear_tracker import Q_ID as Q_ID
 from agent_pm.linear_orchestrator.engine.log import log
-from agent_pm.linear_orchestrator.engine.ops import (
-    call,
-    client_id,
-    comment,
-    find_comment,
-    move,
-    subscribe,
-)
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     Claim,
@@ -41,6 +41,8 @@ from agent_pm.linear_orchestrator.engine.types import (
     Stopped,
     Unavailable,
 )
+from agent_pm.linear_orchestrator.flow.tracker import Tracker
+from agent_pm.linear_orchestrator.flow.types import IssueState
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,
@@ -61,24 +63,16 @@ class Context:
     resume: bool
     project: str | None
     workdir: str
-    gql: Callable[..., dict]
+    tracker: Tracker  # the claim's or role's account
     humans: tuple[str, ...]
     states: Mapping[str, str]
     repos: Mapping[str, str]
-    team: str
     target: tuple[str, str] | None
-    # look each comment step up by its client id before posting it, as on resume: its event may
+    harness: Tracker  # the session comment's account
+    # look each comment step up by its ref before posting it, as on resume: its event may
     # come again after the post landed and its ledger write was lost
     redelivered: bool = False
 
-
-M_TITLE = (
-    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
-)
-M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
-M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
-Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
-Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
 
 LEDGER = "writeback.json"
 LOCK = "writeback.lock"
@@ -86,7 +80,6 @@ MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
-ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 # a run whose client's turn failed (delegate runner's Result.error) ends without an outcome; it is
 # written back as failed under its own steps, a later outcome of its session keeping theirs
 TURN_FAILED = "the client's turn failed: "
@@ -102,12 +95,12 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         resume=resume,
         project=project,
         workdir=cfg.issue_workdir(ident),
-        gql=functools.partial(gql, service=key),
-        humans=tuple(e.lower() for e in cfg.human_members),
+        tracker=LinearTracker(gql, states=cfg.states, team_id=cfg.team, service=key),
         states=cfg.states,
+        humans=tuple(e.lower() for e in cfg.human_members),
         repos=cfg.project_repos,
-        team=cfg.team,
         target=target,
+        harness=LinearTracker(gql, service=cfg.harness_key, timeout=run_comments.LIMIT),
     )
 
 
@@ -182,7 +175,7 @@ def _error(ctx, step, e):
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
-    now = move(ctx.gql, issue, ctx.states[to], ctx.states[frm])
+    now = ctx.tracker.move(issue, MOVES[to], frm=MOVES[frm])
     if now not in (None, ctx.states[to]):
         log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
@@ -254,18 +247,18 @@ def _done(ctx):
     return _ledger(ctx).get(ctx.sid, {}).get("steps", [])
 
 
-def _step(ctx, step, call, cid=None):
+def _step(ctx, step, write, ref=None):
     if step in _done(ctx):
         return None
     try:
         # on resume or redelivery an unledgered post may have landed with its ledger write lost
         found = (
-            cid is not None
+            ref is not None
             and (ctx.resume or ctx.redelivered)
-            and find_comment(ctx.gql, cid, ctx.issue_id) is not None
+            and ctx.tracker.find_comment(ctx.issue_id, ref) is not None
         )
         if not found:
-            call()
+            write()
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, {}).setdefault("steps", []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
@@ -277,8 +270,8 @@ def _step(ctx, step, call, cid=None):
 
 
 def _post(ctx, step, body):
-    cid = client_id(ctx.sid, step)
-    return _step(ctx, step, lambda: comment(ctx.gql, ctx.issue_id, body, cid), cid)
+    ref = (ctx.sid, step)
+    return _step(ctx, step, lambda: ctx.tracker.comment(ctx.issue_id, body, ref), ref)
 
 
 def progress(ctx, event: Progress) -> bool:
@@ -384,21 +377,16 @@ def _post_files(ctx, o, body):
 
 
 def _attach(ctx, url, title, attached):
-    if url in attached:
-        return
-    try:
-        call(ctx.gql, M_ATTACH, "attachmentLinkURL", i=ctx.issue_id, u=url, t=title)
-    except LinearError as e:
-        if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
-            raise
+    if url not in attached:
+        ctx.tracker.link(ctx.issue_id, url, title)
 
 
 def _finish(ctx, o, steps=""):
-    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
+    task, issue = TASKS[ctx.role], ctx.issue_id
     body, state, url = _completion_body(ctx, o)
 
     try:
-        attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
+        attached = ctx.tracker.links(issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, "read", e)
         return False
@@ -412,12 +400,12 @@ def _finish(ctx, o, steps=""):
         and _step(
             ctx,
             "retitle",
-            lambda: call(gql, M_TITLE, "issueUpdate", i=issue, t=f"{task.prefix}: {o.title}"),
+            lambda: ctx.tracker.retitle(issue, f"{task.prefix}: {o.title}"),
         )
     ):
         return False
     if state == "in_review":
-        body += subscribe(gql, issue, ctx.humans)
+        body += ctx.tracker.notify(issue, ctx.humans)
     if _post(ctx, f"{steps}comment", body):
         return False
 
@@ -438,7 +426,7 @@ def _finish(ctx, o, steps=""):
     return _step(ctx, f"{steps}outcome", lambda: None) is None
 
 
-def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
+def _session(ctx, cfg, client, attempt, *, now, end=None) -> bool:
     """The attempt's session comment, as the harness: running at Begun, its `end` (rc, outcome,
     limit) at Finished, each written once.
     """
@@ -454,18 +442,23 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
         info=lambda: LinearRun.attach(ctx.ident, cfg=cfg, sid=ctx.sid).delegate.session_status(),
         seq=record["seq"],
     )
-    harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
     if end is None:
-        error = run_comments.post(ctx.ident, rec, gql=harness)
+        error = run_comments.post(ctx.ident, rec, tracker=ctx.harness)
     else:
         ended_at = now()
         rc, outcome, limited = end
         error = run_comments.post(
-            ctx.ident, rec, gql=harness, rc=rc, ended_at=ended_at, outcome=outcome, limit=limited
+            ctx.ident,
+            rec,
+            tracker=ctx.harness,
+            rc=rc,
+            ended_at=ended_at,
+            outcome=outcome,
+            limit=limited,
         )
         if error is None:
             record = {**record, "ended_at": ended_at}
-            error = run_comments.repair(ctx.ident, ctx.issue_id, rec, gql=harness)
+            error = run_comments.repair(ctx.ident, ctx.issue_id, rec, tracker=ctx.harness)
     if error is None or "ended_at" in record:
         record = {**record, "seq": rec["seq"]}
     try:
@@ -490,7 +483,7 @@ def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
             ctx,
             "limit",
             say(LIMIT, f"resets at {at}." if at else "reset time unknown.")
-            + subscribe(ctx.gql, ctx.issue_id, ctx.humans),
+            + ctx.tracker.notify(ctx.issue_id, ctx.humans),
         )
         is None
         and _step(
@@ -557,7 +550,7 @@ def replay(
             return False
         done = "outcome" in _done(ctx) or finish(ctx, outcome)
         end = (None, outcome, False)
-        _session(ctx, cfg, claim.client, attempt, gql=gql, now=now, end=end)
+        _session(ctx, cfg, claim.client, attempt, now=now, end=end)
         return done
 
 
@@ -576,12 +569,12 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     claim = _claim(cfg, issue, event.sid)
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:
-        return held and _deliver(ctx, cfg, claim, event, gql=gql, now=now)
+        return held and _deliver(ctx, cfg, claim, event, now=now)
 
 
-def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
+def _deliver(ctx, cfg, claim, event, *, now) -> bool:
     attempt = event.attempt
-    session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
+    session = functools.partial(_session, ctx, cfg, claim.client, attempt, now=now)
     if event.kind == "begun":
         registered = session()
         return _running(ctx, attempt) and registered
@@ -611,33 +604,30 @@ def _running(ctx, attempt) -> bool:
         return True
 
     def activate():
-        state = ctx.gql(ops.Q_ISSUE_STATE, i=ctx.issue_id)["issue"]["state"]["id"]
-        if state != ctx.states["in_progress"]:
-            call(ctx.gql, ops.M_STATE, "issueUpdate", i=ctx.issue_id, s=ctx.states["in_progress"])
+        ctx.tracker.move(ctx.issue_id, IssueState.RUNNING)
 
     return _step(ctx, f"running:{attempt}", activate) is None
 
 
 def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
     reason = invalid.reason
-    gql, h = ctx.gql, issue.handoff
-    src = gql(Q_ID, i=h.source)["issue"] if h else None
-    if h is not None and src and src["team"]["id"] == ctx.team:
+    tracker, h = ctx.tracker, issue.handoff
+    src = tracker.on_board(h.source) if h else None
+    if h is not None and src:
         text = (
             f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
             "`Repo: <owner>/<name>` naming the target repo."
         ) + (f" Or fix {LOCAL}'s [project_repos] entry." if invalid.mapped else "")
         with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
-            call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        notes = subscribe(gql, src["id"], ctx.humans)
-        comment(gql, src["id"], text + notes)
-        _guarded_move(ctx, src["id"], h.source, "in_review", "done")
-        comment(gql, ctx.issue_id, text)
+            tracker.unarchive(src)
+        notes = tracker.notify(src, ctx.humans)
+        tracker.comment(src, text + notes)
+        _guarded_move(ctx, src, h.source, "in_review", "done")
+        tracker.comment(ctx.issue_id, text)
         _guarded_move(ctx, ctx.issue_id, ctx.ident, "canceled", "in_progress")
     else:
-        notes = subscribe(gql, ctx.issue_id, ctx.humans)
-        comment(
-            gql,
+        notes = tracker.notify(ctx.issue_id, ctx.humans)
+        tracker.comment(
             ctx.issue_id,
             say(
                 "Question:",

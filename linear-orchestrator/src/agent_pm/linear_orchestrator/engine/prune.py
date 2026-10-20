@@ -134,7 +134,9 @@ Recovery and next help:
 class Pruner:
     def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, writable=None):
         self.now, self.dry, self.work, self.roles = now, dry, work, roles
-        self.tracker = LinearTracker(gql, team, roles, cfg.human_members)
+        self.tracker = LinearTracker(
+            gql, states=team.states, team_id=team.id, finished=team.finished, roles=roles
+        )
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable

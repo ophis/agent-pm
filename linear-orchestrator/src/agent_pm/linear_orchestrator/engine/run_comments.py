@@ -1,39 +1,26 @@
-"""Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness
-account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it
-when a late write left an older one. Resume commands come from the owned run view.
+"""Session comments: an agent run's one tracker comment (`Run <sid> · …`), posted by the harness
+account through the flow Tracker under the ref (sid, "session"), numbered `#<seq>`; repair rewrites
+it when a late write left an older one. Resume commands come from the owned run view.
 """
 
 import re
 import threading
 
 from agent_pm.delegate import ConfigError, Resumable, SessionError
-from agent_pm.linear_orchestrator.engine import ops
-from agent_pm.linear_orchestrator.engine.types import (
-    UUID_RE,
-    LinearError,
-)
+
+# Kept only for tests reading run_comments.<query>; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import M_UPDATE as M_UPDATE
+
+# Kept for issues.py and tests, now linear_tracker's; 第 2 阶段删除.
+from agent_pm.linear_orchestrator.engine.linear_tracker import URL as URL
+from agent_pm.linear_orchestrator.engine.linear_tracker import LinearTracker
+from agent_pm.linear_orchestrator.engine.linear_tracker import is_comment as is_comment
+from agent_pm.linear_orchestrator.engine.linear_tracker import is_record as is_record
 from agent_pm.linear_orchestrator.engine.types import ConfigError as RunConfigError
 from agent_pm.utils import one_line, timestamp
 
-URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
-M_UPDATE = (
-    "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
-)
 SEQ = re.compile(r" · #(\d+) · (\S+)")
-
-
-def is_record(attachment):
-    # the URL alone identifies one: a source may be titled "Run rate analysis"
-    return attachment["url"].startswith(URL)
-
-
-def is_comment(comment):
-    # isMe means the harness account because callers query with its key
-    return (
-        bool((comment["user"] or {}).get("isMe"))
-        and re.match(f"Run {UUID_RE.pattern} · ", comment["body"]) is not None
-    )
 
 
 def base(*, sid, workdir, client, started_at, info, seq=0):
@@ -77,13 +64,13 @@ def body(rec, rc=None, ended_at=None, *, outcome=None, limit=False):
     return f"Run {rec['sid']} · {line}" + ("" if cmd is None else f"\n\n```\n{cmd}\n```")
 
 
-def _bounded(call, limit):
+def _bounded(work, limit):
     # the thread bounds every call, key reads included
     out = {}
 
     def run():
         try:
-            out["value"] = call()
+            out["value"] = work()
         except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             out["error"] = e
 
@@ -100,22 +87,18 @@ def _bounded(call, limit):
     return out["value"], None
 
 
-def write(gql, sid, issue, text, limit=LIMIT):
-    cid = ops.client_id(sid, "session")
+def _ref(sid):
+    return (sid, "session")
 
-    def call():
-        try:
-            done = gql(M_UPDATE, c=cid, b=text)["commentUpdate"]
-        except LinearError as e:
-            if not ops.not_found(e):
-                raise
-            done = None
-        if done is None:
-            done = gql(ops.M_COMMENT_ID, c=cid, i=issue, b=text)["commentCreate"]
-        return done["success"]
 
-    ok, error = _bounded(call, limit)
+def _write(tracker, sid, issue, text, limit):
+    ok, error = _bounded(lambda: tracker.put_comment(issue, text, _ref(sid)), limit)
     return error or (None if ok else "success: false")
+
+
+def write(gql, sid, issue, text, limit=LIMIT):
+    # kept only for tests writing through a gql; 第 2 阶段删除
+    return _write(LinearTracker(gql), sid, issue, text, limit)
 
 
 def _text(rec):
@@ -125,23 +108,21 @@ def _text(rec):
     return out
 
 
-def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
+def post(issue, rec, *, tracker, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
     rec["args"] = (
         rc,
         None if rc is None and ended_at is None else ended_at or timestamp(),
         outcome,
         limit,
     )
-    return write(gql, rec["sid"], issue, _text(rec), limit=timeout)
+    return _write(tracker, rec["sid"], issue, _text(rec), timeout)
 
 
-def repair(issue, issue_id, rec, *, gql, limit=LIMIT):
-    found, error = _bounded(
-        lambda: ops.find_comment(gql, ops.client_id(rec["sid"], "session"), issue_id), limit
-    )
+def repair(issue, issue_id, rec, *, tracker, limit=LIMIT):
+    found, error = _bounded(lambda: tracker.find_comment(issue_id, _ref(rec["sid"])), limit)
     if error:
         return error
     seq = found and SEQ.search(found.split("\n", 1)[0])
     if seq and int(seq[1]) >= rec["last"] and seq[2] == rec["started_at"]:
         return None
-    return write(gql, rec["sid"], issue, _text(rec), limit=limit)
+    return _write(tracker, rec["sid"], issue, _text(rec), limit)
