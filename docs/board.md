@@ -4,6 +4,8 @@ The orchestrator runs the core from a board, chosen by `[orchestrator] tracker`:
 
 ## Setup
 
+With the board ticked (`--board`), [`install.sh`](../README.md#install) does steps 1, 2 and 4 itself once Linear has the [Linear presets](credentials.md#linear-presets): it asks each account's API key into the Keychain, reads the team, states, label groups, members, projects and role accounts from Linear, asks the team (when the harness key sees several), each project's repo and the document roles' docs repo, shows the config it fills (never replacing a value you set) and installs the jobs. Below is the same setup by hand.
+
 Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator runs this checkout's scripts, not the plugin. `<work_dir>` is `orchestrator.work_dir`.
 
 1. Create `~/.agent-pm/config.local.toml` from the `# local:` lines of each packaged `config.toml`, each under its layer's section. Include researcher's and pm's `[output]`. Set `tracker = "linear"` under `[orchestrator]`: unset, the orchestrator reads a [local board](#local-board) instead. The `[orchestrator.linear]` keys are needed only with `tracker = "linear"`; there, a required key left `""` stops every `agent-pm-orchestrator` command.
