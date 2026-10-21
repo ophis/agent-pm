@@ -2238,6 +2238,41 @@ class InstallTest(Case):
         self.assertEqual(
             roles["reviewer"], {"account": "reviewer@example.com", "key": "linear-reviewer"}
         )
+        self.assertEqual(
+            self.board_config()["task_labels"], {"build": uuid(41), "light-build": uuid(42)}
+        )
+
+    def test_board_tasks_from_team_dirs_charter(self):
+        self.linear(
+            keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"},
+            labels=[*LINEAR["labels"], label(46, "triage", 40)],
+        )
+        team = Path(self.home, "custom-team")
+        (team / "roles").mkdir(parents=True)
+        (team / "roles/reviewer.md").write_text(
+            "# Reviewer\n\n## Tasks\n\n- `triage`: Review.\n\n## Rules\n- `build`: ignored.\n"
+        )
+        Path(self.home, "wf.toml").write_text('[[stage]]\nrole = "reviewer"\ninput = "build"\n')
+        slots = ("harness", "manager", "reviewer")
+        result = self.configured(
+            '[delegate]\nteam_dirs = ["~/custom-team"]\n[orchestrator]\nworkflow = "~/wf.toml"\n',
+            then=[*self.keys(*slots), (PROJECT_Q, ""), (WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        self.assertEqual(self.board_config()["task_labels"], {"triage": uuid(46)})
+
+    def test_board_duplicate_charter_is_rejected(self):
+        team = Path(self.home, "custom-team")
+        (team / "roles").mkdir(parents=True)
+        (team / "roles/engineer.md").write_text("# Engineer\n\n## Tasks\n- `triage`: Review.\n")
+        result = self.configured(
+            '[delegate]\nteam_dirs = ["~/custom-team"]\n',
+            then=self.keys(*SLOTS),
+        )
+        self.assertNotEqual(result.code, 0)
+        self.assertIn("charter engineer is defined more than once", result.stderr)
+        self.assertNotIn("[orchestrator", self.config().read_text())
+        self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
 
     def board_config(self):
         return tomllib.loads(self.config().read_text())["orchestrator"]["linear"]
