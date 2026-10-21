@@ -50,6 +50,23 @@ ask_yn() {
   return 1
 }
 
+# The terminal's own device (/dev/ttys<n>), else /dev/tty: macOS's kqueue refuses /dev/tty, so
+# Bun-built clients (Claude Code, OpenCode) die on it with EINVAL.
+terminal() {
+  local name
+  name=$(ps -o tty= -p $$ </dev/null 2>/dev/null) || name=
+  name=${name//[[:space:]]/}
+  case $name in
+    ttys[0-9]*)
+      if [ -c "$root/dev/$name" ] && (: <>"$root/dev/$name") 2>/dev/null; then
+        printf '%s' "$root/dev/$name"
+        return
+      fi
+      ;;
+  esac
+  printf '%s' "$root/dev/tty"
+}
+
 # Exit 0 when $1 is a path strictly under $HOME, absolute, without `..` or a tab or newline.
 under_home() {
   case $1 in
@@ -515,7 +532,7 @@ main() {
   platform=$(uname -sm)
   [ "$platform" = "Darwin arm64" ] || die "needs macOS on Apple silicon (Darwin arm64), not $platform"
   if [ ! -e "$root/dev/tty" ] || ! (: <>"$root/dev/tty") 2>/dev/null; then die "needs a terminal for its questions and logins"; fi
-  exec 3<>"$root/dev/tty"
+  exec 3<>"$(terminal)"
   if [ ! -f "$ledger" ]; then
     say "nothing recorded by install.sh; nothing to remove"
     exit 0

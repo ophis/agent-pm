@@ -288,7 +288,7 @@ def marketplace_name(source):
 
 
 def claude(args):
-    if args in (["auth", "login"], ["setup-token"]) and bun("claude"):
+    if args in (["auth", "login"], ["auth", "logout"], ["setup-token"]) and bun("claude"):
         return 1
     if args == ["auth", "login"]:
         store_key("Claude Code-credentials", "oauth")

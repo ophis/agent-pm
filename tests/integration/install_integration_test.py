@@ -87,6 +87,7 @@ SHARED = (
     "ledger_valid",
     "sudo_once",
     "sudo_end",
+    "terminal",
 )
 RELOAD = (
     "install.sh: in this terminal, run source ~/.zprofile first (or open a new one): its PATH"
@@ -1660,11 +1661,11 @@ class InstallTest(Case):
         self.assertEqual(Path(self.agent_pm, "install/config.local.toml.orig").read_text(), mine)
         self.assertEqual(self.ledger().count("config\tbackup"), 1)
 
-    def cleanup(self, *args, answers=(), stdin=None):
+    def cleanup(self, *args, answers=(), stdin=None, ctty=None):
         """Without --password-stdin, --yes runs answer sudo's prompt."""
         if stdin is None and "--yes" in args:
             answers = [(SUDO_Q, PASSWORD), *answers]
-        return self.run_install(*args, answers=answers, stdin=stdin, script=CLEANUP)
+        return self.run_install(*args, answers=answers, stdin=stdin, script=CLEANUP, ctty=ctty)
 
     def snapshot(self):
         skip = {"fakes", "bin"}
@@ -1731,6 +1732,17 @@ class InstallTest(Case):
             self.assertIn("not a record install.sh writes; nothing removed", result.stderr)
             self.assertFalse([c for c in self.calls() if c.startswith("sudo")], record)
             self.assertEqual(ledger.read_text(), good + record + "\n")
+
+    def test_cleanup_logs_claude_out_on_a_kqueue_refused_tty(self):
+        """claude auth logout dies on /dev/tty, as macOS's kqueue refuses it; the terminal's own device works."""
+        self.assert_ok(self.fresh("--no-docker", clients="claude"))
+        self.assertTrue((self.fakes / "login/claude").exists())
+        result = self.cleanup("--yes", ctty=self.refused_tty())
+        self.assert_ok(result)
+        self.assertIn("claude auth logout", self.calls())
+        self.assertNotIn("claude is still logged in", result.stderr)
+        self.assertFalse((self.fakes / "login/claude").exists())
+        self.assertIn("Removed what install.sh added.", result.stderr)
 
     def test_cleanup_round_trip(self):
         before = self.snapshot()
