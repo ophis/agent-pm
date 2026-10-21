@@ -1512,43 +1512,124 @@ with open(sys.argv[1], "rb") as f:
     sys.exit(0 if tomllib.load(f).get("orchestrator", {}).get("tracker") == "linear" else 1)' "$config"
 }
 
-# "<service>\t<account>" for each Linear key config.local.toml names.
-linear_services() {
-  python3 -I -c '
-import re, sys, tomllib
+# Exit 0 when the board is to be set up: Board chosen, and config.local.toml's tracker unset or "linear"; else
+# skips with the reason.
+board_wanted() {
+  local tracker=
+  if [ "$board" != yes ]; then
+    skip "board not chosen"
+    return 1
+  fi
+  if [ -f "$config" ]; then
+    tracker=$(python3 -I -c '
+import sys, tomllib
 with open(sys.argv[1], "rb") as f:
-    linear = tomllib.load(f).get("orchestrator", {}).get("linear", {})
-found = [(linear.get(k), linear.get(k)) for k in ("harness_key", "manager_key")]
-found += [(role.get("key"), role.get("account") or role.get("key")) for role in linear.get("roles", {}).values()]
-for service, account in found:
-    if not service:
-        continue
-    if all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
-        print(f"{service}\t{account}")
-    else:
-        print(f"install.sh: skipping Linear key {service!r}: not a plain keychain name", file=sys.stderr)' "$config"
+    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker", "linear")
+print(tracker if isinstance(tracker, str) and tracker.isprintable() else repr(tracker))' "$config")
+  fi
+  if [ -n "$tracker" ] && [ "$tracker" != linear ]; then
+    skip "tracker = \"$tracker\" in ~/.agent-pm/config.local.toml"
+    return 1
+  fi
+}
+
+# The role of each [[stage]] in the workflow the orchestrator loads: config.local.toml's [orchestrator] workflow,
+# else the plugin's packaged one.
+stage_roles() {
+  python3 -I -c '
+import os, re, sys, tomllib
+config, packaged = sys.argv[1:]
+path = ""
+if os.path.exists(config):
+    with open(config, "rb") as f:
+        path = tomllib.load(f).get("orchestrator", {}).get("workflow", "")
+path = os.path.expanduser(path) if isinstance(path, str) and path else packaged
+try:
+    with open(path, "rb") as f:
+        roles = [stage.get("role") for stage in tomllib.load(f).get("stage", [])]
+except (OSError, tomllib.TOMLDecodeError, AttributeError):
+    roles = []
+if not roles or not all(isinstance(r, str) and re.fullmatch(r"[a-z][a-z0-9-]*", r) for r in roles):
+    sys.exit(f"install.sh: {path}: cannot read its [[stage]] roles")
+print("\n".join(roles))' "$config" "$pkg/orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml"
+}
+
+# "<slot>\t<service>\t<account>" for each Linear key the board uses: harness, manager, then each stage role. Its
+# service is config.local.toml's, else linear-<slot>; its account the role's account there, else the service.
+linear_slots() {
+  local roles
+  roles=$(stage_roles)
+  python3 -I -c '
+import os, re, sys, tomllib
+config, roles = sys.argv[1], sys.argv[2].split()
+linear = {}
+if os.path.exists(config):
+    with open(config, "rb") as f:
+        linear = tomllib.load(f).get("orchestrator", {}).get("linear", {})
+def text(value):
+    return value if isinstance(value, str) else ""
+slots = [("harness", text(linear.get("harness_key")), ""), ("manager", text(linear.get("manager_key")), "")]
+for role in roles:
+    found = linear.get("roles", {}).get(role, {})
+    slots.append((role, text(found.get("key")), text(found.get("account"))))
+for slot, service, account in slots:
+    service = service or f"linear-{slot}"
+    account = account or service
+    if not all(re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
+        sys.exit(f"install.sh: config.local.toml: {slot} key {service!r}: not a plain keychain name")
+    print(f"{slot}\t{service}\t{account}")' "$config" "$roles"
+}
+
+# linear_api <service> <query> [<variables JSON>]: Linear's GraphQL answer (its data, one JSON line) with the key in
+# keychain item <service>. The key stays in this process: curl gets it on stdin (-K -), -q first so no .curlrc
+# prints it.
+linear_api() {
+  python3 -I -c '
+import json, subprocess, sys
+service, query = sys.argv[1:3]
+variables = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
+def shown(text):
+    return text if text.isprintable() else repr(text)
+found = subprocess.run(["security", "find-generic-password", "-s", service, "-w"], stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True)
+key = found.stdout.strip()
+if found.returncode or not key or not key.isprintable() or any(c.isspace() or c in "\"\\" for c in key):
+    sys.exit(f"install.sh: no usable Linear key in keychain item {service}")
+body = json.dumps({"query": query, "variables": variables})
+sent = subprocess.run(["curl", "-q", "-fsS", "--connect-timeout", "10", "--max-time", "30", "-K", "-",
+                       "--data-binary", body, "-H", "Content-Type: application/json",
+                       "https://api.linear.app/graphql"],
+                      input=f"header = \"Authorization: {key}\"\n", capture_output=True, text=True)
+if sent.returncode:
+    sys.exit(f"install.sh: Linear: {shown(sent.stderr.strip())}")
+try:
+    answer = json.loads(sent.stdout)
+except json.JSONDecodeError:
+    sys.exit("install.sh: Linear: not a JSON answer")
+errors = answer.get("errors") if isinstance(answer, dict) else None
+if errors or not isinstance(answer, dict) or not isinstance(answer.get("data"), dict):
+    first = errors[0].get("message") if isinstance(errors, list) and errors and isinstance(errors[0], dict) else None
+    sys.exit("install.sh: Linear: " + (shown(first) if isinstance(first, str) else "no data"))
+print(json.dumps(answer["data"]))' "$@"
 }
 
 linear_keys() {
-  local list service account
+  local list slot service account
   step "Linear keys"
-  if [ "$board" != yes ]; then
-    skip "board not chosen"
-    return
-  fi
-  if ! linear_board; then
-    skip 'no tracker = "linear" in ~/.agent-pm/config.local.toml (docs/board.md#setup)'
-    return
-  fi
-  list=$(linear_services)
-  while IFS=$'\t' read -r service account; do
+  board_wanted || return 0
+  list=$(linear_slots)
+  while IFS=$'\t' read -r slot service account; do
     [ -n "$service" ] || continue
     if security find-generic-password -s "$service" </dev/null >/dev/null 2>&1; then
       skip "$service in the keychain"
-    else
-      ledger_add keychain "$service" "$account"
-      say "Linear key $service: paste its API key at security's prompt (nothing echoes)"
-      security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
+      continue
+    fi
+    ledger_add keychain "$service" "$account"
+    say "Linear key $service ($slot account): paste its API key at security's prompt (nothing echoes)"
+    security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
+    if ! linear_api "$service" '{ viewer { email } }' >/dev/null; then
+      security delete-generic-password -s "$service" </dev/null >/dev/null 2>&1 || true
+      die "Linear refused the key in $service, or cannot be reached: rerun to paste it again"
     fi
   done <<<"$list"
 }
@@ -1586,10 +1667,7 @@ with open(out, "w", encoding="utf-8") as f:
 board_jobs() {
   local job target new offered= shown= uid
   step "board launchd jobs"
-  if [ "$board" != yes ]; then
-    skip "board not chosen"
-    return
-  fi
+  board_wanted || return 0
   if ! linear_board; then
     skip "no Linear board"
     return
