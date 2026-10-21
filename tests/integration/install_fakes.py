@@ -3,7 +3,8 @@
 Every call is logged to $LOG (argv) and $ENVLOG (environment values). State lives under
 $FAKES: brew/<name> (installed), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
 broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once), tty_name
-(what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty).
+(what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty),
+commit (the commit GitHub reports for every agent-pm ref, else COMMIT).
 """
 
 import base64
@@ -23,6 +24,7 @@ BROKER = ROOT / "usr/local/libexec/agent-pm/agent-pm-broker"
 APPS = {"gh": "gh", "tmux": "tmux", "git": "git", "go": "go", "python": "python3", "node": "npm"}
 CASKS = {"claude-code": "claude", "codex": "codex", "docker-desktop": "docker"}
 CASK_APPS = {"docker-desktop": "Docker.app", "iterm2": "iTerm.app"}
+COMMIT = "1111111111111111111111111111111111111111"
 
 
 def out(text, stream=sys.stdout):
@@ -135,6 +137,10 @@ mkdir -p "{root}/Library/Developer/CommandLineTools"
 """
 
 
+def commit():
+    return (FAKES / "commit").read_text() if (FAKES / "commit").exists() else COMMIT
+
+
 def curl(args):
     url = args[-1]
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh":
@@ -142,6 +148,9 @@ def curl(args):
         return 0
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh":
         out(f'#!/bin/bash\nset -e\n[ "$NONINTERACTIVE" = 1 ]\nrm -f "{PREFIX}/bin/brew"\n')
+        return 0
+    if url.startswith("https://api.github.com/repos/ophis/agent-pm/commits/"):
+        out(commit())
         return 0
     raw = "https://raw.githubusercontent.com/ophis/agent-pm/"
     if url.startswith(raw) and url.endswith("/broker/internal/launcher/versions.go"):
@@ -531,7 +540,9 @@ def xdg(name, default):
 
 
 def opencode_plugin(spec):
-    """opencode plugin -g -f: the spec in the global config, the files npm adds there, and the package."""
+    """opencode plugin -g -f: the spec in the global config, the files npm adds there, and the package,
+    which OpenCode downloads only when the spec has none yet: then the agent-pm commit GitHub reports.
+    """
     conf = xdg("XDG_CONFIG_HOME", ".config") / "opencode"
     path = conf / "opencode.json" if (conf / "opencode.json").exists() else conf / "opencode.jsonc"
     data = (
@@ -546,9 +557,10 @@ def opencode_plugin(spec):
         mark(conf / extra, "{}")
     (conf / "node_modules").mkdir(exist_ok=True)
     package = Path(os.path.normpath(xdg("XDG_CACHE_HOME", ".cache") / "opencode/packages" / spec))
-    shutil.rmtree(package, ignore_errors=True)
-    shutil.copytree(FAKES / "pkg-src", package / "node_modules/agent-pm")
-    mark(package / "node_modules/agent-pm/REF", spec.split("#")[1])
+    if not package.exists():
+        shutil.copytree(FAKES / "pkg-src", package / "node_modules/agent-pm")
+        mark(package / "node_modules/agent-pm/REF", spec.split("#")[1])
+        mark(package / "node_modules/agent-pm/COMMIT", commit())
     out(f"Installed {spec}\n")
     return 0
 
