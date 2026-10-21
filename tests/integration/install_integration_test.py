@@ -71,7 +71,10 @@ SHARED = (
     "under_home",
     "ledger_valid",
     "sudo_once",
-    "on_exit",
+)
+RELOAD = (
+    "install.sh: in this terminal, run source ~/.zprofile first (or open a new one): its PATH"
+    " lacks what install.sh added to ~/.zprofile"
 )
 DOCKER_STEPS = (
     "Docker Desktop running",
@@ -428,9 +431,21 @@ class InstallTest(Case):
         self.assertIn("python3 is 3.11+", result.stderr)
         profile = Path(self.home, ".zprofile").read_text()
         self.assertIn(f'eval "$({self.root}/opt/homebrew/bin/brew shellenv)"\n', profile)
+        self.assertTrue(result.stderr.endswith(RELOAD + "\n"), result.stderr)
         self.assertIn("Log in to gh in your browser.", result.tty)
         self.assertEqual(self.state()["docker"], "no")
         self.assertEqual(self.state()["clients"], "claude,codex")
+
+    def test_no_reload_when_the_path_has_it(self):
+        brew = f"{self.root}/opt/homebrew/bin"
+        self.env["PATH"] = f"{brew}:{self.agent_pm}/bin:{self.bin}"
+        result = self.fresh()
+        self.assert_ok(result)
+        self.assertNotIn("run source", result.stderr)
+        self.env["PATH"] = f"{brew}:{self.bin}"
+        result = self.again()
+        self.assert_ok(result)
+        self.assertTrue(result.stderr.endswith(RELOAD + "\n"), result.stderr)
 
     def test_answers_kept_and_flags_override(self):
         self.assert_ok(self.fresh(clients="claude", docker="y"))
@@ -511,6 +526,7 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertEqual(result.stderr.count("skip: declined"), 3)
         self.assertFalse(Path(self.home, ".zprofile").exists())
+        self.assertNotIn("run source", result.stderr)
         self.assertFalse(self.config().exists())
 
     def test_codex_only(self):
@@ -1090,7 +1106,12 @@ class InstallTest(Case):
             answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (CLIENTS_Q, ""), (WRITE_Q, "y")],
         )
         self.assertEqual(result.code, 1)
-        self.assertIn("install.sh: apps failed; rerun the same command to continue", result.stderr)
+        self.assertTrue(
+            result.stderr.endswith(
+                "install.sh: apps failed; rerun the same command to continue\n" + RELOAD + "\n"
+            ),
+            result.stderr,
+        )
         self.assertIn("cask\tcodex", self.ledger())
         self.assertNotIn("codex plugin", "\n".join(self.calls()))
         result = self.again(answers=[(WRITE_Q, "y")])

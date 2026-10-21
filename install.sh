@@ -35,6 +35,8 @@ keepalive=
 current=
 answer=
 pkg=
+user_path=$PATH
+reload=
 name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
@@ -286,6 +288,10 @@ on_exit() {
   if [ "$rc" -ne 0 ] && [ -n "$current" ]; then
     say "$me: $current failed; rerun the same command to continue"
   fi
+  if [ -n "$reload" ]; then
+    case $reload in "$HOME"/*) reload="~/${reload#"$HOME"/}" ;; esac
+    say "$me: in this terminal, run source $reload first (or open a new one): its PATH lacks what install.sh added to $reload"
+  fi
 }
 
 sudo_once() {
@@ -318,7 +324,8 @@ sudo_once() {
   keepalive=$!
 }
 
-# Appends $1 to the login shell's profile, with consent, unless it is there.
+# Appends $1, which puts directory $2 on PATH, to the login shell's profile, with consent, unless
+# it is there; then, when $2 is not on the PATH install.sh started with, on_exit says to source it.
 profile_line() {
   local file=$HOME/.bash_profile
   case ${SHELL:-} in *zsh) file=$HOME/.zprofile ;; esac
@@ -332,7 +339,9 @@ profile_line() {
     printf '%s\n' "$1" >>"$file"
   else
     skip declined
+    return
   fi
+  case ":$user_path:" in *":$2:"*) ;; *) reload=$file ;; esac
 }
 
 homebrew() {
@@ -352,7 +361,7 @@ homebrew() {
   fi
   eval "$("$brew" shellenv)"
   hash -r
-  profile_line "eval \"\$($brew shellenv)\""
+  profile_line "eval \"\$($brew shellenv)\"" "${brew%/*}"
 }
 
 brew_install() {
@@ -932,7 +941,7 @@ ctmux_install() {
   else
     skip "launchers in ~/.agent-pm/bin"
   fi
-  profile_line 'export PATH="$HOME/.agent-pm/bin:$PATH"'
+  profile_line 'export PATH="$HOME/.agent-pm/bin:$PATH"' "$HOME/.agent-pm/bin"
 }
 
 # sha256 of the plugin's broker sources: a change means the broker must be reinstalled.
