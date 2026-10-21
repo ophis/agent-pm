@@ -50,7 +50,7 @@ APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
 TOKEN = "sk-ant-oat01-SENTINEL-token"
 KEY = "sk-SENTINEL-opencode-key"
-CLIENTS_Q = r"Which clients, comma-separated \(claude, codex, opencode\)\? \[[a-z,]+\]"
+MENU_Q = r"Choose what to install \(up/down move, space ticks, Enter confirms\):"
 PROVIDER_Q = r"OpenCode provider name:"
 URL_Q = r"Its base URL \(ending /v1\):"
 MODEL_Q = r"Its model:"
@@ -62,7 +62,6 @@ PROVIDER_ANSWERS = (
     (MODEL_Q, "m1"),
     (CONTEXT_Q, "204800"),
 )
-DOCKER_Q = r"Run workers in Docker \(Docker Desktop and the agent-pm broker\)\? \[y/N\]"
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
 TOKEN_Q = r"Paste the setup-token \(hidden\):"
@@ -111,6 +110,13 @@ for n in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchest
 done
 """
 Result = namedtuple("Result", "code stdout stderr tty")
+ITEMS = ("claude", "codex", "opencode", "docker", "board")
+
+
+def menu(want, have=("claude", "codex", "board")):
+    """The checklist keys that turn the ticked items `have` into `want`: space where they differ, down to the
+    next item; the answer's newline confirms."""
+    return "".join((" " if (i in want) != (i in have) else "") + "\x1b[B" for i in ITEMS)
 
 
 def executable(path, text):
@@ -288,14 +294,24 @@ class InstallTest(Case):
             logins = [(TOKEN_Q, TOKEN)] if "claude" in (chosen or "claude") else []
             logins.append((PEM_Q, ""))
         answers = [(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
-        answers += [(CLIENTS_Q, clients)] if "--clients" not in args else []
-        answers += [(DOCKER_Q, docker)] if not {"--docker", "--no-docker"} & set(args) else []
+        if "--clients" not in args or not {"--docker", "--no-docker"} & set(args):
+            on = "--docker" in args or ("--no-docker" not in args and docker == "y")
+            have = ("claude", "codex", "board")
+            if "--clients" in args:
+                have = (*chosen.split(","), "board")
+            if "--docker" in args:
+                have = (*have, "docker")
+            want = (*(chosen or "claude,codex").split(","), *(("docker",) if on else ()), "board")
+            answers.append((MENU_Q, menu(want, have)))
         plugin = [(WRITE_Q, "y")] if "opencode" in (chosen or "") else []
         answers += [*opencode, (WRITE_Q, "y"), *plugin, *(logins or ()), (WRITE_Q, "y")]
         return self.run_install(*args, answers=answers, ctty=ctty)
 
     def again(self, *args, answers=()):
-        return self.run_install(*args, answers=[(SUDO_Q, PASSWORD), *answers])
+        """A rerun: the checklist, unless flags answer it, confirmed as the last run left it."""
+        flagged = "--clients" in args and {"--docker", "--no-docker"} & set(args)
+        shown = [] if flagged else [(MENU_Q, "")]
+        return self.run_install(*args, answers=[(SUDO_Q, PASSWORD), *shown, *answers])
 
     def config(self):
         return Path(self.agent_pm, "config.local.toml")
@@ -461,8 +477,8 @@ class InstallTest(Case):
             ],
         )
         tty = result.tty
-        self.assertLess(tty.index("Write it?"), tty.index("Which clients"))
-        self.assertLess(tty.index("Which clients"), tty.index("config.local.toml:"))
+        self.assertLess(tty.index("Write it?"), tty.index("Choose what to install"))
+        self.assertLess(tty.index("Choose what to install"), tty.index("config.local.toml:"))
         logins = [c for c in calls if " login" in c or c.endswith(" status")]
         self.assertEqual(
             logins,
@@ -500,14 +516,42 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertTrue(result.stderr.endswith(RELOAD + "\n"), result.stderr)
 
+    def test_checklist(self):
+        """j/k move too; no client ticked asks again; an unticked board skips its steps."""
+        keys = " j jjj "
+        result = self.run_install(
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (MENU_Q, keys),
+                (r"Tick at least one client\.", "kkkk "),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+            ]
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            (self.state()["clients"], self.state()["docker"], self.state()["board"]),
+            ("codex", "no", "no"),
+        )
+        self.assertIn("==> board launchd jobs\n    skip: board not chosen", result.stderr)
+        self.assertIn("==> Linear keys\n    skip: board not chosen", result.stderr)
+
+    def test_checklist_skipped_by_flags(self):
+        result = self.fresh("--clients", "claude", "--no-docker", "--no-board")
+        self.assert_ok(result)
+        self.assertNotRegex(result.tty, MENU_Q)
+        self.assertEqual(self.state()["board"], "no")
+        self.assertEqual(self.run_install("--board", "--no-board", tty=False).code, 2)
+
     def test_answers_kept_and_flags_override(self):
         self.assert_ok(self.fresh(clients="claude", docker="y"))
         self.assertEqual((self.state()["clients"], self.state()["docker"]), ("claude", "yes"))
         self.assertNotIn("brew install --cask codex", self.calls())
         result = self.again()
         self.assert_ok(result)
-        self.assertNotRegex(result.tty, DOCKER_Q)
-        self.assertNotRegex(result.tty, CLIENTS_Q)
+        for line in ("> [x] Claude Code", "  [ ] Codex", "  [ ] OpenCode", "  [x] Docker workers"):
+            self.assertIn(line, result.tty)
         result = self.again("--clients", "claude,codex")
         self.assert_ok(result)
         self.assertEqual(self.state()["clients"], "claude,codex")
@@ -523,7 +567,7 @@ class InstallTest(Case):
         )
         result = self.again(answers=[(WRITE_Q, "y"), (PEM_Q, "")])
         self.assert_ok(result)
-        self.assertNotRegex(result.tty, CLIENTS_Q)
+        self.assertIn("> [ ] Claude Code\r\n\r\x1b[K  [x] Codex", result.tty)
         self.assertEqual((self.state()["clients"], self.state()["docker"]), ("codex", "yes"))
 
     def test_config_template_and_edit(self):
@@ -571,7 +615,7 @@ class InstallTest(Case):
             answers=[
                 (SUDO_Q, PASSWORD),
                 (WRITE_Q, "n"),
-                (CLIENTS_Q, ""),
+                (MENU_Q, ""),
                 (WRITE_Q, "n"),
                 (WRITE_Q, "n"),
             ],
@@ -729,8 +773,7 @@ class InstallTest(Case):
             answers=[
                 (SUDO_Q, PASSWORD),
                 (WRITE_Q, "y"),
-                (CLIENTS_Q, ""),
-                (DOCKER_Q, "y"),
+                (MENU_Q, menu(("claude", "codex", "docker", "board"))),
                 (WRITE_Q, "y"),
             ]
         )
@@ -973,7 +1016,7 @@ class InstallTest(Case):
             answers=[
                 (SUDO_Q, PASSWORD),
                 (WRITE_Q, "y"),
-                (CLIENTS_Q, "claude,opencode"),
+                (MENU_Q, menu(("claude", "opencode", "board"))),
                 (PROVIDER_Q, "ollama"),
                 (PROVIDER_Q, "lan.1"),
                 (PROVIDER_Q, "lan"),
@@ -1099,8 +1142,9 @@ class InstallTest(Case):
             ".cache/opencode/packages/agent-pm@git+https:/github.com/ophis/agent-pm.git#main",
         )
         self.assertIn(f"    {package}/node_modules/agent-pm\n", result.stderr)
-        result = self.run_install("--password-stdin", stdin=PASSWORD + "\n")
+        result = self.run_install("--password-stdin", stdin=PASSWORD + "\n", answers=[(MENU_Q, "")])
         self.assert_ok(result)
+        self.assertIn("> [ ] Claude Code", result.tty)
         self.assertNotIn("opencode plugin", "\n".join(self.calls()))
 
     def test_cleanup_round_trip_opencode_only(self):
@@ -1386,7 +1430,7 @@ class InstallTest(Case):
         (self.fakes / "fail").write_text("brew install --cask codex")
         result = self.run_install(
             "--no-docker",
-            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (CLIENTS_Q, ""), (WRITE_Q, "y")],
+            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (MENU_Q, ""), (WRITE_Q, "y")],
         )
         self.assertEqual(result.code, 1)
         self.assertTrue(

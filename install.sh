@@ -19,6 +19,8 @@ clients_flag=
 clients=
 docker_flag=
 docker=
+board_flag=
+board=
 provider_flag=
 url_flag=
 model_flag=
@@ -46,7 +48,7 @@ name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
 context_pattern='^[1-9][0-9]{0,8}$'
-synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
+synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board | --no-board] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -69,6 +71,7 @@ usage: $synopsis
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
+  --board, --no-board         install, or not, the Linear board's keys and launchd jobs (when the config names one)
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -79,7 +82,8 @@ usage: $synopsis
 With --password-stdin or --opencode-key-stdin, stdin cannot carry the script:
   security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh)" install.sh --password-stdin
 
-It installs the dependencies, asks what the flags leave open, writes ~/.agent-pm/config.local.toml,
+Without --clients and --docker/--no-docker it shows a checklist of what to install (a rerun ticks the last
+choices). It installs the dependencies, asks what the flags leave open, writes ~/.agent-pm/config.local.toml,
 then installs and logs in only what that needs. A rerun keeps the last answers unless a flag changes
 them, and skips what is done.
 EOF
@@ -136,6 +140,14 @@ parse_args() {
       --no-docker)
         [ "$docker_flag" != yes ] || usage_error "--docker and --no-docker exclude each other"
         docker_flag=no
+        ;;
+      --board)
+        [ "$board_flag" != no ] || usage_error "--board and --no-board exclude each other"
+        board_flag=yes
+        ;;
+      --no-board)
+        [ "$board_flag" != yes ] || usage_error "--board and --no-board exclude each other"
+        board_flag=no
         ;;
       --opencode-provider)
         [ $# -ge 2 ] && valid_name "$2" || usage_error "--opencode-provider: want 1-64 letters, digits, _ or -, not ollama"
@@ -483,36 +495,75 @@ ask_valid() {
   done
 }
 
-# The configuration: each answer from its flag, else the last answer (State), else the config, else a question.
+# The checklist on the terminal: up/down (or k/j) move, space ticks, Enter confirms. labels[] are its items, ticks[]
+# their 1/0, in and out.
+checklist() {
+  local n=${#labels[@]} at=0 i key rest mark drawn=
+  printf 'Choose what to install (up/down move, space ticks, Enter confirms):\n' >&3
+  while :; do
+    if [ -n "$drawn" ]; then printf '\033[%dA' "$n" >&3; fi
+    drawn=1
+    for ((i = 0; i < n; i++)); do
+      mark=' '
+      if [ "${ticks[i]}" = 1 ]; then mark=x; fi
+      if [ "$i" = "$at" ]; then printf '\r\033[K> [%s] %s\n' "$mark" "${labels[i]}" >&3; else printf '\r\033[K  [%s] %s\n' "$mark" "${labels[i]}" >&3; fi
+    done
+    IFS= read -rsn1 -d '' key <&3 || die "no answer on the terminal"
+    case $key in
+      $'\033')
+        IFS= read -rsn2 rest <&3 || rest=
+        case $rest in
+          '[A' | OA) at=$(((at + n - 1) % n)) ;;
+          '[B' | OB) at=$(((at + 1) % n)) ;;
+        esac
+        ;;
+      k) at=$(((at + n - 1) % n)) ;;
+      j) at=$(((at + 1) % n)) ;;
+      ' ') ticks[at]=$((1 - ticks[at])) ;;
+      $'\n' | $'\r') return 0 ;;
+    esac
+  done
+}
+
+# The configuration: each answer from its flag, else the last answer (State), else the config, else the default;
+# without --clients and --docker/--no-docker, the checklist shows them ticked to change.
 answers() {
-  local said default client offer=claude,codex
+  local said default client item
+  local -a labels ticks names=(claude codex opencode)
   step configuration
   said=$(config_says)
   default=${said%%$'\t'*}
   client=${said#*$'\t'}
-  if [ -n "$clients_flag" ]; then
-    clients=$clients_flag
-  elif clients=$(state_get clients) && [ -n "$clients" ]; then
-    :
-  elif [ "$client" = codex ]; then
-    clients=codex
-  else
-    if opencode_flags; then offer=claude,codex,opencode; fi
-    while :; do
-      ask "Which clients, comma-separated (claude, codex, opencode)? [$offer]"
-      if clients=$(clients_of "${answer:-$offer}"); then break; fi
-    done
+  clients=${clients_flag:-$(state_get clients)}
+  if [ -z "$clients" ]; then
+    case $client in claude | codex | opencode) clients=$client ;; *) clients=claude,codex ;; esac
+    if opencode_flags; then clients=$(clients_of "$clients,opencode"); fi
   fi
-  if [ -n "$docker_flag" ]; then
-    docker=$docker_flag
-  elif docker=$(state_get docker) && [ -n "$docker" ]; then
-    :
-  elif [ -n "$default" ]; then
+  docker=${docker_flag:-$(state_get docker)}
+  if [ -z "$docker" ]; then
     if [ "$default" = docker ]; then docker=yes; else docker=no; fi
-  elif ask_yn "Run workers in Docker (Docker Desktop and the agent-pm broker)?"; then
-    docker=yes
-  else
-    docker=no
+  fi
+  board=${board_flag:-$(state_get board)}
+  board=${board:-yes}
+  if [ -z "$clients_flag" ] || [ -z "$docker_flag" ]; then
+    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board launchd jobs and Linear keys (with a Linear board)")
+    ticks=()
+    for item in "${names[@]}"; do
+      if has "$item"; then ticks+=(1); else ticks+=(0); fi
+    done
+    if [ "$docker" = yes ]; then ticks+=(1); else ticks+=(0); fi
+    if [ "$board" = yes ]; then ticks+=(1); else ticks+=(0); fi
+    while :; do
+      checklist
+      clients=
+      for item in 0 1 2; do
+        if [ "${ticks[item]}" = 1 ]; then clients=${clients:+$clients,}${names[item]}; fi
+      done
+      [ -z "$clients" ] || break
+      printf 'Tick at least one client.\n' >&3
+    done
+    if [ "${ticks[3]}" = 1 ]; then docker=yes; else docker=no; fi
+    if [ "${ticks[4]}" = 1 ]; then board=yes; else board=no; fi
   fi
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
   if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
@@ -550,7 +601,8 @@ answers() {
   fi
   state_set clients "$clients"
   state_set docker "$docker"
-  say "    clients: $clients, Docker: $docker${provider:+, OpenCode provider: $provider}"
+  state_set board "$board"
+  say "    clients: $clients, Docker: $docker, board: $board${provider:+, OpenCode provider: $provider}"
 }
 
 # Plans the edits that give config.local.toml (or a new one) the wanted settings; writes the result to
@@ -1372,6 +1424,10 @@ for service, account in found:
 linear_keys() {
   local list service account
   step "Linear keys"
+  if [ "$board" != yes ]; then
+    skip "board not chosen"
+    return
+  fi
   if ! linear_board; then
     skip 'no tracker = "linear" in ~/.agent-pm/config.local.toml (docs/board.md#setup)'
     return
@@ -1422,6 +1478,10 @@ with open(out, "w", encoding="utf-8") as f:
 board_jobs() {
   local job target new offered= shown= uid
   step "board launchd jobs"
+  if [ "$board" != yes ]; then
+    skip "board not chosen"
+    return
+  fi
   if ! linear_board; then
     skip "no Linear board"
     return
