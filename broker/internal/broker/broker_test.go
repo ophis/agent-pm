@@ -3,7 +3,11 @@ package broker
 import (
 	"bytes"
 	"cmp"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -556,6 +560,62 @@ func TestLoginGitHubKeyAfterAccess(t *testing.T) {
 		}
 		if !bytes.Equal(tc.k.got, make([]byte, len(tc.k.got))) {
 			t.Fatalf("%s: key buffer not erased", name)
+		}
+	}
+}
+
+// fakeAppStore is an empty keychain for the App key: PutSecret creates the item as secret_put leaves it, read and
+// export entries trusting only the broker, partition list not yet (halfDone).
+type fakeAppStore struct {
+	fakeApps
+	puts []string
+}
+
+func (k *fakeAppStore) PutSecret(service, account string, data []byte) error {
+	k.puts = append(k.puts, service+" "+account)
+	k.account, k.accountErr, k.key, k.access = account, nil, string(data), halfDone()
+	return nil
+}
+
+func TestStoreAppKey(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	k := &fakeAppStore{fakeApps: fakeApps{accountErr: ErrNotFound}}
+	if err := StoreAppKey("agent-pm-bot", "5352992", pemKey, k); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(k.puts, []string{"agent-pm-bot 5352992"}) || k.key != string(pemKey) {
+		t.Fatalf("puts %q", k.puts)
+	}
+	ask := &askOnce{}
+	var out bytes.Buffer
+	if err := LoginGitHub("agent-pm-bot", k, ask.read, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(k.steps, []string{"partition agent-pm-bot 5352992", "key agent-pm-bot 5352992"}) || ask.calls != 1 {
+		t.Fatalf("steps %q, asked %d times", k.steps, ask.calls)
+	}
+	for name, tc := range map[string]struct {
+		id, pem string
+		k       *fakeAppStore
+		want    string
+	}{
+		"zero id":   {id: "0123", pem: string(pemKey), want: `App ID "0123" is not 1 to 20 digits`},
+		"word id":   {id: "-w", pem: string(pemKey), want: `App ID "-w" is not 1 to 20 digits`},
+		"not pem":   {id: "1", pem: "SENTINEL", want: "not a GitHub App private key: App private key is not PEM"},
+		"exists":    {id: "1", pem: string(pemKey), k: &fakeAppStore{fakeApps: fakeApps{account: "9"}}, want: "keychain item agent-pm-bot exists: run agent-pm-broker login github agent-pm-bot without --key-file, or delete it first"},
+		"ambiguous": {id: "1", pem: string(pemKey), k: &fakeAppStore{fakeApps: fakeApps{accountErr: ErrAmbiguous}}, want: "keychain item agent-pm-bot exists: run agent-pm-broker login github agent-pm-bot without --key-file, or delete it first"},
+		"keychain":  {id: "1", pem: string(pemKey), k: &fakeAppStore{fakeApps: fakeApps{accountErr: errors.New("keychain status -25308")}}, want: "keychain status -25308"},
+	} {
+		if tc.k == nil {
+			tc.k = &fakeAppStore{fakeApps: fakeApps{accountErr: ErrNotFound}}
+		}
+		err := StoreAppKey("agent-pm-bot", tc.id, []byte(tc.pem), tc.k)
+		if err == nil || err.Error() != tc.want || len(tc.k.puts) != 0 || strings.Contains(err.Error(), "PRIVATE KEY") {
+			t.Fatalf("%s: %v, puts %q", name, err, tc.k.puts)
 		}
 	}
 }

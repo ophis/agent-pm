@@ -10,7 +10,7 @@ state config key and every broker keychain service.
 
 **Three-way readers**: a credential the broker hands to a container (the Claude setup-token copy, GitHub installation
 tokens, the Codex access token, OpenCode provider API keys) can be read by the broker, by every process in that container, and by any process
-running as the user: `<B> start --manifest <file>` does not check its caller (`broker/main.go:124`), and the Docker
+running as the user: `<B> start --manifest <file>` does not check its caller (`broker/main.go:161`), and the Docker
 socket is the user's (`broker/internal/docker/docker.go:102`), so such a process can start a container or
 `docker exec` into one and read `/run/agent-pm/secrets/`. Only the App private key and the Codex refresh token stay
 with the broker; a provider API key is the same long-lived key in every container that lists it. The user accepted this on 2026-10-18; the broker is unchanged ([Risks](#risks)).
@@ -21,7 +21,7 @@ with the broker; a provider API key is the same long-lived key in every containe
 |---|---|---|---|---|---|
 | `tmux` | Claude Code | the user, beforehand: `claude`, then `/login` ([Claude auth]) | macOS Keychain; `~/.claude/.credentials.json` (0600) if the Keychain refuses the write ([Claude auth]) | no container | — |
 | `tmux` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
-| Docker | Claude Code | the user, once per broker install and [account](docker-host.md#claude-accounts): `claude setup-token` in its subscription, pasted into `<B> login claude [<name>]` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / account name | the selected account's token alone, `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:450`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
+| Docker | Claude Code | the user, once per broker install and [account](docker-host.md#claude-accounts): `claude setup-token` in its subscription, pasted into `<B> login claude [<name>]` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / account name | the selected account's token alone, `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` (`broker/internal/broker/keychain.go:477`, `broker/internal/launcher/assets/with-secrets:21`) | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex operations](docker-codex.md#commands)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token (`broker/internal/broker/codex.go:397`); the broker publishes each renewal | deleted with the container; never revoked |
 | `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm never reads it | no container | — |
 | Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: the user, once per broker install and provider: `<B> login opencode <name>` ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv (`broker/internal/broker/opencode.go:22`, `session/src/agent_pm/session/clients/opencode/common.py:388`) | deleted with the container; never revoked |
@@ -48,10 +48,10 @@ GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot
 |---|---|---|
 | Purpose | signs the 9-minute JWT that issues installation tokens; never leaves the broker | `broker/internal/github/github.go:96`, `broker/internal/broker/github.go:319` |
 | Minimum permission | one private App, installed only on repos agents may push to; the broker requests contents write, pull requests write, checks read, actions read | `broker/internal/github/github.go:37`; [Log in](docker-host.md#log-in) |
-| Stored at | login keychain, service `agent-pm-bot` (`[session.hosts.docker.github] app`), account the App ID, created by the user; delete the downloaded `.pem` once the item holds it | `broker/internal/broker/keychain.go:59`, `session/src/agent_pm/session/config.toml:201` |
-| Readers | the broker only, once `<B> login github agent-pm-bot` has made the item trust only it; before that the user-created item trusts `/usr/bin/security`, so any process running as the user; and so does a `.pem` left on disk | `broker/internal/broker/keychain.go:332`; [Log in](docker-host.md#log-in) |
+| Stored at | login keychain, service `agent-pm-bot` (`[session.hosts.docker.github] app`), account the App ID, created by `<B> login github agent-pm-bot --key-file <pem> --app-id <ID>`; delete the downloaded `.pem` once the item holds it | `broker/internal/broker/keychain.go:59`, `session/src/agent_pm/session/config.toml:201` |
+| Readers | the broker only: an item `--key-file` creates trusts only it for reads from the start, and the login finishes its partition list; an item made otherwise trusts its creator (`/usr/bin/security`: any process running as the user) until `<B> login github agent-pm-bot`; a `.pem` left on disk, any process running as the user | `broker/internal/broker/keychain.go:359`; [Log in](docker-host.md#log-in) |
 | Lifetime | until the key is deleted in the App's settings | [GitHub private keys] |
-| Revoke | generate a new key and delete the old one in the App's settings; replace the item's content; rerun `<B> login github agent-pm-bot` | [GitHub private keys] |
+| Revoke | generate a new key and delete the old one in the App's settings; delete the item (`security delete-generic-password -s agent-pm-bot`) and rerun `<B> login github agent-pm-bot --key-file <new pem> --app-id <ID>` | [GitHub private keys] |
 
 ### GitHub installation tokens
 
@@ -106,7 +106,7 @@ One per role: `linear.roles.researcher.key` for `linear.roles.researcher.account
 |---|---|---|---|
 | Purpose | the user's own Claude Code | worker and role-run Claude Code in a container | [Who logs in](#who-logs-in) |
 | Minimum permission | the user's subscription login | a setup-token: subscription, model requests only | [Claude auth] |
-| Stored at | macOS Keychain (fallback `~/.claude/.credentials.json`) | `agent-pm-claude` / account name, one item per [account](docker-host.md#claude-accounts); one copy per running container | `broker/internal/broker/keychain.go:30`, `broker/internal/broker/keychain.go:450` |
+| Stored at | macOS Keychain (fallback `~/.claude/.credentials.json`) | `agent-pm-claude` / account name, one item per [account](docker-host.md#claude-accounts); one copy per running container | `broker/internal/broker/keychain.go:30`, `broker/internal/broker/keychain.go:477` |
 | Readers | Claude Code and any process running as the user that the Keychain lets read it | the item: the broker; the copies: **three-way readers** | [Claude auth]; intro |
 | Lifetime | refreshed by Claude Code; `/login` renews | one year | [Claude auth] |
 | Revoke | `/logout` | Unknown: no official route. `claude.ai/settings/claude-code`, cited by the community, is unverified. On a leak: run `claude setup-token` again and rerun `<B> login claude [<name>]` | [Claude auth] |

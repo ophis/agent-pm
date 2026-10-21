@@ -166,6 +166,11 @@ func TestUsageErrors(t *testing.T) {
 		{"unknown", []string{"login", "github", "agent-pm-engineer"}},
 		{"unknown", []string{"login", "github", "agent-pm-docs"}},
 		{"unknown", []string{"login", "github", "agent-pm-bot", "x"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem", "--app-id"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--app-id", "1", "--key-file", "/k.pem"}},
+		{"unknown", []string{"login", "github", "agent-pm-bot", "--key-file", "/k.pem", "--app", "1"}},
+		{"unknown", []string{"login", "github", "agent-pm-other", "--key-file", "/k.pem", "--app-id", "1"}},
 		{"unknown", []string{"login", "claude", "Work"}},
 		{"unknown", []string{"login", "claude", "setup-token"}},
 		{"unknown", []string{"login", "claude", "a", "b"}},
@@ -189,9 +194,12 @@ func TestUsageErrors(t *testing.T) {
 func TestLoginGitHubDispatch(t *testing.T) {
 	for _, name := range []string{"agent-pm-bot"} {
 		var got string
-		a := app{loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
+		a := app{loginGitHub: func(ctx context.Context, app string, key *keyFile, out io.Writer) error {
 			if ctx == nil {
 				t.Error("no context")
+			}
+			if key != nil {
+				t.Errorf("key %+v without flags", key)
 			}
 			got = app
 			_, err := io.WriteString(out, "ok\n")
@@ -201,7 +209,7 @@ func TestLoginGitHubDispatch(t *testing.T) {
 			t.Fatalf("%s: exit %d app %q %q %q", name, code, got, out, errOut)
 		}
 	}
-	a := app{loginGitHub: func(context.Context, string, io.Writer) error { return errors.New("no item") }}
+	a := app{loginGitHub: func(context.Context, string, *keyFile, io.Writer) error { return errors.New("no item") }}
 	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot"); code != 1 || out != "" || errOut != "agent-pm-broker: no item\n" {
 		t.Fatalf("exit %d %q %q", code, out, errOut)
 	}
@@ -644,5 +652,41 @@ func TestAuditHoldsNoSecret(t *testing.T) {
 		"refresh github-installation-token renewed", "refresh github-installation-token revoked", "close github-installation-token revoked"}
 	if !slices.Equal(results, want) || !bytes.Contains(data, []byte(`"repositories":["ophis/agent-pm"]`)) {
 		t.Fatalf("%v\n%s", results, data)
+	}
+}
+
+// --key-file's content and --app-id reach login github; the file's bytes are erased after it returns.
+func TestLoginGitHubKeyFileDispatch(t *testing.T) {
+	const pemText = "-----BEGIN RSA PRIVATE KEY-----\nSENTINEL\n-----END RSA PRIVATE KEY-----\n"
+	path := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(path, []byte(pemText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var seen *keyFile
+	var held string
+	a := app{loginGitHub: func(_ context.Context, app string, key *keyFile, out io.Writer) error {
+		seen, held = key, string(key.pem)
+		_, err := io.WriteString(out, "ok\n")
+		return err
+	}}
+	if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot", "--key-file", path, "--app-id", "5352992"); code != 0 || out != "ok\n" || errOut != "" {
+		t.Fatalf("exit %d %q %q", code, out, errOut)
+	}
+	if seen.id != "5352992" || held != pemText || !bytes.Equal(seen.pem, make([]byte, len(pemText))) {
+		t.Fatalf("key %q %q, after %q", seen.id, held, seen.pem)
+	}
+	big := filepath.Join(t.TempDir(), "big.pem")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("k"), maxKeyFile+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for file, want := range map[string]string{
+		big:                       "agent-pm-broker: " + big + ": more than 16384 bytes\n",
+		filepath.Join(path, "no"): "agent-pm-broker: reading the App private key failed: open " + filepath.Join(path, "no") + ": not a directory\n",
+	} {
+		called := false
+		a := app{loginGitHub: func(context.Context, string, *keyFile, io.Writer) error { called = true; return nil }}
+		if code, out, errOut := invoke(a, "login", "github", "agent-pm-bot", "--key-file", file, "--app-id", "5352992"); code != 1 || out != "" || errOut != want || called {
+			t.Fatalf("%s: exit %d %q %q called %v", file, code, out, errOut, called)
+		}
 	}
 }
