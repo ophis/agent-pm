@@ -10,7 +10,7 @@
 
 *Ceci est une traduction ; la version de référence est le README en anglais.*
 
-Fait tourner des agents de code (Claude Code, Codex, OpenCode sur les modèles Ollama de l'hôte) sans surveillance depuis un tableau Linear. Chaque project Linear est un produit, et l'assignee d'une issue (un compte de role) est son étape. Chaque role traite jusqu'à `max_runs` issues à la fois et vous rend son résultat pour relecture. Une fois que vous approuvez, le role suivant prend le relais.
+Fait tourner des agents de code (Claude Code, Codex, OpenCode sur les modèles Ollama de l'hôte) sans surveillance depuis un tableau Linear ou un tableau local de fichiers Markdown d'issues. Orchestrator lit et écrit les issues via une interface Tracker interchangeable ; `[orchestrator] tracker` sélectionne `local` (par défaut) ou `linear`. Un fichier workflow définit les étapes et leurs roles. Chaque role traite jusqu'à `max_runs` issues à la fois et vous rend son résultat pour relecture. Une fois que vous approuvez, le role suivant prend le relais.
 
 Développeurs : [`AGENTS.md`](../../AGENTS.md).
 
@@ -18,23 +18,23 @@ Développeurs : [`AGENTS.md`](../../AGENTS.md).
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims ready issues| R & P & E
 ```
 
 ## Architecture en couches
 
-agent-pm est construit en couches : chacune fait un seul travail et n'appelle que celle du dessous. Les deux couches du bas, Session et Delegate, sont des briques génériques utilisables seules, et celle du haut se remplace : votre propre workflow peut prendre la place du Linear orchestrator. Pour l'étendre, un nouveau client d'agent se branche sur Session, et de nouveaux roles et tasks s'ajoutent dans Delegate.
+agent-pm est construit en couches : chacune fait un seul travail et n'appelle que celle du dessous. Les deux couches du bas, Session et Delegate, sont des briques génériques utilisables seules ou comme base de votre propre orchestration. Dans Orchestrator, changez le fichier workflow pour définir les étapes, ou implémentez l'interface Tracker pour connecter un autre tableau. Pour l'étendre, un nouveau client d'agent se branche sur Session, et de nouveaux roles et tasks s'ajoutent dans Delegate.
 
-![Couches d'agent-pm, de haut en bas : Manager (l'interface utilisateur), Linear orchestrator (l'orchestration), Delegate (la couche des roles), Session (l'adaptateur de clients)](../images/layers.svg)
+![Couches d'agent-pm, de haut en bas : Manager (l'interface utilisateur), Orchestrator (l'orchestration ; trackers Linear et local), Delegate (la couche des roles), Session (l'adaptateur de clients)](../images/layers.svg)
 
 | Couche | Ce qu'elle fait | Commencer par |
 |---|---|---|
 | Manager | Un pilote pour les couches du dessous : un agent à qui vous parlez, qui lance des workers, des role runs et des runs du tableau, les surveille et vous fait un rapport. | [Démo](#démo--un-manager-plusieurs-workers) |
-| Linear orchestrator | Fait tourner les roles depuis un tableau Linear : mon propre workflow. | [Tableau Linear](../board.md) |
+| Orchestrator | Fait tourner les roles selon un fichier workflow, avec des trackers interchangeables : Linear ou un tableau local de Markdown. | [Tableaux](../board.md) |
 | Delegate (cœur) | Fait exécuter une task à un role via une session et renvoie un résultat vérifié. Un plugin Claude Code et Codex utilisable seul. | [Installation](#installation) |
 | Session | Démarre, surveille et reprend un agent de code (Claude Code, Codex, OpenCode) dans tmux ou un conteneur Docker, de la même façon pour chaque client. | [Sessions](../sessions.md) |
 
-Le Linear orchestrator est ma philosophie de la façon dont les agents devraient travailler (recherche, puis un PRD, puis un build, avec une relecture humaine entre chaque étape). Les roles et les tasks sont aussi à vous de modifier ([Personnaliser les roles et les tasks](../customizing-roles-and-tasks.md)).
+Le workflow fourni reflète ma philosophie de la façon dont les agents devraient travailler (recherche, puis un PRD, puis un build, avec une relecture humaine entre chaque étape). `[orchestrator] workflow` sélectionne un autre fichier workflow ; une valeur vide utilise celui fourni. Les roles et les tasks sont aussi à vous de modifier ([Personnaliser les roles et les tasks](../customizing-roles-and-tasks.md)).
 
 ## Pourquoi agent-pm
 
@@ -56,7 +56,7 @@ Travailler avec des agents de code, c'est une échelle : chaque level ajoute une
 | 4. Orchestrate | loop engineering | Plusieurs agents : fan-out, planner et verifier, routage, limites de concurrence et de quota. |
 | 5. Master | environment engineering | Garde-fous et environnement agent-oriented : outils, checks et vérification pensés pour les agents, pas pour les humains, pour que le chemin le plus facile soit le bon (une idée de Lauren Tan). |
 
-Pas encore au level 3 ? Essayez [autopilot](https://github.com/ophis/claude-autopilot) : il vous y mène, au moins. Les couches d'agent-pm (le tableau du début) montent plus haut : Session porte la conversation de l'agent et lui donne un host où agir (levels 1–2), Delegate exécute un role sur une task comme un workflow vérifié (3), et le Linear orchestrator, avec le manager au-dessus, coordonne plusieurs agents (entre 4 et 5). Placez-vous au sommet, à fixer l'environnement, les limites et les points de contrôle, et c'est Master, même si la vérification d'agent-pm reste un peu légère. L'objectif : le level 5 et au-delà.
+Pas encore au level 3 ? Essayez [autopilot](https://github.com/ophis/claude-autopilot) : il vous y mène, au moins. Les couches d'agent-pm (le tableau du début) montent plus haut : Session porte la conversation de l'agent et lui donne un host où agir (levels 1–2), Delegate exécute un role sur une task comme un workflow vérifié (3), et le Orchestrator, avec le manager au-dessus, coordonne plusieurs agents (entre 4 et 5). Placez-vous au sommet, à fixer l'environnement, les limites et les points de contrôle, et c'est Master, même si la vérification d'agent-pm reste un peu légère. L'objectif : le level 5 et au-delà.
 
 ## Démo : un manager, plusieurs workers
 
@@ -105,7 +105,7 @@ Comment les sessions lancées par agent-pm chargent vos réglages, et pourquoi c
 1. [Installez](#installation) le plugin.
 2. Dans une nouvelle session Claude Code, vérifiez-le : `/agent-pm:act-as dummy-tester:echo hello` renvoie `hello`.
 3. Lancez un role : `/agent-pm:act-as researcher <question>`. Sans configuration locale, le rapport est enregistré dans `~/.agent-pm/adhoc/<date>-researcher-<name>/agent/prompt.md` ; pour le publier, définissez la destination du role ([Personnaliser les roles et les tasks](../customizing-roles-and-tasks.md#change-a-roles-run-settings)).
-4. Pour faire tourner les roles depuis Linear : [Tableau Linear](../board.md).
+4. Pour faire tourner les roles depuis un tableau Linear ou un tableau local de Markdown : [Tableaux](../board.md).
 
 ## Personnaliser les roles et les tasks
 
@@ -122,7 +122,7 @@ Ces pages sont en anglais.
 | Page | Contenu |
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | réglages de run, répertoires de team, fichiers de role et de task, vérifications |
-| [Linear board](../board.md) | mise en place, états d'issue et labels de task, exploitation du router, labels Agent (client par issue) |
+| [Board](../board.md) | mise en place, états d'issue et labels de task, exploitation du router, labels Agent (client par issue), tableau local (`tracker`, `AGENT_PM_BOARD_DIR`, arborescence, format des fichiers) |
 | [Sessions and client policy](../sessions.md) | réglages de session, `agent-pm-session`, flags de client des role runs, sessions OpenCode |
 | [State root](../state-root.md) | structure de `~/.agent-pm/`, ce qui nettoie chaque entrée, ce que vous pouvez supprimer |
 | [Upgrading](../upgrading.md) | étapes de mise à jour depuis la v0.6.20 |

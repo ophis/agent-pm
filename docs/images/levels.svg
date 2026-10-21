@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
 <title id="t">Five levels of mastering AI agents</title>
-<desc id="d">A staircase of five levels. 1 Drive: prompt and context engineering, a back-and-forth conversation with the right model. 2 Equip: tools, skills and MCP servers let the agent reach files, APIs and a browser, inside permissions and a sandbox. 3 Systematize: state engineering, a workflow run as a state machine with stages and retries; autopilot lives here. 4 Orchestrate: loop engineering, a manager fanning work out to workers and verifying results. 5 Master: environment engineering, guardrails and an agent-oriented environment where the easiest path is the right path. agent-pm layers are marked on the steps: Session on levels 1 and 2, Delegate on 3, the Linear orchestrator with the manager between 4 and 5, and you on top, setting the rules, on 5. agent-pm is marked between levels 4 and 5, heading for 5 and beyond.</desc>
+<desc id="d">A staircase of five levels. 1 Drive: prompt and context engineering, a back-and-forth conversation with the right model. 2 Equip: tools, skills and MCP servers let the agent reach files, APIs and a browser, inside permissions and a sandbox. 3 Systematize: state engineering, a workflow run as a state machine with stages and retries; autopilot lives here. 4 Orchestrate: loop engineering, a manager fanning work out to workers and verifying results. 5 Master: environment engineering, guardrails and an agent-oriented environment where the easiest path is the right path. agent-pm layers are marked on the steps: Session on levels 1 and 2, Delegate on 3, Orchestrator with the manager between 4 and 5, and you on top, setting the rules, on 5. agent-pm is marked between levels 4 and 5, heading for 5 and beyond.</desc>
 <defs>
 <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2f7"/></linearGradient>
 <linearGradient id="heroBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#effcfa"/><stop offset="0.5" stop-color="#ffffff"/></linearGradient>
@@ -145,7 +145,7 @@
 <text x="570.0" y="476.5" font-size="12" fill="#0f766e" font-weight="700" text-anchor="start">Delegate</text>
 <rect x="822.0" y="432" width="222" height="28" rx="14" fill="#ffffff" stroke="#5eead4" stroke-width="1.3" filter="url(#soft)"/>
 <polygon points="843.8,449.4 838.0,452.7 832.2,449.4 832.2,442.6 838.0,439.3 843.8,442.6" fill="url(#hex)" stroke="url(#hex)" stroke-width="2" stroke-linejoin="round"/>
-<text x="852.0" y="450.5" font-size="12" fill="#0f766e" font-weight="700" text-anchor="start">Linear orchestrator + manager</text>
+<text x="852.0" y="450.5" font-size="12" fill="#0f766e" font-weight="700" text-anchor="start">Orchestrator + manager</text>
 <rect x="969.0" y="334" width="156" height="28" rx="14" fill="url(#mgr)" filter="url(#soft)"/>
 <use href="#person" x="987.0" y="349" fill="#7ee8dc" transform="scale(1)"/>
 <text x="1003.0" y="352.5" font-size="12" fill="#ffffff" font-weight="700" text-anchor="start">+ you set the rules</text>
