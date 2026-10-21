@@ -1,6 +1,7 @@
 #!/bin/sh
 # ctmux --install copies this under each command's name into ~/.agent-pm/bin: it runs that command
-# from the agent-pm plugin installed now, Claude Code's install first, then Codex's newest.
+# from the agent-pm plugin installed now, Claude Code's install first, then Codex's newest, then
+# OpenCode's newest.
 target=$(python3 -I - "${0##*/}" <<'EOF'
 import glob, json, os, sys
 
@@ -9,10 +10,19 @@ rel = os.path.join("manager", "skills", "manage", "scripts", name) if name == "c
 home = os.path.expanduser("~")
 record = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude"), "plugins", "installed_plugins.json")
 cache = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(home, ".codex"), "plugins", "cache", "agent-pm", "agent-pm")
+packages = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"), "opencode", "packages")
 
 
-def version(path):
-    return [int(part) if part.isdigit() else -1 for part in os.path.basename(path).split(".")]
+def version(text):
+    return [int(part) if part.isdigit() else -1 for part in text.split(".")]
+
+
+def opencode_version(root):
+    try:
+        with open(os.path.join(root, "package.json"), encoding="utf-8") as f:
+            return version(str(json.load(f).get("version")))
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 try:
@@ -21,12 +31,18 @@ try:
 except (OSError, ValueError, LookupError, TypeError):
     entries = []
 roots = [entry.get("installPath") for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
-roots += sorted(glob.glob(os.path.join(glob.escape(cache), "*")), key=version, reverse=True)
+roots += sorted(glob.glob(os.path.join(glob.escape(cache), "*")), key=lambda p: version(os.path.basename(p)), reverse=True)
+found = []
+for top, dirs, _ in os.walk(packages):  # each spec's dir holds a node_modules; never walk into one
+    if "node_modules" in dirs:
+        dirs.remove("node_modules")
+        found.append(os.path.join(top, "node_modules", "agent-pm"))
+roots += sorted(found, key=opencode_version, reverse=True)
 for root in roots:
     if isinstance(root, str) and os.access(path := os.path.join(root, rel), os.X_OK):
         print(path)
         sys.exit()
-sys.exit(f"{name}: no installed agent-pm plugin has {rel}; looked in {record} and {cache}/<version>/")
+sys.exit(f"{name}: no installed agent-pm plugin has {rel}; looked in {record}, {cache}/<version>/ and {packages}/")
 EOF
 ) || exit
 exec "$target" "$@"

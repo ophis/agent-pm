@@ -4,7 +4,7 @@ from tests.case import REPO
 from tests.guard_checks import plugin
 from tests.guard_samples import Sample
 
-CLAUDE, CODEX = ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"
+CLAUDE, CODEX, OPENCODE = ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "package.json"
 
 
 class PluginManifests(Sample):
@@ -17,6 +17,7 @@ class PluginManifests(Sample):
         files = {
             CLAUDE: self.manifest(),
             CODEX: self.manifest(),
+            OPENCODE: self.manifest(),
             "delegate/skills/a/SKILL.md": "",
             "manager/skills/m/SKILL.md": "",
             "manager/skills/t/scripts/ctmux": "",
@@ -35,6 +36,7 @@ class PluginManifests(Sample):
                 {
                     CLAUDE: self.manifest(skills="./skills/"),
                     CODEX: self.manifest(skills="./skills/"),
+                    OPENCODE: self.manifest(skills="./skills/"),
                     "skills/a/SKILL.md": "",
                     "delegate/skills/a/SKILL.md": None,
                     "manager/skills/m/SKILL.md": None,
@@ -42,6 +44,12 @@ class PluginManifests(Sample):
                 [],
             ),
             ("a missing manifest", {CODEX: None}, [f"{CODEX}: missing"]),
+            ("a missing OpenCode manifest", {OPENCODE: None}, [f"{OPENCODE}: missing"]),
+            (
+                "an OpenCode manifest of another version",
+                {OPENCODE: self.manifest(version="0.9.0")},
+                [f'{OPENCODE}: version "0.9.0", not {CLAUDE}\'s "1.0.0"'],
+            ),
             (
                 "a missing project skill",
                 {CODEX: self.manifest(skills=["./delegate/skills/"])},
@@ -92,5 +100,26 @@ class PluginSkills(Sample):
                 "skill act-as: missing",
                 "skill board: missing",
                 "skill extra: not one of act-as, board, manage",
+            ],
+        )
+
+
+class PluginCommandTemplates(Sample):
+    def test_the_real_skills_are_safe_templates(self):
+        self.assertEqual(plugin.plugin_command_templates(REPO), [])
+
+    def test_shell_and_positional_placeholders_in_a_body_are_found(self):
+        head = '---\nname: m\ndescription: "run !`x` with $1"\n---\n'
+        root = self.tree(
+            {
+                "manager/skills/m/SKILL.md": head + "Run `!` first, then `ls`.\nTake $2.\n",
+                "delegate/skills/a/SKILL.md": head + "Arguments: $ARGUMENTS, $HOME, 1$\n",
+            }
+        )
+        self.assertEqual(
+            plugin.plugin_command_templates(root),
+            [
+                "manager/skills/m/SKILL.md: !` runs a shell command in an OpenCode command template",
+                "manager/skills/m/SKILL.md: $2 is an OpenCode command argument placeholder",
             ],
         )
