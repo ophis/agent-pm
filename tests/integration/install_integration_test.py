@@ -426,6 +426,8 @@ class InstallTest(Case):
         """A rerun: the checklist, unless flags answer it, confirmed as the last run left it."""
         flagged = "--clients" in args and {"--docker", "--no-docker"} & set(args)
         shown = [] if flagged else [(MENU_Q, "")]
+        if self.state().get("board") == "yes" and {"--launchd", "--no-launchd"} & set(args):
+            return self.run_install(*args, answers=[*shown, (SUDO_Q, PASSWORD), *answers])
         return self.run_install(*args, answers=[(SUDO_Q, PASSWORD), *shown, *answers])
 
     def config(self):
@@ -1713,12 +1715,15 @@ class InstallTest(Case):
                         job,
                     ],
                 )
-                if tomllib.loads(self.config().read_text())["orchestrator"]["tracker"] == "local":
-                    directory = orchestrator_config._board()
-                    self.assertEqual(directory, str(Path(self.agent_pm, "board").resolve()))
-                    self.assertEqual(local_board.scan(directory), ())
                 self.assertNotIn("AGENT_PM_BOARD_DIR", data["EnvironmentVariables"])
                 self.assertNotIn("local_board_dir", self.state())
+        if (
+            installed
+            and tomllib.loads(self.config().read_text())["orchestrator"]["tracker"] == "local"
+        ):
+            directory = orchestrator_config._board()
+            self.assertEqual(directory, str(Path(self.agent_pm, "board").resolve()))
+            self.assertEqual(local_board.scan(directory), ())
 
     def test_board_local_with_jobs(self):
         result = self.fresh(
@@ -1775,22 +1780,20 @@ class InstallTest(Case):
         self.config().write_text(
             self.config().read_text() + '\n[orchestrator]\ntracker = "local"\n'
         )
-        state = Path(self.agent_pm, "install/state")
-        state.write_text(state.read_text().replace("board=no", "board=yes"))
-        result = self.again("--launchd", answers=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        result = self.run_install(
+            "--launchd",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (MENU_Q, menu(("claude", "codex", "board"))),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+            ],
+        )
         self.assert_ok(result)
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
         self.assertEqual(self.state()["board_tracker"], "local")
         self.assertNotIn("Board tracker [local/linear]", result.tty)
-        state.write_text(
-            "\n".join(
-                line
-                for line in state.read_text().splitlines()
-                if not line.startswith("board_jobs=")
-            )
-            + "\n"
-        )
         result = self.again()
         self.assert_ok(result)
         self.assertEqual(self.state()["board_jobs"], "yes")
@@ -1808,12 +1811,27 @@ class InstallTest(Case):
         result = self.again("--no-board")
         self.assert_ok(result)
         self.assertEqual(self.config().read_text(), before)
+
         self.assert_no_linear(result)
         self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
         for job in ("router", "promote"):
             self.assertTrue(
                 Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist").exists()
             )
+
+    def test_board_tracker_state_precedes_config(self):
+        self.assert_ok(self.fresh("--board", "local", "--no-launchd", then=[(WRITE_Q, "y")] * 2))
+        self.config().write_text(
+            self.config().read_text().replace('tracker = "local"', 'tracker = "linear"')
+        )
+        result = self.again(answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assertEqual(self.state()["board_tracker"], "local")
+        self.assertEqual(
+            tomllib.loads(self.config().read_text())["orchestrator"]["tracker"], "local"
+        )
+        self.assertNotIn("Board tracker [local/linear]", result.tty)
+        self.assert_no_linear(result)
 
     def test_board_local_declined(self):
         result = self.fresh(
@@ -2145,6 +2163,19 @@ class InstallTest(Case):
         )
         self.assertEqual(result.code, 2)
         self.assertIn("requires a board", result.stderr)
+
+    def test_installed_board_jobs_rejected_before_privileged_work(self):
+        self.assert_ok(self.fresh("--board", "local", "--no-launchd", then=[(WRITE_Q, "y")] * 2))
+        before = self.snapshot()
+        result = self.run_install(
+            "--launchd",
+            answers=[(MENU_Q, menu(("claude", "codex"), ("claude", "codex", "board")))],
+        )
+        self.assertEqual(result.code, 2)
+        self.assertIn("requires a board", result.stderr)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse([c for c in self.calls() if c.startswith(("sudo", "brew"))])
+        self.assertNotIn("dependencies", result.stderr)
 
     def test_board_tracker_inference_handles_invalid_config(self):
         self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))

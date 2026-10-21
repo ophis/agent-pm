@@ -630,17 +630,17 @@ answers() {
   if [ "$board" != yes ] && [ -n "$jobs_flag" ]; then
     usage_error "--launchd/--no-launchd requires a board"
   fi
-  board_tracker=$(state_get board_tracker)
-  if [ "$board" = yes ] && [ -z "$board_tracker" ]; then board_tracker=$(configured_tracker); fi
-  case $board_tracker in local | linear) ;; *) board_tracker=local ;; esac
+  board_tracker=
   case $board_flag in local | linear) board_tracker=$board_flag ;; esac
+  board_tracker=${board_tracker:-$(state_get board_tracker)}
+  board_tracker=${board_tracker:-$(configured_tracker "$said")}
   board_jobs_choice=${jobs_flag:-$(state_get board_jobs)}
   if [ "$board" = yes ]; then
-    if [ -z "$board_flag" ] && [ -z "$(state_get board_tracker)" ] && [ -z "$(configured_tracker)" ]; then
+    if [ -z "$board_tracker" ]; then
       while :; do
-        ask "Board tracker [local/linear] [$board_tracker]:"
-        case ${answer:-$board_tracker} in
-          local | linear) board_tracker=${answer:-$board_tracker}; break ;;
+        ask "Board tracker [local/linear] [local]:"
+        case ${answer:-local} in
+          local | linear) board_tracker=${answer:-local}; break ;;
         esac
       done
     fi
@@ -657,6 +657,7 @@ answers() {
     state_set board_tracker "$board_tracker"
     state_set board_jobs "$board_jobs_choice"
   fi
+  board_tracker=${board_tracker:-local}
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
   if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
     usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
@@ -1571,11 +1572,9 @@ docker_cli() {
   config_file session.hosts.docker docker "$cli"
 }
 
-# Prints only a recognized, explicit tracker; an absent setting stays empty.
+# configured_tracker <config_says snapshot>: prints only a recognized tracker; absent stays empty.
 configured_tracker() {
-  local said tracker
-  said=$(config_says)
-  tracker=${said#*$'\t'}
+  local tracker=${1#*$'\t'}
   tracker=${tracker#*$'\t'}
   case $tracker in local | linear) printf '%s' "$tracker" ;; esac
 }
@@ -1952,7 +1951,7 @@ board_config() {
   board_wanted || return 0
   if [ "$board_tracker" = local ]; then
     config_file orchestrator tracker local
-    if [ "$(configured_tracker)" = local ]; then
+    if [ "$(configured_tracker "$(config_says)")" = local ]; then
       local_board_setup
     else
       skip "local tracker not configured"
@@ -2007,7 +2006,7 @@ board_jobs() {
     skip "launchd jobs not chosen"
     return 0
   fi
-  if [ "$(configured_tracker)" != "$board_tracker" ]; then
+  if [ "$(configured_tracker "$(config_says)")" != "$board_tracker" ]; then
     skip "board tracker not configured"
     return 0
   fi
@@ -2092,7 +2091,7 @@ EOF
 }
 
 main() {
-  local platform
+  local platform answered=
   set +x
   parse_args "$@"
   early_checks
@@ -2102,10 +2101,15 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
+  # An installed board already has Python; reject deselecting it with job flags before privileged work.
+  if [ -n "$jobs_flag" ] && [ "$(state_get board)" = yes ]; then
+    answers
+    answered=yes
+  fi
   sudo_once
   homebrew
   dependencies
-  answers
+  if [ -z "$answered" ]; then answers; fi
   config_file
   apps
   client_logins

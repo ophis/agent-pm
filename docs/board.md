@@ -37,6 +37,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    bin/agent-pm-orchestrator promote --dry-run
    ```
 4. Install the launchd jobs:
+   The jobs use the orchestrator's default board directory ([`_board()`](../orchestrator/src/agent_pm/orchestrator/engine/config.py)); the templates need only HOME and PATH substitution.
    ```bash
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
