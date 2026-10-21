@@ -916,6 +916,10 @@ opencode_install() {
     skip "OpenCode $version in $opencode_prefix"
   else
     npm install -g --prefix "$opencode_prefix" --cache "$opencode_prefix/.npm-cache" "opencode-ai@$version" </dev/null >&2
+    # npm's allowScripts skips opencode-ai's postinstall, which puts the platform binary in place of a stub.
+    node "$opencode_prefix/lib/node_modules/opencode-ai/postinstall.mjs" </dev/null >&2
+    found=$("$opencode_prefix/bin/opencode" --version </dev/null 2>/dev/null || true)
+    [ "$found" = "$version" ] || die "OpenCode $version in $opencode_prefix does not run: opencode --version gave '$found'"
   fi
   case $(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url") in
     localhost | 127.0.0.1) ;;

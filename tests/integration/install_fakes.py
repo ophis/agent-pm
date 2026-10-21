@@ -157,6 +157,8 @@ def brew(args):
         mark(installed)
         if command := (CASKS if cask else APPS).get(name):
             link_app(command)
+        if name == "node":
+            link_app("node")
         if app := CASK_APPS.get(name):
             (ROOT / "Applications" / app).mkdir(parents=True, exist_ok=True)
         return 0
@@ -396,12 +398,31 @@ def opencode_auth():
     return data / "opencode/auth.json"
 
 
+STUB = '#!/bin/sh\necho "Error: opencode-ai\'s postinstall script was not run." >&2\nexit 1\n'
+
+
 def npm(args):
+    """Installs opencode-ai as npm's allowScripts leaves it: the stub, its postinstall not run."""
     prefix = Path(args[args.index("--prefix") + 1])
     version = args[-1].split("@", 1)[1]
+    package = prefix / "lib/node_modules/opencode-ai"
+    mark(package / "postinstall.mjs")
+    mark(package / "VERSION", version)
     (prefix / "bin").mkdir(parents=True, exist_ok=True)
-    shutil.copy(FAKES / "apps/opencode", prefix / "bin/opencode")
-    mark(FAKES / "opencode_version", version)
+    (prefix / "bin/opencode").write_text(STUB)
+    (prefix / "bin/opencode").chmod(0o755)
+    return 0
+
+
+def node(args):
+    """opencode-ai's postinstall: the platform binary in place of the stub."""
+    package = Path(args[0]).parent
+    if (
+        args[0].endswith("/opencode-ai/postinstall.mjs")
+        and not (FAKES / "postinstall_broken").exists()
+    ):
+        shutil.copy(FAKES / "apps/opencode", package.parents[2] / "bin/opencode")
+        mark(FAKES / "opencode_version", (package / "VERSION").read_text())
     return 0
 
 
@@ -436,6 +457,7 @@ TOOLS = {
     "git": lambda _args: 0,
     "go": lambda _args: 0,
     "npm": npm,
+    "node": node,
     "opencode": opencode,
     "claude": claude,
     "codex": codex,

@@ -46,7 +46,7 @@ REAL = (
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 FAKED += ("xcode-select", "ps")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
-APPS += ("npm", "opencode")
+APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
 TOKEN = "sk-ant-oat01-SENTINEL-token"
 KEY = "sk-SENTINEL-opencode-key"
@@ -910,6 +910,7 @@ class InstallTest(Case):
             f"npm install -g --prefix {prefix} --cache {prefix}/.npm-cache opencode-ai@1.19.3",
             calls,
         )
+        self.assertIn(f"node {prefix}/lib/node_modules/opencode-ai/postinstall.mjs", calls)
         self.assertIn("opencode auth login", calls)
         self.assertIn("In opencode auth login pick Other, enter lan", result.stderr)
         self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
@@ -949,6 +950,27 @@ class InstallTest(Case):
         (self.fakes / "tty_name").write_text("??\n")
         self.assert_ok(self.fresh())
         self.assertIn("claude auth login", self.calls())
+
+    def test_opencode_that_does_not_run_stops(self):
+        (self.fakes / "postinstall_broken").write_text("")
+        flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
+        flags += ("--opencode-url", "http://localhost:8080/v1", "--opencode-model", "m")
+        flags += ("--opencode-context", "65536", "--opencode-key-stdin")
+        result = self.run_install(
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y")]
+        )
+        self.assertEqual(result.code, 1)
+        self.assertIn(
+            f"install.sh: OpenCode 1.19.3 in {self.agent_pm}/opencode does not run:"
+            " opencode --version gave ''",
+            result.stderr,
+        )
+        (self.fakes / "postinstall_broken").unlink()
+        result = self.run_install(
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
+        )
+        self.assert_ok(result)
+        self.assertIn("1.19.3", (self.fakes / "opencode_version").read_text())
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
