@@ -89,13 +89,14 @@ set -e
 sudo -n true
 mkdir -p "{prefix}/bin"
 cp "{apps}/brew" "{prefix}/bin/brew"
+: > "{fakes}/clt"
 """
 
 
 def curl(args):
     url = args[-1]
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh":
-        out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps"))
+        out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps", fakes=FAKES))
         return 0
     out(f"curl: unexpected {url}\n", sys.stderr)
     return 22
@@ -248,6 +249,10 @@ def security(args):
     return 2
 
 
+def xcode_select(args):
+    return 0 if args == ["-p"] and (FAKES / "clt").exists() else 2
+
+
 def docker(args):
     return 0 if args == ["info"] and (FAKES / "docker_running").exists() else 1
 
@@ -299,15 +304,20 @@ def broker(args):
     if args == ["login", "claude"]:
         out("Paste the setup-token (hidden): ")
         mark(FAKES / "broker/claude_token", sys.stdin.readline().rstrip("\n"))
+        store_key("agent-pm-claude", "token")
         return 0
     if args == ["login", "github", "agent-pm-bot"]:
-        return 0 if (FAKES / "keychain/agent-pm-bot").exists() else 1
+        if not (FAKES / "keychain/agent-pm-bot").exists():
+            return 1
+        store_key("agent-pm-github-users", "42")
+        return 0
     if args == ["login", "codex"]:
         save(codex_file, {**(state or {}), "state": "ready", "repair": ""})
+        store_key("agent-pm-codex", "auth")
         return 0
     if args[:2] == ["login", "opencode"]:
         out(f"OpenCode provider {args[2]} API key (hidden): ")
-        store_key(f"agent-pm-opencode.{args[2]}", sys.stdin.readline().rstrip("\n"))
+        store_key("agent-pm-opencode", sys.stdin.readline().rstrip("\n"))
         return 0
     return 2
 
@@ -359,6 +369,7 @@ TOOLS = {
     "codex": codex,
     "security": security,
     "docker": docker,
+    "xcode-select": xcode_select,
     "open": open_,
     "launchctl": launchctl,
     "shasum": shasum,

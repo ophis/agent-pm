@@ -6,10 +6,12 @@
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
 set -euo pipefail
 
+me=install.sh
 root=${AGENT_PM_INSTALL_ROOT:-}
 broker=$root/usr/local/libexec/agent-pm/agent-pm-broker
 state_dir=$HOME/.agent-pm/install
 state_file=$state_dir/state
+ledger=$state_dir/added
 config=$HOME/.agent-pm/config.local.toml
 opencode_prefix=$HOME/.agent-pm/opencode
 ref=main
@@ -45,7 +47,7 @@ step() {
 }
 skip() { say "    skip: $*"; }
 die() {
-  say "install.sh: $*"
+  say "$me: $*"
   exit 1
 }
 
@@ -187,6 +189,70 @@ consent() {
   ask_yn "Write it?"
 }
 
+# Exit 0 when $1 is a path strictly under $HOME, absolute, without `..` or a tab or newline.
+under_home() {
+  case $1 in
+    "$HOME"/?*) ;;
+    *) return 1 ;;
+  esac
+  case /$1/ in */../* | */./*) return 1 ;; esac
+  case $1 in *$'\t'* | *$'\n'*) return 1 ;; esac
+  return 0
+}
+
+# Exit 0 when the fields are a Ledger record the cleanup can act on.
+ledger_valid() {
+  local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
+  case $1:$# in
+    dir:2 | file:2 | profile-file:2) under_home "$2" ;;
+    profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
+    homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
+    clt:1 | broker:1) true ;;
+    config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
+    formula:2) case $2 in gh | tmux | git | python | go | node) true ;; *) false ;; esac ;;
+    cask:2) case $2 in iterm2 | claude-code | codex | docker-desktop) true ;; *) false ;; esac ;;
+    claude-marketplace:2 | codex-marketplace:2) case $2 in agent-pm | claude-autopilot) true ;; *) false ;; esac ;;
+    claude-plugin:2 | codex-plugin:2) case $2 in agent-pm@agent-pm | autopilot@claude-autopilot) true ;; *) false ;; esac ;;
+    login:2) case $2 in gh | claude | codex) true ;; *) false ;; esac ;;
+    launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
+    keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
+    opencode-auth:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
+    *) false ;;
+  esac
+}
+
+# Records what the installer is about to create, once, for scripts/install-cleanup.sh.
+ledger_add() {
+  local line
+  line=$(
+    IFS=$'\t'
+    printf '%s' "$*"
+  )
+  if ! ledger_valid "$@"; then
+    say "    not recorded for cleanup: $*"
+    return 0
+  fi
+  mkdir -p "$state_dir"
+  if [ -f "$ledger" ] && grep -qxF -- "$line" "$ledger"; then return 0; fi
+  printf '%s\n' "$line" >>"$ledger"
+}
+
+recorded() { [ -f "$ledger" ] && grep -qxF -- "$(
+  IFS=$'\t'
+  printf '%s' "$*"
+)" "$ledger"; }
+
+# Records directory $1 when it does not exist yet.
+record_dir() { [ -e "$1" ] || ledger_add dir "$1"; }
+
+# Records a directory under ~/.agent-pm, unless ~/.agent-pm itself is the installer's.
+record_agent_dir() { recorded dir "$HOME/.agent-pm" || record_dir "$1"; }
+
+# Records keychain item $1 / $2 when it does not exist yet.
+record_item() {
+  security find-generic-password -s "$1" -a "$2" </dev/null >/dev/null 2>&1 || ledger_add keychain "$1" "$2"
+}
+
 state_get() {
   local key value
   [ -f "$state_file" ] || return 0
@@ -197,6 +263,7 @@ state_get() {
 
 state_set() {
   local key value
+  if [ -f "$state_file" ] && [ "$(state_get "$1")" = "$2" ]; then return 0; fi
   mkdir -p "$state_dir"
   {
     if [ -f "$state_file" ]; then
@@ -217,7 +284,7 @@ on_exit() {
   fi
   if [ -n "$sudo_mine" ]; then sudo -k </dev/null >/dev/null 2>&1 || true; fi
   if [ "$rc" -ne 0 ] && [ -n "$current" ]; then
-    say "install.sh: $current failed; rerun the same command to continue"
+    say "$me: $current failed; rerun the same command to continue"
   fi
 }
 
@@ -259,6 +326,8 @@ profile_line() {
   if [ -f "$file" ] && grep -qxF -- "$1" "$file"; then
     skip "in $file"
   elif consent "$file" "$1"; then
+    if [ ! -e "$file" ]; then ledger_add profile-file "$file"; fi
+    ledger_add profile "$file" "$1"
     printf '%s\n' "$1" >>"$file"
   else
     skip declined
@@ -274,6 +343,8 @@ homebrew() {
     brew=$prefix/bin/brew
     skip "installed"
   else
+    ledger_add homebrew "$prefix"
+    if ! xcode-select -p </dev/null >/dev/null 2>&1; then ledger_add clt; fi
     installer=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)
     NONINTERACTIVE=1 bash -c "$installer" </dev/null
     brew=$prefix/bin/brew
@@ -284,6 +355,7 @@ homebrew() {
 }
 
 brew_install() {
+  if [ "$1" = --cask ]; then ledger_add cask "$2"; else ledger_add formula "$1"; fi
   say "    brew install $*"
   brew install "$@" </dev/null
   hash -r
@@ -513,7 +585,7 @@ config_file() {
     3)
       if [ ! -f "$config" ]; then changes=$(cat "$plan"); fi
       if consent "$config" "$changes"; then
-        if [ -f "$config" ]; then backup_config; fi
+        if [ -f "$config" ]; then backup_config; else ledger_add config created; fi
         mv "$plan" "$config"
       else
         rm -f "$plan"
@@ -532,13 +604,25 @@ config_file() {
 # Keeps the user's own config.local.toml once, before the installer's first edit (the cleanup restores it).
 backup_config() {
   local backup=$state_dir/config.local.toml.orig
-  [ -f "$backup" ] && return 0
+  if recorded config created || recorded config backup; then return 0; fi
   cp "$config" "$backup.tmp"
   mv "$backup.tmp" "$backup"
+  ledger_add config backup
 }
 
 apps() {
   step apps
+  record_dir "$HOME/.config/gh"
+  if has claude; then
+    record_dir "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -e "$HOME/.claude.json" ]; then ledger_add file "$HOME/.claude.json"; fi
+  fi
+  if has codex; then record_dir "${CODEX_HOME:-$HOME/.codex}"; fi
+  if [ "$docker" = yes ]; then
+    record_dir "$HOME/.docker"
+    record_dir "$HOME/Library/Containers/com.docker.docker"
+    record_dir "$HOME/Library/Group Containers/group.com.docker"
+  fi
   if has claude; then cask claude-code claude; else skip "Claude Code: not chosen"; fi
   if has codex; then cask codex codex; else skip "Codex: not chosen"; fi
   if [ "$docker" = yes ]; then
@@ -554,6 +638,7 @@ client_logins() {
   if gh auth status </dev/null >/dev/null 2>&1; then
     skip "logged in"
   else
+    ledger_add login gh
     gh auth login --hostname github.com --git-protocol https --web <&3 >&3 2>&3
   fi
   step "Claude Code login"
@@ -562,6 +647,7 @@ client_logins() {
   elif claude auth status </dev/null >/dev/null 2>&1; then
     skip "logged in"
   else
+    ledger_add login claude
     claude auth login <&3 >&3 2>&3
   fi
   step "Codex login"
@@ -570,6 +656,7 @@ client_logins() {
   elif codex login status </dev/null >/dev/null 2>&1; then
     skip "logged in"
   else
+    ledger_add login codex
     codex login <&3 >&3 2>&3
   fi
 }
@@ -634,11 +721,13 @@ claude_plugins() {
       claude plugin uninstall agent-pm@agent-pm </dev/null >&2 || true
       claude plugin marketplace remove agent-pm </dev/null >&2
     fi
+    if [ "$rc" = 1 ]; then ledger_add claude-marketplace agent-pm; fi
     claude plugin marketplace add "$source" </dev/null >&2
   fi
   rc=0
   claude_market claude-autopilot ophis/claude-autopilot '*' || rc=$?
   if [ "$rc" = 1 ]; then
+    ledger_add claude-marketplace claude-autopilot
     claude plugin marketplace add ophis/claude-autopilot </dev/null >&2
   else
     skip "marketplace claude-autopilot"
@@ -649,7 +738,10 @@ claude_plugins() {
     case $rc in
       0) skip "$id installed" ;;
       2) claude plugin enable "$id" </dev/null >&2 ;;
-      *) claude plugin install "$id" </dev/null >&2 ;;
+      *)
+        ledger_add claude-plugin "$id"
+        claude plugin install "$id" </dev/null >&2
+        ;;
     esac
   done
 }
@@ -671,6 +763,7 @@ codex_plugins() {
       codex plugin remove agent-pm@agent-pm </dev/null >&2 || true
       codex plugin marketplace remove agent-pm </dev/null >&2
     fi
+    if [ "$rc" = 1 ]; then ledger_add codex-marketplace agent-pm; fi
     if [ "$ref" = main ]; then
       codex plugin marketplace add ophis/agent-pm </dev/null >&2
     else
@@ -680,12 +773,18 @@ codex_plugins() {
   rc=0
   codex_market claude-autopilot https://github.com/ophis/claude-autopilot.git '*' || rc=$?
   if [ "$rc" = 1 ]; then
+    ledger_add codex-marketplace claude-autopilot
     codex plugin marketplace add ophis/claude-autopilot </dev/null >&2
   else
     skip "marketplace claude-autopilot"
   fi
   for id in agent-pm@agent-pm autopilot@claude-autopilot; do
-    if codex_plugin_on "$id"; then skip "$id installed"; else codex plugin add "$id" </dev/null >&2; fi
+    if codex_plugin_on "$id"; then
+      skip "$id installed"
+    else
+      ledger_add codex-plugin "$id"
+      codex plugin add "$id" </dev/null >&2
+    fi
   done
 }
 
@@ -726,6 +825,11 @@ opencode_install() {
   fi
   version=$(go_const broker/internal/launcher/versions.go opencodeMinVersion)
   formula node
+  record_agent_dir "$opencode_prefix"
+  record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+  record_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
+  record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode"
   if [ -x "$opencode_prefix/bin/opencode" ]; then
     found=$("$opencode_prefix/bin/opencode" --version </dev/null 2>/dev/null || true)
   fi
@@ -788,12 +892,15 @@ opencode_key() {
     skip "logged in through the broker"
   elif opencode_has_key "$provider"; then
     skip "$provider in $(opencode_auth_file)"
-  elif [ -n "$key_stdin" ]; then
-    opencode_store_key
   else
-    say "In opencode auth login pick Other, enter $provider, then paste its API key"
-    "$opencode_prefix/bin/opencode" auth login <&3 >&3 2>&3
-    opencode_has_key "$provider" || die "no $provider key in $(opencode_auth_file)"
+    ledger_add opencode-auth "$(opencode_auth_file)" "$provider"
+    if [ -n "$key_stdin" ]; then
+      opencode_store_key
+    else
+      say "In opencode auth login pick Other, enter $provider, then paste its API key"
+      "$opencode_prefix/bin/opencode" auth login <&3 >&3 2>&3
+      opencode_has_key "$provider" || die "no $provider key in $(opencode_auth_file)"
+    fi
   fi
 }
 
@@ -804,6 +911,13 @@ ctmux_install() {
     [ -x "$HOME/.agent-pm/bin/$name" ] || missing=1
   done
   if [ -n "$missing" ]; then
+    if [ -d "$HOME/.agent-pm/bin" ]; then
+      for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
+        recorded dir "$HOME/.agent-pm" || [ -e "$HOME/.agent-pm/bin/$name" ] || ledger_add file "$HOME/.agent-pm/bin/$name"
+      done
+    else
+      record_agent_dir "$HOME/.agent-pm/bin"
+    fi
     "$pkg/manager/skills/manage/scripts/ctmux" --install </dev/null >&2
   else
     skip "launchers in ~/.agent-pm/bin"
@@ -845,6 +959,8 @@ broker_install() {
   fi
   docker_running
   step broker
+  [ -e "$root/usr/local/libexec/agent-pm" ] || ledger_add broker
+  record_agent_dir "$HOME/.agent-pm/docker"
   if [ "$ref" = main ]; then
     sh "$pkg/broker/install.sh" </dev/null >&2
   else
@@ -869,6 +985,7 @@ store_app_key() {
     case $answer in '' | *[!0-9]*) ;; *) break ;; esac
   done
   id=$answer
+  ledger_add keychain agent-pm-bot "$id"
   key=$(base64 -i "$pem")
   printf 'add-generic-password -s agent-pm-bot -a %s -U -w %s %s\n' "$id" "$key" \
     "$HOME/Library/Keychains/login.keychain-db" | security -i >/dev/null 2>&1 || true
@@ -907,6 +1024,7 @@ broker_logins() {
     skip "done for this broker"
   else
     say "Create a token with claude setup-token, then paste it at the broker's prompt"
+    record_item agent-pm-claude default
     claude setup-token <&3 >&3 2>&3
     "$broker" login claude <&3 >&3 2>&3
     state_set login_claude "$sha"
@@ -917,6 +1035,7 @@ broker_logins() {
   elif ! security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 && ! store_app_key; then
     skip "no agent-pm-bot App key (docs/docker-host.md#log-in)"
   else
+    record_item agent-pm-github-users agent-pm-bot
     "$broker" login github agent-pm-bot <&3 >&3 2>&3
     state_set login_github "$sha"
   fi
@@ -937,6 +1056,7 @@ broker_logins() {
     if [ "$(codex_need "$min")" = ready ]; then
       skip "logged in"
     else
+      record_item agent-pm-codex auth
       "$broker" login codex <&3 >&3 2>&3
     fi
   fi
@@ -946,6 +1066,7 @@ broker_logins() {
   elif [ "$(state_get login_opencode)" = "$sha $provider" ]; then
     skip "done for this broker"
   else
+    record_item agent-pm-opencode "$provider"
     "$broker" login opencode "$provider" <&3 >&3 2>&3
     state_set login_opencode "$sha $provider"
   fi
@@ -1003,6 +1124,7 @@ linear_keys() {
     if security find-generic-password -s "$service" </dev/null >/dev/null 2>&1; then
       skip "$service in the keychain"
     else
+      ledger_add keychain "$service" "$account"
       say "Linear key $service: paste its API key at security's prompt (nothing echoes)"
       security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
     fi
@@ -1053,8 +1175,10 @@ board_jobs() {
     return
   fi
   uid=$(id -u)
+  record_agent_dir "$HOME/.agent-pm/logs"
   mkdir -p "$HOME/.agent-pm/logs" "$HOME/Library/LaunchAgents"
   for job in $offered; do
+    ledger_add launchd "$job"
     target=$HOME/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
     cp "$state_dir/com.ophis.agent-pm.$job.plist" "$target"
     launchctl bootout "gui/$uid/com.ophis.agent-pm.$job" </dev/null >/dev/null 2>&1 || true
@@ -1073,6 +1197,7 @@ main() {
   if [ ! -e "$root/dev/tty" ] || ! (: <>"$root/dev/tty") 2>/dev/null; then die "needs a terminal for its questions and logins"; fi
   exec 3<>"$root/dev/tty"
   trap on_exit EXIT
+  [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
   sudo_once
   homebrew
   dependencies

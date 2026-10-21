@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import namedtuple
@@ -38,6 +39,7 @@ REAL = (
     "cmp",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
+FAKED += ("xcode-select",)
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -913,3 +915,149 @@ class InstallTest(Case):
         )
         self.assertEqual(mine.read_text(), "<plist>mine</plist>")
         self.assertFalse([c for c in self.calls() if c.startswith(("launchctl", "security add"))])
+
+    def ledger(self):
+        path = Path(self.agent_pm, "install/added")
+        return path.read_text().splitlines() if path.exists() else []
+
+    def full(self):
+        return self.fresh(
+            clients="claude,codex,opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(TOKEN_Q, TOKEN), (PEM_Q, ""), (r"OpenCode provider lan API key", KEY)],
+        )
+
+    def test_ledger_of_a_fresh_install(self):
+        shutil.rmtree(self.agent_pm)
+        self.assert_ok(self.fresh("--no-docker"))
+        h = self.home
+        self.assertEqual(
+            self.ledger(),
+            [
+                f"dir\t{h}/.agent-pm",
+                f"homebrew\t{self.root}/opt/homebrew",
+                "clt",
+                f"profile-file\t{h}/.zprofile",
+                f'profile\t{h}/.zprofile\teval "$({self.root}/opt/homebrew/bin/brew shellenv)"',
+                "formula\tgh",
+                "formula\ttmux",
+                "formula\tgit",
+                "cask\titerm2",
+                "config\tcreated",
+                f"dir\t{h}/.config/gh",
+                f"dir\t{h}/.claude",
+                f"file\t{h}/.claude.json",
+                f"dir\t{h}/.codex",
+                "cask\tclaude-code",
+                "cask\tcodex",
+                "login\tgh",
+                "login\tclaude",
+                "login\tcodex",
+                "claude-marketplace\tagent-pm",
+                "claude-marketplace\tclaude-autopilot",
+                "claude-plugin\tagent-pm@agent-pm",
+                "claude-plugin\tautopilot@claude-autopilot",
+                "codex-marketplace\tagent-pm",
+                "codex-marketplace\tclaude-autopilot",
+                "codex-plugin\tagent-pm@agent-pm",
+                "codex-plugin\tautopilot@claude-autopilot",
+                f'profile\t{h}/.zprofile\texport PATH="$HOME/.agent-pm/bin:$PATH"',
+            ],
+        )
+
+    def test_ledger_with_docker_and_opencode(self):
+        self.assert_ok(self.full())
+        h, ledger = self.home, self.ledger()
+        for record in (
+            f"dir\t{h}/.agent-pm/bin",
+            f"dir\t{h}/.agent-pm/docker",
+            f"dir\t{h}/.agent-pm/opencode",
+            f"dir\t{h}/.local/share/opencode",
+            f"dir\t{h}/.docker",
+            f"dir\t{h}/Library/Group Containers/group.com.docker",
+            "formula\tnode",
+            "cask\tdocker-desktop",
+            "broker",
+            "keychain\tagent-pm-claude\tdefault",
+            "keychain\tagent-pm-codex\tauth",
+            "keychain\tagent-pm-opencode\tlan",
+        ):
+            self.assertIn(record, ledger)
+        self.assertNotIn(f"dir\t{h}/.agent-pm", ledger)
+        self.assertNotIn("keychain\tagent-pm-github-users\tagent-pm-bot", ledger)
+
+    def test_rerun_skips_everything(self):
+        self.assert_ok(self.full())
+        before = self.ledger()
+        files = {
+            p: p.read_bytes()
+            for p in Path(self.home).rglob("*")
+            if p.is_file() and "fakes" not in p.parts
+        }
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("[y/N]", result.tty)
+        self.assertNotRegex(result.tty, r"\? |name:|URL|model:|App ID|Paste")
+        changing = (
+            "brew install",
+            "plugin install",
+            "plugin add",
+            "marketplace add",
+            "broker-install",
+        )
+        changing += ("security add", "launchctl", "npm install", "setup-token", "-codex ")
+        changing += ("auth login", "login codex", "login claude", "login opencode", "codex login")
+        changed = [c for c in self.calls() if any(w in c for w in changing)]
+        self.assertEqual([c for c in changed if not c.endswith(" status")], [])
+        self.assertEqual(self.ledger(), before)
+        exempt = {"sudo", "configuration", "plugin directory"}
+        steps = re.findall(r"==> (.+)\n(?!    skip:)", result.stderr)
+        self.assertEqual([s for s in steps if s not in exempt], [])
+        for path, data in files.items():
+            if path.name not in ("stdout", "stderr", "calls.log", "env.log"):
+                self.assertEqual(path.read_bytes(), data, path)
+
+    def test_failure_then_rerun_completes(self):
+        (self.fakes / "fail").write_text("brew install --cask codex")
+        result = self.run_install(
+            "--no-docker",
+            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (CLIENTS_Q, ""), (WRITE_Q, "y")],
+        )
+        self.assertEqual(result.code, 1)
+        self.assertIn("install.sh: apps failed; rerun the same command to continue", result.stderr)
+        self.assertIn("cask\tcodex", self.ledger())
+        self.assertNotIn("codex plugin", "\n".join(self.calls()))
+        result = self.again(answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn("brew install --cask codex", calls)
+        self.assertNotIn("brew install --cask claude-code", calls)
+        self.assertIn("codex plugin add agent-pm@agent-pm", calls)
+        self.assertEqual(self.ledger().count("cask\tcodex"), 1)
+
+    def test_not_recorded_outside_home(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        self.env["CODEX_HOME"] = str(outside / "codex")
+        result = self.fresh("--no-docker")
+        self.assert_ok(result)
+        self.assertIn(f"not recorded for cleanup: dir {outside}/codex", result.stderr)
+        self.assertFalse([r for r in self.ledger() if str(outside) in r])
+
+    def test_created_config_is_not_backed_up(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        self.assert_ok(
+            self.again("--docker", answers=[(WRITE_Q, "y"), (TOKEN_Q, TOKEN), (PEM_Q, "")])
+        )
+        self.assertIn('default = "docker"', self.config().read_text())
+        self.assertFalse(Path(self.agent_pm, "install/config.local.toml.orig").exists())
+        self.assertNotIn("config\tbackup", self.ledger())
+
+    def test_existing_config_is_backed_up_once(self):
+        mine = '# mine\n[session.hosts]\ndefault = "tmux"\n'
+        self.config().write_text(mine)
+        self.assert_ok(self.fresh("--docker", "--clients", "claude"))
+        self.assert_ok(self.again("--no-docker", answers=[(WRITE_Q, "y")]))
+        self.assertEqual(Path(self.agent_pm, "install/config.local.toml.orig").read_text(), mine)
+        self.assertEqual(self.ledger().count("config\tbackup"), 1)
