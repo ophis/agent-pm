@@ -1117,6 +1117,39 @@ class InstallTest(Case):
         self.assert_ok(self.again(answers=[login]))
         self.assertIn("agent-pm-broker login opencode lan", self.calls())
 
+    def test_opencode_empty_key_asked_again_or_skipped(self):
+        key_q = r"OpenCode provider lan API key \(hidden\):"
+        again = r"No lan key stored\. Try again\? \[y/N\]"
+        result = self.fresh(
+            clients="claude,opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(TOKEN_Q, TOKEN), (PEM_Q, ""), (key_q, ""), (again, "y"), (key_q, KEY)],
+        )
+        self.assert_ok(result)
+        self.assertEqual(self.calls().count("agent-pm-broker login opencode lan"), 2)
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+        self.assertIn(
+            'The first worker that reaches http://10.0.0.5:8080/v1 makes macOS ask "Allow Docker to'
+            ' find devices on local networks?": click Allow',
+            result.stderr,
+        )
+        (self.fakes / "keychain/agent-pm-opencode").unlink()
+        result = self.again(answers=[(key_q, ""), (again, "n")])
+        self.assert_ok(result)
+        self.assertIn("skip: no lan key: rerun install.sh, or run", result.stderr)
+
+    def test_opencode_tmux_empty_key_skipped(self):
+        result = self.fresh(
+            "--no-docker",
+            clients="claude,opencode",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", ""), (r"Try again\? \[y/N\]", "n")],
+        )
+        self.assert_ok(result)
+        self.assertIn("skip: no lan key: rerun install.sh, or run", result.stderr)
+        self.assertFalse(self.auth_json().exists())
+
     def test_opencode_http_warning(self):
         flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
         flags += ("--opencode-model", "m", "--opencode-context", "65536", "--opencode-key-stdin")

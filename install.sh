@@ -973,8 +973,20 @@ except BaseException:
 
 # The provider's key: on Docker, the broker's login (after broker_install), once per broker binary
 # while its keychain item is there; on tmux, OpenCode's auth.json.
+# Runs login command "$@" on the terminal until it succeeds (exit 0), or the user stops (exit 1).
+key_login() {
+  until "$@" <&3 >&3 2>&3; do
+    ask_yn "No $provider key stored. Try again?" || return 1
+  done
+}
+
+# OpenCode's own login, which stores the key in auth.json; exit 1 when no $provider key landed there.
+opencode_login() {
+  "$opencode_prefix/bin/opencode" auth login && opencode_has_key "$provider"
+}
+
 opencode_key() {
-  local sha
+  local sha later
   step "OpenCode key"
   if ! has opencode; then
     skip "OpenCode not chosen"
@@ -985,8 +997,15 @@ opencode_key() {
       skip "$provider logged in to this broker"
     else
       record_item agent-pm-opencode "$provider"
-      "$broker" login opencode "$provider" <&3 >&3 2>&3
-      state_set login_opencode "$sha $provider"
+      if key_login "$broker" login opencode "$provider"; then
+        state_set login_opencode "$sha $provider"
+      else
+        skip "no $provider key: rerun install.sh, or run $broker login opencode $provider"
+      fi
+      case $(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url") in
+        localhost | 127.0.0.1) ;;
+        *) say "The first worker that reaches $url makes macOS ask \"Allow Docker to find devices on local networks?\": click Allow (else System Settings › Privacy & Security › Local Network › Docker), or $provider stays unreachable" ;;
+      esac
     fi
   elif opencode_has_key "$provider"; then
     skip "$provider in $(opencode_auth_file)"
@@ -996,8 +1015,8 @@ opencode_key() {
       opencode_store_key
     else
       say "In opencode auth login pick Other, enter $provider, then paste its API key"
-      "$opencode_prefix/bin/opencode" auth login <&3 >&3 2>&3
-      opencode_has_key "$provider" || die "no $provider key in $(opencode_auth_file)"
+      later="rerun install.sh, or run $opencode_prefix/bin/opencode auth login"
+      if ! key_login opencode_login; then skip "no $provider key: $later"; fi
     fi
   fi
 }

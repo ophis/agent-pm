@@ -400,7 +400,9 @@ OpenCode sessions run the host's Ollama models, or a configured provider's ([Ope
 Ollama needs no login; each configured provider's API key comes from the broker ([Log in](#log-in)), which writes it
 to the container's `/run/agent-pm/secrets/opencode/<name>.key` at start ([Credentials](credentials.md#who-logs-in)).
 A provider is reached at its `base_url` from the container's bridge network, which Docker Desktop routes through the
-Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `localhost` is the container itself. An
+Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `localhost` is the container itself. The
+first worker to reach a LAN address makes macOS ask **Allow Docker to find devices on local networks?**: allow it (later:
+System Settings › Privacy & Security › Local Network › Docker), or the provider is unreachable. An
 `http://` `base_url` sends the key in plaintext: anyone on the LAN can capture it ([Risks](#risks)). Once, on the Mac:
 
 1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through

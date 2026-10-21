@@ -467,7 +467,11 @@ def broker(args):
         return 0
     if args[:2] == ["login", "opencode"]:
         out(f"OpenCode provider {args[2]} API key (hidden): ")
-        store_key("agent-pm-opencode", sys.stdin.readline().rstrip("\n"))
+        key = sys.stdin.readline().rstrip("\n")
+        if not key:
+            out("agent-pm-broker: API key must be 1 to 16384 bytes\n", sys.stderr)
+            return 1
+        store_key("agent-pm-opencode", key)
         return 0
     return 2
 
@@ -516,6 +520,8 @@ def opencode(args):
         name = sys.stdin.readline().strip()
         out("API key: ")
         key = sys.stdin.readline().rstrip("\n")
+        if not key:
+            return 1
         path = opencode_auth()
         data = json.loads(path.read_text()) if path.exists() else {}
         data[name] = {"type": "api", "key": key}
