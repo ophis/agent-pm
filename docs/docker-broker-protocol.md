@@ -240,6 +240,9 @@ than claiming success. For Docker Desktop file-sharing rejection, use `start_fai
 put Docker's original diagnostic in optional `error.cause` subject to channel redaction,
 and explain in `message` that `~/.agent-pm/docker-state` must be shared. workspace-rm's
 check run and volume deletion also put Docker's diagnostic in `cause`.
+A failed Codex credential write puts the container writer's reason in `cause`, at start (`start_failed`) and refresh
+(`refresh_failed`): one of `bootstrap.py`'s fixed messages, else a generic one with its exit status; never other container
+output, which the worker controls.
 
 `error.cleanup` is `not_needed` when no container was created, `removed` after rollback,
 or `failed` when rollback failed. Only start can report the latter two. Keep the original
