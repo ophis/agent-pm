@@ -98,7 +98,7 @@ Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`
 | `--ref <ref>` | installs the plugins and the broker from this branch or tag of `ophis/agent-pm` (default `main`; another ref builds the broker locally) |
 | `--clients <list>` | comma-separated `claude`, `codex`, `opencode`, with `claude` or `codex` |
 | `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
-| `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1` |
+| `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
 | `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
 | `--password-stdin` | reads the `sudo` password from stdin, before the key |
 

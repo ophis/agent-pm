@@ -22,12 +22,15 @@ docker=
 provider_flag=
 url_flag=
 model_flag=
+context_flag=
 provider=
 url=
 model=
+context=
 prev_provider=
 prev_url=
 prev_model=
+prev_context=
 key_stdin=
 password_stdin=
 sudo_mine=
@@ -40,7 +43,8 @@ reload=
 name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
-synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-key-stdin] [--password-stdin]'
+context_pattern='^[1-9][0-9]{0,8}$'
+synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -66,6 +70,7 @@ usage: $synopsis
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
+  --opencode-context <tokens> its context window in tokens (default 65536)
   --opencode-key-stdin        read the provider's API key from stdin (tmux Host only)
   --password-stdin            read the sudo password from stdin (first line, before the key)
 
@@ -101,6 +106,7 @@ clients_of() {
 valid_name() { [[ $1 =~ $name_pattern ]] && [ "$1" != ollama ]; }
 valid_url() { [[ $1 =~ $url_pattern ]]; }
 valid_model() { [[ $1 =~ $model_pattern ]]; }
+valid_context() { [[ $1 =~ $context_pattern ]]; }
 
 parse_args() {
   while [ $# -gt 0 ]; do
@@ -145,6 +151,11 @@ parse_args() {
         model_flag=$2
         shift
         ;;
+      --opencode-context)
+        [ $# -ge 2 ] && valid_context "$2" || usage_error "--opencode-context: want a token count, 1-999999999"
+        context_flag=$2
+        shift
+        ;;
       --opencode-key-stdin) key_stdin=1 ;;
       --password-stdin) password_stdin=1 ;;
       *) usage_error "unknown argument: $1" ;;
@@ -156,7 +167,7 @@ parse_args() {
   fi
 }
 
-opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$key_stdin" ]; }
+opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$context_flag$key_stdin" ]; }
 
 # The flags' conflicts that flags and State already decide, before anything runs.
 early_checks() {
@@ -468,10 +479,12 @@ answers() {
   prev_provider=$(state_get opencode_provider)
   prev_url=$(state_get opencode_url)
   prev_model=$(state_get opencode_model)
+  prev_context=$(state_get opencode_context)
   if has opencode; then
     provider=${provider_flag:-$prev_provider}
     url=${url_flag:-$prev_url}
     model=${model_flag:-$prev_model}
+    context=${context_flag:-$prev_context}
     if [ -z "$provider" ]; then
       ask_valid "OpenCode provider name:" valid_name
       provider=$answer
@@ -484,9 +497,14 @@ answers() {
       ask_valid "Its model:" valid_model
       model=$answer
     fi
+    while [ -z "$context" ]; do
+      ask "Its context window in tokens [65536]:"
+      if valid_context "${answer:-65536}"; then context=${answer:-65536}; fi
+    done
     state_set opencode_provider "$provider"
     state_set opencode_url "$url"
     state_set opencode_model "$model"
+    state_set opencode_context "$context"
   fi
   state_set clients "$clients"
   state_set docker "$docker"
@@ -498,7 +516,7 @@ answers() {
 config_plan() {
   python3 -I -c '
 import os, re, sys, tomllib
-path, out, default, harness, client, exe, name, url, model, prev_name, prev_url, prev_model = sys.argv[1:]
+path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context = sys.argv[1:]
 fresh = not os.path.exists(path)
 text = ""
 if not fresh:
@@ -535,16 +553,21 @@ if name:
         want("session.clients.opencode", "model", target)
     table = f"session.clients.opencode.providers.{name}"
     found = get(data, table)
-    if found is None or (name == prev_name and found.get("base_url") == prev_url and found.get("models") == [prev_model]):
+    before_context = int(prev_context) if prev_context else None
+    if found is None or (name == prev_name and found.get("base_url") == prev_url and found.get("models") == [prev_model]
+                         and found.get("context") in (None, before_context)):
         want(table, "base_url", url)
         want(table, "models", [model])
+        want(table, "context", int(context))
     for tier in "1234":
         if ours(get(data, "session.clients.opencode.tiers", tier)):
             want("session.clients.opencode.tiers", tier, target)
 if not wanted:
     sys.exit(0)
 def toml(value):
-    return "[" + ", ".join(toml(item) for item in value) + "]" if isinstance(value, list) else f"\"{value}\""
+    if isinstance(value, list):
+        return "[" + ", ".join(toml(item) for item in value) + "]"
+    return str(value) if isinstance(value, int) else f"\"{value}\""
 lines = text.splitlines(keepends=True)
 if fresh:
     lines = ["# Written by install.sh. Keys and defaults: each layer\x27s packaged config.toml (its `# local:` lines);\n",
@@ -576,7 +599,8 @@ if any(get(edited, table, key) != value for table, key, value in wanted):
 with open(out, "w", encoding="utf-8") as f:
     f.write(result)
 sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
-    "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$prev_provider" "$prev_url" "$prev_model"
+    "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$context" \
+    "$prev_provider" "$prev_url" "$prev_model" "$prev_context"
 }
 
 config_file() {

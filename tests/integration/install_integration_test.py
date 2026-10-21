@@ -52,8 +52,14 @@ CLIENTS_Q = r"Which clients, comma-separated \(claude, codex, opencode\)\? \[[a-
 PROVIDER_Q = r"OpenCode provider name:"
 URL_Q = r"Its base URL \(ending /v1\):"
 MODEL_Q = r"Its model:"
+CONTEXT_Q = r"Its context window in tokens \[65536\]:"
 OPENCODE_LOGIN_Q = r"Provider:"
-PROVIDER_ANSWERS = ((PROVIDER_Q, "lan"), (URL_Q, "http://10.0.0.5:8080/v1"), (MODEL_Q, "m1"))
+PROVIDER_ANSWERS = (
+    (PROVIDER_Q, "lan"),
+    (URL_Q, "http://10.0.0.5:8080/v1"),
+    (MODEL_Q, "m1"),
+    (CONTEXT_Q, "204800"),
+)
 DOCKER_Q = r"Run workers in Docker \(Docker Desktop and the agent-pm broker\)\? \[y/N\]"
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
@@ -322,6 +328,8 @@ class InstallTest(Case):
             ["--opencode-url", "http://user:key@host/v1"],
             ["--opencode-url", "http://host/api"],
             ["--opencode-model", "a b"],
+            ["--opencode-context", "0"],
+            ["--opencode-context", "64k"],
         )
         for args in cases:
             result = self.run_install(*args, tty=False)
@@ -763,7 +771,7 @@ class InstallTest(Case):
     def test_opencode_config_and_flags(self):
         flags = ("--clients", "claude,opencode", "--no-docker")
         flags += ("--opencode-provider", "lan", "--opencode-url", "http://10.0.0.5:8080/v1")
-        flags += ("--opencode-model", "m1", "--opencode-key-stdin")
+        flags += ("--opencode-model", "m1", "--opencode-context", "204800", "--opencode-key-stdin")
         result = self.run_install(
             *flags,
             stdin=KEY + "\n",
@@ -778,7 +786,7 @@ class InstallTest(Case):
             .endswith(
                 f'[session.clients.opencode]\nexecutable = "{exe}"\nmodel = "lan/m1"\n\n'
                 '[session.clients.opencode.providers.lan]\nbase_url = "http://10.0.0.5:8080/v1"\n'
-                f'models = ["m1"]\n\n[session.clients.opencode.tiers]\n{tiers}'
+                f'models = ["m1"]\ncontext = 204800\n\n[session.clients.opencode.tiers]\n{tiers}'
             ),
             self.config().read_text(),
         )
@@ -794,7 +802,30 @@ class InstallTest(Case):
         self.assertIn('1 = "lan/m2"', text)
         self.assertIn('3 = "lan/mine"', text)
         self.assertIn('model = "lan/m2"', text)
+        self.assertIn("context = 204800", text)
         self.assertNotIn("Which clients", result.tty)
+        result = self.again("--opencode-context", "131072", answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assertIn("context = 131072", self.config().read_text())
+        self.assertEqual(self.state()["opencode_context"], "131072")
+
+    def test_opencode_context_asked_when_missing(self):
+        """A State from before the context question: the rerun asks it and adds it to the table."""
+        self.assert_ok(
+            self.fresh(
+                "--no-docker",
+                clients="claude,opencode",
+                opencode=PROVIDER_ANSWERS,
+                logins=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+            )
+        )
+        state = Path(self.agent_pm, "install/state")
+        state.write_text(re.sub(r"(?m)^opencode_context=.*\n", "", state.read_text()))
+        self.config().write_text(self.config().read_text().replace("context = 204800\n", ""))
+        result = self.again(answers=[(CONTEXT_Q, "204800"), (WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assertIn("[session.clients.opencode.providers.lan] context = 204800", result.tty)
+        self.assertIn("context = 204800", self.config().read_text())
 
     def test_opencode_flags_refused(self):
         result = self.run_install("--clients", "claude", "--opencode-model", "m", tty=False)
@@ -816,6 +847,8 @@ class InstallTest(Case):
                 (URL_Q, 'http://h"/v1'),
                 (URL_Q, "http://host/v1"),
                 (MODEL_Q, "m"),
+                (CONTEXT_Q, "0"),
+                (CONTEXT_Q, ""),
                 (WRITE_Q, "y"),
                 (OPENCODE_LOGIN_Q, "lan"),
                 (r"API key:", KEY),
@@ -824,6 +857,8 @@ class InstallTest(Case):
         )
         self.assert_ok(result)
         self.assertEqual(self.state()["opencode_provider"], "lan")
+        self.assertEqual(self.state()["opencode_context"], "65536")
+        self.assertIn("context = 65536", self.config().read_text())
 
     def test_opencode_tmux_interactive(self):
         result = self.fresh(
@@ -935,7 +970,7 @@ class InstallTest(Case):
 
     def test_opencode_http_warning(self):
         flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
-        flags += ("--opencode-model", "m", "--opencode-key-stdin")
+        flags += ("--opencode-model", "m", "--opencode-context", "65536", "--opencode-key-stdin")
         for url, warned in (("http://10.0.0.5:8080/v1", True), ("http://localhost:8080/v1", False)):
             self.config().unlink(missing_ok=True)
             Path(self.agent_pm, "install/state").unlink(missing_ok=True)
