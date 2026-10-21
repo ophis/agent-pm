@@ -908,6 +908,9 @@ class DockerHost(Host):
         self._check_cwd(name, launch)
         events = self.prepare_events(self.events_path(events))
         metadata = metadata or {}
+        min_width = metadata.get("home_min_width", "0")
+        if not re.fullmatch(r"[0-9]+", min_width):
+            raise SessionError(f"docker session {name}: bad min width {min_width!r:.20}")
         created = self._container(name, launch, stops, laps, metadata)
         container, generation, hook, _, cwd, _, _, _ = created
         supervisor = lock = None
@@ -957,6 +960,7 @@ class DockerHost(Host):
                 handover_dir=STATE_ROOT,
                 tags={"@kind": KIND, "@sid": sid or "", "@generation": generation},
                 died=f"{DIED} ; wait-for -S {DEAD_SIGNAL}",
+                min_width=int(min_width),
             )
             _save_record(name, {**_record(name), "process": process})
             laps("tmux")
