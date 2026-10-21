@@ -4,7 +4,8 @@ Every call is logged to $LOG (argv) and $ENVLOG (environment values). State live
 $FAKES: brew/<name> (installed), processes (one running command line each; unkillable: those KILL misses), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
 broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once), tty_name
 (what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty),
-commit (the commit GitHub reports for every agent-pm ref).
+commit (the commit GitHub reports for every agent-pm ref), linear.json (the Linear workspace: keys
+{key: email}, teams [{id, key, name, states, members, projects}], labels).
 """
 
 import hashlib
@@ -15,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import termios
 from pathlib import Path
 
 FAKES = Path(os.environ.get("FAKES", "/nonexistent"))
@@ -136,8 +138,54 @@ mkdir -p "{root}/Library/Developer/CommandLineTools"
 """
 
 
+LINEAR = "https://api.linear.app/graphql"
+
+
+def linear(args):
+    """Linear's GraphQL API: the key from the -K - config on stdin, the query from --data-binary."""
+    if args[:1] != ["-q"]:
+        out("curl: Linear call without -q first\n", sys.stderr)
+        return 2
+    auth = re.fullmatch(r'header = "Authorization: (.*)"\n', sys.stdin.read())
+    workspace = load(FAKES / "linear.json", {})
+    if not auth or auth.group(1) not in workspace.get("keys", {}):
+        out("curl: (22) The requested URL returned error: 400\n", sys.stderr)
+        return 22
+    sent = json.loads(args[args.index("--data-binary") + 1])
+    query, variables = sent["query"], sent.get("variables") or {}
+    if "viewer" in query:
+        data = {"viewer": {"email": workspace["keys"][auth.group(1)]}}
+    elif "teams(" in query:
+        data = {
+            "teams": {
+                "nodes": [{k: t[k] for k in ("id", "key", "name")} for t in workspace["teams"]]
+            }
+        }
+    elif "team(id" in query:
+        found = [t for t in workspace["teams"] if t["id"] == variables.get("id")]
+        if not found:
+            out(json.dumps({"data": None, "errors": [{"message": "Entity not found: Team"}]}))
+            return 0
+        team = found[0]
+        data = {
+            "team": {
+                "key": team["key"],
+                **{k: {"nodes": team[k]} for k in ("states", "members", "projects")},
+            }
+        }
+    elif "issueLabels" in query:
+        data = {"issueLabels": {"nodes": workspace["labels"]}}
+    else:
+        out(f"curl: unexpected Linear query {query}\n", sys.stderr)
+        return 2
+    out(json.dumps({"data": data}))
+    return 0
+
+
 def curl(args):
     url = args[-1]
+    if url == LINEAR:
+        return linear(args)
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh":
         out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps", root=ROOT))
         return 0
@@ -378,14 +426,32 @@ def store_key(service, value):
     mark(FAKES / "keychain" / service, value)
 
 
+def hidden_line(prompt):
+    """A line read as security reads a password: not echoed on a terminal."""
+    if not os.isatty(0):
+        out(prompt)
+        return sys.stdin.readline().rstrip("\n")
+    saved = termios.tcgetattr(0)
+    quiet = [*saved[:3], saved[3] & ~termios.ECHO, *saved[4:]]
+    termios.tcsetattr(0, termios.TCSADRAIN, quiet)
+    try:
+        out(prompt)
+        return sys.stdin.readline().rstrip("\n")
+    finally:
+        termios.tcsetattr(0, termios.TCSADRAIN, saved)
+        out("\n")
+
+
 def security(args):
     if args[:1] == ["find-generic-password"]:
+        item = FAKES / "keychain" / args[args.index("-s") + 1]
+        if not item.exists():
+            return 44
         if "-w" in args:
-            return 9
-        return 0 if (FAKES / "keychain" / args[args.index("-s") + 1]).exists() else 44
+            out(item.read_text() + "\n")
+        return 0
     if args[:1] == ["add-generic-password"] and args[-1] == "-w":
-        out("password data for new item: ")
-        store_key(args[args.index("-s") + 1], sys.stdin.readline().rstrip("\n"))
+        store_key(args[args.index("-s") + 1], hidden_line("password data for new item: "))
         return 0
     if args[:1] == ["delete-generic-password"]:
         item = FAKES / "keychain" / args[args.index("-s") + 1]

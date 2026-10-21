@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs agent-pm on an Apple silicon Mac from nothing: dependencies, then your configuration
-# (clients, Docker, OpenCode provider) into ~/.agent-pm/config.local.toml, then only what it needs.
+# (clients, Docker, OpenCode provider, the Linear board) into ~/.agent-pm/config.local.toml, then only what it needs.
 # Asks sudo once, every login on the spot, and before writing your files. Rerun to finish or check.
 #   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
@@ -74,7 +74,7 @@ usage: $synopsis
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
-  --board, --no-board         install, or not, the Linear board's keys and launchd jobs (when the config names one)
+  --board, --no-board         set up, or not, the Linear board: its keys, configuration and launchd jobs
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -588,9 +588,9 @@ answers() {
     if [ "$default" = docker ]; then docker=yes; else docker=no; fi
   fi
   board=${board_flag:-$(state_get board)}
-  board=${board:-yes}
+  board=${board:-no}
   if [ -z "$clients_flag" ] || [ -z "$docker_flag" ]; then
-    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board launchd jobs and Linear keys (with a Linear board)")
+    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: Linear keys, configuration and launchd jobs (a Linear board set up per docs/board.md)")
     ticks=()
     for item in "${names[@]}"; do
       if has "$item"; then ticks+=(1); else ticks+=(0); fi
@@ -653,8 +653,8 @@ answers() {
 # $1 and prints the changes (exit 3), prints only them when line edits cannot apply them (exit 4), or exit 0.
 config_plan() {
   python3 -I -c '
-import os, re, sys, tomllib
-path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, only = sys.argv[1:]
+import json, os, re, sys, tomllib
+path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, only, board = sys.argv[1:]
 fresh = not os.path.exists(path)
 text = ""
 if not fresh:
@@ -676,17 +676,21 @@ def want(table, key, value):
     if get(data, table, key) != value:
         wanted.append((table, key, value))
 only = only.split("\t") if only else []
-if only:
+scoped = bool(only or board)
+if board:
+    with open(board, encoding="utf-8") as f:
+        wanted += [tuple(entry) for entry in json.load(f)]
+elif only:
     want(*only)
 elif fresh or (get(data, "session.hosts", "default") or "tmux") != default:
     wanted.append(("session.hosts", "default", default))
-if not only and client and (get(data, "delegate", "client") or "claude") != client:
+if not scoped and client and (get(data, "delegate", "client") or "claude") != client:
     wanted.append(("delegate", "client", client))
-if not only and harness and client:  # Docker without Claude Code: no Claude Code install record to stage plugins from
+if not scoped and harness and client:  # Docker without Claude Code: no Claude Code install record to stage plugins from
     want("session.hosts.docker", "plugins", [])
-if not only and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
+if not scoped and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
     wanted.append(("delegate.delegates", "harness_host", harness))
-if name and not only:
+if name and not scoped:
     target, before = f"{name}/{model}", f"{prev_name}/{prev_model}" if prev_name else None
     if get(data, "session.clients.opencode", "executable") in (None, ""):
         want("session.clients.opencode", "executable", exe)
@@ -710,28 +714,38 @@ if not wanted:
 def toml(value):
     if isinstance(value, list):
         return "[" + ", ".join(toml(item) for item in value) + "]"
-    return str(value) if isinstance(value, int) else f"\"{value}\""
+    return str(value) if isinstance(value, int) else json.dumps(value, ensure_ascii=False)
+def toml_key(key):
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key, ensure_ascii=False)
+def line_key(line):
+    try:
+        parsed = tomllib.loads(line)
+    except tomllib.TOMLDecodeError:
+        return None
+    return next(iter(parsed)) if len(parsed) == 1 else None
 lines = text.splitlines(keepends=True)
 if fresh:
     lines = ["# Written by install.sh. Keys and defaults: each layer\x27s packaged config.toml (its `# local:` lines);\n",
              "# the Linear board: docs/board.md#setup.\n"]
 if lines and not lines[-1].endswith("\n"):
     lines[-1] += "\n"
+added = set()
 for table, key, value in wanted:
-    new = f"{key} = {toml(value)}\n"
+    new = f"{toml_key(key)} = {toml(value)}\n"
     print(f"[{table}] {new.strip()}")
     starts = [i for i, line in enumerate(lines) if line.strip() == f"[{table}]"]
     if not starts:
         lines += (["\n"] if lines and not (fresh and len(lines) == 2) else []) + [f"[{table}]\n", new]
+        added.add(table)
         continue
     end = starts[0] + 1
     while end < len(lines) and not lines[end].lstrip().startswith("["):
         end += 1
-    hits = [i for i in range(starts[0] + 1, end) if re.match(rf"\s*{re.escape(key)}\s*=", lines[i])]
+    hits = [i for i in range(starts[0] + 1, end) if line_key(lines[i]) == key]
     if hits:
         lines[hits[0]] = new
     else:
-        lines.insert(end if fresh else starts[0] + 1, new)
+        lines.insert(end if fresh or table in added else starts[0] + 1, new)
 result = "".join(lines)
 try:
     edited = tomllib.loads(result)
@@ -743,14 +757,19 @@ with open(out, "w", encoding="utf-8") as f:
     f.write(result)
 sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
     "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$context" \
-    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$only"
+    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$only" "$board_file"
 }
 
-# Writes the configuration's settings into config.local.toml with consent; given <table> <key> <value>, only that.
+# Writes the configuration's settings into config.local.toml with consent; given <table> <key> <value>, only that;
+# given board <file>, the settings board_plan wrote to <file>.
 config_file() {
-  local wanted_default=tmux wanted_harness= wanted_client= only= changes rc=0 plan
-  if [ $# = 3 ]; then only=$1$'\t'$2$'\t'$3; fi
-  step "config.local.toml${only:+: [$1] $2}"
+  local wanted_default=tmux wanted_harness= wanted_client= only= board_file= changes rc=0 plan
+  if [ $# = 2 ] && [ "$1" = board ]; then
+    board_file=$2
+  elif [ $# = 3 ]; then
+    only=$1$'\t'$2$'\t'$3
+  fi
+  step "config.local.toml${only:+: [$1] $2}${board_file:+: Linear board}"
   if [ "$docker" = yes ]; then
     wanted_default=docker
     wanted_harness=tmux
@@ -1504,53 +1523,361 @@ docker_cli() {
   config_file session.hosts.docker docker "$cli"
 }
 
-# Exit 0 when config.local.toml has [orchestrator] tracker = "linear".
-linear_board() {
-  [ -f "$config" ] && python3 -I -c '
+# Exit 0 when the board is to be set up: Board chosen, and config.local.toml's tracker unset or "linear"; else
+# skips with the reason.
+board_wanted() {
+  local tracker=
+  if [ "$board" != yes ]; then
+    skip "board not chosen"
+    return 1
+  fi
+  if [ -f "$config" ]; then
+    tracker=$(python3 -I -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
-    sys.exit(0 if tomllib.load(f).get("orchestrator", {}).get("tracker") == "linear" else 1)' "$config"
+    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker", "linear")
+print(tracker if isinstance(tracker, str) and tracker.isprintable() else repr(tracker))' "$config")
+  fi
+  if [ -n "$tracker" ] && [ "$tracker" != linear ]; then
+    skip "tracker = \"$tracker\" in ~/.agent-pm/config.local.toml"
+    return 1
+  fi
 }
 
-# "<service>\t<account>" for each Linear key config.local.toml names.
-linear_services() {
+# "<role>\t<input>" for each [[stage]] in the workflow the orchestrator loads: config.local.toml's [orchestrator]
+# workflow, else the plugin's packaged one.
+stage_roles() {
   python3 -I -c '
-import re, sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    linear = tomllib.load(f).get("orchestrator", {}).get("linear", {})
-found = [(linear.get(k), linear.get(k)) for k in ("harness_key", "manager_key")]
-found += [(role.get("key"), role.get("account") or role.get("key")) for role in linear.get("roles", {}).values()]
-for service, account in found:
-    if not service:
-        continue
-    if all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
-        print(f"{service}\t{account}")
-    else:
-        print(f"install.sh: skipping Linear key {service!r}: not a plain keychain name", file=sys.stderr)' "$config"
+import os, re, sys, tomllib
+config, packaged = sys.argv[1:]
+path = ""
+if os.path.exists(config):
+    with open(config, "rb") as f:
+        path = tomllib.load(f).get("orchestrator", {}).get("workflow", "")
+path = os.path.expanduser(path) if isinstance(path, str) and path else packaged
+try:
+    with open(path, "rb") as f:
+        stages = [(stage.get("role"), stage.get("input")) for stage in tomllib.load(f).get("stage", [])]
+except (OSError, tomllib.TOMLDecodeError, AttributeError):
+    stages = []
+names = re.compile(r"[a-z][a-z0-9-]*")
+if not stages or not all(isinstance(v, str) and names.fullmatch(v) for stage in stages for v in stage):
+    sys.exit(f"install.sh: {path}: cannot read its [[stage]] roles")
+print("\n".join(f"{role}\t{input_}" for role, input_ in stages))' "$config" "$pkg/orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml"
+}
+
+# "<slot>\t<service>\t<account>" for each Linear key the board uses: harness, manager, then each stage role. Its
+# service is config.local.toml's, else linear-<slot>; its account the role's account there, else the service.
+linear_slots() {
+  local stages
+  stages=$(stage_roles) || exit 1
+  python3 -I -c '
+import os, re, sys, tomllib
+config, roles = sys.argv[1], [line.split("\t")[0] for line in sys.argv[2].splitlines()]
+linear = {}
+if os.path.exists(config):
+    with open(config, "rb") as f:
+        linear = tomllib.load(f).get("orchestrator", {}).get("linear", {})
+def text(value):
+    return value if isinstance(value, str) else ""
+slots = [("harness", text(linear.get("harness_key")), ""), ("manager", text(linear.get("manager_key")), "")]
+for role in roles:
+    found = linear.get("roles", {}).get(role, {})
+    slots.append((role, text(found.get("key")), text(found.get("account"))))
+for slot, service, account in slots:
+    service = service or f"linear-{slot}"
+    account = account or service
+    if not all(re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
+        sys.exit(f"install.sh: config.local.toml: {slot} key {service!r}: not a plain keychain name")
+    print(f"{slot}\t{service}\t{account}")' "$config" "$stages"
+}
+
+# Python for Linear's GraphQL API: linear(service, query, variables) is the answer's data, with the key in keychain
+# item <service>; LinearError says why not. The key stays in that process: curl gets it on stdin (-K -), -q first so
+# no .curlrc prints it.
+linear_client='
+import json, subprocess, sys
+class LinearError(Exception):
+    pass
+def shown(text):
+    return text if text.isprintable() else repr(text)
+def linear(service, query, variables):
+    found = subprocess.run(["security", "find-generic-password", "-s", service, "-w"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True)
+    key = found.stdout.strip()
+    if found.returncode or not key or not key.isprintable() or any(c.isspace() or c in "\"\\" for c in key):
+        raise LinearError(f"no usable key in keychain item {service}")
+    body = json.dumps({"query": query, "variables": variables})
+    sent = subprocess.run(["curl", "-q", "-fsS", "--connect-timeout", "10", "--max-time", "30", "-K", "-",
+                           "--data-binary", body, "-H", "Content-Type: application/json",
+                           "https://api.linear.app/graphql"],
+                          input=f"header = \"Authorization: {key}\"\n", capture_output=True, text=True)
+    if sent.returncode:
+        raise LinearError(shown(sent.stderr.strip()))
+    try:
+        answer = json.loads(sent.stdout)
+    except json.JSONDecodeError:
+        raise LinearError("not a JSON answer") from None
+    errors = answer.get("errors") if isinstance(answer, dict) else None
+    if errors or not isinstance(answer, dict) or not isinstance(answer.get("data"), dict):
+        first = errors[0].get("message") if isinstance(errors, list) and errors and isinstance(errors[0], dict) else None
+        raise LinearError(shown(first) if isinstance(first, str) else "no data")
+    return answer["data"]
+'
+
+# linear_api <service> <query>: Linear's answer to <query> (its data, one JSON line) with the key in item <service>.
+linear_api() {
+  python3 -I -c "$linear_client"'
+try:
+    print(json.dumps(linear(sys.argv[1], sys.argv[2], {})))
+except LinearError as error:
+    sys.exit(f"install.sh: Linear: {error}")' "$@"
 }
 
 linear_keys() {
-  local list service account
+  local list slot service account
   step "Linear keys"
-  if [ "$board" != yes ]; then
-    skip "board not chosen"
-    return
-  fi
-  if ! linear_board; then
-    skip 'no tracker = "linear" in ~/.agent-pm/config.local.toml (docs/board.md#setup)'
-    return
-  fi
-  list=$(linear_services)
-  while IFS=$'\t' read -r service account; do
+  board_wanted || return 0
+  list=$(linear_slots)
+  while IFS=$'\t' read -r slot service account; do
     [ -n "$service" ] || continue
     if security find-generic-password -s "$service" </dev/null >/dev/null 2>&1; then
       skip "$service in the keychain"
-    else
-      ledger_add keychain "$service" "$account"
-      say "Linear key $service: paste its API key at security's prompt (nothing echoes)"
-      security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
+      continue
+    fi
+    ledger_add keychain "$service" "$account"
+    say "Linear key $service ($slot account): paste its API key at security's prompt (nothing echoes)"
+    security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
+    if ! linear_api "$service" '{ viewer { email } }' >/dev/null; then
+      security delete-generic-password -s "$service" </dev/null >/dev/null 2>&1 || true
+      die "Linear refused the key in $service, or cannot be reached: rerun to paste it again"
     fi
   done <<<"$list"
+}
+
+# Exit 0 when config.local.toml has all the board config the orchestrator requires (engine/config.py's REQUIRED over
+# the stage roles, and each document role's GitHub output), manager_key included, with tracker = "linear".
+board_complete() {
+  local stages
+  [ -f "$config" ] || return 1
+  stages=$(stage_roles) || exit 1
+  python3 -I -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+orchestrator, delegate = data.get("orchestrator", {}), data.get("delegate", {})
+linear = orchestrator.get("linear", {})
+stages = [line.split("\t") for line in sys.argv[2].splitlines()]
+def set_(node, *keys):
+    for key in keys:
+        node = node.get(key) if isinstance(node, dict) else None
+    return isinstance(node, str) and node != ""
+required = [("team",), ("harness_key",), ("manager_key",), ("task_label_group",)]
+required += [("states", state) for state in ("backlog", "todo", "in_progress", "in_review", "handoff", "done", "canceled")]
+required += [("roles", role, key) for role, _ in stages for key in ("account", "key")]
+def published(role):
+    output = delegate.get("roles", {}).get(role, {}).get("output") or delegate.get("output", {})
+    return output.get("type") == "github" and set_(output, "repo") and set_(output, "branch")
+docs = all(published(role) for role, input_ in stages if input_ in ("research", "design"))
+sys.exit(0 if orchestrator.get("tracker") == "linear" and docs and all(set_(linear, *keys) for keys in required) else 1)' \
+    "$config" "$stages"
+}
+
+# board_plan <out>: asks Linear (and the user, for the team and project repos) for the board config
+# config.local.toml lacks; writes it to <out> as JSON [[table, key, value], ...]. Everything Linear says is checked
+# before it is shown or planned.
+board_plan() {
+  local slots stages
+  slots=$(linear_slots) || exit 1
+  stages=$(stage_roles) || exit 1
+  python3 -I -c "$linear_client"'
+import os, re, tomllib
+config, out, slot_lines, stage_lines, charters = sys.argv[1:]
+slots = [line.split("\t") for line in slot_lines.splitlines()]
+stages = [line.split("\t") for line in stage_lines.splitlines()]
+service = {slot: name for slot, name, _ in slots}
+roles = [slot for slot, _, _ in slots[2:]]
+data = {}
+if os.path.exists(config):
+    with open(config, "rb") as f:
+        data = tomllib.load(f)
+def dig(node, *keys):
+    for key in keys:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node
+def stop(text):
+    sys.exit(f"install.sh: {text}")
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+def bad(field, ident=None):
+    stop(f"Linear returned an invalid {field}" + (f" ({ident})" if ident else ""))
+def uid(value, field):
+    return value if isinstance(value, str) and UUID.fullmatch(value) else bad(field)
+def name(value, field, ident):
+    return value if isinstance(value, str) and value and value.isprintable() else bad(field, ident)
+def email(value, field):
+    ok = isinstance(value, str) and value.isprintable() and re.fullmatch(r"[^@\s]+@[^@\s]+", value)
+    return value if ok else bad(field)
+def nodes(node, *keys):
+    found = dig(node, *keys, "nodes")
+    return [n for n in found if isinstance(n, dict)] if isinstance(found, list) else []
+def fetch(slot, query, variables=None):
+    try:
+        return linear(service[slot], query, variables or {})
+    except LinearError as error:
+        print(f"install.sh: Linear: {error}", file=sys.stderr)
+        stop(f"Linear refused the key in {service[slot]}, or cannot be reached: fix that keychain item, then rerun")
+def ask(question):
+    os.write(3, (question + " ").encode())
+    line = b""
+    while not line.endswith(b"\n"):
+        chunk = os.read(3, 1)
+        if not chunk:
+            stop("no answer on the terminal")
+        line += chunk
+    return line.decode(errors="replace").strip()
+emails, seen = {}, {}
+for slot in ["harness", "manager", *roles]:
+    emails[slot] = email(dig(fetch(slot, "{ viewer { email } }"), "viewer", "email"), f"{slot} account email")
+    if emails[slot].lower() in seen:
+        stop(f"the keys in {service[seen[emails[slot].lower()]]} and {service[slot]} are the same Linear account")
+    seen[emails[slot].lower()] = slot
+linear_config = dig(data, "orchestrator", "linear") or {}
+team = linear_config.get("team")
+if team:
+    if not isinstance(team, str) or not UUID.fullmatch(team):
+        stop("config.local.toml: [orchestrator.linear] team must be a Linear team id (UUID)")
+else:
+    teams = []
+    for found in nodes(fetch("harness", "{ teams(first: 250) { nodes { id key name } } }"), "teams"):
+        ident = uid(found.get("id"), "team id")
+        teams.append((ident, name(found.get("key"), "team key", ident)))
+    if not teams:
+        stop("the harness key sees no Linear team (docs/credentials.md#linear-presets)")
+    team = teams[0][0]
+    if len(teams) > 1:
+        keys = {key: ident for ident, key in teams}
+        listed = ", ".join(keys)
+        while (answer := ask(f"Linear team for the board ({listed}):")) not in keys:
+            pass
+        team = keys[answer]
+detail = dig(fetch("harness", "query($id: String!) { team(id: $id) { key states(first: 250) { nodes { id name } } "
+                   "members(first: 250) { nodes { email active } } projects(first: 250) { nodes { id name } } } }",
+                   {"id": team}), "team")
+team_key = name(dig(detail, "key"), "team key", team)
+states = {}
+for found in nodes(detail, "states"):
+    ident = uid(found.get("id"), "state id")
+    states.setdefault(name(found.get("name"), "state name", ident), ident)
+STATES = {"backlog": "Backlog", "todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
+          "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
+if missing := [title for title in STATES.values() if title not in states]:
+    listed = ", ".join(missing)
+    stop(f"Linear team {team_key} lacks states: {listed} (docs/credentials.md#linear-presets)")
+labels = []
+for found in nodes(fetch("harness", "query($id: ID) { issueLabels(first: 250, filter: { or: [{ team: { id: { eq: $id } } }, "
+                         "{ team: { null: true } }] }) { nodes { id name isGroup parent { id } } } }", {"id": team}),
+                   "issueLabels"):
+    ident = uid(found.get("id"), "label id")
+    parent = dig(found, "parent", "id")
+    labels.append((ident, name(found.get("name"), "label name", ident), found.get("isGroup") is True,
+                   uid(parent, "label parent id") if parent is not None else None))
+def group(title):
+    return next((ident for ident, label, is_group, _ in labels if is_group and label == title), None)
+def children(parent):
+    return {label: ident for ident, label, _, of in labels if of == parent}
+tasks = linear_config.get("task_label_group") or group("Tasks")
+if not tasks:
+    stop(f"Linear team {team_key} has no Tasks label group (docs/credentials.md#linear-presets)")
+accounts = {emails[slot].lower() for slot in ["harness", *roles]}
+humans = []
+for found in nodes(detail, "members"):
+    if found.get("active") is True:
+        member = email(found.get("email"), "member email")
+        if member.lower() not in accounts:
+            humans.append(member)
+plan = []
+def fill(table, key, value):
+    if dig(data, *table.split("."), key) in (None, "", [], {}):
+        plan.append([table, key, value])
+fill("orchestrator", "tracker", "linear")
+fill("orchestrator.linear", "team", team)
+fill("orchestrator.linear", "harness_key", service["harness"])
+fill("orchestrator.linear", "manager_key", service["manager"])
+fill("orchestrator.linear", "task_label_group", tasks)
+if humans:
+    fill("orchestrator.linear", "human_members", humans)
+for key, title in STATES.items():
+    fill("orchestrator.linear.states", key, states[title])
+known = set()
+for role, _ in stages:
+    try:
+        with open(os.path.join(charters, f"{role}.md"), encoding="utf-8") as f:
+            index = f.read().partition("\n## Tasks\n")[2].partition("\n## ")[0]
+    except OSError:
+        known = None
+        break
+    known |= set(re.findall(r"^- `([a-z][a-z0-9-]*)`", index, re.M))
+for task, ident in children(tasks).items():
+    if known is None or task in known:
+        fill("orchestrator.linear.task_labels", task, ident)
+    else:
+        print(f"    Tasks label {task}: not a task of the board\x27s roles; left out", file=sys.stderr)
+agent = group("Agent")
+if agent and children(agent) and not linear_config.get("agent_label_group") and not linear_config.get("agent_labels"):
+    fill("orchestrator.linear", "agent_label_group", agent)
+    for client, ident in children(agent).items():
+        fill("orchestrator.linear.agent_labels", client, ident)
+for role in roles:
+    fill(f"orchestrator.linear.roles.{role}", "account", emails[role])
+    fill(f"orchestrator.linear.roles.{role}", "key", service[role])
+repos = linear_config.get("project_repos") or {}
+slug = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._][A-Za-z0-9._-]{0,99}")
+for found in nodes(detail, "projects"):
+    ident = uid(found.get("id"), "project id")
+    title = name(found.get("name"), "project name", ident)
+    if ident in repos:
+        continue
+    while answer := ask(f"GitHub repo of Linear project {title} (<owner>/<name>, empty to skip):"):
+        if slug.fullmatch(answer) and answer.split("/")[1] not in (".", ".."):
+            plan.append(["orchestrator.linear.project_repos", ident, answer])
+            break
+delegate = data.get("delegate", {})
+def output(role):
+    found = dig(delegate, "roles", role, "output") or delegate.get("output") or {}
+    return found if found.get("type") == "github" and found.get("repo") and found.get("branch") else None
+documents = [(role, input_) for role, input_ in stages if input_ in ("research", "design")]
+unpublished = [(role, input_) for role, input_ in documents if not output(role)]
+if unpublished:
+    known_output = next((output(role) for role, _ in documents if output(role)), None)
+    if known_output:
+        repo, branch = known_output["repo"], known_output["branch"]
+    else:
+        question = "GitHub repo for the board\x27s documents, research reports and PRDs (<owner>/<name>):"
+        while not ((repo := ask(question)) and slug.fullmatch(repo) and repo.split("/")[1] not in (".", "..")):
+            pass
+        while not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", branch := ask("Its branch [main]:") or "main"):
+            pass
+    for role, input_ in unpublished:
+        table = f"delegate.roles.{role}.output"
+        for key, value in (("type", "github"), ("repo", repo), ("branch", branch),
+                           ("dir", "Research/" if input_ == "research" else "Product Design/")):
+            fill(table, key, value)
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(plan, f)' "$config" "$1" "$slots" "$stages" "$pkg/delegate/src/agent_pm/delegate/team/roles"
+}
+
+board_config() {
+  local plan=$state_dir/board.json
+  step "Linear board configuration"
+  board_wanted || return 0
+  if board_complete; then
+    skip "has the Linear board configuration"
+    return 0
+  fi
+  mkdir -p "$state_dir"
+  board_plan "$plan"
+  config_file board "$plan"
+  rm -f "$plan"
 }
 
 # PATH for the board jobs: the directories of the tools install.sh found, then ~/.agent-pm/bin and the system's.
@@ -1586,11 +1913,8 @@ with open(out, "w", encoding="utf-8") as f:
 board_jobs() {
   local job target new offered= shown= uid
   step "board launchd jobs"
-  if [ "$board" != yes ]; then
-    skip "board not chosen"
-    return
-  fi
-  if ! linear_board; then
+  board_wanted || return 0
+  if ! board_complete; then
     skip "no Linear board"
     return
   fi
@@ -1694,6 +2018,7 @@ main() {
   opencode_key
   ctmux_install
   linear_keys
+  board_config
   board_jobs
   current=
   celebrate
