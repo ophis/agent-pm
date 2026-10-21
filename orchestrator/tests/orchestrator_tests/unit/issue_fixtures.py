@@ -5,11 +5,18 @@ abstract names' part; list_query, new_issue and issue_change build the backends'
 """
 
 import io
+import math
 import os
 import re
 from types import SimpleNamespace
 
-from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueEdit, ListQuery, NewIssue
+from agent_pm.orchestrator.engine.types import (
+    GraphQLErrors,
+    IssueEdit,
+    LinearError,
+    ListQuery,
+    NewIssue,
+)
 from agent_pm.orchestrator.issue import command as issue
 from agent_pm.orchestrator.trackers.linear import (
     client,
@@ -218,19 +225,54 @@ def user(n, name, email=None, *, active=True):
     return {"id": uid(n), "name": name, "email": email or f"u{n}@example.com", "active": active}
 
 
+LIMIT = 10_000  # Linear's per-query complexity limit
+
+
+def complexity(query, variables):
+    """Linear's score: a field 0.1, an object 1, a connection its fields times first (or 50)."""
+    tokens = re.findall(r'"(?:[^"\\]|\\.)*"|\$?\w+|\S', query)
+    tenths, _, _ = _selection(tokens, tokens.index("{") + 1, variables)
+    return math.ceil(tenths / 10)
+
+
+def _selection(tokens, at, variables):
+    tenths, names = 0, set()
+    while tokens[at] != "}":
+        name, at, args = tokens[at], at + 1, []
+        names.add(name)
+        if tokens[at] == "(":
+            depth = 0
+            while depth or not args:
+                depth += {"(": 1, ")": -1}.get(tokens[at], 0)
+                args.append(tokens[at])
+                at += 1
+        if tokens[at] != "{":
+            tenths += 1
+            continue
+        inner, fields, at = _selection(tokens, at + 1, variables)
+        if fields & {"nodes", "edges"}:
+            first = args[args.index("first") + 2] if "first" in args else "50"
+            tenths += inner * int(variables[first[1:]] if first.startswith("$") else first)
+        else:
+            tenths += 10 + inner
+    return tenths, names, at + 1
+
+
 class Routes:
     """A fake gql answering a query by its root field (teams, team, issueLabels, …): routes[field]
     is a list of answers taken in order, else one answer for every call; an answer is the field's
-    value, a callable of the variables giving it, or an exception it raises. Records every
-    (query, variables) call.
+    value, a callable of the variables giving it, or an exception it raises. strict: a query over
+    LIMIT fails as Linear refuses it, an HTTP 400. Records every (query, variables) call.
     """
 
-    def __init__(self, **routes):
+    def __init__(self, *, strict=False, **routes):
         self.routes = {k: list(v) if isinstance(v, list) else v for k, v in routes.items()}
-        self.calls = []
+        self.strict, self.calls = strict, []
 
     def __call__(self, query, **variables):
         self.calls.append((query, variables))
+        if self.strict and complexity(query, variables) > LIMIT:
+            raise LinearError(f"linear api error: {client.operation(query)}: HTTP 400")
         field = re.match(r"query[^{]*\{\s*(\w+)", query).group(1)
         answer = self.routes[field]
         answer = answer.pop(0) if isinstance(answer, list) else answer
@@ -506,7 +548,7 @@ def _issue_ref(variables):
 
 
 def create_gql(**overrides):
-    """A CreateGql knowing team TEAM's labels bug, ops (workspace) and old (retired), project
+    """A strict CreateGql knowing team TEAM's labels bug, ops (workspace) and old (retired), project
     Agent PM with milestone M1, the role accounts' users, and every issue but NOPE-*.
     """
     routes = {
@@ -519,7 +561,7 @@ def create_gql(**overrides):
         "issue": _issue_ref,
         "viewer": VIEWER,
     }
-    return CreateGql(**{**routes, **overrides})
+    return CreateGql(strict=True, **{**routes, **overrides})
 
 
 def _holds(node, match):

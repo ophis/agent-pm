@@ -3,12 +3,14 @@ candidates and the lookup command.
 """
 
 from agent_pm.orchestrator.engine.types import GraphQLErrors, IssueError, LinearError
-from agent_pm.orchestrator.trackers.linear import issue_refs
+from agent_pm.orchestrator.trackers.linear import issue_page, issue_refs
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.issue_fixtures import (
+    LIMIT,
     OTHER_TEAM,
     Routes,
+    complexity,
     edges,
     label,
     milestone,
@@ -106,11 +108,35 @@ class Project(Case):
         self.assertIn(f"is not a project of team {OTHER_TEAM}", text)
         self.assertIn(f"lookup projects --team {OTHER_TEAM}", text)
 
+    def test_a_name_is_found_within_linears_complexity_limit(self):
+        gql = Routes(strict=True, team={"projects": edges([project(4, "agentpm-test")])})
+        self.assertEqual(issue_refs.project(gql, TEAM, "agentpm-test")["id"], uid(4))
+        query, variables = gql.calls[0]
+        self.assertEqual(variables["first"], issue_page.PAGE)
+        self.assertLessEqual(complexity(query, variables), LIMIT)
+
     def test_same_named_projects_are_rejected(self):
         gql = Routes(team={"projects": edges([project(4, "Ops"), project(5, "Ops")])})
         with self.assertRaises(IssueError) as cm:
             issue_refs.project(gql, TEAM, "Ops")
         self.assertIn(f"{uid(4)} 'Ops', {uid(5)} 'Ops'", str(cm.exception))
+
+
+class Complexity(Case):
+    """The fixtures' score matches Linear's documented example: 66 points, 14 with first: 10."""
+
+    def test_linears_example(self):
+        fields = "{ nodes { id title createdAt } } } }"
+        self.assertEqual(complexity("query { viewer { createdIssues " + fields, {}), 66)
+        query = "query($first: Int!) { viewer { createdIssues(first: $first) " + fields
+        self.assertEqual(complexity(query, {"first": 10}), 14)
+
+    def test_a_strict_routes_refuses_a_query_over_the_limit(self):
+        query = "query($first: Int!) { teams(first: $first) { nodes { id } } }"
+        gql = Routes(strict=True, teams={"nodes": []})
+        self.assertEqual(gql(query, first=LIMIT // 2), {"teams": {"nodes": []}})
+        with self.assertRaisesRegex(LinearError, "^linear api error: teams: HTTP 400$"):
+            gql(query, first=LIMIT)
 
 
 class Filters(Case):
