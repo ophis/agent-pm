@@ -3,7 +3,7 @@
 `agent-pm-broker` builds the worker image and starts and closes worker containers on macOS (Apple silicon) with
 Docker Desktop. It keeps the logins and the GitHub App key in the login keychain and writes credentials only into a
 container's tmpfs. Session's Docker Host calls it ([Run workers](#run-workers)); the sections up to [Close](#close)
-install the broker by hand. JSON interface: [Docker broker protocol](docker-broker-protocol.md); each credential's readers, lifetime
+install the broker by hand. Each credential's readers, lifetime
 and revocation: [Credentials](credentials.md).
 
 The host needs no Node and no personal Codex: the clients run in the image. On subscriptions a container holds a
@@ -41,9 +41,8 @@ command line tools).
 To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-in) again. Claude Code upgrades with
 the image, Codex by its pinned version: the broker refuses a host Codex below its minimum, naming
 `sudo "$B" update-codex <minimum>`, and refuses a below-minimum image: rebuild. The image's `gh` is the version agent-pm
-pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs. So is its OpenCode:
-`assets/opencode-install.py` installs it from npm tarballs checked against recorded sha512 hashes, and an OpenCode
-start refuses an image below the broker's `opencodeMinVersion` (`broker/internal/launcher/versions.go`): rebuild.
+pins, whatever your Dockerfile installs. So is its OpenCode: installed from npm tarballs checked against recorded
+sha512 hashes, and an OpenCode start refuses an image below the broker's minimum OpenCode version: rebuild.
 
 ## Log in
 
@@ -193,23 +192,21 @@ EOF
 "$B" start --manifest /tmp/worker_1.json
 ```
 
-It prints `container` (`C` below), `endpoint`, `image_digest` and the actual `clients` versions; Codex starts add the
-[version audit](docker-broker-protocol.md#success-fields).
+It prints `container` (`C` below), `endpoint`, `image_digest` and the actual `clients` versions; Codex starts add a
+version audit.
 
 ## What a container gets
 
-Each row's source holds the exact values.
-
-| What | Source | Summary |
-|---|---|---|
-| `docker run` flags | `broker/internal/launcher/start.go` `create` | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session`, `agent-pm.generation` and `agent-pm.client` labels |
-| `docker run` env | `create` | the client home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or OpenCode's `XDG_DATA_HOME` with its self-update and LSP downloads off); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
-| Mounts | `create`, `mounts.go` | the [workspace volume](#workspace-volumes) at cwd; Claude and OpenCode: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
-| Secrets tmpfs | `create`; written by `broker/internal/broker/keychain.go` `Credentials.Inject`, `github.go` `Issue`/`Refresh`, `codex.go` `Codex.Inject`, `opencode.go` `OpencodeKeys.Inject` | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential (OpenCode: each configured provider's key, `opencode/<name>.key`) and one GitHub token per installation ([GitHub tokens](docker-broker-protocol.md#github-tokens)); read only through `with-secrets` and the `gh`/git credential wrappers |
-| Start-time files | `create` (`bootstrap.py`, `hook-stub`) | client state that skips onboarding and trusts cwd; the hook stub |
-| Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
-| Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
-| Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `core.hooksPath = .githooks` (`/etc/gitconfig`: each checkout runs its own branch's `.githooks/`, none without one), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
+| What | Summary |
+|---|---|
+| `docker run` flags | user `agent`, all capabilities dropped, `no-new-privileges`, bridge network, `tini` as PID 1, the `agent-pm.session`, `agent-pm.generation` and `agent-pm.client` labels |
+| `docker run` env | the client home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or OpenCode's `XDG_DATA_HOME` with its self-update and LSP downloads off); npm, uv and pip caches under `<cwd>/.agent-pm-cache` |
+| Mounts | the [workspace volume](#workspace-volumes) at cwd; Claude and OpenCode: its home bound at its host path; Codex: tmpfs home and runtime, its `sessions` bound |
+| Secrets tmpfs | `/run/agent-pm/secrets`, agent-owned, `noexec`: the client credential (OpenCode: each configured provider's key, `opencode/<name>.key`) and one GitHub token per installation; read only through `with-secrets` and the `gh`/git credential wrappers |
+| Start-time files | client state that skips onboarding and trusts cwd; the hook stub |
+| Exec env | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
+| Image: base | `~/.agent-pm/docker/worker/Dockerfile`: your image: tools such as tmux, git, gh, Node, uv and Claude Code |
+| Image: agent-pm layer | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `core.hooksPath = .githooks` (`/etc/gitconfig`: each checkout runs its own branch's `.githooks/`, none without one), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
 
 ## Close
 
@@ -226,27 +223,8 @@ Every `start`, `refresh` and `close` appends one JSON line to `~/Library/Logs/ag
 file 0600, written as you) recording each credential it issued, renewed, withdrew or revoked, never a token or key. A
 backlog retry (each `start`, `close` and `status`, and a `refresh` that queues a token) that revokes or drops another
 container's token adds a line for that container. Past 10 MiB it moves to `broker.jsonl.1`, replacing the previous
-one. Writing is best effort: an unwritable line is dropped, the result unchanged. No container mounts it. Source:
-`broker/internal/audit/`. Query: `jq 'select(.session=="NAME")' ~/Library/Logs/agent-pm/broker.jsonl`.
-
-| Field | Value |
-|---|---|
-| `time` | RFC 3339, UTC |
-| `command` | the broker command |
-| `event` | `start`, `refresh`, `close`, or `revocation-retry` (another container's backlog tokens) |
-| `session`, `generation`, `container` | from `agent-pm-<session>-<generation>`; null when start could not read its manifest |
-| `image`, `image_digest`, `mounts` | start only: the manifest's tag, the image ID, each `--mount`/`--tmpfs` as `{type, source, target, mode}`; null for a step not reached |
-| `credentials` | one entry per credential, below |
-| `error` | the error `code` ([Docker broker protocol](docker-broker-protocol.md)); null on success |
-
-| Entry field | Value |
-|---|---|
-| `kind` | `claude-setup-token`, `codex-access-token` or `github-installation-token` |
-| `result` | `issued`, `renewed`, `withdrawn` (deleted with its container), `revoked`, `pending` (in the backlog; a later `revocation-retry` line says `revoked`, or `expired-unrevoked` if it expired first) |
-| `reason` | `pending` only: why not revoked yet |
-| `expires_at` | RFC 3339; null when unknown (the setup-token, a withdrawn Codex token) |
-| `account`, `installation` | GitHub: the installation's account and ID (no ID on retry lines) |
-| `repository_selection`, `repositories` | GitHub `issued`/`renewed`: `all` or `selected`, and every repo the token reaches (all pages of `GET /installation/repositories`); both null with `repositories_error` if that listing failed (the token is still issued) |
+one. Writing is best effort: an unwritable line is dropped, the result unchanged. No container mounts it. Query:
+`jq 'select(.session=="NAME")' ~/Library/Logs/agent-pm/broker.jsonl`.
 
 ## Run workers
 
@@ -324,8 +302,7 @@ Before the first role run, [log in](#log-in) to GitHub and install the App on ev
 included: every Docker session can read and write exactly those private repos.
 
 In the container `repo.py worktree` makes a fresh blobless clone at `<Workdir>/src/<owner>/<name>-<slug>`, never a
-`[local_clones]` worktree; `repo.py` treats `AGENT_PM_PR_AUTHOR` as the PR author (its docstring:
-`delegate/src/agent_pm/delegate/team/tools/repo.py`). An engineer opens its draft PR through the `gh` wrapper as `<app>[bot]`; the Delegate's ready gate on the host
+`[local_clones]` worktree; `repo.py` treats `AGENT_PM_PR_AUTHOR` as the PR author. An engineer opens its draft PR through the `gh` wrapper as `<app>[bot]`; the Delegate's ready gate on the host
 marks it ready, you approve with your own account, and revision rounds push to the same branch. Then
 [review before pulling](#review-before-pulling).
 
@@ -466,8 +443,8 @@ host's view, with the events path); a headless run's `pipe.lock` (held by its ha
 hook supervisor's `supervisor.lock` (holding the generation) and `supervisor.pid`; `rejected.jsonl` (`gen`, `seq`,
 `reason` per refused event, never its content).
 
-**Claude settings**: each new start writes a `settings.json` with the fixed unattended values of `UNATTENDED` in
-`session/src/agent_pm/session/clients/claude/common.py` (no stop at the Workflow usage warning, a full context or a
+**Claude settings**: each new start writes a `settings.json` with the fixed unattended values (no stop at the
+Workflow usage warning, a full context or a
 usage limit; no prompt suggestions; concise; fullscreen), and the host Claude's `model`, `effortLevel`,
 `modelSettings` and `env.CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION` (from `$CLAUDE_CONFIG_DIR/settings.json`, else
 `~/.claude/settings.json`; unreadable: Claude's default model), each `modelSettings` entry without its
@@ -507,8 +484,7 @@ client is ready at its first hook: the first `~/.agent-pm/tui/NAME/hooks.jsonl` 
 ### Recovery
 
 Hook events go from the container's hook stub to a relay daemon queueing them in the container, then over
-`docker exec` to the host run supervisor, which runs `agent-pm-session hook` for each
-([relay protocol](docker-relay-protocol.md)).
+`docker exec` to the host run supervisor, which runs `agent-pm-session hook` for each.
 
 ```mermaid
 flowchart LR

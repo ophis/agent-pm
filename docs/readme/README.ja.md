@@ -125,5 +125,4 @@ agent-pm が起動する session があなたの設定をどう読み込むか�
 | [Board](../board.md) | セットアップ、issue の状態と task ラベル、router の運用、Agent ラベル（issue ごとの client）、ローカルボード（`tracker`、`AGENT_PM_BOARD_DIR`、構成、ファイル形式） |
 | [Sessions and client policy](../sessions.md) | session 設定、`agent-pm-session`、role run の client フラグ、OpenCode の session |
 | [Upgrading](../upgrading.md) | v0.6.20 以降からのアップグレード手順 |
-| [Core architecture](../architecture.md) | レイヤーとパッケージ（開発者向け） |
 | [Tests](../tests.md) | lint、テストスイート、カバレッジ、ローカルモデルで判定できる実機テスト（開発者向け） |

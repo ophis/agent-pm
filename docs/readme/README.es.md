@@ -125,5 +125,4 @@ Estas páginas están en inglés.
 | [Board](../board.md) | configuración, estados de issue y etiquetas de task, operar el router, etiquetas Agent (client por issue), tablero local (`tracker`, `AGENT_PM_BOARD_DIR`, estructura, formato de archivo) |
 | [Sessions and client policy](../sessions.md) | ajustes de session, `agent-pm-session`, flags de client de los role runs, sessions de OpenCode |
 | [Upgrading](../upgrading.md) | pasos de actualización desde v0.6.20 |
-| [Core architecture](../architecture.md) | capas y paquetes (desarrolladores) |
 | [Tests](../tests.md) | lint, suites de tests, cobertura, tests en vivo que un modelo local puede validar (desarrolladores) |
