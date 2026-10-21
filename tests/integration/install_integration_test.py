@@ -92,7 +92,6 @@ DOCKER_STEPS = (
     "broker login: GitHub",
     "broker Codex install",
     "broker login: Codex",
-    "broker login: OpenCode",
 )
 BROKER_INSTALL = """#!/bin/sh
 set -eu
@@ -1019,11 +1018,18 @@ class InstallTest(Case):
             calls.index("agent-pm-broker login opencode lan"),
         )
         self.assertNotIn("opencode auth login", calls)
+        self.assertLess(
+            result.stderr.index("==> broker\n"), result.stderr.index("==> OpenCode key")
+        )
         self.assertFalse(self.auth_json().exists())
         self.assertTrue(self.state()["login_opencode"].endswith(" lan"))
         self.assert_ok(self.again())
         self.assertNotIn("agent-pm-broker login opencode lan", self.calls())
         self.assert_secret_free(KEY, TOKEN, result=result)
+        (self.fakes / "keychain/agent-pm-opencode").unlink()
+        login = (r"OpenCode provider lan API key \(hidden\):", KEY)
+        self.assert_ok(self.again(answers=[login]))
+        self.assertIn("agent-pm-broker login opencode lan", self.calls())
 
     def test_opencode_http_warning(self):
         flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")

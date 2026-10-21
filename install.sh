@@ -967,12 +967,23 @@ except BaseException:
     raise' "$(opencode_auth_file)" "$provider"
 }
 
+# The provider's key: on Docker, the broker's login (after broker_install), once per broker binary
+# while its keychain item is there; on tmux, OpenCode's auth.json.
 opencode_key() {
+  local sha
   step "OpenCode key"
   if ! has opencode; then
     skip "OpenCode not chosen"
   elif [ "$docker" = yes ]; then
-    skip "logged in through the broker"
+    sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
+    if [ "$(state_get login_opencode)" = "$sha $provider" ] \
+      && security find-generic-password -s agent-pm-opencode -a "$provider" </dev/null >/dev/null 2>&1; then
+      skip "$provider logged in to this broker"
+    else
+      record_item agent-pm-opencode "$provider"
+      "$broker" login opencode "$provider" <&3 >&3 2>&3
+      state_set login_opencode "$sha $provider"
+    fi
   elif opencode_has_key "$provider"; then
     skip "$provider in $(opencode_auth_file)"
   else
@@ -1143,23 +1154,13 @@ broker_logins() {
       "$broker" login codex <&3 >&3 2>&3
     fi
   fi
-  step "broker login: OpenCode"
-  if ! has opencode; then
-    skip "OpenCode not chosen"
-  elif [ "$(state_get login_opencode)" = "$sha $provider" ]; then
-    skip "done for this broker"
-  else
-    record_item agent-pm-opencode "$provider"
-    "$broker" login opencode "$provider" <&3 >&3 2>&3
-    state_set login_opencode "$sha $provider"
-  fi
 }
 
 docker_steps() {
   local name
   if [ "$docker" != yes ]; then
     for name in "Docker Desktop running" broker "broker login: Claude" "broker login: GitHub" \
-      "broker Codex install" "broker login: Codex" "broker login: OpenCode"; do
+      "broker Codex install" "broker login: Codex"; do
       step "$name"
       skip "Docker not chosen"
     done
@@ -1310,8 +1311,8 @@ main() {
   codex_plugins
   plugin_dir
   opencode_install
-  opencode_key
   docker_steps
+  opencode_key
   ctmux_install
   linear_keys
   board_jobs
