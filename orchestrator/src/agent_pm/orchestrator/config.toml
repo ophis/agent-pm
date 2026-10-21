@@ -21,6 +21,11 @@ workflow = ""
 # local: tracker = "linear"
 # local: work_dir = "~/.agent-pm"
 
+# Local board settings; override under [orchestrator.local] in ~/.agent-pm/config.local.toml.
+[local]
+#   issue_prefix  used only when the board has no issues; otherwise the highest-numbered id's prefix
+issue_prefix = "LOC"
+
 # Delegate implementations; default selects new runs. Recorded kinds select existing runs.
 [delegates]
 default = "harness"

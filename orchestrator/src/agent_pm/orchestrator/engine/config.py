@@ -42,6 +42,7 @@ TOP_KEYS = {
     "work_dir",
     "delegates",
     "linear",
+    "local",
 }
 LINEAR_KEYS = {
     "team",
@@ -238,6 +239,7 @@ def _load(cfg, work, kind, delegates, index, *, board):
         tracker=cfg["tracker"],
         linear=_linear_settings(cfg["linear"]) if cfg["tracker"] is TrackerKind.LINEAR else None,
         board=board,
+        local_prefix=cfg["local"]["issue_prefix"],
         work_dir=work,
         docs=docs,
         stages=MappingProxyType(_stage_order()),
@@ -319,6 +321,16 @@ def _check_ids(linear):
 
 
 def _load_config(cfg, local, board):
+    board_settings = cfg.setdefault("local", {})
+    if not isinstance(board_settings, dict):
+        raise ConfigError("orchestrator/config.toml: local must be a table")
+    if extra := sorted(set(board_settings) - {"issue_prefix"}):
+        raise ConfigError(f"orchestrator/config.toml: unknown keys in [local]: {', '.join(extra)}")
+    prefix = board_settings.setdefault("issue_prefix", "LOC")
+    if not isinstance(prefix, str) or not re.fullmatch(r"[A-Z][A-Z0-9]*", prefix):
+        raise ConfigError(
+            "orchestrator/config.toml: local.issue_prefix: want an uppercase issue prefix"
+        )
     linear = cfg.setdefault("linear", {})
     if not isinstance(linear, dict):
         raise ConfigError("orchestrator/config.toml: [linear] must be a table")

@@ -1299,6 +1299,22 @@ class LocalErrors(LocalCase):
         self.assertEqual(self.snapshot(), before)
 
 
+class LocalFirstIssue(LocalCase):
+    def test_create_on_an_empty_board(self):
+        os.makedirs(os.path.join(self.board, "unassigned"))
+        code, out, err = self.run_local(["create", "--title", "First", "--body-file", "-"], b"body")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out)["issue"]["identifier"], "LOC-1")
+
+    def test_create_uses_the_local_configuration(self):
+        os.makedirs(os.path.join(self.board, "unassigned"))
+        with open(self.config, "a", encoding="utf-8") as file:
+            file.write('[local]\nissue_prefix = "AGE"\n')
+        code, out, err = self.run_local(["create", "--title", "First", "--body-file", "-"], b"body")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out)["issue"]["identifier"], "AGE-1")
+
+
 class LocalCreatePartial(LocalCase):
     def test_a_failed_blocks_write_exits_one_with_the_report_and_the_issue_made(self):
         failing = self.put("pm/ready", "LOC-1")

@@ -1135,6 +1135,23 @@ class TrackerChoice(ConfigFile, Case):
         self.assertEqual((cfg.tracker, cfg.board), (TrackerKind.LOCAL, self.board))
         self.assertEqual(self.load('tracker = "local"\n' + LOCAL_BOARD), cfg)
 
+    def test_local_issue_prefix(self):
+        self.assertEqual(self.load(LOCAL_BOARD).local_prefix, "LOC")
+        self.assertEqual(
+            self.load(LOCAL_BOARD + '[local]\nissue_prefix = "AGE2"\n').local_prefix, "AGE2"
+        )
+        for value in ('""', '"age"', '"A-B"', '"1A"', '"A\\nB"', "12", "[]"):
+            with self.subTest(value=value):
+                self.fails(
+                    "orchestrator/config.toml: local.issue_prefix: want an uppercase issue prefix",
+                    LOCAL_BOARD + f"[local]\nissue_prefix = {value}\n",
+                )
+        self.fails("orchestrator/config.toml: local must be a table", "local = 1\n" + LOCAL_BOARD)
+        self.fails(
+            "orchestrator/config.toml: unknown keys in [local]: typo",
+            LOCAL_BOARD + "[local]\ntypo = 1\n",
+        )
+
     def test_tracker_linear(self):
         cfg = self.load(PIPELINE)
         self.assertEqual(

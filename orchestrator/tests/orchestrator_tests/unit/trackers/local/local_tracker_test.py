@@ -994,12 +994,22 @@ class Add(Written):
             ["LOC-4 Queue.md", "LOC-5 Queue.md"],
         )
 
-    def test_a_board_with_no_issue_has_no_prefix(self):
-        os.mkdir(os.path.join(self.board, "engineer"))
-        with self.assertRaises(IssueError) as caught:
-            self.tracker.add("pm", LocalState.READY, "Queue", text)
-        self.assertEqual(str(caught.exception), "no issue on the board to take an id prefix from")
-        self.assertEqual(sorted(os.listdir(self.board)), [".lock", "engineer"])
+    def test_a_board_with_no_issue_uses_loc(self):
+        os.mkdir(os.path.join(self.board, "unassigned"))
+        made = self.tracker.add("pm", LocalState.READY, "Queue", text)
+        self.assertEqual(made, Ref("LOC-1", "LOC-1"))
+        self.assertEqual(self.tracker.issue("LOC-1").title, "LOC-1 title")
+
+    def test_a_configured_prefix_is_only_for_an_empty_board(self):
+        os.mkdir(os.path.join(self.board, "unassigned"))
+        self.tracker = LocalTracker(self.board, ("pm",), prefix="AGE")
+        self.assertEqual(
+            self.tracker.add("pm", LocalState.READY, "Queue", text), Ref("AGE-1", "AGE-1")
+        )
+        self.write("pm/backlog", "OTHER-19")
+        self.assertEqual(
+            self.tracker.add("pm", LocalState.READY, "Next", text), Ref("OTHER-2", "OTHER-2")
+        )
 
     def test_writes_under_the_board_lock(self):
         self.write("pm/approved", "LOC-1")

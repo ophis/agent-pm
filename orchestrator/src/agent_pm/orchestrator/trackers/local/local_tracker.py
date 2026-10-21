@@ -80,9 +80,11 @@ class LocalTracker(Tracker):
         board: str,
         roles: Collection[str],
         *,
+        prefix: str = "LOC",
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     ):
         self.board, self.roles, self._cache, self.now = board, frozenset(roles), None, now
+        self.prefix = prefix
 
     def files(self):
         if self._cache is None:
@@ -340,7 +342,7 @@ class LocalTracker(Tracker):
     def _add(self, owner, state, title, render):
         """add's, the lock held."""
         files = self.files()
-        prefix = _prefix(files)
+        prefix = _prefix(files) if files else self.prefix
         folder = self._folder(owner, state.value)
         while True:
             ident = store.next_id(self.board, prefix)
@@ -555,8 +557,6 @@ def archived_from(issue):
 
 
 def _prefix(files):
-    if not files:
-        raise IssueError("no issue on the board to take an id prefix from")
     return max(files, key=lambda i: int(i.rsplit("-", 1)[1])).rsplit("-", 1)[0]
 
 

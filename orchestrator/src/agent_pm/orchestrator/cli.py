@@ -334,14 +334,14 @@ def _linear_board_factory(gql, cfg):
 def _local_board(transport, cfg, *, say=None):
     """A local board's tracker, the router's and a run's: it needs no transport and logs nothing."""
     del transport, say
-    return LocalTracker(cfg.board, cfg.roles)
+    return LocalTracker(cfg.board, cfg.roles, prefix=cfg.local_prefix)
 
 
 def _local_board_factory(transport, cfg):
     """The board scanned once, so an unreadable one fails here; then a fresh tracker each call."""
     del transport
     scan(cfg.board)
-    return lambda _: LocalTracker(cfg.board, cfg.roles)
+    return lambda _: LocalTracker(cfg.board, cfg.roles, prefix=cfg.local_prefix)
 
 
 def _local_accounts(transport, cfg, key):

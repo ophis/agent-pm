@@ -46,9 +46,14 @@ _BAD_CLIENT = re.compile(r'^"|[\s\x00-\x1f\x7f-\x9f]')
 
 class LocalIssues:
     def __init__(
-        self, board, roles: Mapping[str, Role], *, now=lambda: datetime.now().astimezone()
+        self,
+        board,
+        roles: Mapping[str, Role],
+        *,
+        prefix="LOC",
+        now=lambda: datetime.now().astimezone(),
     ):
-        self.tracker = LocalTracker(board, roles, now=now)
+        self.tracker = LocalTracker(board, roles, prefix=prefix, now=now)
         self.roles = list(roles)
         self.tasks = list(dict.fromkeys(task for role in roles.values() for task in role.tasks))
         self.tracker.files()
