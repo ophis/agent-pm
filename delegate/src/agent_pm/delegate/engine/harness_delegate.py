@@ -577,7 +577,10 @@ class HarnessDelegate(Delegate):
         composition = Composer()
         try:
             session_cls.configure_from(thaw(composition.config.values))
-            return session_cls.usage(composition.resolve(role, overlays=overlays).client)
+            run = composition.resolve(role, overlays=overlays)
+            if (usage_for := getattr(session_cls, "_usage_for", None)) is not None:
+                return usage_for(run.client, tier=run.tier)
+            return session_cls.usage(run.client)
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 

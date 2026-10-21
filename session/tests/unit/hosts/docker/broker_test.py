@@ -31,9 +31,9 @@ CONTAINER = "agent-pm-worker_1-0123456789abcdef0123456789abcdef"
 VOLUME = "agent-pm-ws-worker_1"
 KEYS = broker.client_keys(REPO)
 CALLS = {
-    "probe_opencode_output": (
-        "probe-opencode",
-        lambda b: b.probe_opencode("strata", "https://strata.test/v1"),
+    "probe_provider_output": (
+        "probe-provider",
+        lambda b: b.probe_provider("strata", "https://strata.test/v1"),
     ),
     "version_output": ("version", lambda b: b.version()),
     "build_output": ("build", lambda b: b.build("/opt/agent-pm")),
@@ -43,7 +43,7 @@ CALLS = {
     "workspace_rm_output": ("workspace-rm", lambda b: b.workspace_rm(VOLUME)),
 }
 COMMANDS = {
-    "probe-opencode": CALLS["probe_opencode_output"],
+    "probe-provider": CALLS["probe_provider_output"],
     "version": CALLS["version_output"],
     "build": CALLS["build_output"],
     "start": CALLS["start_output"],
@@ -72,10 +72,10 @@ class ResponseTest(Case):
     def test_provider_probe_response_is_only_a_boolean(self):
         for value in (True, False):
             runner = FakeBroker((0, json.dumps({"available": value}), ""))
-            self.assertIs(Broker(runner).probe_opencode("strata", "https://strata.test/v1"), value)
+            self.assertIs(Broker(runner).probe_provider("strata", "https://strata.test/v1"), value)
         for response in ({}, {"available": 1}, {"available": True, "key": "secret"}):
             with self.subTest(response=response), self.assertRaises(SessionError):
-                Broker(FakeBroker((0, json.dumps(response), ""))).probe_opencode(
+                Broker(FakeBroker((0, json.dumps(response), ""))).probe_provider(
                     "strata", "https://strata.test/v1"
                 )
 

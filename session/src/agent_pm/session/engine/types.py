@@ -195,6 +195,12 @@ class Container(NamedTuple):
 
 
 @dataclass(frozen=True)
+class ProviderProbe:
+    provider: str
+    base_url: str
+
+
+@dataclass(frozen=True)
 class ClientContext:
     """What a Host hands its client."""
 

@@ -49,7 +49,7 @@ func recording(calls *[]call) app {
 		},
 		status: func(ctx context.Context) (any, error) { return result("status")(ctx, "", nil) },
 		probeOpencode: func(ctx context.Context, provider, base string) (any, error) {
-			return result("probe-opencode")(ctx, provider+" "+base, nil)
+			return result("probe-provider")(ctx, provider+" "+base, nil)
 		},
 		workspaceRm: func(ctx context.Context, volume string, _ bool) (any, error) { return workspaceRm(ctx, volume, nil) }}
 }
@@ -81,11 +81,11 @@ func TestProbeOpencodeCommand(t *testing.T) {
 		}
 		return map[string]bool{"available": true}, nil
 	}}
-	code, out, errOut := invoke(a, "probe-opencode", "--provider", "strata", "--base-url", "https://strata.test/v1")
+	code, out, errOut := invoke(a, "probe-provider", "--provider", "strata", "--base-url", "https://strata.test/v1")
 	if code != 0 || out != "{\"available\":true}\n" || errOut != "" || calls != 1 {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
-	for _, args := range [][]string{{"probe-opencode"}, {"probe-opencode", "--provider", "../bad", "--base-url", "https://strata.test/v1"}, {"probe-opencode", "--provider", "strata", "--base-url", "file:///tmp/key"}} {
+	for _, args := range [][]string{{"probe-provider"}, {"probe-provider", "--provider", "../bad", "--base-url", "https://strata.test/v1"}, {"probe-provider", "--provider", "strata", "--base-url", "file:///tmp/key"}} {
 		code, _, _ = invoke(a, args...)
 		if code != 2 || calls != 1 {
 			t.Fatal("invalid probe dispatched")
@@ -94,7 +94,7 @@ func TestProbeOpencodeCommand(t *testing.T) {
 }
 
 func TestInputFixtures(t *testing.T) {
-	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "refresh_input", "close_input", "status_input", "workspace_rm_input", "probe_opencode_input") {
+	for _, c := range fixtures.Cases(t, "version_input", "build_input", "start_input", "refresh_input", "close_input", "status_input", "workspace_rm_input", "probe_provider_input") {
 		t.Run(c.File, func(t *testing.T) {
 			var in struct{ Argv []string }
 			if err := json.Unmarshal(c.Data, &in); err != nil {
@@ -108,7 +108,7 @@ func TestInputFixtures(t *testing.T) {
 			if c.Valid {
 				want := call{in.Argv[0], ""}
 				switch in.Argv[0] {
-				case "probe-opencode":
+				case "probe-provider":
 					want.arg = in.Argv[2] + " " + in.Argv[4]
 				case "refresh":
 					want.arg = in.Argv[2] + " " + in.Argv[4]

@@ -468,14 +468,18 @@ class Board:
             resumed=client_of(self.entries, sid),
         )
 
-    def gated(self, issue, role, client, source, frm=IssueState.READY):
+    def gated(self, issue, role, client, source, frm=IssueState.READY, *, task=None):
         """Whether the usage gate blocks a new run of client; an issue-chosen client's quota
         configuration error bounces the issue from frm instead.
         """
         ident = issue["identifier"]
         try:
             return self.gate is not None and self.gate.blocked(
-                role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
+                role,
+                ident,
+                key=(self.cfg.delegate_kind, client),
+                reject_config=source == "label",
+                tier=self.cfg.task_tier(task),
             )
         except delegate.ConfigError as error:
             self.say("launch-error", ident, client=client, error=one_line(error))
@@ -592,7 +596,7 @@ class Board:
         if client in clients:
             self.say("claim-skip", ident, reason=f"{client} is full")
             return None
-        if self.gated(issue, role, client, source):
+        if self.gated(issue, role, client, source, task=task):
             return None
         taken = {**issue, "assignee": current.assignee, "project": current.home}
         if self.dry:
@@ -919,11 +923,18 @@ def choose(board, gate, live_ids, full, counts, *, clients, new_sid):
                 continue
             if spec.mode == "new":
                 blocked = board.gated(
-                    issue, role, spec.client, spec.client_source, IssueState.RUNNING
+                    issue, role, spec.client, spec.client_source, IssueState.RUNNING, task=spec.task
                 )
             else:
                 key = (delegate_of(board.entries, sid), spec.client)
-                blocked = gate.blocked(role, issue["identifier"], key=key)
+                blocked = gate.blocked(
+                    role,
+                    issue["identifier"],
+                    key=key,
+                    tier=board.cfg.task_tier(
+                        started_task(board.cfg.runs_log, issue["identifier"], sid)
+                    ),
+                )
             if not blocked:
                 board.plan(("resume", spec, sid), counts)
                 yield spec

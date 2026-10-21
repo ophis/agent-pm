@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Effort,
     Launch,
     Permission,
+    ProviderProbe,
     Resumable,
     SessionStatus,
     Spec,
@@ -110,7 +111,6 @@ OLLAMA = "ollama"
 SECRETS = "secrets/opencode"  # the broker's key files, under a container's state root
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 WORD = re.compile(r"\S+")
-URL = re.compile(r"https?://\S+")
 
 
 def _window(value) -> bool:
@@ -126,7 +126,7 @@ def _provider(name, table) -> bool:
         and set(table) - {"context"} == {"base_url", "models"}
         and _window(table.get("context", OLLAMA_CONTEXT))
         and isinstance(table["base_url"], str)
-        and URL.fullmatch(table["base_url"]) is not None
+        and probe.valid_url(table["base_url"])
         and strings(table["models"])
         and all(WORD.fullmatch(m) and m.isprintable() for m in table["models"])
     )
@@ -451,10 +451,24 @@ class OpenCodeCommon:
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         return env
 
-    def probe(self) -> Launch:
+    def usage_provider(self, tier: int | None) -> ProviderProbe | None:
+        provider = self.model(tier).partition("/")[0]
+        return (
+            None
+            if provider == OLLAMA
+            else ProviderProbe(provider, self.providers[provider]["base_url"])
+        )
+
+    def probe(self, tier: int | None = None) -> Launch:
         """On this machine, so the loopback, never the Host's address."""
+        request = self.usage_provider(tier)
+        args = (
+            (str(self.port),)
+            if request is None
+            else ("--provider", request.provider, request.base_url)
+        )
         return Launch(
-            (os.path.realpath(sys.executable), "-I", probe.__file__, str(self.port)),
+            (os.path.realpath(sys.executable), "-I", probe.__file__, *args),
             env={k: v for k, v in self.env.items() if k not in LOCAL_ENV_VARS},
             unset=UNSET,
         )
@@ -467,6 +481,8 @@ class OpenCodeCommon:
         except (ValueError, RecursionError):
             return None
         if isinstance(found, dict) and isinstance(found.get("models"), list):
+            return Usage(None, None)
+        if isinstance(found, dict) and set(found) == {"available"} and found["available"] is True:
             return Usage(None, None)
         return None
 

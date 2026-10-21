@@ -143,6 +143,10 @@ class FakeBroker:
         if "version" in self.failing:
             raise self.failing["version"]
 
+    def probe_provider(self, provider, base_url):
+        self.order.append(("probe", provider, base_url))
+        return True
+
     def build(self, package, *, plugins=(), max_age=None):
         self.order.append(("build", package))
         self.plugins = plugins
@@ -296,6 +300,14 @@ def _free(path):
 
 
 class ConfigTest(Base):
+    def test_provider_usage_checks_protocol_and_uses_the_broker(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        self.assertTrue(self.host._provider_usage(request))
+        self.assertEqual(self.order, ["version", ("probe", "strata", "https://strata.test/v1")])
+        self.broker.failing["version"] = SessionError("upgrade broker")
+        with self.assertRaisesRegex(ConfigError, "upgrade broker"):
+            self.host._provider_usage(request)
+
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
             table = tomllib.load(f)["hosts"]

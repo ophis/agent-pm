@@ -47,7 +47,7 @@ COMMANDS = frozenset(
         "close",
         "status",
         "workspace-rm",
-        "probe-opencode",
+        "probe-provider",
         "unknown",
     }
 )
@@ -55,13 +55,13 @@ CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
     "manifest_rejected": (3, {"start", "refresh"}),
     "mount_rejected": (4, {"start", "refresh"}),
-    "login_required": (5, {"start", "refresh", "probe-opencode"}),
+    "login_required": (5, {"start", "refresh", "probe-provider"}),
     "image_rejected": (6, {"start"}),
     "docker_unreachable": (7, {"build", "start", "refresh", "close", "workspace-rm"}),
     "build_failed": (8, {"build"}),
     "start_failed": (9, {"start"}),
     "close_failed": (10, {"close"}),
-    "keychain_failed": (11, {"start", "refresh", "close", "status", "probe-opencode"}),
+    "keychain_failed": (11, {"start", "refresh", "close", "status", "probe-provider"}),
     "workspace_dirty": (12, {"workspace-rm"}),
     "workspace_rejected": (13, {"workspace-rm"}),
     "workspace_failed": (14, {"workspace-rm"}),
@@ -313,9 +313,9 @@ class Broker:
                 f" {INSTALL}"
             )
 
-    def probe_opencode(self, provider: str, base_url: str) -> bool:
+    def probe_provider(self, provider: str, base_url: str) -> bool:
         found = self._parsed(
-            "probe-opencode",
+            "probe-provider",
             lambda d: set(d) == {"available"} and type(d["available"]) is bool,
             "--provider",
             provider,

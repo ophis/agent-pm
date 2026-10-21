@@ -51,6 +51,12 @@ class OpenCodeClient(Client):
     def usage_probe(self):
         return self.common.probe()
 
+    def _usage_probe(self, tier):
+        return self.common.probe(tier)
+
+    def _provider_probe(self, tier):
+        return self.common.usage_provider(tier)
+
     def usage(self, output):
         return self.common.parse_usage(output)
 

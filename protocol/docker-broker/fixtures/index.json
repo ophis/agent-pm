@@ -1737,8 +1737,8 @@
       }
     },
     {
-      "file": "probe-opencode-input.json",
-      "definition": "probe_opencode_input",
+      "file": "probe-provider-input.json",
+      "definition": "probe_provider_input",
       "valid": true,
       "expected": {
         "stage": "schema",
@@ -1747,8 +1747,8 @@
       }
     },
     {
-      "file": "probe-opencode-input-invalid.json",
-      "definition": "probe_opencode_input",
+      "file": "probe-provider-input-invalid.json",
+      "definition": "probe_provider_input",
       "valid": false,
       "expected": {
         "stage": "schema",
@@ -1757,8 +1757,8 @@
       }
     },
     {
-      "file": "probe-opencode-output.json",
-      "definition": "probe_opencode_output",
+      "file": "probe-provider-output.json",
+      "definition": "probe_provider_output",
       "valid": true,
       "expected": {
         "stage": "response",
@@ -1767,8 +1767,8 @@
       }
     },
     {
-      "file": "probe-opencode-output-invalid.json",
-      "definition": "probe_opencode_output",
+      "file": "probe-provider-output-invalid.json",
+      "definition": "probe_provider_output",
       "valid": false,
       "expected": {
         "stage": "response",

@@ -167,6 +167,12 @@ class Session(ABC):
         return cls._hosted("usage")(client)
 
     @classmethod
+    def _usage_for(cls, client: str, *, tier: int | None) -> Usage | None:
+        if cls is not Session:
+            return cls.usage(client)
+        return cls._hosted("_usage_for")(client, tier=tier)
+
+    @classmethod
     def client_resume(cls, client: str, argv: Sequence[str]) -> int:
         return cls._hosted("client_resume")(client, argv)
 

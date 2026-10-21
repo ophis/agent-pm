@@ -759,7 +759,7 @@
                 "status",
                 "workspace-rm",
                 "unknown",
-                "probe-opencode"
+                "probe-provider"
               ]
             },
             "code": {
@@ -879,7 +879,7 @@
                     "status",
                     "workspace-rm",
                     "unknown",
-                    "probe-opencode"
+                    "probe-provider"
                   ]
                 }
               }
@@ -940,7 +940,7 @@
                   "enum": [
                     "start",
                     "refresh",
-                    "probe-opencode"
+                    "probe-provider"
                   ]
                 }
               }
@@ -1062,7 +1062,7 @@
                     "refresh",
                     "close",
                     "status",
-                    "probe-opencode"
+                    "probe-provider"
                   ]
                 }
               }
@@ -1185,7 +1185,7 @@
                     "status",
                     "workspace-rm",
                     "unknown",
-                    "probe-opencode"
+                    "probe-provider"
                   ]
                 }
               }
@@ -1363,14 +1363,14 @@
       ],
       "additionalProperties": false
     },
-    "probe_opencode_input": {
+    "probe_provider_input": {
       "type": "object",
       "properties": {
         "argv": {
           "type": "array",
           "prefixItems": [
             {
-              "const": "probe-opencode"
+              "const": "probe-provider"
             },
             {
               "const": "--provider"
@@ -1397,7 +1397,7 @@
       ],
       "additionalProperties": false
     },
-    "probe_opencode_output": {
+    "probe_provider_output": {
       "type": "object",
       "properties": {
         "available": {

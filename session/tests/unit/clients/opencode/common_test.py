@@ -559,6 +559,30 @@ class CompactionTest(Case):
 
 
 class UsageTest(Case):
+    def test_usage_selects_the_provider_of_the_effective_tier(self):
+        client = OpenCodeClient(
+            {
+                **packaged_table(),
+                "model": "strata/default",
+                "tiers": {"1": "ollama/local", "2": "strata/remote"},
+                "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
+            }
+        )
+        self.assertIsNone(client._provider_probe(1))
+        for tier in (None, 2):
+            request = client._provider_probe(tier)
+            self.assertEqual(
+                (request.provider, request.base_url), ("strata", "https://strata.test/v1")
+            )
+            self.assertEqual(
+                client._usage_probe(tier).argv[-3:],
+                ("--provider", "strata", "https://strata.test/v1"),
+            )
+        self.assertEqual(client._usage_probe(1).argv[-1], "11434")
+        self.assertEqual(client.usage('{"available": true}'), Usage(None, None))
+        for bad in ('{"available": false}', '{"available": 1}', '{"available": true, "key": "x"}'):
+            self.assertIsNone(client.usage(bad))
+
     def test_the_probe_asks_the_hosts_ollama_on_its_port(self):
         client = OpenCodeClient({**packaged_table(), "ollama_port": 11500, "env": {"A": "b"}})
         launch = client.usage_probe()
