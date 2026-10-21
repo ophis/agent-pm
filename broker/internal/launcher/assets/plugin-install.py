@@ -28,7 +28,10 @@ def installed(home, market, name):
         raise ValueError(f"plugin-install: expected one installed version of {name}@{market}")
     root = versions[0]
     paths = [root / ".codex-plugin/plugin.json", root / ".claude-plugin/plugin.json"]
-    manifest = json.loads(next(path for path in paths if path.is_file()).read_text())
+    path = next((path for path in paths if path.is_file()), None)
+    if path is None:
+        raise ValueError(f"plugin-install: missing installed manifest for {name}@{market}")
+    manifest = json.loads(path.read_text())
     version = manifest.get("version")
     if (
         manifest.get("name") != name

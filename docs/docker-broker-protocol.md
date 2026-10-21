@@ -57,9 +57,9 @@ asks GitHub the slug of the key's App (`GET /app`, the App JWT), looks up `<slug
 credential) and saves both ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
-`build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
-the account installed at user scope, `name` or `name@marketplace` (`#/$defs/plugin`), which the
-image holds ([Plugins](docker-host.md#plugins)). The schema checks each token; their pairing and
+`build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is `autopilot` or
+`name@owner/repo` (`#/$defs/plugin`), installed independently by each client inside the image
+([Plugins](docker-host.md#plugins)). The schema checks each token; their pairing and
 order, which JSON Schema cannot express, are the broker's, failing with `usage`.
 
 | Result | Process exit | stdout | stderr |

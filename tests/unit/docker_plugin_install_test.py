@@ -4,7 +4,6 @@ import io
 import json
 import os
 import runpy
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -19,6 +18,7 @@ class PluginInstall(Case):
         )
         self.root = Path(self.home, "image")
         self.calls = []
+        self.markets = {"ophis/claude-autopilot": "claude-autopilot"}
         self.plugins = [
             {"name": "autopilot", "repo": "ophis/claude-autopilot"},
             {"name": "beta", "repo": "ophis/claude-autopilot"},
@@ -30,15 +30,14 @@ class PluginInstall(Case):
         client = argv[0]
         home = Path(env["CLAUDE_CONFIG_DIR"] if client == "claude" else env["CODEX_HOME"])
         if argv[1:4] == ["plugin", "marketplace", "add"]:
-            market = home / (
-                "plugins/marketplaces/claude-autopilot"
-                if client == "claude"
-                else ".tmp/marketplaces/claude-autopilot"
+            name = self.markets[argv[4]]
+            market = (
+                home
+                / ("plugins/marketplaces" if client == "claude" else ".tmp/marketplaces")
+                / name
             )
             (market / ".claude-plugin").mkdir(parents=True)
-            (market / ".claude-plugin/marketplace.json").write_text(
-                json.dumps({"name": "claude-autopilot"})
-            )
+            (market / ".claude-plugin/marketplace.json").write_text(json.dumps({"name": name}))
         if argv[1:3] in (["plugin", "install"], ["plugin", "add"]):
             name, market = argv[3].split("@")
             version = "2.0.0" if client == "codex" else "1.0.0"
@@ -98,7 +97,7 @@ class PluginInstall(Case):
             self.install()
         for _, kw in self.calls:
             self.assertNotIn("PERSONAL_SECRET", kw["env"])
-            self.assertEqual(kw["stdin"], subprocess.DEVNULL)
+            self.assertEqual(kw["stdin"], self.code["subprocess"].DEVNULL)
             self.assertTrue(kw["check"])
 
     def test_empty_plugins_still_prepare_native_empty_homes(self):
@@ -114,8 +113,82 @@ class PluginInstall(Case):
 
         with self.assertRaises((ValueError, FileNotFoundError)):
             self.install(run=no_metadata)
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.install(run=mock.Mock(side_effect=subprocess.CalledProcessError(1, "fake")))
+        error = self.code["subprocess"].CalledProcessError
+        with self.assertRaises(error):
+            self.install(run=mock.Mock(side_effect=error(1, "fake")))
+
+    def test_distinct_repositories_use_their_manifest_marketplace_names(self):
+        self.markets["vendor/catalogue-repo"] = "team-market"
+        self.install([self.plugins[0], {"name": "beta", "repo": "vendor/catalogue-repo"}])
+        commands = [argv for argv, _ in self.calls]
+        for client, verb in (("claude", "install"), ("codex", "add")):
+            self.assertIn(
+                [client, "plugin", "marketplace", "add", "vendor/catalogue-repo"], commands
+            )
+            self.assertIn([client, "plugin", verb, "autopilot@claude-autopilot"], commands)
+            self.assertIn([client, "plugin", verb, "beta@team-market"], commands)
+        self.assertEqual(
+            (self.root / "plugins/beta/skills/build/SKILL.md").read_text(), "original skill"
+        )
+
+    def test_bad_installed_metadata_and_revision_fail_for_either_client(self):
+        for client, verb, home, version in (
+            ("claude", "install", "claude-plugins", "1.0.0"),
+            ("codex", "add", "codex-plugins", "2.0.0"),
+        ):
+            for case in (
+                "missing-version",
+                "invalid-version",
+                "ambiguous",
+                "missing-manifest",
+                "revision",
+            ):
+                with self.subTest(client=client, case=case):
+                    self.root = Path(self.home, client, case)
+
+                    def bad_metadata(
+                        argv,
+                        *,
+                        client=client,
+                        verb=verb,
+                        home=home,
+                        version=version,
+                        case=case,
+                        **kw,
+                    ):
+                        result = self.client_run(argv, **kw)
+                        if argv[:3] == [client, "plugin", verb]:
+                            installed = (
+                                self.root
+                                / home
+                                / "plugins/cache/claude-autopilot/autopilot"
+                                / version
+                            )
+                            manifest = installed / ".claude-plugin/plugin.json"
+                            if case == "missing-version":
+                                manifest.write_text('{"name":"autopilot"}')
+                            elif case == "invalid-version":
+                                manifest.write_text('{"name":"autopilot","version":42}')
+                            elif case == "ambiguous":
+                                (installed.parent / "3.0.0").mkdir()
+                            elif case == "missing-manifest":
+                                manifest.unlink()
+                        if case == "revision" and argv[0] == "git" and home in Path(argv[2]).parts:
+                            return SimpleNamespace(stdout="invalid revision", returncode=0)
+                        return result
+
+                    with self.assertRaisesRegex(ValueError, "plugin-install:"):
+                        self.install([self.plugins[0]], run=bad_metadata)
+
+    def test_main_reads_the_sources_file(self):
+        source = Path(self.home, "sources.json")
+        source.write_text(json.dumps([self.plugins[0]]))
+        with (
+            mock.patch("subprocess.run", side_effect=self.client_run),
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            self.code["main"]([str(source), str(self.root)])
+        self.assertTrue((self.root / "plugins/autopilot/skills/build/SKILL.md").is_file())
 
     def test_main_requires_input_file_and_absolute_root(self):
         for argv in ([], ["input"], ["input", "relative"]):

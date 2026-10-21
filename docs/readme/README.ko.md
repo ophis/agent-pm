@@ -83,7 +83,7 @@ Linear orchestrator는 에이전트가 어떻게 일해야 하는지에 대한 �
 | 요구 사항 | 용도 |
 |---|---|
 | `claude` CLI, Python 3.11+ | 모든 에이전트 run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, 각 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot` | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) 플러그인, host worker의 client에: Claude Code는 `/plugin marketplace add ophis/claude-autopilot`, 다음 `/plugin install autopilot@claude-autopilot`; Codex는 `codex plugin marketplace add ophis/claude-autopilot`, 다음 `codex plugin add autopilot@claude-autopilot`. Docker worker는 이미지 안에 독립적으로 설치합니다([플러그인](../docker-host.md#plugins)). | engineer의 build task(`/autopilot:build`, `/autopilot:light-build`)와 PM의 PRD 리뷰(`/autopilot:review`). 그 외에는 필요 없음. |
 | tmux 3.3+ | `tmux` Host의 tui run |
 | `127.0.0.1`에서만 듣고 컨텍스트 길이 65536 이상, tier 모델을 pull한 [Ollama](https://ollama.com); `tmux`에서는 OpenCode 1.x도(`npm install -g opencode-ai@1.19.3`) | OpenCode만([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, 로그인된 `gh` | 코딩(checkout, pull request)과 GitHub 대상. 그 외에는 필요 없음. |

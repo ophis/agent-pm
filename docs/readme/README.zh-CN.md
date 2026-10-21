@@ -83,7 +83,7 @@ Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再�
 | 依赖 | 用途 |
 |---|---|
 | `claude` CLI、Python 3.11+ | 每次 agent run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) 插件，每个 client 都要装：Claude Code `/plugin marketplace add ophis/claude-autopilot`，然后 `/plugin install autopilot@claude-autopilot`；Codex `codex plugin marketplace add ophis/claude-autopilot`，然后 `codex plugin add autopilot@claude-autopilot` | engineer 的 build task（`/autopilot:build`、`/autopilot:light-build`）和 PM 的 PRD 评审（`/autopilot:review`）。其他情况不需要。 |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) 插件，host worker 使用的 client 需要安装：Claude Code `/plugin marketplace add ophis/claude-autopilot`，然后 `/plugin install autopilot@claude-autopilot`；Codex `codex plugin marketplace add ophis/claude-autopilot`，然后 `codex plugin add autopilot@claude-autopilot`. Docker worker 在镜像内独立安装（[插件](../docker-host.md#plugins)）。 | engineer 的 build task（`/autopilot:build`、`/autopilot:light-build`）和 PM 的 PRD 评审（`/autopilot:review`）。其他情况不需要。 |
 | tmux 3.3+ | 在 `tmux` Host 上的 tui run |
 | [Ollama](https://ollama.com) 只听 `127.0.0.1`，上下文长度至少 65536，已拉取 tier 模型；在 `tmux` 上还要 OpenCode 1.x（`npm install -g opencode-ai@1.19.3`） | 只有 OpenCode 需要（[Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)） |
 | `git`、已登录的 `gh` | 写代码（checkout、pull request）和 GitHub 目标。其他情况不需要。 |

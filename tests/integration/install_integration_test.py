@@ -1513,7 +1513,7 @@ class InstallTest(Case):
         )
         self.assert_ok(result)
         self.assertNotIn("plugins =", self.config().read_text())
-        self.assertFalse(self.plugin_calls())
+        self.assertEqual(self.plugin_calls(), [f"opencode plugin -g -f {SPEC}"])
 
     def test_cleanup_round_trip_opencode_only(self):
         conf = Path(self.home, ".config/opencode")
