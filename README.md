@@ -160,10 +160,9 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | Page | Covers |
 |---|---|
 | [Customizing roles and tasks](docs/customizing-roles-and-tasks.md) | run settings, team dirs, role and task files, checks |
-| [Board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format) |
+| [Board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format), the state root (`~/.agent-pm/`: what you may delete by hand) |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
 | [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions, the OpenCode commander |
-| [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
 | [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
 | [Tests](docs/tests.md) | lint, test suites, coverage, live tests a local model can gate (developers) |

@@ -252,3 +252,33 @@ Approved; hand it to the next stage.
 - **Archive:** prune archives by the [Finish](#using-the-board) rule, moving the issue file and every unarchived descendant flat into `archive/`, each given the engine's comment `Archived from <assignee>/<state>/.`; an issue with a descendant in neither `done/` nor `canceled/` stays. Restoring one (the source of a handoff the engineer's repo check bounces) moves it back to that comment's assignee dir, in its last History state; with no such comment, or one naming no plain directory, to `unassigned/`.
 - **Errors:** a board file that cannot be read stops the router before any pick with `router.py: <absolute path>: <reason>`, exit 2 (`promote.py:` and `prune.py:` the same), e.g. `no front matter`, `unknown key 'owner'`, `bad priority '7'`, `unknown state dir 'doing'`, `duplicate id LOC-12, also in <path>`. No board directory: `router.py: <board>: no such board directory`; one holding no assignee dir: `router.py: <board>: empty board: no assignee directory`.
 - **Writes:** a program takes `.lock` before it changes the board, rereads the issue file, and writes it to a temp file beside it, then replaces it whole, only if the file still holds what it read (else it rereads, up to 3 times, then fails with `<path>: changed while writing`); every other line stays as you wrote it. A move renames the file into `<assignee>/<state>/` and adds a `self` History line; a move that names the state it expects (e.g. a run's to `review/` from `running/`) leaves an issue you moved elsewhere where it is. The engine's comments are `#### self` ones, those it may post again or edit in place (a run's session comment) carrying its hidden `id` and `key`; a body line that would read as a header or section starts with a space. Before its change, a write fixes what you did since the last one: each `###` comment gets its `#### other · <time>` header, and a file whose directory differs from its last History entry gets that `other` move as a History line, both at the file's modification time. A new issue's number comes from `.next-id`, under the lock.
+
+## State root
+
+agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "linear"`, `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default; on a [local board](#local-board) they are in `<board>/.state/`.
+
+What you may delete by hand:
+
+| Entry | Safe to delete by hand |
+|---|---|
+| `config.local.toml` | never: your settings |
+| `work/<ID>/agent/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| `work/<ID>/run/` | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
+| `work/<ID>/writeback.json`, `writeback.lock` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
+| `logs/runs.jsonl` | never ([Operating](#operating)) |
+| `logs/orchestrator.jsonl`, `.1`, `.lock` | any time; keep `logs/` ([Setup](#setup) step 4) |
+| `logs/prune.json` | any time: the next tick reads Linear again |
+| `logs/router.lock` | while no router runs |
+| `board/` (or `$AGENT_PM_BOARD_DIR`): issue files, `.next-id` | never: your issues and the next issue number |
+| `board/.lock` | while no program writes the board |
+| `board/.state/` | as `work/` and `logs/` |
+| `sessions/` | an entry once its session ended and you won't resume it |
+| `tui/<name>/` | no: closing the session removes it |
+| `tui/<name>.lock` | while no session of that name starts or closes |
+| `workers/<sid>/` | once you won't restart or resume the worker |
+| `hidden/<name>.json` | any time: that session then reads not hidden |
+| `managers/<name>/` | while no manager holds it; its Roster is lost |
+| `adhoc/` | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
+| `docker/worker/` | never: your image definition; with it gone, `scripts/install.sh` seeds the default again |
+| `docker-state/<name>/` | once you won't restart or resume that session |
+| `probe/`, `bin/` | any time; `ctmux --install` restores `bin/` |
