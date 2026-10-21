@@ -965,6 +965,104 @@ docker_steps() {
   broker_logins
 }
 
+# Exit 0 when config.local.toml has [orchestrator] tracker = "linear".
+linear_board() {
+  [ -f "$config" ] && python3 -I -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    sys.exit(0 if tomllib.load(f).get("orchestrator", {}).get("tracker") == "linear" else 1)' "$config"
+}
+
+# "<service>\t<account>" for each Linear key config.local.toml names.
+linear_services() {
+  python3 -I -c '
+import re, sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    linear = tomllib.load(f).get("orchestrator", {}).get("linear", {})
+found = [(linear.get(k), linear.get(k)) for k in ("harness_key", "manager_key")]
+found += [(role.get("key"), role.get("account") or role.get("key")) for role in linear.get("roles", {}).values()]
+for service, account in found:
+    if not service:
+        continue
+    if all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
+        print(f"{service}\t{account}")
+    else:
+        print(f"install.sh: skipping Linear key {service!r}: not a plain keychain name", file=sys.stderr)' "$config"
+}
+
+linear_keys() {
+  local list service account
+  step "Linear keys"
+  if ! linear_board; then
+    skip 'no tracker = "linear" in ~/.agent-pm/config.local.toml (docs/board.md#setup)'
+    return
+  fi
+  list=$(linear_services)
+  while IFS=$'\t' read -r service account; do
+    [ -n "$service" ] || continue
+    if security find-generic-password -s "$service" </dev/null >/dev/null 2>&1; then
+      skip "$service in the keychain"
+    else
+      say "Linear key $service: paste its API key at security's prompt (nothing echoes)"
+      security add-generic-password -s "$service" -a "$account" -w <&3 >&3 2>&3
+    fi
+  done <<<"$list"
+}
+
+# Writes the board job $1's plist for this user to $2, from the plugin's: the launcher in ~/.agent-pm/bin.
+board_plist() {
+  python3 -I -c '
+import sys
+source, out, home = sys.argv[1:]
+with open(source, encoding="utf-8") as f:
+    text = f.read()
+shipped = "/Users/francis/playground/agent-pm/bin/agent-pm-orchestrator"
+if shipped not in text:
+    sys.exit(f"install.sh: {source} does not run {shipped}")
+text = text.replace(shipped, "\0").replace("/Users/francis/", home + "/")
+text = text.replace("\0", home + "/.agent-pm/bin/agent-pm-orchestrator")
+with open(out, "w", encoding="utf-8") as f:
+    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME"
+}
+
+board_jobs() {
+  local job target new offered= shown= uid
+  step "board launchd jobs"
+  if ! linear_board; then
+    skip "no Linear board"
+    return
+  fi
+  mkdir -p "$state_dir"
+  for job in router promote; do
+    target=$HOME/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
+    new=$state_dir/com.ophis.agent-pm.$job.plist
+    board_plist "$job" "$new"
+    if [ -f "$target" ] && cmp -s "$new" "$target"; then
+      skip "$job installed"
+    elif [ -e "$target" ]; then
+      skip "$target exists; remove it to let install.sh install the job"
+    else
+      offered="$offered $job"
+      shown="$shown$(printf '%s:\n%s' "$target" "$(cat "$new")")
+"
+    fi
+  done
+  [ -n "$offered" ] || return 0
+  if ! consent "$HOME/Library/LaunchAgents" "$shown"; then
+    skip declined
+    return
+  fi
+  uid=$(id -u)
+  mkdir -p "$HOME/.agent-pm/logs" "$HOME/Library/LaunchAgents"
+  for job in $offered; do
+    target=$HOME/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
+    cp "$state_dir/com.ophis.agent-pm.$job.plist" "$target"
+    launchctl bootout "gui/$uid/com.ophis.agent-pm.$job" </dev/null >/dev/null 2>&1 || true
+    launchctl enable "gui/$uid/com.ophis.agent-pm.$job" </dev/null
+    launchctl bootstrap "gui/$uid" "$target" </dev/null
+  done
+}
+
 main() {
   local platform
   set +x
@@ -989,6 +1087,8 @@ main() {
   opencode_key
   docker_steps
   ctmux_install
+  linear_keys
+  board_jobs
   current=
   say "agent-pm is installed (ref $ref, clients $clients, Docker $docker)."
 }

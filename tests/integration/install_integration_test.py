@@ -35,6 +35,7 @@ REAL = (
     "true",
     "head",
     "tail",
+    "cmp",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
@@ -865,3 +866,50 @@ class InstallTest(Case):
             )
             self.assert_ok(result)
             self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)
+
+    def test_linear_keys_and_board_jobs(self):
+        result = self.fresh()
+        self.assert_ok(result)
+        self.assertIn('skip: no tracker = "linear"', result.stderr)
+        self.assertIn("==> board launchd jobs\n    skip: no Linear board", result.stderr)
+        linear = (
+            '\n[orchestrator]\ntracker = "linear"\n\n[orchestrator.linear]\n'
+            'harness_key = "linear-harness"\nmanager_key = "linear-manager"\n\n'
+            '[orchestrator.linear.roles.pm]\naccount = "me+pm@example.com"\nkey = "linear-pm"\n'
+        )
+        self.config().write_text(self.config().read_text() + linear)
+        (self.fakes / "keychain").mkdir()
+        (self.fakes / "keychain/linear-manager").write_text("already")
+        key = r"password data for new item:"
+        result = self.again(
+            answers=[(key, "k-SENTINEL-harness"), (key, "k-SENTINEL-pm"), (WRITE_Q, "y")]
+        )
+        self.assert_ok(result)
+        self.assertEqual((self.fakes / "keychain/linear-harness").read_text(), "k-SENTINEL-harness")
+        self.assertEqual((self.fakes / "keychain/linear-pm").read_text(), "k-SENTINEL-pm")
+        calls = self.calls()
+        self.assertIn("security add-generic-password -s linear-pm -a me+pm@example.com -w", calls)
+        self.assertIn("security add-generic-password -s linear-harness -a linear-harness -w", calls)
+        self.assertIn("skip: linear-manager in the keychain", result.stderr)
+        agents = Path(self.home, "Library/LaunchAgents")
+        for job in ("router", "promote"):
+            plist = (agents / f"com.ophis.agent-pm.{job}.plist").read_text()
+            self.assertIn(
+                f"<string>{self.home}/.agent-pm/bin/agent-pm-orchestrator</string>", plist
+            )
+            self.assertIn(f"<string>{self.home}/.agent-pm/logs/orchestrator.jsonl</string>", plist)
+            self.assertNotIn("/Users/francis", plist)
+            self.assertIn(
+                f"launchctl bootstrap gui/501 {agents}/com.ophis.agent-pm.{job}.plist", calls
+            )
+        self.assertTrue(Path(self.agent_pm, "logs").is_dir())
+        self.assert_secret_free("k-SENTINEL", result=result)
+        mine = agents / "com.ophis.agent-pm.promote.plist"
+        mine.write_text("<plist>mine</plist>")
+        result = self.again()
+        self.assert_ok(result)
+        self.assertIn(
+            f"skip: {mine} exists; remove it to let install.sh install the job", result.stderr
+        )
+        self.assertEqual(mine.read_text(), "<plist>mine</plist>")
+        self.assertFalse([c for c in self.calls() if c.startswith(("launchctl", "security add"))])
