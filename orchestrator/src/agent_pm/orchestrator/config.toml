@@ -8,8 +8,8 @@
 
 #   tracker   local: where issues live: "local", a local board, the directory $AGENT_PM_BOARD_DIR (default
 #             ~/.agent-pm/board/), its runtime state in <board>/.state/; "linear", Linear ([linear] below)
-#   work_dir  local: the Linear tracker's runtime state: agent runs' workdirs <work_dir>/work/<ID>/,
-#             router state and logs in <work_dir>/logs/; absolute or ~, neither in nor containing
+#   work_dir  local: the Linear tracker's runtime state: agent runs' workdirs <work_dir>/work/<ID>/
+#             (docs/board.md: State cleanup), router state and logs in <work_dir>/logs/; absolute or ~, neither in nor containing
 #             a [local_clones] clone
 tracker = "local"
 work_dir = "~/.agent-pm"

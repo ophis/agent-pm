@@ -1,6 +1,6 @@
-"""The root-owned broker at the PROTOCOL version (protocol/docker-broker/protocol.schema.json): version,
-build, start, refresh, close and workspace-rm with strict response parsing. A missing, malformed or
-inconsistent response is a transport failure; a valid error response is a BrokerError.
+"""The root-owned broker at the PROTOCOL version (protocol/docker-broker/protocol.schema.json): version, build, start, refresh,
+close and workspace-rm with strict response parsing. A missing, malformed or inconsistent response is a transport failure;
+a valid error response is a BrokerError.
 """
 
 import json

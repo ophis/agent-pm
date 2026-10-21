@@ -1,5 +1,5 @@
 """The workspace volume name and a session's state dir. The broker owns the mount-point rules
-(protocol/docker-broker/protocol.schema.json).
+(broker/internal/launcher/mounts.go).
 """
 
 import os

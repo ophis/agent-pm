@@ -160,9 +160,10 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | Page | Covers |
 |---|---|
 | [Customizing roles and tasks](docs/customizing-roles-and-tasks.md) | run settings, team dirs, role and task files, checks |
-| [Board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format), the state root (`~/.agent-pm/`: what you may delete by hand) |
+| [Board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format) |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
 | [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions, the OpenCode commander |
 | [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Tests](docs/tests.md) | lint, test suites, coverage, live tests a local model can gate (developers) |
 | [Docker host](docs/docker-host.md) | install `agent-pm-broker`, log in, build, start and close a worker container, run workers on the Docker Host, OpenCode on the host's Ollama, risks |
+| [Credentials](docs/credentials.md) | every credential agent-pm uses: purpose, least privilege, storage, readers, lifetime, revocation |

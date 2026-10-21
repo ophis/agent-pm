@@ -391,6 +391,34 @@ class RefreshTest(Base):
         fake, timeouts = self.refresh([expiry(3600)], waits=0)
         self.assertEqual((fake.calls, timeouts), ([], [3000.0]))
 
+    def test_github_retries_across_expiry_and_recovers(self):
+        now, waits = NOW, []
+        self.supervisor.clock = lambda: now
+
+        def wait(delay):
+            nonlocal now
+            waits.append(delay)
+            if len(waits) > 12:
+                return True
+            now += delay
+            return False
+
+        with open(self.path, "w") as stream:
+            json.dump([expiry(3600)], stream)
+        renewed = [expiry(7260)]
+        self.supervisor.broker = fake = TokenBroker(*([SessionError("offline")] * 11), renewed)
+        self.supervisor.refresh(SimpleNamespace(wait=wait))
+        self.assertEqual(now, NOW + 3660)
+        self.assertEqual(waits, [3000] + [60] * 11 + [3000])
+        self.assertEqual(len(fake.calls), 12)
+        self.assertEqual(self.saved(), renewed)
+        with open(self.events) as stream:
+            lines = stream.read().splitlines()
+        self.assertEqual(len(lines), 11)
+        self.assertTrue(
+            all(line.endswith("worker_1 github_refresh_failed offline") for line in lines)
+        )
+
 
 class MainTest(Base):
     def main(self, relay, fd, *args):
@@ -487,6 +515,93 @@ class CodexRenewalTest(Base):
                 self.supervisor.refresh(self.stop(1))
                 self.assertEqual(self.waits, [delay, 5400])
                 self.supervisor.broker.close.assert_not_called()
+
+    def test_wire_refresh_keeps_both_credentials_valid_beyond_two_hours(self):
+        self.deadline(3600)
+        with open(self.github, "w") as stream:
+            json.dump([expiry(3000)], stream)
+        deadlines, calls = [NOW + 3600, NOW + 3000], []
+
+        def run(argv, **_kwargs):
+            self.assertEqual(argv[1], "refresh")
+            self.assertLess(self.now, min(deadlines))
+            calls.append(self.now)
+            offset = self.now - NOW
+            self.deadline(offset + 3600)
+            deadlines[:] = [self.now + 3600, self.now + 4200]
+            response = {
+                "container": f"agent-pm-worker_1-{GEN}",
+                "github": [expiry(offset + 4200)],
+                "credential_expires_at": expiry(offset + 3600)["expires_at"],
+            }
+            return SimpleNamespace(returncode=0, stdout=json.dumps(response), stderr="")
+
+        self.supervisor.broker = Broker(run)
+        self.supervisor.refresh(self.stop(3))
+        self.assertEqual(calls, [NOW + 2400, NOW + 5400, NOW + 8400])
+        self.assertEqual(self.waits, [2400, 3000, 3000, 3000])
+        self.assertGreater(self.now, NOW + 7200)
+        self.assertGreater(min(deadlines), self.now)
+        with open(self.github) as stream:
+            self.assertEqual(json.load(stream), [expiry(12600)])
+        with open(self.events) as stream:
+            self.assertEqual(stream.read(), "")
+
+    def test_wire_failure_retries_and_recovers_beyond_initial_expiry(self):
+        for code, exit_code in (("refresh_failed", 16), ("github_failed", 15)):
+            with self.subTest(code=code):
+                self.now, self.waits = NOW, []
+                self.deadline(3600)
+                with open(self.github, "w") as stream:
+                    json.dump([expiry(3600)], stream)
+                with open(self.events, "w"):
+                    pass
+                calls = []
+
+                def run(argv, *, calls=calls, code=code, exit_code=exit_code, **_kwargs):
+                    self.assertEqual(argv[1], "refresh")
+                    calls.append(self.now)
+                    if len(calls) == 1:
+                        error = {
+                            "command": "refresh",
+                            "code": code,
+                            "message": "Renewal unavailable",
+                            "cause": "Retry the broker",
+                            "cleanup": "not_needed",
+                        }
+                        return SimpleNamespace(
+                            returncode=exit_code,
+                            stdout="",
+                            stderr=json.dumps({"exit_code": exit_code, "error": error}),
+                        )
+                    offset = self.now - NOW
+                    self.deadline(offset + 3600)
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "container": f"agent-pm-worker_1-{GEN}",
+                                "github": [expiry(offset + 3600)],
+                                "credential_expires_at": expiry(offset + 3600)["expires_at"],
+                            }
+                        ),
+                        stderr="",
+                    )
+
+                self.supervisor.broker = Broker(run)
+                self.supervisor.refresh(self.stop(3))
+                self.assertEqual(calls, [NOW + 3000, NOW + 3060, NOW + 6060])
+                self.assertEqual(self.waits, [3000, 60, 3000, 3000])
+                with open(self.github) as stream:
+                    self.assertEqual(json.load(stream), [expiry(9660)])
+                with open(self.events) as stream:
+                    lines = stream.read().splitlines()
+                self.assertEqual(len(lines), 1)
+                self.assertTrue(
+                    lines[0].endswith(
+                        "worker_1 client_refresh_failed broker: Renewal unavailable (Retry the broker)"
+                    )
+                )
 
     def test_expired_recovery_reconciles_before_closing(self):
         self.deadline(-1)
