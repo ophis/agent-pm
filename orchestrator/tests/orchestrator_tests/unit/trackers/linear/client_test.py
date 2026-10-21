@@ -180,8 +180,8 @@ class Unavailable(Case):
     def test_other_4xx_and_malformed_errors_are_linear_errors_naming_op_and_status(self):
         for case, error in enumerate(
             (
-                http_error(400, errors("GRAPHQL_VALIDATION_FAILED")),
                 http_error(400, b"not json"),
+                http_error(400, b"\xff\xfe{"),
                 http_error(400),
                 http_error(400, b'{"errors": 1}'),
                 http_error(401, errors("AUTHENTICATION_ERROR")),
@@ -202,6 +202,87 @@ class Unavailable(Case):
                 self.assertEqual(
                     self.linear_error(error), f"linear api error: viewer: HTTP {error.code}"
                 )
+
+    def test_http_400_preserves_messages_and_codes_without_other_fields(self):
+        body = json.dumps(
+            {
+                "errors": [
+                    {
+                        "message": "Query complexity limit exceeded",
+                        "extensions": {"code": "GRAPHQL_VALIDATION_FAILED", "token": SECRET},
+                        "request": {"Authorization": SECRET},
+                    },
+                    {"message": "Use a smaller page"},
+                ],
+                "data": {"secret": SECRET},
+            }
+        ).encode()
+        error = http_error(400, body)
+        with (
+            mock.patch.object(error, "read", wraps=error.read) as read,
+            self.assertRaises(LinearError) as cm,
+        ):
+            self.gql(VIEWER, opened=error)
+        read.assert_called_once_with()
+        self.assertEqual(
+            str(cm.exception),
+            "linear api error: viewer: HTTP 400: Query complexity limit exceeded "
+            "(GRAPHQL_VALIDATION_FAILED); Use a smaller page",
+        )
+        self.assertNotIn(SECRET, str(cm.exception))
+        self.assertTrue(error.closed)
+
+    def test_http_400_with_only_a_code_keeps_its_classification(self):
+        for code in ("RATELIMITED", "GRAPHQL_VALIDATION_FAILED"):
+            error = http_error(
+                400, json.dumps({"errors": [{"extensions": {"code": code}}]}).encode()
+            )
+            with self.subTest(code=code):
+                if code == "RATELIMITED":
+                    self.assertEqual(
+                        self.unavailable(VIEWER, opened=error),
+                        ("viewer", 400, "RATELIMITED", "viewer: RATELIMITED"),
+                    )
+                else:
+                    self.assertEqual(
+                        self.linear_error(error),
+                        "linear api error: viewer: HTTP 400: unrecognized GraphQL error "
+                        "(GRAPHQL_VALIDATION_FAILED)",
+                    )
+
+    def test_http_400_redacts_auth_before_truncating_and_normalizes_messages(self):
+        for message, code, want in (
+            (
+                f"Invalid credential {SECRET}\ntry again",
+                f"BAD_{SECRET}",
+                "Invalid credential [redacted] try again (BAD_[redacted])",
+            ),
+            ("x" * 490 + SECRET, "BAD", "x" * 490 + "[redacted] (BAD)"),
+            ("x" * 600, "BAD", "x" * 500 + "… (BAD)"),
+        ):
+            with self.subTest(length=len(message)):
+                body = json.dumps({"errors": [{"message": message, "extensions": {"code": code}}]})
+                self.assertEqual(
+                    self.linear_error(http_error(400, body.encode())),
+                    "linear api error: viewer: HTTP 400: " + want,
+                )
+
+    def test_http_400_limits_total_details(self):
+        body = json.dumps({"errors": [{"message": "x" * 600, "extensions": {"code": "C" * 2000}}]})
+        text = self.linear_error(http_error(400, body.encode()))
+        self.assertTrue(text.startswith("linear api error: viewer: HTTP 400: " + "x" * 500))
+        self.assertLessEqual(len(text), 1100)
+
+    def test_http_400_with_an_unreadable_body_keeps_status_and_closes_response(self):
+        for failure in (OSError("read failed"), http.client.IncompleteRead(b"{", 9)):
+            error = http_error(400)
+            with (
+                mock.patch.object(error, "read", side_effect=failure),
+                self.assertRaises(LinearError) as cm,
+            ):
+                self.gql(VIEWER, opened=error)
+            self.assertEqual(str(cm.exception), "linear api error: viewer: HTTP 400")
+            self.assertTrue(error.closed)
 
     def test_graphql_errors_in_a_200_stay_systemexit(self):
         with self.assertRaises(types.GraphQLErrors) as cm:

@@ -39,11 +39,11 @@ def fetch(gql, source, first, after=None):
     return rows, page["pageInfo"]["hasNextPage"], page["pageInfo"]["endCursor"]
 
 
-def walk(gql, source):
+def walk(gql, source, *, first=PAGE):
     """Every page's rows, as fetch gives them."""
     rows, after, seen = [], None, set()
     while True:
-        page, more, end = fetch(gql, source, PAGE, after)
+        page, more, end = fetch(gql, source, first, after)
         rows += page
         if not more:
             return rows

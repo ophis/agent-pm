@@ -36,14 +36,19 @@ def linear_gql(query, *, service, timeout=30, **variables):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as e:  # a URLError: before it
+        errors = _http_errors(e) if e.code == 400 else []
+        e.close()
         if e.code >= 500:
             reason = None
-        elif e.code == 400 and _rate_limited(e):
+        elif e.code == 400 and _rate_limited(errors):
             reason = "RATELIMITED"
         else:
-            e.close()
-            raise LinearError(f"linear api error: {operation(query)}: HTTP {e.code}") from None
-        e.close()
+            detail = one_line("; ".join(messages(errors, secret=auth)))
+            detail = detail[:1000] + "…" if len(detail) > 1000 else detail
+            suffix = f": {detail}" if detail else ""
+            raise LinearError(
+                f"linear api error: {operation(query)}: HTTP {e.code}{suffix}"
+            ) from None
         raise Unavailable(operation(query), status=e.code, reason=reason) from None
     except (OSError, http.client.HTTPException) as e:
         cause = e.reason if isinstance(e, urllib.error.URLError) else e
@@ -61,7 +66,7 @@ def linear_gql(query, *, service, timeout=30, **variables):
     return body["data"]
 
 
-def messages(errors):
+def messages(errors, *, secret=None):
     """Each GraphQL error's message (at most 500 characters) and its extensions.code, never the
     rest of the error.
     """
@@ -70,23 +75,36 @@ def messages(errors):
         error = error if isinstance(error, dict) else {}
         text = error.get("message")
         text = text if isinstance(text, str) else "unrecognized GraphQL error"
+        text = text.replace(secret, "[redacted]") if secret else text
         text = text if len(text) <= 500 else text[:500] + "…"
         extensions = error.get("extensions")
         code = extensions.get("code") if isinstance(extensions, dict) else None
+        code = code.replace(secret, "[redacted]") if secret and isinstance(code, str) else code
         found.append(f"{text} ({code})" if isinstance(code, str) else text)
     return found
 
 
-def _rate_limited(e):
+def _http_errors(e):
     try:
         body = json.loads(e.read())
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return False
+    except (OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError):
+        return []
     if not isinstance(body, dict) or not isinstance(body.get("errors"), list):
-        return False
+        return []
+    found = []
     for error in body["errors"]:
         if not isinstance(error, dict):
             continue
+        extensions = error.get("extensions")
+        if isinstance(error.get("message"), str) or (
+            isinstance(extensions, dict) and isinstance(extensions.get("code"), str)
+        ):
+            found.append(error)
+    return found
+
+
+def _rate_limited(errors):
+    for error in errors:
         extensions = error.get("extensions")
         if isinstance(extensions, dict) and extensions.get("code") == "RATELIMITED":
             return True
