@@ -65,16 +65,24 @@ ERROR_OPTIONAL = frozenset({"cause", "cleanup_error", "container"})
 
 class BrokerError(SessionError):
     def __init__(
-        self, exit_code: int, code: str, message: str, cleanup: str, container: str | None
+        self,
+        exit_code: int,
+        code: str,
+        message: str,
+        cleanup: str,
+        container: str | None,
+        *,
+        cause: str | None = None,
     ) -> None:
-        self.exit_code, self.code, self.message, self.cleanup, self.container = (
+        self.exit_code, self.code, self.message, self.cleanup, self.container, self.cause = (
             exit_code,
             code,
             message,
             cleanup,
             container,
+            cause,
         )
-        super().__init__(f"broker: {message}")
+        super().__init__(f"broker: {message}" + (f" ({cause})" if cause else ""))
 
 
 class _Bad(Exception):
@@ -203,7 +211,9 @@ def _error(command: str, returncode: int, data: dict) -> BrokerError:
         and all(_text(error[key]) for key in ("message", "cause", "cleanup_error") if key in error)
     ):
         raise _Bad("error fields")
-    return BrokerError(exit_code, code, error["message"], cleanup, container)
+    return BrokerError(
+        exit_code, code, error["message"], cleanup, container, cause=error.get("cause")
+    )
 
 
 def _stream(argv, *, stdin, env, timeout) -> subprocess.CompletedProcess:

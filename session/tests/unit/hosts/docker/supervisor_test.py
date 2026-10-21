@@ -16,9 +16,11 @@ from unittest import mock
 
 from agent_pm.session.engine.types import SessionError
 from agent_pm.session.hosts.docker import supervisor
+from agent_pm.session.hosts.docker.broker import Broker
 from agent_pm.session.hosts.docker.supervisor import Supervisor
 
 from session.tests.case import REPO, Case
+from session.tests.unit.hosts.docker.support import FakeBroker
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 HOOK = "/plugin/bin/agent-pm-session"
@@ -508,6 +510,26 @@ class CodexRenewalTest(Base):
         self.assertEqual(lines[-1].split(" ", 1)[1], f"worker_1 client_auth_expired {reason}")
         self.assertIn(
             f"WARNING:session:docker session worker_1: client_auth_expired {reason}", logged.output
+        )
+
+    def test_failure_event_carries_the_brokers_message_and_cause(self):
+        self.deadline(100)
+        error = {
+            "command": "refresh",
+            "code": "refresh_failed",
+            "message": "Writing Codex credentials into the container failed",
+            "cleanup": "not_needed",
+            "cause": "bootstrap: cannot write managed Codex credentials: No space left on device",
+        }
+        reply = (16, "", json.dumps({"exit_code": 16, "error": error}))
+        self.supervisor.broker = Broker(FakeBroker(reply, reply))
+        self.supervisor.refresh(self.stop(1))
+        with open(self.events) as stream:
+            lines = stream.read().splitlines()
+        self.assertEqual(
+            lines[0].split(" ", 1)[1],
+            "worker_1 client_refresh_failed broker: Writing Codex credentials into the container"
+            " failed (bootstrap: cannot write managed Codex credentials: No space left on device)",
         )
 
     def test_partial_publication_survives_lost_reply_and_github_failure(self):
