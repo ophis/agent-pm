@@ -124,7 +124,5 @@ Ces pages sont en anglais.
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | réglages de run, répertoires de team, fichiers de role et de task, vérifications |
 | [Board](../board.md) | mise en place, états d'issue et labels de task, exploitation du router, labels Agent (client par issue), tableau local (`tracker`, `AGENT_PM_BOARD_DIR`, arborescence, format des fichiers) |
 | [Sessions and client policy](../sessions.md) | réglages de session, `agent-pm-session`, flags de client des role runs, sessions OpenCode |
-| [State root](../state-root.md) | structure de `~/.agent-pm/`, ce qui nettoie chaque entrée, ce que vous pouvez supprimer |
 | [Upgrading](../upgrading.md) | étapes de mise à jour depuis la v0.6.20 |
-| [Core architecture](../architecture.md) | couches et paquets (développeurs) |
 | [Tests](../tests.md) | lint, suites de tests, couverture, tests réels qu'un modèle local peut valider (développeurs) |
