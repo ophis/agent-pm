@@ -1,7 +1,5 @@
-"""A promote run (promote, then prune) against one counting fake Linear at a real host's scale: 297
-work dirs, 30 of them with agent files; Handoff, finished, refused and open issues; 3 role
-accounts. Each request is counted by phase and query constant, through the real board factory and
-Pruner."""
+"""A promote run, prune included, against a counting fake Linear at a real host's scale: 297 work
+dirs (30 with agent files), 3 role accounts; requests counted by phase and query constant."""
 
 import importlib
 import io
@@ -24,8 +22,7 @@ SETUP, PROMOTE, PRUNE = "setup", "promote", "prune"
 
 
 def _names():
-    """Query text: "module.CONSTANT", over every module of the Linear tracker package; a text two
-    modules hold is linear_tracker's or ops' when either has it."""
+    """Query text: "module.CONSTANT" of the Linear tracker package, linear_tracker's and ops' first."""
     found, mods = {}, sorted(m.name for m in pkgutil.iter_modules(linear_pkg.__path__))
     for mod in dict.fromkeys(["linear_tracker", "ops", *mods]):
         module = importlib.import_module(f"{linear_pkg.__name__}.{mod}")
@@ -43,9 +40,8 @@ NAMES = _names()
 
 
 class Counted:
-    """One gql for the run: prune's queries to gql_for, the rest to promote's FakeLinear; counts
-    {phase: Counter(constant name)}; a query no constant holds is counted as "unnamed: <its text>",
-    so a pinned count fails on it even where the run catches the fake's error."""
+    """One gql: prune's queries to gql_for, the rest to FakeLinear; counts {phase: Counter(name)}, a
+    query no constant holds as "unnamed: <text>"."""
 
     def __init__(self, promote_fake, prune_fake):
         self.promote_fake, self.prune_fake = promote_fake, prune_fake
