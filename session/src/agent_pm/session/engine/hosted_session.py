@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import builtins
 import os
-import shutil
 import re
+import shutil
 import sys
 import time
 import uuid
