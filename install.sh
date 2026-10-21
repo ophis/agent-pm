@@ -448,6 +448,12 @@ dependencies() {
   formula tmux
   formula git
   if python_ok; then skip "python3 is 3.11+"; else brew_install python; fi
+  record_dir "$HOME/.config"
+  if [ ! -e "$root/Applications/iTerm.app" ]; then
+    record_dir "$HOME/.config/iterm2"
+    record_dir "$HOME/Library/Application Support/iTerm2"
+    [ -e "$HOME/Library/Preferences/com.googlecode.iterm2.plist" ] || ledger_add file "$HOME/Library/Preferences/com.googlecode.iterm2.plist"
+  fi
   cask iterm2 "" "$root/Applications/iTerm.app"
 }
 
@@ -700,6 +706,7 @@ apps() {
     record_dir "$HOME/.docker"
     record_dir "$HOME/Library/Containers/com.docker.docker"
     record_dir "$HOME/Library/Group Containers/group.com.docker"
+    record_dir "$HOME/.config/cagent"
   fi
   if has claude; then cask claude-code claude; else skip "Claude Code: not chosen"; fi
   if has codex; then cask codex codex; else skip "Codex: not chosen"; fi

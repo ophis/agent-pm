@@ -449,8 +449,14 @@ brew_packages() {
     [ -n "$name" ] || continue
     if [ "$kind" = cask ]; then
       if [ "$name" = docker-desktop ] && [ -x "$root/Applications/Docker.app/Contents/MacOS/uninstall" ]; then
-        # Docker's own uninstall first (docs.docker.com/desktop/uninstall); it may fail on its protected container.
-        "$root/Applications/Docker.app/Contents/MacOS/uninstall" </dev/null >&2 || say "    Docker Desktop's uninstall failed; going on"
+        # Docker's own uninstall (docs.docker.com/desktop/uninstall) asks for an admin password in a macOS dialog,
+        # which no held sudo answers: --yes leaves its privileged parts to the cask's uninstall below.
+        if [ -n "$yes" ]; then
+          skip "Docker Desktop's own uninstall: it asks in a macOS dialog; brew uninstall --cask removes Docker Desktop"
+        else
+          say "Docker Desktop's own uninstall asks for your admin password in a macOS dialog"
+          "$root/Applications/Docker.app/Contents/MacOS/uninstall" </dev/null >&2 || say "    Docker Desktop's uninstall failed; going on"
+        fi
       fi
       if brew list --cask "$name" </dev/null >/dev/null 2>&1; then brew uninstall --cask "$name" </dev/null >&2; fi
     elif brew list --formula "$name" </dev/null >/dev/null 2>&1; then

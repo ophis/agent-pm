@@ -190,7 +190,15 @@ def brew(args):
             (PREFIX / "bin" / command).unlink(missing_ok=True)
         if app := CASK_APPS.get(name):
             shutil.rmtree(ROOT / "Applications" / app)
-        if name == "docker-desktop":
+        if (
+            name == "docker-desktop"
+        ):  # the cask's uninstall stanza: its CLI links, helper and app state
+            for gone in (
+                ROOT / "usr/local/bin/docker",
+                FAKES / "docker_license",
+                FAKES / "docker_started",
+            ):
+                gone.unlink(missing_ok=True)
             (FAKES / "docker_running").unlink(missing_ok=True)
         return 0
     return 1

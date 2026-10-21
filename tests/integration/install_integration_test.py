@@ -1303,6 +1303,10 @@ class InstallTest(Case):
                 "formula\tgh",
                 "formula\ttmux",
                 "formula\tgit",
+                f"dir\t{h}/.config",
+                f"dir\t{h}/.config/iterm2",
+                f"dir\t{h}/Library/Application Support/iTerm2",
+                f"file\t{h}/Library/Preferences/com.googlecode.iterm2.plist",
                 "cask\titerm2",
                 "config\tcreated",
                 f"dir\t{h}/.config/gh",
@@ -1506,6 +1510,8 @@ class InstallTest(Case):
         calls, ledger, files = self.run_calls(), self.ledger(), self.snapshot()
         result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
         self.assert_ok(result)
+        self.assertNotIn("docker-uninstall", self.calls())
+        self.assertIn("brew uninstall --cask docker-desktop", self.calls())
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(list((self.fakes / "keychain").iterdir()), [])
         self.assertEqual(list((self.fakes / "login").iterdir()), [])
@@ -1528,8 +1534,9 @@ class InstallTest(Case):
         (container / "locked").chmod(0o500)
         self.addCleanup((container / "locked").chmod, 0o700)
         (self.fakes / "protected_container").write_text("")
-        result = self.cleanup("--yes")
+        result = self.cleanup(answers=[(REMOVE_Q, "y"), (SUDO_Q, PASSWORD)])
         self.assert_ok(result)
+        self.assertIn("Docker Desktop's own uninstall asks for your admin password", result.stderr)
         self.assertIn("docker-uninstall", self.calls())
         self.assertLess(
             self.calls().index("docker-uninstall"),
