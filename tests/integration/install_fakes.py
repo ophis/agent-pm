@@ -143,6 +143,10 @@ def curl(args):
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh":
         out(f'#!/bin/bash\nset -e\n[ "$NONINTERACTIVE" = 1 ]\nrm -f "{PREFIX}/bin/brew"\n')
         return 0
+    raw = "https://raw.githubusercontent.com/ophis/agent-pm/"
+    if url.startswith(raw) and url.endswith("/broker/internal/launcher/versions.go"):
+        out((FAKES / "pkg-src/broker/internal/launcher/versions.go").read_text())
+        return 0
     out(f"curl: unexpected {url}\n", sys.stderr)
     return 22
 
@@ -514,7 +518,36 @@ def node(args):
     return 0
 
 
+def xdg(name, default):
+    return Path(os.environ.get(name) or Path(os.environ["HOME"], default))
+
+
+def opencode_plugin(spec):
+    """opencode plugin -g -f: the spec in the global config, the files npm adds there, and the package."""
+    conf = xdg("XDG_CONFIG_HOME", ".config") / "opencode"
+    path = conf / "opencode.json" if (conf / "opencode.json").exists() else conf / "opencode.jsonc"
+    data = (
+        json.loads(path.read_text())
+        if path.exists()
+        else {"$schema": "https://opencode.ai/config.json"}
+    )
+    name = spec.split("@git+")[0]
+    data["plugin"] = [p for p in data.get("plugin", []) if not p.startswith(name + "@")] + [spec]
+    mark(path, json.dumps(data, indent=2))
+    for extra in ("package.json", "package-lock.json", ".gitignore"):
+        mark(conf / extra, "{}")
+    (conf / "node_modules").mkdir(exist_ok=True)
+    package = Path(os.path.normpath(xdg("XDG_CACHE_HOME", ".cache") / "opencode/packages" / spec))
+    shutil.rmtree(package, ignore_errors=True)
+    shutil.copytree(FAKES / "pkg-src", package / "node_modules/agent-pm")
+    mark(package / "node_modules/agent-pm/REF", spec.split("#")[1])
+    out(f"Installed {spec}\n")
+    return 0
+
+
 def opencode(args):
+    if args[:3] == ["plugin", "-g", "-f"] and len(args) == 4:
+        return opencode_plugin(args[3])
     if args == ["--version"]:
         out((FAKES / "opencode_version").read_text() + "\n")
         return 0

@@ -290,7 +290,8 @@ class InstallTest(Case):
         answers = [(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
         answers += [(CLIENTS_Q, clients)] if "--clients" not in args else []
         answers += [(DOCKER_Q, docker)] if not {"--docker", "--no-docker"} & set(args) else []
-        answers += [*opencode, (WRITE_Q, "y"), *(logins or ()), (WRITE_Q, "y")]
+        plugin = [(WRITE_Q, "y")] if "opencode" in (chosen or "") else []
+        answers += [*opencode, (WRITE_Q, "y"), *plugin, *(logins or ()), (WRITE_Q, "y")]
         return self.run_install(*args, answers=answers, ctty=ctty)
 
     def again(self, *args, answers=()):
@@ -329,7 +330,6 @@ class InstallTest(Case):
             ["--ref"],
             ["--ref", "-x"],
             ["--docker", "--no-docker"],
-            ["--clients", "opencode"],
             ["--clients", "claude,,codex"],
             ["--clients", "claude,vim"],
             ["--opencode-provider", "ollama"],
@@ -908,7 +908,7 @@ class InstallTest(Case):
         result = self.run_install(
             *flags,
             stdin=KEY + "\n",
-            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y"), (WRITE_Q, "y")],
+            answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4],
         )
         self.assert_ok(result)
         exe = f"{self.agent_pm}/opencode/bin/opencode"
@@ -982,6 +982,7 @@ class InstallTest(Case):
                 (MODEL_Q, "m"),
                 (CONTEXT_Q, "0"),
                 (CONTEXT_Q, ""),
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (OPENCODE_LOGIN_Q, "lan"),
                 (r"API key:", KEY),
@@ -1065,10 +1066,53 @@ class InstallTest(Case):
         )
         (self.fakes / "postinstall_broken").unlink()
         result = self.run_install(
-            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y")]
         )
         self.assert_ok(result)
         self.assertIn("1.19.3", (self.fakes / "opencode_version").read_text())
+
+    def opencode_only(self):
+        flags = ("--clients", "opencode", "--no-docker", "--opencode-provider", "lan")
+        flags += ("--opencode-url", "http://localhost:8080/v1", "--opencode-model", "m")
+        flags += ("--opencode-context", "65536", "--opencode-key-stdin")
+        return self.run_install(
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4]
+        )
+
+    def test_opencode_only(self):
+        result = self.opencode_only()
+        self.assert_ok(result)
+        calls = self.calls()
+        spec = "agent-pm@git+https://github.com/ophis/agent-pm.git#main"
+        self.assertIn(f"opencode plugin -g -f {spec}", calls)
+        self.assertIn(
+            "curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/broker/internal/launcher/versions.go",
+            calls,
+        )
+        self.assertFalse([c for c in calls if c.startswith(("claude", "codex"))])
+        self.assertIn("ctmux --install", calls)
+        self.assertIn('[delegate]\nclient = "opencode"\n', self.config().read_text())
+        conf = json.loads(Path(self.home, ".config/opencode/opencode.jsonc").read_text())
+        self.assertEqual(conf["plugin"], [spec])
+        package = Path(
+            self.home,
+            ".cache/opencode/packages/agent-pm@git+https:/github.com/ophis/agent-pm.git#main",
+        )
+        self.assertIn(f"    {package}/node_modules/agent-pm\n", result.stderr)
+        result = self.run_install("--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
+        self.assertNotIn("opencode plugin", "\n".join(self.calls()))
+
+    def test_cleanup_round_trip_opencode_only(self):
+        conf = Path(self.home, ".config/opencode")
+        conf.mkdir(parents=True)
+        (conf / "opencode.json").write_text('{"theme": "mine"}')
+        before = self.snapshot()
+        self.assert_ok(self.opencode_only())
+        self.assertIn("agent-pm@git+", (conf / "opencode.json").read_text())
+        result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
+        self.assertEqual(self.snapshot(), before)
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
@@ -1080,7 +1124,7 @@ class InstallTest(Case):
             "--clients",
             "codex,opencode",
             stdin=f"{PASSWORD}\n{KEY}\n",
-            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, (WRITE_Q, "y"), (WRITE_Q, "y")],
+            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, *[(WRITE_Q, "y")] * 3],
         )
         self.assert_ok(result)
         data = json.loads(self.auth_json().read_text())
@@ -1175,7 +1219,7 @@ class InstallTest(Case):
                 "--opencode-url",
                 url,
                 stdin=KEY + "\n",
-                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (3 if warned else 1))],
+                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (4 if warned else 1))],
             )
             self.assert_ok(result)
             self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)

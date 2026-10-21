@@ -66,7 +66,7 @@ usage: $synopsis
   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 
   --ref <ref>                 git branch or tag of ophis/agent-pm to install the plugin and broker from (default main)
-  --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode); claude or codex needed
+  --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
@@ -101,7 +101,6 @@ clients_of() {
   for item in claude codex opencode; do
     case ",$1," in *",$item,"*) out=${out:+$out,}$item ;; esac
   done
-  case ",$out," in *,claude,* | *,codex,*) ;; *) return 1 ;; esac
   printf '%s' "$out"
 }
 
@@ -127,7 +126,7 @@ parse_args() {
         ;;
       --clients)
         [ $# -ge 2 ] || usage_error "--clients needs a value"
-        clients_flag=$(clients_of "$2") || usage_error "--clients: want a comma-separated list of claude, codex, opencode with claude or codex, not $2"
+        clients_flag=$(clients_of "$2") || usage_error "--clients: want a comma-separated list of claude, codex, opencode, not $2"
         shift
         ;;
       --docker)
@@ -232,6 +231,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
@@ -651,7 +651,10 @@ config_file() {
     wanted_default=docker
     wanted_harness=tmux
   fi
-  if ! has claude; then wanted_client=codex; fi
+  if ! has claude; then
+    wanted_client=opencode
+    if has codex; then wanted_client=codex; fi
+  fi
   mkdir -p "$state_dir"
   plan=$state_dir/config.local.toml.plan
   changes=$(config_plan "$plan") || rc=$?
@@ -874,10 +877,12 @@ codex_plugins() {
 }
 
 # The installed plugin: the whole repo at $ref, source of the broker, ctmux and jobs. Claude Code's
-# install first, else Codex's newest, as manager/skills/manage/scripts/launcher looks.
+# install first, else Codex's newest, else OpenCode's, as manager/skills/manage/scripts/launcher looks.
 plugin_dir() {
   step "plugin directory"
-  if has claude; then
+  if ! has claude && ! has codex; then
+    pkg=$(opencode_package "$(opencode_spec)")
+  elif has claude; then
     pkg=$(claude plugin list --json </dev/null | python3 -I -c '
 import json, sys
 print(next((p.get("installPath", "") for p in json.load(sys.stdin) if p.get("id") == "agent-pm@agent-pm"), ""))')
@@ -901,6 +906,20 @@ go_const() {
   printf '%s' "$value"
 }
 
+# The OpenCode version agent-pm pins: from the plugin's broker sources, else (OpenCode only, no plugin yet) from --ref.
+opencode_version() {
+  local text value
+  if [ -n "$pkg" ]; then
+    go_const broker/internal/launcher/versions.go opencodeMinVersion
+    return
+  fi
+  text=$(curl -fsSL "https://raw.githubusercontent.com/ophis/agent-pm/$ref/broker/internal/launcher/versions.go") \
+    || die "cannot read OpenCode's version at ref $ref"
+  value=$(sed -n 's/^const opencodeMinVersion = "\([0-9.]*\)"$/\1/p' <<<"$text")
+  [ -n "$value" ] || die "no opencodeMinVersion at ref $ref"
+  printf '%s' "$value"
+}
+
 opencode_install() {
   local version found=
   step "OpenCode install"
@@ -908,7 +927,7 @@ opencode_install() {
     skip "OpenCode not chosen"
     return
   fi
-  version=$(go_const broker/internal/launcher/versions.go opencodeMinVersion)
+  version=$(opencode_version)
   formula node
   record_agent_dir "$opencode_prefix"
   record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
@@ -931,6 +950,51 @@ opencode_install() {
     localhost | 127.0.0.1) ;;
     *) case $url in http://*) say "$url: http:// sends the API key in plaintext over the network (docs/docker-host.md › Risks)" ;; esac ;;
   esac
+}
+
+opencode_spec() { printf '%s' "agent-pm@git+https://github.com/ophis/agent-pm.git#$ref"; }
+
+# Where OpenCode keeps the plugin it downloaded for spec $1: the whole repo at that ref.
+opencode_package() {
+  python3 -I -c 'import os, sys; print(os.path.normpath(os.path.join(sys.argv[1], sys.argv[2], "node_modules", "agent-pm")))' \
+    "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages" "$1"
+}
+
+# agent-pm's OpenCode plugin, the way OpenCode installs one: opencode plugin -g, which adds it to the global config
+# and downloads it. The config there before is kept for the cleanup; the files OpenCode adds beside it are recorded.
+opencode_plugin() {
+  local spec conf file name
+  step "OpenCode plugin"
+  if ! has opencode; then
+    skip "OpenCode not chosen"
+    return
+  fi
+  spec=$(opencode_spec)
+  conf=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+  if [ -d "$(opencode_package "$spec")" ] && grep -qsF "\"$spec\"" "$conf/opencode.json" "$conf/opencode.jsonc"; then
+    skip "$spec"
+    return
+  fi
+  if ! consent "$conf/opencode.json(c)" "\"plugin\": [\"$spec\"]  (opencode plugin -g -f)"; then
+    skip declined
+    return
+  fi
+  for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
+    if [ -f "$file" ] && ! recorded opencode-config "$file"; then
+      cp "$file" "$state_dir/${file##*/}.orig"
+      ledger_add opencode-config "$file"
+    fi
+  done
+  if ! recorded dir "$conf"; then
+    for name in opencode.jsonc package.json package-lock.json .gitignore; do
+      [ -e "$conf/$name" ] || ledger_add file "$conf/$name"
+    done
+    record_dir "$conf/node_modules"
+  fi
+  record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages"
+  record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages/${spec%%//*}"
+  "$opencode_prefix/bin/opencode" plugin -g -f "$spec" </dev/null >&2
+  [ -d "$(opencode_package "$spec")" ] || die "OpenCode did not download $spec"
 }
 
 opencode_auth_file() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; }
@@ -1447,8 +1511,10 @@ main() {
   client_logins
   claude_plugins
   codex_plugins
-  plugin_dir
+  if has claude || has codex; then plugin_dir; fi
   opencode_install
+  opencode_plugin
+  if ! has claude && ! has codex; then plugin_dir; fi
   docker_steps
   opencode_key
   ctmux_install

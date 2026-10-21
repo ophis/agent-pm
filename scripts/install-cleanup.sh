@@ -78,6 +78,7 @@ ledger_valid() {
     launchd:2) case $2 in router | promote) true ;; *) false ;; esac ;;
     keychain:3) [[ $2 =~ $plain ]] && [[ $3 =~ $plain ]] ;;
     opencode-auth:3) under_home "$2" && [[ $3 =~ $name_pattern ]] ;;
+    opencode-config:2) under_home "$2" && case ${2##*/} in opencode.json | opencode.jsonc) true ;; *) false ;; esac ;;
     *) false ;;
   esac
 }
@@ -217,7 +218,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth profile profile-file config cask formula homebrew clt file dir; do
+    login opencode-auth opencode-config profile profile-file config cask formula homebrew clt file dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -426,6 +427,20 @@ config_file() {
   fi
 }
 
+# Puts back the OpenCode config install.sh's opencode plugin -g changed, from the copy it kept.
+opencode_configs() {
+  local path backup
+  step "OpenCode config"
+  while IFS=$'\t' read -r _ path; do
+    [ -n "$path" ] || continue
+    backup=$state_dir/${path##*/}.orig
+    [ -f "$backup" ] || die "no $backup to restore"
+    cp "$backup" "$path.tmp"
+    mv "$path.tmp" "$path"
+    drop "opencode-config"$'\t'"$path"
+  done <<<"$(of_kind opencode-config)"
+}
+
 brew_packages() {
   local kind name reason
   step "Homebrew packages"
@@ -514,6 +529,7 @@ main() {
   opencode_keys
   profiles
   config_file
+  opencode_configs
   brew_packages
   homebrew_and_clt
   files_and_dirs
