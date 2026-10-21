@@ -985,13 +985,7 @@ class Connect(Case):
         self.assertEqual([v.get("service") for _, v in gql.calls], ["linear-api-key"] * 4)
 
 
-class TeamAndRoles(Case):
-    def test_reads_the_team_then_the_role_accounts(self):
-        gql = Gql(Q_TEAM={"teams": {"nodes": [team_node()]}}, Q_USER=users("u-pm"))
-        found, roles = linear_tracker.team_and_roles(gql, board_linear())
-        self.assertEqual(gql.names(), ["Q_TEAM", "Q_USER"])
-        self.assertEqual((found.id, found.states, roles), (TEAM, STATES, {"u-pm": "pm"}))
-
+class OfTeam(Case):
     def test_of_team_builds_from_the_team(self):
         found = LinearTracker.of_team(Gql(), board_linear(), TEAM_OBJ, ROLES)
         self.assertEqual(

@@ -29,8 +29,9 @@ error, and no issue is pruned. Each step is logged (event_log.log, src prune); a
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-orchestrator prune` (main, HELP) runs one alone.
 
-A tick's requests past its setup: SYNC_PAGES + READ_REQUESTS + ARCHIVE_REQUESTS at most, the
-rest waits (prune-deferred); reads cached in <logs_dir>/prune.json, its cursor the tracker's time.
+A tick's requests past its board's setup (Linear: one read): SYNC_PAGES + READ_REQUESTS +
+ARCHIVE_REQUESTS at most, the rest waits (prune-deferred); reads cached in <logs_dir>/prune.json,
+its cursor the tracker's time.
 """
 
 import functools
@@ -127,7 +128,7 @@ Prerequisites and effects:
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
-  Past its team and role reads, at most 33 Linear requests per run: 3
+  One setup read (team and role accounts), then at most 33 Linear requests: 3
   change-feed pages, 10 issue reads, 20 archive requests; work past a cap
   waits for a later run, and an issue whose sub-issues alone need more is
   not archived. logs/prune.json caches what was read, read again when Linear
