@@ -1,0 +1,337 @@
+"""Fake macOS tools for install_integration_test: run as `install_fakes.py <tool> <args>`.
+
+Every call is logged to $LOG (argv) and $ENVLOG (environment values). State lives under
+$FAKES: brew/<name> (installed), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
+broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once).
+"""
+
+import base64
+import hashlib
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+FAKES = Path(os.environ["FAKES"])
+ROOT = Path(os.environ.get("AGENT_PM_INSTALL_ROOT", "/nonexistent"))
+PREFIX = ROOT / "opt/homebrew"
+BROKER = ROOT / "usr/local/libexec/agent-pm/agent-pm-broker"
+APPS = {"gh": "gh", "tmux": "tmux", "git": "git", "go": "go", "python": "python3"}
+CASKS = {"claude-code": "claude", "codex": "codex", "docker-desktop": "docker"}
+CASK_APPS = {"docker-desktop": "Docker.app", "iterm2": "iTerm.app"}
+
+
+def out(text, stream=sys.stdout):
+    stream.write(text)
+    stream.flush()
+
+
+def mark(path, text=""):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def load(path, default):
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+def save(path, value):
+    mark(path, json.dumps(value))
+
+
+def link_app(command):
+    (PREFIX / "bin").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FAKES / "apps" / command, PREFIX / "bin" / command)
+
+
+def uname(_args):
+    out((FAKES / "platform").read_text() if (FAKES / "platform").exists() else "Darwin arm64\n")
+
+
+def id_(_args):
+    out("501\n")
+
+
+def sudo(args):
+    ticket = FAKES / "sudo_ticket"
+    password = (FAKES / "sudo_password").read_text()
+    if args == ["-k"]:
+        ticket.unlink(missing_ok=True)
+        return 0
+    if args == ["-v"]:
+        out("Password:")
+        if sys.stdin.readline().rstrip("\n") != password:
+            out("Sorry, try again.\n", sys.stderr)
+            return 1
+        mark(ticket)
+        return 0
+    if args == ["-S", "-p", "", "-v"]:
+        if sys.stdin.readline().rstrip("\n") != password:
+            return 1
+        mark(ticket)
+        return 0
+    if args[:1] == ["-n"]:
+        args = args[1:]
+    if not ticket.exists():
+        out("sudo: a password is required\n", sys.stderr)
+        return 1
+    if args == ["-v"]:
+        mark(FAKES / "keepalive.pid", str(os.getppid()))
+        return 0
+    os.execvpe(args[0], args, {**os.environ, "FAKE_SUDO": "1"})
+    return 1
+
+
+HOMEBREW_INSTALLER = """#!/bin/bash
+set -e
+[ "$NONINTERACTIVE" = 1 ]
+sudo -n true
+mkdir -p "{prefix}/bin"
+cp "{apps}/brew" "{prefix}/bin/brew"
+"""
+
+
+def curl(args):
+    url = args[-1]
+    if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh":
+        out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps"))
+        return 0
+    out(f"curl: unexpected {url}\n", sys.stderr)
+    return 22
+
+
+def brew(args):
+    if args == ["shellenv"]:
+        out(f'export HOMEBREW_PREFIX="{PREFIX}"; export PATH="{PREFIX}/bin:$PATH";\n')
+        return 0
+    verb, rest = args[0], args[1:]
+    cask = "--cask" in rest
+    name = [a for a in rest if not a.startswith("--")][0]
+    installed = FAKES / "brew" / name
+    if verb == "list":
+        return 0 if installed.exists() else 1
+    if verb == "install":
+        mark(installed)
+        if command := (CASKS if cask else APPS).get(name):
+            link_app(command)
+        if app := CASK_APPS.get(name):
+            (ROOT / "Applications" / app).mkdir(parents=True, exist_ok=True)
+        return 0
+    return 1
+
+
+def login(client, args, status, start):
+    flag = FAKES / "login" / client
+    if args == status:
+        return 0 if flag.exists() else 1
+    if args == start:
+        out(f"Log in to {client} in your browser.\n")
+        mark(flag)
+        return 0
+    return None
+
+
+def gh(args):
+    return login("gh", args, ["auth", "status"], ["auth", "login", *args[2:]])
+
+
+def marketplace_name(source):
+    return source.split("#")[0].split("/")[-1].removesuffix(".git")
+
+
+def claude(args):
+    done = login("claude", args, ["auth", "status"], ["auth", "login"])
+    if done is not None:
+        return done
+    if args == ["setup-token"]:
+        out(f"Your token: {(FAKES / 'claude_token').read_text()}\n")
+        return 0
+    markets_file, plugins_file = FAKES / "claude/marketplaces.json", FAKES / "claude/plugins.json"
+    markets, plugins = load(markets_file, []), load(plugins_file, [])
+    if args == ["plugin", "marketplace", "list", "--json"]:
+        out(json.dumps(markets))
+    elif args[:3] == ["plugin", "marketplace", "add"]:
+        repo, _, ref = args[3].partition("#")
+        entry = {"name": marketplace_name(repo), "source": "github", "repo": repo}
+        save(markets_file, [*markets, {**entry, **({"ref": ref} if ref else {})}])
+    elif args[:3] == ["plugin", "marketplace", "remove"]:
+        save(markets_file, [m for m in markets if m["name"] != args[3]])
+    elif args == ["plugin", "list", "--json"]:
+        out(json.dumps(plugins))
+    elif args[:2] == ["plugin", "install"]:
+        name, market = args[2].split("@")
+        source = next(m for m in markets if m["name"] == market)
+        path = FAKES / "claude/cache" / str(len(list((FAKES / "claude").glob("cache/*"))))
+        if name == "agent-pm":
+            shutil.copytree(FAKES / "pkg-src", path)
+            mark(path / "REF", source.get("ref", ""))
+        save(plugins_file, [*plugins, {"id": args[2], "enabled": True, "installPath": str(path)}])
+    elif args[:2] == ["plugin", "uninstall"]:
+        if not any(p["id"] == args[2] for p in plugins):
+            return 1
+        save(plugins_file, [p for p in plugins if p["id"] != args[2]])
+    else:
+        return 2
+    return 0
+
+
+def codex_config(markets):
+    home = Path(os.environ.get("CODEX_HOME") or Path(os.environ["HOME"], ".codex"))
+    lines = []
+    for name, m in markets.items():
+        lines += [f"[marketplaces.{name}]", 'source_type = "git"', f'source = "{m["source"]}"']
+        lines += [f'ref = "{m["ref"]}"'] if m.get("ref") else []
+    mark(home / "config.toml", "\n".join(lines) + "\n")
+
+
+def codex(args):
+    done = login("codex", args, ["login", "status"], ["login"])
+    if done is not None:
+        return done
+    markets_file, plugins_file = FAKES / "codex/marketplaces.json", FAKES / "codex/plugins.json"
+    markets, plugins = load(markets_file, {}), load(plugins_file, [])
+    if args[:3] == ["plugin", "marketplace", "add"]:
+        source = f"https://github.com/{args[3]}.git"
+        ref = args[args.index("--ref") + 1] if "--ref" in args else ""
+        markets[marketplace_name(args[3])] = {"source": source, "ref": ref}
+    elif args[:3] == ["plugin", "marketplace", "remove"]:
+        markets.pop(args[3])
+    elif args == ["plugin", "list", "--json"]:
+        out(json.dumps({"installed": plugins, "available": []}))
+        return 0
+    elif args[:2] == ["plugin", "add"]:
+        plugins.append({"pluginId": args[2], "installed": True, "enabled": True})
+    elif args[:2] == ["plugin", "remove"]:
+        if not any(p["pluginId"] == args[2] for p in plugins):
+            return 1
+        plugins = [p for p in plugins if p["pluginId"] != args[2]]
+    else:
+        return 2
+    save(markets_file, markets)
+    save(plugins_file, plugins)
+    codex_config(markets)
+    return 0
+
+
+def store_key(service, value):
+    mark(FAKES / "keychain" / service, value)
+
+
+def security(args):
+    if args[:1] == ["find-generic-password"]:
+        if "-w" in args:
+            return 9
+        return 0 if (FAKES / "keychain" / args[args.index("-s") + 1]).exists() else 44
+    if args[:1] == ["add-generic-password"] and args[-1] == "-w":
+        out("password data for new item: ")
+        store_key(args[args.index("-s") + 1], sys.stdin.readline().rstrip("\n"))
+        return 0
+    if args == ["-i"]:
+        for line in sys.stdin:
+            words = line.split()
+            if words[:1] == ["add-generic-password"]:
+                store_key(words[words.index("-s") + 1], words[words.index("-w") + 1])
+                mark(FAKES / "keychain/agent-pm-bot.account", words[words.index("-a") + 1])
+        return 0
+    return 2
+
+
+def docker(args):
+    return 0 if args == ["info"] and (FAKES / "docker_running").exists() else 1
+
+
+def open_(args):
+    if args == ["-a", "Docker"] and not (FAKES / "docker_wont_start").exists():
+        mark(FAKES / "docker_running")
+    return 0
+
+
+def launchctl(args):
+    return 3 if args[:1] == ["bootout"] else 0
+
+
+def shasum(args):
+    files = args[2:]
+    if not files:
+        out(f"{hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}  -\n")
+    for name in files:
+        out(f"{hashlib.sha256(Path(name).read_bytes()).hexdigest()}  {name}\n")
+    return 0
+
+
+def base64_(args):
+    out(base64.b64encode(Path(args[args.index("-i") + 1]).read_bytes()).decode() + "\n")
+    return 0
+
+
+def broker(args):
+    codex_file = FAKES / "broker/codex.json"
+    state = load(codex_file, None)
+    if args == ["status"]:
+        default = {"state": "installation_invalid", "version": ""}
+        default["repair"] = (
+            "sudo /usr/local/libexec/agent-pm/agent-pm-broker install-codex <version>"
+        )
+        out(json.dumps({"revocations": [], "codex": state or default}))
+        return 0
+    if args[:1] in (["install-codex"], ["update-codex"]):
+        if os.environ.get("FAKE_SUDO") != "1":
+            return 1
+        if args[0] == "install-codex" and state is not None:
+            out("agent-pm-broker: Codex already installed; use update-codex\n", sys.stderr)
+            return 1
+        save(codex_file, {"state": "login_unavailable", "version": args[1], "repair": "login"})
+        return 0
+    if args == ["login", "claude"]:
+        out("Paste the setup-token (hidden): ")
+        mark(FAKES / "broker/claude_token", sys.stdin.readline().rstrip("\n"))
+        return 0
+    if args == ["login", "github", "agent-pm-bot"]:
+        return 0 if (FAKES / "keychain/agent-pm-bot").exists() else 1
+    if args == ["login", "codex"]:
+        save(codex_file, {**(state or {}), "state": "ready", "repair": ""})
+        return 0
+    return 2
+
+
+TOOLS = {
+    "uname": uname,
+    "id": id_,
+    "sudo": sudo,
+    "curl": curl,
+    "brew": brew,
+    "gh": gh,
+    "tmux": lambda _args: 0,
+    "git": lambda _args: 0,
+    "go": lambda _args: 0,
+    "claude": claude,
+    "codex": codex,
+    "security": security,
+    "docker": docker,
+    "open": open_,
+    "launchctl": launchctl,
+    "shasum": shasum,
+    "base64": base64_,
+    "agent-pm-broker": broker,
+}
+
+
+def main(argv):
+    name, args = argv[1], argv[2:]
+    call = " ".join([name, *args])
+    with open(os.environ["LOG"], "a") as log:
+        log.write(call + "\n")
+    with open(os.environ["ENVLOG"], "a") as log:
+        log.write("\n".join(os.environ.values()) + "\n")
+    fail = FAKES / "fail"
+    if fail.exists() and call.startswith(fail.read_text()):
+        fail.unlink()
+        out(f"{name}: fake failure\n", sys.stderr)
+        return 1
+    code = TOOLS[name](args)
+    return 0 if code is None else code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
