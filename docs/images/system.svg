@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="670" viewBox="0 0 1200 670" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
 <title id="t">Flexible hosts: local or Docker</title>
-<desc id="d">Each session runs on a Host you pick. You talk to the manager, which starts workers through agent-pm-session. On the Local Host, tmux, the client runs on your machine as you: not isolated, auto mode. On the Docker Host the session asks agent-pm-broker to start and close its own container: isolated, so its client runs in yolo mode by default. The broker, root-owned, reads its own login keychain items, which only it reads once logged in; the App key and the Codex refresh token stay with it. At start it writes the container's own credentials to a tmpfs: GitHub tokens valid an hour, renewed and revoked at close; a Codex access token without its refresh token; a Claude setup-token copy deleted with the container. The container's workspace volume is kept across restart and resume. It cannot reach the host keychain, the optional Linear tracker keys (a local board needs none), the host gh login or the Docker socket, but reaches the host's services listening on 127.0.0.1, an accepted risk. It clones, pushes and opens draft pull requests on GitHub as agent-pm-bot[bot]; its work reaches the Mac only through GitHub.</desc>
+<desc id="d">Each session runs on a Host you pick. You talk to the manager (Claude Code, Codex or OpenCode), which starts workers through agent-pm-session; workers use the same clients. On the Local Host, tmux, the client runs on your machine as you: not isolated, auto mode. On the Docker Host the session asks agent-pm-broker to start and close its own container: isolated, so its client runs in yolo mode by default. The broker, root-owned, reads its own login keychain items, which only it reads once logged in; the App key and the Codex refresh token stay with it. At start it writes the container's own credentials to a tmpfs: GitHub tokens valid an hour, renewed and revoked at close; a Codex access token without its refresh token; a Claude setup-token copy deleted with the container. The container's workspace volume is kept across restart and resume. It cannot reach the host keychain, the optional Linear tracker keys (a local board needs none), the host gh login or the Docker socket, but reaches the host's services listening on 127.0.0.1, an accepted risk. It clones, pushes and opens draft pull requests on GitHub as agent-pm-bot[bot]; its work reaches the Mac only through GitHub.</desc>
 <defs>
 <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2f7"/></linearGradient>
 <linearGradient id="heroBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#effcfa"/><stop offset="0.5" stop-color="#ffffff"/></linearGradient>
@@ -27,7 +27,8 @@
 <path d="M94,228 V246" fill="none" stroke="#64748b" stroke-width="1.3" marker-end="url(#m1)"/>
 <rect x="48" y="250" width="200" height="72" rx="12" fill="url(#mgr)" filter="url(#soft)"/>
 <text x="64" y="276" font-size="15" fill="#ffffff" font-weight="700" text-anchor="start">manager</text>
-<text x="64" y="298" font-size="11.5" fill="#cbd5e1" font-weight="500" text-anchor="start">Claude Code or Codex</text>
+<text x="64" y="296" font-size="11.5" fill="#cbd5e1" font-weight="500" text-anchor="start">Claude Code · Codex</text>
+<text x="64" y="312" font-size="11.5" fill="#cbd5e1" font-weight="500" text-anchor="start">OpenCode</text>
 <path d="M148,324 V350" fill="none" stroke="#64748b" stroke-width="1.3" marker-end="url(#m1)"/>
 <text x="158" y="342" font-size="10.5" fill="#64748b" font-weight="600" text-anchor="start">starts workers</text>
 <rect x="48" y="354" width="200" height="76" rx="12" fill="#ffffff" stroke="#e2e8f0" filter="url(#card)"/>
@@ -83,7 +84,9 @@
 <text x="814" y="273" font-size="10.5" fill="#334155" font-weight="600" text-anchor="start">Claude Code</text>
 <rect x="902" y="258" width="80" height="22" rx="7" fill="#efedfe"/><circle cx="914" cy="269" r="3.5" fill="#7c6cf2"/>
 <text x="924" y="273" font-size="10.5" fill="#334155" font-weight="600" text-anchor="start">Codex</text>
-<text x="992" y="273" font-size="10.5" fill="#334155" font-weight="600" text-anchor="start">yolo by default</text>
+<rect x="988" y="258" width="110" height="22" rx="7" fill="#e8ecf2"/><circle cx="1000" cy="269" r="3.5" fill="#475569"/>
+<text x="1010" y="273" font-size="10.5" fill="#334155" font-weight="600" text-anchor="start">OpenCode</text>
+<text x="1128" y="246" font-size="10.5" fill="#334155" font-weight="600" text-anchor="end">yolo by default</text>
 <rect x="792" y="294" width="336" height="92" rx="10" fill="#f0fdfa" stroke="#5eead4"/>
 <text x="806" y="313" font-size="10.5" fill="#0f766e" font-weight="700" text-anchor="start">its own credentials · tmpfs</text>
 <text x="806" y="334" font-size="10.5" fill="#475569" font-weight="500" text-anchor="start"><tspan fill="#0f172a" font-weight="700">GitHub tokens</tspan> · 1 h, renewed · revoked at close</text>
