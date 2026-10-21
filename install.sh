@@ -1582,8 +1582,13 @@ configured_tracker() {
   [ -f "$config" ] || return 0
   python3 -I -c '
 import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker")
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except (OSError, tomllib.TOMLDecodeError):
+    sys.exit()
+orchestrator = data.get("orchestrator")
+tracker = orchestrator.get("tracker") if isinstance(orchestrator, dict) else None
 if tracker in ("local", "linear"):
     print(tracker)' "$config"
 }

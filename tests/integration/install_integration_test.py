@@ -1910,6 +1910,34 @@ class InstallTest(Case):
         self.assertEqual(result.code, 2)
         self.assertIn("requires a board", result.stderr)
 
+    def test_board_tracker_inference_handles_invalid_config(self):
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
+        before = self.config().read_text()
+        for broken in ("[broken\n", "orchestrator = 7\n" + before):
+            self.config().write_text(broken)
+            state = Path(self.agent_pm, "install/state")
+            state.write_text(
+                "\n".join(
+                    line
+                    for line in state.read_text().splitlines()
+                    if not line.startswith("board_tracker=")
+                )
+                + "\n"
+            )
+            result = self.run_install(
+                "--clients",
+                "claude",
+                "--no-docker",
+                "--board",
+                "local",
+                "--no-launchd",
+                answers=[(SUDO_Q, PASSWORD)],
+            )
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(self.config().read_text(), broken)
+            self.assert_jobs(installed=False)
+            self.assert_no_linear(result)
+
     def test_board_custom_workflow_roles(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})
         Path(self.home, "wf.toml").write_text(
