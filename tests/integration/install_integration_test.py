@@ -1617,7 +1617,7 @@ class InstallTest(Case):
         self.assertIn("security add-generic-password -s linear-harness -a linear-harness -w", calls)
         self.assertIn("skip: linear-manager in the keychain", result.stderr)
         self.assertIn(
-            "==> Linear board configuration\n    skip: has the Linear board configuration",
+            "==> linear board configuration\n    skip: has the Linear board configuration",
             result.stderr,
         )
         agents = Path(self.home, "Library/LaunchAgents")
@@ -2166,16 +2166,21 @@ class InstallTest(Case):
 
     def test_installed_board_jobs_rejected_before_privileged_work(self):
         self.assert_ok(self.fresh("--board", "local", "--no-launchd", then=[(WRITE_Q, "y")] * 2))
-        before = self.snapshot()
-        result = self.run_install(
-            "--launchd",
-            answers=[(MENU_Q, menu(("claude", "codex"), ("claude", "codex", "board")))],
-        )
-        self.assertEqual(result.code, 2)
-        self.assertIn("requires a board", result.stderr)
-        self.assertEqual(self.snapshot(), before)
-        self.assertFalse([c for c in self.calls() if c.startswith(("sudo", "brew"))])
-        self.assertNotIn("dependencies", result.stderr)
+        for python_on_path in (True, False):
+            with self.subTest(python_on_path=python_on_path):
+                if not python_on_path:
+                    (self.bin / "python3").unlink()
+                    (self.root / "opt/homebrew/bin/python3").symlink_to(sys.executable)
+                before = self.snapshot()
+                result = self.run_install(
+                    "--launchd",
+                    answers=[(MENU_Q, menu(("claude", "codex"), ("claude", "codex", "board")))],
+                )
+                self.assertEqual(result.code, 2)
+                self.assertIn("requires a board", result.stderr)
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse([c for c in self.calls() if c.startswith(("sudo", "brew"))])
+                self.assertNotIn("dependencies", result.stderr)
 
     def test_board_tracker_inference_handles_invalid_config(self):
         self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
@@ -2247,7 +2252,10 @@ class InstallTest(Case):
                 self.assert_no_linear(result)
 
     def test_board_custom_workflow_roles(self):
-        self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})
+        self.linear(
+            keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"},
+            labels=[*LINEAR["labels"], label(46, "foreign-task", 40)],
+        )
         Path(self.home, "wf.toml").write_text(
             "".join(
                 f'[[stage]]\nrole = "{role}"\ninput = "build"\n\n'
@@ -2293,6 +2301,7 @@ class InstallTest(Case):
         self.assertEqual(self.board_config()["task_labels"], {"triage": uuid(46)})
 
     def test_board_duplicate_charter_is_rejected(self):
+        self.linear()
         team = Path(self.home, "custom-team")
         (team / "roles").mkdir(parents=True)
         (team / "roles/engineer.md").write_text("# Engineer\n\n## Tasks\n- `triage`: Review.\n")

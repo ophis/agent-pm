@@ -2103,7 +2103,7 @@ main() {
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
   # An installed board already has Python; reject deselecting it with job flags before privileged work.
   if [ -n "$jobs_flag" ] && [ "$(state_get board)" = yes ]; then
-    answers
+    PATH="${HOMEBREW_PREFIX:-$root/opt/homebrew}/bin:$PATH" answers
     answered=yes
   fi
   sudo_once
