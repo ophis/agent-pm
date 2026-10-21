@@ -173,6 +173,8 @@ GitHub renewal, including when GitHub is absent or unavailable. Under the login 
 replaces the effective container credential and durably publishes only the expiry JSON
 string to `~/.agent-pm/docker-state/<name>/<generation>.credential.json`. That record is
 authoritative after partial failure or a lost response; retry reconciles it before GitHub.
+GitHub renewal runs even when the Codex step fails; refresh then reports the Codex error, its message also naming
+a GitHub failure.
 A deadline-write failure reports `refresh_failed`. Publication does not acknowledge that
 the running terminal adopted the credential; see [refresh continuity](docker-codex.md).
 

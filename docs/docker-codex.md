@@ -160,11 +160,12 @@ flowchart TD
     D -->|no and due| N[Verified native refresh]
     N --> K[Validate and save same account]
     K --> U
-    U --> P[Replace effective auth and publish deadline]
+    U --> P[Write secret, relink, publish deadline]
     P --> G[Renew GitHub credentials]
 ```
 Sources: `broker/internal/broker/codex.go`, `codex_revision.go`, `codex_refresh.go`;
-`broker/internal/launcher/refresh.go:15`. Login takes the same lock. The revision record holds no account or
+`broker/internal/launcher/refresh.go:15`. A Codex failure at any step still goes on to GitHub renewal. Login takes the
+same lock. The revision record holds no account or
 credential.
 
 - The pinned native app-server refreshes the account in a private temporary home (as in
@@ -173,7 +174,7 @@ credential.
 - Publication replaces `/run/agent-pm/secrets/codex/auth.json` and points `CODEX_HOME/auth.json` at it again
   when Codex replaced or removed that link; it writes nothing else into `CODEX_HOME`, whose tmpfs Codex's own state
   fills. It saves the expiry durably before GitHub renewal, so a lost response or GitHub failure cannot erase it; retries
-  repair publication on their own.
+  repair publication on their own. A failed Codex step still renews GitHub, and refresh reports the Codex error.
 - The terminal keeps its launch, permissions and history. By pinned source ([Plan A](#plan-a-validation-report)
   evidence), it reloads proactively within 300 s of the old access expiry, and reloads same-account state on an
   unauthorized response before trying its own refresh. Adoption is eventual; publishing a file is no
