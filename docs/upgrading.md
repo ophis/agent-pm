@@ -3,6 +3,19 @@
 This covers upgrades from v0.6.20 on; upgrades from before v0.6.20 are not covered. Before upgrading, do the
 [Upgrading steps](#upgrading-steps) that apply.
 
+## With install.sh
+
+On a machine already set up, by hand or by [`install.sh`](../README.md#install), run the same command again, with
+`--ref <ref>` for a branch: it reads your answers from its last run, else from `~/.agent-pm/config.local.toml`, else
+asks; skips what is installed and logged in; installs what the configuration lacks; and shows and asks before each
+change to your config or shell profile. Flags change the configuration (`--clients`, `--docker`/`--no-docker`, the
+`--opencode-*` flags); it removes nothing chosen before.
+
+It does not update what is installed. Update the plugins (Claude Code: `claude plugin marketplace update agent-pm`,
+then `claude plugin update agent-pm@agent-pm`; Codex: `codex plugin marketplace upgrade agent-pm`), then rerun it: when
+the plugin's broker sources changed it reinstalls the broker and asks its logins again ([Log in](docker-host.md#log-in)).
+Do the [Upgrading steps](#upgrading-steps) that apply as before: it does not edit config keys a release renames.
+
 ## Upgrading steps
 
 Nothing migrates automatically. Do each row that applies, once, by hand or through an agent.

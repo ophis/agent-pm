@@ -77,14 +77,39 @@ Commands: [Quick start](#quick-start).
 
 ## Install
 
-Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/upgrading.md).
+On an Apple silicon Mac, from nothing installed up to a working agent-pm, in one command:
 
-| Client | Install |
+```bash
+curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | bash
+```
+
+`install.sh` installs the dependencies (Homebrew with the Command Line Tools, `gh`, tmux, git, Python 3.11+, iTerm2), asks which clients you use and whether workers run in Docker, writes `~/.agent-pm/config.local.toml`, then installs and logs in only what that configuration needs: Claude Code and Codex with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider, Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and, when the config names a Linear board, its Keychain keys and launchd jobs. It asks `sudo` once, runs each login on the spot (`gh`, Claude Code and Codex open your browser), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
+
+Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
+
+| Flag | Does |
+|---|---|
+| `--ref <ref>` | installs the plugins and the broker from this branch or tag of `ophis/agent-pm` (default `main`; another ref builds the broker locally) |
+| `--clients <list>` | comma-separated `claude`, `codex`, `opencode`, with `claude` or `codex` |
+| `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
+| `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1` |
+| `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
+| `--password-stdin` | reads the `sudo` password from stdin, before the key |
+
+With a stdin flag, stdin cannot also carry the script:
+
+```bash
+security find-generic-password -s <item> -w | bash -c "$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh)" install.sh --password-stdin
+```
+
+What it sets up, for reference or by hand:
+
+| Client | Plugin install |
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
 | Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
 
-Nothing checks these. A missing one fails the agent run.
+Set up by hand, nothing checks these: a missing one fails the agent run.
 
 | Requirement | For |
 |---|---|
