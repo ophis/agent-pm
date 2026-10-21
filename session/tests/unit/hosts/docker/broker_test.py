@@ -229,6 +229,35 @@ class ResponseTest(Case):
                 CONTAINER, MANIFEST
             )
 
+    def test_refresh_failure_keeps_the_brokers_message_and_cause(self):
+        message = "Writing Codex credentials into the container failed"
+        cause = "bootstrap: cannot write managed Codex credentials: No space left on device"
+
+        def fails(code, exit_code, **extra):
+            error = {
+                "command": "refresh",
+                "code": code,
+                "message": message,
+                "cleanup": "not_needed",
+            }
+            return exit_code, "", json.dumps({"exit_code": exit_code, "error": error | extra})
+
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker(fails("refresh_failed", 16, cause=cause))).refresh(
+                CONTAINER, MANIFEST
+            )
+        self.assertEqual(
+            (raised.exception.code, raised.exception.cause, str(raised.exception)),
+            ("refresh_failed", cause, f"broker: {message} ({cause})"),
+        )
+        with self.assertRaises(BrokerError) as raised:
+            Broker(FakeBroker(fails("refresh_failed", 16))).refresh(CONTAINER, MANIFEST)
+        self.assertEqual(
+            (raised.exception.cause, str(raised.exception)), (None, f"broker: {message}")
+        )
+        with self.assertRaisesRegex(SessionError, "bad response to refresh: error fields"):
+            Broker(FakeBroker(fails("start_failed", 9, cause=cause))).refresh(CONTAINER, MANIFEST)
+
     def test_parsed_successes(self):
         self.assertEqual(
             Broker(FakeBroker(success("build-cached.json"))).build("/opt/agent-pm"),

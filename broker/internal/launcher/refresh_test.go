@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/ophis/agent-pm/broker/internal/protocol"
@@ -67,9 +68,10 @@ func TestRefreshRepairsDeadlineBeforeGitHubFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := h.Refresh(context.Background(), container, manifest)
-	if code(t, err) != protocol.RefreshFailed || creds.injected != 1 || len(tokens.calls) != 0 {
+	if code(t, err) != protocol.RefreshFailed || creds.injected != 1 || !slices.Contains(tokens.calls, "refresh agent-pm-bot "+container) {
 		t.Fatalf("%v %v %v", err, creds.injected, tokens.calls)
 	}
+	tokens.calls = nil
 	if err := os.Remove(deadline); err != nil {
 		t.Fatal(err)
 	}
@@ -135,5 +137,41 @@ func TestRefreshDeadlineReplacesLinkWithoutFollowingIt(t *testing.T) {
 	info, err := os.Lstat(deadline)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		t.Fatalf("%v %v", info, err)
+	}
+}
+
+func TestRefreshRenewsGitHubWhenCodexFails(t *testing.T) {
+	h, manifest, _, tokens, creds := refreshCodexHost(t, true)
+	failed := protocol.New(protocol.RefreshFailed, "Writing Codex credentials into the container failed")
+	failed.Cause = "bootstrap: cannot write managed Codex credentials: No space left on device"
+	creds.err = failed
+	_, err := h.Refresh(context.Background(), container, manifest)
+	var e *protocol.Error
+	if !errors.As(err, &e) || e.Code != protocol.RefreshFailed || e.Message != failed.Message || e.Cause != failed.Cause {
+		t.Fatalf("%#v", err)
+	}
+	if !slices.Equal(tokens.calls, []string{"ready agent-pm-bot", "refresh agent-pm-bot " + container}) {
+		t.Fatalf("GitHub not renewed: %v", tokens.calls)
+	}
+}
+
+func TestRefreshReportsBothFailures(t *testing.T) {
+	for _, step := range []string{"ready", "refresh"} {
+		t.Run(step, func(t *testing.T) {
+			h, manifest, _, tokens, creds := refreshCodexHost(t, true)
+			creds.err = protocol.New(protocol.LoginRequired, "Codex login unavailable; run agent-pm-broker login codex")
+			github := protocol.New(protocol.GitHubFailed, "GitHub request failed: HTTP 502")
+			if step == "ready" {
+				tokens.ready = github
+			} else {
+				tokens.refresh = github
+			}
+			_, err := h.Refresh(context.Background(), container, manifest)
+			var e *protocol.Error
+			want := "Codex login unavailable; run agent-pm-broker login codex; GitHub renewal also failed: GitHub request failed: HTTP 502"
+			if !errors.As(err, &e) || e.Code != protocol.LoginRequired || e.Message != want {
+				t.Fatalf("%#v", err)
+			}
+		})
 	}
 }

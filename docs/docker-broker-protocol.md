@@ -173,6 +173,8 @@ GitHub renewal, including when GitHub is absent or unavailable. Under the login 
 replaces the effective container credential and durably publishes only the expiry JSON
 string to `~/.agent-pm/docker-state/<name>/<generation>.credential.json`. That record is
 authoritative after partial failure or a lost response; retry reconciles it before GitHub.
+GitHub renewal runs even when the Codex step fails; refresh then reports the Codex error, its message also naming
+a GitHub failure.
 A deadline-write failure reports `refresh_failed`. Publication does not acknowledge that
 the running terminal adopted the credential; see [refresh continuity](docker-codex.md).
 
@@ -240,6 +242,9 @@ than claiming success. For Docker Desktop file-sharing rejection, use `start_fai
 put Docker's original diagnostic in optional `error.cause` subject to channel redaction,
 and explain in `message` that `~/.agent-pm/docker-state` must be shared. workspace-rm's
 check run and volume deletion also put Docker's diagnostic in `cause`.
+A failed Codex credential write puts the container writer's reason in `cause`, at start (`start_failed`) and refresh
+(`refresh_failed`): one of `bootstrap.py`'s fixed messages, else a generic one with its exit status; never other container
+output, which the worker controls.
 
 `error.cleanup` is `not_needed` when no container was created, `removed` after rollback,
 or `failed` when rollback failed. Only start can report the latter two. Keep the original
