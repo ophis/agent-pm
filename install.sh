@@ -646,6 +646,8 @@ elif fresh or (get(data, "session.hosts", "default") or "tmux") != default:
     wanted.append(("session.hosts", "default", default))
 if not only and client and (get(data, "delegate", "client") or "claude") != client:
     wanted.append(("delegate", "client", client))
+if not only and harness and client:  # Docker without Claude Code: no Claude Code install record to stage plugins from
+    want("session.hosts.docker", "plugins", [])
 if not only and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
     wanted.append(("delegate.delegates", "harness_host", harness))
 if name and not only:

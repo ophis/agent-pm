@@ -578,18 +578,19 @@ class InstallTest(Case):
             "# Written by install.sh. Keys and defaults: each layer's packaged config.toml "
             "(its `# local:` lines);\n# the Linear board: docs/board.md#setup.\n"
             '[session.hosts]\ndefault = "docker"\n\n[delegate]\nclient = "codex"\n\n'
-            '[delegate.delegates]\nharness_host = "tmux"\n',
+            '[session.hosts.docker]\nplugins = []\n\n[delegate.delegates]\nharness_host = "tmux"\n',
         )
         cases = (
             (
                 '# mine\n[session.hosts]\ndefault = "tmux" # x\n\n[other]\nx = 1\n',
                 '# mine\n[session.hosts]\ndefault = "docker"\n\n[other]\nx = 1\n\n'
-                '[delegate]\nclient = "codex"\n\n[delegate.delegates]\nharness_host = "tmux"\n',
+                '[delegate]\nclient = "codex"\n\n[session.hosts.docker]\nplugins = []\n\n'
+                '[delegate.delegates]\nharness_host = "tmux"\n',
             ),
             (
                 '[delegate.delegates]\n\n[session.hosts]\ndefault = "docker"\n[delegate]\nclient = "codex"\n',
                 '[delegate.delegates]\nharness_host = "tmux"\n\n[session.hosts]\ndefault = "docker"\n'
-                '[delegate]\nclient = "codex"\n',
+                '[delegate]\nclient = "codex"\n\n[session.hosts.docker]\nplugins = []\n',
             ),
         )
         for before, after in cases:
@@ -1147,6 +1148,12 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertIn("> [ ] Claude Code", result.tty)
         self.assertNotIn("opencode plugin", "\n".join(self.calls()))
+
+    def test_docker_without_claude_stages_no_plugins(self):
+        """The broker stages plugins from Claude Code's install record; Codex or OpenCode alone has none."""
+        result = self.fresh("--clients", "codex", "--docker", logins=[(PEM_Q, "")])
+        self.assert_ok(result)
+        self.assertIn("[session.hosts.docker]\nplugins = []\n", self.config().read_text())
 
     def test_cleanup_round_trip_opencode_only(self):
         conf = Path(self.home, ".config/opencode")
