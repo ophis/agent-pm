@@ -59,7 +59,7 @@ echo:
 | Login | Terminal | macOS dialog, at most | Click |
 |---|---|---|---|
 | `login claude [<name>]` | the token; the login keychain password only when the item's access needs a change | one change-access dialog, after the password; one read dialog, announced on the terminal first | Allow; Always Allow |
-| `login github agent-pm-bot` | the login keychain password, when a step is not yet in place | one change-access dialog (Deny / Allow), after the password | Allow |
+| `login github agent-pm-bot [--key-file <pem> --app-id <ID>]` | the login keychain password, when a step is not yet in place | with `--key-file`, none; else one change-access dialog (Deny / Allow), after the password | Allow |
 | `login codex` | the login keychain password, when a step is not yet in place, before the browser opens | one change-access dialog (Deny / Allow), after the password | Allow |
 | `login opencode <name>` | the provider's API key; the login keychain password only when the item's access needs a change | at most one change-access dialog (Deny / Allow), after the password | Allow |
 | `start` | none | none: a token or key it cannot read without one fails with `login_required`, naming unlocking the login keychain or the login to run | |
@@ -84,15 +84,17 @@ dialog and once without, proving Always Allow was clicked.
 Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
 **GitHub**: the private key of your one GitHub App ([create it](#create-the-github-app)), whatever its name, must be
-a generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
-truncates the key at 128 characters):
+a generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the key. Let the
+broker create it from the downloaded `.pem` (`install.sh` does), so the key never goes on a command line:
 
 ```sh
-security add-generic-password -s agent-pm-bot -a <App ID> -U -w "$(base64 -i <key>.pem)" ~/Library/Keychains/login.keychain-db
-"$B" login github agent-pm-bot
+"$B" login github agent-pm-bot --key-file <key>.pem --app-id <App ID>   # then delete <key>.pem
+"$B" login github agent-pm-bot                                          # after a broker reinstall
 ```
 
-The login restricts the item's access in place (content and account kept): partition list to only the broker's
+With `--key-file` (at most 16384 bytes, a PEM RSA key) it refuses an existing `agent-pm-bot` item, and the item it
+creates already trusts only the broker for reads: the login asks the keychain password once, for the partition list,
+and shows no dialog. Without it, the item must exist, and the login restricts its access in place (content and account kept): partition list to only the broker's
 partition ID, then read/export entries to only the broker (a wrong password: `keychain status -25293`). It reads the
 access back and checks the key is not empty before printing success; else it exits non-zero saying what is done
 and what is not: rerun it. Then it asks GitHub which App the key is (`GET /app`, its slug), looks up `<slug>[bot]`

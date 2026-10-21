@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import re
@@ -44,8 +43,8 @@ REAL = (
     "mkfifo",
     "stty",
 )
-FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
-FAKED += ("xcode-select", "ps", "sw_vers", "lipo")
+FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum")
+FAKED += ("xcode-select", "ps", "sw_vers", "lipo", "pgrep", "pkill", "defaults")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -72,6 +71,8 @@ PROVIDER_ANSWERS = (
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
 TOKEN_Q = r"Paste the setup-token \(hidden\):"
+LEAVE_Q = r"Press Enter to leave this screen:"
+SCREEN_ON, SCREEN_OFF = "\x1b[?1049h\x1b[H\x1b[2J", "\x1b[H\x1b[2J\x1b[?1049l"
 PEM_Q = r"private key \(\.pem; [^)]*\), empty to skip:"
 DOCKER_LOGINS = ((TOKEN_Q, TOKEN), (PEM_Q, ""))
 REMOVE_Q = r"Remove all of this\? \[y/N\]"
@@ -86,6 +87,7 @@ SHARED = (
     "ledger_valid",
     "sudo_once",
     "sudo_end",
+    "terminal",
 )
 RELOAD = (
     "install.sh: in this terminal, run source ~/.zprofile first (or open a new one): its PATH"
@@ -116,6 +118,23 @@ for n in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchest
   chmod 755 "$HOME/.agent-pm/bin/$n"
 done
 """
+ITERM_DIRS = (
+    "Application Support/iTerm2",
+    "Application Support/iTerm",
+    "Caches/com.googlecode.iterm2",
+    "HTTPStorages/com.googlecode.iterm2",
+    "WebKit/com.googlecode.iterm2",
+    "Saved Application State/com.googlecode.iterm2.savedState",
+    "Containers/com.googlecode.iterm2.iTermFileProvider",
+    "Containers/iTermAI",
+    "Application Scripts/com.googlecode.iterm2.iTermFileProvider",
+)
+ITERM_FILES = (
+    "Preferences/com.googlecode.iterm2.plist",
+    "Preferences/com.googlecode.iterm2.private.plist",
+    "Cookies/com.googlecode.iterm2.binarycookies",
+    "HTTPStorages/com.googlecode.iterm2.binarycookies",
+)
 Result = namedtuple("Result", "code stdout stderr tty")
 ITEMS = ("claude", "codex", "opencode", "docker", "board")
 
@@ -894,21 +913,27 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertNotIn("login github", "\n".join(self.calls()))
 
-    def test_github_app_key_stored_by_pipe(self):
+    def test_github_app_key_stored_by_the_broker(self):
+        """The broker creates the App key item from the .pem path, so the key is on no command line."""
         pem = Path(self.home, "app.pem")
         secret = "-----BEGIN RSA PRIVATE KEY-----SENTINELKEY-----END RSA PRIVATE KEY-----"
         pem.write_text(secret)
-        encoded = base64.b64encode(secret.encode()).decode()
         logins = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
-        logins += [(r"App ID \(digits\):", "5352992"), (WRITE_Q, "y")]
-        result = self.fresh(docker="y", logins=logins)
+        logins += [(r"App ID \(digits\):", "0123"), (r"App ID \(digits\):", "5352992")]
+        result = self.fresh(docker="y", logins=[*logins, (WRITE_Q, "y")])
         self.assert_ok(result)
-        self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), encoded)
+        self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), secret)
         self.assertEqual((self.fakes / "keychain/agent-pm-bot.account").read_text(), "5352992")
-        self.assertIn("security -i", self.calls())
-        self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
+        calls = self.calls()
+        login = f"agent-pm-broker login github agent-pm-bot --key-file {pem} --app-id 5352992"
+        self.assertIn(login, calls)
+        self.assertFalse(
+            [c for c in calls if c.startswith(("security -i", "security add-", "base64"))]
+        )
+        self.assertIn("keychain\tagent-pm-bot\t5352992", self.ledger())
+        self.assertEqual(self.state()["github_app"], "agentpm-test-bot")
         pem.unlink()
-        self.assert_secret_free(encoded, "SENTINELKEY", TOKEN, result=result)
+        self.assert_secret_free("SENTINELKEY", TOKEN, result=result)
 
     def test_broker_change_logs_in_again(self):
         self.assert_ok(self.fresh(docker="y"))
@@ -1097,6 +1122,40 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertIn("claude setup-token", self.calls())
         self.assertIn("agent-pm-broker login claude", self.calls())
+
+    def test_setup_token_on_a_cleared_alternate_screen(self):
+        """The token setup-token prints and its paste stay on the alternate screen, cleared before leaving it."""
+        result = self.fresh(clients="claude", docker="y")
+        self.assert_ok(result)
+        self.assertEqual((result.tty.count(SCREEN_ON), result.tty.count(SCREEN_OFF)), (1, 1))
+        on = result.tty.index(SCREEN_ON)
+        off = result.tty.index(SCREEN_OFF)
+        self.assertLess(on, off)
+        shown = [m.start() for m in re.finditer(re.escape(TOKEN), result.tty)]
+        self.assertTrue(shown)
+        self.assertTrue(all(on < at < off for at in shown), result.tty)
+        self.assertRegex(result.tty[on:off], TOKEN_Q)
+        self.assertIn("    setup-token saved in the broker; its screen is cleared\n", result.stderr)
+        self.assertEqual((self.fakes / "broker/claude_token").read_text(), TOKEN)
+        self.assert_secret_free(TOKEN, result=result)
+
+    def test_setup_token_failure_leaves_the_alternate_screen(self):
+        """A failed setup-token or broker login waits for Enter on that screen, then leaves it and stops."""
+        failed = "install.sh: broker login: Claude failed; rerun the same command to continue\n"
+        self.assert_ok(self.fresh("--no-docker", clients="claude"))
+        config = [(WRITE_Q, "y")]
+        for call in ("claude setup-token", "agent-pm-broker login claude"):
+            with self.subTest(call=call):
+                (self.fakes / "fail").write_text(call)
+                result = self.again("--docker", answers=[*config, (LEAVE_Q, "")])
+                config = []
+                self.assertEqual(result.code, 1, result.stderr)
+                on = result.tty.index(SCREEN_ON)
+                self.assertGreater(result.tty.index(LEAVE_Q.replace("\\", ""), on), on)
+                self.assertTrue(result.tty.endswith(SCREEN_OFF), result.tty[-200:])
+                self.assertEqual(result.stderr.count(failed), 1, result.stderr)
+                self.assertNotIn("setup-token saved in the broker", result.stderr)
+                self.assertNotIn("login_claude", self.state())
 
     def test_terminal_without_a_device_name(self):
         (self.fakes / "tty_name").write_text("??\n")
@@ -1493,8 +1552,8 @@ class InstallTest(Case):
                 "formula\tgit",
                 f"dir\t{h}/.config",
                 f"dir\t{h}/.config/iterm2",
-                f"dir\t{h}/Library/Application Support/iTerm2",
-                f"file\t{h}/Library/Preferences/com.googlecode.iterm2.plist",
+                *(f"dir\t{h}/Library/{path}" for path in ITERM_DIRS),
+                *(f"file\t{h}/Library/{path}" for path in ITERM_FILES),
                 "cask\titerm2",
                 "config\tcreated",
                 f"dir\t{h}/.config/gh",
@@ -1619,11 +1678,11 @@ class InstallTest(Case):
         self.assertEqual(Path(self.agent_pm, "install/config.local.toml.orig").read_text(), mine)
         self.assertEqual(self.ledger().count("config\tbackup"), 1)
 
-    def cleanup(self, *args, answers=(), stdin=None):
+    def cleanup(self, *args, answers=(), stdin=None, ctty=None):
         """Without --password-stdin, --yes runs answer sudo's prompt."""
         if stdin is None and "--yes" in args:
             answers = [(SUDO_Q, PASSWORD), *answers]
-        return self.run_install(*args, answers=answers, stdin=stdin, script=CLEANUP)
+        return self.run_install(*args, answers=answers, stdin=stdin, script=CLEANUP, ctty=ctty)
 
     def snapshot(self):
         skip = {"fakes", "bin"}
@@ -1691,6 +1750,17 @@ class InstallTest(Case):
             self.assertFalse([c for c in self.calls() if c.startswith("sudo")], record)
             self.assertEqual(ledger.read_text(), good + record + "\n")
 
+    def test_cleanup_logs_claude_out_on_a_kqueue_refused_tty(self):
+        """claude auth logout dies on /dev/tty, as macOS's kqueue refuses it; the terminal's own device works."""
+        self.assert_ok(self.fresh("--no-docker", clients="claude"))
+        self.assertTrue((self.fakes / "login/claude").exists())
+        result = self.cleanup("--yes", ctty=self.refused_tty())
+        self.assert_ok(result)
+        self.assertIn("claude auth logout", self.calls())
+        self.assertNotIn("claude is still logged in", result.stderr)
+        self.assertFalse((self.fakes / "login/claude").exists())
+        self.assertIn("Removed what install.sh added.", result.stderr)
+
     def test_cleanup_round_trip(self):
         before = self.snapshot()
         first = self.full()
@@ -1713,31 +1783,105 @@ class InstallTest(Case):
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
 
-    def test_cleanup_keeps_a_protected_docker_container(self):
-        """Docker's own uninstall and rm both fail on it without Full Disk Access; the rest goes."""
+    def test_cleanup_round_trip_leaves_no_docker_files(self):
+        """Docker Desktop's and iTerm2's own files go; a shell rc there before keeps its own lines."""
+        bashrc = Path(self.home, ".bashrc")
+        bashrc.write_text("export EDITOR=vim\n")
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        library = Path(self.home, "Library")
+        written = [
+            library / "Application Support/Docker Desktop/state.json",
+            library / "Preferences/com.docker.docker.plist",
+            Path(self.home, ".zshrc"),
+        ]
+        self.assertTrue(all(path.exists() for path in written))
+        self.assertIn("by Docker Desktop", bashrc.read_text())
+        for path in ("Preferences/com.googlecode.iterm2.plist", "Application Support/iTerm2/x"):
+            (library / path).parent.mkdir(parents=True, exist_ok=True)
+            (library / path).write_text("iTerm2")
+        self.assertIn(f"profile-file\t{self.home}/.zshrc", self.ledger())
+        self.assertIn(f"docker-block\t{bashrc}", self.ledger())
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        for path in [*written, library / "Preferences/com.googlecode.iterm2.plist"]:
+            self.assertFalse(path.exists(), path)
+        self.assertFalse((library / "Application Support/Docker Desktop").exists())
+        self.assertFalse((library / "Application Support/iTerm2").exists())
+        self.assertEqual(bashrc.read_text(), "export EDITOR=vim\n")
+        self.assertIn("defaults delete com.docker.docker", self.calls())
+        self.assertIn("defaults delete com.googlecode.iterm2", self.calls())
+
+    def test_cleanup_stops_docker_processes(self):
+        """What still runs from Docker.app after its cask is gone ends; nothing else is signalled."""
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        agent = (
+            f"{self.root}/Applications/Docker.app/Contents/Resources/cli-plugins/docker-agent serve"
+        )
+        others = [f"{self.root}/Applications/DockerXapp/Contents/MacOS/x", f"/bin/sh {agent}"]
+        processes = self.fakes / "processes"
+        self.assertEqual(processes.read_text().splitlines(), [agent])
+        processes.write_text("".join(f"{line}\n" for line in [agent, *others]))
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertEqual(processes.read_text().splitlines(), others)
+        calls = self.calls()
+        kill = next(c for c in calls if c.startswith("pkill -TERM -f "))
+        self.assertLess(calls.index("brew uninstall --cask docker-desktop"), calls.index(kill))
+        self.assertNotIn("pkill -KILL", "\n".join(calls))
+
+    def test_cleanup_fails_on_an_unkillable_docker_process(self):
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        (self.fakes / "unkillable").write_text((self.fakes / "processes").read_text())
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(
+            "install-cleanup.sh: Docker Desktop processes still running: 1\n", result.stderr
+        )
+        self.assertIn("pkill -KILL", "\n".join(self.calls()))
+        self.assertIn("cask\tdocker-desktop", self.ledger())
+
+    def test_cleanup_needs_full_disk_access_for_a_container(self):
+        """macOS lets only Full Disk Access remove an app container: without it nothing is removed."""
         self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
         container = Path(self.home, "Library/Containers/com.docker.docker")
         (container / "locked").mkdir(parents=True)
         (container / "locked/data").write_text("")
-        (container / "locked").chmod(0o500)
-        self.addCleanup((container / "locked").chmod, 0o700)
-        (self.fakes / "protected_container").write_text("")
+        ledger = Path(self.agent_pm, "install/added")
+        recorded = ledger.read_bytes()
+        result = self.cleanup()
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertEqual(
+            result.stderr,
+            f"install-cleanup.sh: macOS lets only Full Disk Access remove {container}: give the"
+            " terminal Full Disk Access (System Settings › Privacy & Security), reopen it, then"
+            " rerun; nothing removed (take the access back once cleanup has finished)\n",
+        )
+        self.assertNotRegex(result.tty, REMOVE_Q)
+        self.assertEqual(ledger.read_bytes(), recorded)
+        self.assertTrue((container / "locked/data").exists())
+        self.assertEqual([c for c in self.calls() if not c.startswith(("uname", "ps "))], [])
+        tcc = Path(self.home, "Library/Application Support/com.apple.TCC/TCC.db")
+        tcc.parent.mkdir(parents=True)
+        tcc.write_text("granted")
+        locked = container / "locked"
+        locked.chmod(0o500)
+        self.addCleanup(lambda: locked.exists() and locked.chmod(0o700))
         result = self.cleanup(answers=[(REMOVE_Q, "y"), (SUDO_Q, PASSWORD)])
-        self.assert_ok(result)
-        self.assertIn("Docker Desktop's own uninstall asks for your admin password", result.stderr)
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(
+            f"install-cleanup.sh: cannot remove {container}; its record stays", result.stderr
+        )
+        self.assertIn(f"dir\t{container}", ledger.read_text().splitlines())
         self.assertIn("docker-uninstall", self.calls())
         self.assertLess(
             self.calls().index("docker-uninstall"),
             self.calls().index("brew uninstall --cask docker-desktop"),
         )
-        self.assertIn("Docker Desktop's uninstall failed; going on", result.stderr)
-        self.assertTrue(
-            result.stderr.endswith(
-                f"Removed what install.sh added.\nLeft {container}: grant the terminal Full Disk"
-                " Access (System Settings › Privacy & Security), then rm -rf it.\n"
-            ),
-            result.stderr,
-        )
+        locked.chmod(0o700)
+        result = self.cleanup(answers=[(REMOVE_Q, "y"), (SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertTrue(result.stderr.endswith("Removed what install.sh added.\n"), result.stderr)
+        self.assertFalse(container.exists())
         self.assertFalse(Path(self.agent_pm, "install").exists())
         self.assertFalse(Path(self.home, ".zprofile").exists())
 

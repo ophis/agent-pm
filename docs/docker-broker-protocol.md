@@ -51,7 +51,8 @@ Input fixtures' `argv` arrays represent arguments after the executable, in canon
 order. They are test data, not JSON sent to the broker. These commands consume no
 stdin. `login claude [NAME]` reads account NAME's token (`default` without NAME) and `login opencode <provider>`
 that provider's API key; they and `login github <app>` read the login keychain password once when the item's access
-needs a change, all interactively without echo; none has a JSON contract. `login github agent-pm-bot` then
+needs a change, all interactively without echo; none has a JSON contract. `login github agent-pm-bot --key-file <pem>
+--app-id <ID>` first creates the App key item from the PEM file (none may exist yet). `login github agent-pm-bot` then
 asks GitHub the slug of the key's App (`GET /app`, the App JWT), looks up `<slug>[bot]` (`GET /users/<slug>[bot]`, no
 credential) and saves both ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).

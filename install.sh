@@ -41,6 +41,9 @@ feeder=
 askpass_dir=
 current=
 answer=
+token_screen=
+app_pem=
+app_id=
 pkg=
 user_path=$PATH
 reload=
@@ -232,6 +235,7 @@ ledger_valid() {
   case $1:$# in
     dir:2 | file:2 | profile-file:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
+    docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
@@ -272,6 +276,37 @@ recorded() { [ -f "$ledger" ] && grep -qxF -- "$(
 # Records directory $1 when it does not exist yet.
 record_dir() { [ -e "$1" ] || ledger_add dir "$1"; }
 
+# Records file $1 when it does not exist yet.
+record_file() { [ -e "$1" ] || ledger_add file "$1"; }
+
+# Per-user files under ~/Library that Docker Desktop and iTerm2 write once running, from their casks' zap stanzas:
+# directories, then files (preferences plists, cookies).
+docker_dirs=("Application Support/Docker Desktop" "Application Support/docker-secrets-engine"
+  "Application Support/com.docker.docker" "Application Support/com.bugsnag.Bugsnag"
+  "Application Support/com.bugsnag.Bugsnag/com.docker.docker" "Caches/com.docker.docker" "Caches/Docker Desktop"
+  "Caches/docker-secrets-engine" "Caches/com.plausiblelabs.crashreporter.data"
+  "Caches/com.plausiblelabs.crashreporter.data/com.docker.docker" "Caches/KSCrashReports" "Caches/KSCrashReports/Docker"
+  "Containers/com.docker.helper" "Application Scripts/com.docker.helper" "Application Scripts/group.com.docker"
+  "HTTPStorages/com.docker.docker" "Logs/Docker Desktop" "Saved Application State/com.electron.docker-frontend.savedState"
+  "Saved Application State/com.electron.dockerdesktop.savedState")
+docker_files=("HTTPStorages/com.docker.docker.binarycookies" "Preferences/com.docker.docker.plist"
+  "Preferences/com.electron.docker-frontend.plist" "Preferences/com.electron.dockerdesktop.plist")
+iterm_dirs=("Application Support/iTerm2" "Application Support/iTerm" "Caches/com.googlecode.iterm2"
+  "HTTPStorages/com.googlecode.iterm2" "WebKit/com.googlecode.iterm2" "Saved Application State/com.googlecode.iterm2.savedState"
+  "Containers/com.googlecode.iterm2.iTermFileProvider" "Containers/iTermAI"
+  "Application Scripts/com.googlecode.iterm2.iTermFileProvider")
+iterm_files=("Preferences/com.googlecode.iterm2.plist" "Preferences/com.googlecode.iterm2.private.plist"
+  "Cookies/com.googlecode.iterm2.binarycookies" "HTTPStorages/com.googlecode.iterm2.binarycookies")
+
+# Records each of the paths after $1 under ~/Library, $1 the kind: dir or file.
+record_library() {
+  local kind=$1 path
+  shift
+  for path in "$@"; do
+    if [ "$kind" = dir ]; then record_dir "$HOME/Library/$path"; else record_file "$HOME/Library/$path"; fi
+  done
+}
+
 # Records a directory under ~/.agent-pm, unless ~/.agent-pm itself is the installer's.
 record_agent_dir() { recorded dir "$HOME/.agent-pm" || record_dir "$1"; }
 
@@ -305,6 +340,7 @@ state_set() {
 
 on_exit() {
   local rc=$?
+  token_screen_leave
   sudo_end
   if [ "$rc" -ne 0 ] && [ -n "$current" ]; then
     say "$me: $current failed; rerun the same command to continue"
@@ -463,8 +499,8 @@ dependencies() {
   record_dir "$HOME/.config"
   if [ ! -e "$root/Applications/iTerm.app" ]; then
     record_dir "$HOME/.config/iterm2"
-    record_dir "$HOME/Library/Application Support/iTerm2"
-    [ -e "$HOME/Library/Preferences/com.googlecode.iterm2.plist" ] || ledger_add file "$HOME/Library/Preferences/com.googlecode.iterm2.plist"
+    record_library dir "${iterm_dirs[@]}"
+    record_library file "${iterm_files[@]}"
   fi
   cask iterm2 "" "$root/Applications/iTerm.app"
 }
@@ -757,6 +793,7 @@ backup_config() {
 }
 
 apps() {
+  local rc
   step apps
   record_dir "$HOME/.config/gh"
   if has claude; then
@@ -769,6 +806,17 @@ apps() {
     record_dir "$HOME/Library/Containers/com.docker.docker"
     record_dir "$HOME/Library/Group Containers/group.com.docker"
     record_dir "$HOME/.config/cagent"
+    record_library dir "${docker_dirs[@]}"
+    record_library file "${docker_files[@]}"
+    # Docker Desktop adds its CLI completion block to the shell's rc files, creating them if needed: the cleanup
+    # removes the block where it was not before, and a file that was not there once empty.
+    for rc in .zshrc .bashrc .bash_profile .zprofile; do
+      if [ ! -e "$HOME/$rc" ]; then
+        ledger_add profile-file "$HOME/$rc"
+      elif ! grep -qF "# End of Docker Desktop section." "$HOME/$rc"; then
+        ledger_add docker-block "$HOME/$rc"
+      fi
+    done
   fi
   if has claude; then cask claude-code claude; else skip "Claude Code: not chosen"; fi
   if has codex; then cask codex codex; else skip "Codex: not chosen"; fi
@@ -1310,28 +1358,23 @@ broker_install() {
   state_set broker_source "$source"
 }
 
-# Stores the agent-pm-bot App key from a .pem the user names; 1 when they skip it.
+# Asks for the agent-pm-bot App key's .pem and App ID into app_pem and app_id, for the broker to store; 1 when the
+# user skips it.
 store_app_key() {
-  local pem id key
   [ "$(state_get github_app_key)" != skipped ] || return 1
   ask "Path to your GitHub App's private key (.pem; docs/docker-host.md#create-the-github-app), empty to skip:"
   if [ -z "$answer" ]; then
     state_set github_app_key skipped
     return 1
   fi
-  pem=$answer
-  [ -f "$pem" ] || die "no file $pem"
+  app_pem=$answer
+  [ -f "$app_pem" ] || die "no file $app_pem"
   while :; do
     ask "Its App ID (digits):"
-    case $answer in '' | *[!0-9]*) ;; *) break ;; esac
+    if [[ $answer =~ ^[1-9][0-9]{0,19}$ ]]; then break; fi
   done
-  id=$answer
-  ledger_add keychain agent-pm-bot "$id"
-  key=$(base64 -i "$pem") && [ -n "$key" ] || die "cannot read $pem"
-  printf 'add-generic-password -s agent-pm-bot -a %s -U -w %s %s\n' "$id" "$key" \
-    "$HOME/Library/Keychains/login.keychain-db" | security -i >/dev/null 2>&1 || true
-  unset key
-  security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 || die "agent-pm-bot key not stored"
+  app_id=$answer
+  ledger_add keychain agent-pm-bot "$app_id"
 }
 
 # install, update, login, ready or busy: what the broker's pinned Codex needs.
@@ -1364,6 +1407,20 @@ to_terminal() {
   done
 }
 
+# The token screen: the terminal's alternate screen, which keeps no scrollback, cleared on entering and on leaving,
+# for claude setup-token's token and its paste.
+token_screen_enter() {
+  printf '\033[?1049h\033[H\033[2J' >&3
+  token_screen=1
+}
+
+token_screen_leave() {
+  if [ -n "$token_screen" ]; then
+    printf '\033[H\033[2J\033[?1049l' >&3
+    token_screen=
+  fi
+}
+
 broker_logins() {
   local sha min need said slug
   sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
@@ -1373,10 +1430,15 @@ broker_logins() {
   elif [ "$(state_get login_claude)" = "$sha" ]; then
     skip "done for this broker"
   else
-    say "Create a token with claude setup-token, then paste it at the broker's prompt"
+    say "Create a token with claude setup-token, then paste it at the broker's prompt; both run on a screen cleared afterwards"
     record_item agent-pm-claude default
-    claude setup-token <&3 >&3 2>&3
-    "$broker" login claude <&3 >&3 2>&3
+    token_screen_enter
+    if ! { claude setup-token <&3 >&3 2>&3 && "$broker" login claude <&3 >&3 2>&3; }; then
+      ask "Press Enter to leave this screen:"
+      exit 1
+    fi
+    token_screen_leave
+    say "    setup-token saved in the broker; its screen is cleared"
     state_set login_claude "$sha"
   fi
   step "broker login: GitHub"
@@ -1386,7 +1448,11 @@ broker_logins() {
     skip "no GitHub App key: create the App by docs/docker-host.md#create-the-github-app, then rerun"
   else
     record_item agent-pm-github-users agent-pm-bot
-    said=$("$broker" login github agent-pm-bot <&3 2>&3 | to_terminal)
+    if [ -n "$app_id" ]; then
+      said=$("$broker" login github agent-pm-bot --key-file "$app_pem" --app-id "$app_id" <&3 2>&3 | to_terminal)
+    else
+      said=$("$broker" login github agent-pm-bot <&3 2>&3 | to_terminal)
+    fi
     slug=$(sed -n 's/^GitHub App \([A-Za-z0-9-]*\) bot user .*/\1/p' <<<"$said")
     [ -n "$slug" ] || die "broker login github named no GitHub App"
     state_set github_app "$slug"

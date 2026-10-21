@@ -26,7 +26,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -42,11 +42,39 @@ type app struct {
 	refresh       func(ctx context.Context, container, manifest string) (any, error)
 	status        func(ctx context.Context) (any, error)
 	workspaceRm   func(ctx context.Context, volume string, force bool) (any, error)
-	login         func(account string, out io.Writer) error // login claude [NAME]
-	loginGitHub   func(ctx context.Context, app string, out io.Writer) error
+	login         func(account string, out io.Writer) error                                // login claude [NAME]
+	loginGitHub   func(ctx context.Context, app string, key *keyFile, out io.Writer) error // key: nil without --key-file
 	loginCodex    func(context.Context, io.Writer) error
 	loginOpencode func(provider string, out io.Writer) error
 	installCodex  func(context.Context, string, bool) (any, error)
+}
+
+// keyFile is login github's --key-file content and --app-id.
+type keyFile struct {
+	id  string
+	pem []byte
+}
+
+// maxKeyFile caps --key-file: a 4096-bit PEM key is about 3.3 KB.
+const maxKeyFile = 16384
+
+// readKeyFile reads the --key-file PEM, at most maxKeyFile bytes; errors name only the path.
+func readKeyFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the App private key failed: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxKeyFile+1))
+	switch {
+	case err != nil:
+		clear(data)
+		return nil, fmt.Errorf("reading the App private key failed: %w", err)
+	case len(data) > maxKeyFile:
+		clear(data)
+		return nil, fmt.Errorf("%s: more than %d bytes", path, maxKeyFile)
+	}
+	return data, nil
 }
 
 func main() {
@@ -93,7 +121,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 			case len(args) == 3 && args[1] == "claude" && launcher.ValidClaudeAccount(args[2]):
 				login = func() error { return a.login(args[2], stdout) }
 			case len(args) == 3 && args[1] == "github" && args[2] == broker.AppKeyService:
-				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
+				login = func() error { return a.loginGitHub(ctx, args[2], nil, stdout) }
+			case len(args) == 7 && args[1] == "github" && args[2] == broker.AppKeyService && args[3] == "--key-file" && args[5] == "--app-id":
+				login = func() error {
+					pem, err := readKeyFile(args[4])
+					if err != nil {
+						return err
+					}
+					defer clear(pem)
+					return a.loginGitHub(ctx, args[2], &keyFile{id: args[6], pem: pem}, stdout)
+				}
 			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
 				login = func() error { return a.loginOpencode(args[2], stdout) }
 			}
@@ -275,7 +312,7 @@ func system() app {
 				return broker.ReadHidden()
 			}, broker.SystemKeychain{Home: home}, os.Stderr, out)
 		},
-		loginGitHub: func(ctx context.Context, app string, out io.Writer) error {
+		loginGitHub: func(ctx context.Context, app string, key *keyFile, out io.Writer) error {
 			home, err := accountHome()
 			if err != nil {
 				return err
@@ -283,7 +320,13 @@ func system() app {
 			if err := broker.CheckInstalled(); err != nil {
 				return err
 			}
-			if err := broker.LoginGitHub(app, broker.SystemKeychain{Home: home}, func() ([]byte, error) {
+			k := broker.SystemKeychain{Home: home}
+			if key != nil {
+				if err := broker.StoreAppKey(app, key.id, key.pem, k); err != nil {
+					return err
+				}
+			}
+			if err := broker.LoginGitHub(app, k, func() ([]byte, error) {
 				fmt.Fprint(os.Stderr, "Login keychain password, to make "+app+" trust only the broker (hidden): ")
 				defer fmt.Fprintln(os.Stderr)
 				return broker.ReadHidden()

@@ -20,7 +20,6 @@ feeder=
 askpass_dir=
 current=
 answer=
-leftover=
 
 say() { printf '%s\n' "$*" >&2; }
 
@@ -50,6 +49,23 @@ ask_yn() {
   return 1
 }
 
+# The terminal's own device (/dev/ttys<n>), else /dev/tty: macOS's kqueue refuses /dev/tty, so
+# Bun-built clients (Claude Code, OpenCode) die on it with EINVAL.
+terminal() {
+  local name
+  name=$(ps -o tty= -p $$ </dev/null 2>/dev/null) || name=
+  name=${name//[[:space:]]/}
+  case $name in
+    ttys[0-9]*)
+      if [ -c "$root/dev/$name" ] && (: <>"$root/dev/$name") 2>/dev/null; then
+        printf '%s' "$root/dev/$name"
+        return
+      fi
+      ;;
+  esac
+  printf '%s' "$root/dev/tty"
+}
+
 # Exit 0 when $1 is a path strictly under $HOME, absolute, without `..` or a tab or newline.
 under_home() {
   case $1 in
@@ -67,6 +83,7 @@ ledger_valid() {
   case $1:$# in
     dir:2 | file:2 | profile-file:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
+    docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
@@ -165,7 +182,8 @@ usage: install-cleanup.sh [--yes] [--password-stdin]
 
 Internal, for test machines only: removes what install.sh recorded in ~/.agent-pm/install/added,
 so the machine is as before install.sh ran. Lists it and asks first; --yes skips the question
-(automation only). Run by hand:
+(automation only). An app container to remove (~/Library/Containers/<app>) needs the terminal's Full Disk
+Access: without it the cleanup stops before removing anything. Run by hand:
   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install-cleanup.sh | bash
 With --password-stdin (sudo password on stdin), stdin cannot carry the script:
   security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install-cleanup.sh)" install-cleanup.sh --yes --password-stdin
@@ -214,11 +232,22 @@ validate() {
   done <"$ledger"
 }
 
+# Stops before anything is removed while a recorded app container is there and the terminal lacks Full Disk Access:
+# macOS lets only that remove ~/Library/Containers/<app>, and only that reads TCC.db.
+protected_dirs() {
+  local path found=
+  while IFS= read -r path; do
+    case $path in "$HOME/Library/Containers/"?*) if [ -e "$path" ]; then found="$found $path"; fi ;; esac
+  done <<<"$(of_kind dir | cut -f2)"
+  if [ -z "$found" ] || head -c 1 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" >/dev/null 2>&1; then return 0; fi
+  die "macOS lets only Full Disk Access remove$found: give the terminal Full Disk Access (System Settings › Privacy & Security), reopen it, then rerun; nothing removed (take the access back once cleanup has finished)"
+}
+
 show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-config profile profile-file config cask formula homebrew clt file dir; do
+    login opencode-auth opencode-config docker-block profile profile-file config cask formula homebrew clt file dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -394,7 +423,7 @@ profiles() {
   if of_kind cask | grep -qx "cask"$'\t'"docker-desktop"; then
     while IFS= read -r file; do
       if [ -f "$file" ]; then docker_block "$file"; fi
-    done <<<"$(of_kind 'profile(-file)?' | cut -f2 | sort -u)"
+    done <<<"$(of_kind '(profile(-file)?|docker-block)' | cut -f2 | sort -u)"
   fi
   while IFS=$'\t' read -r _ file line; do
     [ -n "$file" ] || continue
@@ -405,6 +434,10 @@ profiles() {
     fi
     drop "profile"$'\t'"$file"$'\t'"$line"
   done <<<"$(of_kind profile)"
+  while IFS=$'\t' read -r _ file; do
+    [ -n "$file" ] || continue
+    drop "docker-block"$'\t'"$file"
+  done <<<"$(of_kind docker-block)"
   while IFS=$'\t' read -r _ file; do
     [ -n "$file" ] || continue
     if [ -f "$file" ] && ! grep -q '[^[:space:]]' "$file"; then rm -f "$file"; fi
@@ -441,6 +474,21 @@ opencode_configs() {
   done <<<"$(of_kind opencode-config)"
 }
 
+# Ends what still runs from Docker.app once its cask is gone (its quit misses helpers such as docker-agent): TERM, up to
+# 10 seconds, then KILL; matched by the literal command-line prefix, so nothing else is signalled.
+docker_processes() {
+  local pattern left tries
+  pattern=^$(printf '%s' "$root/Applications/Docker.app/" | sed 's/[]$*.^+?(){}|[\]/\\&/g')
+  pkill -TERM -f "$pattern" </dev/null || return 0
+  for tries in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$pattern" </dev/null >/dev/null || return 0
+    sleep 1
+  done
+  pkill -KILL -f "$pattern" </dev/null || true
+  sleep 1
+  if left=$(pgrep -f "$pattern" </dev/null); then die "Docker Desktop processes still running: ${left//$'\n'/ }"; fi
+}
+
 brew_packages() {
   local kind name reason
   step "Homebrew packages"
@@ -459,6 +507,7 @@ brew_packages() {
         fi
       fi
       if brew list --cask "$name" </dev/null >/dev/null 2>&1; then brew uninstall --cask "$name" </dev/null >&2; fi
+      if [ "$name" = docker-desktop ]; then docker_processes; fi
     elif brew list --formula "$name" </dev/null >/dev/null 2>&1; then
       if ! reason=$(brew uninstall "$name" </dev/null 2>&1); then
         case $reason in
@@ -488,22 +537,24 @@ homebrew_and_clt() {
 }
 
 files_and_dirs() {
-  local path
+  local path domain
   step "files and directories"
   while IFS=$'\t' read -r _ path; do
     [ -n "$path" ] || continue
+    # Through cfprefsd first, so it does not write back a preferences plist it still holds.
+    case $path in
+      "$HOME/Library/Preferences/"*.plist)
+        domain=${path##*/}
+        defaults delete "${domain%.plist}" </dev/null >/dev/null 2>&1 || true
+        ;;
+    esac
     rm -f "$path"
     drop "file"$'\t'"$path"
   done <<<"$(of_kind file)"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     [ "$path" = "$HOME/.agent-pm" ] && continue
-    if ! rm -rf "$path" && [ "$path" = "$HOME/Library/Containers/com.docker.docker" ]; then
-      leftover=$path
-      say "    kept $path: macOS protects it; give the terminal Full Disk Access, then rm -rf it"
-    elif [ -e "$path" ]; then
-      die "cannot remove $path; its record stays for a rerun"
-    fi
+    if ! rm -rf "$path" || [ -e "$path" ]; then die "cannot remove $path; its record stays for a rerun"; fi
     drop "dir"$'\t'"$path"
   done <<<"$(of_kind dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
 }
@@ -515,12 +566,13 @@ main() {
   platform=$(uname -sm)
   [ "$platform" = "Darwin arm64" ] || die "needs macOS on Apple silicon (Darwin arm64), not $platform"
   if [ ! -e "$root/dev/tty" ] || ! (: <>"$root/dev/tty") 2>/dev/null; then die "needs a terminal for its questions and logins"; fi
-  exec 3<>"$root/dev/tty"
+  exec 3<>"$(terminal)"
   if [ ! -f "$ledger" ]; then
     say "nothing recorded by install.sh; nothing to remove"
     exit 0
   fi
   validate
+  protected_dirs
   show
   if [ -z "$yes" ] && ! ask_yn "Remove all of this?"; then die "nothing removed"; fi
   trap on_exit EXIT
@@ -547,9 +599,6 @@ main() {
   if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
-  if [ -n "$leftover" ]; then
-    say "Left $leftover: grant the terminal Full Disk Access (System Settings › Privacy & Security), then rm -rf it."
-  fi
 }
 
 main "$@"

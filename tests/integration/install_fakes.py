@@ -1,17 +1,17 @@
 """Fake macOS tools for install_integration_test: run as `install_fakes.py <tool> <args>`.
 
 Every call is logged to $LOG (argv) and $ENVLOG (environment values). State lives under
-$FAKES: brew/<name> (installed), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
+$FAKES: brew/<name> (installed), processes (one running command line each; unkillable: those KILL misses), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
 broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once), tty_name
 (what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty),
 commit (the commit GitHub reports for every agent-pm ref).
 """
 
-import base64
 import hashlib
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -255,13 +255,6 @@ def docker_uninstall(_args):
     (FAKES / "docker_license").unlink(missing_ok=True)
     (FAKES / "docker_running").unlink(missing_ok=True)
     (FAKES / "docker_started").unlink(missing_ok=True)
-    if (FAKES / "protected_container").exists():
-        home = os.environ["HOME"]
-        out(
-            f"rm: {home}/Library/Containers/com.docker.docker: Operation not permitted\n",
-            sys.stderr,
-        )
-        return 1
     return 0
 
 
@@ -289,7 +282,7 @@ def marketplace_name(source):
 
 
 def claude(args):
-    if args in (["auth", "login"], ["setup-token"]) and bun("claude"):
+    if args in (["auth", "login"], ["auth", "logout"], ["setup-token"]) and bun("claude"):
         return 1
     if args == ["auth", "login"]:
         store_key("Claude Code-credentials", "oauth")
@@ -400,13 +393,6 @@ def security(args):
             return 44
         item.unlink()
         return 0
-    if args == ["-i"]:
-        for line in sys.stdin:
-            words = line.split()
-            if words[:1] == ["add-generic-password"]:
-                store_key(words[words.index("-s") + 1], words[words.index("-w") + 1])
-                mark(FAKES / "keychain/agent-pm-bot.account", words[words.index("-a") + 1])
-        return 0
     return 2
 
 
@@ -419,17 +405,60 @@ def docker(args):
 
 
 def open_(args):
-    """Docker Desktop's first start also adds its block to ~/.zprofile. Installed by the cask, it asks for its
+    """Docker Desktop's first start also adds its block to ~/.zprofile, ~/.zshrc and ~/.bashrc and writes its own
+    files under ~/Library. Installed by the cask, it asks for its
     license unless its install command accepted it."""
     cask = (FAKES / "brew/docker-desktop").exists()
     if cask and not (FAKES / "docker_license").exists():
         return 0
     if args == ["-a", "Docker"] and not (FAKES / "docker_wont_start").exists():
         if not (FAKES / "docker_started").exists():
-            with open(Path(os.environ["HOME"], ".zprofile"), "a") as profile:
-                profile.write(DOCKER_BLOCK.format(home=os.environ["HOME"]))
+            home = Path(os.environ["HOME"])
+            for name in (".zprofile", ".zshrc", ".bashrc"):
+                rc = home / name
+                if "by Docker Desktop" not in (rc.read_text() if rc.exists() else ""):
+                    with open(rc, "a") as profile:
+                        profile.write(DOCKER_BLOCK.format(home=home))
+            mark(home / "Library/Application Support/Docker Desktop/state.json", "{}")
+            mark(home / "Library/Preferences/com.docker.docker.plist", "prefs")
+            agent = ROOT / "Applications/Docker.app/Contents/Resources/cli-plugins/docker-agent"
+            mark(
+                FAKES / "processes",
+                "".join(f"{line}\n" for line in [*processes(), f"{agent} serve"]),
+            )
             mark(FAKES / "docker_started")
         mark(FAKES / "docker_running")
+    return 0
+
+
+def processes():
+    path = FAKES / "processes"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def pgrep(args):
+    """pgrep -f <regex>: the 1-based line numbers of the matching processes as their pids."""
+    pattern = re.compile(args[args.index("-f") + 1])
+    found = [str(n) for n, line in enumerate(processes(), 1) if pattern.search(line)]
+    out("".join(f"{pid}\n" for pid in found))
+    return 0 if found else 1
+
+
+def pkill(args):
+    """pkill -TERM|-KILL -f <regex>: ends the matching processes, but none listed in $FAKES/unkillable."""
+    pattern = re.compile(args[args.index("-f") + 1])
+    stays = (
+        set((FAKES / "unkillable").read_text().splitlines())
+        if (FAKES / "unkillable").exists()
+        else set()
+    )
+    running = processes()
+    kept = [line for line in running if not pattern.search(line) or line in stays]
+    mark(FAKES / "processes", "".join(f"{line}\n" for line in kept))
+    return 0 if any(pattern.search(line) for line in running) else 1
+
+
+def defaults(_args):
     return 0
 
 
@@ -443,11 +472,6 @@ def shasum(args):
         out(f"{hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}  -\n")
     for name in files:
         out(f"{hashlib.sha256(Path(name).read_bytes()).hexdigest()}  {name}\n")
-    return 0
-
-
-def base64_(args):
-    out(base64.b64encode(Path(args[args.index("-i") + 1]).read_bytes()).decode() + "\n")
     return 0
 
 
@@ -476,6 +500,16 @@ def broker(args):
         mark(FAKES / "broker/claude_token", sys.stdin.readline().rstrip("\n"))
         store_key("agent-pm-claude", "token")
         return 0
+    if args[:3] == ["login", "github", "agent-pm-bot"] and args[3:4] == ["--key-file"]:
+        if (
+            (FAKES / "keychain/agent-pm-bot").exists()
+            or args[5:6] != ["--app-id"]
+            or len(args) != 7
+        ):
+            return 1
+        store_key("agent-pm-bot", Path(args[4]).read_text())
+        mark(FAKES / "keychain/agent-pm-bot.account", args[6])
+        args = args[:3]
     if args == ["login", "github", "agent-pm-bot"]:
         if not (FAKES / "keychain/agent-pm-bot").exists():
             return 1
@@ -604,8 +638,10 @@ TOOLS = {
     "xcode-select": xcode_select,
     "open": open_,
     "launchctl": launchctl,
+    "defaults": defaults,
+    "pgrep": pgrep,
+    "pkill": pkill,
     "shasum": shasum,
-    "base64": base64_,
     "agent-pm-broker": broker,
     "docker-uninstall": docker_uninstall,
     "docker-install": docker_install,
