@@ -1677,6 +1677,14 @@ class PreflightTest(Base):
         self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
 
+    def test_resume_preflight_builds_with_the_whitelisted_plugins(self):
+        self.host.plugins = ("autopilot", "beta@owner/market")
+        self.validate()
+        self.assertEqual(self.order, ["version", ("build", REPO)])
+        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
+        self.assertEqual(self.broker.max_ages, [REFRESH])
+        self.assertFalse(os.path.exists(self.state))
+
     def test_an_argument_over_the_linux_limit_is_refused_before_any_docker_call(self):
         fits, over = "a" * 131_071, "雪" * 43_691  # 131,073 bytes
         self.host.validate("w", Launch(("agent", fits), cwd=self.cwd))
@@ -2079,6 +2087,13 @@ class RecoverTest(Base):
                 os.path.join(REPO, "bin", "agent-pm-session"),
             ],
         )
+
+    def test_supervisor_recovery_checks_the_digest_with_the_whitelisted_plugins(self):
+        self.host.plugins = ("autopilot", "beta@owner/market")
+        self.host.attach("w")
+        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
+        self.assertEqual(self.broker.max_ages, [None])
+        self.assertEqual(len(self.spawned), 1)
 
     def test_attach_with_the_lock_held_starts_nothing(self):
         self.live_supervisor()
