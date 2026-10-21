@@ -14,6 +14,7 @@ from pathlib import Path
 from tests.case import REPO, Case
 
 SCRIPT = Path(REPO, "install.sh")
+CLEANUP = Path(REPO, "scripts/install-cleanup.sh")
 FAKE_TOOLS = Path(REPO, "tests/integration/install_fakes.py")
 REAL = (
     "bash",
@@ -37,6 +38,8 @@ REAL = (
     "head",
     "tail",
     "cmp",
+    "awk",
+    "tr",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 FAKED += ("xcode-select",)
@@ -57,6 +60,19 @@ WRITE_Q = r"Write it\? \[y/N\]"
 TOKEN_Q = r"Paste the setup-token \(hidden\):"
 PEM_Q = r"private key \(\.pem\), empty to skip:"
 DOCKER_LOGINS = ((TOKEN_Q, TOKEN), (PEM_Q, ""))
+REMOVE_Q = r"Remove all of this\? \[y/N\]"
+SHARED = (
+    "say",
+    "step",
+    "skip",
+    "die",
+    "ask",
+    "ask_yn",
+    "under_home",
+    "ledger_valid",
+    "sudo_once",
+    "on_exit",
+)
 DOCKER_STEPS = (
     "Docker Desktop running",
     "broker",
@@ -690,7 +706,7 @@ class InstallTest(Case):
 
     def test_codex_install_or_update(self):
         self.assert_ok(self.fresh(docker="y"))
-        codex = self.fakes / "broker/codex.json"
+        codex = self.broker_path().parent / "codex/state.json"
         broker = self.broker_path()
         cases = (
             (
@@ -826,6 +842,12 @@ class InstallTest(Case):
         self.assertNotIn("opencode auth login", self.calls())
         self.assertEqual(list(self.auth_json().parent.glob(".auth.json.*")), [])
         self.assert_secret_free(KEY, PASSWORD, result=result)
+        result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
+        self.assertEqual(
+            json.loads(self.auth_json().read_text()), {"other": {"type": "api", "key": "theirs"}}
+        )
+        self.assertEqual(self.auth_json().stat().st_mode & 0o777, 0o600)
 
     def test_opencode_docker_broker_login(self):
         result = self.fresh(
@@ -1061,3 +1083,175 @@ class InstallTest(Case):
         self.assert_ok(self.again("--no-docker", answers=[(WRITE_Q, "y")]))
         self.assertEqual(Path(self.agent_pm, "install/config.local.toml.orig").read_text(), mine)
         self.assertEqual(self.ledger().count("config\tbackup"), 1)
+
+    def cleanup(self, *args, answers=(), stdin=None):
+        """Without --password-stdin, --yes runs answer sudo's prompt."""
+        if stdin is None and "--yes" in args:
+            answers = [(SUDO_Q, PASSWORD), *answers]
+        return self.run_install(*args, answers=answers, stdin=stdin, script=CLEANUP)
+
+    def snapshot(self):
+        skip = {"fakes", "bin"}
+        logs = {"stdout", "stderr", "calls.log", "env.log"}
+        return {
+            p: p.read_bytes()
+            for p in Path(self.home).rglob("*")
+            if p.is_file() and not skip & set(p.relative_to(self.home).parts) and p.name not in logs
+        }
+
+    def test_cleanup_usage_and_nothing_recorded(self):
+        result = self.run_install("--help", tty=False, script=CLEANUP)
+        self.assertEqual(result.code, 0)
+        self.assertIn("usage: install-cleanup.sh [--yes] [--password-stdin]", result.stdout)
+        result = self.run_install("--bogus", tty=False, script=CLEANUP)
+        self.assertEqual(result.code, 2)
+        tty = Tty()
+        try:
+            with open(tty.path) as stdin:
+                proc = subprocess.run(
+                    ["bash", str(CLEANUP), "--password-stdin"],
+                    env=self.env,
+                    stdin=stdin,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+        finally:
+            tty.close()
+        self.assertEqual(proc.returncode, 2)
+        result = self.cleanup()
+        self.assert_ok(result)
+        self.assertIn("nothing recorded by install.sh; nothing to remove", result.stderr)
+        self.assertNotIn("sudo", "\n".join(self.calls()))
+
+    def test_cleanup_asks_and_declines(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        before = self.snapshot()
+        result = self.cleanup(answers=[(REMOVE_Q, "n")])
+        self.assertEqual(result.code, 1)
+        self.assertIn("install-cleanup.sh: nothing removed", result.stderr)
+        self.assertIn("  formula gh", result.tty)
+        self.assertIn("  login claude", result.tty)
+        self.assertFalse([c for c in self.calls() if c.startswith("sudo")])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_cleanup_rejects_bad_records(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        ledger = Path(self.agent_pm, "install/added")
+        good = ledger.read_text()
+        bad = (
+            "dir\t/Applications",
+            f"dir\t{self.home}",
+            f"dir\t{self.home}/x/../..",
+            "formula\t--force",
+            "homebrew\t/usr/local",
+            "keychain\t-x\ty",
+            "rm\t-rf",
+        )
+        for record in bad:
+            ledger.write_text(good + record + "\n")
+            result = self.run_install("--yes", script=CLEANUP)
+            self.assertEqual(result.code, 1, record)
+            self.assertIn("not a record install.sh writes; nothing removed", result.stderr)
+            self.assertFalse([c for c in self.calls() if c.startswith("sudo")], record)
+            self.assertEqual(ledger.read_text(), good + record + "\n")
+
+    def test_cleanup_round_trip(self):
+        before = self.snapshot()
+        first = self.full()
+        self.assert_ok(first)
+        calls, ledger, files = self.calls(), self.ledger(), self.snapshot()
+        result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list((self.fakes / "keychain").iterdir()), [])
+        self.assertEqual(list((self.fakes / "login").iterdir()), [])
+        self.assertFalse(self.broker_path().parent.exists())
+        self.assertFalse(Path(self.root, "opt/homebrew/bin/brew").exists())
+        self.assert_secret_free(PASSWORD, KEY, TOKEN, result=result)
+        second = self.full()
+        self.assert_ok(second)
+        self.assertEqual(self.calls(), calls)
+        self.assertEqual(self.ledger(), ledger)
+        self.assertEqual(second.tty, first.tty)
+        self.assertEqual(self.snapshot(), files)
+
+    def test_cleanup_removes_only_what_was_added(self):
+        prefix = Path(self.root, "opt/homebrew/bin")
+        prefix.mkdir(parents=True)
+        for app in ("brew", "gh"):
+            shutil.copy(self.fakes / "apps" / app, prefix / app)
+        (self.fakes / "brew").mkdir()
+        (self.fakes / "brew/gh").touch()
+        Path(self.root, "Library/Developer/CommandLineTools").mkdir(parents=True)
+        profile = Path(self.home, ".zprofile")
+        profile.write_text("export EDITOR=vim\n")
+        mine = '# mine\n[session.hosts]\ndefault = "tmux"\n'
+        self.config().write_text(mine)
+        (self.fakes / "keychain").mkdir()
+        (self.fakes / "keychain/agent-pm-claude").write_text("theirs")
+        Path(self.home, ".docker").mkdir()
+        Path(self.home, ".docker/config.json").write_text("{}")
+        before = self.snapshot()
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        self.assertFalse(
+            [r for r in self.ledger() if r.startswith(("homebrew", "clt", "formula\tgh"))]
+        )
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertEqual(self.snapshot(), before)
+        self.assertTrue((self.fakes / "brew/gh").exists())
+        self.assertTrue((self.fakes / "keychain/agent-pm-claude").exists())
+        calls = self.calls()
+        for done in (
+            "brew uninstall --cask codex",
+            "brew uninstall --cask docker-desktop",
+            "claude auth logout",
+        ):
+            self.assertIn(done, calls)
+        self.assertNotIn("brew uninstall gh", calls)
+        self.assertEqual(list((self.fakes / "login").iterdir()), [])
+
+    def test_cleanup_keeps_user_profile_lines(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        profile = Path(self.home, ".zprofile")
+        profile.write_text(profile.read_text() + "export EDITOR=vim\n")
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertEqual(profile.read_text(), "export EDITOR=vim\n")
+
+    def test_cleanup_failure_then_rerun(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        (self.fakes / "fail").write_text("codex plugin remove agent-pm@agent-pm")
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1)
+        self.assertIn("install-cleanup.sh: plugins failed; rerun the same command", result.stderr)
+        self.assertIn("codex-plugin\tagent-pm@agent-pm", self.ledger())
+        self.assertIn("login\tgh", self.ledger())
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertFalse(Path(self.agent_pm, "install").exists())
+
+    def test_cleanup_missing_tool_keeps_record(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        Path(self.root, "opt/homebrew/bin/codex").unlink()
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1)
+        self.assertIn("codex not found on PATH; its records stay for a rerun", result.stderr)
+        self.assertIn("codex-plugin\tagent-pm@agent-pm", self.ledger())
+        self.assertIn("cask\tcodex", self.ledger())
+
+    def test_cleanup_handles_every_kind(self):
+        install, cleanup = SCRIPT.read_text(), CLEANUP.read_text()
+        written = set(re.findall(r"ledger_add ([a-z-]+)", install)) | {"dir", "keychain"}
+        listed = re.search(r"for kind in (.*?); do", cleanup, re.S).group(1)
+        handled = set(listed.replace("\\\n", " ").split())
+        self.assertEqual(written - handled, set())
+
+    def test_cleanup_helpers_match(self):
+        install, cleanup = SCRIPT.read_text(), CLEANUP.read_text()
+        for name in SHARED:
+            pattern = rf"^{name}\(\) \{{(?:[^\n]*\}}$|\n.*?^\}})"
+            ours = re.search(pattern, install, re.S | re.M)
+            theirs = re.search(pattern, cleanup, re.S | re.M)
+            self.assertIsNotNone(theirs, name)
+            self.assertEqual(theirs.group(0), ours.group(0), name)

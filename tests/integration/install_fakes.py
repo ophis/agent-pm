@@ -79,6 +79,10 @@ def sudo(args):
     if args == ["-v"]:
         mark(FAKES / "keepalive.pid", str(os.getppid()))
         return 0
+    home = os.environ["HOME"]
+    if any(a.startswith("/") and not a.startswith(home + "/") for a in args[1:]):
+        out(f"fake sudo: refusing a path outside {home}: {args}\n", sys.stderr)
+        return 1
     os.execvpe(args[0], args, {**os.environ, "FAKE_SUDO": "1"})
     return 1
 
@@ -89,14 +93,17 @@ set -e
 sudo -n true
 mkdir -p "{prefix}/bin"
 cp "{apps}/brew" "{prefix}/bin/brew"
-: > "{fakes}/clt"
+mkdir -p "{root}/Library/Developer/CommandLineTools"
 """
 
 
 def curl(args):
     url = args[-1]
     if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh":
-        out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps", fakes=FAKES))
+        out(HOMEBREW_INSTALLER.format(prefix=PREFIX, apps=FAKES / "apps", root=ROOT))
+        return 0
+    if url == "https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh":
+        out(f'#!/bin/bash\nset -e\n[ "$NONINTERACTIVE" = 1 ]\nrm -f "{PREFIX}/bin/brew"\n')
         return 0
     out(f"curl: unexpected {url}\n", sys.stderr)
     return 22
@@ -119,13 +126,28 @@ def brew(args):
         if app := CASK_APPS.get(name):
             (ROOT / "Applications" / app).mkdir(parents=True, exist_ok=True)
         return 0
+    if verb == "uninstall":
+        if (FAKES / "dependents" / name).exists():
+            out(f"Error: Refusing to uninstall {name} because it is required by mine\n", sys.stderr)
+            return 1
+        installed.unlink()
+        if command := (CASKS if cask else APPS).get(name):
+            (PREFIX / "bin" / command).unlink(missing_ok=True)
+        if app := CASK_APPS.get(name):
+            shutil.rmtree(ROOT / "Applications" / app)
+        if name == "docker-desktop":
+            (FAKES / "docker_running").unlink(missing_ok=True)
+        return 0
     return 1
 
 
-def login(client, args, status, start):
+def login(client, args, status, start, logout):
     flag = FAKES / "login" / client
     if args == status:
         return 0 if flag.exists() else 1
+    if args == logout:
+        flag.unlink(missing_ok=True)
+        return 0
     if args == start:
         out(f"Log in to {client} in your browser.\n")
         mark(flag)
@@ -134,7 +156,8 @@ def login(client, args, status, start):
 
 
 def gh(args):
-    return login("gh", args, ["auth", "status"], ["auth", "login", *args[2:]])
+    logout = ["auth", "logout", "--hostname", "github.com"]
+    return login("gh", args, ["auth", "status"], ["auth", "login", *args[2:]], logout)
 
 
 def marketplace_name(source):
@@ -142,7 +165,7 @@ def marketplace_name(source):
 
 
 def claude(args):
-    done = login("claude", args, ["auth", "status"], ["auth", "login"])
+    done = login("claude", args, ["auth", "status"], ["auth", "login"], ["auth", "logout"])
     if done is not None:
         return done
     if args == ["setup-token"]:
@@ -171,8 +194,10 @@ def claude(args):
     elif args[:2] == ["plugin", "enable"]:
         save(plugins_file, [{**p, "enabled": p["enabled"] or p["id"] == args[2]} for p in plugins])
     elif args[:2] == ["plugin", "uninstall"]:
-        if not any(p["id"] == args[2] for p in plugins):
+        found = [p for p in plugins if p["id"] == args[2]]
+        if not found:
             return 1
+        shutil.rmtree(found[0]["installPath"], ignore_errors=True)
         save(plugins_file, [p for p in plugins if p["id"] != args[2]])
     else:
         return 2
@@ -193,7 +218,7 @@ def codex_config(markets):
 
 
 def codex(args):
-    done = login("codex", args, ["login", "status"], ["login"])
+    done = login("codex", args, ["login", "status"], ["login"], ["logout"])
     if done is not None:
         return done
     markets_file, plugins_file = FAKES / "codex/marketplaces.json", FAKES / "codex/plugins.json"
@@ -207,6 +232,9 @@ def codex(args):
     elif args == ["plugin", "list", "--json"]:
         out(json.dumps({"installed": plugins, "available": []}))
         return 0
+    elif args == ["plugin", "marketplace", "list", "--json"]:
+        out(json.dumps({"marketplaces": [{"name": name} for name in markets]}))
+        return 0
     elif args[:2] == ["plugin", "add"]:
         plugins.append({"pluginId": args[2], "installed": True, "enabled": True})
         if args[2] == "agent-pm@agent-pm":
@@ -218,6 +246,8 @@ def codex(args):
         if not any(p["pluginId"] == args[2] for p in plugins):
             return 1
         plugins = [p for p in plugins if p["pluginId"] != args[2]]
+        if args[2] == "agent-pm@agent-pm":
+            shutil.rmtree(codex_home() / "plugins/cache/agent-pm", ignore_errors=True)
     else:
         return 2
     save(markets_file, markets)
@@ -239,6 +269,12 @@ def security(args):
         out("password data for new item: ")
         store_key(args[args.index("-s") + 1], sys.stdin.readline().rstrip("\n"))
         return 0
+    if args[:1] == ["delete-generic-password"]:
+        item = FAKES / "keychain" / args[args.index("-s") + 1]
+        if not item.exists():
+            return 44
+        item.unlink()
+        return 0
     if args == ["-i"]:
         for line in sys.stdin:
             words = line.split()
@@ -250,7 +286,7 @@ def security(args):
 
 
 def xcode_select(args):
-    return 0 if args == ["-p"] and (FAKES / "clt").exists() else 2
+    return 0 if args == ["-p"] and (ROOT / "Library/Developer/CommandLineTools").exists() else 2
 
 
 def docker(args):
@@ -282,7 +318,7 @@ def base64_(args):
 
 
 def broker(args):
-    codex_file = FAKES / "broker/codex.json"
+    codex_file = BROKER.parent / "codex/state.json"
     state = load(codex_file, None)
     if args == ["status"]:
         default = {"state": "installation_invalid", "version": ""}
