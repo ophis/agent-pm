@@ -1,6 +1,6 @@
 """agent-pm-orchestrator issue edit: one issueUpdate naming only what changes among title, description,
-task, client and priority; a task or client replaces the issue's labels of that group, every other
-label staying. Every given value already so: unchanged, nothing written.
+assignee, task, client and priority; a task or client replaces the issue's labels of that group, every
+other label staying. Every given value already so: unchanged, nothing written.
 """
 
 from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS
@@ -8,7 +8,7 @@ from agent_pm.orchestrator.trackers.linear import issue_label, issue_names, issu
 
 Q_READ = (
     "query($i: String!) { viewer { id name } issue(id: $i) { id identifier url title description "
-    f"priority team {{ id key }} {issue_label.labels_page()} }} }}"
+    f"priority assignee {{ id }} team {{ id key }} {issue_label.labels_page()} }} }}"
 )
 M_EDIT = (
     "mutation($i: String!, $in: IssueUpdateInput!) { issueUpdate(id: $i, input: $in) { success } }"
@@ -16,7 +16,8 @@ M_EDIT = (
 
 
 def edit(gql, linear, change):
-    """Change change.id's title, description, task, client and priority as given."""
+    """Change change.id's title, description, assignee, task, client and priority as given."""
+    who = None if change.role is None else issue_names.assignee(gql, linear, change.role)
     groups = {}
     if change.task is not None:
         groups["--task"] = (issue_names.task_label(linear, change.task), linear.task_label_group)
@@ -35,6 +36,8 @@ def edit(gql, linear, change):
     priority = None if change.priority is None else PRIORITY_NUMBERS[change.priority]
     if priority is not None and priority != node["priority"]:
         update["priority"] = priority
+    if change.role is not None and who != (node["assignee"] or {}).get("id"):
+        update["assigneeId"] = who
     if groups:
         issue_names.in_team(linear, node, " and ".join(groups))
         update.update(_labels(issue_label.carried_labels(gql, change.id, node), groups.values()))

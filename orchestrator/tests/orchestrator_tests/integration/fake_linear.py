@@ -119,7 +119,15 @@ CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "tit
 
 ISSUE_CREATE = CREATE | {"labelIds", "parentId"}
 
-UPDATE = {"title", "description", "priority", "addedLabelIds", "removedLabelIds", "stateId"}
+UPDATE = {
+    "title",
+    "description",
+    "priority",
+    "assigneeId",
+    "addedLabelIds",
+    "removedLabelIds",
+    "stateId",
+}
 
 ONE_PAGE = {"hasNextPage": False, "endCursor": None}
 
@@ -868,6 +876,8 @@ class FakeLinear:
             raise Problem(f"fake: issueUpdate has no input {extra[0]}")
         if "stateId" in new and new["stateId"] not in NAMES:
             raise Problem(f"Entity not found: {'WorkflowState'}")
+        if new.get("assigneeId") is not None and new["assigneeId"] not in self.users:
+            raise Problem(f"Entity not found: {'User'}")
         removed = set(new.get("removedLabelIds", ()))
         labels = [i for i in rec["labels"] if i not in removed]
         labels = self._labelled(
@@ -876,6 +886,8 @@ class FakeLinear:
         for key in ("title", "description", "priority"):
             if key in new:
                 rec[key] = new[key]
+        if "assigneeId" in new:
+            rec["assignee"] = new["assigneeId"]
         rec["labels"] = labels
         if "stateId" in new:
             self._move(rec, new["stateId"], caller["id"], stamp())

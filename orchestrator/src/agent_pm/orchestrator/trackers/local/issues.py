@@ -199,10 +199,13 @@ class LocalIssues:
         return receipt
 
     def edit(self, change):
+        owner = None if change.role is None else self._folder(change.role)
         self._names(change.task, change.client)
         key = self._issue(change.id).id
 
         def rewrite(text, found):
+            if owner is not None and found.assignee is None:
+                raise IssueError(f"{key}: archived")
             edited = text
             if change.title is not None and change.title != found.title:
                 edited = issue_file.set_title(edited, change.title)
@@ -215,6 +218,8 @@ class LocalIssues:
             priority = None if change.priority is None else PRIORITY_NUMBERS[change.priority]
             if priority is not None and priority != found.priority:
                 edited = issue_file.set_front(edited, "priority", priority)
+            if owner is not None and owner != found.assignee:
+                return edited, (owner, found.state)
             return None if edited == text else (edited, None)
 
         return self._receipt(key, "edit", self._write(key, rewrite))

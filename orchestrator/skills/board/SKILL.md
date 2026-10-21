@@ -19,7 +19,7 @@ The prefix `agent-pm-orchestrator issue` is left out. `ID` is an issue identifie
 | `read ID --full --output FILE` | every page and body, to FILE |
 | `list [filters]` | the board's issues, newest update first; also the search |
 | `create --title TEXT --body-file FILE` | one issue with its fields and blocking relations; `--parent ID` makes it a sub-issue (a split) |
-| `edit ID [--title …] [--body-file …] [--task …] [--client …] [--priority …]` | change those fields, keeping the rest |
+| `edit ID [--title …] [--body-file …] [--role …] [--task …] [--client …] [--priority …]` | change those fields, keeping the rest |
 | `move ID STATE` | set its state |
 | `comment ID --body-file FILE` | a new top-level comment |
 | `relation add ID --blocks OTHER` | one blocking edge; `remove` deletes it; `--blocked-by` for the other direction |
@@ -68,10 +68,11 @@ agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md
 agent-pm-orchestrator issue create --title 'Fix login' --body-file - --parent TASK-1 --role engineer --task build --client codex --priority high --state ready --blocks TASK-2 TASK-3 --blocked-by TASK-4 < note.md
 agent-pm-orchestrator issue edit TASK-1 --title 'Fix login on Safari' --body-file note.md
 agent-pm-orchestrator issue edit TASK-1 --task light-build --client claude --priority low
+agent-pm-orchestrator issue edit TASK-1 --role engineer
 ```
 
 - `create` resolves every value before writing; unset fields stay unset. `--blocks` and `--blocked-by` repeat.
-- `edit` changes only what it is given; `--task` and `--client` replace the issue's current task or client.
+- `edit` changes only what it is given; `--task` and `--client` replace the issue's current task or client, `--role` its assignment (an issue created without `--role` can be assigned later).
 - A write prints a receipt: `issue`, `operation`, `result` (`changed` or `unchanged`), `actor`, and `comment_id` for `comment`. It never echoes the body.
 
 ## Blocking relations

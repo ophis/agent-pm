@@ -261,7 +261,7 @@ class Help(Case):
             ["edit", "TASK-1", "--priority", "high", "--priority", "low"],
             ["edit", "TASK-1", "--priority", "2"],
             ["edit", "TASK-1", "--state", "done"],
-            ["edit", "TASK-1", "--role", "me"],
+            ["edit", "TASK-1", "--role", "me", "--role", "pm"],
             ["edit", "TASK-1", "--label", "bug"],
             ["list", "--team", "TASK"],
             ["list", "--assignee", "me"],
@@ -535,6 +535,14 @@ class Edit(IssueCase):
                 self.assertNotIn("中文".encode(), out)
                 self.assertEqual(gql.call_args.kwargs["service"], MANAGER_KEY)
 
+    def test_a_role_alone_changes_the_assignee(self):
+        for role, want in (("engineer", ROLE_USERS[ACCOUNTS["engineer"]]), ("unassigned", None)):
+            gql = EditGql((self.BUILD,), [], fields={"assignee": {"id": "u-other"}})
+            with self.subTest(role=role):
+                code, out, err = self.run_main(["edit", "TASK-2", "--role", role], gql)
+                self.assertEqual((code, err, json.loads(out)["result"]), (0, "", "changed"))
+                self.assertEqual([w[1]["in"] for w in gql.writes], [{"assigneeId": want}])
+
     def test_unchanged_exits_zero(self):
         gql = EditGql((self.BUILD,), [], fields={"title": "Same"})
         code, out, _ = self.run_main(["edit", "TASK-2", "--title", "Same"], gql)
@@ -545,7 +553,11 @@ class Edit(IssueCase):
         with open(blank, "w", encoding="utf-8") as f:
             f.write("\n  \n")
         for argv, phrase in (
-            ([], "edit: give at least one of --title, --body-file, --task, --client, --priority"),
+            (
+                [],
+                "edit: give at least one of --title, --body-file, --role, --task, --client, "
+                "--priority",
+            ),
             (["--title", " \n"], "--title: empty title"),
             (["--body-file", blank], "--body-file"),
             (["--body-file", os.path.join(self.root, "nope.md")], "--body-file"),
@@ -561,6 +573,7 @@ class Edit(IssueCase):
         cases = (
             (EditGql((), [], fields=other), ["--task", "build"], 2, "is in team OPS"),
             (EditGql((), []), ["--client", "nope"], 2, "--client nope"),
+            (EditGql((), []), ["--role", "nope"], 2, "--role nope: not a role"),
             (EditGql((), [], result={"success": False}), ["--title", "New"], 1, "success: false"),
             (
                 EditGql((), [], result=Unavailable("issueUpdate", reason="timed out")),
@@ -575,7 +588,7 @@ class Edit(IssueCase):
                 self.assertEqual((code, out), (want, b""))
                 self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
-        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 1, 1])
+        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 0, 1, 1])
 
 
 class Comment(IssueCase):
@@ -1614,15 +1627,29 @@ class Requests(Case):
 
     def test_edit(self):
         argv = ("edit", "TASK-1", "--title", "T", "--body-file", "f", "--task", "build")
-        got = self.request(*argv, "--client", "c", "--priority", "low", body="B")
+        got = self.request(*argv, "--role", "pm", "--client", "c", "--priority", "low", body="B")
         want = IssueEdit(
-            id="TASK-1", title="T", body="B", task="build", client="c", priority=Priority.LOW
+            id="TASK-1",
+            title="T",
+            body="B",
+            role="pm",
+            task="build",
+            client="c",
+            priority=Priority.LOW,
         )
         self.assertEqual(got, want)
         self.assertIs(type(got.priority), Priority)
         self.assertEqual(
             self.request("edit", "TASK-1", "--task", "build"),
-            IssueEdit(id="TASK-1", title=None, body=None, task="build", client=None, priority=None),
+            IssueEdit(
+                id="TASK-1",
+                title=None,
+                body=None,
+                role=None,
+                task="build",
+                client=None,
+                priority=None,
+            ),
         )
 
     def test_the_other_commands_carry_none(self):

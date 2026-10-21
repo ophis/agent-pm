@@ -235,6 +235,7 @@ class IssueEdit:
     id: str
     title: str | None
     body: str | None
+    role: str | None
     task: str | None
     client: str | None
     priority: Priority | None

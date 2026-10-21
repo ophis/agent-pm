@@ -271,12 +271,16 @@ _MOVE_HELP = (
 
 _EDIT_HELP = (
     _WRITE_RULES % "" + "Changes the given fields of one issue in one update naming only what\n"
-    "  changes; give at least one of --title, --body-file, --task, --client,\n"
-    "  --priority. Every given value already so: result unchanged, nothing\n"
-    "  written. A name the configuration lacks exits 2 before anything is read.\n"
+    "  changes; give at least one of --title, --body-file, --role, --task,\n"
+    "  --client, --priority. Every given value already so: result unchanged,\n"
+    "  nothing written. A name the configuration lacks exits 2 before anything\n"
+    "  is read.\n"
     "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
     "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
     "  blank or unreadable exits 2.\n"
+    "--role SPEC: the assignee: a configured role's account, me (the\n"
+    "  linear.manager_key account) or unassigned (no assignee); a local board:\n"
+    "  the file moves to <SPEC>/<state>/, an archived issue exits 2.\n"
     "--task NAME / --client NAME: a configured task / client name (a local\n"
     "  board: a configured role's task / any client name). On Linear its label\n"
     "  replaces the issue's labels of that group: every other label stays, and\n"
@@ -286,7 +290,8 @@ _EDIT_HELP = (
     "Example (a configured board holding TASK-1):\n"
     "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
-    "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --role engineer\n\n"
     "Recovery and next help:\n"
     "  The issue's fields and labels: agent-pm-orchestrator issue read TASK-1\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
@@ -489,8 +494,9 @@ def _parser():
     )
     change = commands.add_parser(
         "edit",
-        help="change one issue's title, description, task, client or priority",
-        description="Change the title, description, task, client or priority of one issue.",
+        help="change one issue's title, description, assignee, task, client or priority",
+        description="Change the title, description, assignee, task, client or priority of one "
+        "issue.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_EDIT_HELP,
     )
@@ -498,6 +504,9 @@ def _parser():
     change.add_argument("--title", action=_Once, metavar="TEXT", help="not blank")
     change.add_argument(
         "--body-file", action=_Once, metavar="FILE", help="the description, UTF-8; -: stdin"
+    )
+    change.add_argument(
+        "--role", action=_Once, metavar="SPEC", help="assignee: a configured role, me or unassigned"
     )
     change.add_argument("--task", action=_Once, metavar="NAME", help="a configured task name")
     change.add_argument("--client", action=_Once, metavar="NAME", help="a configured client name")
@@ -603,9 +612,12 @@ def _limit(text):
 def _usage(args):
     """The usage error in args' options, or None."""
     if args.command == "edit" and (
-        (args.title, args.body_file, args.task, args.client, args.priority) == (None,) * 5
+        (args.title, args.body_file, args.role, args.task, args.client, args.priority)
+        == (None,) * 6
     ):
-        return "edit: give at least one of --title, --body-file, --task, --client, --priority"
+        return (
+            "edit: give at least one of --title, --body-file, --role, --task, --client, --priority"
+        )
     if args.command in ("create", "edit") and args.title is not None and not args.title.strip():
         return "--title: empty title"
     if "full" not in args:
@@ -684,6 +696,7 @@ def _request(args, body):
             id=args.id,
             title=args.title,
             body=body,
+            role=args.role,
             task=args.task,
             client=args.client,
             priority=_priority(args.priority),

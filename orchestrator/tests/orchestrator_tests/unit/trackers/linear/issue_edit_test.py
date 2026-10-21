@@ -8,11 +8,12 @@ from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnk
 from agent_pm.orchestrator.issue.output import receipt_payload
 from agent_pm.orchestrator.trackers.linear import issue_edit, issue_label, issue_read
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import TASK_GROUP
+from orchestrator_tests.unit.board_ids import ACCOUNTS, TASK_GROUP
 from orchestrator_tests.unit.issue_fixtures import (
     CLIENT_GROUP,
     CLIENT_LABELS,
     OTHER_TEAM,
+    ROLE_USERS,
     TASK_LABELS,
     VIEWER,
     EditGql,
@@ -122,8 +123,27 @@ class Edit(Case):
         self.assertEqual((receipt.result, receipt.operation, gql.writes), ("unchanged", "edit", []))
         self.assertEqual(receipt_payload(receipt)["actor"], VIEWER)
 
+    def test_a_role_writes_only_its_assignee(self):
+        engineer = ROLE_USERS[ACCOUNTS["engineer"]]
+        for role, want in (("engineer", engineer), ("me", VIEWER["id"]), ("unassigned", None)):
+            gql = EditGql(CATALOG, [KEEP["id"]], fields={"assignee": {"id": "u-other"}})
+            with self.subTest(role=role):
+                self.assertEqual(edit(gql, role=role).result, "changed")
+                self.assertEqual(
+                    gql.writes,
+                    [(issue_edit.M_EDIT, {"i": "id-TASK-2", "in": {"assigneeId": want}})],
+                )
+
+    def test_a_role_already_assigned_writes_nothing(self):
+        engineer = {"id": ROLE_USERS[ACCOUNTS["engineer"]]}
+        for role, assignee in (("engineer", engineer), ("me", VIEWER), ("unassigned", None)):
+            gql = EditGql(CATALOG, [], fields={"assignee": assignee})
+            with self.subTest(role=role):
+                self.assertEqual(edit(gql, role=role).result, "unchanged")
+                self.assertEqual(gql.writes, [])
+
     def test_an_unconfigured_name_is_refused_before_any_read(self):
-        for given in ({"task": "nope"}, {"client": "nope"}):
+        for given in ({"task": "nope"}, {"client": "nope"}, {"role": "nope"}):
             gql = EditGql(CATALOG, [])
             with self.subTest(given=given), self.assertRaises(IssueError):
                 edit(gql, **given)
@@ -138,9 +158,11 @@ class Edit(Case):
             self.assertIn("is in team OPS", str(cm.exception))
             self.assertEqual(gql.writes, [])
 
-    def test_title_description_and_priority_need_no_team(self):
-        gql = EditGql(CATALOG, [], fields={"team": {"id": OTHER_TEAM, "key": "OPS"}})
-        self.assertEqual(edit(gql, title="New").result, "changed")
+    def test_title_description_priority_and_role_need_no_team(self):
+        for given in ({"title": "New"}, {"role": "pm"}):
+            gql = EditGql(CATALOG, [], fields={"team": {"id": OTHER_TEAM, "key": "OPS"}})
+            with self.subTest(given=given):
+                self.assertEqual(edit(gql, **given).result, "changed")
 
     def test_no_such_issue_writes_nothing(self):
         gql = EditGql(CATALOG, [])
