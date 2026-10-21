@@ -170,6 +170,11 @@ class Recheck:
     client: Pick
 
 
+NO_ISSUE = Recheck(
+    ready=False, role=None, refused=None, assignee=None, home=None, task=Pick(), client=Pick()
+)
+
+
 @dataclass(frozen=True)
 class Stage:
     """See workflow.toml's header."""

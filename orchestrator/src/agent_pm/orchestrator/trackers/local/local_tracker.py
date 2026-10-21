@@ -12,6 +12,7 @@ from urllib.parse import unquote
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
+    NO_ISSUE,
     Approved,
     ArchivePlan,
     ArchiveRefused,
@@ -136,15 +137,7 @@ class LocalTracker(Tracker):
         known = self.files().get(key)
         found = read_one(self.board, known.path, key) if known else None
         if found is None:
-            return Recheck(
-                ready=False,
-                role=None,
-                refused=None,
-                assignee=None,
-                home=None,
-                task=Pick(),
-                client=Pick(),
-            )
+            return NO_ISSUE
         self.files()[key] = found
         role = found.assignee if found.assignee in self.roles else None
         return Recheck(

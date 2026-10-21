@@ -10,6 +10,7 @@ from agent_pm.orchestrator.engine import config
 from agent_pm.orchestrator.engine.flow.handoff import parse_handoff
 from agent_pm.orchestrator.engine.flow.tracker import Tracker
 from agent_pm.orchestrator.engine.flow.types import (
+    NO_ISSUE,
     UNREADABLE,
     Approved,
     ArchivePlan,
@@ -386,15 +387,7 @@ class LinearTracker(Tracker):
                 raise
             found = None
         if found is None:
-            return Recheck(
-                ready=False,
-                role=None,
-                refused=None,
-                assignee=None,
-                home=None,
-                task=Pick(),
-                client=Pick(),
-            )
+            return NO_ISSUE
         ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
         nodes = found["labels"]["nodes"]
         return Recheck(
