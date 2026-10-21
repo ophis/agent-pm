@@ -66,7 +66,7 @@ Details: [Docker host](docs/docker-host.md), [Credentials](docs/credentials.md).
 
 ## Demo: one manager, many workers
 
-Without the board, you can run agent-pm by talking to one agent, the manager. Open its session with `ctmux <name>`, start Claude Code or Codex in it and invoke `/agent-pm:manage`. You give it work in plain words; it launches a worker for each task, watches their events, checks their pull requests and reports back.
+Without the board, you can run agent-pm by talking to one agent, the manager. Open its session with `ctmux <name>`, start Claude Code, Codex or OpenCode in it and invoke `/agent-pm:manage`. You give it work in plain words; it launches a worker for each task, watches their events, checks their pull requests and reports back.
 
 ![A manager session (left) coordinating engineer workers in a tmux grid](docs/images/demo.jpg)
 
@@ -83,6 +83,7 @@ Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/u
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
 | Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
+| OpenCode 1.x | In `~/.config/opencode/opencode.json`, `"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v<version>"]` (a release tag, e.g. `#v0.6.34`), then restart OpenCode. Commander only, without idle notifications: [OpenCode commander](docs/sessions.md#opencode-commander). |
 
 Nothing checks these. A missing one fails the agent run.
 
@@ -100,7 +101,7 @@ How the sessions agent-pm starts load your settings, and why some commands refus
 
 | Command | Does |
 |---|---|
-| `ctmux <name>` | Open the commander's tmux session: native windows in iTerm2, a plain tmux attach in other terminals, a switch from inside tmux. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-orchestrator` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
+| `ctmux <name>` | Open the commander's tmux session: native windows in iTerm2, a plain tmux attach in other terminals, a switch from inside tmux. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-orchestrator` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, then OpenCode's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
 | `/agent-pm:manage` | Launch and direct workers, role runs and pipeline runs, with the commander's guidelines. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Run a core role in this conversation. |
 | `/agent-pm:board` | Read, find, create, edit, move and archive board issues with fixed `agent-pm-orchestrator issue` commands. |
@@ -128,7 +129,7 @@ Formats, rules and the board's limits: [Customizing roles and tasks](docs/custom
 | [Customizing roles and tasks](docs/customizing-roles-and-tasks.md) | run settings, team dirs, role and task files, checks |
 | [Board](docs/board.md) | setup, issue states and task labels, operating the router, Agent labels (client per issue), the local board (`tracker`, `AGENT_PM_BOARD_DIR`, layout, file format) |
 | [Credentials](docs/credentials.md) | every credential agent-pm uses: who logs in, where it is stored, who can read it, lifetime, revocation; Linear presets |
-| [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions |
+| [Sessions and client policy](docs/sessions.md) | session settings, `agent-pm-session`, role runs' client flags, OpenCode sessions, the OpenCode commander |
 | [State root](docs/state-root.md) | `~/.agent-pm/` layout, what cleans each entry, what you may delete |
 | [Upgrading](docs/upgrading.md) | upgrade steps from v0.6.20 on |
 | [Core architecture](docs/architecture.md) | layers and packages (developers) |
