@@ -552,7 +552,7 @@ answers() {
 config_plan() {
   python3 -I -c '
 import os, re, sys, tomllib
-path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, app = sys.argv[1:]
+path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, only = sys.argv[1:]
 fresh = not os.path.exists(path)
 text = ""
 if not fresh:
@@ -573,15 +573,16 @@ wanted = []
 def want(table, key, value):
     if get(data, table, key) != value:
         wanted.append((table, key, value))
-if app:
-    want("session.hosts.docker.github", "app", app)
+only = only.split("\t") if only else []
+if only:
+    want(*only)
 elif fresh or (get(data, "session.hosts", "default") or "tmux") != default:
     wanted.append(("session.hosts", "default", default))
-if not app and client and (get(data, "delegate", "client") or "claude") != client:
+if not only and client and (get(data, "delegate", "client") or "claude") != client:
     wanted.append(("delegate", "client", client))
-if not app and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
+if not only and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
     wanted.append(("delegate.delegates", "harness_host", harness))
-if name and not app:
+if name and not only:
     target, before = f"{name}/{model}", f"{prev_name}/{prev_model}" if prev_name else None
     if get(data, "session.clients.opencode", "executable") in (None, ""):
         want("session.clients.opencode", "executable", exe)
@@ -638,13 +639,14 @@ with open(out, "w", encoding="utf-8") as f:
     f.write(result)
 sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
     "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$context" \
-    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$wanted_app"
+    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$only"
 }
 
-# Writes the configuration's settings into config.local.toml with consent; with $1, only github.app = $1.
+# Writes the configuration's settings into config.local.toml with consent; given <table> <key> <value>, only that.
 config_file() {
-  local wanted_default=tmux wanted_harness= wanted_client= wanted_app=${1:-} changes rc=0 plan
-  step "config.local.toml${wanted_app:+: GitHub App}"
+  local wanted_default=tmux wanted_harness= wanted_client= only= changes rc=0 plan
+  if [ $# = 3 ]; then only=$1$'\t'$2$'\t'$3; fi
+  step "config.local.toml${only:+: [$1] $2}"
   if [ "$docker" = yes ]; then
     wanted_default=docker
     wanted_harness=tmux
@@ -1225,7 +1227,7 @@ broker_logins() {
     state_set github_app "$slug"
     state_set login_github "$sha"
   fi
-  if [ -n "$(state_get github_app)" ]; then config_file "$(state_get github_app)"; fi
+  if [ -n "$(state_get github_app)" ]; then config_file session.hosts.docker.github app "$(state_get github_app)"; fi
   step "broker Codex install"
   if ! has codex; then
     skip "Codex not chosen"
@@ -1260,7 +1262,15 @@ docker_steps() {
     return
   fi
   broker_install
+  docker_cli
   broker_logins
+}
+
+# Points [session.hosts.docker] docker at this Mac's docker CLI when the packaged /usr/local/bin/docker is not there.
+docker_cli() {
+  local cli
+  if [ -x "$root/usr/local/bin/docker" ] || ! cli=$(command -v docker); then return 0; fi
+  config_file session.hosts.docker docker "$cli"
 }
 
 # Exit 0 when config.local.toml has [orchestrator] tracker = "linear".
@@ -1308,20 +1318,34 @@ linear_keys() {
   done <<<"$list"
 }
 
-# Writes the board job $1's plist for this user to $2, from the plugin's: the launcher in ~/.agent-pm/bin.
+# PATH for the board jobs: the directories of the tools install.sh found, then ~/.agent-pm/bin and the system's.
+launchd_path() {
+  local dirs= name dir
+  for name in python3 claude codex gh tmux git docker; do
+    dir=$(command -v "$name") || continue
+    case $dir in /*) ;; *) continue ;; esac
+    dirs="$dirs:${dir%/*}"
+  done
+  for dir in $dirs "$HOME/.agent-pm/bin" /usr/bin /bin /usr/sbin /sbin; do
+    case ":$path:" in *":$dir:"*) ;; *) path=${path:+$path:}$dir ;; esac
+  done
+}
+
+# Writes the board job $1's plist for this user to $2, from the plugin's template: @HOME@ and @PATH@ filled in.
 board_plist() {
+  local path=
+  IFS=: launchd_path
   python3 -I -c '
 import sys
-source, out, home = sys.argv[1:]
+from xml.sax.saxutils import escape
+source, out, home, path = sys.argv[1:]
 with open(source, encoding="utf-8") as f:
     text = f.read()
-shipped = "/Users/francis/playground/agent-pm/bin/agent-pm-orchestrator"
-if shipped not in text:
-    sys.exit(f"install.sh: {source} does not run {shipped}")
-text = text.replace(shipped, "\0").replace("/Users/francis/", home + "/")
-text = text.replace("\0", home + "/.agent-pm/bin/agent-pm-orchestrator")
+if "@HOME@" not in text or "@PATH@" not in text:
+    sys.exit(f"install.sh: {source} is not a template with @HOME@ and @PATH@")
+text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path))
 with open(out, "w", encoding="utf-8") as f:
-    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME"
+    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path"
 }
 
 board_jobs() {

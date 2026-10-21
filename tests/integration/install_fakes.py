@@ -227,10 +227,15 @@ def docker_install(args):
         )
         return 1
     mark(FAKES / "docker_license")
+    cli = ROOT / "usr/local/bin/docker"
+    if not cli.exists():
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.symlink_to(PREFIX / "bin/docker")
     return 0
 
 
 def docker_uninstall(_args):
+    (ROOT / "usr/local/bin/docker").unlink(missing_ok=True)
     (FAKES / "docker_license").unlink(missing_ok=True)
     (FAKES / "docker_running").unlink(missing_ok=True)
     (FAKES / "docker_started").unlink(missing_ok=True)

@@ -767,6 +767,19 @@ class InstallTest(Case):
         self.assertNotIn("press Enter", result.tty)
         self.assertEqual(self.state()["docker_license"], "accepted")
 
+    def test_docker_cli_not_in_usr_local_bin(self):
+        self.assert_ok(self.fresh(clients="claude", docker="y"))
+        self.assertNotIn("[session.hosts.docker]", self.config().read_text())
+        Path(self.root, "usr/local/bin/docker").unlink()
+        result = self.again(answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assertTrue(
+            self.config()
+            .read_text()
+            .endswith(f'[session.hosts.docker]\ndocker = "{self.root}/opt/homebrew/bin/docker"\n')
+        )
+        self.assertNotIn("[session.hosts.docker] docker", self.again().tty)
+
     def test_docker_settings_kept(self):
         self.docker_settings().parent.mkdir(parents=True)
         self.docker_settings().write_text(
@@ -1198,7 +1211,12 @@ class InstallTest(Case):
                 f"<string>{self.home}/.agent-pm/bin/agent-pm-orchestrator</string>", plist
             )
             self.assertIn(f"<string>{self.home}/.agent-pm/logs/orchestrator.jsonl</string>", plist)
-            self.assertNotIn("/Users/francis", plist)
+            self.assertFalse({"@HOME@", "@PATH@"} & set(re.findall(r"@[A-Z]+@", plist)))
+            path = re.search(r"<key>PATH</key>\s*<string>([^<]*)</string>", plist).group(1)
+            self.assertEqual(
+                path,
+                f"{self.bin}:{self.root}/opt/homebrew/bin:{self.agent_pm}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            )
             self.assertIn(
                 f"launchctl bootstrap gui/501 {agents}/com.ophis.agent-pm.{job}.plist", calls
             )

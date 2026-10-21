@@ -383,8 +383,7 @@ class InsideAnAgentSession(Case):
                 self.assertTrue(errors.getvalue().startswith(first), errors.getvalue())
 
 
-DEPLOY = "/Users/francis/playground/agent-pm"
-LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
+LOG = "@HOME@/.agent-pm/logs/orchestrator.jsonl"
 JOBS = {"router": [], "promote": []}
 
 
@@ -397,7 +396,7 @@ def plist(job):
 
 
 class LaunchdJobs(Case):
-    def test_each_job_runs_its_command_from_the_deploy_checkout(self):
+    def test_each_job_runs_the_launcher_in_agent_pm_bin(self):
         self.assertTrue(os.access(os.path.join(REPO, "bin", "agent-pm-orchestrator"), os.X_OK))
         for job, flags in JOBS.items():
             with self.subTest(job=job):
@@ -405,24 +404,13 @@ class LaunchdJobs(Case):
                 self.assertEqual(job_plist["Label"], f"com.ophis.agent-pm.{job}")
                 self.assertEqual(
                     job_plist["ProgramArguments"],
-                    [f"{DEPLOY}/bin/agent-pm-orchestrator", job, *flags],
+                    ["@HOME@/.agent-pm/bin/agent-pm-orchestrator", job, *flags],
                 )
 
-    def test_path_finds_claude_tmux_and_homebrew_python_before_the_system_one(self):
+    def test_path_is_filled_in_at_install(self):
         for job in JOBS:
             with self.subTest(job=job):
-                path = plist(job)["EnvironmentVariables"]["PATH"].split(":")
-                self.assertEqual(
-                    path,
-                    [
-                        "/Users/francis/.local/bin",
-                        "/opt/homebrew/bin",
-                        "/usr/bin",
-                        "/bin",
-                        "/usr/sbin",
-                        "/sbin",
-                    ],
-                )
+                self.assertEqual(plist(job)["EnvironmentVariables"]["PATH"], "@PATH@")
 
     def test_output_goes_to_the_orchestrator_log(self):
         for job in JOBS:
