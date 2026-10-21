@@ -16,6 +16,8 @@ yes=
 password_stdin=
 sudo_mine=
 keepalive=
+feeder=
+askpass_dir=
 current=
 answer=
 
@@ -79,24 +81,48 @@ ledger_valid() {
   esac
 }
 
+# Reads the sudo password once (stdin's first line, else the terminal) and checks it. A FIFO then
+# hands it from memory to the askpass helper of every later sudo -A, Homebrew's included (it passes
+# -A when SUDO_ASKPASS is set): macOS's per-terminal tickets miss some of those sudo calls.
 sudo_once() {
-  local password=
+  local password= tries=0
   step sudo
-  if [ -n "$password_stdin" ]; then IFS= read -r password || true; fi
-  if sudo -n true </dev/null >/dev/null 2>&1; then
-    unset password
-    skip "already valid"
-  elif [ -n "$password_stdin" ]; then
+  sudo -k </dev/null >/dev/null 2>&1 || true
+  sudo_mine=1
+  if [ -n "$password_stdin" ]; then
+    IFS= read -r password || true
     if ! printf '%s\n' "$password" | sudo -S -p '' -v; then
       unset password
       die "sudo rejected the password from stdin"
     fi
-    unset password
-    sudo_mine=1
   else
-    sudo -v <&3 >&3 2>&3 || die "sudo refused"
-    sudo_mine=1
+    while :; do
+      printf 'Password:' >&3
+      IFS= read -rs password <&3 || die "no answer on the terminal"
+      printf '\n' >&3
+      if printf '%s\n' "$password" | sudo -S -p '' -v 2>/dev/null; then break; fi
+      tries=$((tries + 1))
+      [ "$tries" -lt 3 ] || die "sudo refused"
+      printf 'Sorry, try again.\n' >&3
+    done
   fi
+  askpass_dir=$(mktemp -d "${TMPDIR:-/tmp}/agent-pm-sudo.XXXXXX")
+  case $askpass_dir in *"'"* | *$'\n'*) die "unusable TMPDIR: $askpass_dir" ;; esac
+  mkfifo -m 600 "$askpass_dir/fifo"
+  cat >"$askpass_dir/askpass" <<EOF
+#!/bin/sh
+IFS= read -r p <'$askpass_dir/fifo' && printf '%s\n' "\$p"
+EOF
+  chmod 700 "$askpass_dir/askpass"
+  (
+    trap '' PIPE
+    while [ -p "$askpass_dir/fifo" ]; do
+      printf '%s\n' "$password" 2>/dev/null >"$askpass_dir/fifo" || true
+    done
+  ) </dev/null >/dev/null 2>&1 &
+  feeder=$!
+  unset password
+  export SUDO_ASKPASS=$askpass_dir/askpass
   (
     trap 'kill "$nap" 2>/dev/null; exit 0' TERM
     while kill -0 $$ 2>/dev/null; do
@@ -105,17 +131,27 @@ sudo_once() {
       nap=$!
       wait "$nap" || true
     done
+    kill "$feeder" 2>/dev/null
+    sleep 1
+    rm -rf "$askpass_dir"
   ) </dev/null >/dev/null 2>&1 &
   keepalive=$!
 }
 
+# Stops the keep-alive and the askpass feeder, and drops the ticket sudo_once made.
+sudo_end() {
+  local pid
+  for pid in $keepalive $feeder; do
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  if [ -n "$askpass_dir" ]; then rm -rf "$askpass_dir"; fi
+  if [ -n "$sudo_mine" ]; then sudo -k </dev/null >/dev/null 2>&1 || true; fi
+}
+
 on_exit() {
   local rc=$?
-  if [ -n "$keepalive" ]; then
-    kill "$keepalive" 2>/dev/null || true
-    wait "$keepalive" 2>/dev/null || true
-  fi
-  if [ -n "$sudo_mine" ]; then sudo -k </dev/null >/dev/null 2>&1 || true; fi
+  sudo_end
   if [ "$rc" -ne 0 ] && [ -n "$current" ]; then
     say "$me: $current failed; rerun the same command to continue"
   fi
@@ -226,7 +262,7 @@ broker_files() {
     skip "not installed by install.sh"
     return
   fi
-  sudo rm -rf "$root/usr/local/libexec/agent-pm"
+  sudo -A rm -rf "$root/usr/local/libexec/agent-pm"
   for service in agent-pm-tokens agent-pm-revocations; do
     count=0
     while delete_item "$service"; do
@@ -396,11 +432,11 @@ homebrew_and_clt() {
   if [ -n "$prefix" ]; then
     uninstaller=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)
     NONINTERACTIVE=1 bash -c "$uninstaller" </dev/null >&2
-    sudo rm -rf "$prefix"
+    sudo -A rm -rf "$prefix"
     drop "homebrew"$'\t'"$prefix"
   fi
   if grep -qx clt "$ledger"; then
-    sudo rm -rf "$root/Library/Developer/CommandLineTools"
+    sudo -A rm -rf "$root/Library/Developer/CommandLineTools"
     drop clt
   fi
 }

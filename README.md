@@ -89,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | ba
 2. asks which clients you use (Claude Code, Codex, OpenCode) and whether workers run in Docker, and writes `~/.agent-pm/config.local.toml`;
 3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider, Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and, when the config names a Linear board, its Keychain keys and launchd jobs.
 
-It asks `sudo` once, runs each login on the spot (`gh`, Claude Code and Codex open your browser), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
+It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
 
 Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
 

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -85,11 +86,21 @@ def sudo(args):
             return 1
         mark(ticket)
         return 0
-    if args[:1] == ["-n"]:
-        args = args[1:]
-    if not ticket.exists():
-        out("sudo: a password is required\n", sys.stderr)
-        return 1
+    flags = []
+    while args and args[0] in ("-n", "-A", "-E", "--"):
+        flags.append(args.pop(0))
+        if flags[-1] == "--":
+            break
+    if not ticket.exists() or os.environ.get("FAKE_TICKET_MISSED"):
+        if "-A" not in flags or "SUDO_ASKPASS" not in os.environ:
+            out("sudo: a password is required\n", sys.stderr)
+            return 1
+        asked = subprocess.run([os.environ["SUDO_ASKPASS"], "Password:"], capture_output=True)
+        if asked.stdout.decode().rstrip("\n") != password:
+            out("sudo: askpass gave a wrong password\n", sys.stderr)
+            return 1
+        mark(ticket)
+        mark(FAKES / "askpass_used")
     if args == ["-v"]:
         mark(FAKES / "keepalive.pid", str(os.getppid()))
         return 0
@@ -123,6 +134,13 @@ def curl(args):
     return 22
 
 
+def homebrew_sudo():
+    """Homebrew's sudo for a cask's artifacts, which macOS's per-terminal ticket misses."""
+    flags = ["-A"] if "SUDO_ASKPASS" in os.environ else []
+    env = {**os.environ, "FAKE_TICKET_MISSED": "1"}
+    return subprocess.run(["sudo", *flags, "-E", "--", "true"], env=env, check=False).returncode
+
+
 def brew(args):
     if args == ["shellenv"]:
         out(f'export HOMEBREW_PREFIX="{PREFIX}"; export PATH="{PREFIX}/bin:$PATH";\n')
@@ -134,6 +152,8 @@ def brew(args):
     if verb == "list":
         return 0 if installed.exists() else 1
     if verb == "install":
+        if name == "docker-desktop" and homebrew_sudo():
+            return 1
         mark(installed)
         if command := (CASKS if cask else APPS).get(name):
             link_app(command)

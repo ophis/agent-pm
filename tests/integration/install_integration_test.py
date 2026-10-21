@@ -40,6 +40,8 @@ REAL = (
     "cmp",
     "awk",
     "tr",
+    "mktemp",
+    "mkfifo",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 FAKED += ("xcode-select", "ps")
@@ -77,6 +79,7 @@ SHARED = (
     "under_home",
     "ledger_valid",
     "sudo_once",
+    "sudo_end",
 )
 RELOAD = (
     "install.sh: in this terminal, run source ~/.zprofile first (or open a new one): its PATH"
@@ -165,6 +168,8 @@ class InstallTest(Case):
     def setUp(self):
         self.bin, self.fakes, self.root = (Path(self.home, n) for n in ("bin", "fakes", "root"))
         self.bin.mkdir()
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         for tool in REAL:
             (self.bin / tool).symlink_to(shutil.which(tool))
         (self.bin / "python3").symlink_to(sys.executable)
@@ -197,6 +202,7 @@ class InstallTest(Case):
             "LOG": str(self.log),
             "ENVLOG": str(self.envlog),
             "FAKES": str(self.fakes),
+            "TMPDIR": str(self.tmp),
             "AGENT_PM_INSTALL_ROOT": str(self.root),
         }
 
@@ -298,7 +304,7 @@ class InstallTest(Case):
         return [c for c in self.calls() if " plugin " in c and " list " not in c]
 
     def broker_calls(self):
-        own = {"sudo -n true", "sudo -v", "sudo -n -v", "sudo -k", "sudo -S -p  -v"}
+        own = {"sudo -n true", "sudo -n -v", "sudo -k", "sudo -S -p  -v", "sudo -A -E -- true"}
         wanted = ("broker-", "sudo", "agent-pm-broker")
         return [
             c for c in self.calls() if c.startswith(wanted) and c not in own and "status" not in c
@@ -385,12 +391,41 @@ class InstallTest(Case):
         self.assertIn("install.sh: sudo rejected the password from stdin", result.stderr)
         self.assertNotIn("brew", "\n".join(self.calls()))
 
+    def test_sudo_wrong_password_asked_again(self):
+        result = self.run_install(
+            "--no-docker",
+            "--clients",
+            "claude",
+            answers=[(SUDO_Q, "wrong"), (SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 3],
+        )
+        self.assert_ok(result)
+        self.assertEqual(result.tty.count("Sorry, try again."), 1)
+        self.assertNotIn(PASSWORD, result.tty)
+
+    def test_cask_sudo_gets_the_password_from_memory(self):
+        """Homebrew's sudo for docker-desktop misses the ticket; the askpass FIFO answers it."""
+        result = self.run_install(
+            "--password-stdin",
+            "--docker",
+            "--clients",
+            "claude",
+            stdin=PASSWORD + "\n",
+            answers=[(WRITE_Q, "y"), (WRITE_Q, "y"), *DOCKER_LOGINS, (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        self.assertIn("brew install --cask docker-desktop", self.calls())
+        self.assertTrue((self.fakes / "askpass_used").exists())
+        self.assertNotRegex(result.tty, SUDO_Q)
+        self.assertEqual(list(self.tmp.iterdir()), [])
+        self.assert_secret_free(PASSWORD, TOKEN, result=result)
+        self.assertNotIn(PASSWORD, self.envlog.read_text())
+
     def test_sudo_prompt_once(self):
         result = self.fresh()
         self.assert_ok(result)
         self.assertEqual(len(re.findall(SUDO_Q, result.tty)), 1)
         calls = self.calls()
-        self.assertEqual(calls.count("sudo -v"), 1)
+        self.assertEqual(calls.count("sudo -S -p  -v"), 1)
         self.assertIn("sudo -n -v", calls)
         self.assertEqual(calls[-1], "sudo -k")
         keepalive = int((self.fakes / "keepalive.pid").read_text())
@@ -408,7 +443,7 @@ class InstallTest(Case):
         installer = calls.index(
             "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
         )
-        self.assertLess(calls.index("sudo -v"), installer)
+        self.assertLess(calls.index("sudo -S -p  -v"), installer)
         brew = [c for c in calls if c.startswith("brew install")]
         self.assertEqual(
             brew,
@@ -636,7 +671,7 @@ class InstallTest(Case):
                 "broker-install ",
                 f"sudo mkdir -p {self.root}/usr/local/libexec/agent-pm",
                 "agent-pm-broker login claude",
-                f"sudo {broker} install-codex 0.163.0",
+                f"sudo -A {broker} install-codex 0.163.0",
                 "agent-pm-broker install-codex 0.163.0",
                 "agent-pm-broker login codex",
             ],
@@ -737,7 +772,7 @@ class InstallTest(Case):
         calls = self.calls()
         self.assertIn("broker-install ", calls)
         self.assertIn("agent-pm-broker login claude", calls)
-        self.assertIn(f"sudo {self.broker_path()} update-codex 0.170.0", calls)
+        self.assertIn(f"sudo -A {self.broker_path()} update-codex 0.170.0", calls)
         self.assertNotIn("agent-pm-broker login codex", calls)
 
     def test_codex_install_or_update(self):
@@ -762,9 +797,9 @@ class InstallTest(Case):
                 self.assertIn("install.sh: broker busy; rerun", result.stderr)
                 continue
             self.assert_ok(result)
-            update = f"sudo {broker} update-codex 0.163.0"
+            update = f"sudo -A {broker} update-codex 0.163.0"
             self.assertEqual(update in calls, action == "update", status)
-            self.assertNotIn(f"sudo {broker} install-codex 0.163.0", calls)
+            self.assertNotIn(f"sudo -A {broker} install-codex 0.163.0", calls)
             login = "agent-pm-broker login codex" in calls
             self.assertEqual(login, status["state"] != "ready", status)
 
