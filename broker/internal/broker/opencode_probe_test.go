@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpencodeProbe(t *testing.T) {
@@ -15,6 +16,10 @@ func TestOpencodeProbe(t *testing.T) {
 		calls := 0
 		transport := roundTrip(func(req *http.Request) (*http.Response, error) {
 			calls++
+			deadline, ok := req.Context().Deadline()
+			if remaining := time.Until(deadline); !ok || remaining <= 0 || remaining > 5*time.Second {
+				t.Fatalf("probe deadline: %v %v", deadline, ok)
+			}
 			if req.URL.String() != "https://strata.test/v1/models" || req.Header.Get("Authorization") != "Bearer "+apiKey {
 				t.Fatal("wrong endpoint or authentication")
 			}

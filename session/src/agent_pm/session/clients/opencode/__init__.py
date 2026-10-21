@@ -51,8 +51,8 @@ class OpenCodeClient(Client):
     def usage_probe(self):
         return self.common.probe()
 
-    def _usage_executable(self):
-        return self.common.executable
+    def _usage_executable(self, *, container=False):
+        return "" if container else self.common.executable
 
     def _usage_probe(self, tier):
         return self.common.probe(tier)

@@ -111,6 +111,7 @@ class PmToEngineer(Segment):
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.agent_script("pm", "none", ident))
         self.agent_run()
+        self.human_move(ident, "in_progress", "human: retry failed run")
         self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident))
         self.agent_run()
         self.handoff(ident, BUILD)
@@ -128,6 +129,7 @@ class PmToEngineer(Segment):
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.agent_script("pm", "none", ident), tui=True)
         self.agent_run()
+        self.human_move(ident, "in_progress", "human: retry failed run")
         self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident))
         self.assertFalse(self.live(config.tui_name("pm", ident, sid)))
         self.agent_run()
@@ -138,6 +140,7 @@ class PmToEngineer(Segment):
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.agent_script("pm", "none", ident))
         self.agent_run()
+        self.human_move(ident, "in_progress", "human: retry failed run")
         with self.step("drop transcript"):
             os.remove(self.transcript_path(ident, sid))
         with self.step("router: interrupted"):

@@ -89,4 +89,4 @@ class RecordedQuotaKeys(Case):
         self.assertTrue(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
         self.assertTrue(gate.blocked("engineer", "TASK-2", key=("saved-kind", "saved-client")))
         self.assertEqual((provider.queried, saved.queried), ([], ["engineer"]))
-        self.assertIn("saved-client", gate.seen)
+        self.assertIn(("saved-kind", "engineer", "saved-client", None), gate.seen)

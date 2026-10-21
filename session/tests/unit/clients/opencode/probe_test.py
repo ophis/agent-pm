@@ -80,11 +80,12 @@ class ProbeTest(Case):
         made = connection(status=204, body=b"TEST-SECRET")
         with (
             mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
-            mock.patch.object(probe.http.client, "HTTPSConnection", return_value=made),
+            mock.patch.object(probe.http.client, "HTTPSConnection", return_value=made) as network,
         ):
             self.assertEqual(
                 probe.provider("strata", "https://strata.test/v1/"), {"available": True}
             )
+        network.assert_called_once_with("strata.test", None, timeout=5)
         made.request.assert_called_once_with(
             "GET", "/v1/models", headers={"Authorization": "Bearer TEST-SECRET"}
         )

@@ -19,6 +19,7 @@ from agent_pm.utils.environment import (
     EVENTS_ENV,
     LEASE_ENV,
     SID_ENV,
+    TIER_ENV,
     environment_ok,
     nested_start,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "Status",
     "StatusState",
     "Stopped",
+    "TIER_ENV",
     "answer_keys",
     "append_line",
     "check_slug",

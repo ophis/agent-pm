@@ -275,24 +275,48 @@ class Done(Run):
 
 
 class Undone(Run):
-    def test_a_run_without_an_outcome_stays_in_progress(self):
+    def test_a_run_without_an_outcome_reports_failure_and_moves_to_review(self):
         self.seed("engineer")
         self.launch([mark("start", PICK), "Working."])
         self.assertEqual(
-            self.wrote(), self.framed(post("start", f"Build started: {PICK}"), end=UNDONE)
+            self.wrote(),
+            self.framed(
+                post("start", f"Build started: {PICK}"),
+                READ,
+                SUBSCRIBE,
+                post("no-outcome:1:comment", "Build failed: the agent run returned no outcome"),
+                REREAD,
+                TO_REVIEW,
+                end=UNDONE,
+            ),
         )
         self.assertEqual(
             self.said(),
             steps(
                 "running:1",
                 "start",
+                "no-outcome:1:comment",
+                "no-outcome:1:move:in_review",
+                "no-outcome:1:outcome",
                 more=[
                     f"writeback no-outcome {ID} sid={SID} error=the agent run returned no outcome"
                 ],
             ),
         )
         self.assertEqual(
-            (self.state(ID), self.ledger(ID)), ("in_progress", {SID: ["running:1", "start"]})
+            (self.state(ID), self.ledger(ID)),
+            (
+                "in_review",
+                {
+                    SID: [
+                        "running:1",
+                        "start",
+                        "no-outcome:1:comment",
+                        "no-outcome:1:move:in_review",
+                        "no-outcome:1:outcome",
+                    ]
+                },
+            ),
         )
 
     def test_a_usage_limit_moves_to_in_review_once_per_sid(self):

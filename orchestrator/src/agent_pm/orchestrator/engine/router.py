@@ -130,6 +130,7 @@ from agent_pm.utils import (
     CLIENT_ENV,
     EVENTS_ENV,
     SID_ENV,
+    TIER_ENV,
     exhausted,
     nested_start,
     one_line,
@@ -1071,7 +1072,16 @@ def run_issue(opts, cfg, gql, start, *, keychain, wiring, clock=datetime.now, la
 
 
 def brake(role, cfg):
-    usage = read_usage(role, cfg, client=os.environ.get(CLIENT_ENV) or None)
+    raw_tier = os.environ.get(TIER_ENV, "")
+    if raw_tier and raw_tier not in {"1", "2", "3", "4"}:
+        print(f"router.py: ${TIER_ENV}: want a tier from 1 to 4", file=sys.stderr)
+        return 2
+    usage = read_usage(
+        role,
+        cfg,
+        client=os.environ.get(CLIENT_ENV) or None,
+        tier=int(raw_tier) if raw_tier else None,
+    )
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 

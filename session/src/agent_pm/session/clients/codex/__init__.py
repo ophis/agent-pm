@@ -49,7 +49,7 @@ class CodexClient(Client):
     def usage_probe(self):
         return self.common.probe()
 
-    def _usage_executable(self):
+    def _usage_executable(self, *, container=False):
         return "codex"
 
     def usage(self, output):

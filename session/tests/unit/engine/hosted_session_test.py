@@ -1172,7 +1172,9 @@ class UsageTest(Base):
                 (host.request.provider, host.request.base_url), ("strata", "https://strata.test/v1")
             )
         probe.assert_not_called()
-        self.assertEqual(self.session.usage("opencode"), Usage(None, None))
+        with mock.patch("shutil.which", return_value=None) as executable:
+            self.assertEqual(self.session.usage("opencode"), Usage(None, None))
+        self.assertNotIn("opencode", [call.args[0] for call in executable.call_args_list])
         self.assertEqual(probe.call_count, 1)
 
     def probing(self, out="42.5", **launch) -> mock.Mock:

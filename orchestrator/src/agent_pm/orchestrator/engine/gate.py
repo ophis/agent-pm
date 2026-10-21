@@ -11,8 +11,8 @@ from agent_pm.utils import exhausted, summary
 BRAKE_5H = 80
 
 
-def read_usage(role, cfg, *, client=None):
-    return _probe(role, cfg, cfg.delegate_cls, client)[0]
+def read_usage(role, cfg, *, client=None, tier=None):
+    return _probe(role, cfg, cfg.delegate_cls, client, tier)[0]
 
 
 def _probe(role, cfg, provider, client, tier=None):

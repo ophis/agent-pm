@@ -225,7 +225,7 @@ class Host(ABC):
     attachable: ClassVar[bool] = False
 
     def _provider_usage(self, request: ProviderProbe) -> bool | None:
-        """Availability using this Host's stored credentials, when supported."""
+        """Probe with this Host's credentials, when supported."""
         return None
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:

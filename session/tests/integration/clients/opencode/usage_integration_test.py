@@ -2,12 +2,16 @@
 
 import http.server
 import json
+import os
+import shlex
 import socket
+import sys
 import threading
 
 from agent_pm.session.engine.types import Usage
 
 from session.tests.case import Case
+from session.tests.integration.clients.opencode import fake_opencode
 
 TAGS = {"models": [{"name": "qwen3.6:35b-mlx"}]}
 
@@ -32,11 +36,19 @@ def free_port() -> int:
 
 class UsageIntegrationTest(Case):
     def usage(self, port: int) -> Usage | None:
+        executable = os.path.join(self.home, "opencode")
+        with open(executable, "w", encoding="utf-8") as file:
+            file.write(
+                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_opencode.__file__)} "$@"\n'
+            )
+        os.chmod(executable, 0o755)
         self.configure_session(
             {
                 "opencode": {
                     "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
                     "ollama_port": port,
+                    "model": "ollama/local",
+                    "executable": executable,
                 }
             }
         )

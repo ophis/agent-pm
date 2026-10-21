@@ -161,6 +161,7 @@ class Attended(Segment):
         sid = self.claim(ident, "pm", self.agent_script("pm", "none", ident), tui=True)
         record, tui = self.printed, config.tui_name("pm", ident, sid)
         self.agent_run()
+        self.human_move(ident, "in_progress", "human: retry failed run")
         self.assertEqual(self.server.tmux("kill-session", "-t", f"={tui}").returncode, 0)
         self.scene(**tui_scene(self.agent_script("pm", "done", ident)), usage=USAGE)
         seen = len(agent_calls(self.calls()))
