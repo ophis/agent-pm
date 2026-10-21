@@ -167,6 +167,8 @@ def claude(args):
             shutil.copytree(FAKES / "pkg-src", path)
             mark(path / "REF", source.get("ref", ""))
         save(plugins_file, [*plugins, {"id": args[2], "enabled": True, "installPath": str(path)}])
+    elif args[:2] == ["plugin", "enable"]:
+        save(plugins_file, [{**p, "enabled": p["enabled"] or p["id"] == args[2]} for p in plugins])
     elif args[:2] == ["plugin", "uninstall"]:
         if not any(p["id"] == args[2] for p in plugins):
             return 1

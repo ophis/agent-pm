@@ -212,7 +212,13 @@ class InstallTest(Case):
     def fresh(self, *args, docker="n", extra=()):
         return self.run_install(
             *args,
-            answers=[(DOCKER_Q, docker), (SUDO_Q, PASSWORD), (WRITE_Q, "y"), *extra],
+            answers=[
+                (DOCKER_Q, docker),
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                *extra,
+                (WRITE_Q, "y"),
+            ],
         )
 
     def test_usage_and_platform(self):
@@ -256,7 +262,7 @@ class InstallTest(Case):
             "--password-stdin",
             "--no-docker",
             stdin=PASSWORD + "\n",
-            answers=[(WRITE_Q, "y")],
+            answers=[(WRITE_Q, "y"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
         self.assertNotRegex(result.tty, SUDO_Q)
@@ -340,3 +346,67 @@ class InstallTest(Case):
         result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
         self.assert_ok(result)
         self.assertEqual(self.state()["docker"], "yes")
+
+    def plugin_calls(self):
+        return [c for c in self.calls() if " plugin " in c and " list " not in c]
+
+    def test_ref_installs_branch(self):
+        result = self.fresh("--ref", "orchestrator-revamped")
+        self.assert_ok(result)
+        self.assertEqual(
+            self.plugin_calls(),
+            [
+                "claude plugin marketplace add ophis/agent-pm#orchestrator-revamped",
+                "claude plugin marketplace add ophis/claude-autopilot",
+                "claude plugin install agent-pm@agent-pm",
+                "claude plugin install autopilot@claude-autopilot",
+                "codex plugin marketplace add ophis/agent-pm --ref orchestrator-revamped",
+                "codex plugin marketplace add ophis/claude-autopilot",
+                "codex plugin add agent-pm@agent-pm",
+                "codex plugin add autopilot@claude-autopilot",
+            ],
+        )
+        pkg = Path(self.fakes, "claude/cache/0")
+        self.assertEqual((pkg / "REF").read_text(), "orchestrator-revamped")
+        self.assertIn(f"    {pkg}", result.stderr)
+        self.assertIn("ctmux --install", self.calls())
+        for name in ("ctmux", "agent-pm-orchestrator"):
+            self.assertTrue(os.access(Path(self.agent_pm, "bin", name), os.X_OK))
+        profile = Path(self.home, ".zprofile").read_text()
+        self.assertTrue(profile.endswith('export PATH="$HOME/.agent-pm/bin:$PATH"\n'), profile)
+
+    def test_ref_change_readds_marketplaces(self):
+        self.assert_ok(self.fresh())
+        self.assertIn("claude plugin marketplace add ophis/agent-pm", self.calls())
+        result = self.run_install("--ref", "next", answers=[(SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertEqual(
+            self.plugin_calls(),
+            [
+                "claude plugin uninstall agent-pm@agent-pm",
+                "claude plugin marketplace remove agent-pm",
+                "claude plugin marketplace add ophis/agent-pm#next",
+                "claude plugin install agent-pm@agent-pm",
+                "codex plugin remove agent-pm@agent-pm",
+                "codex plugin marketplace remove agent-pm",
+                "codex plugin marketplace add ophis/agent-pm --ref next",
+                "codex plugin add agent-pm@agent-pm",
+            ],
+        )
+        self.assertNotIn("ctmux --install", self.calls())
+        result = self.run_install("--ref", "next", answers=[(SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertEqual(self.plugin_calls(), [])
+
+    def test_disabled_plugin_is_enabled(self):
+        self.assert_ok(self.fresh())
+        plugins = Path(self.fakes, "claude/plugins.json")
+        plugins.write_text(plugins.read_text().replace("true", "false"))
+        self.assert_ok(self.run_install(answers=[(SUDO_Q, PASSWORD)]))
+        self.assertEqual(
+            self.plugin_calls(),
+            [
+                "claude plugin enable agent-pm@agent-pm",
+                "claude plugin enable autopilot@claude-autopilot",
+            ],
+        )

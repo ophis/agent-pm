@@ -300,6 +300,137 @@ client_logins() {
   fi
 }
 
+# Exit 0: marketplace $1 is $2 at ref $3 ("*": any ref); 1: absent; 2: another source or ref.
+claude_market() {
+  claude plugin marketplace list --json </dev/null | python3 -c '
+import json, sys
+name, repo, ref = sys.argv[1:]
+refs = {"", "main"} if ref == "main" else {ref}
+for m in json.load(sys.stdin):
+    if m.get("name") == name:
+        sys.exit(0 if m.get("repo") == repo and (ref == "*" or m.get("ref", "") in refs) else 2)
+sys.exit(1)' "$1" "$2" "$3"
+}
+
+# Exit 0: plugin $1 installed and enabled; 1: absent; 2: disabled.
+claude_plugin() {
+  claude plugin list --json </dev/null | python3 -c '
+import json, sys
+found = [p for p in json.load(sys.stdin) if p.get("id") == sys.argv[1]]
+sys.exit(1 if not found else 0 if found[0].get("enabled") else 2)' "$1"
+}
+
+codex_market() {
+  python3 -c '
+import sys, tomllib
+path, name, source, ref = sys.argv[1:]
+try:
+    with open(path, "rb") as f:
+        m = tomllib.load(f).get("marketplaces", {}).get(name)
+except FileNotFoundError:
+    m = None
+refs = {"", "main"} if ref == "main" else {ref}
+if m is None:
+    sys.exit(1)
+sys.exit(0 if m.get("source") == source and (ref == "*" or m.get("ref", "") in refs) else 2)' \
+    "${CODEX_HOME:-$HOME/.codex}/config.toml" "$1" "$2" "$3"
+}
+
+codex_plugin_on() {
+  codex plugin list --json </dev/null | python3 -c '
+import json, sys
+sys.exit(0 if any(p.get("pluginId") == sys.argv[1] and p.get("enabled") for p in json.load(sys.stdin).get("installed", [])) else 1)' "$1"
+}
+
+claude_plugins() {
+  local source=ophis/agent-pm rc id
+  [ "$ref" = main ] || source="ophis/agent-pm#$ref"
+  step "Claude Code plugins"
+  rc=0
+  claude_market agent-pm ophis/agent-pm "$ref" || rc=$?
+  if [ "$rc" = 0 ]; then
+    skip "marketplace agent-pm at $ref"
+  else
+    if [ "$rc" = 2 ]; then
+      say "    marketplace agent-pm has another source: re-adding it from $source"
+      claude plugin uninstall agent-pm@agent-pm </dev/null >&2 || true
+      claude plugin marketplace remove agent-pm </dev/null >&2
+    fi
+    claude plugin marketplace add "$source" </dev/null >&2
+  fi
+  rc=0
+  claude_market claude-autopilot ophis/claude-autopilot '*' || rc=$?
+  if [ "$rc" = 1 ]; then
+    claude plugin marketplace add ophis/claude-autopilot </dev/null >&2
+  else
+    skip "marketplace claude-autopilot"
+  fi
+  for id in agent-pm@agent-pm autopilot@claude-autopilot; do
+    rc=0
+    claude_plugin "$id" || rc=$?
+    case $rc in
+      0) skip "$id installed" ;;
+      2) claude plugin enable "$id" </dev/null >&2 ;;
+      *) claude plugin install "$id" </dev/null >&2 ;;
+    esac
+  done
+}
+
+codex_plugins() {
+  local rc id
+  step "Codex plugins"
+  rc=0
+  codex_market agent-pm https://github.com/ophis/agent-pm.git "$ref" || rc=$?
+  if [ "$rc" = 0 ]; then
+    skip "marketplace agent-pm at $ref"
+  else
+    if [ "$rc" = 2 ]; then
+      say "    marketplace agent-pm has another source: re-adding it at $ref"
+      codex plugin remove agent-pm@agent-pm </dev/null >&2 || true
+      codex plugin marketplace remove agent-pm </dev/null >&2
+    fi
+    if [ "$ref" = main ]; then
+      codex plugin marketplace add ophis/agent-pm </dev/null >&2
+    else
+      codex plugin marketplace add ophis/agent-pm --ref "$ref" </dev/null >&2
+    fi
+  fi
+  rc=0
+  codex_market claude-autopilot https://github.com/ophis/claude-autopilot.git '*' || rc=$?
+  if [ "$rc" = 1 ]; then
+    codex plugin marketplace add ophis/claude-autopilot </dev/null >&2
+  else
+    skip "marketplace claude-autopilot"
+  fi
+  for id in agent-pm@agent-pm autopilot@claude-autopilot; do
+    if codex_plugin_on "$id"; then skip "$id installed"; else codex plugin add "$id" </dev/null >&2; fi
+  done
+}
+
+# The installed Claude Code plugin: the whole repo at $ref, source of the broker, ctmux and jobs.
+plugin_dir() {
+  step "plugin directory"
+  pkg=$(claude plugin list --json </dev/null | python3 -c '
+import json, sys
+print(next((p.get("installPath", "") for p in json.load(sys.stdin) if p.get("id") == "agent-pm@agent-pm"), ""))')
+  [ -n "$pkg" ] && [ -d "$pkg" ] || die "claude plugin list --json names no agent-pm@agent-pm directory"
+  say "    $pkg"
+}
+
+ctmux_install() {
+  local name missing=
+  step "ctmux --install"
+  for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
+    [ -x "$HOME/.agent-pm/bin/$name" ] || missing=1
+  done
+  if [ -n "$missing" ]; then
+    "$pkg/manager/skills/manage/scripts/ctmux" --install </dev/null >&2
+  else
+    skip "launchers in ~/.agent-pm/bin"
+  fi
+  profile_line 'export PATH="$HOME/.agent-pm/bin:$PATH"'
+}
+
 main() {
   local platform
   parse_args "$@"
@@ -313,6 +444,10 @@ main() {
   homebrew
   brew_packages
   client_logins
+  claude_plugins
+  codex_plugins
+  plugin_dir
+  ctmux_install
   current=
   say "agent-pm is installed (ref $ref, Docker $docker)."
 }
