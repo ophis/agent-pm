@@ -249,7 +249,10 @@ class PromotionOutages(Base):
                     gql = failing(error)
                     self.assertEqual(self.run_main(gql=gql), 1)
                     self.assertEqual((self.out, self.err, FakePruner.calls), (said, "", []))
-                    self.assertEqual(gql.failed, [(ops.Q_TEAM, {"service": HARNESS, "t": TEAM})])
+                    self.assertEqual(
+                        [(q, v["service"], v["t"]) for q, v in gql.failed],
+                        [(ops.Q_SETUP, HARNESS, TEAM)],
+                    )
         self.assertEqual(self.fake.calls, [])
         self.assertEqual((self.run_main(), src["state"]), (0, "Done"))
 
@@ -901,7 +904,7 @@ class LocalBoardPromotion(Base):
         )
 
 
-SETUP_REQUESTS = {"ops.Q_TEAM": 1, "ops.Q_USER": 3}
+SETUP_REQUESTS = {"ops.Q_SETUP": 1}
 PROMOTION = {  # one Handoff issue promoted
     "linear_tracker.Q_DETAIL": 1,
     "linear_tracker.Q_CHILD": 1,
@@ -969,5 +972,5 @@ class RequestCountTest(HostScale):
         self.assertLessEqual(max(sum(r["prune"].values()) for r in found.values()), cap)
         self.assertEqual(
             {name: sum(sum(p.values()) for p in r.values()) for name, r in found.items()},
-            {"cold": 48, "warm": 14, "quiet": 8, "next_day": 31},
+            {"cold": 45, "warm": 11, "quiet": 5, "next_day": 28},
         )

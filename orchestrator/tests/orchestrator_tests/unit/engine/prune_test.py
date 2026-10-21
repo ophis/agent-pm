@@ -728,7 +728,7 @@ class RetentionCleanup(PruneScenario):
         code, _, out = self.tick(gql)
         self.assertEqual((code, gql.archived), (0, ["id-TASK-1"]))
         self.assertIn("prune-archived TASK-1", out)
-        self.assertEqual(self.user_queries, len(tp.ROLE))
+        self.assertEqual(self.setup_queries, [ops.Q_SETUP])
 
     def test_promote_tick_closes_recorded_runs_through_the_delegate(self):
         self.record("TASK-7", SID, [A])
@@ -1677,9 +1677,8 @@ class ArchiveBound(Bound):
                 config_path=path,
                 pruner=self.pruner,
             )
-        roles = len(tp.ROLE)
-        self.assertEqual(len(setup), 1 + roles)
-        self.assertLessEqual(len(prune_gql.calls) + len(setup), 34 + roles)
+        self.assertEqual(setup, [ops.Q_SETUP])
+        self.assertLessEqual(len(prune_gql.calls) + len(setup), 34)
 
 
 DONE_3H = "- 2026-09-27 12:00 done self\n"  # NOW - 3 h

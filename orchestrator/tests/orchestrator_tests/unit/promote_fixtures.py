@@ -130,6 +130,10 @@ class FakeLinear:
     def _identity(self, query, v):
         if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
+        if query == ops.Q_SETUP:
+            emails = {f["email"]["eqIgnoreCase"].lower() for f in v["u"]["or"]}
+            nodes = [{"id": f"u-{r}", "email": a} for r, a in ROLE.items() if a.lower() in emails]
+            return {"teams": {"nodes": [team_node(self.state_ids)]}, "users": {"nodes": nodes}}
         if query == ops.Q_USER:
             users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
             return {

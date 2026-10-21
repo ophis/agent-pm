@@ -149,9 +149,14 @@ def user_id(gql, email):
 
 
 def role_ids(gql, roles):
+    return _roles(roles, lambda email: user_id(gql, email))
+
+
+def _roles(roles, find):
+    """{user id: role}, find(account) giving each role account's id, None when Linear has none."""
     out = {}
     for name, role in roles.items():
-        uid = user_id(gql, role.account)
+        uid = find(role.account)
         if not uid:
             raise LinearError(
                 f"orchestrator/config.toml [linear.roles.{name}]: account {role.account!r} not found in Linear"
@@ -160,12 +165,33 @@ def role_ids(gql, roles):
     return out
 
 
-Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
-  states(first: 100) { nodes { id type } } } } }"""
+TEAMS = """teams(filter: { id: { eq: $t } }) { nodes { id name
+  states(first: 100) { nodes { id type } } } }"""
+Q_TEAM = "query($t: ID) { " + TEAMS + " }"
+Q_SETUP = (
+    "query($t: ID, $u: UserFilter) { "
+    + TEAMS
+    + " users(filter: $u, first: 100) { nodes { id email } } }"
+)
 
 
 def team(gql, linear):
-    nodes = gql(Q_TEAM, t=linear.team)["teams"]["nodes"]
+    return _team(gql(Q_TEAM, t=linear.team)["teams"]["nodes"], linear)
+
+
+def team_and_roles(gql, linear):
+    """team() and role_ids() in one read (none with no roles: team() alone), the team checked
+    first."""
+    if not linear.roles:
+        return team(gql, linear), {}
+    accounts = [{"email": {"eqIgnoreCase": r.account}} for r in linear.roles.values()]
+    found = gql(Q_SETUP, t=linear.team, u={"or": accounts})
+    found_team = _team(found["teams"]["nodes"], linear)
+    ids = {n["email"].lower(): n["id"] for n in found["users"]["nodes"]}
+    return found_team, _roles(linear.roles, lambda email: ids.get(email.lower()))
+
+
+def _team(nodes, linear):
     if not nodes:
         raise LinearError(
             f"orchestrator/config.toml: linear.team {linear.team} not found in Linear"

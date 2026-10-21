@@ -31,8 +31,8 @@ from agent_pm.orchestrator.engine.types import (
     Wiring,
 )
 from agent_pm.orchestrator.issue import command as issue_command
-from agent_pm.orchestrator.trackers.linear import client
-from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker, team_and_roles
+from agent_pm.orchestrator.trackers.linear import client, ops
+from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
 from agent_pm.orchestrator.trackers.local.board import scan
 from agent_pm.orchestrator.trackers.local.local_tracker import LOCAL_STATES, LocalTracker
 from agent_pm.utils import (
@@ -322,10 +322,10 @@ def _linear_key(cfg, role):
 
 
 def _linear_board_factory(gql, cfg):
-    """The team and role accounts read once; each tracker calls its transport as the harness_key
-    service."""
+    """The team and role accounts read once, in one request; each tracker calls its transport as
+    the harness_key service."""
     linear = cfg.linear
-    team, roles = team_and_roles(partial(gql, service=linear.harness_key), linear)
+    team, roles = ops.team_and_roles(partial(gql, service=linear.harness_key), linear)
     return lambda transport: LinearTracker.of_team(
         partial(transport, service=linear.harness_key), linear, team, roles
     )

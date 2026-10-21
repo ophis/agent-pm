@@ -247,12 +247,6 @@ def _move_origin(node, selves) -> Origin:
     return _origin(node["actor"], selves)
 
 
-def team_and_roles(gql, linear):
-    """The team (states, finished) and the role accounts' user ids promote and prune build their
-    tracker from, by the LinearSettings linear: the team read first."""
-    return ops.team(gql, linear), ops.role_ids(gql, linear.roles)
-
-
 class LinearTracker(Tracker):
     """states: {State key: state id}; team_id; finished: ops.Team.finished; roles: {user id: role};
     humans: human_members emails, subscribed on notify; selves: the role accounts' emails, lowercased;
@@ -327,7 +321,7 @@ class LinearTracker(Tracker):
 
     @classmethod
     def of_team(cls, gql, linear, team, roles):
-        """From team_and_roles' reads."""
+        """From ops.team_and_roles' read."""
         return cls(
             gql,
             states=team.states,
