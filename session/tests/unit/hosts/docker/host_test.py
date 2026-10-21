@@ -319,8 +319,10 @@ class ConfigTest(Base):
         bare = DockerHost("docker", {"docker": DOCKER})
         self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))
         self.assertTrue(DockerHost("docker", {"docker": DOCKER, "isolated": True})._isolated)
-        named = DockerHost("docker", {"docker": DOCKER, "plugins": ["a", "b.c@market_1-x"]})
-        self.assertEqual(named.plugins, ("a", "b.c@market_1-x"))
+        named = DockerHost(
+            "docker", {"docker": DOCKER, "plugins": ["autopilot", "b.c@owner/market_1-x"]}
+        )
+        self.assertEqual(named.plugins, ("autopilot", "b.c@owner/market_1-x"))
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -580,9 +582,9 @@ class StartTest(Base):
         self.popen_mock.assert_not_called()
 
     def test_the_build_holds_the_whitelisted_plugins(self):
-        self.host.plugins = ("autopilot", "beta@market")
+        self.host.plugins = ("autopilot", "beta@owner/market")
         self.start()
-        self.assertEqual(self.broker.plugins, ("autopilot", "beta@market"))
+        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
 
     def test_start_order(self):
         os.makedirs(self.home_dir)

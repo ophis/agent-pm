@@ -6,7 +6,7 @@
     "--plugin",
     "autopilot",
     "--plugin",
-    "beta@market",
+    "beta@owner/market",
     "--max-age",
     "604800"
   ]

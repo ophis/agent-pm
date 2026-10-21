@@ -19,15 +19,17 @@ SKILLS_PROBE = """
 import json, os, stat, subprocess
 from pathlib import Path
 home = Path(os.environ['CODEX_HOME'])
-root = Path('/opt/agent-pm/codex-plugins/inline/ci-probe/local')
-skill = root / 'skills/probe/SKILL.md'
-for path in (root, root / '.codex-plugin/plugin.json', skill):
+cache = Path('/opt/agent-pm/codex-plugins/plugins/cache')
+root, = (cache / 'claude-autopilot/autopilot').iterdir()
+manifest = next(path for path in (root / '.codex-plugin/plugin.json', root / '.claude-plugin/plugin.json') if path.is_file())
+skill = root / 'skills/light-build/SKILL.md'
+for path in (root, manifest, skill):
     assert path.stat().st_uid == 0
     assert not path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
     assert not os.access(path, os.W_OK)
-assert home.joinpath('plugins/cache').resolve() == root.parents[2]
+assert home.joinpath('plugins/cache').resolve() == cache
 assert not root.is_symlink()
-assert json.loads(root.joinpath('.codex-plugin/plugin.json').read_text())['name'] == 'ci-probe'
+assert json.loads(manifest.read_text())['name'] == 'autopilot'
 proc = subprocess.Popen(['codex', 'app-server'], stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
 def request(identifier, method, params):
@@ -47,9 +49,9 @@ try:
     entry, = found['data']
     assert entry['cwd'] == '/workspace'
     assert not entry['errors']
-    loaded, = [s for s in entry['skills'] if s['name'] == 'ci-probe:probe']
+    loaded, = [s for s in entry['skills'] if s['name'] == 'autopilot:light-build']
     assert loaded['enabled'] is True
-    assert loaded['pluginId'] == 'ci-probe@inline'
+    assert loaded['pluginId'] == 'autopilot@claude-autopilot'
     assert Path(loaded['path']).resolve() == skill.resolve()
 finally:
     proc.terminate()

@@ -23,13 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini python3 py
 COPY session/src /opt/agent-pm/session/src
 COPY utils/src /opt/agent-pm/utils/src
 COPY delegate/src /opt/agent-pm/delegate/src
-COPY plugins /opt/agent-pm/plugins
-COPY codex-plugins /opt/agent-pm/codex-plugins
+COPY plugin-sources.json /opt/agent-pm/plugin-sources.json
 COPY .claude-plugin/plugin.json /opt/agent-pm/version.json
-COPY bootstrap.py codex-update.py opencode-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
+COPY bootstrap.py codex-update.py opencode-install.py plugin-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/
 COPY claude.json /opt/agent-pm/templates/.claude.json
 RUN npm install --global --ignore-scripts --prefix /opt/agent-pm/clients @openai/codex@0.163.0 \
     && python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)" /opt/agent-pm/clients \
+    && PATH=/opt/agent-pm/clients/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin python3 -I /opt/agent-pm/lib/plugin-install.py /opt/agent-pm/plugin-sources.json /opt/agent-pm \
     && mkdir -p /opt/agent-pm/bin /opt/agent-pm/runtime
 COPY codex /opt/agent-pm/bin/codex
 # python3 on the agent's PATH is this venv's, importing agent-pm; system site keeps pip --user working.
@@ -48,6 +48,7 @@ RUN python3 -m venv --system-site-packages /opt/agent-pm/venv && mkdir -p /opt/a
     && printf '%s\n' 'PATH=/opt/agent-pm/bin:$PATH' > /etc/profile.d/agent-pm.sh \
     && chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay /opt/agent-pm/bin/python3 /opt/agent-pm/lib/with-secrets /opt/agent-pm/lib/hook-stub /opt/agent-pm/lib/workspace-check /opt/agent-pm/lib/gh /opt/agent-pm/lib/git-credential-agent-pm \
     && chmod -R a+rX /opt/agent-pm/codex-plugins \
+    && chmod -R a+rX /opt/agent-pm/claude-plugins \
     && chmod -R a+rX /opt/agent-pm/plugins \
     && chown -R root:root /opt/agent-pm && chmod -R go-w /opt/agent-pm \
     && install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue
