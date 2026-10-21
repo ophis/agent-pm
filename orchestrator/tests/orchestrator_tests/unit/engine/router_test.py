@@ -2610,50 +2610,6 @@ class ScheduledUsageGates(TickBase):
                 )
 
 
-class TaskProviderUsage(TickBase):
-    def test_scheduled_start_and_resume_probe_the_effective_task_provider(self):
-        self.write_config(CONFIG + TASK_LABELS + "[task_tiers]\ndeep-research = 1\n")
-        for resumed in (False, True):
-            with self.subTest(resumed=resumed):
-                self.lines, self.hist = [], {}
-                candidate = issue("TASK-1", "In Progress" if resumed else "Todo", "researcher")
-                candidate["labels"] = [
-                    label(
-                        "light-research" if resumed else "deep-research", LIGHT if resumed else DEEP
-                    )
-                ]
-                if resumed:
-                    self.moved("TASK-1", 61)
-                    self.add(
-                        kind="start",
-                        ident="TASK-1",
-                        sid="prior",
-                        minutes_ago=60,
-                        task="deep-research",
-                    )
-                    self.touch("prior", 40)
-                tiers = []
-
-                def make(api, cfg, readings=tiers):
-                    cls = provider(api, cfg)
-
-                    def usage(role, *, overlays=()):
-                        tier = 2
-                        for overlay in overlays:
-                            tier = overlay.get("roles", {}).get(role, {}).get("tier", tier)
-                        readings.append(tier)
-                        # Tier 1's remote provider is reachable; tier 2's Ollama is stopped.
-                        return reading(None, None) if tier == 1 else None
-
-                    cls.usage = staticmethod(usage)
-                    return cls
-
-                with mock.patch("orchestrator_tests.router_fixtures.provider", side_effect=make):
-                    self.assertEqual(self.tick(self.fake(candidate)), 0)
-                self.assertEqual(tiers, [1])
-                self.assertEqual(self.launched_runs(), [("TASK-1", "resume" if resumed else "new")])
-
-
 class TaskSelection(TaskLabelsScenario):
     def test_task_for(self):
         role_tasks = ("deep-research", "light-research")

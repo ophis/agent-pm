@@ -182,7 +182,7 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
 3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
-The usage gate probes the provider of the effective tier/model: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 17 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Every tier maps to the same model by default, so `[task_tiers]` changes nothing for OpenCode unless `[session.clients.opencode.tiers]` maps tiers to different models.
+The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 17 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
 
 ## Local board
 
@@ -199,7 +199,7 @@ Use a separate initialized local test board with OpenCode, Strata and Docker con
 | Case | Action | Expected |
 |---|---|---|
 | First issue | Run `issue create --title "First" --body-file <file>` with only `unassigned/` present; repeat on a fresh board with `[orchestrator.local] issue_prefix = "AGE"` | `LOC-1`, then `AGE-1`; no hand-written seed issue |
-| Strata gate | Assign an OpenCode issue whose effective tier selects Strata; run `router --dry-run`, then a scheduled tick | Provider probe passes and the issue can launch while Ollama is stopped; no API key in argv/logs |
+| Strata gate | Set the default `[session.clients.opencode] model` to Strata and assign an OpenCode issue; run `router --dry-run`, then a scheduled tick | Provider probe passes and the issue can launch while Ollama is stopped; no API key in argv/logs |
 | Dependency cycle | Set a ready issue's `blocked_by` to its own id, then test a two-issue cycle; run `router --dry-run` | `dependency-cycle` names the closed path and asks for `blocked_by` repair; independent ready issues remain candidates |
 | Missing client | Choose Claude on an issue while its probe executable is absent; run one real router tick | `launch-error`, a comment naming the missing executable, issue in `review/` |
 | Outcome error | Run an engineer test issue whose client ends with an invalid outcome after the harness's one correction attempt | A failure comment includes the reason and the issue moves to `review/`; repeated callback delivery does not duplicate it |

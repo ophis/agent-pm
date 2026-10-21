@@ -448,22 +448,18 @@ class HostedSession(Session):
 
     @classmethod
     def usage(cls, client: str) -> Usage | None:
-        return cls._usage_for(client, tier=None)
-
-    @classmethod
-    def _usage_for(cls, client: str, *, tier: int | None) -> Usage | None:
         setup = cls._config()
         found = setup.registry.client(client)
         host = cls.host()
         if (
-            request := found._provider_probe(tier)
+            request := found._provider_probe()
         ) is not None and host._client_context().container is not None:
             return Usage(None, None) if host._provider_usage(request) else None
         if (pool := _pooled(setup, client, found, host)) is None:
             return _read_usage(
                 setup,
                 found,
-                found._usage_probe(tier),
+                found.usage_probe(),
                 container=host._client_context().container is not None,
             )
         return None if (name := accounts.best(pool)) is None else pool[name]

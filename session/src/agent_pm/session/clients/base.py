@@ -61,10 +61,7 @@ class Client:
     def _usage_executable(self, *, container: bool = False) -> str:
         return ""
 
-    def _usage_probe(self, tier: int | None) -> Launch | None:
-        return self.usage_probe()
-
-    def _provider_probe(self, tier: int | None) -> ProviderProbe | None:
+    def _provider_probe(self) -> ProviderProbe | None:
         return None
 
     def _accounts(self) -> frozenset[str] | None:

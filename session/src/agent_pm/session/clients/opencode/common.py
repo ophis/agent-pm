@@ -451,17 +451,17 @@ class OpenCodeCommon:
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
         return env
 
-    def usage_provider(self, tier: int | None) -> ProviderProbe | None:
-        provider = self.model(tier).partition("/")[0]
+    def usage_provider(self) -> ProviderProbe | None:
+        provider = self.model(None).partition("/")[0]
         return (
             None
             if provider == OLLAMA
             else ProviderProbe(provider, self.providers[provider]["base_url"])
         )
 
-    def probe(self, tier: int | None = None) -> Launch:
+    def probe(self) -> Launch:
         """On this machine, so the loopback, never the Host's address."""
-        request = self.usage_provider(tier)
+        request = self.usage_provider()
         args = (
             (str(self.port),)
             if request is None

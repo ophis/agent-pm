@@ -868,27 +868,17 @@ class UsageSession(HarnessSession):
 
 
 class OverlayTest(HarnessCase):
-    def test_usage_passes_the_resolved_tier_to_the_private_hook(self):
-        calls = []
-
-        class TierSession(UsageSession):
-            @classmethod
-            def _usage_for(cls, client, *, tier):
-                calls.append((client, tier))
-
-        HarnessDelegate.usage(
-            "dummy-tester",
-            overlays=({"roles": {"dummy-tester": {"client": "opencode", "tier": 3}}},),
-            session_cls=TierSession,
-        )
-        self.assertEqual(calls, [("opencode", 3)])
-
     def test_usage_reads_the_client_the_owner_overlays_resolve(self):
         UsageSession.clients = []
         overlays = ({"roles": {"dummy-tester": {"client": "claude"}}},)
         HarnessDelegate.usage("dummy-tester", session_cls=UsageSession)
         HarnessDelegate.usage("dummy-tester", overlays=overlays, session_cls=UsageSession)
-        self.assertEqual(UsageSession.clients, ["fake", "claude"])
+        HarnessDelegate.usage(
+            "dummy-tester",
+            overlays=({"roles": {"dummy-tester": {"client": "opencode", "tier": 3}}},),
+            session_cls=UsageSession,
+        )
+        self.assertEqual(UsageSession.clients, ["fake", "claude", "opencode"])
 
     def test_owner_overlays_shape_the_persisted_run(self):
         self.make()

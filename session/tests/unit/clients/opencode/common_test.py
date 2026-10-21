@@ -559,26 +559,33 @@ class CompactionTest(Case):
 
 
 class UsageTest(Case):
-    def test_usage_selects_the_provider_of_the_effective_tier(self):
-        client = OpenCodeClient(
-            {
-                **packaged_table(),
-                "model": "strata/default",
-                "tiers": {"1": "ollama/local", "2": "strata/remote"},
-                "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
-            }
-        )
-        self.assertIsNone(client._provider_probe(1))
-        for tier in (None, 2):
-            request = client._provider_probe(tier)
-            self.assertEqual(
-                (request.provider, request.base_url), ("strata", "https://strata.test/v1")
+    def test_usage_selects_only_the_default_models_provider(self):
+        for model, tier_model in (
+            ("strata/default", "ollama/local"),
+            ("ollama/local", "strata/remote"),
+        ):
+            client = OpenCodeClient(
+                {
+                    **packaged_table(),
+                    "model": model,
+                    "tiers": {"1": tier_model, "2": tier_model},
+                    "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
+                }
             )
-            self.assertEqual(
-                client._usage_probe(tier).argv[-3:],
-                ("--provider", "strata", "https://strata.test/v1"),
-            )
-        self.assertEqual(client._usage_probe(1).argv[-1], "11434")
+            with self.subTest(model=model), mock.patch.dict(os.environ, {"AGENT_PM_TIER": "1"}):
+                request = client._provider_probe()
+                if model.startswith("strata/"):
+                    assert request is not None
+                    self.assertEqual(
+                        (request.provider, request.base_url), ("strata", "https://strata.test/v1")
+                    )
+                    self.assertEqual(
+                        client.usage_probe().argv[-3:],
+                        ("--provider", "strata", "https://strata.test/v1"),
+                    )
+                else:
+                    self.assertIsNone(request)
+                    self.assertEqual(client.usage_probe().argv[-1], "11434")
         self.assertEqual(client.usage('{"available": true}'), Usage(None, None))
         for bad in ('{"available": false}', '{"available": 1}', '{"available": true, "key": "x"}'):
             self.assertIsNone(client.usage(bad))
