@@ -179,7 +179,7 @@ max = "max"
 #   docker            the docker CLI, an absolute path
 #   plugins           image-installed sources: autopilot or name@owner/repo; []: none (docs/docker-host.md › Plugins)
 #   github.app        the slug of the GitHub App whose installation tokens every Docker session gets, the one
-#                     `agent-pm-broker login github agent-pm-bot` saved (install.sh writes it); "": none
+#                     `agent-pm-broker login github agent-pm-bot` saved (scripts/install.sh writes it); "": none
 [hosts]
 default = "tmux"
 

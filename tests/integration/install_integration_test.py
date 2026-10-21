@@ -17,7 +17,7 @@ from agent_pm.orchestrator.trackers.local import board as local_board
 
 from tests.case import REPO, Case
 
-SCRIPT = Path(REPO, "install.sh")
+SCRIPT = Path(REPO, "scripts/install.sh")
 CLEANUP = Path(REPO, "scripts/install-cleanup.sh")
 FAKE_TOOLS = Path(REPO, "tests/integration/install_fakes.py")
 REAL = (
@@ -479,7 +479,7 @@ class InstallTest(Case):
     def test_usage_and_platform(self):
         result = self.run_install("--help", tty=False)
         self.assertEqual(result.code, 0)
-        self.assertIn("usage: install.sh [--ref <ref>]", result.stdout)
+        self.assertIn("usage: scripts/install.sh [--ref <ref>]", result.stdout)
         cases = (
             ["--bogus"],
             ["--ref"],
@@ -499,7 +499,7 @@ class InstallTest(Case):
         for args in cases:
             result = self.run_install(*args, tty=False)
             self.assertEqual(result.code, 2, args)
-            self.assertIn("install.sh: usage: install.sh [--ref <ref>]", result.stderr)
+            self.assertIn("install.sh: usage: scripts/install.sh [--ref <ref>]", result.stderr)
         tty = Tty()
         try:
             for flag in ("--password-stdin", "--opencode-key-stdin"):

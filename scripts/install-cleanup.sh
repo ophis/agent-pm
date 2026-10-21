@@ -1,9 +1,9 @@
 #!/bin/bash
-# Internal, for test machines only (not user docs): removes what install.sh added, as recorded in
+# Internal, for test machines only (not user docs): removes what scripts/install.sh added, as recorded in
 # ~/.agent-pm/install/added, and keeps what was there before. Lists it and asks first; --yes skips that.
 #   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install-cleanup.sh | bash
-# Its shared helpers are install.sh's, copied (install.sh stays one file for curl | bash);
-# tests/integration/install_integration_test.py checks they match. AGENT_PM_INSTALL_ROOT: as install.sh's.
+# Its shared helpers are scripts/install.sh's, copied (scripts/install.sh stays one file for curl | bash);
+# tests/integration/install_integration_test.py checks they match. AGENT_PM_INSTALL_ROOT: as scripts/install.sh's.
 set -euo pipefail
 
 me=install-cleanup.sh
@@ -460,7 +460,7 @@ config_file() {
   fi
 }
 
-# Puts back the OpenCode config install.sh's opencode plugin -g changed, from the copy it kept.
+# Puts back the OpenCode config scripts/install.sh's opencode plugin -g changed, from the copy it kept.
 opencode_configs() {
   local path backup
   step "OpenCode config"

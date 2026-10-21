@@ -13,7 +13,7 @@ from tests.case import REPO, Case
 
 
 def embedded(function):
-    text = Path(REPO, "install.sh").read_text()
+    text = Path(REPO, "scripts/install.sh").read_text()
     body = text.split(f"{function}() {{\n", 1)[1].split("\n}\n", 1)[0]
     return body.split("python3 -I -c '\n", 1)[1].split("' ", 1)[0]
 
@@ -36,7 +36,7 @@ class BoardContract(Case):
         self.assertIn("linear.manager_key", covered)
 
     def test_stage_snapshot_is_passed_to_board_helpers(self):
-        script = Path(REPO, "install.sh").read_text()
+        script = Path(REPO, "scripts/install.sh").read_text()
         self.assertEqual(script.count("$(stage_roles)"), 1)
         board = script.split("board_config() {\n", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("$(stage_roles)", board)
