@@ -10,7 +10,7 @@
 
 *これは翻訳です。正式な内容は英語版 README を参照してください。*
 
-Linear ボードからコーディングエージェント（Claude Code、Codex、ホストの Ollama モデルで動く OpenCode）を無人で動かします。各 Linear project が 1 つのプロダクトで、issue の assignee（role アカウント）がそのステージです。各 role は同時に最大 `max_runs` 件の issue を処理し、成果物をレビューのために戻します。承認すると次の role が引き継ぎます。
+Linear ボード、または Markdown の issue ファイルからなるローカルボードから、コーディングエージェント（Claude Code、Codex、ホストの Ollama モデルで動く OpenCode）を無人で動かします。Orchestrator は差し替え可能な Tracker インターフェースで issue を読み書きし、`[orchestrator] tracker` で `local`（デフォルト）か `linear` を選びます。workflow ファイルがステージと対応する role を定義します。各 role は同時に最大 `max_runs` 件の issue を処理し、成果物をレビューのために戻します。承認すると次の role が引き継ぎます。
 
 開発者向け：[`AGENTS.md`](../../AGENTS.md)。
 
@@ -18,23 +18,23 @@ Linear ボードからコーディングエージェント（Claude Code、Codex
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims ready issues| R & P & E
 ```
 
 ## レイヤー構成
 
-agent-pm はレイヤーで構成され、各レイヤーは 1 つの役割だけを担い、すぐ下のレイヤーだけを呼び出します。下の 2 つのレイヤー、Session と Delegate は単体で使える汎用の部品です。一番上は差し替えられ、Linear orchestrator の代わりに自分のワークフローを置けます。拡張するときは、新しいエージェント client を Session に、新しい role と task を Delegate に追加します。
+agent-pm はレイヤーで構成され、各レイヤーは 1 つの役割だけを担い、すぐ下のレイヤーだけを呼び出します。下の 2 つのレイヤー、Session と Delegate は単体で使える汎用の部品で、その上に独自のオーケストレーションも構築できます。Orchestrator では workflow ファイルでステージを変更し、Tracker インターフェースを実装して別のボードを接続できます。拡張するときは、新しいエージェント client を Session に、新しい role と task を Delegate に追加します。
 
-![agent-pm のレイヤー（上から下へ）：Manager（ユーザーインターフェース）、Linear orchestrator（オーケストレーション）、Delegate（role レイヤー）、Session（client アダプター）](../images/layers.svg)
+![agent-pm のレイヤー（上から下へ）：Manager（ユーザーインターフェース）、Orchestrator（オーケストレーション、Linear とローカルボードの tracker）、Delegate（role レイヤー）、Session（client アダプター）](../images/layers.svg)
 
 | レイヤー | 役割 | 入口 |
 |---|---|---|
 | Manager | 下位レイヤーのドライバー。対話するエージェントで、worker、role run、ボード run を起動し、監視して報告します。 | [デモ](#デモ1-つの-manager複数の-worker) |
-| Linear orchestrator | Linear ボードから role を動かします。私自身のワークフローです。 | [Linear ボード](../board.md) |
+| Orchestrator | workflow ファイルに従って role を動かし、差し替え可能な tracker で Linear またはローカルの Markdown ボードに接続します。 | [ボード](../board.md) |
 | Delegate（コア） | session を通じて role に 1 つの task を実行させ、チェック済みの結果を返します。単体でも使える Claude Code / Codex プラグインです。 | [インストール](#インストール) |
 | Session | tmux または Docker コンテナでコーディングエージェント（Claude Code、Codex、OpenCode）を起動・監視・再開します。どの client でも同じ方法です。 | [Sessions](../sessions.md) |
 
-Linear orchestrator は、エージェントがどう働くべきかについての私の考え方です（調査、PRD、ビルドの順に進み、各ステージの間に人間のレビューを挟む）。role と task 自体も自由に編集できます（[role と task のカスタマイズ](../customizing-roles-and-tasks.md)）。
+同梱の workflow は、エージェントがどう働くべきかについての私の考え方です（調査、PRD、ビルドの順に進み、各ステージの間に人間のレビューを挟む）。`[orchestrator] workflow` で別の workflow ファイルを選び、空なら同梱のものを使います。role と task 自体も自由に編集できます（[role と task のカスタマイズ](../customizing-roles-and-tasks.md)）。
 
 ## agent-pm を使う理由
 
@@ -56,7 +56,7 @@ Linear orchestrator は、エージェントがどう働くべきかについて
 | 4. Orchestrate | loop engineering | 複数の agent：fan-out、planner と verifier、ルーティング、並行数と quota の上限。 |
 | 5. Master | environment engineering | ガードレールと agent-oriented な環境：人間ではなく agent のために作ったツール、チェック、検証で、いちばん楽な道が正しい道になるようにする（Lauren Tan の考え方）。 |
 
-まだ level 3 に届いていない？[autopilot](https://github.com/ophis/claude-autopilot) をどうぞ。少なくともそこまでは連れて行ってくれます。agent-pm の各層（冒頭の表）はさらに上へ登ります。Session は agent の対話を回し、手を動かせる host を与えます（level 1–2）。Delegate は 1 つの role を 1 つの task でチェック付きの workflow として回します（3）。Linear orchestrator とその上の manager は複数の agent を調整します（4 と 5 の間）。そこにあなたが上に立ち、環境、境界、関門を決めれば Master です。ただし agent-pm の検証はまだ少し手薄です。目標は level 5、そしてその先です。
+まだ level 3 に届いていない？[autopilot](https://github.com/ophis/claude-autopilot) をどうぞ。少なくともそこまでは連れて行ってくれます。agent-pm の各層（冒頭の表）はさらに上へ登ります。Session は agent の対話を回し、手を動かせる host を与えます（level 1–2）。Delegate は 1 つの role を 1 つの task でチェック付きの workflow として回します（3）。Orchestrator とその上の manager は複数の agent を調整します（4 と 5 の間）。そこにあなたが上に立ち、環境、境界、関門を決めれば Master です。ただし agent-pm の検証はまだ少し手薄です。目標は level 5、そしてその先です。
 
 ## デモ：1 つの manager、複数の worker
 
@@ -105,7 +105,7 @@ agent-pm が起動する session があなたの設定をどう読み込むか�
 1. プラグインを[インストール](#インストール)します。
 2. 新しい Claude Code session で確認します：`/agent-pm:act-as dummy-tester:echo hello` が `hello` を返します。
 3. role を実行します：`/agent-pm:act-as researcher <question>`。ローカル設定がなければ、レポートは `~/.agent-pm/adhoc/<date>-researcher-<name>/agent/prompt.md` に保存されます。公開したい場合は role の destination を設定してください（[role と task のカスタマイズ](../customizing-roles-and-tasks.md#change-a-roles-run-settings)）。
-4. Linear から role を動かすには：[Linear ボード](../board.md)。
+4. Linear またはローカルの Markdown ボードから role を動かすには：[ボード](../board.md)。
 
 ## role と task のカスタマイズ
 
@@ -122,7 +122,7 @@ agent-pm が起動する session があなたの設定をどう読み込むか�
 | ページ | 内容 |
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | 実行設定、team ディレクトリ、role と task のファイル、チェック |
-| [Linear board](../board.md) | セットアップ、issue の状態と task ラベル、router の運用、Agent ラベル（issue ごとの client） |
+| [Board](../board.md) | セットアップ、issue の状態と task ラベル、router の運用、Agent ラベル（issue ごとの client）、ローカルボード（`tracker`、`AGENT_PM_BOARD_DIR`、構成、ファイル形式） |
 | [Sessions and client policy](../sessions.md) | session 設定、`agent-pm-session`、role run の client フラグ、OpenCode の session |
 | [State root](../state-root.md) | `~/.agent-pm/` の構成、各エントリを何が掃除するか、削除してよいもの |
 | [Upgrading](../upgrading.md) | v0.6.20 以降からのアップグレード手順 |

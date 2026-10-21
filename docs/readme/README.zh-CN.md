@@ -10,7 +10,7 @@
 
 *本文为译文，以英文 README 为准。*
 
-从 Linear 看板无人值守地运行编码 agent（Claude Code、Codex，以及用宿主 Ollama 模型的 OpenCode）。每个 Linear project 是一个产品，issue 的 assignee（一个 role 账号）就是它所处的阶段。每个 role 同时最多处理 `max_runs` 个 issue，并把产出交回给你审阅。你批准后，下一个 role 接手。
+从 Linear 看板或由 Markdown issue 文件组成的本地看板无人值守地运行编码 agent（Claude Code、Codex，以及用宿主 Ollama 模型的 OpenCode）。Orchestrator 通过可替换的 Tracker 接口读写 issue；`[orchestrator] tracker` 选择 `local`（默认）或 `linear`。workflow 文件定义阶段和对应的 role。每个 role 同时最多处理 `max_runs` 个 issue，并把产出交回给你审阅。你批准后，下一个 role 接手。
 
 开发者：[`AGENTS.md`](../../AGENTS.md)。
 
@@ -18,23 +18,23 @@
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims ready issues| R & P & E
 ```
 
 ## 分层架构
 
-agent-pm 是分层构建的：每层只做一件事，只调用它下面的一层。底下两层 Session 和 Delegate 是通用的构建块，可以单独拿去用；最上层也可以换掉，用你自己的工作流替代 Linear orchestrator。要扩展，新的 agent client 接在 Session，新的 role 和 task 加在 Delegate。
+agent-pm 是分层构建的：每层只做一件事，只调用它下面的一层。底下两层 Session 和 Delegate 是通用的构建块，可以单独拿去用，也可以在上面构建自己的编排。在 Orchestrator 中，修改 workflow 文件即可定义阶段，实现 Tracker 接口即可接入其他看板。要扩展，新的 agent client 接在 Session，新的 role 和 task 加在 Delegate。
 
-![agent-pm 的分层，从上到下：Manager（用户界面）、Linear orchestrator（编排）、Delegate（role 层）、Session（client 适配层）](../images/layers.svg)
+![agent-pm 的分层，从上到下：Manager（用户界面）、Orchestrator（编排；Linear 和本地看板 tracker）、Delegate（role 层）、Session（client 适配层）](../images/layers.svg)
 
 | 层 | 做什么 | 从这里开始 |
 |---|---|---|
 | Manager | 下面各层的驱动：一个你与之对话的 agent，它启动 worker、role run 和看板 run，监视它们并向你汇报。 | [演示](#演示一个-manager多个-worker) |
-| Linear orchestrator | 从 Linear 看板运行各 role：我自己的工作流。 | [Linear 看板](../board.md) |
+| Orchestrator | 按 workflow 文件运行各 role，通过可替换的 tracker 接入 Linear 或本地 Markdown 看板。 | [看板](../board.md) |
 | Delegate（核心） | 通过一个 session 让某个 role 执行一个 task，并返回经过检查的结果。是一个可单独使用的 Claude Code 和 Codex 插件。 | [安装](#安装) |
 | Session | 在 tmux 或 Docker 容器中启动、监视和恢复编码 agent（Claude Code、Codex、OpenCode），对每个 client 方式相同。 | [Sessions](../sessions.md) |
 
-Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再写 PRD，再构建，每个阶段之间都有人工审阅）。role 和 task 本身也都由你编辑（[自定义 role 和 task](../customizing-roles-and-tasks.md)）。
+内置 workflow 体现了我对 agent 应如何工作的理念（先研究，再写 PRD，再构建，每个阶段之间都有人工审阅）。`[orchestrator] workflow` 选择其他 workflow 文件；空值使用内置文件。role 和 task 本身也都由你编辑（[自定义 role 和 task](../customizing-roles-and-tasks.md)）。
 
 ## 为什么用 agent-pm
 
@@ -56,7 +56,7 @@ Linear orchestrator 是我对 agent 应如何工作的理念（先研究，再�
 | 4. Orchestrate | loop engineering | 多个 agent：fan-out、planner 和 verifier、路由、并发和配额上限。 |
 | 5. Master | environment engineering | 护栏，加上 agent-oriented 的环境：工具、检查和验证都为 agent 而不是为人设计，让最省事的路就是对的路（Lauren Tan 的观点）。 |
 
-还没到 level 3？试试 [autopilot](https://github.com/ophis/claude-autopilot)：至少能把你带到那儿。agent-pm 的各层（见开头的表格）爬得更高：Session 跑 agent 的对话并给它一个能动手的 host（level 1–2），Delegate 把一个 role 在一个 task 上跑成带检查的 workflow（3），Linear orchestrator 加上其上的 manager 协调多个 agent（4 和 5 之间）。再加上你在最上面设定环境、边界和关卡，就是 Master，只是 agent-pm 的验证还差一点。目标是 level 5，乃至更高。
+还没到 level 3？试试 [autopilot](https://github.com/ophis/claude-autopilot)：至少能把你带到那儿。agent-pm 的各层（见开头的表格）爬得更高：Session 跑 agent 的对话并给它一个能动手的 host（level 1–2），Delegate 把一个 role 在一个 task 上跑成带检查的 workflow（3），Orchestrator 加上其上的 manager 协调多个 agent（4 和 5 之间）。再加上你在最上面设定环境、边界和关卡，就是 Master，只是 agent-pm 的验证还差一点。目标是 level 5，乃至更高。
 
 ## 演示：一个 manager，多个 worker
 
@@ -105,7 +105,7 @@ agent-pm 启动的 session 如何加载你的设置，以及为什么有些命�
 1. [安装](#安装)插件。
 2. 在新的 Claude Code session 中检查：`/agent-pm:act-as dummy-tester:echo hello` 会回显 `hello`。
 3. 运行一个 role：`/agent-pm:act-as researcher <question>`。没有本地配置时，报告保存在 `~/.agent-pm/adhoc/<date>-researcher-<name>/agent/prompt.md`；若要发布，请设置该 role 的 destination（[自定义 role 和 task](../customizing-roles-and-tasks.md#change-a-roles-run-settings)）。
-4. 从 Linear 运行各 role：[Linear 看板](../board.md)。
+4. 从 Linear 或本地 Markdown 看板运行各 role：[看板](../board.md)。
 
 ## 自定义 role 和 task
 
@@ -122,7 +122,7 @@ agent-pm 启动的 session 如何加载你的设置，以及为什么有些命�
 | 页面 | 内容 |
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | 运行设置、team 目录、role 和 task 文件、检查 |
-| [Linear board](../board.md) | 设置、issue 状态和 task 标签、运营 router、Agent 标签（每个 issue 的 client） |
+| [Board](../board.md) | 设置、issue 状态和 task 标签、运营 router、Agent 标签（每个 issue 的 client）、本地看板（`tracker`、`AGENT_PM_BOARD_DIR`、布局、文件格式） |
 | [Sessions and client policy](../sessions.md) | session 设置、`agent-pm-session`、role run 的 client 参数、OpenCode session |
 | [State root](../state-root.md) | `~/.agent-pm/` 结构、每项由谁清理、哪些可以删除 |
 | [Upgrading](../upgrading.md) | 从 v0.6.20 起的升级步骤 |

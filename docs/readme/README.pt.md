@@ -10,7 +10,7 @@
 
 *Esta é uma tradução; a versão de referência é o README em inglês.*
 
-Executa agentes de programação (Claude Code, Codex e OpenCode com os modelos Ollama do host) sem supervisão a partir de um quadro do Linear. Cada project do Linear é um produto, e o assignee de uma issue (uma conta de role) é a sua etapa. Cada role trabalha em até `max_runs` issues ao mesmo tempo e devolve o resultado para você revisar. Depois que você aprova, o próximo role assume.
+Executa agentes de programação (Claude Code, Codex e OpenCode com os modelos Ollama do host) sem supervisão a partir de um quadro do Linear ou de um quadro local de arquivos Markdown de issues. Orchestrator lê e escreve issues por uma interface Tracker substituível; `[orchestrator] tracker` seleciona `local` (padrão) ou `linear`. Um arquivo workflow define as etapas e seus roles. Cada role trabalha em até `max_runs` issues ao mesmo tempo e devolve o resultado para você revisar. Depois que você aprova, o próximo role assume.
 
 Desenvolvedores: [`AGENTS.md`](../../AGENTS.md).
 
@@ -18,23 +18,23 @@ Desenvolvedores: [`AGENTS.md`](../../AGENTS.md).
 flowchart LR
     R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[agent-pm-orchestrator router] -.->|claims Todo issues| R & P & E
+    T[agent-pm-orchestrator router] -.->|claims ready issues| R & P & E
 ```
 
 ## Arquitetura em camadas
 
-O agent-pm é construído em camadas: cada uma faz um só trabalho e só chama a de baixo. As duas camadas de baixo, Session e Delegate, são blocos genéricos que você pode usar sozinhos, e a de cima pode ser trocada: o seu próprio fluxo de trabalho pode substituir o Linear orchestrator. Para estendê-lo, um novo client de agente se conecta em Session, e novos roles e tasks entram em Delegate.
+O agent-pm é construído em camadas: cada uma faz um só trabalho e só chama a de baixo. As duas camadas de baixo, Session e Delegate, são blocos genéricos que você pode usar sozinhos ou como base da sua própria orquestração. No Orchestrator, altere o arquivo workflow para definir as etapas ou implemente a interface Tracker para conectar outro quadro. Para estendê-lo, um novo client de agente se conecta em Session, e novos roles e tasks entram em Delegate.
 
-![Camadas do agent-pm, de cima para baixo: Manager (a interface de usuário), Linear orchestrator (orquestração), Delegate (a camada de roles), Session (o adaptador de clients)](../images/layers.svg)
+![Camadas do agent-pm, de cima para baixo: Manager (a interface de usuário), Orchestrator (orquestração; trackers Linear e local), Delegate (a camada de roles), Session (o adaptador de clients)](../images/layers.svg)
 
 | Camada | O que faz | Comece em |
 |---|---|---|
 | Manager | Um condutor para as camadas abaixo: um agente com quem você conversa, que lança workers, role runs e runs do quadro, acompanha-os e reporta. | [Demo](#demo-um-manager-vários-workers) |
-| Linear orchestrator | Executa os roles a partir de um quadro do Linear: o meu próprio fluxo de trabalho. | [Quadro do Linear](../board.md) |
+| Orchestrator | Executa os roles conforme um arquivo workflow, com trackers substituíveis: Linear ou um quadro local de Markdown. | [Quadros](../board.md) |
 | Delegate (núcleo) | Executa um role numa task por meio de uma session e devolve um resultado verificado. Um plugin do Claude Code e do Codex que você pode usar sozinho. | [Instalação](#instalação) |
 | Session | Inicia, acompanha e retoma um agente de programação (Claude Code, Codex, OpenCode) no tmux ou num contêiner Docker, da mesma forma para todo client. | [Sessions](../sessions.md) |
 
-O Linear orchestrator é a minha filosofia de como os agentes devem trabalhar (pesquisa, depois um PRD, depois um build, com revisão humana entre cada etapa). Os roles e as tasks também são seus para editar ([Personalizar roles e tasks](../customizing-roles-and-tasks.md)).
+O workflow incluído reflete a minha filosofia de como os agentes devem trabalhar (pesquisa, depois um PRD, depois um build, com revisão humana entre cada etapa). `[orchestrator] workflow` seleciona outro arquivo workflow; um valor vazio usa o incluído. Os roles e as tasks também são seus para editar ([Personalizar roles e tasks](../customizing-roles-and-tasks.md)).
 
 ## Por que agent-pm
 
@@ -56,7 +56,7 @@ Trabalhar com agents de programação é uma escada: cada level soma uma discipl
 | 4. Orchestrate | loop engineering | Muitos agents: fan-out, planner e verifier, roteamento, limites de concorrência e de cota. |
 | 5. Master | environment engineering | Guardrails e um ambiente agent-oriented: ferramentas, checks e verificação feitos para agents, não para humanos, para que o caminho mais fácil seja o certo (uma ideia de Lauren Tan). |
 
-Ainda não chegou ao level 3? Experimente o [autopilot](https://github.com/ophis/claude-autopilot): pelo menos até lá ele te leva. As camadas do agent-pm (a tabela do início) sobem mais: Session conduz a conversa do agent e lhe dá um host onde agir (levels 1–2), Delegate executa um role numa task como um workflow verificado (3), e o Linear orchestrator, com o manager por cima, coordena muitos agents (entre 4 e 5). Coloque você no topo, definindo o ambiente, os limites e os portões, e isso é Master, embora a verificação do agent-pm ainda esteja um pouco fraca. A meta é o level 5 e além.
+Ainda não chegou ao level 3? Experimente o [autopilot](https://github.com/ophis/claude-autopilot): pelo menos até lá ele te leva. As camadas do agent-pm (a tabela do início) sobem mais: Session conduz a conversa do agent e lhe dá um host onde agir (levels 1–2), Delegate executa um role numa task como um workflow verificado (3), e o Orchestrator, com o manager por cima, coordena muitos agents (entre 4 e 5). Coloque você no topo, definindo o ambiente, os limites e os portões, e isso é Master, embora a verificação do agent-pm ainda esteja um pouco fraca. A meta é o level 5 e além.
 
 ## Demo: um manager, vários workers
 
@@ -105,7 +105,7 @@ Como as sessions que o agent-pm inicia carregam as suas configurações, e por q
 1. [Instale](#instalação) o plugin.
 2. Numa nova session do Claude Code, verifique: `/agent-pm:act-as dummy-tester:echo hello` devolve `hello`.
 3. Execute um role: `/agent-pm:act-as researcher <question>`. Sem configuração local, o relatório é salvo em `~/.agent-pm/adhoc/<date>-researcher-<name>/agent/prompt.md`; para publicá-lo, defina o destination do role ([Personalizar roles e tasks](../customizing-roles-and-tasks.md#change-a-roles-run-settings)).
-4. Para executar roles a partir do Linear: [Quadro do Linear](../board.md).
+4. Para executar roles a partir de um quadro do Linear ou de um quadro local de Markdown: [Quadros](../board.md).
 
 ## Personalizar roles e tasks
 
@@ -122,7 +122,7 @@ Estas páginas estão em inglês.
 | Página | Cobre |
 |---|---|
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | configurações de run, diretórios de team, arquivos de role e task, verificações |
-| [Linear board](../board.md) | configuração, estados de issue e labels de task, operação do router, labels Agent (client por issue) |
+| [Board](../board.md) | configuração, estados de issue e labels de task, operação do router, labels Agent (client por issue), quadro local (`tracker`, `AGENT_PM_BOARD_DIR`, estrutura, formato de arquivo) |
 | [Sessions and client policy](../sessions.md) | configurações de session, `agent-pm-session`, flags de client dos role runs, sessions do OpenCode |
 | [State root](../state-root.md) | estrutura de `~/.agent-pm/`, o que limpa cada entrada, o que você pode apagar |
 | [Upgrading](../upgrading.md) | passos de atualização a partir da v0.6.20 |
