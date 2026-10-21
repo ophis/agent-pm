@@ -487,6 +487,11 @@ class SelectionTest(Case):
         plain = self.common.environment(self.spec, LOCAL_CONTEXT)
         self.assertNotIn("plugin", json.loads(plain["OPENCODE_CONFIG_CONTENT"]))
 
+    def test_container_loads_image_skills_and_host_has_no_image_path(self):
+        container = self.common.inline(self.spec, DOCKER_CONTEXT)
+        self.assertEqual(container["skills"], {"paths": ["/opt/agent-pm/plugins"]})
+        self.assertNotIn("skills", self.common.inline(self.spec, LOCAL_CONTEXT))
+
 
 class CompactionTest(Case):
     def setUp(self):

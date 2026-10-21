@@ -61,9 +61,11 @@ After a `--plugin` build ([Plugins](docker-host.md#plugins)).
 | Check | Expect |
 |---|---|
 | `"$B" build --agent-pm "$PKG" --plugin autopilot`, then `docker run --rm "$I" sh -c 'echo "$CLAUDE_CODE_PLUGIN_DIRS"; stat -c %U /opt/agent-pm/plugins/autopilot; touch /opt/agent-pm/plugins/autopilot/x'` | `/opt/agent-pm/plugins/autopilot`, `root`, `Permission denied` |
-| `"$B" build --agent-pm "$PKG" --plugin no-such-plugin` | exit 8, `build_failed`, `Plugin no-such-plugin is not installed: …`; no Docker build |
-| `claude plugin update autopilot@<marketplace>`, the same build | `"rebuilt":true`, a new key |
+| `"$B" build --agent-pm "$PKG" --plugin autopilot --max-age 0` on a host without Claude plugin records | `"rebuilt":true`; both clients' native installation commands run; logs show each installed version and marketplace commit |
+| `"$B" build --agent-pm "$PKG" --plugin no-such-plugin` | exit 2, usage: use `autopilot` or `name@owner/repo`; no Docker build |
+| update a host plugin, then repeat the build without forcing refresh | host changes do not change the image key |
 | `/autopilot:build` in a container's Claude | the skill starts |
+| OpenCode in the container, `opencode debug skill` with `skills.paths` set to `/opt/agent-pm/plugins` | `light-build` is discovered from the image's original skill file |
 
 ## Start
 

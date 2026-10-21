@@ -83,7 +83,7 @@ Rien de tout cela n'est vérifié. S'il en manque un, le run de l'agent échoue.
 | Prérequis | Pour |
 |---|---|
 | CLI `claude`, Python 3.11+ | chaque run d'agent |
-| le plugin [`autopilot`](https://github.com/ophis/claude-autopilot), dans chaque client : Claude Code `/plugin marketplace add ophis/claude-autopilot`, puis `/plugin install autopilot@claude-autopilot` ; Codex `codex plugin marketplace add ophis/claude-autopilot`, puis `codex plugin add autopilot@claude-autopilot` | les build tasks de l'engineer (`/autopilot:build`, `/autopilot:light-build`) et la revue du PRD par le PM (`/autopilot:review`). Inutile sinon. |
+| le plugin [`autopilot`](https://github.com/ophis/claude-autopilot), pour les workers sur le host : Claude Code `/plugin marketplace add ophis/claude-autopilot`, puis `/plugin install autopilot@claude-autopilot` ; Codex `codex plugin marketplace add ophis/claude-autopilot`, puis `codex plugin add autopilot@claude-autopilot`. Les workers Docker l’installent dans l’image ([plugins](../docker-host.md#plugins)). | les build tasks de l'engineer (`/autopilot:build`, `/autopilot:light-build`) et la revue du PRD par le PM (`/autopilot:review`). Inutile sinon. |
 | tmux 3.3+ | les tui runs sur le Host `tmux` |
 | [Ollama](https://ollama.com) sur `127.0.0.1` seulement, contexte d'au moins 65536, modèle du tier téléchargé ; sur `tmux` aussi OpenCode 1.x (`npm install -g opencode-ai@1.19.3`) | OpenCode seulement ([Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)) |
 | `git`, `gh` connecté | coder (checkouts, pull requests) et destinations GitHub. Inutile sinon. |

@@ -144,7 +144,9 @@ VOLUME_FORMAT = '{{.Name}}\t{{.Label "' + WORKSPACE_LABEL + '"}}'
 STATE_MAX = 1 << 20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 NO_SESSION = re.compile(r"can't find session.*|no server running on /.*", re.S)
-PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?")
+PLUGIN = re.compile(
+    r"(?:autopilot|[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99})"
+)
 STOPS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 
 
@@ -540,8 +542,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path; plugins, the account's installed
-    plugins its image holds (none when absent); and github.app, the GitHub App whose tokens every
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path; plugins, repository sources
+    installed in its image (none when absent); and github.app, the GitHub App whose tokens every
     session gets ("" or no table: none). Terminal and piped sessions run here, each on its
     workspace volume.
     """

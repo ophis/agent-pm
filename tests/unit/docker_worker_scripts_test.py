@@ -76,7 +76,8 @@ class CodexBootstrap(Case):
         secrets.start()
         self.addCleanup(secrets.stop)
         self.plugins = Path(self.home, "image-plugins")
-        (self.plugins / "inline").mkdir(parents=True)
+        (self.plugins / "plugins/cache").mkdir(parents=True)
+        (self.plugins / "config.toml").write_text("")
 
     def test_codex_home_has_file_auth_trusted_project_and_only_a_secret_link(self):
         import tomllib
@@ -94,20 +95,26 @@ class CodexBootstrap(Case):
         import tomllib
 
         for name in ("beta", "autopilot"):
-            (self.plugins / "inline" / name / "local").mkdir(parents=True)
+            (self.plugins / "plugins/cache/claude-autopilot" / name / "1.0.0").mkdir(parents=True)
+        (self.plugins / "config.toml").write_text(
+            '[plugins."autopilot@claude-autopilot"]\nenabled = true\n'
+            '[plugins."beta@claude-autopilot"]\nenabled = true\n'
+            '[marketplaces.private]\nsource = "ignored"\n'
+        )
         self.code["bootstrap_codex"](self.target, "/work/project", self.secrets, self.plugins)
         config = tomllib.loads((self.target / "config.toml").read_text())
         self.assertEqual(
             config["plugins"],
             {
-                "autopilot@inline": {"enabled": True},
-                "beta@inline": {"enabled": True},
+                "autopilot@claude-autopilot": {"enabled": True},
+                "beta@claude-autopilot": {"enabled": True},
             },
         )
         cache = self.target / "plugins/cache"
         self.assertTrue(cache.is_symlink())
-        self.assertEqual(cache.readlink(), self.plugins)
-        self.assertFalse((cache / "inline/autopilot/local").is_symlink())
+        self.assertEqual(cache.readlink(), self.plugins / "plugins/cache")
+        self.assertFalse((cache / "claude-autopilot/autopilot/1.0.0").is_symlink())
+        self.assertNotIn("marketplaces", config)
         self.assertFalse((self.target / "sessions").exists())
 
     def carrier(self, access="one", account="account"):

@@ -5,6 +5,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 TEMPLATES = Path("/opt/agent-pm/templates")
@@ -47,9 +48,9 @@ def install_hook(stub, destination, owner=0, top=Path("/")):
 
 def bootstrap_codex(directory, cwd, secrets=None, plugins=Path("/opt/agent-pm/codex-plugins")):
     secrets = SECRETS if secrets is None else secrets
+    native = tomllib.loads((plugins / "config.toml").read_text()).get("plugins", {})
     enabled = "".join(
-        f"[plugins.{json.dumps(plugin.name + '@inline')}]\nenabled = true\n"
-        for plugin in sorted((plugins / "inline").iterdir())
+        f"[plugins.{json.dumps(identifier)}]\nenabled = true\n" for identifier in sorted(native)
     )
     (directory / "config.toml").write_text(
         'cli_auth_credentials_store = "file"\n'
@@ -58,7 +59,7 @@ def bootstrap_codex(directory, cwd, secrets=None, plugins=Path("/opt/agent-pm/co
         f'[projects.{json.dumps(cwd)}]\ntrust_level = "trusted"\n' + enabled
     )
     (directory / "plugins").mkdir(mode=0o700)
-    (directory / "plugins/cache").symlink_to(plugins, target_is_directory=True)
+    (directory / "plugins/cache").symlink_to(plugins / "plugins/cache", target_is_directory=True)
     (directory / "auth.json").symlink_to(secrets / "codex/auth.json")
 
 

@@ -306,7 +306,7 @@ class Broker:
     def build(
         self, package: str, *, plugins: Sequence[str] = (), max_age: int | None = None
     ) -> tuple[str, str]:
-        """`package`'s image tag and digest, the image holding the account's installed `plugins`;
+        """`package`'s image tag and digest, with `plugins` installed from repository sources;
         `max_age`: rebuild an image built at least that many seconds ago.
         """
         named = [arg for name in plugins for arg in ("--plugin", name)]

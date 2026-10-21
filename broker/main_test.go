@@ -341,7 +341,7 @@ func TestBuildPlugins(t *testing.T) {
 	}{
 		{nil, nil, -1},
 		{[]string{"--plugin", "autopilot"}, []string{"autopilot"}, -1},
-		{[]string{"--plugin", "b", "--plugin", "a@m.x", "--max-age", "60"}, []string{"b", "a@m.x"}, time.Minute},
+		{[]string{"--plugin", "b@o/r", "--plugin", "a@o/m.x", "--max-age", "60"}, []string{"b@o/r", "a@o/m.x"}, time.Minute},
 	} {
 		var plugins []string
 		maxAge := time.Duration(-2)

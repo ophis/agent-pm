@@ -735,8 +735,6 @@ elif fresh or (get(data, "session.hosts", "default") or "tmux") != default:
     wanted.append(("session.hosts", "default", default))
 if not scoped and client and (get(data, "delegate", "client") or "claude") != client:
     wanted.append(("delegate", "client", client))
-if not scoped and harness and client:  # Docker without Claude Code: no Claude Code install record to stage plugins from
-    want("session.hosts.docker", "plugins", [])
 if not scoped and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
     wanted.append(("delegate.delegates", "harness_host", harness))
 if name and not scoped:
@@ -971,7 +969,7 @@ sys.exit(1 if not found else 0 if found[0].get("enabled") else 2)' "$1"
 
 # A re-pointed marketplace (rc 2) existed before, and so may its plugin: neither is recorded.
 claude_plugins() {
-  local source=ophis/agent-pm rc id repointed=
+  local source=ophis/agent-pm rc id repointed= ids=(agent-pm@agent-pm)
   [ "$ref" = main ] || source="ophis/agent-pm#$ref"
   step "Claude Code plugins"
   if ! has claude; then
@@ -992,15 +990,18 @@ claude_plugins() {
     if [ "$rc" = 1 ]; then ledger_add claude-marketplace agent-pm; fi
     claude plugin marketplace add "$source" </dev/null >&2
   fi
-  rc=0
-  claude_market claude-autopilot ophis/claude-autopilot '*' || rc=$?
-  if [ "$rc" = 1 ]; then
-    ledger_add claude-marketplace claude-autopilot
-    claude plugin marketplace add ophis/claude-autopilot </dev/null >&2
-  else
-    skip "marketplace claude-autopilot"
+  if [ "$docker" != yes ]; then
+    rc=0
+    claude_market claude-autopilot ophis/claude-autopilot '*' || rc=$?
+    if [ "$rc" = 1 ]; then
+      ledger_add claude-marketplace claude-autopilot
+      claude plugin marketplace add ophis/claude-autopilot </dev/null >&2
+    else
+      skip "marketplace claude-autopilot"
+    fi
+    ids+=(autopilot@claude-autopilot)
   fi
-  for id in agent-pm@agent-pm autopilot@claude-autopilot; do
+  for id in "${ids[@]}"; do
     rc=0
     claude_plugin "$id" || rc=$?
     case $rc in
@@ -1015,7 +1016,7 @@ claude_plugins() {
 }
 
 codex_plugins() {
-  local rc id repointed=
+  local rc id repointed= ids=(agent-pm@agent-pm)
   step "Codex plugins"
   if ! has codex; then
     skip "Codex not chosen"
@@ -1039,15 +1040,18 @@ codex_plugins() {
       codex plugin marketplace add ophis/agent-pm --ref "$ref" </dev/null >&2
     fi
   fi
-  rc=0
-  codex_market claude-autopilot https://github.com/ophis/claude-autopilot.git '*' || rc=$?
-  if [ "$rc" = 1 ]; then
-    ledger_add codex-marketplace claude-autopilot
-    codex plugin marketplace add ophis/claude-autopilot </dev/null >&2
-  else
-    skip "marketplace claude-autopilot"
+  if [ "$docker" != yes ]; then
+    rc=0
+    codex_market claude-autopilot https://github.com/ophis/claude-autopilot.git '*' || rc=$?
+    if [ "$rc" = 1 ]; then
+      ledger_add codex-marketplace claude-autopilot
+      codex plugin marketplace add ophis/claude-autopilot </dev/null >&2
+    else
+      skip "marketplace claude-autopilot"
+    fi
+    ids+=(autopilot@claude-autopilot)
   fi
-  for id in agent-pm@agent-pm autopilot@claude-autopilot; do
+  for id in "${ids[@]}"; do
     rc=0
     codex_plugin "$id" || rc=$?
     case $rc in

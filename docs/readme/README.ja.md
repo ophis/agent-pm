@@ -83,7 +83,7 @@ Linear orchestrator は、エージェントがどう働くべきかについて
 | 必要なもの | 用途 |
 |---|---|
 | `claude` CLI、Python 3.11+ | すべてのエージェント run |
-| [`autopilot`](https://github.com/ophis/claude-autopilot) プラグイン（各 client に）：Claude Code は `/plugin marketplace add ophis/claude-autopilot`、続けて `/plugin install autopilot@claude-autopilot`。Codex は `codex plugin marketplace add ophis/claude-autopilot`、続けて `codex plugin add autopilot@claude-autopilot` | engineer の build task（`/autopilot:build`、`/autopilot:light-build`）と PM の PRD レビュー（`/autopilot:review`）。それ以外では不要。 |
+| [`autopilot`](https://github.com/ophis/claude-autopilot) プラグイン（host worker の client に）：Claude Code は `/plugin marketplace add ophis/claude-autopilot`、続けて `/plugin install autopilot@claude-autopilot`。Codex は `codex plugin marketplace add ophis/claude-autopilot`、続けて `codex plugin add autopilot@claude-autopilot`. Docker worker はイメージ内で個別にインストールします（[プラグイン](../docker-host.md#plugins)）。 | engineer の build task（`/autopilot:build`、`/autopilot:light-build`）と PM の PRD レビュー（`/autopilot:review`）。それ以外では不要。 |
 | tmux 3.3+ | `tmux` Host 上の tui run |
 | `127.0.0.1` だけで待ち受け、コンテキスト長 65536 以上、tier のモデルを pull 済みの [Ollama](https://ollama.com)。`tmux` ではさらに OpenCode 1.x（`npm install -g opencode-ai@1.19.3`） | OpenCode のみ（[Docker host › OpenCode](../docker-host.md#opencode), [OpenCode sessions](../sessions.md#opencode-sessions)） |
 | `git`、ログイン済みの `gh` | コーディング（checkout、pull request）と GitHub の出力先。それ以外では不要。 |

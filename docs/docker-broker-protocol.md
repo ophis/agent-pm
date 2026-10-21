@@ -57,9 +57,9 @@ asks GitHub the slug of the key's App (`GET /app`, the App JWT), looks up `<slug
 credential) and saves both ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
-`build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
-the account installed at user scope, `name` or `name@marketplace` (`#/$defs/plugin`), which the
-image holds ([Plugins](docker-host.md#plugins)). The schema checks each token; their pairing and
+`build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is `autopilot` or
+`name@owner/repo` (`#/$defs/plugin`), installed independently by each client inside the image
+([Plugins](docker-host.md#plugins)). The schema checks each token; their pairing and
 order, which JSON Schema cannot express, are the broker's, failing with `usage`.
 
 | Result | Process exit | stdout | stderr |
@@ -225,7 +225,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `5` | `login_required` | start/refresh | The Claude account's setup-token item, or the App's private-key item, absent or without an App ID account; the setup-token trusting another broker build or needing keychain approval; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
 | `7` | `docker_unreachable` | build/start/refresh/close/workspace-rm | Cannot reach fixed Docker Desktop daemon, including connection loss during the command |
-| `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` not installed or unusable (message names it; before any Docker call), context hashing, the image lock or lease ([Docker Host](docker-host.md#build)), or either build stage failed |
+| `8` | `build_failed` | build | Package directory/version invalid, a `--plugin` value that is neither `autopilot` nor `name@owner/repo`, or a duplicate name (message names it; before any Docker call), a plugin that fails to install inside the image, context hashing, the image lock or lease ([Docker Host](docker-host.md#build)), or either build stage failed |
 | `9` | `start_failed` | start | Container creation, bootstrap, hook installation, client version probing or token injection failed |
 | `10` | `close_failed` | close | Daemon reachable but container deletion failed |
 | `11` | `keychain_failed` | start/refresh/close/status | Keychain access denied, locked or otherwise failed; distinguish from absent entry. close: the container is deleted, but its tokens could not be revoked |
