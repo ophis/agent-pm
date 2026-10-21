@@ -65,14 +65,11 @@ def by_id(issues, ident):
 
 
 def by_option(issues, **given):
-    calls = {
+    return {
         "create": lambda: issues.create(new_issue(**given)),
         "list": lambda: issues.page(list_query(**given), 20, None),
         "edit": lambda: issues.edit(issue_change("LOC-1", **given)),
     }
-    if "role" in given:
-        del calls["edit"]
-    return calls
 
 
 class Board(Case):
@@ -522,6 +519,37 @@ class Edit(Board):
         got = self.issues().edit(issue_change("LOC-1", title="New"))
         self.assertEqual(got, self.receipt("LOC-1", path, "edit", "changed"))
         self.assertIn('title: "New"\n', self.read(path))
+
+    def test_a_role_moves_the_file_to_its_folder_and_changes_nothing_else(self):
+        for role in ("engineer", "me", "unassigned"):
+            with self.subTest(role=role):
+                old = self.put("pm/ready", "LOC-1", description="Old.", history=READY)
+                before = self.read(old)
+                got = self.issues().edit(issue_change("LOC-1", role=role))
+                path = os.path.join(self.board, role, "ready", "LOC-1 x.md")
+                self.assertEqual(got, self.receipt("LOC-1", path, "edit", "changed"))
+                self.assertFalse(os.path.exists(old))
+                self.assertEqual(self.read(path), before)
+                os.remove(path)
+
+    def test_a_role_with_another_field_is_one_write(self):
+        self.put("pm/ready", "LOC-1", history=READY)
+        got = self.issues().edit(issue_change("LOC-1", role="engineer", title="New"))
+        path = os.path.join(self.board, "engineer/ready/LOC-1 x.md")
+        self.assertEqual(got, self.receipt("LOC-1", path, "edit", "changed"))
+        self.assertIn('title: "New"\n', self.read(path))
+
+    def test_the_role_already_assigned_writes_nothing(self):
+        path = self.put("engineer/ready", "LOC-1", history=READY)
+        before = self.snapshot()
+        got = self.issues().edit(issue_change("LOC-1", role="engineer"))
+        self.assertEqual(got, self.receipt("LOC-1", path, "edit", "unchanged"))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_role_on_an_archived_issue_is_refused(self):
+        self.put("archive", "LOC-1", history="- 2026-10-19 14:02 done self\n")
+        issues = self.issues()
+        self.refused(lambda: issues.edit(issue_change("LOC-1", role="engineer")), "LOC-1: archived")
 
 
 class Move(Board):

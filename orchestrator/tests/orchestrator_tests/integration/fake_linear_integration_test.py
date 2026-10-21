@@ -1085,6 +1085,7 @@ class IssueOps(ServerCase):
                     "title": "Edit me",
                     "description": "Old",
                     "priority": 0,
+                    "assignee": None,
                     "team": {"id": TEAM, "key": "TASK"},
                     "labels": {"nodes": labels, "pageInfo": pages(labels)},
                 },
@@ -1145,6 +1146,20 @@ class IssueOps(ServerCase):
             with self.subTest(name), self.assertRaisesRegex(LinearError, error):
                 ops.call(self.gql, issue_edit.M_EDIT, "issueUpdate", i="TASK-8", **{"in": bad})
         self.assertEqual(rec["labels"], [TASK_LABELS["light-build"], CLIENT_LABELS["claude"]])
+
+    def test_edit_role_assigns_and_unassigns_only(self):
+        rec = self.fake.issue("Unassigned", description="Kept")
+        for role, want in (("engineer", self.engineer), ("me", self.harness), ("unassigned", None)):
+            with self.subTest(role=role):
+                receipt = self.issues.edit(issue_change(rec["identifier"], role=role))
+                self.assertEqual(receipt.result, "changed")
+                self.assertEqual(self.fake.requests[-1].variables["in"], {"assigneeId": want})
+                self.assertEqual(
+                    (rec["assignee"], rec["title"], rec["description"]),
+                    (want, "Unassigned", "Kept"),
+                )
+        again = self.issues.edit(issue_change(rec["identifier"], role="unassigned"))
+        self.assertEqual(again.result, "unchanged")
 
     def test_label_more_reads_after_the_cursor(self):
         build, codex = TASK_LABELS["build"], CLIENT_LABELS["codex"]

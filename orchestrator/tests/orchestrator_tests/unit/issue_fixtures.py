@@ -15,10 +15,12 @@ from agent_pm.orchestrator.trackers.linear import (
     client,
     issue_edit,
     issue_label,
+    issue_names,
     issue_read,
     issue_refs,
     issue_relation,
     linear_tracker,
+    ops,
 )
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -79,7 +81,7 @@ def new_issue(**given):
 
 def issue_change(ident, **given):
     """An IssueEdit of ident changing only the given fields."""
-    none = ("title", "body", "task", "client", "priority")
+    none = ("title", "body", "role", "task", "client", "priority")
     return IssueEdit(**{"id": ident, **dict.fromkeys(none), **given})
 
 
@@ -597,16 +599,27 @@ class LabelGql:
 
 
 class EditGql(LabelGql):
-    """LabelGql whose issue TASK-2 also holds `fields` (title, description, priority; team to move
-    it), answering `agent-pm-orchestrator issue edit`'s read; the mutation applies its label
-    changes.
+    """LabelGql whose issue TASK-2 also holds `fields` (title, description, priority, assignee;
+    team to move it), answering `agent-pm-orchestrator issue edit`'s read and its --role lookups
+    (the role accounts' users, the viewer); the mutation applies its label changes.
     """
 
     def __init__(self, catalog, carried, *, fields=None, **options):
         super().__init__(catalog, carried, **options)
-        self.fields = {"title": "Old", "description": "Old body", "priority": 0, **(fields or {})}
+        self.fields = {
+            "title": "Old",
+            "description": "Old body",
+            "priority": 0,
+            "assignee": None,
+            **(fields or {}),
+        }
 
     def __call__(self, query, **variables):
+        if query in (ops.Q_USER, issue_names.Q_VIEWER):
+            self.calls.append((query, variables))
+            return (
+                {"users": role_users(variables)} if query == ops.Q_USER else {"viewer": self.viewer}
+            )
         found = super().__call__(query, **variables)
         if query == issue_edit.Q_READ and found["issue"] is not None:
             found["issue"].update(self.fields)
