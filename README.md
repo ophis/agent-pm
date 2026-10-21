@@ -87,18 +87,19 @@ curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | ba
 
 1. installs the dependencies: Homebrew with the Command Line Tools, `gh`, tmux, git, Python 3.11+, iTerm2;
 2. asks which clients you use (Claude Code, Codex, OpenCode) and whether workers run in Docker, and writes `~/.agent-pm/config.local.toml`;
-3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider and its agent-pm plugin (`opencode plugin -g`), Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and, with the board ticked, the Linear board: its Keychain keys, its config read from Linear and its launchd jobs ([Linear board](docs/board.md#setup)).
+3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider and its agent-pm plugin (`opencode plugin -g`), Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and the selected [board](docs/board.md#setup). A local board writes `tracker = "local"` after confirmation, without asking for Linear keys or contacting Linear. A Linear board asks for its Keychain keys and reads its config from Linear. Either board can optionally install the router and promote launchd jobs.
 
 It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser; the broker's `claude setup-token` and its paste run on the terminal's alternate screen, cleared once the broker has the token, so it stays out of the scrollback), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
 
-Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, the Linear board; the board starts unticked): arrow keys move, space ticks, Enter confirms; a rerun ticks the last choices. Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
+Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, Board; Board starts unticked): arrow keys move, space ticks, Enter confirms. Selecting Board asks local or Linear (default local), then whether to install launchd jobs (default no). A rerun keeps the tracker and job choices and skips completed setup; flags change them. Existing tracker config and installed jobs supply defaults when no choice is saved. Skipping Board or jobs leaves existing config and jobs in place; uninstall jobs as [documented](docs/board.md#setup). Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
 
 | Flag | Does |
 |---|---|
 | `--ref <ref>` | installs the plugins and the broker from this branch or tag of `ophis/agent-pm` (default `main`; another ref builds the broker locally) |
 | `--clients <list>` | comma-separated `claude`, `codex`, `opencode`; any one alone works |
 | `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
-| `--board`, `--no-board` | sets up the Linear board (Keychain keys, config, launchd jobs), or not (default: not on a first run) |
+| `--board <local\|linear>`, `--no-board` | sets up a local or Linear board, or skips board setup (first-run default) |
+| `--launchd`, `--no-launchd` | installs router and promote jobs for either board, or skips them; asked separately when Board is selected and no choice is saved |
 | `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
 | `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
 | `--password-stdin` | reads the `sudo` password from stdin, before the key |

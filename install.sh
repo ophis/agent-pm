@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs agent-pm on an Apple silicon Mac from nothing: dependencies, then your configuration
-# (clients, Docker, OpenCode provider, the Linear board) into ~/.agent-pm/config.local.toml, then only what it needs.
+# (clients, Docker, OpenCode provider, the board) into ~/.agent-pm/config.local.toml, then only what it needs.
 # Asks sudo once, every login on the spot, and before writing your files. Rerun to finish or check.
 #   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
@@ -21,6 +21,9 @@ docker_flag=
 docker=
 board_flag=
 board=
+board_tracker=
+jobs_flag=
+board_jobs_choice=
 provider_flag=
 url_flag=
 model_flag=
@@ -51,7 +54,7 @@ name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
 context_pattern='^[1-9][0-9]{0,8}$'
-synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board | --no-board] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
+synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board <local|linear> | --no-board] [--launchd | --no-launchd] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -74,7 +77,9 @@ usage: $synopsis
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
-  --board, --no-board         set up, or not, the Linear board: its keys, configuration and launchd jobs
+  --board <local|linear>      set up a local or Linear board
+  --no-board                 skip board setup (first-run default)
+  --launchd, --no-launchd     install, or not, router and promote jobs for either board
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -146,11 +151,22 @@ parse_args() {
         ;;
       --board)
         [ "$board_flag" != no ] || usage_error "--board and --no-board exclude each other"
-        board_flag=yes
+        [ $# -ge 2 ] || usage_error "--board needs local or linear"
+        case $2 in local | linear) ;; *) usage_error "--board needs local or linear" ;; esac
+        board_flag=$2
+        shift
         ;;
       --no-board)
-        [ "$board_flag" != yes ] || usage_error "--board and --no-board exclude each other"
+        [ -z "$board_flag" ] || [ "$board_flag" = no ] || usage_error "--board and --no-board exclude each other"
         board_flag=no
+        ;;
+      --launchd)
+        [ "$jobs_flag" != no ] || usage_error "--launchd and --no-launchd exclude each other"
+        jobs_flag=yes
+        ;;
+      --no-launchd)
+        [ "$jobs_flag" != yes ] || usage_error "--launchd and --no-launchd exclude each other"
+        jobs_flag=no
         ;;
       --opencode-provider)
         [ $# -ge 2 ] && valid_name "$2" || usage_error "--opencode-provider: want 1-64 letters, digits, _ or -, not ollama"
@@ -587,10 +603,11 @@ answers() {
   if [ -z "$docker" ]; then
     if [ "$default" = docker ]; then docker=yes; else docker=no; fi
   fi
-  board=${board_flag:-$(state_get board)}
+  board=$(state_get board)
+  case $board_flag in local | linear) board=yes ;; no) board=no ;; esac
   board=${board:-no}
   if [ -z "$clients_flag" ] || [ -z "$docker_flag" ]; then
-    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: Linear keys, configuration and launchd jobs (a Linear board set up per docs/board.md)")
+    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: local or Linear (launchd jobs chosen separately)")
     ticks=()
     for item in "${names[@]}"; do
       if has "$item"; then ticks+=(1); else ticks+=(0); fi
@@ -608,6 +625,33 @@ answers() {
     done
     if [ "${ticks[3]}" = 1 ]; then docker=yes; else docker=no; fi
     if [ "${ticks[4]}" = 1 ]; then board=yes; else board=no; fi
+  fi
+  board_tracker=$(state_get board_tracker)
+  [ -n "$board_tracker" ] || board_tracker=$(configured_tracker)
+  case $board_tracker in local | linear) ;; *) board_tracker=local ;; esac
+  case $board_flag in local | linear) board_tracker=$board_flag ;; esac
+  board_jobs_choice=${jobs_flag:-$(state_get board_jobs)}
+  if [ "$board" = yes ]; then
+    if [ -z "$board_flag" ] && [ -z "$(state_get board_tracker)" ] && [ -z "$(configured_tracker)" ]; then
+      while :; do
+        ask "Board tracker [local/linear] [$board_tracker]:"
+        case ${answer:-$board_tracker} in
+          local | linear) board_tracker=${answer:-$board_tracker}; break ;;
+        esac
+      done
+    fi
+    if [ -z "$board_jobs_choice" ]; then
+      if [ -f "$HOME/Library/LaunchAgents/com.ophis.agent-pm.router.plist" ] \
+        || [ -f "$HOME/Library/LaunchAgents/com.ophis.agent-pm.promote.plist" ]; then
+        board_jobs_choice=yes
+      elif ask_yn "Install board launchd jobs?"; then
+        board_jobs_choice=yes
+      else
+        board_jobs_choice=no
+      fi
+    fi
+    state_set board_tracker "$board_tracker"
+    state_set board_jobs "$board_jobs_choice"
   fi
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
   if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
@@ -646,7 +690,7 @@ answers() {
   state_set clients "$clients"
   state_set docker "$docker"
   state_set board "$board"
-  say "    clients: $clients, Docker: $docker, board: $board${provider:+, OpenCode provider: $provider}"
+  say "    clients: $clients, Docker: $docker, board: $board ($board_tracker), launchd: ${board_jobs_choice:-no}${provider:+, OpenCode provider: $provider}"
 }
 
 # Plans the edits that give config.local.toml (or a new one) the wanted settings; writes the result to
@@ -1523,23 +1567,28 @@ docker_cli() {
   config_file session.hosts.docker docker "$cli"
 }
 
-# Exit 0 when the board is to be set up: Board chosen, and config.local.toml's tracker unset or "linear"; else
-# skips with the reason.
+# Prints only a recognized, explicit tracker; an absent setting stays empty.
+configured_tracker() {
+  [ -f "$config" ] || return 0
+  python3 -I -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker")
+if tracker in ("local", "linear"):
+    print(tracker)' "$config"
+}
+
 board_wanted() {
-  local tracker=
   if [ "$board" != yes ]; then
     skip "board not chosen"
     return 1
   fi
-  if [ -f "$config" ]; then
-    tracker=$(python3 -I -c '
-import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker", "linear")
-print(tracker if isinstance(tracker, str) and tracker.isprintable() else repr(tracker))' "$config")
-  fi
-  if [ -n "$tracker" ] && [ "$tracker" != linear ]; then
-    skip "tracker = \"$tracker\" in ~/.agent-pm/config.local.toml"
+}
+
+linear_wanted() {
+  board_wanted || return 1
+  if [ "$board_tracker" != linear ]; then
+    skip "local board chosen"
     return 1
   fi
 }
@@ -1637,7 +1686,7 @@ except LinearError as error:
 linear_keys() {
   local list slot service account
   step "Linear keys"
-  board_wanted || return 0
+  linear_wanted || return 0
   list=$(linear_slots)
   while IFS=$'\t' read -r slot service account; do
     [ -n "$service" ] || continue
@@ -1799,7 +1848,8 @@ plan = []
 def fill(table, key, value):
     if dig(data, *table.split("."), key) in (None, "", [], {}):
         plan.append([table, key, value])
-fill("orchestrator", "tracker", "linear")
+if dig(data, "orchestrator", "tracker") != "linear":
+    plan.append(("orchestrator", "tracker", "linear"))
 fill("orchestrator.linear", "team", team)
 fill("orchestrator.linear", "harness_key", service["harness"])
 fill("orchestrator.linear", "manager_key", service["manager"])
@@ -1868,8 +1918,12 @@ with open(out, "w", encoding="utf-8") as f:
 
 board_config() {
   local plan=$state_dir/board.json
-  step "Linear board configuration"
+  if [ "$board_tracker" = local ]; then step "local board configuration"; else step "Linear board configuration"; fi
   board_wanted || return 0
+  if [ "$board_tracker" = local ]; then
+    config_file orchestrator tracker local
+    return 0
+  fi
   if board_complete; then
     skip "has the Linear board configuration"
     return 0
@@ -1914,7 +1968,15 @@ board_jobs() {
   local job target new offered= shown= uid
   step "board launchd jobs"
   board_wanted || return 0
-  if ! board_complete; then
+  if [ "$board_jobs_choice" != yes ]; then
+    skip "launchd jobs not chosen"
+    return 0
+  fi
+  if [ "$(configured_tracker)" != "$board_tracker" ]; then
+    skip "board tracker not configured"
+    return 0
+  fi
+  if [ "$board_tracker" = linear ] && ! board_complete; then
     skip "no Linear board"
     return
   fi

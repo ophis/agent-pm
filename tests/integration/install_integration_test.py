@@ -436,7 +436,7 @@ class InstallTest(Case):
         """The answers pasting each slot's key at security's prompt."""
         return [(KEY_Q, f"k-SENTINEL-{slot}") for slot in slots]
 
-    def configured(self, text, then=()):
+    def configured(self, text, then=(), board="linear"):
         """A first run with Board ticked over a config.local.toml of `text` that already has the
         configuration: brew profile line, the checklist, the PATH line, then `then`."""
         Path(self.agent_pm).mkdir(parents=True, exist_ok=True)
@@ -448,7 +448,7 @@ class InstallTest(Case):
             (MENU_Q, menu(ticked, ticked)),
             (WRITE_Q, "y"),
         ]
-        return self.run_install("--board", answers=[*answers, *then])
+        return self.run_install("--board", board, "--launchd", answers=[*answers, *then])
 
     def plugin_calls(self):
         return [c for c in self.calls() if " plugin " in c and " list " not in c]
@@ -668,7 +668,7 @@ class InstallTest(Case):
             (self.state()["clients"], self.state()["docker"], self.state()["board"]),
             ("codex", "no", "no"),
         )
-        self.assertIn("  [ ] Board: Linear keys, configuration and launchd jobs", result.tty)
+        self.assertIn("  [ ] Board: local or Linear", result.tty)
         self.assertIn("==> board launchd jobs\n    skip: board not chosen", result.stderr)
         self.assertIn("==> Linear keys\n    skip: board not chosen", result.stderr)
 
@@ -677,7 +677,9 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertNotRegex(result.tty, MENU_Q)
         self.assertEqual(self.state()["board"], "no")
-        self.assertEqual(self.run_install("--board", "--no-board", tty=False).code, 2)
+        self.assertEqual(
+            self.run_install("--board", "linear", "--launchd", "--no-board", tty=False).code, 2
+        )
 
     def test_answers_kept_and_flags_override(self):
         self.assert_ok(self.fresh(clients="claude", docker="y"))
@@ -1598,6 +1600,8 @@ class InstallTest(Case):
         self.linear()
         result = self.again(
             "--board",
+            "linear",
+            "--launchd",
             answers=[*self.keys("harness", "researcher", "pm", "engineer"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
@@ -1641,7 +1645,7 @@ class InstallTest(Case):
 
     def test_board_keys_stored_and_verified(self):
         self.linear()
-        result = self.fresh("--board", then=[*self.keys(*SLOTS), *BOARD])
+        result = self.fresh("--board", "linear", "--launchd", then=[*self.keys(*SLOTS), *BOARD])
         self.assert_ok(result)
         for slot in SLOTS:
             self.assertEqual(
@@ -1662,7 +1666,10 @@ class InstallTest(Case):
     def test_board_refused_key_is_deleted(self):
         self.linear()
         result = self.fresh(
-            "--board", then=[*self.keys("harness", "manager"), (KEY_Q, "k-SENTINEL-wrong")]
+            "--board",
+            "linear",
+            "--launchd",
+            then=[*self.keys("harness", "manager"), (KEY_Q, "k-SENTINEL-wrong")],
         )
         self.assertNotEqual(result.code, 0)
         self.assertIn(
@@ -1674,15 +1681,212 @@ class InstallTest(Case):
         self.assert_secret_free("k-SENTINEL", result=result)
         self.assertNotIn("k-SENTINEL", result.tty)
 
-    def test_board_local_tracker_skips(self):
-        result = self.configured('[orchestrator]\ntracker = "local"\n')
-        self.assert_ok(result)
-        skip = 'skip: tracker = "local" in ~/.agent-pm/config.local.toml'
-        for step in ("Linear keys", "board launchd jobs"):
-            self.assertIn(f"==> {step}\n    {skip}", result.stderr)
-        self.assertFalse(
-            [c for c in self.calls() if c.startswith(("security add", "curl -q", "launchctl"))]
+    def assert_no_linear(self, result, *, keychain=True):
+        self.assertNotRegex(result.tty, KEY_Q)
+        self.assertFalse([c for c in self.calls() if c.startswith("curl -q")])
+        if keychain:
+            self.assertFalse(
+                [c for c in self.calls() if c.startswith("security") and "linear" in c]
+            )
+
+    def assert_jobs(self, installed):
+        for job in ("router", "promote"):
+            target = Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist")
+            self.assertEqual(target.exists(), installed)
+            bootstraps = [c for c in self.calls() if c == f"launchctl bootstrap gui/501 {target}"]
+            self.assertEqual(bool(bootstraps), installed)
+
+    def test_board_local_with_jobs(self):
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
         )
+        self.assert_ok(result)
+        self.assertEqual(
+            tomllib.loads(self.config().read_text())["orchestrator"]["tracker"], "local"
+        )
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+        before = self.config().read_text()
+        result = self.again()
+        self.assert_ok(result)
+        self.assertEqual(self.config().read_text(), before)
+        self.assertEqual(
+            (self.state()["board_tracker"], self.state()["board_jobs"]), ("local", "yes")
+        )
+        self.assertNotRegex(result.tty, WRITE_Q)
+        self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
+        self.assert_no_linear(result)
+
+    def test_board_local_without_jobs(self):
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--no-launchd",
+            then=[(WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            tomllib.loads(self.config().read_text())["orchestrator"]["tracker"], "local"
+        )
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertEqual(self.state()["board_jobs"], "no")
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+
+    def test_board_local_tracker_inferred(self):
+        self.assert_ok(self.fresh())
+        self.config().write_text(
+            self.config().read_text() + '\n[orchestrator]\ntracker = "local"\n'
+        )
+        state = Path(self.agent_pm, "install/state")
+        state.write_text(state.read_text().replace("board=no", "board=yes"))
+        result = self.again("--launchd", answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+        self.assertEqual(self.state()["board_tracker"], "local")
+        self.assertNotIn("Board tracker [local/linear]", result.tty)
+        state.write_text(
+            "\n".join(
+                line
+                for line in state.read_text().splitlines()
+                if not line.startswith("board_jobs=")
+            )
+            + "\n"
+        )
+        result = self.again()
+        self.assert_ok(result)
+        self.assertEqual(self.state()["board_jobs"], "yes")
+        self.assert_no_linear(result)
+
+    def test_board_switch_from_linear_to_local(self):
+        result = self.configured(HAND_CONFIG, board="local", then=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        self.assert_ok(result)
+        data = tomllib.loads(self.config().read_text())["orchestrator"]
+        self.assertEqual(data["tracker"], "local")
+        self.assertEqual(data["linear"]["team"], uuid(1))
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+        before = self.config().read_text()
+        result = self.again("--no-board", "--no-launchd")
+        self.assert_ok(result)
+        self.assertEqual(self.config().read_text(), before)
+        self.assert_no_linear(result)
+        self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
+        for job in ("router", "promote"):
+            self.assertTrue(
+                Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist").exists()
+            )
+
+    def test_board_local_declined(self):
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "n")],
+        )
+        self.assert_ok(result)
+        self.assertNotIn("orchestrator", tomllib.loads(self.config().read_text()))
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+        result = self.again(answers=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+
+    def test_board_switch_from_local_to_linear(self):
+        self.linear()
+        result = self.configured(
+            HAND_CONFIG.replace('tracker = "linear"', 'tracker = "local"'),
+            then=[*self.keys(*SLOTS), *BOARD],
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            tomllib.loads(self.config().read_text())["orchestrator"]["tracker"], "linear"
+        )
+        orchestrator_config.load()
+        self.assert_jobs(installed=True)
+        self.assert_secret_free("k-SENTINEL", result=result)
+
+    def test_board_linear_without_jobs(self):
+        self.linear()
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "linear",
+            "--no-launchd",
+            then=[*self.keys(*SLOTS), *BOARD[:-1]],
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            tomllib.loads(self.config().read_text())["orchestrator"]["tracker"], "linear"
+        )
+        orchestrator_config.load()
+        self.assert_jobs(installed=False)
+        self.assert_secret_free("k-SENTINEL", result=result)
+        result = self.again()
+        self.assert_ok(result)
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result, keychain=False)
+
+    def test_board_none_leaves_tracker_and_jobs_alone(self):
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker", "--no-board"))
+        self.assertNotIn("orchestrator", tomllib.loads(self.config().read_text()))
+        self.assert_jobs(installed=False)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertEqual(self.state()["board"], "no")
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+
+    def test_board_interactive_tracker_and_jobs(self):
+        result = self.run_install(
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (MENU_Q, menu(("claude", "codex", "board"))),
+                (r"Board tracker \[local/linear\] \[local\]:", "invalid"),
+                (r"Board tracker \[local/linear\] \[local\]:", ""),
+                (r"Install board launchd jobs\? \[y/N\]", "n"),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+            ]
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            (self.state()["board_tracker"], self.state()["board_jobs"]), ("local", "no")
+        )
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+
+    def test_board_flags_reject_invalid_choices(self):
+        for args in (
+            ("--board",),
+            ("--board", "yes"),
+            ("--launchd", "--no-launchd"),
+            ("--board", "local", "--no-board"),
+        ):
+            result = self.run_install(*args, tty=False)
+            self.assertEqual(result.code, 2, args)
+            self.assertEqual(self.calls(), [])
 
     def test_board_custom_workflow_roles(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})
@@ -1721,7 +1925,7 @@ class InstallTest(Case):
     def test_board_fresh_install(self):
         """Keys, the config from Linear (shown before writing) and the jobs; a rerun redoes none of it."""
         self.linear(labels=[*LINEAR["labels"], label(46, "design", 40)])
-        result = self.fresh("--board", then=[*self.keys(*SLOTS), *BOARD])
+        result = self.fresh("--board", "linear", "--launchd", then=[*self.keys(*SLOTS), *BOARD])
         self.assert_ok(result)
         data = tomllib.loads(self.config().read_text())
         self.assertEqual(data["orchestrator"]["tracker"], "linear")
@@ -1775,11 +1979,13 @@ class InstallTest(Case):
     def test_board_config_declined(self):
         self.linear()
         board = [*self.keys(*SLOTS), (PROJECT_Q, ""), *DOCS, (WRITE_Q, "n")]
-        result = self.fresh("--board", then=board)
+        result = self.fresh("--board", "linear", "--launchd", then=board)
         self.assert_ok(result)
         self.assertIn("skip: declined", result.stderr)
         self.assertNotIn("[orchestrator", self.config().read_text())
-        self.assertIn("==> board launchd jobs\n    skip: no Linear board", result.stderr)
+        self.assertIn(
+            "==> board launchd jobs\n    skip: board tracker not configured", result.stderr
+        )
         self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
 
     def test_board_fills_only_missing(self):
@@ -1815,7 +2021,7 @@ class InstallTest(Case):
         self.linear(teams=[LINEAR["teams"][0], ops])
         team_q = r"Linear team for the board \(ENG, OPS\):"
         board = [(team_q, "NOPE"), (team_q, "OPS"), *DOCS, (WRITE_Q, "y"), (WRITE_Q, "y")]
-        result = self.fresh("--board", then=[*self.keys(*SLOTS), *board])
+        result = self.fresh("--board", "linear", "--launchd", then=[*self.keys(*SLOTS), *board])
         self.assert_ok(result)
         self.assertEqual(self.board_config()["team"], uuid(2))
 
@@ -1823,14 +2029,14 @@ class InstallTest(Case):
         team = LINEAR["teams"][0]
         states = [s for s in team["states"] if s["name"] != "Handoff"]
         self.linear(teams=[{**team, "states": states}])
-        result = self.fresh("--board", then=self.keys(*SLOTS))
+        result = self.fresh("--board", "linear", "--launchd", then=self.keys(*SLOTS))
         self.assert_board_stopped(
             result, "Linear team ENG lacks states: Handoff (docs/credentials.md#linear-presets)"
         )
 
     def test_board_without_tasks_group_stops(self):
         self.linear(labels=[x for x in LINEAR["labels"] if x["name"] != "Tasks"])
-        result = self.fresh("--board", then=self.keys(*SLOTS))
+        result = self.fresh("--board", "linear", "--launchd", then=self.keys(*SLOTS))
         self.assert_board_stopped(
             result,
             "Linear team ENG has no Tasks label group (docs/credentials.md#linear-presets)",
@@ -1838,7 +2044,7 @@ class InstallTest(Case):
 
     def test_board_same_account_stops(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-pm": "researcher@example.com"})
-        result = self.fresh("--board", then=self.keys(*SLOTS))
+        result = self.fresh("--board", "linear", "--launchd", then=self.keys(*SLOTS))
         self.assert_board_stopped(
             result, "the keys in linear-researcher and linear-pm are the same Linear account"
         )
@@ -1847,7 +2053,7 @@ class InstallTest(Case):
         (self.fakes / "keychain").mkdir()
         (self.fakes / "keychain/linear-harness").write_text("k-SENTINEL-stale")
         self.linear()
-        result = self.fresh("--board", then=self.keys(*SLOTS[1:]))
+        result = self.fresh("--board", "linear", "--launchd", then=self.keys(*SLOTS[1:]))
         self.assert_board_stopped(
             result,
             "Linear refused the key in linear-harness, or cannot be reached: fix that keychain item, then rerun",
@@ -1859,7 +2065,7 @@ class InstallTest(Case):
         team = LINEAR["teams"][0]
         hostile = "W\x1b]52;c;aGk=\x07"
         self.linear(teams=[{**team, "projects": [{"id": uuid(30), "name": hostile}]}])
-        result = self.fresh("--board", then=self.keys(*SLOTS))
+        result = self.fresh("--board", "linear", "--launchd", then=self.keys(*SLOTS))
         self.assert_board_stopped(result, f"Linear returned an invalid project name ({uuid(30)})")
         members = [*team["members"], {"email": "x\x1b[2J@example.com", "active": True}]
         self.linear(teams=[{**team, "members": members}])
@@ -1873,7 +2079,7 @@ class InstallTest(Case):
         quoted, astral = 'a" = "b', "\U0001f916 bot"
         labels = [*LINEAR["labels"], label(46, quoted, 43), label(47, astral, 43)]
         self.linear(labels=labels)
-        result = self.fresh("--board", then=[*self.keys(*SLOTS), *BOARD])
+        result = self.fresh("--board", "linear", "--launchd", then=[*self.keys(*SLOTS), *BOARD])
         self.assert_ok(result)
         agents = self.board_config()["agent_labels"]
         self.assertEqual((agents[quoted], agents[astral]), (uuid(46), uuid(47)))
@@ -2327,7 +2533,7 @@ class InstallTest(Case):
         self.config().write_text(self.config().read_text() + linear)
         self.linear()
         board = [*self.keys(*SLOTS), (PROJECT_Q, ""), *DOCS, (WRITE_Q, "y"), (WRITE_Q, "y")]
-        self.assert_ok(self.again("--board", answers=board))
+        self.assert_ok(self.again("--board", "linear", "--launchd", answers=board))
         return first + self.run_calls()
 
     def test_cleanup_round_trip_with_board(self):
