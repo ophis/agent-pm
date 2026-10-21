@@ -264,6 +264,92 @@ class CodexBootstrap(Case):
         self.assert_only(secret.parent, "auth.json")
         self.assert_only(self.target, "auth.json", "config.toml", "plugins")
 
+    def test_auth_link_ignores_preexisting_directories(self):
+        old = self.target / f".auth-link-{os.getpid()}"
+        old.mkdir()
+        collision = self.target / (".auth-link-" + "00" * 16)
+        collision.mkdir()
+        with mock.patch("os.urandom", side_effect=[bytes(16), b"a" * 16]):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+        self.assertTrue(old.is_dir())
+        self.assertTrue(collision.is_dir())
+        self.assert_only(self.target, "auth.json", old.name, collision.name)
+
+    def test_failed_auth_link_creation_leaves_preexisting_directory_alone(self):
+        collision = self.target / (".auth-link-" + "00" * 16)
+        collision.mkdir()
+        with (
+            mock.patch("os.urandom", return_value=bytes(16)),
+            mock.patch("os.symlink", side_effect=OSError(errno.EIO, "Input/output error")),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertTrue(collision.is_dir())
+        self.assert_only(self.target, collision.name)
+        self.assert_only(self.secrets / "codex", "auth.json")
+
+    def test_failed_auth_link_replace_cleans_link_and_preserves_native_file(self):
+        link = self.target / "auth.json"
+        link.write_bytes(self.carrier("native"))
+        replace = os.replace
+
+        def fail_link(source, destination):
+            if destination == link:
+                raise OSError(errno.EIO, "Input/output error")
+            return replace(source, destination)
+
+        with (
+            mock.patch("os.replace", side_effect=fail_link),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual(link.read_bytes(), self.carrier("native"))
+        self.assert_only(self.target, "auth.json")
+        self.assert_only(self.secrets / "codex", "auth.json")
+
+    def test_auth_cleanup_does_not_mask_write_failure(self):
+        unlink = Path.unlink
+        cleaned = []
+
+        def fail_cleanup(path, *args, **kwargs):
+            if path.name.startswith(".auth-"):
+                cleaned.append(path)
+                raise OSError(errno.EACCES, "Permission denied")
+            return unlink(path, *args, **kwargs)
+
+        def fail_replace(source, destination):
+            if destination == self.target / "auth.json":
+                raise OSError(errno.EIO, "Input/output error")
+            return replace(source, destination)
+
+        replace = os.replace
+        with (
+            mock.patch("os.replace", side_effect=fail_replace),
+            mock.patch.object(Path, "unlink", fail_cleanup),
+            self.assertRaisesRegex(
+                SystemExit,
+                "^bootstrap: cannot write managed Codex credentials: Input/output error$",
+            ),
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual(len(cleaned), 2)
+        self.assertTrue(cleaned[1].is_symlink())
+
+    def test_auth_cleanup_does_not_turn_success_into_failure(self):
+        with mock.patch.object(
+            Path, "unlink", side_effect=OSError(errno.EACCES, "Permission denied")
+        ):
+            self.code["inject_codex"](io.BytesIO(self.carrier()), self.secrets, self.target)
+        self.assertEqual((self.target / "auth.json").readlink(), self.secrets / "codex/auth.json")
+        self.assert_only(self.target, "auth.json")
+
     def test_auth_rejects_account_change_secrets_and_arbitrary_links(self):
         inject = self.code["inject_codex"]
         path = self.target / "auth.json"

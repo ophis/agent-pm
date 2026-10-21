@@ -102,7 +102,7 @@ personal Codex.
 | Resource | Lifetime |
 |---|---|
 | `~/.agent-pm/docker-state/<name>/codex/sessions/` | the only host-bound client state; native history survives restart and close/resume |
-| container `CODEX_HOME`, at the matching host path | tmpfs; image-made config and credential-link replacements go at close |
+| container `CODEX_HOME`, at the matching host path | 1 GiB tmpfs (Codex's log DB grows past its 64 MiB budget, with no setting to cap it); image-made config and credential-link replacements go at close |
 | `/run/agent-pm/secrets/codex/auth.json` | agent-owned 0400 tmpfs file, written over `docker exec` stdin |
 | `/run/agent-pm/codex-store/` | the terminal launcher's volatile copy of only the current `(workdir, sid)` recovery record |
 | `<generation>.credential.json` | broker-owned; only the latest published Codex expiry |
