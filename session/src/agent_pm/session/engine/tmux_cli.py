@@ -417,9 +417,7 @@ def events_file(path: str) -> str:
 
 
 def _floor(session: str, min_width: int) -> list[str]:
-    """A window that follows its latest client, never narrower than min_width (0: no floor); tmux
-    itself never resizes it.
-    """
+    """The window follows its latest client, at least min_width wide (0: no floor)."""
     if not min_width:
         return []
     target = f"={session}:"

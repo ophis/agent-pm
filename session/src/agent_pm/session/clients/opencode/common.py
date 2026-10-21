@@ -50,7 +50,6 @@ from agent_pm.utils import (
 
 TABLE = "[clients.opencode]"
 # A container Host's session state dir: OpenCode keeps opencode.db under $XDG_DATA_HOME/opencode.
-# min_width: OpenCode 1.19.3's Bun 1.3.14 segfaults on Linux at 37 columns or fewer (TASK-821).
 HOME = ClientHome("opencode_dir", "opencode", "XDG_DATA_HOME", "none", min_width=40)
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = f"{STATE}/sessions/opencode"  # under HOME, resolved per call

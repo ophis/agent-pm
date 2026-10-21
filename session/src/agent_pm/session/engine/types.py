@@ -170,7 +170,7 @@ class ClientHome:
     """What a container Host needs to run a client: its per-session state dir (`field`, its name in
     the Host's records; `dir`, its last path part; `env`, the variable naming it), `credential`,
     the kind the Host injects, `files`, (name, text) for a fresh dir, `providers`, whose keys the
-    broker adds, `min_width`, the narrowest its container window may get (0: no floor).
+    broker adds, `min_width`, its window's least width (0: any).
     """
 
     field: str
