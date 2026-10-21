@@ -37,7 +37,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    bin/agent-pm-orchestrator promote --dry-run
    ```
 4. Install the launchd jobs:
-   The jobs use the orchestrator's default board directory ([`_board()`](../orchestrator/src/agent_pm/orchestrator/engine/config.py)); the templates need only HOME and PATH substitution.
+   The jobs use the orchestrator's default board directory; the templates need only HOME and PATH substitution.
    ```bash
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
@@ -105,7 +105,7 @@ A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`.
 flowchart LR
     L[launchd] -->|every 30 min| R["agent-pm-orchestrator router: claim or resume, render the input"] -->|"detach its LinearRun, exit"| I["harness: Delegate, claude"]
     Y[you] -->|"--issue"| R
-    I -->|"each event: agent-pm-orchestrator writeback"| W["writeback.py → Linear, as the role"]
+    I -->|"each event: agent-pm-orchestrator writeback"| W["write-back → Linear, as the role"]
     L -->|every 5 min| P[agent-pm-orchestrator promote] --> X[prune]
 ```
 
@@ -155,13 +155,13 @@ Copy `[orchestrator.linear]`'s `agent_label_group` and `[orchestrator.linear.age
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [`router.py` `client_for`](../orchestrator/src/agent_pm/orchestrator/engine/router.py). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([`router.py` `_label_client_error`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)); fix it → move back to Todo.
+The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry; fix it → move back to Todo.
 
-Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([`router.py` `Board.plan`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)); a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
+Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed`; a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([`gate.py` `Gate.blocked`](../orchestrator/src/agent_pm/orchestrator/engine/gate.py)). On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([`modes/base.py` `child_env`](../session/src/agent_pm/session/modes/base.py), [`router.py` `brake`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients. On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default.
 
-`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([`router.py` `Board.claim`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)).
+`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged.
 
 Rollout:
 
