@@ -11,8 +11,10 @@ asks; skips what is installed and logged in; installs what the configuration lac
 change to your config or shell profile. Flags change the configuration (`--clients`, `--docker`/`--no-docker`, the
 `--opencode-*` flags); it removes nothing chosen before.
 
-It does not update what is installed. Update the plugins (Claude Code: `claude plugin marketplace update agent-pm`,
-then `claude plugin update agent-pm@agent-pm`; Codex: `codex plugin marketplace upgrade agent-pm`), then rerun it: when
+It does not update what is installed, but for OpenCode's agent-pm plugin: when `--ref` (default `main`) names a newer
+commit than the one it last downloaded, it deletes OpenCode's copy and downloads it again, and the `~/.agent-pm/bin`
+commands run the new copy. Update the other plugins (Claude Code: `claude plugin marketplace update agent-pm`, then
+`claude plugin update agent-pm@agent-pm`; Codex: `codex plugin marketplace upgrade agent-pm`), then rerun it: when
 the plugin's broker sources changed it reinstalls the broker and asks its logins again ([Log in](docker-host.md#log-in)).
 Do the [Upgrading steps](#upgrading-steps) that apply as before: it does not edit config keys a release renames.
 
