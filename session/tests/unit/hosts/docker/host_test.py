@@ -753,6 +753,30 @@ class StartTest(Base):
         self.assertTrue(kw["start_new_session"])
         self.assertFalse(set(CLEARED) & kw["env"].keys())
 
+    def test_a_min_width_reaches_the_container_tmux(self):
+        for case, width, floored in (("opencode", "40", True), ("claude", None, False)):
+            with self.subTest(case=case):
+                self.order.clear()
+                self.start(home_min_width=width)
+                (new,) = [call for call in self.docker.execs() if "new-session" in call]
+                self.assertEqual("window-size" in new, floored)
+                self.assertEqual("client-resized" in new, floored)
+                if floored:
+                    self.assertGreaterEqual(int(new[new.index("-x") + 1]), 40)
+
+    def test_a_bad_min_width_is_refused_before_a_container(self):
+        for width in ("4x", "-1", ""):
+            with self.subTest(width=width):
+                self.order.clear()
+                with self.assertRaisesRegex(
+                    SessionError, f"docker session w: bad min width {width!r}"
+                ):
+                    self.start(home_min_width=width)
+                self.assertFalse(
+                    [o for o in self.order if isinstance(o, tuple) and o[0] == "start"]
+                )
+                self.popen_mock.assert_not_called()
+
     def test_a_long_prompt_is_staged_whole_off_tmux_s_command_line_on_start_resume_and_codex(self):
         """Restart and resume both start with resume=1; a Claude and a Codex client differ only in
         their with-secrets client and home."""

@@ -422,7 +422,8 @@ none of the Mac's OpenCode install, config or plugins goes into the container (t
 `~/.agent-pm/docker/worker/Dockerfile` needs no edit for it: the agent-pm layer installs OpenCode on top of any user
 image. Its session state is `~/.agent-pm/docker-state/<name>/opencode/` (`opencode_dir`). Then
 `agent-pm-crew worker NAME --client opencode` starts a worker in a container; an OpenCode board run:
-[Linear board › OpenCode](board.md#opencode).
+[Linear board › OpenCode](board.md#opencode). An OpenCode worker's window never gets narrower than 40 columns,
+since its Bun crashes at 37 or fewer on Linux: a narrower grid cell or terminal shows the window's left part.
 
 ### Lifecycle
 
