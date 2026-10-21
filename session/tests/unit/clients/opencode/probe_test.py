@@ -77,19 +77,28 @@ class ProbeTest(Case):
         os.makedirs(directory)
         with open(os.path.join(directory, "auth.json"), "w", encoding="utf-8") as file:
             json.dump({"strata": {"type": "api", "key": "TEST-SECRET"}}, file)
-        made = connection(status=204, body=b"TEST-SECRET")
-        with (
-            mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
-            mock.patch.object(probe.http.client, "HTTPSConnection", return_value=made) as network,
-        ):
-            self.assertEqual(
-                probe.provider("strata", "https://strata.test/v1/"), {"available": True}
+        for status in (200, 204):
+            made = connection(status=status, body=b"TEST-SECRET")
+            response = made.getresponse.return_value
+            with (
+                self.subTest(status=status),
+                mock.patch.object(
+                    response, "read", side_effect=AssertionError("read response body")
+                ) as read,
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+                mock.patch.object(
+                    probe.http.client, "HTTPSConnection", return_value=made
+                ) as network,
+            ):
+                self.assertEqual(
+                    probe.provider("strata", "https://strata.test/v1/"), {"available": True}
+                )
+                read.assert_not_called()
+            network.assert_called_once_with("strata.test", None, timeout=5)
+            made.request.assert_called_once_with(
+                "GET", "/v1/models", headers={"Authorization": "Bearer TEST-SECRET"}
             )
-        network.assert_called_once_with("strata.test", None, timeout=5)
-        made.request.assert_called_once_with(
-            "GET", "/v1/models", headers={"Authorization": "Bearer TEST-SECRET"}
-        )
-        made.close.assert_called_once()
+            made.close.assert_called_once()
 
     def test_provider_failures_do_not_read_a_response_body_or_follow_redirects(self):
         directory = os.path.join(self.home, "data", "opencode")
@@ -100,11 +109,19 @@ class ProbeTest(Case):
         for status in (302, 401, 500):
             made = connection(status=status)
             with (
+                self.subTest(status=status),
+                mock.patch.object(
+                    made.getresponse.return_value,
+                    "read",
+                    side_effect=AssertionError("read response body"),
+                ) as read,
                 mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
                 mock.patch.object(probe.http.client, "HTTPSConnection", return_value=made),
             ):
                 self.assertIsNone(probe.provider("strata", "https://strata.test/v1"))
+                read.assert_not_called()
             self.assertEqual(made.request.call_count, 1)
+            made.close.assert_called_once()
         with open(path, "w", encoding="utf-8") as file:
             file.write("not JSON TEST-SECRET")
         with (
