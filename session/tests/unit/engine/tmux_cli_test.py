@@ -627,6 +627,38 @@ class LaunchTest(Case):
         self.assertEqual(runner.staged_mode, 0o600)
         self.assertEqual(os.listdir(self.handover), [])
 
+    def test_launch_floors_the_window_width_and_follows_clients_above_it(self):
+        runner = Container()
+        floor = (
+            'run-shell -C "resize-window -t =#{q:session_name}: -x'
+            ' #{?#{e|<:#{client_width},40},40,#{client_width}} -y #{client_height}"'
+        )
+        with unittest.mock.patch(
+            "shutil.get_terminal_size", return_value=os.terminal_size((37, 8))
+        ):
+            self.launch(runner, min_width=40)
+        new = self.new_session(runner)
+        self.assertEqual(new[new.index("-x") : new.index("-y") + 2], ["-x", "40", "-y", "8"])
+        tail = " ".join([*new[new.index(tmux_cli.RELAUNCH) + 2 :], ";"])
+        for option in (
+            "; set-option -w -t =w: window-size manual ;",
+            f"; set-hook -t =w: client-attached {floor} ;",
+            f"; set-hook -t =w: client-resized {floor} ;",
+        ):
+            self.assertIn(option, tail)
+
+    def test_launch_without_min_width_keeps_todays_command(self):
+        runner = Container()
+        with unittest.mock.patch(
+            "shutil.get_terminal_size", return_value=os.terminal_size((37, 8))
+        ):
+            self.launch(runner)
+        new = self.new_session(runner)
+        self.assertEqual(new[new.index("-x") + 1], "37")
+        self.assertFalse(
+            any(arg in ("window-size", "client-attached", "client-resized") for arg in new)
+        )
+
     def test_a_64_kib_prompt_reaches_the_client_whole_on_a_short_tmux_command_line(self):
         line = "a b ; $(echo x) #{y} \u96ea -p\n"
         prompt = line * (65536 // len(line.encode()) + 1)

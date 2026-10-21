@@ -416,6 +416,27 @@ def events_file(path: str) -> str:
     return path
 
 
+def _floor(session: str, min_width: int) -> list[str]:
+    """A window that follows its latest client, never narrower than min_width (0: no floor); tmux
+    itself never resizes it.
+    """
+    if not min_width:
+        return []
+    target = f"={session}:"
+    width = f"#{{?#{{e|<:#{{client_width}},{min_width}}},{min_width},#{{client_width}}}}"
+    resize = (
+        f'run-shell -C "resize-window -t =#{{q:session_name}}: -x {width} -y #{{client_height}}"'
+    )
+    return [
+        *(";", "set-option", "-w", "-t", target, "window-size", "manual"),
+        *(
+            arg
+            for hook in ("client-attached", "client-resized")
+            for arg in (";", "set-hook", "-t", target, hook, resize)
+        ),
+    ]
+
+
 def _decorations(
     session: str, events: str | None, *, status_line: bool, died: str = DIED
 ) -> list[list[str]]:
@@ -711,11 +732,12 @@ class TmuxCli:
         handover_dir: str,
         tags: Mapping[str, str] | None = None,
         died: str = DIED,
+        min_width: int = 0,
     ) -> str:
         """start's setup in one call, without events, pane-died `died`: the runner's `python` STAGEs
         argv and env (over the server's) in a 0600 file in its private `handover_dir` for RELAUNCH,
         keeping tmux's command line short; a failed launch deletes it. Returns process().
-        Forwards OSC 52 copies.
+        Forwards OSC 52 copies. A `min_width` window is never narrower (_floor).
         """
         session_name(session)
         tag_options = _tags(session, tags or {})
@@ -728,6 +750,7 @@ class TmuxCli:
             raise TuiError("argv or env holds a NUL character")
         path = self._stage(python, handover_dir, json.dumps({"argv": list(argv), "env": dict(env)}))
         cols, rows = shutil.get_terminal_size()
+        cols = max(cols, min_width)
         decorations = [
             arg
             for args in _decorations(session, None, status_line=False, died=died)
@@ -760,6 +783,7 @@ class TmuxCli:
                     *(";", "set-option", "-qp", "-t", f"={session}:", "allow-passthrough", "on"),
                     *tag_options,
                     *decorations,
+                    *_floor(session, min_width),
                     *_recorded(session),
                 ]
             )
