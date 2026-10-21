@@ -58,6 +58,9 @@ class Client:
     def usage_probe(self) -> Launch | None:
         return None
 
+    def _usage_executable(self) -> str:
+        return ""
+
     def _usage_probe(self, tier: int | None) -> Launch | None:
         return self.usage_probe()
 

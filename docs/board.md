@@ -190,6 +190,20 @@ Create the first issue with `agent-pm-orchestrator issue create --title "First i
 
 Unfinished `blocked_by` cycles (including an issue blocking itself) produce a `dependency-cycle` router diagnostic naming the closed path. Remove the cyclic links in those issue files. The same diagnostic is logged once per 24 hours; `router --dry-run` always shows it without writing. Missing blockers still block, and independent ready issues remain schedulable.
 
+An issue-selected client whose usage probe requires a missing or non-executable program produces `launch-error`, a repair comment and a move to `review/`. An executable client whose usage cannot be read still produces `usage unknown`. Fix the client choice or installation, then move the issue to `ready/`.
+
+### Mac mini regression checks
+
+Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 17 first. These checks require the real mini; CI results do not replace them.
+
+| Case | Action | Expected |
+|---|---|---|
+| First issue | Run `issue create --title "First" --body-file <file>` with only `unassigned/` present; repeat on a fresh board with `[orchestrator.local] issue_prefix = "AGE"` | `LOC-1`, then `AGE-1`; no hand-written seed issue |
+| Strata gate | Assign an OpenCode issue whose effective tier selects Strata; run `router --dry-run`, then a scheduled tick | Provider probe passes and the issue can launch while Ollama is stopped; no API key in argv/logs |
+| Dependency cycle | Set a ready issue's `blocked_by` to its own id, then test a two-issue cycle; run `router --dry-run` | `dependency-cycle` names the closed path and asks for `blocked_by` repair; independent ready issues remain candidates |
+| Missing client | Choose Claude on an issue while its probe executable is absent; run one real router tick | `launch-error`, a comment naming the missing executable, issue in `review/` |
+| Outcome error | Run an engineer test issue whose client ends with an invalid outcome after the harness's one correction attempt | A failure comment includes the reason and the issue moves to `review/`; repeated callback delivery does not duplicate it |
+
 `[orchestrator] tracker` picks where issues live: `"local"` (the default) a local board, `"linear"` Linear (everything above). A local board is a directory of Markdown issue files, `$AGENT_PM_BOARD_DIR` (an absolute or `~` path), default `~/.agent-pm/board/`; no config key names it. One directory is one board: boards never sync, and a machine may keep several, each command reading the one its `$AGENT_PM_BOARD_DIR` names.
 
 The router runs a local board by the Linear board's rules ([Order work](#using-the-board), [Task labels](#task-labels), [Agent label](#agent-label)): a tick or `--issue` claims a role's ready issue (its file moves to `running/`), its run writes back (`writeback`: the session, start, progress and completion comments) and moves it on (`review/`, as In Review), Recover replays an ended run's outcome, and `--dry-run` writes nothing. `router --brake`, `resume`, `status`, `show`, `hide`, `close`, `attach-command` and `content` work too, and so do `promote` and `prune`. With `install.sh --board local --launchd`, router and promote run on their schedules (step 4 above). Without jobs, the manager runs `agent-pm-orchestrator promote` (it prunes too) once an approved issue's 10-minute undo window has passed. The `agent-pm-orchestrator issue` commands (`/agent-pm:board`) work on one too, writing as `other`, a person: their comments and moves count as yours; `lookup`, `label swap`, `--label`, `--project` and `--milestone` exit 2 there. Their output keeps the Linear fields: the labels are the `task` and `client`, the assignee its directory, project and milestone `null`, a comment's id `<ID>#<n>` its position among the file's comments, the engine's archive note neither shown nor counted, so archiving never shifts it. A local board has no accounts: the engine writes as `self`, notifies no one, and checks no Keychain role key.

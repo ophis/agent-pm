@@ -1091,6 +1091,50 @@ class EventsOverAModeTest(Case):
 
 
 class UsageTest(Base):
+    def test_a_configured_non_executable_program_is_a_configuration_error(self):
+        program = os.path.join(self.dir, "not-executable")
+        with open(program, "w", encoding="utf-8") as file:
+            file.write("data")
+        os.chmod(program, 0o600)
+        session = HostedSession.configured(
+            clients={
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "ollama/local",
+                    "executable": program,
+                }
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+        )
+        with self.assertRaisesRegex(ConfigError, "missing or not executable"):
+            session.usage("opencode")
+
+    def test_missing_builtin_executables_raise_configuration_errors_before_probing(self):
+        probe = mock.Mock(return_value=None)
+        session = HostedSession.configured(
+            clients={
+                "claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"},
+                "codex": {"implementation": "agent_pm.session.clients.codex:CodexClient"},
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "ollama/local",
+                },
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+            probe=probe,
+        )
+        for name in ("claude", "codex", "opencode"):
+            with (
+                self.subTest(name=name),
+                mock.patch("shutil.which", return_value=None),
+                self.assertRaisesRegex(ConfigError, "missing or not executable"),
+            ):
+                session.usage(name)
+        probe.assert_not_called()
+        with mock.patch("shutil.which", return_value="/bin/client"):
+            self.assertIsNone(session.usage("claude"))
+        self.assertEqual(probe.call_count, 1)
+
     def test_effective_provider_reaches_the_container_host_without_a_host_probe(self):
         class ProviderHost(ScreenHost):
             def _client_context(self):

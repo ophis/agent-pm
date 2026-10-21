@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import shutil
 import re
 import sys
 import time
@@ -153,7 +154,14 @@ def _read_usage(setup: _Setup, client: Client, launch: Launch | None) -> Usage |
     cwd = launch.cwd or _probe_dir()
     if cwd is None:
         return None
-    output = setup.probe(launch.argv, cwd=cwd, env=child_env(launch, cwd), timeout=PROBE_TIMEOUT)
+    env = child_env(launch, cwd)
+    if executable := client._usage_executable():
+        program = os.path.join(cwd, executable) if os.path.dirname(executable) else executable
+        if shutil.which(program, path=env.get("PATH", os.defpath)) is None:
+            raise ConfigError(
+                f"client executable {executable!r} is missing or not executable; install or configure this client"
+            )
+    output = setup.probe(launch.argv, cwd=cwd, env=env, timeout=PROBE_TIMEOUT)
     if output is None:
         return None
     try:

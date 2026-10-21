@@ -1422,6 +1422,18 @@ class AgentLabels(Base):
 
 
 class LabelClients(TickBase):
+    def test_missing_selected_client_is_a_launch_error_comment(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        fake = self.fake(
+            issue("TASK-1", "Todo", "engineer", labels=[label("chosen", AGENT_A, AGENT_GROUP)])
+        )
+        self.api.usages["a"] = ConfigError("client executable claude is missing or not executable")
+        self.assertEqual(self.tick(fake), 0)
+        self.assertFalse(self.start.launches)
+        self.assertTrue(any(line.startswith("launch-error TASK-1") for line in self.said()))
+        self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+        self.assertTrue(any("missing or not executable" in str(call) for call in fake.mutations))
+
     def test_a_todo_run_after_a_start_on_another_client_follows_the_label(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
         for argv in ((), ("--issue", "TASK-1")):
