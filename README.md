@@ -80,10 +80,10 @@ Commands: [Quick start](#quick-start).
 On an Apple silicon Mac, from nothing installed up to a working agent-pm, in one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/scripts/install.sh | bash
 ```
 
-`install.sh`, in order:
+`scripts/install.sh`, in order:
 
 1. installs the dependencies: Homebrew with the Command Line Tools, `gh`, tmux, git, Python 3.11+, iTerm2;
 2. asks which clients you use (Claude Code, Codex, OpenCode) and whether workers run in Docker, and writes `~/.agent-pm/config.local.toml`;
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | ba
 
 It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser; the broker's `claude setup-token` and its paste run on the terminal's alternate screen, cleared once the broker has the token, so it stays out of the scrollback), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
 
-Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, Board; Board starts unticked): arrow keys move, space ticks, Enter confirms. With no saved choice or existing setup, selecting Board asks local or Linear (default local), then whether to install launchd jobs (default no). A rerun keeps the tracker and job choices and skips completed setup; flags change them. When no choice is saved, existing tracker config and installed jobs are kept without asking. Skipping Board or jobs leaves existing config and jobs in place; uninstall jobs as [documented](docs/board.md#setup). Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
+Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, Board; Board starts unticked): arrow keys move, space ticks, Enter confirms. With no saved choice or existing setup, selecting Board asks local or Linear (default local), then whether to install launchd jobs (default no). A rerun keeps the tracker and job choices and skips completed setup; flags change them. When no choice is saved, existing tracker config and installed jobs are kept without asking. Skipping Board or jobs leaves existing config and jobs in place; uninstall jobs as [documented](docs/board.md#setup). Flags pre-answer its questions: `curl -fsSL …/scripts/install.sh | bash -s -- <flags>`.
 
 | Flag | Does |
 |---|---|
@@ -107,7 +107,7 @@ Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of w
 With a stdin flag, stdin cannot also carry the script:
 
 ```bash
-security find-generic-password -s <item> -w | bash -c "$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh)" install.sh --password-stdin
+security find-generic-password -s <item> -w | bash -c "$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/scripts/install.sh)" scripts/install.sh --password-stdin
 ```
 
 What it sets up, for reference or by hand:

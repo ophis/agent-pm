@@ -237,7 +237,7 @@ container's own tmux socket is not Docker's, so the socket search names `docker`
 
 ## Linear presets
 
-With `--board linear`, `install.sh` stores the keys and fills the ids itself ([Setup](board.md#setup)); the table
+With `--board linear`, `scripts/install.sh` stores the keys and fills the ids itself ([Setup](board.md#setup)); the table
 lists what it needs in Linear. By hand: create these in the Linear team, then put each id in `~/.agent-pm/config.local.toml`: a `linear.<key>` under
 `[orchestrator.linear]` (`linear.states.todo` is `todo` in `[orchestrator.linear.states]`, `linear.roles.pm.key` is
 `key` in `[orchestrator.linear.roles.pm]`), `local_clones` under `[orchestrator]` ([Setup](board.md#setup)).
