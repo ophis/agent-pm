@@ -11,6 +11,8 @@ import tomllib
 from collections import namedtuple
 from pathlib import Path
 
+from agent_pm.orchestrator.engine import config as orchestrator_config
+
 from tests.case import REPO, Case
 
 SCRIPT = Path(REPO, "install.sh")
@@ -1746,17 +1748,7 @@ class InstallTest(Case):
             outputs,
             {"researcher": {**docs, "dir": "Research/"}, "pm": {**docs, "dir": "Product Design/"}},
         )
-        loaded = subprocess.run(  # the router's config load accepts it
-            [
-                sys.executable,
-                "-c",
-                "from agent_pm.orchestrator.engine import config; config.load()",
-            ],
-            env={**os.environ, "HOME": self.home},
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(loaded.returncode, 0, loaded.stderr)
+        orchestrator_config.load()  # the router's config load accepts it (HOME is this test's)
         shown = result.tty.index('[orchestrator.linear] team = "' + uuid(1) + '"')
         self.assertLess(shown, result.tty.index("Library/LaunchAgents:"))
         agents = Path(self.home, "Library/LaunchAgents")
