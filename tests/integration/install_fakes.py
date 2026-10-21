@@ -161,6 +161,8 @@ def brew(args):
             link_app("node")
         if app := CASK_APPS.get(name):
             (ROOT / "Applications" / app).mkdir(parents=True, exist_ok=True)
+        if name == "docker-desktop":
+            docker_app(ROOT / "Applications" / "Docker.app")
         return 0
     if verb == "uninstall":
         if (FAKES / "dependents" / name).exists():
@@ -175,6 +177,34 @@ def brew(args):
             (FAKES / "docker_running").unlink(missing_ok=True)
         return 0
     return 1
+
+
+DOCKER_BLOCK = """
+# The following lines have been added by Docker Desktop to enable Docker CLI completions.
+export PATH="$PATH:{home}/.docker/bin"
+# End of Docker Desktop section.
+"""
+
+
+def docker_app(app):
+    """Docker.app's own uninstall, as the cask puts it in place."""
+    tool = app / "Contents/MacOS/uninstall"
+    tool.parent.mkdir(parents=True, exist_ok=True)
+    tool.write_text(f'#!/bin/sh\nexec {sys.executable} -I {__file__} docker-uninstall "$@"\n')
+    tool.chmod(0o755)
+
+
+def docker_uninstall(_args):
+    (FAKES / "docker_running").unlink(missing_ok=True)
+    (FAKES / "docker_started").unlink(missing_ok=True)
+    if (FAKES / "protected_container").exists():
+        home = os.environ["HOME"]
+        out(
+            f"rm: {home}/Library/Containers/com.docker.docker: Operation not permitted\n",
+            sys.stderr,
+        )
+        return 1
+    return 0
 
 
 def login(client, args, status, start, logout):
@@ -203,6 +233,8 @@ def marketplace_name(source):
 def claude(args):
     if args in (["auth", "login"], ["setup-token"]) and bun("claude"):
         return 1
+    if args == ["auth", "login"]:
+        store_key("Claude Code-credentials", "oauth")
     done = login("claude", args, ["auth", "status"], ["auth", "login"], ["auth", "logout"])
     if done is not None:
         return done
@@ -329,7 +361,12 @@ def docker(args):
 
 
 def open_(args):
+    """Docker Desktop's first start also adds its block to ~/.zprofile."""
     if args == ["-a", "Docker"] and not (FAKES / "docker_wont_start").exists():
+        if not (FAKES / "docker_started").exists():
+            with open(Path(os.environ["HOME"], ".zprofile"), "a") as profile:
+                profile.write(DOCKER_BLOCK.format(home=os.environ["HOME"]))
+            mark(FAKES / "docker_started")
         mark(FAKES / "docker_running")
     return 0
 
@@ -469,6 +506,7 @@ TOOLS = {
     "shasum": shasum,
     "base64": base64_,
     "agent-pm-broker": broker,
+    "docker-uninstall": docker_uninstall,
 }
 
 

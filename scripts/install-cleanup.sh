@@ -20,6 +20,7 @@ feeder=
 askpass_dir=
 current=
 answer=
+leftover=
 
 say() { printf '%s\n' "$*" >&2; }
 
@@ -331,6 +332,7 @@ logins() {
       claude)
         if claude auth status </dev/null >/dev/null 2>&1; then claude auth logout <&3 >&3 2>&3 || true; fi
         ! claude auth status </dev/null >/dev/null 2>&1 || die "claude is still logged in"
+        while delete_item "Claude Code-credentials"; do :; done
         ;;
       codex)
         if codex login status </dev/null >/dev/null 2>&1; then codex logout <&3 >&3 2>&3 || true; fi
@@ -371,9 +373,28 @@ except BaseException:
   done <<<"$(of_kind opencode-auth)"
 }
 
+# Drops Docker Desktop's own block (its first start writes it) from profile $1, when both its markers are there.
+docker_block() {
+  python3 -I -c '
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    text = f.read()
+block = re.compile(r"(?:^\n)?^# The following lines .*by Docker Desktop.*\n(?:.*\n)*?# End of Docker Desktop section\.\n?", re.M)
+new = block.sub("", text)
+if new != text:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new)' "$1"
+}
+
 profiles() {
   local file line
   step "shell profiles"
+  if of_kind cask | grep -qx "cask"$'\t'"docker-desktop"; then
+    while IFS= read -r file; do
+      if [ -f "$file" ]; then docker_block "$file"; fi
+    done <<<"$(of_kind 'profile(-file)?' | cut -f2 | sort -u)"
+  fi
   while IFS=$'\t' read -r _ file line; do
     [ -n "$file" ] || continue
     if [ -f "$file" ]; then
@@ -412,6 +433,10 @@ brew_packages() {
   while IFS=$'\t' read -r kind name; do
     [ -n "$name" ] || continue
     if [ "$kind" = cask ]; then
+      if [ "$name" = docker-desktop ] && [ -x "$root/Applications/Docker.app/Contents/MacOS/uninstall" ]; then
+        # Docker's own uninstall first (docs.docker.com/desktop/uninstall); it may fail on its protected container.
+        "$root/Applications/Docker.app/Contents/MacOS/uninstall" </dev/null >&2 || say "    Docker Desktop's uninstall failed; going on"
+      fi
       if brew list --cask "$name" </dev/null >/dev/null 2>&1; then brew uninstall --cask "$name" </dev/null >&2; fi
     elif brew list --formula "$name" </dev/null >/dev/null 2>&1; then
       if ! reason=$(brew uninstall "$name" </dev/null 2>&1); then
@@ -452,7 +477,12 @@ files_and_dirs() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     [ "$path" = "$HOME/.agent-pm" ] && continue
-    rm -rf "$path"
+    if ! rm -rf "$path" && [ "$path" = "$HOME/Library/Containers/com.docker.docker" ]; then
+      leftover=$path
+      say "    kept $path: macOS protects it; give the terminal Full Disk Access, then rm -rf it"
+    elif [ -e "$path" ]; then
+      die "cannot remove $path; its record stays for a rerun"
+    fi
     drop "dir"$'\t'"$path"
   done <<<"$(of_kind dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
 }
@@ -495,6 +525,9 @@ main() {
   if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
+  if [ -n "$leftover" ]; then
+    say "Left $leftover: grant the terminal Full Disk Access (System Settings › Privacy & Security), then rm -rf it."
+  fi
 }
 
 main "$@"

@@ -1071,7 +1071,7 @@ class InstallTest(Case):
             '[orchestrator.linear.roles.pm]\naccount = "me+pm@example.com"\nkey = "linear-pm"\n'
         )
         self.config().write_text(self.config().read_text() + linear)
-        (self.fakes / "keychain").mkdir()
+        (self.fakes / "keychain").mkdir(exist_ok=True)
         (self.fakes / "keychain/linear-manager").write_text("already")
         key = r"password data for new item:"
         result = self.again(
@@ -1350,6 +1350,33 @@ class InstallTest(Case):
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
 
+    def test_cleanup_keeps_a_protected_docker_container(self):
+        """Docker's own uninstall and rm both fail on it without Full Disk Access; the rest goes."""
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        container = Path(self.home, "Library/Containers/com.docker.docker")
+        (container / "locked").mkdir(parents=True)
+        (container / "locked/data").write_text("")
+        (container / "locked").chmod(0o500)
+        self.addCleanup((container / "locked").chmod, 0o700)
+        (self.fakes / "protected_container").write_text("")
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertIn("docker-uninstall", self.calls())
+        self.assertLess(
+            self.calls().index("docker-uninstall"),
+            self.calls().index("brew uninstall --cask docker-desktop"),
+        )
+        self.assertIn("Docker Desktop's uninstall failed; going on", result.stderr)
+        self.assertTrue(
+            result.stderr.endswith(
+                f"Removed what install.sh added.\nLeft {container}: grant the terminal Full Disk"
+                " Access (System Settings › Privacy & Security), then rm -rf it.\n"
+            ),
+            result.stderr,
+        )
+        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertFalse(Path(self.home, ".zprofile").exists())
+
     def preinstalled_homebrew(self):
         """Homebrew with gh and the Command Line Tools, there before install.sh; PATH lacks its bin."""
         prefix = Path(self.root, "opt/homebrew/bin")
@@ -1370,6 +1397,10 @@ class InstallTest(Case):
         (self.fakes / "keychain/agent-pm-claude").write_text("theirs")
         Path(self.home, ".docker").mkdir()
         Path(self.home, ".docker/config.json").write_text("{}")
+        Path(self.home, ".zshrc").write_text(
+            "# The following lines have been added by Docker Desktop to enable Docker CLI"
+            " completions.\n# End of Docker Desktop section.\n"
+        )
         before = self.snapshot()
         self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
         self.assertFalse(
