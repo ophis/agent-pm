@@ -22,6 +22,7 @@ docker=
 board_flag=
 board=
 board_tracker=
+board_stages=
 jobs_flag=
 board_jobs_choice=
 local_board_ready=
@@ -629,17 +630,17 @@ answers() {
   if [ "$board" != yes ] && [ -n "$jobs_flag" ]; then
     usage_error "--launchd/--no-launchd requires a board"
   fi
-  board_tracker=$(state_get board_tracker)
-  if [ "$board" = yes ] && [ -z "$board_tracker" ]; then board_tracker=$(configured_tracker); fi
-  case $board_tracker in local | linear) ;; *) board_tracker=local ;; esac
+  board_tracker=
   case $board_flag in local | linear) board_tracker=$board_flag ;; esac
+  board_tracker=${board_tracker:-$(state_get board_tracker)}
+  board_tracker=${board_tracker:-$(configured_tracker "$said")}
   board_jobs_choice=${jobs_flag:-$(state_get board_jobs)}
   if [ "$board" = yes ]; then
-    if [ -z "$board_flag" ] && [ -z "$(state_get board_tracker)" ] && [ -z "$(configured_tracker)" ]; then
+    if [ -z "$board_tracker" ]; then
       while :; do
-        ask "Board tracker [local/linear] [$board_tracker]:"
-        case ${answer:-$board_tracker} in
-          local | linear) board_tracker=${answer:-$board_tracker}; break ;;
+        ask "Board tracker [local/linear] [local]:"
+        case ${answer:-local} in
+          local | linear) board_tracker=${answer:-local}; break ;;
         esac
       done
     fi
@@ -656,6 +657,7 @@ answers() {
     state_set board_tracker "$board_tracker"
     state_set board_jobs "$board_jobs_choice"
   fi
+  board_tracker=${board_tracker:-local}
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
   if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
     usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
@@ -1570,11 +1572,9 @@ docker_cli() {
   config_file session.hosts.docker docker "$cli"
 }
 
-# Prints only a recognized, explicit tracker; an absent setting stays empty.
+# configured_tracker <config_says snapshot>: prints only a recognized tracker; absent stays empty.
 configured_tracker() {
-  local said tracker
-  said=$(config_says)
-  tracker=${said#*$'\t'}
+  local tracker=${1#*$'\t'}
   tracker=${tracker#*$'\t'}
   case $tracker in local | linear) printf '%s' "$tracker" ;; esac
 }
@@ -1616,11 +1616,9 @@ if not stages or not all(isinstance(v, str) and names.fullmatch(v) for stage in 
 print("\n".join(f"{role}\t{input_}" for role, input_ in stages))' "$config" "$pkg/orchestrator/src/agent_pm/orchestrator/engine/flow/workflow.toml"
 }
 
-# "<slot>\t<service>\t<account>" for each Linear key the board uses: harness, manager, then each stage role. Its
+# linear_slots <stages>: "<slot>\t<service>\t<account>" for each Linear key: harness, manager, then each stage role. Its
 # service is config.local.toml's, else linear-<slot>; its account the role's account there, else the service.
 linear_slots() {
-  local stages
-  stages=$(stage_roles) || exit 1
   python3 -I -c '
 import os, re, sys, tomllib
 config, roles = sys.argv[1], [line.split("\t")[0] for line in sys.argv[2].splitlines()]
@@ -1639,7 +1637,7 @@ for slot, service, account in slots:
     account = account or service
     if not all(re.fullmatch(r"[A-Za-z0-9._@+][A-Za-z0-9._@+-]*", v) for v in (service, account)):
         sys.exit(f"install.sh: config.local.toml: {slot} key {service!r}: not a plain keychain name")
-    print(f"{slot}\t{service}\t{account}")' "$config" "$stages"
+    print(f"{slot}\t{service}\t{account}")' "$config" "$1"
 }
 
 # Python for Linear's GraphQL API: linear(service, query, variables) is the answer's data, with the key in keychain
@@ -1685,10 +1683,9 @@ except LinearError as error:
 }
 
 linear_keys() {
-  local list slot service account
+  local list=$1 slot service account
   step "Linear keys"
   linear_wanted || return 0
-  list=$(linear_slots)
   while IFS=$'\t' read -r slot service account; do
     [ -n "$service" ] || continue
     if security find-generic-password -s "$service" </dev/null >/dev/null 2>&1; then
@@ -1708,9 +1705,7 @@ linear_keys() {
 # Exit 0 when config.local.toml has all the board config the orchestrator requires (engine/config.py's REQUIRED over
 # the stage roles, and each document role's GitHub output), manager_key included, with tracker = "linear".
 board_complete() {
-  local stages
   [ -f "$config" ] || return 1
-  stages=$(stage_roles) || exit 1
   python3 -I -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
@@ -1730,16 +1725,13 @@ def published(role):
     return output.get("type") == "github" and set_(output, "repo") and set_(output, "branch")
 docs = all(published(role) for role, input_ in stages if input_ in ("research", "design"))
 sys.exit(0 if orchestrator.get("tracker") == "linear" and docs and all(set_(linear, *keys) for keys in required) else 1)' \
-    "$config" "$stages"
+    "$config" "$1"
 }
 
-# board_plan <out>: asks Linear (and the user, for the team and project repos) for the board config
+# board_plan <out> <slots> <stages>: asks Linear (and the user, for the team and project repos) for the board config
 # config.local.toml lacks; writes it to <out> as JSON [[table, key, value], ...]. Everything Linear says is checked
 # before it is shown or planned.
 board_plan() {
-  local slots stages
-  slots=$(linear_slots) || exit 1
-  stages=$(stage_roles) || exit 1
   python3 -I -c "$linear_client"'
 import os, re, tomllib
 config, out, slot_lines, stage_lines, charters = sys.argv[1:]
@@ -1860,16 +1852,23 @@ if humans:
 for key, title in STATES.items():
     fill("orchestrator.linear.states", key, states[title])
 known = set()
+team_dirs = dig(data, "delegate", "team_dirs") or []
+charter_dirs = [charters, *(os.path.join(os.path.expanduser(d), "roles") for d in team_dirs)]
 for role, _ in stages:
+    paths = [os.path.join(d, f"{role}.md") for d in charter_dirs if os.path.isfile(os.path.join(d, f"{role}.md"))]
+    if len(paths) > 1:
+        stop(f"charter {role} is defined more than once; team_dirs files only add")
+    if not paths:
+        continue
     try:
-        with open(os.path.join(charters, f"{role}.md"), encoding="utf-8") as f:
-            index = f.read().partition("\n## Tasks\n")[2].partition("\n## ")[0]
+        with open(paths[0], encoding="utf-8") as f:
+            match = re.search(r"^## Tasks\n(.*?)(?=^#|\Z)", f.read(), re.M | re.S)
     except OSError:
-        known = None
-        break
-    known |= set(re.findall(r"^- `([a-z][a-z0-9-]*)`", index, re.M))
+        continue
+    if match:
+        known.update(re.findall(r"^- `([\w-]+)`(?: \(`[^`]*`\))?: .+$", match[1], re.M))
 for task, ident in children(tasks).items():
-    if known is None or task in known:
+    if task in known:
         fill("orchestrator.linear.task_labels", task, ident)
     else:
         print(f"    Tasks label {task}: not a task of the board\x27s roles; left out", file=sys.stderr)
@@ -1914,7 +1913,7 @@ if unpublished:
                            ("dir", "Research/" if input_ == "research" else "Product Design/")):
             fill(table, key, value)
 with open(out, "w", encoding="utf-8") as f:
-    json.dump(plan, f)' "$config" "$1" "$slots" "$stages" "$pkg/delegate/src/agent_pm/delegate/team/roles"
+    json.dump(plan, f)' "$config" "$1" "$2" "$3" "$pkg/delegate/src/agent_pm/delegate/team/roles"
 }
 
 local_board_setup() {
@@ -1942,24 +1941,29 @@ $wanted"; then
 }
 
 board_config() {
-  local plan=$state_dir/board.json
-  if [ "$board_tracker" = local ]; then step "local board configuration"; else step "Linear board configuration"; fi
+  local plan=$state_dir/board.json slots=
+  if [ "$board" = yes ] && [ "$board_tracker" = linear ]; then
+    board_stages=$(stage_roles) || exit 1
+    slots=$(linear_slots "$board_stages") || exit 1
+  fi
+  linear_keys "$slots"
+  step "$board_tracker board configuration"
   board_wanted || return 0
   if [ "$board_tracker" = local ]; then
     config_file orchestrator tracker local
-    if [ "$(configured_tracker)" = local ]; then
+    if [ "$(configured_tracker "$(config_says)")" = local ]; then
       local_board_setup
     else
       skip "local tracker not configured"
     fi
     return 0
   fi
-  if board_complete; then
+  if board_complete "$board_stages"; then
     skip "has the Linear board configuration"
     return 0
   fi
   mkdir -p "$state_dir"
-  board_plan "$plan"
+  board_plan "$plan" "$slots" "$board_stages"
   config_file board "$plan"
   rm -f "$plan"
 }
@@ -2002,7 +2006,7 @@ board_jobs() {
     skip "launchd jobs not chosen"
     return 0
   fi
-  if [ "$(configured_tracker)" != "$board_tracker" ]; then
+  if [ "$(configured_tracker "$(config_says)")" != "$board_tracker" ]; then
     skip "board tracker not configured"
     return 0
   fi
@@ -2010,7 +2014,7 @@ board_jobs() {
     skip "local board not initialized"
     return 0
   fi
-  if [ "$board_tracker" = linear ] && ! board_complete; then
+  if [ "$board_tracker" = linear ] && ! board_complete "$1"; then
     skip "no Linear board"
     return
   fi
@@ -2087,7 +2091,7 @@ EOF
 }
 
 main() {
-  local platform
+  local platform answered=
   set +x
   parse_args "$@"
   early_checks
@@ -2097,10 +2101,15 @@ main() {
   exec 3<>"$(terminal)"
   trap on_exit EXIT
   [ -d "$HOME/.agent-pm" ] || ledger_add dir "$HOME/.agent-pm"
+  # An installed board already has Python; reject deselecting it with job flags before privileged work.
+  if [ -n "$jobs_flag" ] && [ "$(state_get board)" = yes ]; then
+    PATH="${HOMEBREW_PREFIX:-$root/opt/homebrew}/bin:$PATH" answers
+    answered=yes
+  fi
   sudo_once
   homebrew
   dependencies
-  answers
+  if [ -z "$answered" ]; then answers; fi
   config_file
   apps
   client_logins
@@ -2113,9 +2122,8 @@ main() {
   docker_steps
   opencode_key
   ctmux_install
-  linear_keys
   board_config
-  board_jobs
+  board_jobs "$board_stages"
   current=
   celebrate
 }

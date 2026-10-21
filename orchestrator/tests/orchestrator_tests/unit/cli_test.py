@@ -407,23 +407,15 @@ class LaunchdJobs(Case):
                     ["@HOME@/.agent-pm/bin/agent-pm-orchestrator", job, *flags],
                 )
 
-    def test_path_is_filled_in_at_install(self):
+    def test_jobs_use_install_placeholders_and_the_default_board_directory(self):
         for job in JOBS:
-            with self.subTest(job=job):
-                self.assertEqual(plist(job)["EnvironmentVariables"]["PATH"], "@PATH@")
-
-    def test_jobs_use_the_orchestrator_default_board_directory(self):
-        for job in JOBS:
-            with self.subTest(job=job):
-                self.assertEqual(plist(job)["EnvironmentVariables"], {"PATH": "@PATH@"})
-
-    def test_output_goes_to_the_orchestrator_log(self):
-        for job in JOBS:
-            with self.subTest(job=job):
-                job_plist = plist(job)
-                self.assertEqual(
-                    {job_plist["StandardOutPath"], job_plist["StandardErrorPath"]}, {LOG}
-                )
+            for field, expected in (
+                ("EnvironmentVariables", {"PATH": "@PATH@"}),
+                ("StandardOutPath", LOG),
+                ("StandardErrorPath", LOG),
+            ):
+                with self.subTest(job=job, field=field):
+                    self.assertEqual(plist(job)[field], expected)
 
     def test_router_ticks_on_the_half_hour_and_leaves_its_detached_runs_alive(self):
         router = plist("router")
