@@ -48,7 +48,7 @@ def provider(name: str, base: str) -> object:
         if not isinstance(key, str) or not key or any(ord(c) < 33 or ord(c) == 127 for c in key):
             return None
         kind = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        connection = kind(url.hostname, url.port, timeout=TIMEOUT)
+        connection = kind(url.hostname or "", url.port, timeout=TIMEOUT)
         connection.request(
             "GET",
             (url.path or "").rstrip("/") + "/models",
