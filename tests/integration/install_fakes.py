@@ -283,7 +283,9 @@ def broker(args):
         if args[0] == "install-codex" and state is not None:
             out("agent-pm-broker: Codex already installed; use update-codex\n", sys.stderr)
             return 1
-        save(codex_file, {"state": "login_unavailable", "version": args[1], "repair": "login"})
+        kept = state if args[0] == "update-codex" and state and state.get("version") else {}
+        fresh = {"state": "login_unavailable", "repair": "login"}
+        save(codex_file, {**fresh, **kept, "version": args[1]})
         return 0
     if args == ["login", "claude"]:
         out("Paste the setup-token (hidden): ")

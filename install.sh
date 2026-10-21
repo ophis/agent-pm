@@ -6,6 +6,7 @@
 set -euo pipefail
 
 root=${AGENT_PM_INSTALL_ROOT:-}
+broker=$root/usr/local/libexec/agent-pm/agent-pm-broker
 state_file=$HOME/.agent-pm/install/state
 config=$HOME/.agent-pm/config.local.toml
 ref=main
@@ -431,6 +432,144 @@ ctmux_install() {
   profile_line 'export PATH="$HOME/.agent-pm/bin:$PATH"'
 }
 
+# sha256 of the plugin's broker sources: a change means the broker must be reinstalled.
+broker_source() {
+  (
+    cd "$pkg"
+    find broker -type f | LC_ALL=C sort | while IFS= read -r file; do shasum -a 256 "$file"; done
+    shasum -a 256 .claude-plugin/plugin.json
+  ) | shasum -a 256 | cut -d' ' -f1
+}
+
+docker_running() {
+  step "Docker Desktop running"
+  if docker info </dev/null >/dev/null 2>&1; then
+    skip running
+    return
+  fi
+  open -a Docker </dev/null
+  while ! docker info </dev/null >/dev/null 2>&1; do
+    ask "Finish Docker Desktop's first-run setup, then press Enter (or type skip)"
+    [ "$answer" != skip ] || die "Docker Desktop not running"
+  done
+}
+
+broker_install() {
+  local source
+  source=$(broker_source)
+  if [ -x "$broker" ] && [ "$(state_get broker_source)" = "$source" ]; then
+    step "Docker Desktop running"
+    skip "broker current"
+    step broker
+    skip "installed from this plugin"
+    return
+  fi
+  docker_running
+  step broker
+  if [ "$ref" = main ]; then
+    sh "$pkg/broker/install.sh" </dev/null >&2
+  else
+    sh "$pkg/broker/install.sh" --build </dev/null >&2
+  fi
+  state_set broker_source "$source"
+}
+
+# Stores the agent-pm-bot App key from a .pem the user names; 1 when they skip it.
+store_app_key() {
+  local pem id key
+  [ "$(state_get github_app_key)" != skipped ] || return 1
+  ask "Path to the agent-pm-bot GitHub App private key (.pem), empty to skip:"
+  if [ -z "$answer" ]; then
+    state_set github_app_key skipped
+    return 1
+  fi
+  pem=$answer
+  [ -f "$pem" ] || die "no file $pem"
+  while :; do
+    ask "Its App ID (digits):"
+    case $answer in '' | *[!0-9]*) ;; *) break ;; esac
+  done
+  id=$answer
+  key=$(base64 -i "$pem")
+  printf 'add-generic-password -s agent-pm-bot -a %s -U -w %s %s\n' "$id" "$key" \
+    "$HOME/Library/Keychains/login.keychain-db" | security -i >/dev/null 2>&1 || true
+  unset key
+  security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 || die "agent-pm-bot key not stored"
+}
+
+# install, update, login, ready or busy: what the broker's pinned Codex needs.
+codex_need() {
+  "$broker" status </dev/null | python3 -c '
+import json, sys
+codex = json.load(sys.stdin).get("codex") or {}
+state = codex.get("state", "")
+def version(text):
+    try:
+        return tuple(int(part) for part in text.split("."))
+    except ValueError:
+        return (0,)
+if state == "busy":
+    print("busy")
+elif state == "installation_invalid":
+    print("install" if "install-codex" in codex.get("repair", "") else "update")
+elif version(codex.get("version", "")) < version(sys.argv[1]):
+    print("update")
+else:
+    print("ready" if state == "ready" else "login")' "$1"
+}
+
+broker_logins() {
+  local sha min need
+  sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
+  step "broker login: Claude"
+  if [ "$(state_get login_claude)" = "$sha" ]; then
+    skip "done for this broker"
+  else
+    say "Create a token with claude setup-token, then paste it at the broker's prompt"
+    claude setup-token <&3 >&3 2>&3
+    "$broker" login claude <&3 >&3 2>&3
+    state_set login_claude "$sha"
+  fi
+  step "broker login: GitHub"
+  if [ "$(state_get login_github)" = "$sha" ]; then
+    skip "done for this broker"
+  elif ! security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 && ! store_app_key; then
+    skip "no agent-pm-bot App key (docs/docker-host.md#log-in)"
+  else
+    "$broker" login github agent-pm-bot <&3 >&3 2>&3
+    state_set login_github "$sha"
+  fi
+  step "broker Codex install"
+  min=$(sed -n 's/^const MinVersion = "\([0-9.]*\)"$/\1/p' "$pkg/broker/internal/codex/versions.go")
+  [ -n "$min" ] || die "no MinVersion in $pkg/broker/internal/codex/versions.go"
+  need=$(codex_need "$min")
+  case $need in
+    busy) die "broker busy; rerun" ;;
+    install | update) sudo "$broker" "$need-codex" "$min" </dev/null >&2 ;;
+    *) skip "Codex $min or newer installed" ;;
+  esac
+  step "broker login: Codex"
+  if [ "$(codex_need "$min")" = ready ]; then
+    skip "logged in"
+  else
+    "$broker" login codex <&3 >&3 2>&3
+  fi
+}
+
+docker_steps() {
+  local name
+  if [ "$docker" != yes ]; then
+    for name in "Docker Desktop running" broker "broker login: Claude" "broker login: GitHub" \
+      "broker Codex install" "broker login: Codex"; do
+      step "$name"
+      skip "Docker not chosen"
+    done
+    return
+  fi
+  broker_install
+  broker_logins
+}
+
 main() {
   local platform
   parse_args "$@"
@@ -447,6 +586,7 @@ main() {
   claude_plugins
   codex_plugins
   plugin_dir
+  docker_steps
   ctmux_install
   current=
   say "agent-pm is installed (ref $ref, Docker $docker)."

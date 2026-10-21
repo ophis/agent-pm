@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 import re
 import shutil
@@ -41,6 +43,17 @@ TOKEN = "sk-ant-oat01-SENTINEL-token"
 DOCKER_Q = r"Run workers in Docker \(Docker Desktop and the agent-pm broker\)\? \[y/N\]"
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
+TOKEN_Q = r"Paste the setup-token \(hidden\):"
+PEM_Q = r"private key \(\.pem\), empty to skip:"
+DOCKER_LOGINS = ((TOKEN_Q, TOKEN), (PEM_Q, ""))
+DOCKER_STEPS = (
+    "Docker Desktop running",
+    "broker",
+    "broker login: Claude",
+    "broker login: GitHub",
+    "broker Codex install",
+    "broker login: Codex",
+)
 BROKER_INSTALL = """#!/bin/sh
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -209,7 +222,9 @@ class InstallTest(Case):
             for name, text in texts.items():
                 self.assertNotIn(secret, text, name)
 
-    def fresh(self, *args, docker="n", extra=()):
+    def fresh(self, *args, docker="n", extra=None):
+        if extra is None:
+            extra = DOCKER_LOGINS if docker == "y" else ()
         return self.run_install(
             *args,
             answers=[
@@ -410,3 +425,155 @@ class InstallTest(Case):
                 "claude plugin enable autopilot@claude-autopilot",
             ],
         )
+
+    def broker_calls(self):
+        calls = self.calls()
+        own = {"sudo -n true", "sudo -v", "sudo -n -v", "sudo -k", "sudo -S -p  -v"}
+        wanted = ("broker-", "sudo", "agent-pm-broker")
+        return [c for c in calls if c.startswith(wanted) and c not in own and "status" not in c]
+
+    def broker_path(self):
+        return Path(self.root, "usr/local/libexec/agent-pm/agent-pm-broker")
+
+    def test_fresh_install(self):
+        result = self.fresh(docker="y")
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn("brew install --cask docker-desktop", calls)
+        self.assertNotIn("brew install go", calls)
+        broker = str(self.broker_path())
+        self.assertEqual(
+            self.broker_calls(),
+            [
+                "broker-install ",
+                f"sudo mkdir -p {self.root}/usr/local/libexec/agent-pm",
+                "agent-pm-broker login claude",
+                f"sudo {broker} install-codex 0.163.0",
+                "agent-pm-broker install-codex 0.163.0",
+                "agent-pm-broker login codex",
+            ],
+        )
+        self.assertLess(calls.index("open -a Docker"), calls.index("broker-install "))
+        self.assertLess(
+            calls.index("claude setup-token"), calls.index("agent-pm-broker login claude")
+        )
+        self.assertEqual((self.fakes / "broker/claude_token").read_text(), TOKEN)
+        self.assertIn("skip: no agent-pm-bot App key", result.stderr)
+        state = self.state()
+        self.assertEqual(state["github_app_key"], "skipped")
+        self.assertEqual(len(state["login_claude"]), 64)
+        self.assertNotIn("login_github", state)
+        self.assert_secret_free(PASSWORD, TOKEN, result=result)
+
+    def test_no_docker(self):
+        result = self.run_install(
+            "--no-docker", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y")]
+        )
+        self.assert_ok(result)
+        for name in DOCKER_STEPS:
+            self.assertIn(f"==> {name}\n    skip: Docker not chosen", result.stderr)
+        calls = "\n".join(self.calls())
+        for absent in (
+            "docker-desktop",
+            "broker",
+            "open -a Docker",
+            "setup-token",
+            "brew install go",
+        ):
+            self.assertNotIn(absent, calls)
+
+    def test_branch_broker_is_built(self):
+        self.assert_ok(self.fresh("--ref", "next", docker="y"))
+        self.assertIn("brew install go", self.calls())
+        self.assertIn("broker-install --build", self.calls())
+
+    def test_docker_not_running_skip_fails(self):
+        (self.fakes / "docker_wont_start").touch()
+        skip = (r"first-run setup.*\(or type skip\)", "skip")
+        result = self.run_install(
+            answers=[(DOCKER_Q, "y"), (SUDO_Q, PASSWORD), (WRITE_Q, "y"), skip]
+        )
+        self.assertEqual(result.code, 1)
+        self.assertIn("install.sh: Docker Desktop not running", result.stderr)
+        self.assertIn(
+            "install.sh: Docker Desktop running failed; rerun the same command", result.stderr
+        )
+        self.assertNotIn("broker-install ", self.calls())
+        (self.fakes / "docker_wont_start").unlink()
+        result = self.run_install(answers=[(SUDO_Q, PASSWORD), *DOCKER_LOGINS, (WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assertIn("broker-install ", self.calls())
+
+    def test_github_app_key_optional(self):
+        self.assert_ok(self.fresh(docker="y"))
+        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertNotRegex(result.tty, PEM_Q)
+        self.assertIn("skip: no agent-pm-bot App key", result.stderr)
+        (self.fakes / "keychain").mkdir(exist_ok=True)
+        (self.fakes / "keychain/agent-pm-bot").write_text("stored by hand")
+        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
+        self.assertEqual(len(self.state()["login_github"]), 64)
+
+    def test_github_app_key_stored_by_pipe(self):
+        pem = Path(self.home, "app.pem")
+        secret = "-----BEGIN RSA PRIVATE KEY-----SENTINELKEY-----END RSA PRIVATE KEY-----"
+        pem.write_text(secret)
+        encoded = base64.b64encode(secret.encode()).decode()
+        answers = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
+        answers.append((r"App ID \(digits\):", "5352992"))
+        result = self.fresh(docker="y", extra=answers)
+        self.assert_ok(result)
+        self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), encoded)
+        self.assertEqual((self.fakes / "keychain/agent-pm-bot.account").read_text(), "5352992")
+        self.assertIn("security -i", self.calls())
+        self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
+        pem.unlink()
+        self.assert_secret_free(encoded, "SENTINELKEY", TOKEN, result=result)
+
+    def test_broker_change_logs_in_again(self):
+        self.assert_ok(self.fresh(docker="y"))
+        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertEqual(self.broker_calls(), [])
+        self.assertIn("==> broker\n    skip: installed from this plugin", result.stderr)
+        self.assertIn("==> Docker Desktop running\n    skip: broker current", result.stderr)
+        versions = Path(self.fakes, "claude/cache/0/broker/internal/codex/versions.go")
+        versions.write_text('package codex\n\nconst MinVersion = "0.170.0"\n')
+        result = self.run_install(answers=[(SUDO_Q, PASSWORD), (TOKEN_Q, TOKEN)])
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn("broker-install ", calls)
+        self.assertIn("agent-pm-broker login claude", calls)
+        self.assertIn(f"sudo {self.broker_path()} update-codex 0.170.0", calls)
+        self.assertNotIn("agent-pm-broker login codex", calls)
+
+    def test_codex_install_or_update(self):
+        self.assert_ok(self.fresh(docker="y"))
+        codex = self.fakes / "broker/codex.json"
+        broker = self.broker_path()
+        cases = (
+            (
+                {"state": "installation_invalid", "repair": "sudo B update-codex <version>"},
+                "update",
+            ),
+            ({"state": "ready", "version": "0.163.0", "repair": ""}, None),
+            ({"state": "expired", "version": "0.163.1", "repair": "B login codex"}, None),
+            ({"state": "busy", "version": "0.163.0"}, "busy"),
+        )
+        for status, action in cases:
+            codex.write_text(json.dumps(status))
+            result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+            calls = self.calls()
+            if action == "busy":
+                self.assertEqual(result.code, 1)
+                self.assertIn("install.sh: broker busy; rerun", result.stderr)
+                continue
+            self.assert_ok(result)
+            update = f"sudo {broker} update-codex 0.163.0"
+            self.assertEqual(update in calls, action == "update", status)
+            self.assertNotIn(f"sudo {broker} install-codex 0.163.0", calls)
+            login = "agent-pm-broker login codex" in calls
+            self.assertEqual(login, status["state"] != "ready", status)
