@@ -1780,7 +1780,7 @@ class InstallTest(Case):
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
         before = self.config().read_text()
-        result = self.again("--no-board", "--no-launchd")
+        result = self.again("--no-board")
         self.assert_ok(result)
         self.assertEqual(self.config().read_text(), before)
         self.assert_no_linear(result)
@@ -1887,6 +1887,28 @@ class InstallTest(Case):
             result = self.run_install(*args, tty=False)
             self.assertEqual(result.code, 2, args)
             self.assertEqual(self.calls(), [])
+
+    def test_board_jobs_require_board(self):
+        for flag in ("--launchd", "--no-launchd"):
+            result = self.run_install("--no-board", flag, tty=False)
+            self.assertEqual(result.code, 2)
+            self.assertEqual(self.calls(), [])
+            result = self.run_install("--clients", "claude", "--no-docker", flag, tty=False)
+            self.assertEqual(result.code, 2)
+            self.assertIn("requires a board", result.stderr)
+            self.assertEqual(self.calls(), [])
+
+    def test_board_jobs_rejected_when_checklist_leaves_board_off(self):
+        result = self.run_install(
+            "--launchd",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (MENU_Q, ""),
+            ],
+        )
+        self.assertEqual(result.code, 2)
+        self.assertIn("requires a board", result.stderr)
 
     def test_board_custom_workflow_roles(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})

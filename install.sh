@@ -194,6 +194,9 @@ parse_args() {
     esac
     shift
   done
+  if [ "$board_flag" = no ] && [ -n "$jobs_flag" ]; then
+    usage_error "--launchd/--no-launchd requires a board"
+  fi
   if { [ -n "$password_stdin" ] || [ -n "$key_stdin" ]; } && [ -t 0 ]; then
     usage_error "--password-stdin and --opencode-key-stdin read a pipe, not a terminal"
   fi
@@ -204,6 +207,10 @@ opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$context_flag$key_std
 # The flags' conflicts that flags and State already decide, before anything runs.
 early_checks() {
   local said_docker
+  if [ -n "$jobs_flag" ] && [ -z "$board_flag" ] && [ "$(state_get board)" != yes ] \
+    && [ -n "$clients_flag" ] && [ -n "$docker_flag" ]; then
+    usage_error "--launchd/--no-launchd requires a board"
+  fi
   said_docker=$docker_flag
   [ -n "$said_docker" ] || said_docker=$(state_get docker)
   if [ -n "$key_stdin" ] && [ "$said_docker" = yes ]; then
@@ -625,6 +632,9 @@ answers() {
     done
     if [ "${ticks[3]}" = 1 ]; then docker=yes; else docker=no; fi
     if [ "${ticks[4]}" = 1 ]; then board=yes; else board=no; fi
+  fi
+  if [ "$board" != yes ] && [ -n "$jobs_flag" ]; then
+    usage_error "--launchd/--no-launchd requires a board"
   fi
   board_tracker=$(state_get board_tracker)
   if [ "$board" = yes ] && [ -z "$board_tracker" ]; then board_tracker=$(configured_tracker); fi
