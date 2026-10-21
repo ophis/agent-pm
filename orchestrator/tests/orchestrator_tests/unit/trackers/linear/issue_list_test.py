@@ -86,6 +86,14 @@ class Filters(IssueCase):
         }
         self.assertEqual(gql.sent("issues")[0]["f"], want)
 
+    def test_a_project_name_resolves(self):
+        gql = Routes(
+            strict=True, team={"projects": edges([project(5, "Agent PM")])}, issues=edges([])
+        )
+        self.run_list(["--project", "Agent PM"], gql)
+        want = [{"team": {"id": {"eq": TEAM}}}, {"project": {"id": {"eq": uid(5)}}}]
+        self.assertEqual(gql.sent("issues")[0]["f"], {"and": want})
+
     def test_each_state_and_priority_by_its_configured_id_and_number(self):
         for argv, want in (
             (["--state", "backlog"], {"state": {"id": {"eq": STATES["backlog"]}}}),

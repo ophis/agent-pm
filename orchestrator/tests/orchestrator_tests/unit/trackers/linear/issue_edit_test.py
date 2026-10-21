@@ -6,9 +6,9 @@ nothing.
 from agent_pm.orchestrator.engine.flow.types import Priority
 from agent_pm.orchestrator.engine.types import IssueError, Unavailable, WriteUnknown
 from agent_pm.orchestrator.issue.output import receipt_payload
-from agent_pm.orchestrator.trackers.linear import issue_edit, issue_label, issue_read
+from agent_pm.orchestrator.trackers.linear import issue_edit, issue_label, issue_read, issue_refs
 from orchestrator_tests.case import Case
-from orchestrator_tests.unit.board_ids import ACCOUNTS, TASK_GROUP
+from orchestrator_tests.unit.board_ids import ACCOUNTS, TASK_GROUP, TEAM
 from orchestrator_tests.unit.issue_fixtures import (
     CLIENT_GROUP,
     CLIENT_LABELS,
@@ -20,6 +20,8 @@ from orchestrator_tests.unit.issue_fixtures import (
     issue_change,
     label,
     names_cfg,
+    project,
+    uid,
 )
 
 BUILD, LIGHT = label(0xB1, "build", group=TASK_GROUP), label(0xB2, "light", group=TASK_GROUP)
@@ -27,6 +29,8 @@ CODEX, CLAUDE = label(0xC1, "a", group=CLIENT_GROUP), label(0xC2, "b", group=CLI
 KEEP = label(3, "keep")
 CATALOG = (BUILD, LIGHT, CODEX, CLAUDE, KEEP)
 BODY = 'say "hi", `ls`, $HOME\n中文\n'
+AGENT_PM, OPS, OPS_TOO = project(4, "Agent PM"), project(5, "Ops"), project(6, "Ops")
+PROJECTS = (AGENT_PM, OPS, project(7, "Elsewhere", team_ids=(OTHER_TEAM,)))
 
 
 def edit(gql, body=None, cfg=None, **given):
@@ -142,6 +146,44 @@ class Edit(Case):
                 self.assertEqual(edit(gql, role=role).result, "unchanged")
                 self.assertEqual(gql.writes, [])
 
+    def test_a_project_by_id_or_exact_name_writes_only_the_project(self):
+        for value in (AGENT_PM["id"], "Agent PM"):
+            gql = EditGql(CATALOG, [KEEP["id"]], projects=PROJECTS)
+            with self.subTest(value=value):
+                self.assertEqual(edit(gql, project=value).result, "changed")
+                self.assertEqual(
+                    gql.writes,
+                    [(issue_edit.M_EDIT, {"i": "id-TASK-2", "in": {"projectId": AGENT_PM["id"]}})],
+                )
+
+    def test_a_project_already_set_writes_nothing(self):
+        gql = EditGql(CATALOG, [], projects=PROJECTS, fields={"project": {"id": OPS["id"]}})
+        self.assertEqual(edit(gql, project="Ops").result, "unchanged")
+        self.assertEqual(gql.writes, [])
+
+    def test_a_project_that_does_not_resolve_lists_the_candidates_and_writes_nothing(self):
+        lookup = f"agent-pm-orchestrator issue lookup projects --team {TEAM}"
+        for value, phrase in (
+            ("Nope", f"no project of team {TEAM} has that name; candidates: none"),
+            ("Ops", f"2 match, name one by id: {OPS['id']} 'Ops', {OPS_TOO['id']} 'Ops'"),
+            (uid(7), f"{uid(7)} 'Elsewhere' is not a project of team {TEAM}; candidates: "),
+            (uid(9), "no such project"),
+        ):
+            gql = EditGql(CATALOG, [], projects=(*PROJECTS, OPS_TOO))
+            with self.subTest(value=value), self.assertRaises(IssueError) as cm:
+                edit(gql, project=value)
+            self.assertIn(phrase, str(cm.exception))
+            self.assertIn(lookup, str(cm.exception))
+            self.assertEqual(gql.writes, [])
+        self.assertIn(f"{AGENT_PM['id']} 'Agent PM'", str(cm.exception))
+
+    def test_a_project_is_resolved_before_the_issue_is_read(self):
+        gql = EditGql(CATALOG, [], projects=PROJECTS)
+        with self.assertRaises(IssueError):
+            edit(gql, project="Nope")
+        self.assertNotIn(issue_edit.Q_READ, [query for query, _ in gql.calls])
+        self.assertEqual(gql.calls[0][0], issue_refs.projects(TEAM, None)[0])
+
     def test_an_unconfigured_name_is_refused_before_any_read(self):
         for given in ({"task": "nope"}, {"client": "nope"}, {"role": "nope"}):
             gql = EditGql(CATALOG, [])
@@ -149,10 +191,10 @@ class Edit(Case):
                 edit(gql, **given)
             self.assertEqual(gql.calls, [])
 
-    def test_a_task_or_client_on_another_team_writes_nothing(self):
+    def test_a_task_client_or_project_on_another_team_writes_nothing(self):
         other = {"team": {"id": OTHER_TEAM, "key": "OPS"}}
-        for given in ({"task": "build"}, {"client": "codex", "title": "New"}):
-            gql = EditGql(CATALOG, [], fields=other)
+        for given in ({"task": "build"}, {"client": "codex", "title": "New"}, {"project": "Ops"}):
+            gql = EditGql(CATALOG, [], fields=other, projects=PROJECTS)
             with self.subTest(given=given), self.assertRaises(IssueError) as cm:
                 edit(gql, **given)
             self.assertIn("is in team OPS", str(cm.exception))

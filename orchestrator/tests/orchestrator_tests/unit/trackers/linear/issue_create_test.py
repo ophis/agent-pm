@@ -44,6 +44,11 @@ def relation(blocker, blocked):
 
 
 class Create(Case):
+    def test_a_project_name_resolves(self):
+        fake = create_gql()
+        run(fake, project="Agent PM")
+        self.assertEqual(fake.writes[0][1]["in"]["projectId"], uid(7))
+
     def test_every_field_and_both_blocking_directions(self):
         fake = create_gql()
         receipt = run(

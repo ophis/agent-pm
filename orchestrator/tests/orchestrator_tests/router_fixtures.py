@@ -310,6 +310,8 @@ class FakeLinear:
                 raise LinearError(f"linear api error: {[{'message': 'Entity not found'}]}")
             return {"issue": {"inverseRelations": self.issues[v["i"]]["inverseRelations"]}}
         if query == RECHECK:
+            if v["i"] not in self.issues:
+                raise LinearError("linear api error: Entity not found: Issue")
             i = self.issues[v["i"]]
             return {
                 "issue": {

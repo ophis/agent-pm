@@ -139,6 +139,7 @@ from agent_pm.utils import (
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
 CAP = 4
+NOT_QUEUED = "not a Todo issue assigned to a role account"
 SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
@@ -531,12 +532,15 @@ class Board:
         if queue:
             self.say("pick-none", reason="nothing claimable")
         else:
-            self.say(
-                "pick-none",
-                only,
-                reason="not a Todo issue assigned to a role account" if only else "queue empty",
-            )
+            self.say("pick-none", only, reason=self.unqueued(only) if only else "queue empty")
         return None
+
+    def unqueued(self, ident):
+        """Why ident is not queued, with the tracker's refusal."""
+        current = self.tracker.recheck(ident)
+        reasons = [] if current.ready and current.role else [NOT_QUEUED]
+        reasons += [current.refused] if current.refused else []
+        return "; ".join(reasons) or NOT_QUEUED
 
     def claim(self, issue, full, clients=()):
         ident = issue["identifier"]
