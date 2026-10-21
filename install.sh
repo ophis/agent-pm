@@ -1931,33 +1931,23 @@ with open(out, "w", encoding="utf-8") as f:
 }
 
 local_board_setup() {
-  local wanted directory
-  local_board_dir=$(python3 -I -c '
-import os, sys
-value = os.environ.get("AGENT_PM_BOARD_DIR") or sys.argv[1] or "~/.agent-pm/board"
-path = os.path.expanduser(value)
-if not path.isprintable() or not os.path.isabs(path) or not os.path.normpath(path).strip("/"):
-    sys.exit("install.sh: AGENT_PM_BOARD_DIR must name a printable absolute or ~ board path")
-print(os.path.normpath(path))' "$(state_get local_board_dir)")
+  local wanted= directory
+  local_board_dir=${AGENT_PM_BOARD_DIR:-$(state_get local_board_dir)}
+  local_board_dir=${local_board_dir:-$HOME/.agent-pm/board}
+  case $local_board_dir in
+    '~') local_board_dir=$HOME ;;
+    '~/'*) local_board_dir=$HOME/${local_board_dir#\~/} ;;
+    /*) ;;
+    *) die "AGENT_PM_BOARD_DIR must name an absolute or ~ board path" ;;
+  esac
   state_set local_board_dir "$local_board_dir"
-  wanted=$(python3 -I -c '
-import sys
-from pathlib import Path
-board = Path(sys.argv[1])
-if (board / "unassigned").is_symlink():
-    sys.exit("install.sh: local board unassigned must be a directory, not a symlink")
-planned = []
-for target in (board, board / "unassigned"):
-    missing, at = [], target
-    while not at.exists():
-        if at.is_symlink():
-            sys.exit("install.sh: local board path contains a broken symlink")
-        missing.append(str(at))
-        at = at.parent
-    if not at.is_dir():
-        sys.exit("install.sh: local board path must contain only directories")
-    planned.extend(reversed(missing))
-print("\n".join(dict.fromkeys(planned)))' "$local_board_dir")
+  directory=$local_board_dir/unassigned
+  while [ ! -e "$directory" ]; do
+    wanted="$directory${wanted:+
+$wanted}"
+    directory=${directory%/*}
+    [ -n "$directory" ] || directory=/
+  done
   if [ -n "$wanted" ]; then
     if ! consent "$local_board_dir" "Create directories:
 $wanted"; then
@@ -1965,14 +1955,11 @@ $wanted"; then
       return 0
     fi
     while IFS= read -r directory; do
-      if [ ! -d "$directory" ]; then
-        ledger_add board-dir "$directory"
-        mkdir "$directory"
-      fi
+      [ -e "$directory" ] || ledger_add board-dir "$directory"
     done <<<"$wanted"
-  else
-    skip "local board initialized"
   fi
+  mkdir -p "$local_board_dir/unassigned"
+  [ -n "$wanted" ] || skip "local board initialized"
   local_board_ready=yes
 }
 

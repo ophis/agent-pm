@@ -1937,6 +1937,25 @@ class InstallTest(Case):
         self.assert_jobs(installed=False)
         self.assert_no_linear(result)
 
+    def test_board_local_mkdir_failure_stops_before_jobs(self):
+        blocked = Path(self.home, "blocked")
+        blocked.write_text("keep")
+        self.env["AGENT_PM_BOARD_DIR"] = str(blocked / "board")
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assertEqual(result.code, 1)
+        self.assertEqual(blocked.read_text(), "keep")
+        self.assertNotIn(f"board-dir\t{blocked}", self.ledger())
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+
     def test_board_local_cleanup_stops_on_new_data(self):
         result = self.fresh(
             "--clients",
