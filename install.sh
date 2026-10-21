@@ -534,7 +534,7 @@ dependencies() {
   cask iterm2 "" "$root/Applications/iTerm.app"
 }
 
-# What an existing config.local.toml says: "<[session.hosts] default>\t<[delegate] client>".
+# What an existing config.local.toml says: "<[session.hosts] default>\t<[delegate] client>\t<[orchestrator] tracker>".
 config_says() {
   [ -f "$config" ] || return 0
   python3 -I -c '
@@ -549,7 +549,7 @@ def get(*keys):
     for key in keys:
         node = node.get(key) if isinstance(node, dict) else None
     return node if isinstance(node, str) else ""
-print(get("session", "hosts", "default") + "\t" + get("delegate", "client"))' "$config"
+print("\t".join((get("session", "hosts", "default"), get("delegate", "client"), get("orchestrator", "tracker"))))' "$config"
 }
 
 # ask_valid <question> <check>: asks until <check> accepts the answer.
@@ -607,6 +607,7 @@ answers() {
   said=$(config_says)
   default=${said%%$'\t'*}
   client=${said#*$'\t'}
+  client=${client%%$'\t'*}
   clients=${clients_flag:-$(state_get clients)}
   if [ -z "$clients" ]; then
     case $client in claude | codex | opencode) clients=$client ;; *) clients=claude,codex ;; esac
@@ -1585,18 +1586,10 @@ docker_cli() {
 
 # Prints only a recognized, explicit tracker; an absent setting stays empty.
 configured_tracker() {
-  [ -f "$config" ] || return 0
-  python3 -I -c '
-import sys, tomllib
-try:
-    with open(sys.argv[1], "rb") as f:
-        data = tomllib.load(f)
-except (OSError, tomllib.TOMLDecodeError):
-    sys.exit()
-orchestrator = data.get("orchestrator")
-tracker = orchestrator.get("tracker") if isinstance(orchestrator, dict) else None
-if tracker in ("local", "linear"):
-    print(tracker)' "$config"
+  local said tracker
+  said=$(config_says)
+  tracker=${said##*$'\t'}
+  case $tracker in local | linear) printf '%s' "$tracker" ;; esac
 }
 
 board_wanted() {

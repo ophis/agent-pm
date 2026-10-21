@@ -2102,6 +2102,31 @@ class InstallTest(Case):
             self.assert_jobs(installed=False)
             self.assert_no_linear(result)
 
+    def test_board_tracker_inference_keeps_config_columns_separate(self):
+        Path(self.agent_pm).mkdir(parents=True, exist_ok=True)
+        self.config().write_text(
+            '[delegate]\nclient = "codex"\n[orchestrator]\ntracker = "local"\n'
+        )
+        ticked = ("codex", "board")
+        result = self.run_install(
+            "--launchd",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (MENU_Q, menu(ticked, ("codex",))),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+            ],
+        )
+        self.assert_ok(result)
+        self.assertEqual(self.state()["clients"], "codex")
+        self.assertEqual(self.state()["docker"], "no")
+        self.assertEqual(self.state()["board_tracker"], "local")
+        self.assertNotIn("Board tracker [local/linear]", result.tty)
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+
     def test_board_custom_workflow_roles(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})
         Path(self.home, "wf.toml").write_text(
