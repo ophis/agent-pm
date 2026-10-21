@@ -6,6 +6,8 @@
 	<true/>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<key>AGENT_PM_BOARD_DIR</key>
+		<string>@BOARD@</string>
 		<key>PATH</key>
 		<string>@PATH@</string>
 	</dict>

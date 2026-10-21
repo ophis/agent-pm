@@ -1625,7 +1625,7 @@ class InstallTest(Case):
                 f"<string>{self.home}/.agent-pm/bin/agent-pm-orchestrator</string>", plist
             )
             self.assertIn(f"<string>{self.home}/.agent-pm/logs/orchestrator.jsonl</string>", plist)
-            self.assertFalse({"@HOME@", "@PATH@"} & set(re.findall(r"@[A-Z]+@", plist)))
+            self.assertFalse({"@HOME@", "@PATH@", "@BOARD@"} & set(re.findall(r"@[A-Z]+@", plist)))
             path = re.search(r"<key>PATH</key>\s*<string>([^<]*)</string>", plist).group(1)
             self.assertEqual(
                 path,
@@ -1700,6 +1700,7 @@ class InstallTest(Case):
             self.assertEqual(bool(bootstraps), installed)
             if installed:
                 data = plistlib.loads(target.read_bytes())
+                self.assertNotRegex(target.read_text(), r"@(HOME|PATH|BOARD)@")
                 self.assertEqual(
                     data["ProgramArguments"],
                     [
@@ -1711,6 +1712,8 @@ class InstallTest(Case):
                     directory = data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"]
                     self.assertEqual(directory, self.state()["local_board_dir"])
                     self.assertEqual(local_board.scan(directory), ())
+                else:
+                    self.assertEqual(data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"], "")
 
     def test_board_local_with_jobs(self):
         result = self.fresh(

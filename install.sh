@@ -1999,23 +1999,19 @@ launchd_path() {
   done
 }
 
-# Writes the board job $1's plist for this user to $2, from the plugin's template: @HOME@ and @PATH@ filled in.
+# Writes the board job $1's plist for this user to $2, with @HOME@, @PATH@ and @BOARD@ filled in.
 board_plist() {
   local path=
   IFS=: launchd_path
   python3 -I -c '
-import plistlib, sys
+import sys
 from xml.sax.saxutils import escape
 source, out, home, path, board = sys.argv[1:]
 with open(source, encoding="utf-8") as f:
     text = f.read()
-if "@HOME@" not in text or "@PATH@" not in text:
-    sys.exit(f"install.sh: {source} is not a template with @HOME@ and @PATH@")
-text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path))
-if board:
-    data = plistlib.loads(text.encode())
-    data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"] = board
-    text = plistlib.dumps(data).decode()
+if "@HOME@" not in text or "@PATH@" not in text or "@BOARD@" not in text:
+    sys.exit(f"install.sh: {source} is not a template with @HOME@, @PATH@ and @BOARD@")
+text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path)).replace("@BOARD@", escape(board))
 with open(out, "w", encoding="utf-8") as f:
     f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path" "$local_board_dir"
 }

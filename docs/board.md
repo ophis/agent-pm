@@ -41,7 +41,8 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
      launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job 2>/dev/null   # fails harmlessly if none is loaded
-     sed -e "s|@HOME@|$HOME|g" -e "s|@PATH@|$PATH|" orchestrator/launchd/com.ophis.agent-pm.$job.plist \
+     sed -e "s|@HOME@|$HOME|g" -e "s|@PATH@|$PATH|" -e "s|@BOARD@|$HOME/.agent-pm/board|g" \
+       orchestrator/launchd/com.ophis.agent-pm.$job.plist \
        > ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist   # needs ctmux --install's ~/.agent-pm/bin
      launchctl enable gui/$(id -u)/com.ophis.agent-pm.$job
      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist

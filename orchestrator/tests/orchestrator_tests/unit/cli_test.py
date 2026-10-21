@@ -412,6 +412,13 @@ class LaunchdJobs(Case):
             with self.subTest(job=job):
                 self.assertEqual(plist(job)["EnvironmentVariables"]["PATH"], "@PATH@")
 
+    def test_board_directory_is_filled_in_at_install(self):
+        for job in JOBS:
+            with self.subTest(job=job):
+                self.assertEqual(
+                    plist(job)["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"], "@BOARD@"
+                )
+
     def test_output_goes_to_the_orchestrator_log(self):
         for job in JOBS:
             with self.subTest(job=job):
