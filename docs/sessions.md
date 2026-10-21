@@ -83,11 +83,11 @@ Each launch's OpenCode config (`OPENCODE_CONFIG_CONTENT`) enables only the `olla
 # ~/.agent-pm/config.local.toml
 [session.clients.opencode.providers.strata]
 base_url = "http://<LAN host>:8080/v1"
-models = ["qwen3.8-flash-next-iq2_xs"]   # beside the models tiers and model map to it
+models = ["qwen3.8-flash-next"]   # beside the models tiers and model map to it
 context = 204800                          # its context window in tokens; default 65536
 
 [session.clients.opencode.tiers]
-1 = "strata/qwen3.8-flash-next-iq2_xs"
+1 = "strata/qwen3.8-flash-next"
 ```
 
 Its API key, on the tmux Host, stays OpenCode's: run `opencode auth login` once, pick Other and enter the provider's name (`strata`), and OpenCode keeps the key in its `auth.json`; agent-pm never reads or passes it. On the Docker Host the broker keeps it: `agent-pm-broker login opencode strata` once, for every configured provider ([Docker host › OpenCode](docker-host.md#opencode)). A name is up to 64 letters, digits, `.`, `_` or `-`.
