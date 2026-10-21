@@ -235,6 +235,24 @@ func wantCode(t *testing.T, err error, code protocol.Code) {
 	}
 }
 
+func TestAPIErrorIncludesGitHubMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Validation Failed", "token": "fake-ignored-credential"})
+	}))
+	defer srv.Close()
+	c := github.Client{Base: srv.URL, HTTP: srv.Client()}
+	_, _, err := c.Issue(context.Background(), "fake-request-credential", 42)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	got := apiError(err)
+	wantCode(t, got, protocol.GitHubFailed)
+	if got.Message != `GitHub request failed: GitHub answered HTTP 422 to POST /app/installations/42/access_tokens: "Validation Failed".` {
+		t.Fatalf("unexpected protocol error: %v", got)
+	}
+}
+
 // A test App whose slug is not the key item's name.
 const (
 	slug        = "agentpm-test-bot"
@@ -294,8 +312,8 @@ func TestSaveUserRejects(t *testing.T) {
 		putErr           error
 		down             bool
 	}{
-		"no app":      {"", botUserJSON, app + "GitHub answered HTTP 404" + rerun, nil, false},
-		"absent":      {slug, "", lookup + "GitHub answered HTTP 404" + rerun, nil, false},
+		"no app":      {"", botUserJSON, app + "GitHub answered HTTP 404 to GET /app" + rerun, nil, false},
+		"absent":      {slug, "", lookup + "GitHub answered HTTP 404 to GET /users/agentpm-test-bot%5Bbot%5D" + rerun, nil, false},
 		"unreachable": {slug, botUserJSON, app + "GitHub unreachable: GET /app" + rerun, nil, true},
 		"not a bot":   {slug, `{"login":"agentpm-test-bot[bot]","id":1,"type":"User"}`, lookup + "GitHub answered no bot user with that login and a valid id" + rerun, nil, false},
 		"save fails":  {slug, botUserJSON, "saving the bot user ID of agentpm-test-bot failed: " + errLeaky.Error(), errLeaky, false},
