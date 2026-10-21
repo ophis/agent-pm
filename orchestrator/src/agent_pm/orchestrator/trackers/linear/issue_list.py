@@ -6,6 +6,8 @@ from agent_pm.orchestrator.engine.flow.types import PRIORITY_NUMBERS
 from agent_pm.orchestrator.trackers.linear import issue_names, issue_page, issue_refs
 
 LABELS = 50
+# Nested labels multiply the issue page's cost; 50 issues stay below Linear's 10,000 points.
+PAGE = 50
 FIELDS = (
     "id identifier title url state { id name } assignee { id name } project { id name } "
     f"parent {{ id }} labels(first: {LABELS}) {{ nodes {{ id name }} pageInfo {{ hasNextPage }} }}"

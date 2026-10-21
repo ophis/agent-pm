@@ -44,7 +44,8 @@ class LinearIssues:
 
     def walk(self, query):
         with self._keychain():
-            return issue_page.walk(self.gql, issue_list.source(self.gql, query, self.linear))
+            source = issue_list.source(self.gql, query, self.linear)
+            return issue_page.walk(self.gql, source, first=issue_list.PAGE)
 
     def lookup_page(self, query, first, cursor):
         """lookup's page, as page is list's."""
