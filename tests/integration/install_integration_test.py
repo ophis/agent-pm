@@ -1907,6 +1907,28 @@ class InstallTest(Case):
         self.assertTrue(directory.is_dir())
         self.assertFalse((directory / "unassigned").exists())
 
+    def test_board_local_dot_paths_are_recorded_and_cleaned(self):
+        directory = Path(self.home, "new parent", "board")
+        self.env["AGENT_PM_BOARD_DIR"] = f"{self.home}/./new parent//unused/../board/."
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y")] * 3,
+        )
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+        self.assertEqual(self.state()["local_board_dir"], str(directory))
+        for path in (directory.parent, directory, directory / "unassigned"):
+            self.assertIn(f"board-dir\t{path}", self.ledger())
+        self.assertFalse((directory.parent / "unused").exists())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(directory.parent.exists())
+
     def test_board_local_tilde_path(self):
         self.env["AGENT_PM_BOARD_DIR"] = "~/my board"
         result = self.fresh(
@@ -2148,6 +2170,22 @@ class InstallTest(Case):
         self.assertNotIn("Board tracker [local/linear]", result.tty)
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
+
+    def test_board_tracker_with_control_characters_is_not_recognized(self):
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
+        before = self.config().read_text()
+        for tracker in (r"invalid\tlocal", r"local\n", r"linear\n"):
+            with self.subTest(tracker=tracker):
+                text = before + f'\n[orchestrator]\ntracker = "{tracker}"\n'
+                self.config().write_text(text)
+                result = self.again("--board", "local", "--launchd", answers=[(WRITE_Q, "n")])
+                self.assert_ok(result)
+                self.assertEqual(self.config().read_text(), text)
+                self.assertIn("skip: local tracker not configured", result.stderr)
+                self.assertFalse(Path(self.agent_pm, "board").exists())
+                self.assertNotIn("board-dir\t", self.ledger())
+                self.assert_jobs(installed=False)
+                self.assert_no_linear(result)
 
     def test_board_custom_workflow_roles(self):
         self.linear(keys={**LINEAR["keys"], "k-SENTINEL-reviewer": "reviewer@example.com"})

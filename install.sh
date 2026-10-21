@@ -549,7 +549,8 @@ def get(*keys):
     for key in keys:
         node = node.get(key) if isinstance(node, dict) else None
     return node if isinstance(node, str) else ""
-print("\t".join((get("session", "hosts", "default"), get("delegate", "client"), get("orchestrator", "tracker"))))' "$config"
+tracker = get("orchestrator", "tracker")
+print("\t".join((get("session", "hosts", "default"), get("delegate", "client"), tracker if tracker in ("local", "linear") else "")))' "$config"
 }
 
 # ask_valid <question> <check>: asks until <check> accepts the answer.
@@ -1588,7 +1589,8 @@ docker_cli() {
 configured_tracker() {
   local said tracker
   said=$(config_says)
-  tracker=${said##*$'\t'}
+  tracker=${said#*$'\t'}
+  tracker=${tracker#*$'\t'}
   case $tracker in local | linear) printf '%s' "$tracker" ;; esac
 }
 
@@ -1931,7 +1933,7 @@ with open(out, "w", encoding="utf-8") as f:
 }
 
 local_board_setup() {
-  local wanted= directory
+  local wanted= directory rest part resolved=
   local_board_dir=${AGENT_PM_BOARD_DIR:-$(state_get local_board_dir)}
   local_board_dir=${local_board_dir:-$HOME/.agent-pm/board}
   case $local_board_dir in
@@ -1940,6 +1942,17 @@ local_board_setup() {
     /*) ;;
     *) die "AGENT_PM_BOARD_DIR must name an absolute or ~ board path" ;;
   esac
+  rest=${local_board_dir#/}
+  while [ -n "$rest" ]; do
+    part=${rest%%/*}
+    if [ "$part" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
+    case $part in
+      '' | .) ;;
+      ..) resolved=${resolved%/*} ;;
+      *) resolved=$resolved/$part ;;
+    esac
+  done
+  local_board_dir=${resolved:-/}
   state_set local_board_dir "$local_board_dir"
   directory=$local_board_dir/unassigned
   while [ ! -e "$directory" ]; do
