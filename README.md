@@ -87,7 +87,7 @@ curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | ba
 
 1. installs the dependencies: Homebrew with the Command Line Tools, `gh`, tmux, git, Python 3.11+, iTerm2;
 2. asks which clients you use (Claude Code, Codex, OpenCode) and whether workers run in Docker, and writes `~/.agent-pm/config.local.toml`;
-3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider and its agent-pm plugin (`opencode plugin -g`), Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and the selected [board](docs/board.md#setup). A local board confirms `tracker = "local"` and creating missing board and `unassigned/` directories, without asking for Linear keys or contacting Linear. A Linear board asks for its Keychain keys and reads its config from Linear. Either board can optionally install the router and promote launchd jobs; local jobs use the initialized board path saved in their plists.
+3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider and its agent-pm plugin (`opencode plugin -g`), Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and the selected [board](docs/board.md#setup). A local board confirms `tracker = "local"` and creating missing board and `unassigned/` directories, without asking for Linear keys or contacting Linear. A Linear board asks for its Keychain keys and reads its config from Linear. Either board can optionally install the router and promote launchd jobs.
 
 It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser; the broker's `claude setup-token` and its paste run on the terminal's alternate screen, cleared once the broker has the token, so it stays out of the scrollback), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
 
@@ -99,7 +99,7 @@ Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of w
 | `--clients <list>` | comma-separated `claude`, `codex`, `opencode`; any one alone works |
 | `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
 | `--board <local\|linear>`, `--no-board` | sets up a local or Linear board, or skips board setup (first-run default) |
-| `--launchd`, `--no-launchd` | installs router and promote jobs for either board, or skips them; requires Board (otherwise exit 2); asked when no choice or existing jobs are present |
+| `--launchd`, `--no-launchd` | router/promote jobs; see [Board setup](docs/board.md#setup) |
 | `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
 | `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
 | `--password-stdin` | reads the `sudo` password from stdin, before the key |

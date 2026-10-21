@@ -24,7 +24,6 @@ board=
 board_tracker=
 jobs_flag=
 board_jobs_choice=
-local_board_dir=
 local_board_ready=
 provider_flag=
 url_flag=
@@ -81,7 +80,7 @@ usage: $synopsis
   --no-docker                 run workers on the local tmux Host; no Docker
   --board <local|linear>      set up a local or Linear board
   --no-board                 skip board setup (first-run default)
-  --launchd, --no-launchd     install, or not, router and promote jobs for either board
+  --launchd, --no-launchd     choose router/promote jobs (docs/board.md)
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -196,9 +195,6 @@ parse_args() {
     esac
     shift
   done
-  if [ "$board_flag" = no ] && [ -n "$jobs_flag" ]; then
-    usage_error "--launchd/--no-launchd requires a board"
-  fi
   if { [ -n "$password_stdin" ] || [ -n "$key_stdin" ]; } && [ -t 0 ]; then
     usage_error "--password-stdin and --opencode-key-stdin read a pipe, not a terminal"
   fi
@@ -209,10 +205,6 @@ opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$context_flag$key_std
 # The flags' conflicts that flags and State already decide, before anything runs.
 early_checks() {
   local said_docker
-  if [ -n "$jobs_flag" ] && [ -z "$board_flag" ] && [ "$(state_get board)" != yes ] \
-    && [ -n "$clients_flag" ] && [ -n "$docker_flag" ]; then
-    usage_error "--launchd/--no-launchd requires a board"
-  fi
   said_docker=$docker_flag
   [ -n "$said_docker" ] || said_docker=$(state_get docker)
   if [ -n "$key_stdin" ] && [ "$said_docker" = yes ]; then
@@ -258,11 +250,7 @@ under_home() {
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
   case $1:$# in
-    dir:2 | file:2 | profile-file:2) under_home "$2" ;;
-    board-dir:2)
-      case $2 in /?*) ;; *) return 1 ;; esac
-      case /$2/ in */../* | */./* | *$'\t'* | *$'\n'*) false ;; *) true ;; esac
-      ;;
+    dir:2 | file:2 | profile-file:2 | board-dir:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
@@ -1933,28 +1921,8 @@ with open(out, "w", encoding="utf-8") as f:
 }
 
 local_board_setup() {
-  local wanted= directory rest part resolved=
-  local_board_dir=${AGENT_PM_BOARD_DIR:-$(state_get local_board_dir)}
-  local_board_dir=${local_board_dir:-$HOME/.agent-pm/board}
-  case $local_board_dir in
-    '~') local_board_dir=$HOME ;;
-    '~/'*) local_board_dir=$HOME/${local_board_dir#\~/} ;;
-    /*) ;;
-    *) die "AGENT_PM_BOARD_DIR must name an absolute or ~ board path" ;;
-  esac
-  rest=${local_board_dir#/}
-  while [ -n "$rest" ]; do
-    part=${rest%%/*}
-    if [ "$part" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
-    case $part in
-      '' | .) ;;
-      ..) resolved=${resolved%/*} ;;
-      *) resolved=$resolved/$part ;;
-    esac
-  done
-  local_board_dir=${resolved:-/}
-  state_set local_board_dir "$local_board_dir"
-  directory=$local_board_dir/unassigned
+  local board_dir=$HOME/.agent-pm/board wanted= directory
+  directory=$board_dir/unassigned
   while [ ! -e "$directory" ]; do
     wanted="$directory${wanted:+
 $wanted}"
@@ -1962,7 +1930,7 @@ $wanted}"
     [ -n "$directory" ] || directory=/
   done
   if [ -n "$wanted" ]; then
-    if ! consent "$local_board_dir" "Create directories:
+    if ! consent "$board_dir" "Create directories:
 $wanted"; then
       skip declined
       return 0
@@ -1971,7 +1939,7 @@ $wanted"; then
       [ -e "$directory" ] || ledger_add board-dir "$directory"
     done <<<"$wanted"
   fi
-  mkdir -p "$local_board_dir/unassigned"
+  mkdir -p "$board_dir/unassigned"
   [ -n "$wanted" ] || skip "local board initialized"
   local_board_ready=yes
 }
@@ -2012,21 +1980,21 @@ launchd_path() {
   done
 }
 
-# Writes the board job $1's plist for this user to $2, with @HOME@, @PATH@ and @BOARD@ filled in.
+# Writes the board job $1's plist for this user to $2, with @HOME@ and @PATH@ filled in.
 board_plist() {
   local path=
   IFS=: launchd_path
   python3 -I -c '
 import sys
 from xml.sax.saxutils import escape
-source, out, home, path, board = sys.argv[1:]
+source, out, home, path = sys.argv[1:]
 with open(source, encoding="utf-8") as f:
     text = f.read()
-if "@HOME@" not in text or "@PATH@" not in text or "@BOARD@" not in text:
-    sys.exit(f"install.sh: {source} is not a template with @HOME@, @PATH@ and @BOARD@")
-text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path)).replace("@BOARD@", escape(board))
+if "@HOME@" not in text or "@PATH@" not in text:
+    sys.exit(f"install.sh: {source} is not a template with @HOME@ and @PATH@")
+text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path))
 with open(out, "w", encoding="utf-8") as f:
-    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path" "$local_board_dir"
+    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path"
 }
 
 board_jobs() {

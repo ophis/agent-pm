@@ -81,11 +81,7 @@ under_home() {
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
   case $1:$# in
-    dir:2 | file:2 | profile-file:2) under_home "$2" ;;
-    board-dir:2)
-      case $2 in /?*) ;; *) return 1 ;; esac
-      case /$2/ in */../* | */./* | *$'\t'* | *$'\n'*) false ;; *) true ;; esac
-      ;;
+    dir:2 | file:2 | profile-file:2 | board-dir:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
@@ -546,7 +542,7 @@ board_dirs() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if [ -e "$path" ] || [ -L "$path" ]; then
-      if ! rmdir "$path"; then die "cannot remove $path; its record stays for a rerun (keep or move its data first)"; fi
+      if ! rmdir "$path" 2>/dev/null; then say "    kept $path: not empty"; fi
     fi
     drop "board-dir"$'\t'"$path"
   done <<<"$(of_kind board-dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
@@ -613,7 +609,7 @@ main() {
     die "records no step removed are left in $ledger"
   fi
   rm -rf "$state_dir"
-  if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
+  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
 }

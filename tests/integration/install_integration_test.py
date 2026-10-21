@@ -1636,6 +1636,11 @@ class InstallTest(Case):
             )
         self.assertTrue(Path(self.agent_pm, "logs").is_dir())
         self.assert_secret_free("k-SENTINEL", result=result)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("exists; remove it", result.stderr)
+        self.assertNotRegex(result.tty, WRITE_Q)
+        self.assertFalse([c for c in self.calls() if c.startswith("launchctl")])
         mine = agents / "com.ophis.agent-pm.promote.plist"
         mine.write_text("<plist>mine</plist>")
         result = self.again()
@@ -1709,11 +1714,11 @@ class InstallTest(Case):
                     ],
                 )
                 if tomllib.loads(self.config().read_text())["orchestrator"]["tracker"] == "local":
-                    directory = data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"]
-                    self.assertEqual(directory, self.state()["local_board_dir"])
+                    directory = orchestrator_config.load().board
+                    self.assertEqual(directory, str(Path(self.agent_pm, "board").resolve()))
                     self.assertEqual(local_board.scan(directory), ())
-                else:
-                    self.assertEqual(data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"], "")
+                self.assertNotIn("AGENT_PM_BOARD_DIR", data["EnvironmentVariables"])
+                self.assertNotIn("local_board_dir", self.state())
 
     def test_board_local_with_jobs(self):
         result = self.fresh(
@@ -1861,9 +1866,10 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assert_jobs(installed=True)
 
-    def test_board_local_custom_path_and_cleanup(self):
-        directory = Path(self.tmp, "new parent", "board & work")
-        self.env["AGENT_PM_BOARD_DIR"] = str(directory)
+    def test_board_local_default_path_and_cleanup(self):
+        directory = Path(self.agent_pm, "board")
+        ignored = Path(self.tmp, "new parent", "board & work")
+        self.env["AGENT_PM_BOARD_DIR"] = str(ignored)
         result = self.fresh(
             "--clients",
             "claude",
@@ -1876,16 +1882,18 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
-        for path in (directory.parent, directory, directory / "unassigned"):
+        for path in (directory, directory / "unassigned"):
             self.assertIn(f"board-dir\t{path}", self.ledger())
+        self.assertFalse(ignored.parent.exists())
+        self.assertNotIn("local_board_dir", self.state())
         del self.env["AGENT_PM_BOARD_DIR"]
         result = self.again()
         self.assert_ok(result)
         self.assertNotRegex(result.tty, WRITE_Q)
-        self.assertEqual(self.state()["local_board_dir"], str(directory))
+        self.assertNotIn("local_board_dir", self.state())
         result = self.cleanup("--yes")
         self.assert_ok(result)
-        self.assertFalse(directory.parent.exists())
+        self.assertFalse(directory.exists())
 
     def test_board_local_cleanup_preserves_existing_root(self):
         directory = Path(self.agent_pm, "board")
@@ -1907,65 +1915,10 @@ class InstallTest(Case):
         self.assertTrue(directory.is_dir())
         self.assertFalse((directory / "unassigned").exists())
 
-    def test_board_local_dot_paths_are_recorded_and_cleaned(self):
-        directory = Path(self.home, "new parent", "board")
-        self.env["AGENT_PM_BOARD_DIR"] = f"{self.home}/./new parent//unused/../board/."
-        result = self.fresh(
-            "--clients",
-            "claude",
-            "--no-docker",
-            "--board",
-            "local",
-            "--launchd",
-            then=[(WRITE_Q, "y")] * 3,
-        )
-        self.assert_ok(result)
-        self.assert_jobs(installed=True)
-        self.assert_no_linear(result)
-        self.assertEqual(self.state()["local_board_dir"], str(directory))
-        for path in (directory.parent, directory, directory / "unassigned"):
-            self.assertIn(f"board-dir\t{path}", self.ledger())
-        self.assertFalse((directory.parent / "unused").exists())
-        self.assert_ok(self.cleanup("--yes"))
-        self.assertFalse(directory.parent.exists())
-
-    def test_board_local_tilde_path(self):
-        self.env["AGENT_PM_BOARD_DIR"] = "~/my board"
-        result = self.fresh(
-            "--clients",
-            "claude",
-            "--no-docker",
-            "--board",
-            "local",
-            "--launchd",
-            then=[(WRITE_Q, "y")] * 3,
-        )
-        self.assert_ok(result)
-        self.assert_jobs(installed=True)
-        self.assertEqual(self.state()["local_board_dir"], str(Path(self.home, "my board")))
-        self.assert_ok(self.cleanup("--yes"))
-        self.assertFalse(Path(self.home, "my board").exists())
-
-    def test_board_local_invalid_path_stops_before_jobs(self):
-        self.env["AGENT_PM_BOARD_DIR"] = "relative/board"
-        result = self.fresh(
-            "--clients",
-            "claude",
-            "--no-docker",
-            "--board",
-            "local",
-            "--launchd",
-            then=[(WRITE_Q, "y")],
-        )
-        self.assertEqual(result.code, 1)
-        self.assertIn("AGENT_PM_BOARD_DIR must name", result.stderr)
-        self.assert_jobs(installed=False)
-        self.assert_no_linear(result)
-
     def test_board_local_mkdir_failure_stops_before_jobs(self):
-        blocked = Path(self.home, "blocked")
+        blocked = Path(self.agent_pm, "board")
+        blocked.parent.mkdir(parents=True, exist_ok=True)
         blocked.write_text("keep")
-        self.env["AGENT_PM_BOARD_DIR"] = str(blocked / "board")
         result = self.fresh(
             "--clients",
             "claude",
@@ -1981,7 +1934,56 @@ class InstallTest(Case):
         self.assert_jobs(installed=False)
         self.assert_no_linear(result)
 
-    def test_board_local_cleanup_stops_on_new_data(self):
+    def test_board_local_cleanup_keeps_data_and_continues(self):
+        shutil.rmtree(self.agent_pm)
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y")] * 3,
+        )
+        self.assert_ok(result)
+        board = Path(self.agent_pm, "board")
+        data = board / "unassigned/keep.txt"
+        data.write_text("keep")
+        runtime = board / ".state/router.json"
+        runtime.parent.mkdir()
+        runtime.write_text("{}")
+        key = self.fakes / "keychain/linear-pm"
+        key.parent.mkdir(exist_ok=True)
+        key.write_text("fake key")
+        ledger = Path(self.agent_pm, "install/added")
+        ledger.write_text(ledger.read_text() + "keychain\tlinear-pm\tlinear-pm\n")
+        self.assertIn(f"board-dir\t{board}", self.ledger())
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertEqual(data.read_text(), "keep")
+        self.assertEqual(runtime.read_text(), "{}")
+        for directory in (board, data.parent):
+            self.assertEqual(result.stderr.count(f"kept {directory}: not empty"), 1)
+        self.assertFalse(key.exists())
+        self.assertIn("security delete-generic-password -s linear-pm -a linear-pm", self.calls())
+        self.assertIn("claude plugin uninstall agent-pm@agent-pm", self.calls())
+        self.assertFalse(self.config().exists())
+        self.assertFalse(Path(self.agent_pm, "install").exists())
+        for job in ("router", "promote"):
+            self.assertFalse(
+                Path(self.home, f"Library/LaunchAgents/com.ophis.agent-pm.{job}.plist").exists()
+            )
+        self.assertFalse(Path(self.agent_pm, "bin/agent-pm-orchestrator").exists())
+        data.unlink()
+        runtime.unlink()
+        runtime.parent.rmdir()
+        data.parent.rmdir()
+        board.rmdir()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(board.exists())
+
+    def test_board_local_cleanup_keeps_router_state(self):
+        shutil.rmtree(self.agent_pm)
         result = self.fresh(
             "--clients",
             "claude",
@@ -1989,18 +1991,20 @@ class InstallTest(Case):
             "--board",
             "local",
             "--no-launchd",
-            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+            then=[(WRITE_Q, "y")] * 2,
         )
         self.assert_ok(result)
-        data = Path(self.agent_pm, "board/unassigned/keep.txt")
-        data.write_text("keep")
+        board = Path(self.agent_pm, "board")
+        state = board / ".state/router.json"
+        state.parent.mkdir()
+        state.write_text("{}")
         result = self.cleanup("--yes")
-        self.assertEqual(result.code, 1)
-        self.assertEqual(data.read_text(), "keep")
-        self.assertIn(f"board-dir\t{data.parent}", self.ledger())
-        data.unlink()
-        self.assert_ok(self.cleanup("--yes"))
-        self.assertFalse(Path(self.agent_pm, "board").exists())
+        self.assert_ok(result)
+        self.assertEqual(state.read_text(), "{}")
+        self.assertFalse((board / "unassigned").exists())
+        self.assertEqual(result.stderr.count(f"kept {board}: not empty"), 1)
+        self.assertFalse(Path(self.agent_pm, "install").exists())
+        self.assertFalse(self.config().exists())
 
     def test_board_linear_without_jobs(self):
         self.linear()
@@ -2097,14 +2101,33 @@ class InstallTest(Case):
         self.assert_no_linear(result, keychain=False)
 
     def test_board_jobs_require_board(self):
+        self.assert_ok(self.fresh("--clients", "claude", "--no-docker"))
+        before = self.snapshot()
         for flag in ("--launchd", "--no-launchd"):
-            result = self.run_install("--no-board", flag, tty=False)
-            self.assertEqual(result.code, 2)
-            self.assertEqual(self.calls(), [])
-            result = self.run_install("--clients", "claude", "--no-docker", flag, tty=False)
-            self.assertEqual(result.code, 2)
-            self.assertIn("requires a board", result.stderr)
-            self.assertEqual(self.calls(), [])
+            for board_flags in (("--no-board",), ()):
+                result = self.again("--clients", "claude", "--no-docker", *board_flags, flag)
+                self.assertEqual(result.code, 2)
+                self.assertIn("requires a board", result.stderr)
+                self.assertEqual(self.snapshot(), before)
+                self.assertNotRegex(result.tty, WRITE_Q)
+                self.assert_jobs(installed=False)
+                self.assert_no_linear(result)
+
+    def test_board_jobs_require_board_on_a_fresh_install(self):
+        result = self.run_install(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--no-board",
+            "--launchd",
+            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y")],
+        )
+        self.assertEqual(result.code, 2)
+        self.assertIn("requires a board", result.stderr)
+        self.assertFalse(self.config().exists())
+        self.assertEqual(self.plugin_calls(), [])
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
 
     def test_board_jobs_rejected_when_checklist_leaves_board_off(self):
         result = self.run_install(
@@ -2605,6 +2628,10 @@ class InstallTest(Case):
             "dir\t/Applications",
             f"dir\t{self.home}",
             f"dir\t{self.home}/x/../..",
+            "board-dir\t/Applications",
+            f"board-dir\t{self.home}",
+            f"board-dir\t{self.home}/board/../outside",
+            f"board-dir\t{self.home}/./board",
             "formula\t--force",
             "homebrew\t/usr/local",
             "keychain\t-x\ty",
