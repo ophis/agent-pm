@@ -412,6 +412,11 @@ class LaunchdJobs(Case):
             with self.subTest(job=job):
                 self.assertEqual(plist(job)["EnvironmentVariables"]["PATH"], "@PATH@")
 
+    def test_jobs_use_the_orchestrator_default_board_directory(self):
+        for job in JOBS:
+            with self.subTest(job=job):
+                self.assertEqual(plist(job)["EnvironmentVariables"], {"PATH": "@PATH@"})
+
     def test_output_goes_to_the_orchestrator_log(self):
         for job in JOBS:
             with self.subTest(job=job):

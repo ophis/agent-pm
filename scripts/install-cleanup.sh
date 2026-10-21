@@ -81,7 +81,7 @@ under_home() {
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
   case $1:$# in
-    dir:2 | file:2 | profile-file:2) under_home "$2" ;;
+    dir:2 | file:2 | profile-file:2 | board-dir:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
@@ -247,7 +247,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-config docker-block profile profile-file config cask formula homebrew clt file dir; do
+    login opencode-auth opencode-config docker-block profile profile-file config cask formula homebrew clt file board-dir dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -536,6 +536,18 @@ homebrew_and_clt() {
   fi
 }
 
+board_dirs() {
+  local path
+  step "local board directories"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      if ! rmdir "$path" 2>/dev/null; then say "    kept $path: not empty"; fi
+    fi
+    drop "board-dir"$'\t'"$path"
+  done <<<"$(of_kind board-dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
+}
+
 files_and_dirs() {
   local path domain
   step "files and directories"
@@ -580,6 +592,7 @@ main() {
   if [ -x "$root/opt/homebrew/bin/brew" ]; then eval "$("$root/opt/homebrew/bin/brew" shellenv)"; fi
   if grep -qx "dir"$'\t'"$HOME/.agent-pm" "$ledger"; then agent_root=1; fi
   launchd_jobs
+  board_dirs
   keychain_items
   broker_files
   plugins
@@ -596,7 +609,7 @@ main() {
     die "records no step removed are left in $ledger"
   fi
   rm -rf "$state_dir"
-  if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
+  if [ -n "$agent_root" ] && [ ! -e "$HOME/.agent-pm/board" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
 }

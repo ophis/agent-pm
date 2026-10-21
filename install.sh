@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs agent-pm on an Apple silicon Mac from nothing: dependencies, then your configuration
-# (clients, Docker, OpenCode provider, the Linear board) into ~/.agent-pm/config.local.toml, then only what it needs.
+# (clients, Docker, OpenCode provider, the board) into ~/.agent-pm/config.local.toml, then only what it needs.
 # Asks sudo once, every login on the spot, and before writing your files. Rerun to finish or check.
 #   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
@@ -21,6 +21,10 @@ docker_flag=
 docker=
 board_flag=
 board=
+board_tracker=
+jobs_flag=
+board_jobs_choice=
+local_board_ready=
 provider_flag=
 url_flag=
 model_flag=
@@ -51,7 +55,7 @@ name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
 context_pattern='^[1-9][0-9]{0,8}$'
-synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board | --no-board] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
+synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board <local|linear> | --no-board] [--launchd | --no-launchd] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -74,7 +78,9 @@ usage: $synopsis
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
-  --board, --no-board         set up, or not, the Linear board: its keys, configuration and launchd jobs
+  --board <local|linear>      set up a local or Linear board
+  --no-board                 skip board setup (first-run default)
+  --launchd, --no-launchd     choose router/promote jobs (docs/board.md)
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -146,11 +152,22 @@ parse_args() {
         ;;
       --board)
         [ "$board_flag" != no ] || usage_error "--board and --no-board exclude each other"
-        board_flag=yes
+        [ $# -ge 2 ] || usage_error "--board needs local or linear"
+        case $2 in local | linear) ;; *) usage_error "--board needs local or linear" ;; esac
+        board_flag=$2
+        shift
         ;;
       --no-board)
-        [ "$board_flag" != yes ] || usage_error "--board and --no-board exclude each other"
+        [ -z "$board_flag" ] || [ "$board_flag" = no ] || usage_error "--board and --no-board exclude each other"
         board_flag=no
+        ;;
+      --launchd)
+        [ "$jobs_flag" != no ] || usage_error "--launchd and --no-launchd exclude each other"
+        jobs_flag=yes
+        ;;
+      --no-launchd)
+        [ "$jobs_flag" != yes ] || usage_error "--launchd and --no-launchd exclude each other"
+        jobs_flag=no
         ;;
       --opencode-provider)
         [ $# -ge 2 ] && valid_name "$2" || usage_error "--opencode-provider: want 1-64 letters, digits, _ or -, not ollama"
@@ -233,7 +250,7 @@ under_home() {
 ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
   case $1:$# in
-    dir:2 | file:2 | profile-file:2) under_home "$2" ;;
+    dir:2 | file:2 | profile-file:2 | board-dir:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
@@ -306,9 +323,6 @@ record_library() {
     if [ "$kind" = dir ]; then record_dir "$HOME/Library/$path"; else record_file "$HOME/Library/$path"; fi
   done
 }
-
-# Records a directory under ~/.agent-pm, unless ~/.agent-pm itself is the installer's.
-record_agent_dir() { recorded dir "$HOME/.agent-pm" || record_dir "$1"; }
 
 # Records keychain item $1 / $2 when it does not exist yet.
 record_item() {
@@ -505,7 +519,7 @@ dependencies() {
   cask iterm2 "" "$root/Applications/iTerm.app"
 }
 
-# What an existing config.local.toml says: "<[session.hosts] default>\t<[delegate] client>".
+# What an existing config.local.toml says: "<[session.hosts] default>\t<[delegate] client>\t<[orchestrator] tracker>".
 config_says() {
   [ -f "$config" ] || return 0
   python3 -I -c '
@@ -520,7 +534,8 @@ def get(*keys):
     for key in keys:
         node = node.get(key) if isinstance(node, dict) else None
     return node if isinstance(node, str) else ""
-print(get("session", "hosts", "default") + "\t" + get("delegate", "client"))' "$config"
+tracker = get("orchestrator", "tracker")
+print("\t".join((get("session", "hosts", "default"), get("delegate", "client"), tracker if tracker in ("local", "linear") else "")))' "$config"
 }
 
 # ask_valid <question> <check>: asks until <check> accepts the answer.
@@ -578,6 +593,7 @@ answers() {
   said=$(config_says)
   default=${said%%$'\t'*}
   client=${said#*$'\t'}
+  client=${client%%$'\t'*}
   clients=${clients_flag:-$(state_get clients)}
   if [ -z "$clients" ]; then
     case $client in claude | codex | opencode) clients=$client ;; *) clients=claude,codex ;; esac
@@ -587,10 +603,11 @@ answers() {
   if [ -z "$docker" ]; then
     if [ "$default" = docker ]; then docker=yes; else docker=no; fi
   fi
-  board=${board_flag:-$(state_get board)}
+  board=$(state_get board)
+  case $board_flag in local | linear) board=yes ;; no) board=no ;; esac
   board=${board:-no}
   if [ -z "$clients_flag" ] || [ -z "$docker_flag" ]; then
-    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: Linear keys, configuration and launchd jobs (a Linear board set up per docs/board.md)")
+    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: local or Linear (launchd jobs chosen separately)")
     ticks=()
     for item in "${names[@]}"; do
       if has "$item"; then ticks+=(1); else ticks+=(0); fi
@@ -608,6 +625,36 @@ answers() {
     done
     if [ "${ticks[3]}" = 1 ]; then docker=yes; else docker=no; fi
     if [ "${ticks[4]}" = 1 ]; then board=yes; else board=no; fi
+  fi
+  if [ "$board" != yes ] && [ -n "$jobs_flag" ]; then
+    usage_error "--launchd/--no-launchd requires a board"
+  fi
+  board_tracker=$(state_get board_tracker)
+  if [ "$board" = yes ] && [ -z "$board_tracker" ]; then board_tracker=$(configured_tracker); fi
+  case $board_tracker in local | linear) ;; *) board_tracker=local ;; esac
+  case $board_flag in local | linear) board_tracker=$board_flag ;; esac
+  board_jobs_choice=${jobs_flag:-$(state_get board_jobs)}
+  if [ "$board" = yes ]; then
+    if [ -z "$board_flag" ] && [ -z "$(state_get board_tracker)" ] && [ -z "$(configured_tracker)" ]; then
+      while :; do
+        ask "Board tracker [local/linear] [$board_tracker]:"
+        case ${answer:-$board_tracker} in
+          local | linear) board_tracker=${answer:-$board_tracker}; break ;;
+        esac
+      done
+    fi
+    if [ -z "$board_jobs_choice" ]; then
+      if [ -f "$HOME/Library/LaunchAgents/com.ophis.agent-pm.router.plist" ] \
+        || [ -f "$HOME/Library/LaunchAgents/com.ophis.agent-pm.promote.plist" ]; then
+        board_jobs_choice=yes
+      elif ask_yn "Install board launchd jobs?"; then
+        board_jobs_choice=yes
+      else
+        board_jobs_choice=no
+      fi
+    fi
+    state_set board_tracker "$board_tracker"
+    state_set board_jobs "$board_jobs_choice"
   fi
   if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
   if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
@@ -646,7 +693,7 @@ answers() {
   state_set clients "$clients"
   state_set docker "$docker"
   state_set board "$board"
-  say "    clients: $clients, Docker: $docker, board: $board${provider:+, OpenCode provider: $provider}"
+  say "    clients: $clients, Docker: $docker, board: $board ($board_tracker), launchd: ${board_jobs_choice:-no}${provider:+, OpenCode provider: $provider}"
 }
 
 # Plans the edits that give config.local.toml (or a new one) the wanted settings; writes the result to
@@ -1065,7 +1112,7 @@ opencode_install() {
   fi
   version=$(opencode_version)
   formula node
-  record_agent_dir "$opencode_prefix"
+  record_dir "$opencode_prefix"
   record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
   record_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
@@ -1264,10 +1311,10 @@ ctmux_install() {
   if [ -n "$missing" ]; then
     if [ -d "$HOME/.agent-pm/bin" ]; then
       for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
-        recorded dir "$HOME/.agent-pm" || [ -e "$HOME/.agent-pm/bin/$name" ] || ledger_add file "$HOME/.agent-pm/bin/$name"
+        [ -e "$HOME/.agent-pm/bin/$name" ] || ledger_add file "$HOME/.agent-pm/bin/$name"
       done
     else
-      record_agent_dir "$HOME/.agent-pm/bin"
+      record_dir "$HOME/.agent-pm/bin"
     fi
     "$pkg/manager/skills/manage/scripts/ctmux" --install </dev/null >&2
   else
@@ -1368,7 +1415,7 @@ broker_install() {
   docker_running
   step broker
   [ -e "$root/usr/local/libexec/agent-pm" ] || ledger_add broker
-  record_agent_dir "$HOME/.agent-pm/docker"
+  record_dir "$HOME/.agent-pm/docker"
   if [ "$ref" = main ]; then
     sh "$pkg/broker/install.sh" </dev/null >&2
   else
@@ -1523,23 +1570,26 @@ docker_cli() {
   config_file session.hosts.docker docker "$cli"
 }
 
-# Exit 0 when the board is to be set up: Board chosen, and config.local.toml's tracker unset or "linear"; else
-# skips with the reason.
+# Prints only a recognized, explicit tracker; an absent setting stays empty.
+configured_tracker() {
+  local said tracker
+  said=$(config_says)
+  tracker=${said#*$'\t'}
+  tracker=${tracker#*$'\t'}
+  case $tracker in local | linear) printf '%s' "$tracker" ;; esac
+}
+
 board_wanted() {
-  local tracker=
   if [ "$board" != yes ]; then
     skip "board not chosen"
     return 1
   fi
-  if [ -f "$config" ]; then
-    tracker=$(python3 -I -c '
-import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    tracker = tomllib.load(f).get("orchestrator", {}).get("tracker", "linear")
-print(tracker if isinstance(tracker, str) and tracker.isprintable() else repr(tracker))' "$config")
-  fi
-  if [ -n "$tracker" ] && [ "$tracker" != linear ]; then
-    skip "tracker = \"$tracker\" in ~/.agent-pm/config.local.toml"
+}
+
+linear_wanted() {
+  board_wanted || return 1
+  if [ "$board_tracker" != linear ]; then
+    skip "local board chosen"
     return 1
   fi
 }
@@ -1637,7 +1687,7 @@ except LinearError as error:
 linear_keys() {
   local list slot service account
   step "Linear keys"
-  board_wanted || return 0
+  linear_wanted || return 0
   list=$(linear_slots)
   while IFS=$'\t' read -r slot service account; do
     [ -n "$service" ] || continue
@@ -1799,7 +1849,8 @@ plan = []
 def fill(table, key, value):
     if dig(data, *table.split("."), key) in (None, "", [], {}):
         plan.append([table, key, value])
-fill("orchestrator", "tracker", "linear")
+if dig(data, "orchestrator", "tracker") != "linear":
+    plan.append(("orchestrator", "tracker", "linear"))
 fill("orchestrator.linear", "team", team)
 fill("orchestrator.linear", "harness_key", service["harness"])
 fill("orchestrator.linear", "manager_key", service["manager"])
@@ -1866,10 +1917,43 @@ with open(out, "w", encoding="utf-8") as f:
     json.dump(plan, f)' "$config" "$1" "$slots" "$stages" "$pkg/delegate/src/agent_pm/delegate/team/roles"
 }
 
+local_board_setup() {
+  local board_dir=$HOME/.agent-pm/board wanted= directory
+  directory=$board_dir/unassigned
+  while [ ! -e "$directory" ]; do
+    wanted="$directory${wanted:+
+$wanted}"
+    directory=${directory%/*}
+    [ -n "$directory" ] || directory=/
+  done
+  if [ -n "$wanted" ]; then
+    if ! consent "$board_dir" "Create directories:
+$wanted"; then
+      skip declined
+      return 0
+    fi
+    while IFS= read -r directory; do
+      [ -e "$directory" ] || ledger_add board-dir "$directory"
+    done <<<"$wanted"
+  fi
+  mkdir -p "$board_dir/unassigned"
+  [ -n "$wanted" ] || skip "local board initialized"
+  local_board_ready=yes
+}
+
 board_config() {
   local plan=$state_dir/board.json
-  step "Linear board configuration"
+  if [ "$board_tracker" = local ]; then step "local board configuration"; else step "Linear board configuration"; fi
   board_wanted || return 0
+  if [ "$board_tracker" = local ]; then
+    config_file orchestrator tracker local
+    if [ "$(configured_tracker)" = local ]; then
+      local_board_setup
+    else
+      skip "local tracker not configured"
+    fi
+    return 0
+  fi
   if board_complete; then
     skip "has the Linear board configuration"
     return 0
@@ -1893,7 +1977,7 @@ launchd_path() {
   done
 }
 
-# Writes the board job $1's plist for this user to $2, from the plugin's template: @HOME@ and @PATH@ filled in.
+# Writes the board job $1's plist for this user to $2, with @HOME@ and @PATH@ filled in.
 board_plist() {
   local path=
   IFS=: launchd_path
@@ -1914,7 +1998,19 @@ board_jobs() {
   local job target new offered= shown= uid
   step "board launchd jobs"
   board_wanted || return 0
-  if ! board_complete; then
+  if [ "$board_jobs_choice" != yes ]; then
+    skip "launchd jobs not chosen"
+    return 0
+  fi
+  if [ "$(configured_tracker)" != "$board_tracker" ]; then
+    skip "board tracker not configured"
+    return 0
+  fi
+  if [ "$board_tracker" = local ] && [ "$local_board_ready" != yes ]; then
+    skip "local board not initialized"
+    return 0
+  fi
+  if [ "$board_tracker" = linear ] && ! board_complete; then
     skip "no Linear board"
     return
   fi
@@ -1939,7 +2035,7 @@ board_jobs() {
     return
   fi
   uid=$(id -u)
-  record_agent_dir "$HOME/.agent-pm/logs"
+  record_dir "$HOME/.agent-pm/logs"
   record_dir "$HOME/Library/LaunchAgents"
   mkdir -p "$HOME/.agent-pm/logs" "$HOME/Library/LaunchAgents"
   for job in $offered; do
