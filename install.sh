@@ -697,6 +697,7 @@ apps() {
   if has codex; then cask codex codex; else skip "Codex: not chosen"; fi
   if [ "$docker" = yes ]; then
     cask docker-desktop "" "$root/Applications/Docker.app"
+    docker_build
     if [ "$ref" = main ]; then skip "go: the broker comes from a release"; else formula go; fi
   else
     skip "Docker Desktop: Docker not chosen"
@@ -1028,16 +1029,73 @@ broker_source() {
   ) | shasum -a 256 | cut -d' ' -f1
 }
 
+# Stops unless Docker.app is built for this Mac's CPU and macOS: the cask's download is picked by CPU only.
+docker_build() {
+  local app=$root/Applications/Docker.app info archs cpu os
+  info=$(python3 -I -c '
+import plistlib, sys
+with open(sys.argv[1], "rb") as f:
+    info = plistlib.load(f)
+print(info["CFBundleExecutable"], info.get("LSMinimumSystemVersion", "0"), info.get("CFBundleShortVersionString", "?"))' \
+    "$app/Contents/Info.plist") || die "cannot read $app/Contents/Info.plist"
+  set -- $info
+  archs=$(lipo -archs "$app/Contents/MacOS/$1" </dev/null) || die "cannot read the CPU types of $app"
+  cpu=$(uname -m)
+  case " $archs " in
+    *" $cpu "*) ;;
+    *) die "Docker Desktop $3 is built for $archs, not this Mac's $cpu: brew reinstall --cask docker-desktop" ;;
+  esac
+  os=$(sw_vers -productVersion </dev/null)
+  python3 -I -c '
+import sys
+def v(text):
+    return [int(p) for p in text.split(".") if p.isdigit()]
+sys.exit(v(sys.argv[1]) < v(sys.argv[2]))' "$os" "$2" || die "Docker Desktop $3 needs macOS $2 or later, not $os"
+  say "    Docker Desktop $3 for $archs, macOS $2+: matches $cpu, macOS $os"
+}
+
+# Presets Docker Desktop's settings before its first start, keeping any it has: Rosetta off (the worker image is
+# arm64; install.sh never installs Rosetta) and its onboarding marked done.
+docker_settings() {
+  python3 -I -c '
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except FileNotFoundError:
+    data = {}
+preset = {"UseVirtualizationFrameworkRosetta": False, "DisplayedOnboarding": True}
+new = {**preset, **data}
+if new != data:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(new, f, indent=2)
+    os.replace(path + ".tmp", path)' "$HOME/Library/Group Containers/group.com.docker/settings-store.json"
+}
+
+# Starts Docker Desktop and waits for its engine; the first time install.sh installed it, without its windows:
+# license accepted and privileged setup done by its own install command, settings preset.
 docker_running() {
+  local app=$root/Applications/Docker.app tries=0
   step "Docker Desktop running"
   if docker info </dev/null >/dev/null 2>&1; then
     skip running
     return
   fi
+  if recorded cask docker-desktop; then
+    if [ "$(state_get docker_license)" != accepted ]; then
+      sudo -A "$app/Contents/MacOS/install" --accept-license --user="$(id -un)" </dev/null >&2
+      state_set docker_license accepted
+    fi
+    docker_settings
+  fi
   open -a Docker </dev/null
+  say "    waiting for Docker Desktop's engine (up to 5 minutes)"
   while ! docker info </dev/null >/dev/null 2>&1; do
-    ask "Finish Docker Desktop's first-run setup, then press Enter (or type skip)"
-    [ "$answer" != skip ] || die "Docker Desktop not running"
+    tries=$((tries + 1))
+    [ "$tries" -le 100 ] || die "Docker Desktop did not start in 5 minutes: check its window, then rerun"
+    sleep 3
   done
 }
 

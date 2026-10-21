@@ -17,6 +17,17 @@ the installed agent-pm plugin directory.
 
 Needs Docker Desktop (running) and `gh` (logged in).
 
+`install.sh` installs Docker Desktop with the `docker-desktop` cask, stops unless its binary's CPU types include
+`uname -m` and its `LSMinimumSystemVersion` is at most `sw_vers`, and starts it once without its windows: its own
+`Contents/MacOS/install --accept-license --user=<you>` (with the `sudo` password it holds), then
+`UseVirtualizationFrameworkRosetta: false` and `DisplayedOnboarding: true` in
+`~/Library/Group Containers/group.com.docker/settings-store.json` (settings already there are kept).
+
+**Rosetta** stays off and `install.sh` never installs it: the worker image is arm64. For an amd64-only base image in
+your Dockerfile, run `softwareupdate --install-rosetta`, then turn on Docker Desktop › Settings › General › **Use Rosetta
+for x86_64/amd64 emulation on Apple Silicon**. Rosetta cannot be uninstalled, so `scripts/install-cleanup.sh` cannot
+undo it.
+
 ```sh
 sh "$PKG/broker/install.sh"
 ```

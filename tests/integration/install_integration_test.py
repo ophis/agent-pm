@@ -44,7 +44,7 @@ REAL = (
     "mkfifo",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
-FAKED += ("xcode-select", "ps")
+FAKED += ("xcode-select", "ps", "sw_vers", "lipo")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -306,7 +306,12 @@ class InstallTest(Case):
         own = {"sudo -n true", "sudo -n -v", "sudo -k", "sudo -S -p  -v", "sudo -A -E -- true"}
         wanted = ("broker-", "sudo", "agent-pm-broker")
         return [
-            c for c in self.calls() if c.startswith(wanted) and c not in own and "status" not in c
+            c
+            for c in self.calls()
+            if c.startswith(wanted)
+            and c not in own
+            and "status" not in c
+            and "/Docker.app/" not in c
         ]
 
     def broker_path(self):
@@ -716,9 +721,10 @@ class InstallTest(Case):
         self.assertIn("brew install go", self.calls())
         self.assertIn("broker-install --build", self.calls())
 
-    def test_docker_not_running_skip_fails(self):
+    def test_docker_not_running_fails(self):
         (self.fakes / "docker_wont_start").touch()
-        skip = (r"first-run setup.*\(or type skip\)", "skip")
+        (self.bin / "sleep").unlink()
+        executable(self.bin / "sleep", "#!/bin/sh\n")
         result = self.run_install(
             answers=[
                 (SUDO_Q, PASSWORD),
@@ -726,11 +732,14 @@ class InstallTest(Case):
                 (CLIENTS_Q, ""),
                 (DOCKER_Q, "y"),
                 (WRITE_Q, "y"),
-                skip,
             ]
         )
         self.assertEqual(result.code, 1)
-        self.assertIn("install.sh: Docker Desktop not running", result.stderr)
+        self.assertEqual(self.calls().count("docker info"), 102)
+        self.assertIn(
+            "install.sh: Docker Desktop did not start in 5 minutes: check its window, then rerun",
+            result.stderr,
+        )
         self.assertIn(
             "install.sh: Docker Desktop running failed; rerun the same command", result.stderr
         )
@@ -738,6 +747,60 @@ class InstallTest(Case):
         (self.fakes / "docker_wont_start").unlink()
         self.assert_ok(self.again(answers=[*DOCKER_LOGINS, (WRITE_Q, "y")]))
         self.assertIn("broker-install ", self.calls())
+
+    def test_docker_first_start_unattended(self):
+        result = self.fresh(clients="claude", docker="y")
+        self.assert_ok(result)
+        calls = self.calls()
+        install = f"sudo -A {self.root}/Applications/Docker.app/Contents/MacOS/install"
+        self.assertLess(
+            calls.index(f"{install} --accept-license --user=tester"), calls.index("open -a Docker")
+        )
+        self.assertEqual(
+            json.loads(self.docker_settings().read_text()),
+            {"UseVirtualizationFrameworkRosetta": False, "DisplayedOnboarding": True},
+        )
+        self.assertIn(
+            "Docker Desktop 4.96.0 for arm64, macOS 14.0+: matches arm64, macOS 26.7.1",
+            result.stderr,
+        )
+        self.assertNotIn("press Enter", result.tty)
+        self.assertEqual(self.state()["docker_license"], "accepted")
+
+    def test_docker_settings_kept(self):
+        self.docker_settings().parent.mkdir(parents=True)
+        self.docker_settings().write_text(
+            '{"UseVirtualizationFrameworkRosetta": true, "Theme": "dark"}'
+        )
+        self.assert_ok(self.fresh(clients="claude", docker="y"))
+        self.assertEqual(
+            json.loads(self.docker_settings().read_text()),
+            {
+                "UseVirtualizationFrameworkRosetta": True,
+                "Theme": "dark",
+                "DisplayedOnboarding": True,
+            },
+        )
+
+    def docker_settings(self):
+        return Path(self.home, "Library/Group Containers/group.com.docker/settings-store.json")
+
+    def assert_docker_build_refused(self, marker, text, said):
+        (self.fakes / marker).write_text(text)
+        result = self.run_install(
+            "--docker", "--clients", "claude", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 2]
+        )
+        self.assertEqual(result.code, 1)
+        self.assertIn(f"install.sh: {said}", result.stderr)
+        self.assertNotIn("open -a Docker", self.calls())
+
+    def test_docker_build_for_another_cpu(self):
+        said = "Docker Desktop 4.96.0 is built for x86_64, not this Mac's arm64"
+        self.assert_docker_build_refused("docker_arch", "x86_64", said)
+
+    def test_docker_build_for_a_newer_macos(self):
+        said = "Docker Desktop 4.96.0 needs macOS 27.0 or later, not 26.7.1"
+        self.assert_docker_build_refused("docker_min_os", "27.0", said)
 
     def test_github_app_key_optional(self):
         self.assert_ok(self.fresh(docker="y"))

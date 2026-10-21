@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -47,12 +48,24 @@ def link_app(command):
     shutil.copy(FAKES / "apps" / command, PREFIX / "bin" / command)
 
 
-def uname(_args):
-    out((FAKES / "platform").read_text() if (FAKES / "platform").exists() else "Darwin arm64\n")
+def uname(args):
+    platform = (
+        (FAKES / "platform").read_text() if (FAKES / "platform").exists() else "Darwin arm64\n"
+    )
+    out(platform.split()[-1] + "\n" if args == ["-m"] else platform)
 
 
-def id_(_args):
-    out("501\n")
+def id_(args):
+    out("tester\n" if args == ["-un"] else "501\n")
+
+
+def sw_vers(_args):
+    out((FAKES / "macos").read_text() if (FAKES / "macos").exists() else "26.7.1\n")
+
+
+def lipo(args):
+    """lipo -archs <binary>: the fake Docker binary's text is its CPU types."""
+    out(Path(args[-1]).read_text() + "\n")
 
 
 def ps(_args):
@@ -187,14 +200,38 @@ export PATH="$PATH:{home}/.docker/bin"
 
 
 def docker_app(app):
-    """Docker.app's own uninstall, as the cask puts it in place."""
-    tool = app / "Contents/MacOS/uninstall"
-    tool.parent.mkdir(parents=True, exist_ok=True)
-    tool.write_text(f'#!/bin/sh\nexec {sys.executable} -I {__file__} docker-uninstall "$@"\n')
-    tool.chmod(0o755)
+    """Docker.app as the cask puts it in place: Info.plist, its binary, its install and uninstall."""
+    macos = app / "Contents/MacOS"
+    macos.mkdir(parents=True, exist_ok=True)
+    minimum = (
+        (FAKES / "docker_min_os").read_text() if (FAKES / "docker_min_os").exists() else "14.0"
+    )
+    info = {"CFBundleExecutable": "Docker", "LSMinimumSystemVersion": minimum}
+    (app / "Contents/Info.plist").write_bytes(
+        plistlib.dumps({**info, "CFBundleShortVersionString": "4.96.0"})
+    )
+    arch = (FAKES / "docker_arch").read_text() if (FAKES / "docker_arch").exists() else "arm64"
+    (macos / "Docker").write_text(arch)
+    for name in ("install", "uninstall"):
+        (macos / name).write_text(
+            f'#!/bin/sh\nexec {sys.executable} -I {__file__} docker-{name} "$@"\n'
+        )
+        (macos / name).chmod(0o755)
+
+
+def docker_install(args):
+    if os.environ.get("FAKE_SUDO") != "1" or args != ["--accept-license", "--user=tester"]:
+        out(
+            f"docker install: want sudo and --accept-license --user=tester, not {args}\n",
+            sys.stderr,
+        )
+        return 1
+    mark(FAKES / "docker_license")
+    return 0
 
 
 def docker_uninstall(_args):
+    (FAKES / "docker_license").unlink(missing_ok=True)
     (FAKES / "docker_running").unlink(missing_ok=True)
     (FAKES / "docker_started").unlink(missing_ok=True)
     if (FAKES / "protected_container").exists():
@@ -361,7 +398,11 @@ def docker(args):
 
 
 def open_(args):
-    """Docker Desktop's first start also adds its block to ~/.zprofile."""
+    """Docker Desktop's first start also adds its block to ~/.zprofile. Installed by the cask, it asks for its
+    license unless its install command accepted it."""
+    cask = (FAKES / "brew/docker-desktop").exists()
+    if cask and not (FAKES / "docker_license").exists():
+        return 0
     if args == ["-a", "Docker"] and not (FAKES / "docker_wont_start").exists():
         if not (FAKES / "docker_started").exists():
             with open(Path(os.environ["HOME"], ".zprofile"), "a") as profile:
@@ -507,6 +548,9 @@ TOOLS = {
     "base64": base64_,
     "agent-pm-broker": broker,
     "docker-uninstall": docker_uninstall,
+    "docker-install": docker_install,
+    "sw_vers": sw_vers,
+    "lipo": lipo,
 }
 
 
