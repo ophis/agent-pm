@@ -1,4 +1,4 @@
-// Package protocol holds the broker protocol's error contract (docs/docker-broker-protocol.md).
+// Package protocol holds the broker protocol's error contract (protocol/docker-broker/protocol.schema.json).
 package protocol
 
 import (
