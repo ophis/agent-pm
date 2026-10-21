@@ -224,6 +224,24 @@ func TestBotUser(t *testing.T) {
 	}
 }
 
+func TestAppSlug(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app" || r.Header.Get("Authorization") != "Bearer jwt" {
+			t.Errorf("request %s %s %v", r.Method, r.URL.Path, r.Header)
+		}
+		_, _ = io.WriteString(w, `{"id":5405554,"slug":"agentpm-test-bot","name":"agentpm test bot"}`)
+	})
+	if slug, err := c.AppSlug(context.Background(), "jwt"); err != nil || slug != "agentpm-test-bot" {
+		t.Fatalf("%q %v", slug, err)
+	}
+	for _, body := range []string{`{"slug":""}`, `{"slug":"a b"}`, `{}`, `<html>`} {
+		c := client(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
+		if _, err := c.AppSlug(context.Background(), "jwt"); err == nil {
+			t.Errorf("%s: no error", body)
+		}
+	}
+}
+
 func TestBotUserRejects(t *testing.T) {
 	for name, body := range map[string]string{
 		"wrong login": `{"login":"someone[bot]","id":1,"type":"Bot"}`,

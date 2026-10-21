@@ -1380,6 +1380,7 @@ class DockerHost(Host):
             raise SessionError(f"no docker session {name}")
         argv = _attach_argv(self.docker, found.container, name)
         return CommandView(
-            printed=shlex.join(argv),
+            # '=<name>' quoted, as tmux_cli.attach_command: zsh expands a bare =word.
+            printed=f"{shlex.join(argv[:-1])} '{argv[-1]}'",
             argv=("/usr/bin/env", *(arg for key in CLEARED for arg in ("-u", key)), *argv),
         )

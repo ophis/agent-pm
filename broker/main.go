@@ -92,7 +92,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 				login = func() error { return a.login(launcher.DefaultClaudeAccount, stdout) }
 			case len(args) == 3 && args[1] == "claude" && launcher.ValidClaudeAccount(args[2]):
 				login = func() error { return a.login(args[2], stdout) }
-			case len(args) == 3 && args[1] == "github" && broker.GitHubApps[args[2]]:
+			case len(args) == 3 && args[1] == "github" && args[2] == broker.AppKeyService:
 				login = func() error { return a.loginGitHub(ctx, args[2], stdout) }
 			case len(args) == 3 && args[1] == "opencode" && launcher.ValidProvider(args[2]):
 				login = func() error { return a.loginOpencode(args[2], stdout) }
@@ -290,7 +290,7 @@ func system() app {
 			}, out); err != nil {
 				return err
 			}
-			return tokens(home, nil).SaveUser(ctx, app, out)
+			return tokens(home, nil).SaveUser(ctx, out)
 		},
 		loginOpencode: func(provider string, out io.Writer) error {
 			home, err := accountHome()

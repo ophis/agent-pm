@@ -459,6 +459,7 @@ def broker(args):
         if not (FAKES / "keychain/agent-pm-bot").exists():
             return 1
         store_key("agent-pm-github-users", "42")
+        out("GitHub App agentpm-test-bot bot user agentpm-test-bot[bot] has ID 42\n")
         return 0
     if args == ["login", "codex"]:
         save(codex_file, {**(state or {}), "state": "ready", "repair": ""})

@@ -178,7 +178,8 @@ max = "max"
 # [hosts.docker]      each tui session in its own container, made by agent-pm-broker (docs/docker-host.md):
 #   docker            the docker CLI, an absolute path
 #   plugins           the account's installed plugins every container's image holds, by name or name@marketplace; []: none
-#   github.app        the GitHub App whose installation tokens every Docker session gets; "": none
+#   github.app        the slug of the GitHub App whose installation tokens every Docker session gets, the one
+#                     `agent-pm-broker login github agent-pm-bot` saved (install.sh writes it); "": none
 [hosts]
 default = "tmux"
 
@@ -198,7 +199,9 @@ plugins = ["autopilot"]
 isolated = true
 
 [hosts.docker.github]
-app = "agent-pm-bot"
+app = ""
+# local: [session.hosts.docker.github]
+# local: app = "<your App's slug>"
 
 # ── Viewer ──────────────────────────────────────────────
 # [viewer]            how the Viewer (session/src/agent_pm/session/viewer/viewer.py) shows every Host's sessions:

@@ -51,8 +51,9 @@ Input fixtures' `argv` arrays represent arguments after the executable, in canon
 order. They are test data, not JSON sent to the broker. These commands consume no
 stdin. `login claude [NAME]` reads account NAME's token (`default` without NAME) and `login opencode <provider>`
 that provider's API key; they and `login github <app>` read the login keychain password once when the item's access
-needs a change, all interactively without echo; none has a JSON contract. `login github <app>` then
-looks up `<app>[bot]` (`GET /users/<app>[bot]`, no credential) and saves its user ID ([GitHub tokens](#github-tokens)).
+needs a change, all interactively without echo; none has a JSON contract. `login github agent-pm-bot` then
+asks GitHub the slug of the key's App (`GET /app`, the App JWT), looks up `<slug>[bot]` (`GET /users/<slug>[bot]`, no
+credential) and saves both ([GitHub tokens](#github-tokens)).
 The administrative Codex commands are defined in [Codex operations](docker-codex.md).
 
 `build`'s `--plugin NAME` repeats, every one before `--max-age`; `NAME` is a Claude Code plugin
@@ -90,7 +91,7 @@ Callers branch on exit/code, not diagnostic text, and reject malformed responses
 | `opencode_dir` | Required only for OpenCode, forbidden for the others; mounted read/write at the same container path as the container's `XDG_DATA_HOME`. OpenCode gets no client credential beyond `opencode_providers`' keys |
 | `claude_account` | Optional, Claude only (on another client `manifest_rejected`): an account name (`[a-z0-9][a-z0-9._-]{0,63}`, never `setup-token`); absent is `default`. Start writes only that account's setup-token, saved by `agent-pm-broker login claude [NAME]`, to `/run/agent-pm/secrets/claude` |
 | `opencode_providers` | Optional, OpenCode only: unique provider names (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, never `ollama`), at most 32; absent is none. Start writes each one's API key, saved by `agent-pm-broker login opencode <provider>`, to `/run/agent-pm/secrets/opencode/<provider>.key` (0400, through `docker exec` stdin) |
-| `github` | Required: `null` (no GitHub token), or `{"app": "agent-pm-bot"}`, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
+| `github` | Required: `null` (no GitHub token), or `{"app": "<slug>"}`, the slug `login github` saved, the only App the broker serves; another name is `manifest_rejected` at `start` and `refresh` |
 | `hook_path` | Optional absolute container executable path; omitted for step 1 manual acceptance; `null` is invalid |
 | `labels` | Required string-to-string object, possibly empty; caller keys use letters/digits/`_`/`.`/`-`, start with a letter or digit, and cannot use the reserved `agent-pm.` prefix |
 
@@ -216,7 +217,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | Exit | `error.code` | Commands | Failure class |
 |---|---|---|---|
 | `2` | `usage` | All, or `unknown` | Unknown command/flag, missing/extra argument, malformed argument value |
-| `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than `agent-pm-bot`; refresh: a manifest of another container, or Claude with `github` `null` |
+| `3` | `manifest_rejected` | start/refresh | Manifest unreadable, malformed JSON, duplicate keys, missing/unknown field or schema violation; a `github` App other than the one `login github` saved; refresh: a manifest of another container, or Claude with `github` `null` |
 | `4` | `mount_rejected` | start/refresh | Runtime cwd, `claude_dir`, symlink or hook-placement rejection; a workspace volume with other labels or in use |
 | `5` | `login_required` | start/refresh | The Claude account's setup-token item, or the App's private-key item, absent or without an App ID account; the setup-token trusting another broker build or needing keychain approval; message gives login command |
 | `6` | `image_rejected` | start | Schema-valid tag references a missing/untrusted image or one missing `agent-pm.version` |
@@ -260,7 +261,7 @@ manifest or log.
 |---|---|---|
 | `agent-pm-tokens` | container name | `{"app", "tokens": [{"account", "installation", "token", "expires_at"}]}` |
 | `agent-pm-revocations` | `pending` | `[{"container", "account", "token", "expires_at"}]` |
-| `agent-pm-github-users` | App | its bot user's ID, decimal, saved by `login github` |
+| `agent-pm-github-users` | `agent-pm-bot` | `{"slug", "id"}`: the App's slug and its bot user's ID, saved by `login github` |
 
 - Every token is recorded before it is written in, and revoked (`DELETE /installation/token`) only with the
   recorded value, never one read back from the container. A 401 or 404 answer counts as revoked.

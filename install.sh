@@ -552,7 +552,7 @@ answers() {
 config_plan() {
   python3 -I -c '
 import os, re, sys, tomllib
-path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context = sys.argv[1:]
+path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, app = sys.argv[1:]
 fresh = not os.path.exists(path)
 text = ""
 if not fresh:
@@ -573,13 +573,15 @@ wanted = []
 def want(table, key, value):
     if get(data, table, key) != value:
         wanted.append((table, key, value))
-if fresh or (get(data, "session.hosts", "default") or "tmux") != default:
+if app:
+    want("session.hosts.docker.github", "app", app)
+elif fresh or (get(data, "session.hosts", "default") or "tmux") != default:
     wanted.append(("session.hosts", "default", default))
-if client and (get(data, "delegate", "client") or "claude") != client:
+if not app and client and (get(data, "delegate", "client") or "claude") != client:
     wanted.append(("delegate", "client", client))
-if harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
+if not app and harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
     wanted.append(("delegate.delegates", "harness_host", harness))
-if name:
+if name and not app:
     target, before = f"{name}/{model}", f"{prev_name}/{prev_model}" if prev_name else None
     if get(data, "session.clients.opencode", "executable") in (None, ""):
         want("session.clients.opencode", "executable", exe)
@@ -636,12 +638,13 @@ with open(out, "w", encoding="utf-8") as f:
     f.write(result)
 sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
     "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$context" \
-    "$prev_provider" "$prev_url" "$prev_model" "$prev_context"
+    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$wanted_app"
 }
 
+# Writes the configuration's settings into config.local.toml with consent; with $1, only github.app = $1.
 config_file() {
-  local wanted_default=tmux wanted_harness= wanted_client= changes rc=0 plan
-  step config.local.toml
+  local wanted_default=tmux wanted_harness= wanted_client= wanted_app=${1:-} changes rc=0 plan
+  step "config.local.toml${wanted_app:+: GitHub App}"
   if [ "$docker" = yes ]; then
     wanted_default=docker
     wanted_harness=tmux
@@ -1125,7 +1128,7 @@ broker_install() {
 store_app_key() {
   local pem id key
   [ "$(state_get github_app_key)" != skipped ] || return 1
-  ask "Path to the agent-pm-bot GitHub App private key (.pem), empty to skip:"
+  ask "Path to your GitHub App's private key (.pem; docs/docker-host.md#create-the-github-app), empty to skip:"
   if [ -z "$answer" ]; then
     state_set github_app_key skipped
     return 1
@@ -1166,8 +1169,17 @@ else:
     print("ready" if state == "ready" else "login")' "$1"
 }
 
+# Copies stdin to the terminal and to stdout.
+to_terminal() {
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >&3
+    printf '%s\n' "$line"
+  done
+}
+
 broker_logins() {
-  local sha min need
+  local sha min need said slug
   sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
   step "broker login: Claude"
   if ! has claude; then
@@ -1182,15 +1194,19 @@ broker_logins() {
     state_set login_claude "$sha"
   fi
   step "broker login: GitHub"
-  if [ "$(state_get login_github)" = "$sha" ]; then
+  if [ "$(state_get login_github)" = "$sha" ] && [ -n "$(state_get github_app)" ]; then
     skip "done for this broker"
   elif ! security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 && ! store_app_key; then
     skip "no GitHub App key: create the App by docs/docker-host.md#create-the-github-app, then rerun"
   else
     record_item agent-pm-github-users agent-pm-bot
-    "$broker" login github agent-pm-bot <&3 >&3 2>&3
+    said=$("$broker" login github agent-pm-bot <&3 2>&3 | to_terminal)
+    slug=$(sed -n 's/^GitHub App \([A-Za-z0-9-]*\) bot user .*/\1/p' <<<"$said")
+    [ -n "$slug" ] || die "broker login github named no GitHub App"
+    state_set github_app "$slug"
     state_set login_github "$sha"
   fi
+  if [ -n "$(state_get github_app)" ]; then config_file "$(state_get github_app)"; fi
   step "broker Codex install"
   if ! has codex; then
     skip "Codex not chosen"
@@ -1365,7 +1381,7 @@ celebrate() {
 
 EOF
   say "agent-pm is installed (ref $ref, clients $clients, Docker $docker)."
-  say "Welcome aboard, and congrats: your crew is ready. Open a commander with ctmux <name>."
+  say "Welcome onboard, and congrats: your crew is ready. Open a commander with ctmux <name>."
 }
 
 main() {

@@ -55,12 +55,13 @@ var (
 	errAccessUnread = errors.New("reading its access failed")
 )
 
-// GitHubApps are the GitHub Apps the broker serves: login github's keychain services and the manifest's github app.
-var GitHubApps = map[string]bool{"agent-pm-bot": true}
+// AppKeyService is the item of the one GitHub App's private key (account its App ID) and login github's argument;
+// the App's own slug, whatever it is, comes from GitHub at login.
+const AppKeyService = "agent-pm-bot"
 
 // KeychainServices are every keychain service the broker reads or writes, one literal each: docs/credentials.md names
 // them all (tests/guard_checks/credentials.py reads this list). Declare each service as a package-level `...Service`
-// string constant or a GitHubApps key: TestKeychainServices pins this list to exactly those.
+// string constant: TestKeychainServices pins this list to exactly those.
 var KeychainServices = []string{
 	"agent-pm-claude",
 	"agent-pm-bot",

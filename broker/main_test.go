@@ -587,7 +587,7 @@ func TestAuditHoldsNoSecret(t *testing.T) {
 	_ = json.Unmarshal(manifest, &m)
 	c := "agent-pm-" + m.Name + "-" + m.Generation
 	log := filepath.Join(t.TempDir(), "Library/Logs/agent-pm/broker.jsonl")
-	keys := memSecrets{"agent-pm-github-users/agent-pm-bot": []byte("343764394")}
+	keys := memSecrets{"agent-pm-github-users/agent-pm-bot": []byte(`{"slug":"agent-pm-bot","id":343764394}`)}
 	lock := broker.FileLock(filepath.Join(t.TempDir(), "tokens.lock"))
 	for _, command := range []string{"start", "refresh", "close"} {
 		rec := &audit.Recorder{Command: command, Now: time.Now, Log: audit.Log{Path: log}}

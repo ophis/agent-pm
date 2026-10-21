@@ -66,7 +66,7 @@ DOCKER_Q = r"Run workers in Docker \(Docker Desktop and the agent-pm broker\)\? 
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
 TOKEN_Q = r"Paste the setup-token \(hidden\):"
-PEM_Q = r"private key \(\.pem\), empty to skip:"
+PEM_Q = r"private key \(\.pem; [^)]*\), empty to skip:"
 DOCKER_LOGINS = ((TOKEN_Q, TOKEN), (PEM_Q, ""))
 REMOVE_Q = r"Remove all of this\? \[y/N\]"
 SHARED = (
@@ -482,7 +482,7 @@ class InstallTest(Case):
         self.assertIn("| (_| | (_| |  __/ | | | ||_____| |_) | | | | | |\n", result.stderr)
         self.assertIn(
             "agent-pm is installed (ref main, clients claude,codex, Docker no).\n"
-            "Welcome aboard, and congrats: your crew is ready.",
+            "Welcome onboard, and congrats: your crew is ready.",
             result.stderr,
         )
         self.assertIn("Log in to gh in your browser.", result.tty)
@@ -813,9 +813,20 @@ class InstallTest(Case):
         )
         (self.fakes / "keychain").mkdir(exist_ok=True)
         (self.fakes / "keychain/agent-pm-bot").write_text("stored by hand")
-        self.assert_ok(self.again())
+        result = self.again(answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
         self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
         self.assertEqual(len(self.state()["login_github"]), 64)
+        self.assertEqual(self.state()["github_app"], "agentpm-test-bot")
+        self.assertIn('[session.hosts.docker.github] app = "agentpm-test-bot"', result.tty)
+        self.assertTrue(
+            self.config()
+            .read_text()
+            .endswith('[session.hosts.docker.github]\napp = "agentpm-test-bot"\n')
+        )
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("login github", "\n".join(self.calls()))
 
     def test_github_app_key_stored_by_pipe(self):
         pem = Path(self.home, "app.pem")
@@ -823,7 +834,7 @@ class InstallTest(Case):
         pem.write_text(secret)
         encoded = base64.b64encode(secret.encode()).decode()
         logins = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
-        logins.append((r"App ID \(digits\):", "5352992"))
+        logins += [(r"App ID \(digits\):", "5352992"), (WRITE_Q, "y")]
         result = self.fresh(docker="y", logins=logins)
         self.assert_ok(result)
         self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), encoded)

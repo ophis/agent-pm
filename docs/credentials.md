@@ -146,7 +146,7 @@ shows.
 |---|---|---|---|---|---|
 | `agent-pm-claude` | account name (`default` or `<name>`) | `[session.clients.claude.accounts.<name>]` | that Claude account's setup-token | `<B> login claude [<name>]` | the broker |
 | `agent-pm-bot` | App ID | `[session.hosts.docker.github] app` | App private key | the user; access set by `<B> login github agent-pm-bot` | the broker, once logged in |
-| `agent-pm-github-users` | `agent-pm-bot` | — | the bot user's ID, for git identity (not a secret) | `<B> login github agent-pm-bot` | the broker |
+| `agent-pm-github-users` | `agent-pm-bot` | — | the App's slug and its bot user's ID, for git identity (not a secret) | `<B> login github agent-pm-bot` | the broker |
 | `agent-pm-tokens` | container name | — | that container's installation tokens and expiries | `<B> start`, `refresh`; removed by `close` | the broker |
 | `agent-pm-revocations` | `pending` | — | tokens awaiting revocation | `<B> close`, `refresh` failures | the broker |
 | `agent-pm-codex` | `auth` | — | the full Codex login | `<B> login codex`; renewals at `start`, `refresh` | the broker |

@@ -34,7 +34,7 @@ After `login github agent-pm-bot` ([Log in](docker-host.md#log-in)).
 | Check | Expect |
 |---|---|
 | first run after an install | one hidden `Login keychain password` question; no macOS dialog, or one only after the password |
-| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, then `GitHub App agent-pm-bot bot user agent-pm-bot[bot] has ID <ID>` (`gh api 'users/agent-pm-bot[bot]' --jq .id`), no key |
+| output | `GitHub App agent-pm-bot private key (App ID <App ID>) now trusts only the broker`, then `GitHub App <slug> bot user <slug>[bot] has ID <ID>`, `<slug>` your App's (`gh api 'users/<slug>[bot]' --jq .id`), no key |
 | `security dump-keychain -a ~/Library/Keychains/login.keychain-db \| grep -A40 '"agent-pm-bot"'` | every entry with `decrypt` or `export` lists only `$B`, none `/usr/bin/security`; `partition_id` lists only the `cdhash:` from `codesign -dv --verbose=4 "$B"` (its `CDHash=`), no `apple-tool:` |
 | `security find-generic-password -s agent-pm-bot -a <App ID> -w` | asks for the keychain password; Cancel: non-zero exit, empty stdout |
 | rerun the login | same output, no password question |
