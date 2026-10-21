@@ -542,8 +542,8 @@ def _stop_supervisor(name: str) -> str | None:
 
 
 class DockerHost(Host):
-    """settings: [hosts.<name>]'s docker, the CLI's absolute path; plugins, the account's installed
-    plugins its image holds (none when absent); and github.app, the GitHub App whose tokens every
+    """settings: [hosts.<name>]'s docker, the CLI's absolute path; plugins, repository sources
+    installed in its image (none when absent); and github.app, the GitHub App whose tokens every
     session gets ("" or no table: none). Terminal and piped sessions run here, each on its
     workspace volume.
     """

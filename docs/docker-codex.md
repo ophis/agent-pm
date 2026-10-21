@@ -128,19 +128,18 @@ Docker sweep.
 
 ### Native plugins
 
-The [plugin whitelist](docker-host.md#plugins) feeds both clients from the same installed payload; staging reads
-no host Codex or personal `CODEX_HOME`.
+The [plugin list](docker-host.md#plugins) supplies repository sources. Codex installs each with its own
+`codex plugin marketplace add` and `codex plugin add`, independently of Claude and all host installations.
 
 | Artifact | Codex behavior |
 |---|---|
-| explicit `.codex-plugin/plugin.json` | kept, with its hook/server config; name must match, declared skill dirs stay inside the plugin |
-| Claude-only payload | a generated native skills manifest: name, optional description/version, default `skills/` and declared extra skill dirs |
-| default Claude hook/server files | left out of the generated manifest: `hooks/hooks.json`, `.mcp.json`, `.app.json`; commands are not migrated |
-| `/opt/agent-pm/codex-plugins/inline/<name>/local/` | image-owned read-only native cache; skill-relative scripts and references kept |
-| `CODEX_HOME/plugins/cache` | volatile link to that cache; generated config enables `<name>@inline` |
+| `/opt/agent-pm/codex-plugins/` | image installation's Codex home; native commands own its manifests and cache format |
+| `/opt/agent-pm/codex-plugins/plugins/cache/<marketplace>/<name>/<version>/` | root-owned, agent-read-only native cache; skill-relative scripts and references kept |
+| `CODEX_HOME/plugins/cache` | volatile link to the image's native cache |
+| `CODEX_HOME/config.toml` | generated session config enables the installed native ids, e.g. `autopilot@claude-autopilot`; no host configuration or credentials copied |
 
-Skills are namespaced, e.g. `autopilot:build`. Invalid native names or skill paths, and escaping or dangling links
-(checked before metadata is read), fail the build before Docker. Format source, `rust-v0.162.1`:
+Skills are namespaced, e.g. `autopilot:build`. The broker no longer generates a Codex adapter from Claude's
+installation. Native cache and skill discovery sources, `rust-v0.162.1`:
 [cache lookup](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core-plugin-common/src/installed.rs#L47),
 [skill discovery](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core-plugins/src/loader.rs#L1045),
 [namespaced inventory](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/app-server/tests/suite/v2/skills_list.rs#L650).

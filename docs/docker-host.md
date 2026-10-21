@@ -156,29 +156,36 @@ Checks: [Docker checks › Build](docker-checks.md#build).
 
 ### Plugins
 
-A container's Claude Code and Codex load the plugins its image holds (OpenCode loads none): `[session.hosts.docker] plugins`, default `["autopilot"]`
+A container's Claude Code and Codex independently install the plugins listed in `[session.hosts.docker] plugins`, default `["autopilot"]`
 (the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review`); `[]`: none. Never agent-pm's own:
 every session runs with it disabled, and the image holds the team at `/opt/agent-pm/team`.
 
 ```toml
 [session.hosts.docker]
-plugins = ["autopilot", "other@its-marketplace"]
+plugins = ["autopilot", "other@owner/marketplace-repo"]
 ```
 
-Each name is a plugin installed in Claude Code at user scope (`claude plugin install`), `name` or `name@marketplace`
-when two marketplaces have one. `build` passes each as `--plugin NAME`: the broker finds it in
-`~/.claude/plugins/installed_plugins.json` and copies the version Claude Code loads now (its `installPath`) to
-`/opt/agent-pm/plugins/<name>`, root-owned and read-only for `agent`, listed in `CLAUDE_CODE_PLUGIN_DIRS` (a launch
-env's own replaces it), so it loads as `<name>@inline` with its `/<name>:` commands. The copies are part of the image
-key: a whitelist change or `claude plugin update` rebuilds at the next start (Claude Code's `.in_use/` and
-`.orphaned_at` markers are not copied). Codex uses the same payload ([Native plugins](docker-codex.md#native-plugins)).
-One whitelist per account: another is another key, whose rebuild removes this one's images.
+`autopilot` means `autopilot@ophis/claude-autopilot`. Other entries use `name@owner/repo`, a public GitHub
+marketplace repository; its manifest supplies the marketplace name. Older `name@marketplace` entries must be
+replaced. The broker passes these sources into the image without reading host plugin installation records or
+copying host plugin contents. A host with only OpenCode gets the same default autopilot installation.
 
-The build fails before Docker with `build_failed` naming the plugin (`Plugin <name> is not installed: no user-scope
-entry in <record>.` when not installed) if a name matches two marketplaces, resolves outside the plugin cache, has no
-valid `.claude-plugin/plugin.json` name, or holds a symlink leaving its directory or dangling; a start fails in
-preflight the same way. Whitelisting trusts the plugin's code (Claude loads its hooks, MCP servers and scripts) beside
-the container's credentials.
+Each image refresh runs both stages without Docker cache. In the client installation layer, Claude runs
+`claude plugin marketplace add <repo>` then `claude plugin install <name>@<marketplace>`; Codex independently runs
+`codex plugin marketplace add <repo>` then `codex plugin add <name>@<marketplace>`. Both use the repository's latest
+default branch, with no version pin. Build logs record each client's plugin id, installed manifest version and
+marketplace commit. Changing the source list changes the image key; host plugin updates do not. The existing
+[age limit](#build) controls refresh; `--max-age 0` forces one. A failed age-only refresh keeps the usable image.
+
+Claude loads its installation through `/opt/agent-pm/plugins/<name>`, listed in `CLAUDE_CODE_PLUGIN_DIRS`, with
+`/<name>:` commands. OpenCode's container config points `skills.paths` at `/opt/agent-pm/plugins`: it discovers the
+same original `skills/*/SKILL.md` files and keeps their relative references. Codex loads its own native installation
+([Native plugins](docker-codex.md#native-plugins)). Image plugin files are root-owned and read-only for `agent`.
+
+Invalid sources and duplicate plugin names fail before Docker; marketplace, installation or metadata failures
+fail the image build. Selecting a plugin trusts its code, hooks and servers beside the container's credentials.
+`install.sh --docker` installs agent-pm on the host and leaves autopilot installation to the image;
+`--no-docker` also installs autopilot for the selected host Claude/Codex clients.
 
 Checks: [Docker checks › Plugins](docker-checks.md#plugins).
 

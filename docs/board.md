@@ -176,7 +176,7 @@ Use the installed `agent-pm-orchestrator` absolute path. `--issue` skips the usa
 
 ### OpenCode
 
-An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Ollama models. Use local models only for live-test issues (the user's rule; nothing enforces it): OpenCode does not load the image's plugins, so it cannot run `/autopilot:build` or `/autopilot:light-build`. Beyond [Setup](#setup):
+An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Ollama models. Use local models only for live-test issues (the user's rule; nothing enforces it). Docker workers discover the image's autopilot skills, including build and light-build, through `skills.paths` ([Plugins](docker-host.md#plugins)). Beyond [Setup](#setup):
 
 1. Ollama and its model: [Docker host › OpenCode](docker-host.md#opencode).
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
