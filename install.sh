@@ -42,6 +42,8 @@ askpass_dir=
 current=
 answer=
 token_screen=
+app_pem=
+app_id=
 pkg=
 user_path=$PATH
 reload=
@@ -1312,28 +1314,23 @@ broker_install() {
   state_set broker_source "$source"
 }
 
-# Stores the agent-pm-bot App key from a .pem the user names; 1 when they skip it.
+# Asks for the agent-pm-bot App key's .pem and App ID into app_pem and app_id, for the broker to store; 1 when the
+# user skips it.
 store_app_key() {
-  local pem id key
   [ "$(state_get github_app_key)" != skipped ] || return 1
   ask "Path to your GitHub App's private key (.pem; docs/docker-host.md#create-the-github-app), empty to skip:"
   if [ -z "$answer" ]; then
     state_set github_app_key skipped
     return 1
   fi
-  pem=$answer
-  [ -f "$pem" ] || die "no file $pem"
+  app_pem=$answer
+  [ -f "$app_pem" ] || die "no file $app_pem"
   while :; do
     ask "Its App ID (digits):"
-    case $answer in '' | *[!0-9]*) ;; *) break ;; esac
+    if [[ $answer =~ ^[1-9][0-9]{0,19}$ ]]; then break; fi
   done
-  id=$answer
-  ledger_add keychain agent-pm-bot "$id"
-  key=$(base64 -i "$pem") && [ -n "$key" ] || die "cannot read $pem"
-  printf 'add-generic-password -s agent-pm-bot -a %s -U -w %s %s\n' "$id" "$key" \
-    "$HOME/Library/Keychains/login.keychain-db" | security -i >/dev/null 2>&1 || true
-  unset key
-  security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 || die "agent-pm-bot key not stored"
+  app_id=$answer
+  ledger_add keychain agent-pm-bot "$app_id"
 }
 
 # install, update, login, ready or busy: what the broker's pinned Codex needs.
@@ -1407,7 +1404,11 @@ broker_logins() {
     skip "no GitHub App key: create the App by docs/docker-host.md#create-the-github-app, then rerun"
   else
     record_item agent-pm-github-users agent-pm-bot
-    said=$("$broker" login github agent-pm-bot <&3 2>&3 | to_terminal)
+    if [ -n "$app_id" ]; then
+      said=$("$broker" login github agent-pm-bot --key-file "$app_pem" --app-id "$app_id" <&3 2>&3 | to_terminal)
+    else
+      said=$("$broker" login github agent-pm-bot <&3 2>&3 | to_terminal)
+    fi
     slug=$(sed -n 's/^GitHub App \([A-Za-z0-9-]*\) bot user .*/\1/p' <<<"$said")
     [ -n "$slug" ] || die "broker login github named no GitHub App"
     state_set github_app "$slug"

@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import re
@@ -44,7 +43,7 @@ REAL = (
     "mkfifo",
     "stty",
 )
-FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
+FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum")
 FAKED += ("xcode-select", "ps", "sw_vers", "lipo")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "node", "opencode")
@@ -896,21 +895,27 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertNotIn("login github", "\n".join(self.calls()))
 
-    def test_github_app_key_stored_by_pipe(self):
+    def test_github_app_key_stored_by_the_broker(self):
+        """The broker creates the App key item from the .pem path, so the key is on no command line."""
         pem = Path(self.home, "app.pem")
         secret = "-----BEGIN RSA PRIVATE KEY-----SENTINELKEY-----END RSA PRIVATE KEY-----"
         pem.write_text(secret)
-        encoded = base64.b64encode(secret.encode()).decode()
         logins = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
-        logins += [(r"App ID \(digits\):", "5352992"), (WRITE_Q, "y")]
-        result = self.fresh(docker="y", logins=logins)
+        logins += [(r"App ID \(digits\):", "0123"), (r"App ID \(digits\):", "5352992")]
+        result = self.fresh(docker="y", logins=[*logins, (WRITE_Q, "y")])
         self.assert_ok(result)
-        self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), encoded)
+        self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), secret)
         self.assertEqual((self.fakes / "keychain/agent-pm-bot.account").read_text(), "5352992")
-        self.assertIn("security -i", self.calls())
-        self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
+        calls = self.calls()
+        login = f"agent-pm-broker login github agent-pm-bot --key-file {pem} --app-id 5352992"
+        self.assertIn(login, calls)
+        self.assertFalse(
+            [c for c in calls if c.startswith(("security -i", "security add-", "base64"))]
+        )
+        self.assertIn("keychain\tagent-pm-bot\t5352992", self.ledger())
+        self.assertEqual(self.state()["github_app"], "agentpm-test-bot")
         pem.unlink()
-        self.assert_secret_free(encoded, "SENTINELKEY", TOKEN, result=result)
+        self.assert_secret_free("SENTINELKEY", TOKEN, result=result)
 
     def test_broker_change_logs_in_again(self):
         self.assert_ok(self.fresh(docker="y"))

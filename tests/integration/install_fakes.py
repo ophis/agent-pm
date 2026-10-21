@@ -7,7 +7,6 @@ broker/ (the broker's Codex install and tokens), fail (a call prefix that fails 
 commit (the commit GitHub reports for every agent-pm ref).
 """
 
-import base64
 import hashlib
 import json
 import os
@@ -400,13 +399,6 @@ def security(args):
             return 44
         item.unlink()
         return 0
-    if args == ["-i"]:
-        for line in sys.stdin:
-            words = line.split()
-            if words[:1] == ["add-generic-password"]:
-                store_key(words[words.index("-s") + 1], words[words.index("-w") + 1])
-                mark(FAKES / "keychain/agent-pm-bot.account", words[words.index("-a") + 1])
-        return 0
     return 2
 
 
@@ -446,11 +438,6 @@ def shasum(args):
     return 0
 
 
-def base64_(args):
-    out(base64.b64encode(Path(args[args.index("-i") + 1]).read_bytes()).decode() + "\n")
-    return 0
-
-
 def broker(args):
     codex_file = BROKER.parent / "codex/state.json"
     state = load(codex_file, None)
@@ -476,6 +463,16 @@ def broker(args):
         mark(FAKES / "broker/claude_token", sys.stdin.readline().rstrip("\n"))
         store_key("agent-pm-claude", "token")
         return 0
+    if args[:3] == ["login", "github", "agent-pm-bot"] and args[3:4] == ["--key-file"]:
+        if (
+            (FAKES / "keychain/agent-pm-bot").exists()
+            or args[5:6] != ["--app-id"]
+            or len(args) != 7
+        ):
+            return 1
+        store_key("agent-pm-bot", Path(args[4]).read_text())
+        mark(FAKES / "keychain/agent-pm-bot.account", args[6])
+        args = args[:3]
     if args == ["login", "github", "agent-pm-bot"]:
         if not (FAKES / "keychain/agent-pm-bot").exists():
             return 1
@@ -605,7 +602,6 @@ TOOLS = {
     "open": open_,
     "launchctl": launchctl,
     "shasum": shasum,
-    "base64": base64_,
     "agent-pm-broker": broker,
     "docker-uninstall": docker_uninstall,
     "docker-install": docker_install,
