@@ -177,7 +177,7 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 ## Safety
 
 - Only secret-store names travel in output, env, argv, logs or prompts; secrets never do.
-- Permanent deletion (comments, agents, secrets, destructive data changes) is the user's to run (`!` in the prompt). A command the user must run that asks for a password (sudo, an interactive prompt) gets no `!`, whose shell takes no typed input: they run it in their own terminal. Files go to the Trash, not `rm -r`.
+- Permanent deletion (comments, agents, secrets, destructive data changes) is the user's to run (prefixed with ! in the prompt). A command the user must run that asks for a password (sudo, an interactive prompt) gets no ! prefix, whose shell takes no typed input: they run it in their own terminal. Files go to the Trash, not `rm -r`.
 - A permission or classifier denial stands: take no other route around it and approve no denied prompt through a pane. Relay "the user approves" only when the user did, with its scope.
 - Workers never get the GitHub `workflows` permission (they could bypass CI): a worker's `.github/workflows/` change comes to you as a patch, which you read, apply to its branch and push.
 - New projects or layers: set the mechanical checks (lint rules, guards, type checks) before code is written.

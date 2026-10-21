@@ -94,3 +94,24 @@ class PluginSkills(Sample):
                 "skill extra: not one of act-as, board, manage",
             ],
         )
+
+
+class PluginCommandTemplates(Sample):
+    def test_the_real_skills_are_safe_templates(self):
+        self.assertEqual(plugin.plugin_command_templates(REPO), [])
+
+    def test_shell_and_positional_placeholders_in_a_body_are_found(self):
+        head = '---\nname: m\ndescription: "run !`x` with $1"\n---\n'
+        root = self.tree(
+            {
+                "manager/skills/m/SKILL.md": head + "Run `!` first, then `ls`.\nTake $2.\n",
+                "delegate/skills/a/SKILL.md": head + "Arguments: $ARGUMENTS, $HOME, 1$\n",
+            }
+        )
+        self.assertEqual(
+            plugin.plugin_command_templates(root),
+            [
+                "manager/skills/m/SKILL.md: !` runs a shell command in an OpenCode command template",
+                "manager/skills/m/SKILL.md: $2 is an OpenCode command argument placeholder",
+            ],
+        )

@@ -3,6 +3,7 @@
 import glob
 import json
 import os
+import re
 
 from tests.guards import PROJECTS
 
@@ -13,6 +14,10 @@ SKILL_DIRS = ("skills", *(f"{project}/skills" for project in PROJECTS))
 
 
 SKILLS = ("act-as", "board", "manage")
+
+
+# OpenCode 1.19.3 session/prompt.ts
+SHELL, PLACEHOLDER = re.compile(r"!`[^`]+`"), re.compile(r"\$\d+")
 
 
 def _skills(repo, dirs):
@@ -54,6 +59,24 @@ def plugin_manifests(repo: str) -> list[str]:
             f'{rel}: {key} "{fields.get(key)}", not {first[0]}\'s "{first[1].get(key)}"'
             for key in ("name", "version")
             if fields.get(key) != first[1].get(key)
+        ]
+    return found
+
+
+def plugin_command_templates(repo: str) -> list[str]:
+    """Each skill body, the OpenCode plugin's command template (.opencode-plugin/agent-pm.js), has
+    no shell expansion (!`…`) and no positional placeholder ($1); $ARGUMENTS is the arguments.
+    """
+    found = []
+    for rel in sorted(_skills(repo, SKILL_DIRS)):
+        with open(os.path.join(repo, rel), encoding="utf-8") as skill:
+            text = skill.read()
+        body = text.split("\n---\n", 1)[1] if text.startswith("---\n") else text
+        if SHELL.search(body):
+            found.append(f"{rel}: !` runs a shell command in an OpenCode command template")
+        found += [
+            f"{rel}: {match} is an OpenCode command argument placeholder"
+            for match in sorted(set(PLACEHOLDER.findall(body)))
         ]
     return found
 
