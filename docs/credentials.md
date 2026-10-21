@@ -279,6 +279,8 @@ agent-pm 0.6.28.
 - Config picks a Docker Claude session's account ([Claude accounts](docker-host.md#claude-accounts)); it is no
   access control: any process running as the user can start a container with any logged-in account (`<B> start`
   does not check its caller).
+- `<B> probe-provider --provider NAME --base-url URL` also does not check its caller: any process running as
+  the user can choose an endpoint and have the broker send that provider's stored API key to it.
 - An OpenCode provider whose `base_url` is `http://` gets its API key in plaintext: anyone on the LAN path, or on the
   Docker Desktop VM's network, can capture it and the prompts. Prefer `https://`, or a key that reaches only that
   server.
