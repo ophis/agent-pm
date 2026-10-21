@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | ba
 
 It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser; the broker's `claude setup-token` and its paste run on the terminal's alternate screen, cleared once the broker has the token, so it stays out of the scrollback), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
 
-Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, Board; Board starts unticked): arrow keys move, space ticks, Enter confirms. Selecting Board asks local or Linear (default local), then whether to install launchd jobs (default no). A rerun keeps the tracker and job choices and skips completed setup; flags change them. Existing tracker config and installed jobs supply defaults when no choice is saved. Skipping Board or jobs leaves existing config and jobs in place; uninstall jobs as [documented](docs/board.md#setup). Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
+Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, Board; Board starts unticked): arrow keys move, space ticks, Enter confirms. With no saved choice or existing setup, selecting Board asks local or Linear (default local), then whether to install launchd jobs (default no). A rerun keeps the tracker and job choices and skips completed setup; flags change them. When no choice is saved, existing tracker config and installed jobs are kept without asking. Skipping Board or jobs leaves existing config and jobs in place; uninstall jobs as [documented](docs/board.md#setup). Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
 
 | Flag | Does |
 |---|---|
@@ -99,7 +99,7 @@ Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of w
 | `--clients <list>` | comma-separated `claude`, `codex`, `opencode`; any one alone works |
 | `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
 | `--board <local\|linear>`, `--no-board` | sets up a local or Linear board, or skips board setup (first-run default) |
-| `--launchd`, `--no-launchd` | installs router and promote jobs for either board, or skips them; asked separately when Board is selected and no choice is saved |
+| `--launchd`, `--no-launchd` | installs router and promote jobs for either board, or skips them; requires Board (otherwise exit 2); asked when no choice or existing jobs are present |
 | `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
 | `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
 | `--password-stdin` | reads the `sudo` password from stdin, before the key |

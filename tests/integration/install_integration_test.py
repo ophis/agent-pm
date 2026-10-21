@@ -2024,6 +2024,34 @@ class InstallTest(Case):
             self.assertEqual(result.code, 2, args)
             self.assertEqual(self.calls(), [])
 
+    def test_board_interactive_linear_with_jobs(self):
+        self.linear()
+        result = self.run_install(
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (MENU_Q, menu(("claude", "codex", "board"))),
+                (r"Board tracker \[local/linear\] \[local\]:", "linear"),
+                (r"Install board launchd jobs\? \[y/N\]", "y"),
+                (WRITE_Q, "y"),
+                (WRITE_Q, "y"),
+                *self.keys(*SLOTS),
+                *BOARD,
+            ]
+        )
+        self.assert_ok(result)
+        self.assertEqual(
+            (self.state()["board_tracker"], self.state()["board_jobs"]), ("linear", "yes")
+        )
+        orchestrator_config.load()
+        self.assert_jobs(installed=True)
+        self.assert_secret_free("k-SENTINEL", result=result)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("Board tracker [local/linear]", result.tty)
+        self.assertNotIn("Install board launchd jobs?", result.tty)
+        self.assert_no_linear(result, keychain=False)
+
     def test_board_jobs_require_board(self):
         for flag in ("--launchd", "--no-launchd"):
             result = self.run_install("--no-board", flag, tty=False)
