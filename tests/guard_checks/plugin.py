@@ -1,4 +1,6 @@
-"""Plugin manifest checks: each client's manifest ships every skill of the one agent-pm plugin."""
+"""Plugin manifest checks: each client's manifest (OpenCode's: package.json) ships every skill of the one
+agent-pm plugin.
+"""
 
 import glob
 import json
@@ -7,7 +9,7 @@ import re
 
 from tests.guards import PROJECTS
 
-MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "package.json")
 
 
 SKILL_DIRS = ("skills", *(f"{project}/skills" for project in PROJECTS))
