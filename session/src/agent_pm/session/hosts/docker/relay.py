@@ -1,4 +1,4 @@
-"""The container's hook relay (stdlib only, run by path; docs/docker-relay-protocol.md). `serve GEN`
+"""The container's hook relay (stdlib only, run by path; protocol/docker-relay/protocol.schema.json). `serve GEN`
 queues each stub request under the queue dir and sends the queue one message at a time over the
 uplink socket; `connect` joins the supervisor's exec stream to that socket.
 """

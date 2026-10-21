@@ -37,7 +37,7 @@ Needs macOS and [Install](../README.md#install)'s requirements. The orchestrator
    bin/agent-pm-orchestrator promote --dry-run
    ```
 4. Install the launchd jobs:
-   The jobs use the orchestrator's default board directory ([`_board()`](../orchestrator/src/agent_pm/orchestrator/engine/config.py)); the templates need only HOME and PATH substitution.
+   The jobs use the orchestrator's default board directory; the templates need only HOME and PATH substitution.
    ```bash
    mkdir -p ~/.agent-pm/logs   # launchd can't start a job without it
    for job in router promote; do
@@ -89,9 +89,9 @@ flowchart LR
 - **Approve:** move to Handoff and comment what's next. After 10 minutes (move it out of Handoff to undo), promote creates the next role's issue and marks this one Done.
 - **Revise:** comment and move back to Todo. The agent resumes where it left off. On an engineer issue your PR comments and reviews count too. After 4 attempts the issue goes to In Review; moving it back to Todo restarts the count.
 - **Who counts as you:** every Linear account but the harness account, the role accounts and Linear automation, the manager included (its `agent-pm-orchestrator issue` commands act as `linear.manager_key`'s account): its comments are instructions and its moves to Todo restart the attempt count. Comments without a user, such as the GitHub integration's, are ignored. `linear.human_members` only picks who is subscribed on In Review. Anyone who can comment on or move the team's issues (members, guests, synced users) can so instruct agents: keep the team's membership and guest access tight.
-- **Continue work:** every resumed or rerun board attempt re-reads the issue's state and returns it to In Progress; already there is a no-op. Write-back records this once per attempt, retries a failed move on progress, and ignores ended or older attempts. Pane answers, follow-ups, rework and PR-gate fixes after the harness ends follow `/agent-pm:manage`'s **Continue issue work** rule (`manager/skills/manage/SKILL.md`): the manager moves it before sending and applies the normal end state when that work finishes.
-- **Runs without an outcome:** one whose client's turn failed (such as a context overflow) is written back as a failure, its error the comment; any other (no outcome block, a give-up, a crash or a stop) stays In Progress for Recover. A refused write-back logs `writeback refused` with its reason in `orchestrator.jsonl`, and its `callback_error` row in the run's `run.jsonl` keeps the callback's stderr.
-- **Finish:** set Done, Canceled or Duplicate. 2 hours later prune closes the run, deletes its `agent/` dir and the issue's pushed branches, and archives the issue (Canceled or Duplicate whoever is assigned, no one or researcher too; Done only pm and engineer issues: researcher reports stay) unless a sub-issue, at any depth, is still open (Linear would archive it too); 7 days later it deletes the issue's whole workdir. An issue left in any other state but Todo or In Progress (In Review, Handoff, Backlog) for 7 days since its latest move or run loses its checkouts and temp files (`agent/src`, `agent/publish`, `agent/tmp`), unless its run or agent session is still open; its other agent files, run records (`run/`), write-back ledger and branches stay, and a Revise rebuilds the checkouts. Each run's end also clears `agent/tmp`. Uncommitted and unpushed work is lost. A promote run (every 5 minutes) reads the team and role accounts once, in one request; then prune sends Linear at most 33 requests (change feed included), so a busy run leaves the rest to the next, and an issue whose sub-issues take more than that to read is not archived; an issue moved to another team finishes by its state there.
+- **Continue work:** every resumed or rerun board attempt re-reads the issue's state and returns it to In Progress; already there is a no-op. Pane answers, follow-ups, rework and PR-gate fixes after the harness ends follow `/agent-pm:manage`'s **Continue issue work** rule (`manager/skills/manage/SKILL.md`): the manager moves it before sending and applies the normal end state when that work finishes.
+- **Runs without an outcome:** one whose client's turn failed (such as a context overflow) is written back as a failure, its error the comment; any other (no outcome block, a give-up, a crash or a stop) stays In Progress for Recover. A refused write-back logs `writeback refused` with its reason in `orchestrator.jsonl`.
+- **Finish:** set Done, Canceled or Duplicate. 2 hours later prune closes the run, deletes its `agent/` dir and the issue's pushed branches, and archives the issue (Canceled or Duplicate whoever is assigned, no one or researcher too; Done only pm and engineer issues: researcher reports stay) unless a sub-issue, at any depth, is still open (Linear would archive it too); 7 days later it deletes the issue's whole workdir. An issue left in any other state but Todo or In Progress (In Review, Handoff, Backlog) for 7 days since its latest move or run loses its checkouts and temp files (`agent/src`, `agent/publish`, `agent/tmp`), unless its run or agent session is still open; its other agent files, run records (`run/`), write-back ledger and branches stay, and a Revise rebuilds the checkouts. Each run's end also clears `agent/tmp`. Uncommitted and unpushed work is lost.
 
 ### Task labels
 
@@ -100,14 +100,6 @@ A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`.
 `[orchestrator.task_tiers]` sets a task's model tier, e.g. `light-build = 3` (1 = strongest): the router overlays it on the role's run, a resume taking its start's task; an issue with an unlisted task or no label keeps its role's or global tier.
 
 ## Operating
-
-```mermaid
-flowchart LR
-    L[launchd] -->|every 30 min| R["agent-pm-orchestrator router: claim or resume, render the input"] -->|"detach its LinearRun, exit"| I["harness: Delegate, claude"]
-    Y[you] -->|"--issue"| R
-    I -->|"each event: agent-pm-orchestrator writeback"| W["writeback.py → Linear, as the role"]
-    L -->|every 5 min| P[agent-pm-orchestrator promote] --> X[prune]
-```
 
 ```bash
 bin/agent-pm-orchestrator router --issue <ID>         # run one issue now, skipping the run limits and usage gates
@@ -119,7 +111,7 @@ bin/agent-pm-orchestrator resume <ID>                 # resume an attended run w
 tmux ls                                         # running agent runs
 ```
 
-Run `bin/agent-pm-orchestrator` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-orchestrator issue …`: read, list, create (`--parent` splits), edit, move, comment, relate, archive; on Linear also look up and swap a label), in abstract states, roles, task and client names: `/agent-pm:board` ([orchestrator/skills/board/SKILL.md](../orchestrator/skills/board/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover, write-back and the first-claim search read it.
+Run `bin/agent-pm-orchestrator` by its absolute path; `--help` lists each command's options. Issue operations (`bin/agent-pm-orchestrator issue …`: read, list, create (`--parent` splits), edit, move, comment, relate, archive; on Linear also look up and swap a label), in abstract states, roles, task and client names: `/agent-pm:board` ([orchestrator/skills/board/SKILL.md](../orchestrator/skills/board/SKILL.md)), their one guide. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: deleting it breaks resume, Recover, write-back and the first-claim search.
 
 A run that ended leaves its TUI open for pane follow-ups; the issue's next run, new or resumed, closes it.
 
@@ -155,13 +147,13 @@ Copy `[orchestrator.linear]`'s `agent_label_group` and `[orchestrator.linear.age
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [`router.py` `client_for`](../orchestrator/src/agent_pm/orchestrator/engine/router.py). The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([`router.py` `_label_client_error`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)); fix it → move back to Todo.
+The `claim` log records `client` and `client_source=label|default`. A label-selected client's quota configuration or configuration error produces a comment with the client and error's first line, then In Review instead of an interruption retry; fix it → move back to Todo.
 
-Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress, its `plan` line saying `mode=new` with that `client`. Once the usage gate lets it start, the router logs `restart` with the old `sid`, `client`, `client_source` and the session's client as `resumed` ([`router.py` `Board.plan`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)); a usage-blocked restart logs only `usage-skip`. Invalid Agent or task labels keep the resume.
+Each new run selects again, retries included. A session resumes only in the client that created it, so an interrupted run re-reads its labels: when the selection differs from its session's client, the router starts a new session on the selected client instead, the issue staying In Progress. A usage-blocked restart waits for the next tick. Invalid Agent or task labels keep the resume.
 
-Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients ([`gate.py` `Gate.blocked`](../orchestrator/src/agent_pm/orchestrator/engine/gate.py)). On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default ([`modes/base.py` `child_env`](../session/src/agent_pm/session/modes/base.py), [`router.py` `brake`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)).
+Scheduled quota checks use each candidate’s selected or recorded client, with at most one probe per client per tick; blocked usage logs `usage-skip` without switching clients. On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default.
 
-`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client (its `plan` line adds the tier), or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged ([`router.py` `Board.claim`](../orchestrator/src/agent_pm/orchestrator/engine/router.py)).
+`--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client, or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged.
 
 Rollout:
 
@@ -202,7 +194,7 @@ The router runs a local board by the Linear board's rules ([Order work](#using-t
 └── archive/                 archived issue files, flat: archive/<ID> <title>.md
 ```
 
-`<state>` is one of `backlog`, `ready`, `running`, `review`, `approved`, `done`, `canceled`. The directory an issue file sits in is its assignee and state: no front-matter key holds either, so moving a file from `review/` to `approved/` approves it, back to `ready/` revises it. Only role dirs' `ready/` issues are queued and only their `running/` ones recovered; `unassigned/`, `me/`, a dir named after no configured role, `archive/` and `.state/` are never listed. An archived issue's state is its last History entry's. Files not ending `.md`, and entries starting with `.` (an atomic write's temp file), are skipped.
+`<state>` is one of `backlog`, `ready`, `running`, `review`, `approved`, `done`, `canceled`. The directory an issue file sits in is its assignee and state: no front-matter key holds either, so moving a file from `review/` to `approved/` approves it, back to `ready/` revises it. Only role dirs' `ready/` issues are queued and only their `running/` ones recovered; `unassigned/`, `me/`, a dir named after no configured role, `archive/` and `.state/` are never listed. An archived issue's state is its last History entry's. Files not ending `.md`, and entries starting with `.`, are skipped.
 
 An issue file, e.g. `engineer/review/LOC-12 Session registry.md`:
 
@@ -231,7 +223,7 @@ Add a session registry.
 #### other · 2026-10-19 14:05
 Read LOC-7 first.
 
-#### self · 2026-10-19 16:10 <!-- id=c3 key=result:ab12 -->
+#### self · 2026-10-19 16:10
 Build ready: https://github.com/<owner>/<name>/pull/1
 
 ###
@@ -246,9 +238,36 @@ Approved; hand it to the next stage.
 - **Front matter:** one `key: value` line each, at most once. `id` (required) is the issue's identifier, e.g. `LOC-12`; the file name is only for you, so renaming a file changes nothing. `title` (required): plain text or a JSON string. `created` (required): ISO 8601 with an offset or `Z`. `priority`: 0 none (the default), 1 urgent … 4 low. `task` and `client` choose the run's task and client as the Tasks and Agent labels do: unset, the role picks its task and runs its default client; a task not among the role's bounces the issue as a bad Tasks label does. `blocked_by` and `related`: `[ID, …]`, `[]` for none. `parent`: one id. `links`: `  - title:` / `    url:` pairs. An empty value means none.
 - **Blockers:** a ready issue waits while a `blocked_by` issue is not in `done/` or `canceled/` (an archived one by its last History state); an id with no issue file blocks too.
 - **Sections:** `### Description`, `### Comments`, `### History`, each optional, at most once, in that order; nothing but blank lines before the first.
-- **Comments:** each starts with `#### <self|other> · YYYY-MM-DD HH:MM`; `self` is the engine (its hidden `id` and `key` let it edit a comment in place and never post one twice), `other` a person. To comment, add a line `###` at the end of Comments and your text below it: it counts as yours (`other`) at the file's modification time.
+- **Comments:** each starts with `#### <self|other> · YYYY-MM-DD HH:MM`; `self` is the engine, `other` a person. To comment, add a line `###` at the end of Comments and your text below it: it counts as yours (`other`) at the file's modification time.
 - **History:** one `- YYYY-MM-DD HH:MM <state> <self|other>` line per move, `self` the engine's. A file whose directory differs from its last History entry (or that has none) was moved by a person: it counts as an `other` move there at the file's modification time, as when a person moves a Linear issue. Times without an offset are local time.
-- **Promote:** an approved issue becomes `<next role>/ready/<ID> <title>.md`: its `parent` the source's (a local board's project), the source's priority, the handoff description and the engine's first comment, `Created by promote.`, whose hidden key (the source, the next role and the handoff time) keeps a rerun from creating it twice, archived or not. The source gets the new id in `related`, moves to `done/` and gets `Promoted to <ID>.`. `<ID>` takes the next number from `.next-id` and the prefix of the board's highest-numbered id, skipping a number whose id or file name is taken; `/` and control characters in the title become `-` in the file name.
+- **Promote:** an approved issue becomes a ready issue for the next role, linked to the source; the source moves to `done/`.
 - **Archive:** prune archives by the [Finish](#using-the-board) rule, moving the issue file and every unarchived descendant flat into `archive/`, each given the engine's comment `Archived from <assignee>/<state>/.`; an issue with a descendant in neither `done/` nor `canceled/` stays. Restoring one (the source of a handoff the engineer's repo check bounces) moves it back to that comment's assignee dir, in its last History state; with no such comment, or one naming no plain directory, to `unassigned/`.
 - **Errors:** a board file that cannot be read stops the router before any pick with `router.py: <absolute path>: <reason>`, exit 2 (`promote.py:` and `prune.py:` the same), e.g. `no front matter`, `unknown key 'owner'`, `bad priority '7'`, `unknown state dir 'doing'`, `duplicate id LOC-12, also in <path>`. No board directory: `router.py: <board>: no such board directory`; one holding no assignee dir: `router.py: <board>: empty board: no assignee directory`.
-- **Writes:** a program takes `.lock` before it changes the board, rereads the issue file, and writes it to a temp file beside it, then replaces it whole, only if the file still holds what it read (else it rereads, up to 3 times, then fails with `<path>: changed while writing`); every other line stays as you wrote it. A move renames the file into `<assignee>/<state>/` and adds a `self` History line; a move that names the state it expects (e.g. a run's to `review/` from `running/`) leaves an issue you moved elsewhere where it is. The engine's comments are `#### self` ones, those it may post again or edit in place (a run's session comment) carrying its hidden `id` and `key`; a body line that would read as a header or section starts with a space. Before its change, a write fixes what you did since the last one: each `###` comment gets its `#### other · <time>` header, and a file whose directory differs from its last History entry gets that `other` move as a History line, both at the file's modification time. A new issue's number comes from `.next-id`, under the lock.
+
+## State cleanup
+
+agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "linear"`, `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default; on a [local board](#local-board) they are in `<board>/.state/`.
+
+| Entry | Safe to delete by hand |
+|---|---|
+| `config.local.toml` | never: your settings |
+| `work/<ID>/agent/` | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| `work/<ID>/run/` | once you won't attach or resume the run; by hand where prune never reaches: the run's delegate kind is no longer configured, or the issue was deleted in Linear |
+| `work/<ID>/writeback.json`, `writeback.lock` | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger; where prune never reaches: as `work/<ID>/run/` |
+| `logs/runs.jsonl` | never ([Operating](#operating)) |
+| `logs/orchestrator.jsonl`, `.1`, `.lock` | any time; keep `logs/` ([Setup](#setup) step 4) |
+| `logs/prune.json` | any time: the next tick reads Linear again |
+| `logs/router.lock` | while no router runs |
+| `board/` (or `$AGENT_PM_BOARD_DIR`): issue files, `.next-id` | never: your issues and the next issue number |
+| `board/.lock` | while no program writes the board |
+| `board/.state/` | as `work/` and `logs/` |
+| `sessions/` | an entry once its session ended and you won't resume it |
+| `tui/<name>/` | no: closing the session removes it |
+| `tui/<name>.lock` | while no session of that name starts or closes |
+| `workers/<sid>/` | once you won't restart or resume the worker |
+| `hidden/<name>.json` | any time: that session then reads not hidden |
+| `managers/<name>/` | while no manager holds it; its Roster is lost |
+| `adhoc/` | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
+| `docker/worker/` | never: your image definition; with it gone, `scripts/install.sh` seeds the default again |
+| `docker-state/<name>/` | once you won't restart or resume that session |
+| `probe/`, `bin/` | any time; `ctmux --install` restores `bin/` |

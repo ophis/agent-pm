@@ -106,7 +106,7 @@ def _reconciled(entry: Entry, status: Status) -> State:
 def _closed_run(work_dir: str, issue: str) -> tuple[str, str, str, str, str, str, str]:
     """An issue run's role, client, session id, cwd, agent name, Host and account ("": none, the
     session's ACCOUNT_ENV) from its run record,
-    `<work_dir>/work/<issue>/run/delegate.json` (docs/state-root.md); never run.jsonl, which its
+    `<work_dir>/work/<issue>/run/delegate.json`; never run.jsonl, which its
     agent can append to.
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]+", issue):
