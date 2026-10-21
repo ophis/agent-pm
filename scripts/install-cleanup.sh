@@ -20,7 +20,6 @@ feeder=
 askpass_dir=
 current=
 answer=
-leftover=
 
 say() { printf '%s\n' "$*" >&2; }
 
@@ -182,7 +181,8 @@ usage: install-cleanup.sh [--yes] [--password-stdin]
 
 Internal, for test machines only: removes what install.sh recorded in ~/.agent-pm/install/added,
 so the machine is as before install.sh ran. Lists it and asks first; --yes skips the question
-(automation only). Run by hand:
+(automation only). An app container to remove (~/Library/Containers/<app>) needs the terminal's Full Disk
+Access: without it the cleanup stops before removing anything. Run by hand:
   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install-cleanup.sh | bash
 With --password-stdin (sudo password on stdin), stdin cannot carry the script:
   security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install-cleanup.sh)" install-cleanup.sh --yes --password-stdin
@@ -229,6 +229,17 @@ validate() {
     IFS=$'\t' read -r -a fields <<<"$line"
     ledger_valid "${fields[@]}" || die "not a record install.sh writes; nothing removed: $line"
   done <"$ledger"
+}
+
+# Stops before anything is removed while a recorded app container is there and the terminal lacks Full Disk Access:
+# macOS lets only that remove ~/Library/Containers/<app>, and only that reads TCC.db.
+protected_dirs() {
+  local path found=
+  while IFS= read -r path; do
+    case $path in "$HOME/Library/Containers/"?*) if [ -e "$path" ]; then found="$found $path"; fi ;; esac
+  done <<<"$(of_kind dir | cut -f2)"
+  if [ -z "$found" ] || head -c 1 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" >/dev/null 2>&1; then return 0; fi
+  die "macOS lets only Full Disk Access remove$found: give the terminal Full Disk Access (System Settings › Privacy & Security), reopen it, then rerun; nothing removed (take the access back once cleanup has finished)"
 }
 
 show() {
@@ -515,12 +526,7 @@ files_and_dirs() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     [ "$path" = "$HOME/.agent-pm" ] && continue
-    if ! rm -rf "$path" && [ "$path" = "$HOME/Library/Containers/com.docker.docker" ]; then
-      leftover=$path
-      say "    kept $path: macOS protects it; give the terminal Full Disk Access, then rm -rf it"
-    elif [ -e "$path" ]; then
-      die "cannot remove $path; its record stays for a rerun"
-    fi
+    if ! rm -rf "$path" || [ -e "$path" ]; then die "cannot remove $path; its record stays for a rerun"; fi
     drop "dir"$'\t'"$path"
   done <<<"$(of_kind dir | cut -f2 | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)"
 }
@@ -538,6 +544,7 @@ main() {
     exit 0
   fi
   validate
+  protected_dirs
   show
   if [ -z "$yes" ] && ! ask_yn "Remove all of this?"; then die "nothing removed"; fi
   trap on_exit EXIT
@@ -564,9 +571,6 @@ main() {
   if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=
   say "Removed what install.sh added."
-  if [ -n "$leftover" ]; then
-    say "Left $leftover: grant the terminal Full Disk Access (System Settings › Privacy & Security), then rm -rf it."
-  fi
 }
 
 main "$@"

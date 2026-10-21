@@ -254,13 +254,6 @@ def docker_uninstall(_args):
     (FAKES / "docker_license").unlink(missing_ok=True)
     (FAKES / "docker_running").unlink(missing_ok=True)
     (FAKES / "docker_started").unlink(missing_ok=True)
-    if (FAKES / "protected_container").exists():
-        home = os.environ["HOME"]
-        out(
-            f"rm: {home}/Library/Containers/com.docker.docker: Operation not permitted\n",
-            sys.stderr,
-        )
-        return 1
     return 0
 
 

@@ -1766,31 +1766,48 @@ class InstallTest(Case):
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
 
-    def test_cleanup_keeps_a_protected_docker_container(self):
-        """Docker's own uninstall and rm both fail on it without Full Disk Access; the rest goes."""
+    def test_cleanup_needs_full_disk_access_for_a_container(self):
+        """macOS lets only Full Disk Access remove an app container: without it nothing is removed."""
         self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
         container = Path(self.home, "Library/Containers/com.docker.docker")
         (container / "locked").mkdir(parents=True)
         (container / "locked/data").write_text("")
-        (container / "locked").chmod(0o500)
-        self.addCleanup((container / "locked").chmod, 0o700)
-        (self.fakes / "protected_container").write_text("")
+        ledger = Path(self.agent_pm, "install/added")
+        recorded = ledger.read_bytes()
+        result = self.cleanup()
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertEqual(
+            result.stderr,
+            f"install-cleanup.sh: macOS lets only Full Disk Access remove {container}: give the"
+            " terminal Full Disk Access (System Settings › Privacy & Security), reopen it, then"
+            " rerun; nothing removed (take the access back once cleanup has finished)\n",
+        )
+        self.assertNotRegex(result.tty, REMOVE_Q)
+        self.assertEqual(ledger.read_bytes(), recorded)
+        self.assertTrue((container / "locked/data").exists())
+        self.assertEqual([c for c in self.calls() if not c.startswith(("uname", "ps "))], [])
+        tcc = Path(self.home, "Library/Application Support/com.apple.TCC/TCC.db")
+        tcc.parent.mkdir(parents=True)
+        tcc.write_text("granted")
+        locked = container / "locked"
+        locked.chmod(0o500)
+        self.addCleanup(lambda: locked.exists() and locked.chmod(0o700))
         result = self.cleanup(answers=[(REMOVE_Q, "y"), (SUDO_Q, PASSWORD)])
-        self.assert_ok(result)
-        self.assertIn("Docker Desktop's own uninstall asks for your admin password", result.stderr)
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(
+            f"install-cleanup.sh: cannot remove {container}; its record stays", result.stderr
+        )
+        self.assertIn(f"dir\t{container}", ledger.read_text().splitlines())
         self.assertIn("docker-uninstall", self.calls())
         self.assertLess(
             self.calls().index("docker-uninstall"),
             self.calls().index("brew uninstall --cask docker-desktop"),
         )
-        self.assertIn("Docker Desktop's uninstall failed; going on", result.stderr)
-        self.assertTrue(
-            result.stderr.endswith(
-                f"Removed what install.sh added.\nLeft {container}: grant the terminal Full Disk"
-                " Access (System Settings › Privacy & Security), then rm -rf it.\n"
-            ),
-            result.stderr,
-        )
+        locked.chmod(0o700)
+        result = self.cleanup(answers=[(REMOVE_Q, "y"), (SUDO_Q, PASSWORD)])
+        self.assert_ok(result)
+        self.assertTrue(result.stderr.endswith("Removed what install.sh added.\n"), result.stderr)
+        self.assertFalse(container.exists())
         self.assertFalse(Path(self.agent_pm, "install").exists())
         self.assertFalse(Path(self.home, ".zprofile").exists())
 
