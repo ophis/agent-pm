@@ -68,5 +68,5 @@ func (c Codex) refreshError(err error) error {
 }
 
 func (c Codex) Refresh(ctx context.Context, exec func([]string, []byte) error, publish func(string) error) (string, error) {
-	return c.inject(ctx, exec, publish)
+	return c.inject(ctx, exec, publish, protocol.RefreshFailed)
 }

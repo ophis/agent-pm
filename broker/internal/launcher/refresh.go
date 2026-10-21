@@ -30,6 +30,8 @@ func (h Host) Refresh(ctx context.Context, container, path string) (RefreshResul
 		return RefreshResult{}, err
 	}
 	result := RefreshResult{Container: container, GitHub: []protocol.Expiry{}}
+	// Codex and GitHub renew independently: a failed Codex step must not let the GitHub tokens expire.
+	var codexErr, githubErr *protocol.Error
 	if m.Client == "codex" {
 		exec := h.agentExec(ctx, container)
 		inject := func(argv []string, data []byte) error {
@@ -42,20 +44,30 @@ func (h Host) Refresh(ctx context.Context, container, path string) (RefreshResul
 			return nil
 		})
 		if err != nil {
-			return RefreshResult{}, injected(err, protocol.RefreshFailed, "Writing Codex credentials into "+container+" failed.")
+			codexErr = injected(err, protocol.RefreshFailed, "Writing Codex credentials into "+container+" failed.")
+		} else {
+			result.CredentialExpiresAt = &expiry
+			h.Audit.Add(container, audit.Credential{Kind: clientKind(m.Client), Result: audit.Renewed, ExpiresAt: &expiry}, "")
 		}
-		result.CredentialExpiresAt = &expiry
-		h.Audit.Add(container, audit.Credential{Kind: clientKind(m.Client), Result: audit.Renewed, ExpiresAt: &expiry}, "")
 	}
 	if m.GitHubApp != "" {
 		if err := h.GitHub.Ready(m.GitHubApp); err != nil {
-			return RefreshResult{}, err
+			githubErr = injected(err, protocol.RefreshFailed, "GitHub renewal for "+container+" failed.")
+		} else if expiries, err := h.GitHub.Refresh(ctx, m.GitHubApp, container, h.agentExec(ctx, container)); err != nil {
+			githubErr = injected(err, protocol.RefreshFailed, "Writing a GitHub token into "+container+" failed.")
+		} else {
+			result.GitHub = expiries
 		}
-		expiries, err := h.GitHub.Refresh(ctx, m.GitHubApp, container, h.agentExec(ctx, container))
-		if err != nil {
-			return RefreshResult{}, injected(err, protocol.RefreshFailed, "Writing a GitHub token into "+container+" failed.")
-		}
-		result.GitHub = expiries
+	}
+	switch {
+	case codexErr != nil && githubErr != nil:
+		both := *codexErr
+		both.Message += "; GitHub renewal also failed: " + githubErr.Message
+		return RefreshResult{}, &both
+	case codexErr != nil:
+		return RefreshResult{}, codexErr
+	case githubErr != nil:
+		return RefreshResult{}, githubErr
 	}
 	return result, nil
 }
