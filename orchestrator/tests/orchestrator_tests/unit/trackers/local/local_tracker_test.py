@@ -90,6 +90,23 @@ class States(Case):
 
 
 class Listing(Board):
+    def test_dependency_cycles_include_backlog_but_not_ended_or_missing_issues(self):
+        self.write("pm/ready", "LOC-1", front="blocked_by: [LOC-1]\n")
+        self.write("pm/ready", "LOC-2", front="blocked_by: [LOC-3]\n")
+        self.write("me/backlog", "LOC-3", front="blocked_by: [LOC-4]\n")
+        self.write("pm/review", "LOC-4", front="blocked_by: [LOC-2]\n")
+        self.write("pm/ready", "LOC-5", front="blocked_by: [LOC-6, LOC-99]\n")
+        self.write("pm/done", "LOC-6", front="blocked_by: [LOC-5]\n")
+        self.assertEqual(
+            self.tracker.dependency_cycles(),
+            (("LOC-1", "LOC-1"), ("LOC-2", "LOC-3", "LOC-4", "LOC-2")),
+        )
+
+    def test_deep_dependencies_do_not_recurse(self):
+        for number in range(1, 1050):
+            self.write("pm/ready", f"LOC-{number}", front=f"blocked_by: [LOC-{number + 1}]\n")
+        self.assertEqual(self.tracker.dependency_cycles(), ())
+
     def test_assigned_lists_role_dirs_only(self):
         path = self.write("pm/ready", "LOC-1", front="priority: 2\n")
         self.write("engineer/ready", "LOC-2")

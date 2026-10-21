@@ -135,6 +135,13 @@ class LocalTracker(Tracker):
             for each in self._in(LocalState.READY)
         ]
 
+    def dependency_cycles(self):
+        files = {key: each for key, each in self.files().items() if each.state not in ENDED}
+        graph = {
+            key: sorted(b for b in each.blocked_by if b in files) for key, each in files.items()
+        }
+        return _cycles(graph)
+
     def recheck(self, key):
         known = self.files().get(key)
         found = read_one(self.board, known.path, key) if known else None
@@ -558,6 +565,32 @@ def archived_from(issue):
 
 def _prefix(files):
     return max(files, key=lambda i: int(i.rsplit("-", 1)[1])).rsplit("-", 1)[0]
+
+
+def _cycles(graph):
+    """Iterative DFS: each back edge supplies a closed path, rotated to its smallest id."""
+    done, cycles = set(), set()
+    for root in sorted(graph):
+        if root in done:
+            continue
+        path, active = [root], {root: 0}
+        stack = [iter(graph[root])]
+        while stack:
+            child = next(stack[-1], None)
+            if child is None:
+                done.add(path[-1])
+                active.pop(path.pop())
+                stack.pop()
+            elif child in active:
+                cycle = path[active[child] :]
+                pivot = cycle.index(min(cycle))
+                ordered = cycle[pivot:] + cycle[:pivot]
+                cycles.add((*ordered, ordered[0]))
+            elif child not in done:
+                active[child] = len(path)
+                path.append(child)
+                stack.append(iter(graph[child]))
+    return tuple(sorted(cycles))
 
 
 def _name(title):

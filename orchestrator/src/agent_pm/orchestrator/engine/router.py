@@ -249,6 +249,13 @@ class Board:
     def todo(self):
         if self.ready is None:
             found = self.tracker.ready()
+            for cycle in self.tracker.dependency_cycles():
+                self.say(
+                    "dependency-cycle",
+                    cycle[0],
+                    once=True,
+                    reason=f"blocked_by cycle: {' -> '.join(cycle)}; remove cyclic blocked_by links",
+                )
             self.blocked = {i["identifier"]: list(b) for i, b in found if b}
             for ident, b in self.blocked.items():
                 self.say("blocked", ident, once=True, by=b)

@@ -2229,6 +2229,27 @@ class LocalBoard(TickBase):
         self.connects.append(cfg.tracker)
         return BrokenBoard()
 
+    def test_cycle_diagnostic_is_once_and_leaves_a_healthy_issue_schedulable(self):
+        ready = os.path.join(self.tmp, "board", "researcher", "ready")
+        os.makedirs(ready)
+        for number, blocked in ((1, "blocked_by: [LOC-1]\n"), (2, "")):
+            with open(os.path.join(ready, f"LOC-{number} x.md"), "w", encoding="utf-8") as f:
+                f.write(
+                    f"---\nid: LOC-{number}\ntitle: Issue\ncreated: 2026-09-01T00:00:00Z\n{blocked}---\n"
+                )
+        for again in (False, True):
+            self.assertEqual(self.tick(self.fake(), "--dry-run", again=again), 0)
+            self.assertIn("preview LOC-2 client=a client_source=default", self.said())
+            diagnostic = [s for s in self.said() if s.startswith("dependency-cycle ")]
+            self.assertEqual(len(diagnostic), 1)
+            self.assertIn("LOC-1 -> LOC-1", diagnostic[0])
+            self.assertIn("blocked_by", diagnostic[0])
+        self.assertEqual(self.tick(self.fake()), 0)
+        logs = config.load(path=self.config_path).logs_dir
+        self.assertEqual(len([s for s in logged(logs) if s["kind"] == "dependency-cycle"]), 1)
+        self.assertEqual(self.tick(self.fake(), again=True), 0)
+        self.assertEqual(len([s for s in logged(logs) if s["kind"] == "dependency-cycle"]), 1)
+
     def on_local(self, fake, *argv, **kw):
         wiring = replace(cli.TRACKERS[TrackerKind.LOCAL], connect=self.connect)
         return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: wiring}, **kw)
