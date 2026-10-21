@@ -228,6 +228,14 @@ class LaunchTest(Base):
     def test_bash_ask(self):
         self.assertEqual(self.inline(self.launch(self.spec()))["permission"]["bash"], "ask")
 
+    def test_yolo_approves_tools_and_retains_edit_boundaries(self):
+        spec = self.spec(access=Access(cwd=self.cwd, project=True, reads=(self.made("read"),)))
+        permission = self.inline(self.launch(spec, DOCKER_CONTEXT))["permission"]
+        for tool in ("bash", "read", "external_directory", "doom_loop"):
+            self.assertEqual(permission[tool], "allow", tool)
+        self.assertNotIn("*", permission)
+        self.assertEqual(permission["edit"], self.inline(self.launch(spec))["permission"]["edit"])
+
     def test_a_refused_call_does_not_end_the_turn(self):
         inline = self.inline(self.launch(self.spec()))
         self.assertEqual(inline["experimental"], {"continue_loop_on_deny": True})

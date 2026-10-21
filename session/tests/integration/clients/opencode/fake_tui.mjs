@@ -1,8 +1,9 @@
 // A fake `opencode` TUI: loads the plugins its OPENCODE_CONFIG_CONTENT lists, as OpenCode 1.19.3
 // does, and plays FAKE_SCENARIO's turns ("turns", or "resume" for a --session start) as OpenCode bus
 // events to them. The first turn's text is --prompt's (a fresh start), the rest stdin lines. A step:
-// {text, late?: ms} (late: saved ms after the turn's idle), {tool}, {bash, child?} (asks unless
-// --auto, then waits for the stdin line "allow"), {question, child?} (asks, then waits for the stdin
+// {text, late?: ms} (late: saved ms after the turn's idle), {tool, permission?, pattern?},
+// {bash, child?} (backend ask emits permission.asked, then --auto replies or stdin "allow" does),
+// {question, child?} (asks, then waits for the stdin
 // line "answer" or "dismiss"), {error, recover?} (recovered: the turn goes on, as
 // after a compaction), {unsaved} (an assistant message never completed), {errored} (one that
 // failed), {lateUser: ms} (the whole turn, its user message too, saved ms after its idle),
@@ -94,10 +95,13 @@ async function tool(session, name) {
   }
 }
 
-function asks(command) {
-  const rule = config.permission?.bash ?? "ask";
-  const found = typeof rule === "string" ? rule : (rule[command] ?? rule["*"] ?? "ask");
-  return !opts.auto && found === "ask";
+async function ask(permission, pattern, session) {
+  const rule = config.permission?.[permission] ?? "ask";
+  const found = typeof rule === "string" ? rule : (rule[pattern] ?? rule["*"] ?? "ask");
+  if (found !== "ask") return;
+  await emit("permission.asked", { id: "per_1", sessionID: session, permission, patterns: [pattern] });
+  if (!opts.auto) while ((await next()) !== "allow");
+  await emit("permission.replied", { sessionID: session, requestID: "per_1", reply: "once" });
 }
 
 async function step(item) {
@@ -111,16 +115,13 @@ async function step(item) {
     const error = item.errored ? { name: "MessageAbortedError", data: { message: "aborted" } } : undefined;
     save({ info: { id: `msg_${++part}`, role: "assistant", time: { created: Date.now() }, error }, parts: [] });
   } else if ("tool" in item) {
+    if (item.permission) await ask(item.permission, item.pattern, native);
     await tool(native, item.tool);
     save(assistant([{ type: "tool", tool: item.tool }]));
   } else if ("bash" in item) {
     const session = item.child ? CHILD : native;
     if (item.child) await emit("session.created", { info: { id: CHILD, parentID: native } });
-    if (asks(item.bash)) {
-      await emit("permission.asked", { id: "per_1", sessionID: session, permission: "bash", patterns: [item.bash] });
-      while ((await next()) !== "allow");
-      await emit("permission.replied", { sessionID: session, requestID: "per_1", reply: "once" });
-    }
+    await ask("bash", item.bash, session);
     await tool(session, "bash");
   } else if ("question" in item) {
     const session = item.child ? CHILD : native;
