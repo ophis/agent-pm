@@ -1,6 +1,6 @@
 // Package github is the broker's GitHub App client: the App JWT, its installations, installation tokens and the
 // repositories each reaches, and its bot user's ID.
-// Its errors carry an HTTP status at most, never a response body or a token.
+// Status errors carry the request method/path and a bounded, credential-redacted JSON message, never a full body.
 package github
 
 import (
@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -57,9 +58,43 @@ type Installation struct {
 }
 
 // StatusError is a response with an unexpected HTTP status.
-type StatusError struct{ Status int }
+type StatusError struct {
+	Status                int
+	method, path, message string
+}
 
-func (e *StatusError) Error() string { return "GitHub answered HTTP " + strconv.Itoa(e.Status) }
+func (e *StatusError) Error() string {
+	text := fmt.Sprintf("GitHub answered HTTP %d to %s %s", e.Status, e.method, e.path)
+	if e.message != "" {
+		text += ": " + strconv.Quote(e.message)
+	}
+	return text
+}
+
+var (
+	githubToken = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+`)
+	jwtToken    = regexp.MustCompile(`\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`)
+)
+
+// redact removes credentials before truncation so no partial token can escape at the boundary.
+func redact(text, bearer string) string {
+	if strings.Contains(text, "PRIVATE KEY") {
+		return "[redacted]"
+	}
+	if bearer != "" {
+		text = strings.ReplaceAll(text, bearer, "[redacted]")
+	}
+	text = githubToken.ReplaceAllString(text, "[redacted]")
+	return jwtToken.ReplaceAllStringFunc(text, func(candidate string) string {
+		header, _, _ := strings.Cut(candidate, ".")
+		decoded, err := base64.RawURLEncoding.DecodeString(header)
+		var fields map[string]json.RawMessage
+		if err == nil && json.Unmarshal(decoded, &fields) == nil && fields != nil {
+			return "[redacted]"
+		}
+		return candidate
+	})
+}
 
 type transportError struct{ op string }
 
@@ -137,7 +172,16 @@ func (c Client) call(ctx context.Context, method, path, bearer string, body any,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != want {
-		return &StatusError{resp.StatusCode}
+		failure := &StatusError{Status: resp.StatusCode, method: method, path: redact(req.URL.EscapedPath(), bearer)}
+		var answer struct {
+			Message string `json:"message"`
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+		if readErr == nil && len(data) <= maxBody && json.Unmarshal(data, &answer) == nil {
+			message := []rune(redact(answer.Message, bearer))
+			failure.message = string(message[:min(len(message), 200)])
+		}
+		return failure
 	}
 	if out == nil {
 		return nil

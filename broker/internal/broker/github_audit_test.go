@@ -94,7 +94,7 @@ func TestIssueAuditRepositoriesFail(t *testing.T) {
 		t.Fatal("a failed listing stops the issue")
 	}
 	c := flush(t, rec, sink)[0].Credentials[0]
-	if c.Result != audit.Issued || c.Selection != nil || c.Repositories != nil || c.ReposError != "GitHub answered HTTP 500" {
+	if c.Result != audit.Issued || c.Selection != nil || c.Repositories != nil || c.ReposError != "GitHub answered HTTP 500 to GET /installation/repositories" {
 		t.Fatalf("%+v", c)
 	}
 }
@@ -136,7 +136,7 @@ func TestRefreshAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = flush(t, rec, sink)[0]
-	if !slices.Equal(resultsOf(got), []string{audit.Renewed, audit.Pending}) || got.Credentials[1].Reason != "GitHub answered HTTP 502" {
+	if !slices.Equal(resultsOf(got), []string{audit.Renewed, audit.Pending}) || got.Credentials[1].Reason != "GitHub answered HTTP 502 to DELETE /installation/token" {
 		t.Fatalf("the old token stays pending with the retry's reason: %+v", got)
 	}
 }
@@ -180,7 +180,7 @@ func TestRevokeAuditLockFails(t *testing.T) {
 	rec, sink := r.audited("close", ctr)
 	_ = r.g.Revoke(context.Background(), ctr)
 	got := flush(t, rec, sink)[0]
-	if !slices.Equal(resultsOf(got), []string{audit.Pending}) || got.Credentials[0].Reason != "GitHub answered HTTP 500" {
+	if !slices.Equal(resultsOf(got), []string{audit.Pending}) || got.Credentials[0].Reason != "GitHub answered HTTP 500 to DELETE /installation/token" {
 		t.Fatalf("a direct revoke that fails, then is queued: %+v", got)
 	}
 }
