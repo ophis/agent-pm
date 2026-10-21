@@ -50,7 +50,7 @@ class LocalIssues:
         board,
         roles: Mapping[str, Role],
         *,
-        prefix="LOC",
+        prefix,
         now=lambda: datetime.now().astimezone(),
     ):
         self.tracker = LocalTracker(board, roles, prefix=prefix, now=now)

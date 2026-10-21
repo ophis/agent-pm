@@ -76,7 +76,7 @@ class Config:
     delegate_kind: str
     delegates: Mapping[str, type]
     core: Mapping
-    local_prefix: str = "LOC"
+    local_prefix: str
 
     def __post_init__(self):
         if (self.linear is None) != (self.tracker is TrackerKind.LOCAL):

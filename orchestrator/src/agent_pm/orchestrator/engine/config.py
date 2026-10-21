@@ -321,12 +321,12 @@ def _check_ids(linear):
 
 
 def _load_config(cfg, local, board):
-    board_settings = cfg.setdefault("local", {})
+    board_settings = cfg.get("local", {})
     if not isinstance(board_settings, dict):
         raise ConfigError("orchestrator/config.toml: local must be a table")
     if extra := sorted(set(board_settings) - {"issue_prefix"}):
         raise ConfigError(f"orchestrator/config.toml: unknown keys in [local]: {', '.join(extra)}")
-    prefix = board_settings.setdefault("issue_prefix", "LOC")
+    prefix = board_settings.get("issue_prefix")
     if not isinstance(prefix, str) or not re.fullmatch(r"[A-Z][A-Z0-9]*", prefix):
         raise ConfigError(
             "orchestrator/config.toml: local.issue_prefix: want an uppercase issue prefix"

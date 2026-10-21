@@ -143,7 +143,7 @@ class ReviewToArchive(BinFlow):
             for rel, child in ((pm, "LOC-10"), (research, "LOC-11")):
                 self.assertIn(f"\nrelated: [{child}]\n", self.read(rel))
                 self.assertEqual(self.history(rel)[-2:], [("approved", "other"), ("done", "self")])
-            detail = LocalTracker(self.board, ROLES).detail("LOC-5")
+            detail = LocalTracker(self.board, ROLES, prefix="LOC").detail("LOC-5")
             self.assertEqual(detail.comments[-1].body, "Promoted to LOC-10.")
             self.assertEqual(self.read(".next-id"), "12\n")
             before = self.files()

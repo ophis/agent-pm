@@ -91,7 +91,7 @@ class Board(Case):
         return path
 
     def issues(self):
-        return LocalIssues(self.board, ROLES, now=lambda: NOW)
+        return LocalIssues(self.board, ROLES, now=lambda: NOW, prefix="LOC")
 
     def read(self, path):
         with open(path, encoding="utf-8") as file:
@@ -753,7 +753,7 @@ class Errors(Board):
 
     def test_board_errors(self):
         self.refused(
-            lambda: LocalIssues(os.path.join(self.board, "none"), ROLES),
+            lambda: LocalIssues(os.path.join(self.board, "none"), ROLES, prefix="LOC"),
             f"{os.path.join(self.board, 'none')}: no such board directory",
             TrackerFileError,
         )
@@ -761,7 +761,9 @@ class Errors(Board):
         with open(path, "w", encoding="utf-8") as file:
             file.write("no front matter\n")
         self.refused(
-            lambda: LocalIssues(self.board, ROLES), f"{path}: no front matter", TrackerFileError
+            lambda: LocalIssues(self.board, ROLES, prefix="LOC"),
+            f"{path}: no front matter",
+            TrackerFileError,
         )
 
     def test_a_failing_write_raises_its_os_error(self):

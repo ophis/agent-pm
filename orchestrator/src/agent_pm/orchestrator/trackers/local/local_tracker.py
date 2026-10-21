@@ -80,7 +80,7 @@ class LocalTracker(Tracker):
         board: str,
         roles: Collection[str],
         *,
-        prefix: str = "LOC",
+        prefix: str,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     ):
         self.board, self.roles, self._cache, self.now = board, frozenset(roles), None, now
