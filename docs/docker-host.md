@@ -286,9 +286,19 @@ Text a client copies in a container's pane (Claude Code's mouse selection, for o
 the container's tmux sets `set-clipboard on` and `allow-passthrough on`. Your terminal must support OSC 52 (Ghostty
 does), and a host tmux showing the pane needs `set -g set-clipboard on` in `~/.tmux.conf`.
 
-A session's GitHub tokens are renewed 10 minutes before the first expires, by the TUI session's host run supervisor or
-the headless run's harness; a failure writes `github_refresh_failed <reason>` to the session's events or the harness's
-log, and retries every minute.
+A session's credentials are renewed by the TUI session's host run supervisor or the headless run's harness;
+failures go to the session's events or the harness's log and retry every minute:
+
+| Session | Renewal due | Failure event |
+|---|---|---|
+| Codex | 10 minutes before the earliest Codex or GitHub expiry | `client_refresh_failed <reason>` for either credential's failure |
+| Other clients with GitHub tokens | 10 minutes before the earliest GitHub expiry | `github_refresh_failed <reason>` |
+
+Codex and GitHub renew independently within one broker refresh: a Codex failure still attempts GitHub renewal.
+For Codex, the absence of `github_refresh_failed` does not imply GitHub renewal succeeded; inspect
+`client_refresh_failed` and the [broker audit](#audit-log). A valid broker error preserves its message and optional
+cause. If the published Codex deadline expires, the supervisor reports `client_auth_expired` and closes the container;
+GitHub-only renewal keeps retrying across expiry. See [Codex refresh and recovery](docker-codex.md#refresh-and-recovery).
 
 ### Permissions
 
