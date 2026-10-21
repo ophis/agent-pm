@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.orchestrator import cli
-from agent_pm.orchestrator.engine import config, promote
+from agent_pm.orchestrator.engine import config, promote, prune
 from agent_pm.orchestrator.engine import log as event_log
 from agent_pm.orchestrator.engine.flow import workflow
 from agent_pm.orchestrator.engine.flow.types import IssueState
@@ -38,6 +38,7 @@ from orchestrator_tests.unit.promote_fixtures import (
     ago,
     instructions,
 )
+from orchestrator_tests.unit.request_count_fixtures import HostScale
 from orchestrator_tests.unit.run_fixtures import HARNESS, logged, show
 
 
@@ -897,4 +898,76 @@ class LocalBoardPromotion(Base):
         self.assertEqual(
             (record["kind"], record["reason"], record["error"]),
             ("handoff-error", "could not move to In Review", "IssueError: LOC-1: archived"),
+        )
+
+
+SETUP_REQUESTS = {"ops.Q_TEAM": 1, "ops.Q_USER": 3}
+PROMOTION = {  # one Handoff issue promoted
+    "linear_tracker.Q_DETAIL": 1,
+    "linear_tracker.Q_CHILD": 1,
+    "linear_tracker.M_CREATE": 1,
+    "linear_tracker.M_RELATE": 1,
+    "ops.Q_ISSUE_STATE": 1,
+    "ops.M_STATE": 1,
+    "ops.M_COMMENT": 1,
+}
+WAITING = {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_DETAIL": 1}  # TASK-1003 not yet due
+
+
+class RequestCountTest(HostScale):
+    """A promote run's Linear requests by call site at a real host's scale (HostScale)."""
+
+    def test_each_run_sends_these_requests(self):
+        two = {k: 2 for k in PROMOTION} | {"linear_tracker.Q_DETAIL": 3}
+        expected = {
+            "cold": {
+                "setup": SETUP_REQUESTS,
+                "promote": {"linear_tracker.Q_HANDOFF": 1, **two},
+                "prune": {
+                    "linear_tracker.Q_SNAPSHOTS": 6,
+                    "linear_tracker.Q_ISSUE": 2,
+                    "linear_tracker.Q_FINISHED": 1,
+                    "linear_tracker.Q_ARCHIVE": 10,
+                    "linear_tracker.Q_CHILDREN": 2,
+                    "linear_tracker.M_ARCHIVE": 7,
+                },
+            },
+            "warm": {
+                "setup": SETUP_REQUESTS,
+                "promote": WAITING,
+                "prune": {
+                    "linear_tracker.Q_CHANGED": 1,
+                    "linear_tracker.Q_SNAPSHOTS": 1,
+                    "linear_tracker.Q_FINISHED": 1,
+                    "linear_tracker.Q_ARCHIVE": 2,
+                    "linear_tracker.Q_CHILDREN": 1,
+                    "linear_tracker.M_ARCHIVE": 2,
+                },
+            },
+            "quiet": {
+                "setup": SETUP_REQUESTS,
+                "promote": WAITING,
+                "prune": {"linear_tracker.Q_CHANGED": 1, "linear_tracker.Q_FINISHED": 1},
+            },
+            "next_day": {
+                "setup": SETUP_REQUESTS,
+                "promote": {"linear_tracker.Q_HANDOFF": 1, **PROMOTION},
+                "prune": {
+                    "linear_tracker.Q_CHANGED": 1,
+                    "linear_tracker.Q_SNAPSHOTS": 6,
+                    "linear_tracker.Q_ISSUE": 2,
+                    "linear_tracker.Q_FINISHED": 1,
+                    "linear_tracker.Q_ARCHIVE": 5,
+                    "linear_tracker.Q_CHILDREN": 2,
+                    "linear_tracker.M_ARCHIVE": 2,
+                },
+            },
+        }
+        found = self.runs()
+        self.assertEqual(found, expected)
+        cap = prune.SYNC_PAGES + prune.READ_REQUESTS + prune.ARCHIVE_REQUESTS
+        self.assertLessEqual(max(sum(r["prune"].values()) for r in found.values()), cap)
+        self.assertEqual(
+            {name: sum(sum(p.values()) for p in r.values()) for name, r in found.items()},
+            {"cold": 48, "warm": 14, "quiet": 8, "next_day": 31},
         )
