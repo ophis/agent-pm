@@ -3,8 +3,7 @@
 `agent-pm-broker` builds the worker image and starts and closes worker containers on macOS (Apple silicon) with
 Docker Desktop. It keeps the logins and the GitHub App key in the login keychain and writes credentials only into a
 container's tmpfs. Session's Docker Host calls it ([Run workers](#run-workers)); the sections up to [Close](#close)
-install the broker by hand; checks for each step: [Docker checks](docker-checks.md). JSON interface: [Docker broker
-protocol](docker-broker-protocol.md); Codex: [Codex operations](docker-codex.md); each credential's readers, lifetime
+install the broker by hand. JSON interface: [Docker broker protocol](docker-broker-protocol.md); each credential's readers, lifetime
 and revocation: [Credentials](credentials.md).
 
 The host needs no Node and no personal Codex: the clients run in the image. On subscriptions a container holds a
@@ -40,18 +39,19 @@ instead builds and ad-hoc signs it locally with the hardened runtime (needs Go, 
 command line tools).
 
 To upgrade, rerun it (your Dockerfile is never overwritten), then [log in](#log-in) again. Claude Code upgrades with
-the image, Codex by its [version policy](docker-codex.md#container-versions); the image's `gh` is the version agent-pm
+the image, Codex by its pinned version: the broker refuses a host Codex below its minimum, naming
+`sudo "$B" update-codex <minimum>`, and refuses a below-minimum image: rebuild. The image's `gh` is the version agent-pm
 pins (`broker/internal/launcher/assets/Dockerfile`), whatever your Dockerfile installs. So is its OpenCode:
 `assets/opencode-install.py` installs it from npm tarballs checked against recorded sha512 hashes, and an OpenCode
 start refuses an image below the broker's `opencodeMinVersion` (`broker/internal/launcher/versions.go`): rebuild.
 
-Checks: [Docker checks › Install](docker-checks.md#install).
-
 ## Log in
 
 After every install or reinstall, run all three logins: `login claude`, `login github agent-pm-bot` and
-`login codex` ([Codex operations](docker-codex.md#commands)), plus `login claude <name>` for each other registered
-[Claude account](#claude-accounts) and `login opencode <name>` for each configured OpenCode provider. The keychain
+`login codex`, plus `login claude <name>` for each other registered
+[Claude account](#claude-accounts) and `login opencode <name>` for each configured OpenCode provider. `login codex`
+needs the pinned Codex installed first: `sudo "$B" install-codex <version>`, `<version>` an exact stable npm version;
+update it later with `sudo "$B" update-codex <version>`. The keychain
 trusts the broker by its code requirement (an ad hoc signature's cdhash), not its path, so a reinstalled broker cannot read the old one's items without asking;
 `start` never asks, failing instead (`login_required`, or `keychain_failed` for an old GitHub item). Each login asks its terminal questions first, without
 echo:
@@ -81,8 +81,6 @@ trusts only the broker`. If macOS would still ask, it first prints `macOS will a
 agent-pm-claude <name>: enter the login keychain password if asked and click Always Allow`, then reads once with the
 dialog and once without, proving Always Allow was clicked.
 
-Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
-
 **GitHub**: the private key of your one GitHub App ([create it](#create-the-github-app)), whatever its name, must be
 a generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the key. Let the
 broker create it from the downloaded `.pem` (`scripts/install.sh` does), so the key never goes on a command line:
@@ -103,8 +101,6 @@ on GitHub's public user API (no credential; needs network) and keeps both in the
 `GitHub App <slug> bot user <slug>[bot] has ID <ID>`. Set `[session.hosts.docker.github] app = "<slug>"` in
 `~/.agent-pm/config.local.toml` (`scripts/install.sh` writes it): a start naming another App is `manifest_rejected`. The App must be private (installable only on your account): every session gets a token for every repo of
 every installation.
-
-Checks: [Docker checks › GitHub login](docker-checks.md#github-login).
 
 **OpenCode**: for each `[session.clients.opencode.providers.<name>]` table (Ollama needs none):
 
@@ -152,8 +148,6 @@ concurrent builds of two packages (two worktrees, a worker's check beside a boar
 `build_failed`; a removal pass removes nothing, printing `agent-pm-broker: kept older images: cannot take the image
 lock: <reason>`.
 
-Checks: [Docker checks › Build](docker-checks.md#build).
-
 ### Plugins
 
 A container's Claude Code and Codex independently install the plugins listed in `[session.hosts.docker] plugins`, default `["autopilot"]`
@@ -179,15 +173,13 @@ marketplace commit. Changing the source list changes the image key; host plugin 
 
 Claude loads its installation through `/opt/agent-pm/plugins/<name>`, listed in `CLAUDE_CODE_PLUGIN_DIRS`, with
 `/<name>:` commands. OpenCode's container config points `skills.paths` at `/opt/agent-pm/plugins`: it discovers the
-same original `skills/*/SKILL.md` files and keeps their relative references. Codex loads its own native installation
-([Native plugins](docker-codex.md#native-plugins)). Image plugin files are root-owned and read-only for `agent`.
+same original `skills/*/SKILL.md` files and keeps their relative references. Codex loads its own native installation.
+Image plugin files are root-owned and read-only for `agent`.
 
 Invalid sources and duplicate plugin names fail before Docker; marketplace, installation or metadata failures
 fail the image build. Selecting a plugin trusts its code, hooks and servers beside the container's credentials.
 `scripts/install.sh --docker` installs agent-pm on the host and leaves autopilot installation to the image;
 `--no-docker` also installs autopilot for the selected host Claude/Codex clients.
-
-Checks: [Docker checks › Plugins](docker-checks.md#plugins).
 
 ## Start
 
@@ -204,8 +196,6 @@ EOF
 It prints `container` (`C` below), `endpoint`, `image_digest` and the actual `clients` versions; Codex starts add the
 [version audit](docker-broker-protocol.md#success-fields).
 
-Checks: [Docker checks › Start](docker-checks.md#start).
-
 ## What a container gets
 
 Each row's source holds the exact values.
@@ -220,10 +210,6 @@ Each row's source holds the exact values.
 | Exec env | `session/src/agent_pm/session/hosts/docker/host.py` `_exec_env` | the client's launch env without `PATH`; with `[session.hosts.docker.github] app`: `AGENT_PM_PR_AUTHOR` and the git author and committer `<app>[bot] <<bot user ID>+<app>[bot]@users.noreply.github.com>`, the ID from start's `github_user_id` |
 | Image: base | `~/.agent-pm/docker/worker/Dockerfile` (seeded from `broker/worker/Dockerfile`) | your image: tools such as tmux, git, gh, Node, uv and Claude Code |
 | Image: agent-pm layer | `broker/internal/launcher/assets/Dockerfile` | agent-pm's session, delegate and utils sources and venv, the [plugins](#plugins), Codex, OpenCode, ripgrep, the `gh` and git credential wrappers (`/etc/gitconfig`), `core.hooksPath = .githooks` (`/etc/gitconfig`: each checkout runs its own branch's `.githooks/`, none without one), `with-secrets`, `relay`, `/opt/agent-pm/bin` first on `PATH`; no git identity |
-
-## Refusals
-
-What the broker refuses before creating any container, with each exit code: [Docker checks › Refusals](docker-checks.md#refusals).
 
 ## Close
 
@@ -288,7 +274,13 @@ does), and a host tmux showing the pane needs `set -g set-clipboard on` in `~/.t
 
 A session's GitHub tokens are renewed 10 minutes before the first expires, by the TUI session's host run supervisor or
 the headless run's harness; a failure writes `github_refresh_failed <reason>` to the session's events or the harness's
-log, and retries every minute.
+log, and retries every minute. Codex credentials renew before they expire the same way; when a renewal keeps failing,
+`client_refresh_failed` is written and retried each minute, and after a final failed reconciliation at expiry
+`client_auth_expired` and the harness log carry:
+
+> Client authentication expired; run /usr/local/libexec/agent-pm/agent-pm-broker login codex on the host, then resume
+
+The generation closes; run that on the host, then resume the worker: native history is kept.
 
 ### Permissions
 
@@ -441,7 +433,7 @@ running container first; `resume` (after `close`, or once the container is gone)
 keep the client history and [workspace volume](#workspace-volumes) and continue the conversation; only a new start
 clears them. A resume whose conversation file is missing or a symlink fails before any container with
 `no native history to resume`. Resume with `agent-pm-session resume <name>`, never `client-resume`, which runs the
-client on the host. Claude, [Codex](docker-codex.md#docker-sessions) and [OpenCode](#opencode) terminals and headless runs are supported;
+client on the host. Claude, Codex and [OpenCode](#opencode) terminals and headless runs are supported;
 other clients, detached sessions and a start while a container of that name exists fail before creation.
 
 **Preflight**, before every start: client and mode supported; the cwd exists (`Session.preflight` also accepts one
@@ -503,7 +495,7 @@ docker timing NAME GENERATION: checks 0.12 s
 | `agent-pm-broker: start` | `preflight` | manifest, cwd and `claude_dir` rules, the Claude account's setup-token or OpenCode providers' keys present |
 | | `image`, `checks` | the image check; the container-name check and workspace volume (created for `agent` on first use) |
 | | `create`, `bootstrap`, `clients` | `docker run`; the client's bootstrap state (none for OpenCode) and the hook stub; every client's `--version` |
-| | `client_update` | Codex only: [version preparation](docker-codex.md#container-versions) |
+| | `client_update` | Codex only: version preparation |
 | | `credentials`, `total` | the token injection (OpenCode: its providers' keys); the whole `start` |
 | `docker timing NAME GENERATION` | `checks`, `image` | cwd, sweep, the container check; `version` and `build` again (cached), a new start's workspace reset and client home, manifest and plan |
 | | `start` | the broker's `start` |
@@ -574,8 +566,6 @@ docs, progress logs) go with the volume. An absent volume is `removed:false`.
   client gets a new name and empty volume; the old one goes when the issue is pruned, so fetch its unpushed work by
   hand.
 
-Checks: [Docker checks › Workspace volumes](docker-checks.md#workspace-volumes).
-
 ## Review before pulling
 
 A worker's branch can carry files your tools run. Review a bot PR on GitHub first; only then `gh pr checkout <number>`
@@ -596,7 +586,7 @@ secrets in environments that need it.
 `session/tests/live_docker.py` checks the critical path on Docker Desktop, run by hand from
 the repo root with `PYTHONPATH` as in [Tests](tests.md). It needs the broker installed and
 logged in ([Install](#install), [Log in](#log-in)), for Codex also `install-codex` and
-`login codex` ([Codex operations](docker-codex.md#commands)), for OpenCode the host's Ollama on `127.0.0.1` with the
+`login codex` ([Log in](#log-in)), for OpenCode the host's Ollama on `127.0.0.1` with the
 tier model pulled and `OLLAMA_CONTEXT_LENGTH` ≥ 65536, `[session.hosts] default =
 "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Run workers](#run-workers),
 [Role runs](#role-runs)), and an authorized test repo with `agent-pm-bot` installed.
@@ -626,10 +616,9 @@ the first failed check. The keychain, Linear preset and board-run checks stay ma
 - The [audit log](#audit-log) is yours to change: it records what the broker did, not that nothing else happened.
 - Git in a container runs each checkout's own `.githooks/` (`core.hooksPath`), as `agent`, on its branch's
   version: a target repo's hooks run with the container's GitHub tokens in reach.
-- Image builds trust the client vendors' npm packages ([Codex's policy](docker-codex.md#container-versions)).
+- Image builds trust the client vendors' npm packages.
 - A resume after an upgrade runs a newer Claude than the one that wrote the conversation; if it cannot read it, the
-  resume fails rather than starting anew. Claude may show an onboarding prompt after a rebuild; the
-  [Claude check](docker-checks.md#start) catches it.
+  resume fails rather than starting anew. Claude may show an onboarding prompt after a rebuild.
 - Docker Desktop file sharing must include `~/.agent-pm/docker-state` (Settings > Resources > File sharing), or start
   fails with `start_failed`.
 - A kept dirty volume takes disk until you act. Volumes are plain files in the Docker Desktop VM: anyone with Docker
