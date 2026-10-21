@@ -170,6 +170,41 @@ class Filters(IssueCase):
         self.assertEqual([i["identifier"] for i in items], ["TASK-1", "TASK-2"])
         self.assertEqual([v["after"] for v in gql.sent("issues")], [None, "c1"])
 
+    def test_full_stays_within_complexity_limit_and_keeps_every_page(self):
+        labels = [{"id": uid(n), "name": f"label-{n}"} for n in range(50)]
+        nodes = [
+            issue_row(
+                f"TASK-{n}",
+                labels={"nodes": labels, "pageInfo": {"hasNextPage": n == 100}},
+            )
+            for n in range(121)
+        ]
+
+        def answer(variables):
+            offset = int(variables["after"] or 0)
+            end = offset + variables["first"]
+            return edges(nodes[offset:end], more=end < len(nodes), cursor=str(end))
+
+        gql = Routes(strict=True, issues=answer)
+        path = os.path.join(self.root, "issues.json")
+        code, out, err = self.run_main(["list", "--full", "--output", path], gql)
+        self.assertEqual((code, err), (0, ""), err)
+        self.assertEqual(json.loads(out), {"output": path})
+        with open(path, encoding="utf-8") as f:
+            page = json.load(f)
+        self.assertEqual([i["identifier"] for i in page["items"]], [n["identifier"] for n in nodes])
+        self.assertTrue(all(i["labels"] == labels for i in page["items"]))
+        self.assertEqual(page["truncated"], ["items.100.labels"])
+        self.assertGreaterEqual(len(gql.sent("issues")), 3)
+
+    def test_full_empty_list_stays_within_complexity_limit(self):
+        gql = Routes(strict=True, issues=edges([]))
+        path = os.path.join(self.root, "empty.json")
+        code, _, err = self.run_main(["list", "--full", "--output", path], gql)
+        self.assertEqual((code, err), (0, ""), err)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["items"], [])
+
 
 class Unresolved(IssueCase):
     def test_an_unresolved_filter_exits_two_before_listing(self):
