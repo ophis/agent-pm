@@ -256,13 +256,6 @@ the same day. Requirements: [M4 PRD](https://github.com/ophis/private_docs/blob/
 The verification matrix, observed results, pinned source evidence, compatibility table and the evidence JSON now
 live in [private_docs › docker-codex-plan-a-validation.md](https://github.com/ophis/private_docs/blob/main/Knowledge/agent-pm/docker-codex-plan-a-validation.md).
 
-Probes, from the repository root: `python3 -I scripts/docker_codex_a_probe.py --user-run --live-root
-<isolated-root> live-reload task647-codex-a-1` (actions `live-reload`, `inject`, `host-refresh`, `versions`;
-the live root is required and absolute, with no default to a personal login), and
-`python3 -I scripts/docker_codex_probe.py inventory` (source only: its `live_refresh_count=0` is a constant). The
-manager runs the nonprivileged commands, credential injection and host refresh included; only sudo/password steps
-go to the user. Workers never run live probes or read real credentials.
-
 ## Checks
 
 - Automated tests use fake transports, processes and keychain/Security adapters; Linux, Docker and integration
