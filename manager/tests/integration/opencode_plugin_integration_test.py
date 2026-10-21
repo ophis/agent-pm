@@ -45,10 +45,10 @@ class OpenCodePluginTest(Case):
         os.symlink(sys.executable, os.path.join(self.bin, "python3"))
         self.path = f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
-    def play(self, steps, **extra):
+    def play(self, steps, plugin=PLUGIN, **extra):
         env = {"PATH": self.path, "HOME": self.home, **extra}
         done = subprocess.run(
-            (NODE, HOST, PLUGIN),
+            (NODE, HOST, plugin),
             input=json.dumps(steps).encode(),
             capture_output=True,
             env=env,
@@ -101,6 +101,24 @@ class OpenCodePluginTest(Case):
                 {"OTHER": "1", "PATH": f"{BIN}{os.pathsep}{self.path}"},
             ],
         )
+
+    def test_a_plugin_path_with_a_colon_goes_on_path_through_a_link(self):
+        """OpenCode caches the plugin under .../agent-pm@git+https:/...; no PATH entry can hold ":"."""
+        root = os.path.join(self.home, "packages", "agent-pm@git+https:", "agent-pm")
+        os.makedirs(os.path.join(root, ".opencode-plugin"))
+        shutil.copy(PLUGIN, os.path.join(root, ".opencode-plugin"))
+        for name in ("bin", "manager", "delegate", "orchestrator", "package.json"):
+            os.symlink(os.path.join(REPO, name), os.path.join(root, name))
+        plugin = os.path.join(root, ".opencode-plugin", "agent-pm.js")
+        for _ in range(2):
+            [env] = self.play([{"env": {"PATH": "/x"}}], plugin=plugin)
+            first, rest = env["PATH"].split(os.pathsep)
+            self.assertEqual(rest, "/x")
+            self.assertEqual(
+                os.path.dirname(os.path.dirname(first)),
+                os.path.join(self.home, ".agent-pm", "links"),
+            )
+            self.assertEqual(os.readlink(os.path.dirname(first)), root)
 
     def test_a_new_root_sessions_first_turn_carries_the_startup_rearm_until_idle(self):
         played = self.manager(

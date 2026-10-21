@@ -17,6 +17,17 @@ the installed agent-pm plugin directory.
 
 Needs Docker Desktop (running) and `gh` (logged in).
 
+`install.sh` installs Docker Desktop with the `docker-desktop` cask, stops unless its binary's CPU types include
+`uname -m` and its `LSMinimumSystemVersion` is at most `sw_vers`, and starts it once without its windows: its own
+`Contents/MacOS/install --accept-license --user=<you>` (with the `sudo` password it holds), then
+`UseVirtualizationFrameworkRosetta: false` and `DisplayedOnboarding: true` in
+`~/Library/Group Containers/group.com.docker/settings-store.json` (settings already there are kept).
+
+**Rosetta** stays off and `install.sh` never installs it: the worker image is arm64. For an amd64-only base image in
+your Dockerfile, run `softwareupdate --install-rosetta`, then turn on Docker Desktop › Settings › General › **Use Rosetta
+for x86_64/amd64 emulation on Apple Silicon**. Rosetta cannot be uninstalled, so `scripts/install-cleanup.sh` cannot
+undo it.
+
 ```sh
 sh "$PKG/broker/install.sh"
 ```
@@ -72,8 +83,8 @@ dialog and once without, proving Always Allow was clicked.
 
 Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
-**GitHub**: the private key of the one GitHub App, `agent-pm-bot`, must be a generic-password item in the login
-keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
+**GitHub**: the private key of your one GitHub App ([create it](#create-the-github-app)), whatever its name, must be
+a generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
 truncates the key at 128 characters):
 
 ```sh
@@ -84,9 +95,11 @@ security add-generic-password -s agent-pm-bot -a <App ID> -U -w "$(base64 -i <ke
 The login restricts the item's access in place (content and account kept): partition list to only the broker's
 partition ID, then read/export entries to only the broker (a wrong password: `keychain status -25293`). It reads the
 access back and checks the key is not empty before printing success; else it exits non-zero saying what is done
-and what is not: rerun it. Then it looks up `agent-pm-bot[bot]` on GitHub's public user API (no
-credential; needs network) and keeps its ID in the broker-only item `agent-pm-github-users`, for the containers' git
-identity. The App must be private (installable only on your account): every session gets a token for every repo of
+and what is not: rerun it. Then it asks GitHub which App the key is (`GET /app`, its slug), looks up `<slug>[bot]`
+on GitHub's public user API (no credential; needs network) and keeps both in the broker-only item
+`agent-pm-github-users`, for the containers' git identity; it prints
+`GitHub App <slug> bot user <slug>[bot] has ID <ID>`. Set `[session.hosts.docker.github] app = "<slug>"` in
+`~/.agent-pm/config.local.toml` (`install.sh` writes it): a start naming another App is `manifest_rejected`. The App must be private (installable only on your account): every session gets a token for every repo of
 every installation.
 
 Checks: [Docker checks › GitHub login](docker-checks.md#github-login).
@@ -101,6 +114,19 @@ It saves the key in a new broker-only item `agent-pm-opencode` / `<name>`, repla
 only the broker (prompt `Login keychain password, to make the <name> API key trust only the broker (hidden):`) and
 reads it back. A Docker OpenCode start needs every configured provider's key: a missing one fails with
 `login_required`, naming this command.
+
+### Create the GitHub App
+
+`install.sh` does not create it. In GitHub › Settings › Developer settings › GitHub Apps › New GitHub App:
+
+1. Owned by you, installable **Only on this account** (private).
+2. Webhook: off (clear **Active**).
+3. Repository permissions: Contents and Pull requests **Read and write**; Checks, Actions and Metadata **Read-only**.
+4. Create it, note its **App ID**, then **Generate a private key** (a `.pem` download).
+5. **Install App** on only the repositories agents may push to.
+
+Then store the key and run `login github` as [above](#log-in); `install.sh` asks for the `.pem` and the App ID, does
+both and writes the App's slug to `github.app`.
 
 ## Build
 
@@ -240,7 +266,7 @@ default = "docker"
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
 | `plugins` | `["autopilot"]` | the plugin payloads every image holds ([Plugins](#plugins)); `[]`: none |
-| `github.app` | `agent-pm-bot` | the GitHub App whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
+| `github.app` | `""` | the slug of the GitHub App `login github` saved, whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
 | `isolated` | `true` | its sessions' clients run in yolo mode ([Permissions](#permissions)); `false`: auto mode, as on tmux |
 
 Then `agent-pm-crew worker NAME --client claude` starts NAME in its own container; the other `agent-pm-crew` verbs,
@@ -298,7 +324,7 @@ included: every Docker session can read and write exactly those private repos.
 
 In the container `repo.py worktree` makes a fresh blobless clone at `<Workdir>/src/<owner>/<name>-<slug>`, never a
 `[local_clones]` worktree; `repo.py` treats `AGENT_PM_PR_AUTHOR` as the PR author (its docstring:
-`delegate/src/agent_pm/delegate/team/tools/repo.py`). An engineer opens its draft PR through the `gh` wrapper as `agent-pm-bot[bot]`; the Delegate's ready gate on the host
+`delegate/src/agent_pm/delegate/team/tools/repo.py`). An engineer opens its draft PR through the `gh` wrapper as `<app>[bot]`; the Delegate's ready gate on the host
 marks it ready, you approve with your own account, and revision rounds push to the same branch. Then
 [review before pulling](#review-before-pulling).
 
@@ -374,7 +400,9 @@ OpenCode sessions run the host's Ollama models, or a configured provider's ([Ope
 Ollama needs no login; each configured provider's API key comes from the broker ([Log in](#log-in)), which writes it
 to the container's `/run/agent-pm/secrets/opencode/<name>.key` at start ([Credentials](credentials.md#who-logs-in)).
 A provider is reached at its `base_url` from the container's bridge network, which Docker Desktop routes through the
-Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `localhost` is the container itself. An
+Mac: a LAN address such as `http://10.0.0.5:8080/v1` works as on the Mac, `localhost` is the container itself. The
+first worker to reach a LAN address makes macOS ask **Allow Docker to find devices on local networks?**: allow it (later:
+System Settings › Privacy & Security › Local Network › Docker), or the provider is unreachable. An
 `http://` `base_url` sends the key in plaintext: anyone on the LAN can capture it ([Risks](#risks)). Once, on the Mac:
 
 1. Keep Ollama on `127.0.0.1` (its default; leave `OLLAMA_HOST` unset): the container reaches it through

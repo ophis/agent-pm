@@ -306,7 +306,7 @@ class ConfigTest(Base):
                 "docker": "/usr/local/bin/docker",
                 "plugins": ["autopilot"],
                 "isolated": True,
-                "github": {"app": "agent-pm-bot"},
+                "github": {"app": ""},
             },
         )
         self.assertEqual(Host.parse_hosts(table).default, "tmux")
@@ -314,7 +314,7 @@ class ConfigTest(Base):
         host = DockerHost("docker", settings)
         self.assertEqual(
             (host.docker, host.github, host.plugins, host._isolated),
-            ("/usr/local/bin/docker", "agent-pm-bot", ("autopilot",), True),
+            ("/usr/local/bin/docker", "", ("autopilot",), True),
         )
         bare = DockerHost("docker", {"docker": DOCKER})
         self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))
@@ -1872,7 +1872,7 @@ class TerminalTest(Base):
     def test_the_viewers_status_attach_is_the_docker_command(self):
         process = self.terminal()
         self.docker.replies = {("tmux", "display-message"): pane()}
-        want = f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t =w"
+        want = f"{DOCKER} --host {self.ep} exec -it {CONTAINER} tmux attach -t '=w'"
         self.assertIsNone(process.status().attach)
         tmux = mock.create_autospec(TmuxCli, instance=True)
         tmux.runner = mock.Mock()
@@ -2582,7 +2582,9 @@ class AttachTargetTest(Base):
         self.assertTrue(DockerHost.attachable)
         self.assertEqual(
             self.host.attach_target("w"),
-            CommandView(printed=shlex.join(argv), argv=("/usr/bin/env", *cleared, *argv)),
+            CommandView(
+                printed=shlex.join(argv[:-1]) + " '=w'", argv=("/usr/bin/env", *cleared, *argv)
+            ),
         )
         with self.assertRaisesRegex(SessionError, "^no docker session x$"):
             self.host.attach_target("x")

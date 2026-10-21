@@ -77,15 +77,47 @@ Commands: [Quick start](#quick-start).
 
 ## Install
 
-Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/upgrading.md).
+On an Apple silicon Mac, from nothing installed up to a working agent-pm, in one command:
 
-| Client | Install |
+```bash
+curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh | bash
+```
+
+`install.sh`, in order:
+
+1. installs the dependencies: Homebrew with the Command Line Tools, `gh`, tmux, git, Python 3.11+, iTerm2;
+2. asks which clients you use (Claude Code, Codex, OpenCode) and whether workers run in Docker, and writes `~/.agent-pm/config.local.toml`;
+3. installs and logs in only what that configuration needs: the clients with the agent-pm and [`autopilot`](https://github.com/ophis/claude-autopilot) plugins, OpenCode with its provider and its agent-pm plugin (`opencode plugin -g`), Docker Desktop and the broker with the chosen clients' broker logins, `ctmux --install`, and, when the config names a Linear board, its Keychain keys and launchd jobs.
+
+It asks the `sudo` password once per run and keeps it only in memory, for every `sudo` the run makes (Homebrew's included), runs each login on the spot (`gh`, Claude Code and Codex open your browser), and shows and asks before it writes your shell profile, the config or launchd jobs. A rerun keeps your last answers, skips what is done and finishes an interrupted install. Before upgrading, see [Upgrading](docs/upgrading.md).
+
+Without `--clients` and `--docker`/`--no-docker` it starts with a checklist of what to install (each client, Docker workers, the board's launchd jobs and Linear keys): arrow keys move, space ticks, Enter confirms; a rerun ticks the last choices. Flags pre-answer its questions: `curl -fsSL …/install.sh | bash -s -- <flags>`.
+
+| Flag | Does |
+|---|---|
+| `--ref <ref>` | installs the plugins and the broker from this branch or tag of `ophis/agent-pm` (default `main`; another ref builds the broker locally) |
+| `--clients <list>` | comma-separated `claude`, `codex`, `opencode`; any one alone works |
+| `--docker`, `--no-docker` | workers in Docker (Docker Desktop, the broker) or on the local tmux Host |
+| `--board`, `--no-board` | the Linear board's Keychain keys and launchd jobs, or not (default: installed when the config names a board) |
+| `--opencode-provider <name>`, `--opencode-url <url>`, `--opencode-model <model>`, `--opencode-context <tokens>` | OpenCode's OpenAI-compatible provider, e.g. a LAN model server; its base URL ends `/v1`; its context window (default 65536) |
+| `--opencode-key-stdin` | reads the provider's API key from stdin (tmux Host only: with Docker, type it at the broker's prompt) |
+| `--password-stdin` | reads the `sudo` password from stdin, before the key |
+
+With a stdin flag, stdin cannot also carry the script:
+
+```bash
+security find-generic-password -s <item> -w | bash -c "$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/install.sh)" install.sh --password-stdin
+```
+
+What it sets up, for reference or by hand:
+
+| Client | Plugin install |
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
 | Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
 | OpenCode 1.x | In `~/.config/opencode/opencode.json`, `"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v<version>"]` (a release tag after `v0.6.34`, the first with the plugin), then restart OpenCode. Commander only, without idle notifications: [OpenCode commander](docs/sessions.md#opencode-commander). |
 
-Nothing checks these. A missing one fails the agent run.
+Set up by hand, nothing checks these: a missing one fails the agent run.
 
 | Requirement | For |
 |---|---|

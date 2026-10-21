@@ -867,7 +867,7 @@ func TestInjectKeychainFailure(t *testing.T) {
 	}
 }
 
-// TestKeychainServices: KeychainServices lists exactly the package's ...Service string constants and GitHubApps, so a
+// TestKeychainServices: KeychainServices lists exactly the package's ...Service string constants, so a
 // new service cannot miss docs/credentials.md.
 func TestKeychainServices(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -875,9 +875,6 @@ func TestKeychainServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{}
-	for app := range GitHubApps {
-		want[app] = true
-	}
 	constants := 0
 	fset := gotoken.NewFileSet()
 	for _, name := range files {

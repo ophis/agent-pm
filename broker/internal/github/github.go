@@ -236,6 +236,20 @@ func (c Client) Revoke(ctx context.Context, token string) error {
 	return err
 }
 
+// AppSlug is the slug of the App jwt signs for.
+func (c Client) AppSlug(ctx context.Context, jwt string) (string, error) {
+	var got struct {
+		Slug string `json:"slug"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/app", jwt, nil, http.StatusOK, &got); err != nil {
+		return "", err
+	}
+	if !Login.MatchString(got.Slug) {
+		return "", errors.New("GitHub answered no valid App slug")
+	}
+	return got.Slug, nil
+}
+
 // BotUser is the user ID of bot login (`<app>[bot]`), from the public user API, sent without a credential.
 func (c Client) BotUser(ctx context.Context, login string) (int64, error) {
 	var got struct {

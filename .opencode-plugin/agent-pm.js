@@ -5,11 +5,28 @@
 // (AGENT_PM_AGENT_SESSION) gets none of it. State lives here, not per plugin call: OpenCode calls a
 // plugin again whenever it rebuilds its instance.
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// `root`, or a link to it under ~/.agent-pm/links when it holds the PATH delimiter (OpenCode's own cache path,
+// .../agent-pm@git+https:/..., does), which no PATH or PYTHONPATH entry can hold.
+function delimiterFree(root) {
+  if (!root.includes(path.delimiter)) return root;
+  const links = path.join(homedir(), ".agent-pm", "links");
+  const link = path.join(links, `opencode-${createHash("sha256").update(root).digest("hex").slice(0, 16)}`);
+  try {
+    if (readlinkSync(link) === root) return link;
+    unlinkSync(link);
+  } catch {}
+  mkdirSync(links, { recursive: true });
+  symlinkSync(root, link);
+  return link;
+}
+
+const ROOT = delimiterFree(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const REARM = path.join(ROOT, "manager", "src", "agent_pm", "manager", "rearm.py");
 const REARM_WAIT = 5000; // ms, the SessionStart hooks' timeout
 

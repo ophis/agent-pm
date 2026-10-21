@@ -5,19 +5,19 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/Users/francis/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>@PATH@</string>
 	</dict>
 	<key>Label</key>
 	<string>com.ophis.agent-pm.promote</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/francis/playground/agent-pm/bin/agent-pm-orchestrator</string>
+		<string>@HOME@/.agent-pm/bin/agent-pm-orchestrator</string>
 		<string>promote</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>/Users/francis/.agent-pm/logs/orchestrator.jsonl</string>
+	<string>@HOME@/.agent-pm/logs/orchestrator.jsonl</string>
 	<key>StandardOutPath</key>
-	<string>/Users/francis/.agent-pm/logs/orchestrator.jsonl</string>
+	<string>@HOME@/.agent-pm/logs/orchestrator.jsonl</string>
 	<key>StartInterval</key>
 	<integer>300</integer>
 </dict>
