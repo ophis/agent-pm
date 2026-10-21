@@ -1023,16 +1023,39 @@ opencode_install() {
 
 opencode_spec() { printf '%s' "agent-pm@git+https://github.com/ophis/agent-pm.git#$ref"; }
 
+# The directory OpenCode downloads spec $1 into, else exit 1 when it would not lie under OpenCode's packages
+# (a --ref with .. segments).
+opencode_cache_dir() {
+  python3 -I -c '
+import os, sys
+packages = os.path.normpath(sys.argv[1])
+path = os.path.normpath(os.path.join(packages, sys.argv[2]))
+if not path.startswith(packages + os.sep):
+    sys.exit(1)
+print(path)' "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages" "$1"
+}
+
 # Where OpenCode keeps the plugin it downloaded for spec $1: the whole repo at that ref.
 opencode_package() {
-  python3 -I -c 'import os, sys; print(os.path.normpath(os.path.join(sys.argv[1], sys.argv[2], "node_modules", "agent-pm")))' \
-    "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages" "$1"
+  local dir
+  dir=$(opencode_cache_dir "$1") || die "$1: not an OpenCode package dir"
+  printf '%s' "$dir/node_modules/agent-pm"
+}
+
+# The commit $ref names on GitHub now.
+ref_commit() {
+  local commit
+  commit=$(curl -fsSL -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/ophis/agent-pm/commits/$ref" </dev/null) \
+    || die "cannot resolve $ref on github.com/ophis/agent-pm"
+  [[ $commit =~ ^[0-9a-f]{40}$ ]] || die "cannot resolve $ref on github.com/ophis/agent-pm"
+  printf '%s' "$commit"
 }
 
 # agent-pm's OpenCode plugin, the way OpenCode installs one: opencode plugin -g, which adds it to the global config
 # and downloads it. The config there before is kept for the cleanup; the files OpenCode adds beside it are recorded.
+# OpenCode never downloads a spec again, so when $ref has moved since the last download its copy is deleted first.
 opencode_plugin() {
-  local spec conf file name
+  local spec conf file name dir commit had
   step "OpenCode plugin"
   if ! has opencode; then
     skip "OpenCode not chosen"
@@ -1040,13 +1063,20 @@ opencode_plugin() {
   fi
   spec=$(opencode_spec)
   conf=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
-  if [ -d "$(opencode_package "$spec")" ] && grep -qsF "\"$spec\"" "$conf/opencode.json" "$conf/opencode.jsonc"; then
-    skip "$spec"
+  dir=$(opencode_cache_dir "$spec") && under_home "$dir" || die "$spec: not an OpenCode package dir"
+  commit=$(ref_commit)
+  had=$(state_get opencode_plugin_commit)
+  if ! grep -qsF "\"$spec\"" "$conf/opencode.json" "$conf/opencode.jsonc"; then
+    if ! consent "$conf/opencode.json(c)" "\"plugin\": [\"$spec\"]  (opencode plugin -g -f)"; then
+      skip declined
+      return
+    fi
+  elif [ -d "$dir/node_modules/agent-pm" ] && [ "$had" = "$commit" ]; then
+    skip "$spec at ${commit:0:12}"
     return
-  fi
-  if ! consent "$conf/opencode.json(c)" "\"plugin\": [\"$spec\"]  (opencode plugin -g -f)"; then
-    skip declined
-    return
+  else
+    [ -d "$dir" ] && [ -n "$had" ] || had=unknown
+    say "    $spec: $ref is at ${commit:0:12}, OpenCode's copy at ${had:0:12}: downloading it again"
   fi
   for file in "$conf/opencode.json" "$conf/opencode.jsonc"; do
     if [ -f "$file" ] && ! recorded opencode-config "$file"; then
@@ -1062,8 +1092,10 @@ opencode_plugin() {
   fi
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages"
   record_dir "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/packages/${spec%%//*}"
+  rm -rf -- "$dir"
   "$opencode_prefix/bin/opencode" plugin -g -f "$spec" </dev/null >&2
-  [ -d "$(opencode_package "$spec")" ] || die "OpenCode did not download $spec"
+  [ -d "$dir/node_modules/agent-pm" ] || die "OpenCode did not download $spec"
+  state_set opencode_plugin_commit "$commit"
 }
 
 opencode_auth_file() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; }

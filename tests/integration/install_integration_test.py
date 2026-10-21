@@ -51,6 +51,12 @@ APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
 TOKEN = "sk-ant-oat01-SENTINEL-token"
 KEY = "sk-SENTINEL-opencode-key"
+OLD, NEW = "1" * 40, "2" * 40
+SPEC = "agent-pm@git+https://github.com/ophis/agent-pm.git#main"
+API_CALL = (
+    "curl -fsSL -H Accept: application/vnd.github.sha"
+    " https://api.github.com/repos/ophis/agent-pm/commits/main"
+)
 MENU_Q = r"Choose what to install \(up/down move, space ticks, Enter confirms\):"
 PROVIDER_Q = r"OpenCode provider name:"
 URL_Q = r"Its base URL \(ending /v1\):"
@@ -187,6 +193,7 @@ class InstallTest(Case):
         (self.fakes / "sudo_password").write_text(PASSWORD)
         (self.fakes / "claude_token").write_text(TOKEN)
         (self.fakes / "tty_name").write_text("ttys001\n")
+        (self.fakes / "commit").write_text(OLD)
         (self.root / "dev").mkdir(parents=True)
         self.pkg_src = self.fakes / "pkg-src"
         executable(self.pkg_src / "broker/install.sh", BROKER_INSTALL)
@@ -638,6 +645,7 @@ class InstallTest(Case):
         self.assertIn(f"    {pkg}", result.stderr)
         self.assertIn("ctmux --install", self.calls())
         self.assertIn('[delegate]\nclient = "codex"\n', self.config().read_text())
+        self.assertNotIn("api.github.com", calls)
 
     def test_claude_only(self):
         result = self.fresh(clients="claude", docker="y")
@@ -1124,12 +1132,24 @@ class InstallTest(Case):
             *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 4]
         )
 
+    def opencode_rerun(self, *answers):
+        """A rerun of opencode_only's install: the checklist confirmed, then `answers`."""
+        return self.run_install(
+            "--password-stdin", stdin=PASSWORD + "\n", answers=[(MENU_Q, ""), *answers]
+        )
+
+    def opencode_package(self):
+        return Path(
+            self.home,
+            ".cache/opencode/packages/agent-pm@git+https:/github.com/ophis/agent-pm.git#main",
+            "node_modules/agent-pm",
+        )
+
     def test_opencode_only(self):
         result = self.opencode_only()
         self.assert_ok(result)
         calls = self.calls()
-        spec = "agent-pm@git+https://github.com/ophis/agent-pm.git#main"
-        self.assertIn(f"opencode plugin -g -f {spec}", calls)
+        self.assertIn(f"opencode plugin -g -f {SPEC}", calls)
         self.assertIn(
             "curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/main/broker/internal/launcher/versions.go",
             calls,
@@ -1138,16 +1158,132 @@ class InstallTest(Case):
         self.assertIn("ctmux --install", calls)
         self.assertIn('[delegate]\nclient = "opencode"\n', self.config().read_text())
         conf = json.loads(Path(self.home, ".config/opencode/opencode.jsonc").read_text())
-        self.assertEqual(conf["plugin"], [spec])
-        package = Path(
-            self.home,
-            ".cache/opencode/packages/agent-pm@git+https:/github.com/ophis/agent-pm.git#main",
-        )
-        self.assertIn(f"    {package}/node_modules/agent-pm\n", result.stderr)
-        result = self.run_install("--password-stdin", stdin=PASSWORD + "\n", answers=[(MENU_Q, "")])
+        self.assertEqual(conf["plugin"], [SPEC])
+        self.assertIn(f"    {self.opencode_package()}\n", result.stderr)
+        self.assertEqual((self.opencode_package() / "COMMIT").read_text(), OLD)
+        self.assertEqual(self.state()["opencode_plugin_commit"], OLD)
+        result = self.opencode_rerun()
         self.assert_ok(result)
         self.assertIn("> [ ] Claude Code", result.tty)
         self.assertNotIn("opencode plugin", "\n".join(self.calls()))
+        self.assertIn(f"==> OpenCode plugin\n    skip: {SPEC} at {OLD[:12]}\n", result.stderr)
+
+    def test_opencode_rerun_downloads_new_commit(self):
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "commit").write_text(NEW)
+        (self.pkg_src / "NEW").write_text("")
+        result = self.opencode_rerun()
+        self.assert_ok(result)
+        self.assertIn(f"opencode plugin -g -f {SPEC}", self.calls())
+        self.assertIn(
+            f"    {SPEC}: main is at {NEW[:12]}, OpenCode's copy at {OLD[:12]}: downloading it again\n",
+            result.stderr,
+        )
+        package = self.opencode_package()
+        self.assertEqual((package / "COMMIT").read_text(), NEW)
+        self.assertTrue((package / "NEW").exists())
+        self.assertEqual(self.state()["opencode_plugin_commit"], NEW)
+        self.assertIn(f"    {package}\n", result.stderr)
+
+    def test_opencode_new_commit_reinstalls_broker(self):
+        key_q = r"OpenCode provider lan API key \(hidden\):"
+        result = self.fresh(
+            clients="opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(PEM_Q, ""), (key_q, KEY)],
+        )
+        self.assert_ok(result)
+        self.assertIn("broker-install ", self.calls())
+        (self.fakes / "commit").write_text(NEW)
+        self.versions.write_text('package codex\n\nconst MinVersion = "0.170.0"\n')
+        result = self.again(answers=[(key_q, KEY)])
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn(f"opencode plugin -g -f {SPEC}", calls)
+        self.assertIn("broker-install ", calls)
+        self.assertNotIn("ctmux --install", calls)
+        self.assertEqual((self.opencode_package() / "COMMIT").read_text(), NEW)
+
+    def test_opencode_rerun_without_recorded_commit(self):
+        """An install from before install.sh recorded the plugin's commit downloads it once more."""
+        self.assert_ok(self.opencode_only())
+        state = Path(self.agent_pm, "install/state")
+        lines = state.read_text().splitlines(keepends=True)
+        state.write_text("".join(x for x in lines if not x.startswith("opencode_plugin_commit=")))
+        result = self.opencode_rerun()
+        self.assert_ok(result)
+        self.assertIn(
+            f"    {SPEC}: main is at {OLD[:12]}, OpenCode's copy at unknown: downloading it again\n",
+            result.stderr,
+        )
+        self.assertIn(f"opencode plugin -g -f {SPEC}", self.calls())
+        self.assertEqual(self.state()["opencode_plugin_commit"], OLD)
+
+    def test_opencode_unresolvable_ref_stops(self):
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "fail").write_text(API_CALL)
+        failed = self.opencode_rerun()
+        (self.fakes / "commit").write_text("main\n")
+        garbled = self.opencode_rerun()
+        for result in (failed, garbled):
+            self.assertEqual(result.code, 1)
+            self.assertIn(
+                "install.sh: cannot resolve main on github.com/ophis/agent-pm\n", result.stderr
+            )
+            self.assertIn(
+                "install.sh: OpenCode plugin failed; rerun the same command to continue",
+                result.stderr,
+            )
+        self.assertNotIn("opencode plugin", "\n".join(self.calls()))
+        self.assertEqual((self.opencode_package() / "COMMIT").read_text(), OLD)
+        self.assertEqual(self.state()["opencode_plugin_commit"], OLD)
+
+    def test_opencode_failed_download_keeps_no_commit(self):
+        self.assert_ok(self.opencode_only())
+        (self.fakes / "commit").write_text(NEW)
+        (self.fakes / "fail").write_text(f"opencode plugin -g -f {SPEC}")
+        result = self.opencode_rerun()
+        self.assertEqual(result.code, 1)
+        self.assertIn(
+            "install.sh: OpenCode plugin failed; rerun the same command to continue", result.stderr
+        )
+        self.assertEqual(self.state()["opencode_plugin_commit"], OLD)
+        self.assertFalse(self.opencode_package().exists())
+        result = self.opencode_rerun()
+        self.assert_ok(result)
+        self.assertIn("OpenCode's copy at unknown: downloading it again", result.stderr)
+        self.assertEqual((self.opencode_package() / "COMMIT").read_text(), NEW)
+        self.assertEqual(self.state()["opencode_plugin_commit"], NEW)
+
+    def test_opencode_plugin_declined_keeps_cache(self):
+        self.assert_ok(self.opencode_only())
+        Path(self.home, ".config/opencode/opencode.jsonc").write_text('{"plugin": []}')
+        (self.fakes / "commit").write_text(NEW)
+        result = self.opencode_rerun((WRITE_Q, "n"))
+        self.assert_ok(result)
+        self.assertIn("==> OpenCode plugin\n    skip: declined\n", result.stderr)
+        self.assertNotIn("opencode plugin", "\n".join(self.calls()))
+        self.assertEqual((self.opencode_package() / "COMMIT").read_text(), OLD)
+        self.assertEqual(self.state()["opencode_plugin_commit"], OLD)
+
+    def test_opencode_ref_outside_cache_deletes_nothing(self):
+        victim = Path(self.home, ".cache/opencode/victim")
+        victim.mkdir(parents=True)
+        ref = "../../../../../../victim"
+        flags = ("--ref", ref, "--clients", "opencode", "--no-docker", "--opencode-provider", "lan")
+        flags += ("--opencode-url", "http://localhost:8080/v1", "--opencode-model", "m")
+        flags += ("--opencode-context", "65536", "--opencode-key-stdin")
+        result = self.run_install(
+            *flags, stdin=KEY + "\n", answers=[(SUDO_Q, PASSWORD), *[(WRITE_Q, "y")] * 2]
+        )
+        self.assertEqual(result.code, 1)
+        spec = f"agent-pm@git+https://github.com/ophis/agent-pm.git#{ref}"
+        self.assertIn(f"install.sh: {spec}: not an OpenCode package dir\n", result.stderr)
+        self.assertTrue(victim.is_dir())
+        calls = "\n".join(self.calls())
+        self.assertNotIn("opencode plugin", calls)
+        self.assertNotIn("api.github.com", calls)
 
     def test_docker_without_claude_stages_no_plugins(self):
         """The broker stages plugins from Claude Code's install record; Codex or OpenCode alone has none."""
