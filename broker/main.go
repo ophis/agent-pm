@@ -26,7 +26,7 @@ import (
 	"github.com/ophis/agent-pm/broker/internal/protocol"
 )
 
-const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | workspace-rm --volume NAME [--force]"
+const usage = "usage: agent-pm-broker version | install-codex VERSION | update-codex VERSION | login codex | login claude [NAME] | login github agent-pm-bot [--key-file PEM --app-id ID] | login opencode PROVIDER | build --agent-pm DIR [--plugin NAME]... [--max-age SECONDS] | start --manifest FILE | refresh --container NAME --manifest FILE | close --container NAME | status | probe-opencode --provider NAME --base-url URL | workspace-rm --volume NAME [--force]"
 
 var containerPattern = regexp.MustCompile(`^agent-pm-[A-Za-z0-9_-]+-[0-9a-f]{32}$`)
 var secondsPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
@@ -41,6 +41,7 @@ type app struct {
 	start, close  step
 	refresh       func(ctx context.Context, container, manifest string) (any, error)
 	status        func(ctx context.Context) (any, error)
+	probeOpencode func(ctx context.Context, provider, base string) (any, error)
 	workspaceRm   func(ctx context.Context, volume string, force bool) (any, error)
 	login         func(account string, out io.Writer) error                                // login claude [NAME]
 	loginGitHub   func(ctx context.Context, app string, key *keyFile, out io.Writer) error // key: nil without --key-file
@@ -109,7 +110,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 				}
 				return emit(stdout, result)
 			}
-		case "version", "build", "start", "refresh", "close", "status", "workspace-rm":
+		case "version", "build", "start", "refresh", "close", "status", "workspace-rm", "probe-opencode":
 			command = args[0]
 		case "login":
 			var login func() error
@@ -168,6 +169,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, a app) (c
 		}, args[2]
 	case command == "status" && len(args) == 1:
 		s = func(ctx context.Context, _ string, _ io.Writer) (any, error) { return a.status(ctx) }
+	case command == "probe-opencode" && len(args) == 5 && args[1] == "--provider" && launcher.ValidProvider(args[2]) && args[3] == "--base-url" && broker.ValidOpencodeURL(args[4]):
+		s = func(ctx context.Context, _ string, _ io.Writer) (any, error) {
+			return a.probeOpencode(ctx, args[2], args[4])
+		}
 	case command == "close" && len(args) == 3 && args[1] == "--container" && containerPattern.MatchString(args[2]):
 		s, arg = a.close, args[2]
 	case command == "workspace-rm" && (len(args) == 3 || len(args) == 4 && args[3] == "--force") && args[1] == "--volume" &&
@@ -264,6 +269,14 @@ func tokens(home string, rec *audit.Recorder) broker.GitHub {
 
 func system() app {
 	return app{
+		probeOpencode: func(ctx context.Context, provider, base string) (any, error) {
+			home, err := accountHome()
+			if err != nil {
+				return nil, err
+			}
+			available, err := (broker.OpencodeKeys{Keychain: broker.SystemKeychain{Home: home}}).Probe(ctx, provider, base, nil)
+			return map[string]bool{"available": available}, err
+		},
 		build: func(ctx context.Context, pkg string, plugins []string, maxAge time.Duration, progress io.Writer) (any, error) {
 			return withHost("build", "", progress, func(h launcher.Host) (any, error) { return h.Build(ctx, pkg, plugins, maxAge) })
 		},

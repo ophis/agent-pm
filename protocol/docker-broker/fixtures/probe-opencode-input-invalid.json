@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "probe-opencode",
+    "--provider",
+    "../strata",
+    "--base-url",
+    "https://strata.test/v1"
+  ]
+}
