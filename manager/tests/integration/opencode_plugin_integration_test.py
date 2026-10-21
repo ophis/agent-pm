@@ -135,5 +135,10 @@ class OpenCodePluginTest(Case):
         played = self.manager(child)
         self.assertEqual((played[2], played[4]), ([], []))
         self.assertEqual(self.play([created("ses_1"), system("ses_1")])[1], [])
+        resumed_child = [{"saved": {"ses_c": {"id": "ses_c", "parentID": "ses_1"}}}]
+        resumed_child += [system("ses_c"), event("session.compacted", "ses_c"), system("ses_c")]
+        played = self.manager(resumed_child)
+        self.assertEqual((played[1], played[3]), ([], []))
+        self.assertIn("SessionStart `resume`", self.manager([system("ses_root")])[0][0])
         held_elsewhere = {**MANAGER, "AGENT_PM_HOLDER_PID": "1"}
         self.assertEqual(self.play([created("ses_1"), system("ses_1")], **held_elsewhere)[1], [])

@@ -83,7 +83,7 @@ Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/u
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
 | Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
-| OpenCode 1.x | In `~/.config/opencode/opencode.json`, `"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v<version>"]` (a release tag, e.g. `#v0.6.34`), then restart OpenCode. Commander only, without idle notifications: [OpenCode commander](docs/sessions.md#opencode-commander). |
+| OpenCode 1.x | In `~/.config/opencode/opencode.json`, `"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v<version>"]` (a release tag after `v0.6.34`, the first with the plugin), then restart OpenCode. Commander only, without idle notifications: [OpenCode commander](docs/sessions.md#opencode-commander). |
 
 Nothing checks these. A missing one fails the agent run.
 

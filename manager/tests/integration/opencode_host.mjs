@@ -1,13 +1,19 @@
 // Plays steps through .opencode-plugin/agent-pm.js as OpenCode 1.19.3 calls a plugin: argv[2] the
-// plugin's path, stdin a JSON list of steps; prints a JSON list of one result per step.
+// plugin's path, stdin a JSON list of steps; prints a JSON list of one result per step. The client's
+// session.get answers from the saved sessions a `saved` step adds.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const steps = JSON.parse(readFileSync(0, "utf8"));
-const hooks = await (await import(pathToFileURL(process.argv[2]).href)).AgentPmCommander({});
+const saved = {};
+const client = { session: { get: async ({ path }) => ({ data: saved[path.id] ?? { id: path.id } }) } };
+const hooks = await (await import(pathToFileURL(process.argv[2]).href)).AgentPmCommander({ client });
 const results = [];
 for (const step of steps) {
-  if (step.hooks) {
+  if (step.saved) {
+    Object.assign(saved, step.saved);
+    results.push(null);
+  } else if (step.hooks) {
     results.push(Object.keys(hooks).sort());
   } else if (step.config) {
     await hooks.config(step.config);

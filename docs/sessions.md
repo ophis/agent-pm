@@ -119,10 +119,10 @@ It prints the session's newest `N` (default 100) user and assistant texts, oldes
 
 ## OpenCode commander
 
-A commander can run in OpenCode 1.x (checked against 1.19.3). Install agent-pm in `~/.config/opencode/opencode.json`:
+A commander can run in OpenCode 1.x (checked against 1.19.3). Install agent-pm in `~/.config/opencode/opencode.json`, `<version>` a release after 0.6.34 (the first with the plugin):
 
 ```json
-{"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v0.6.34"]}
+{"plugin": ["agent-pm@git+https://github.com/ophis/agent-pm.git#v<version>"]}
 ```
 
 OpenCode installs that tag once, into `${XDG_CACHE_HOME:-~/.cache}/opencode/packages/<spec>/node_modules/agent-pm`, and never refreshes the same spec: to update, set the new release's `#v<version>`, restart OpenCode, and delete the old spec's directory. A checkout instead: `"plugin": ["file://<checkout>/.opencode-plugin/agent-pm.js"]`. `opencode plugin` installs npm packages only. The plugin sits in `.opencode-plugin/`, not `.opencode/`, because OpenCode runs a cwd's `.opencode/plugins/` unasked: an OpenCode working in an agent-pm checkout would load it. `ctmux --install`'s commands find the installed copy ([Install](../README.md#install)); start `opencode` in the `ctmux` shell, then run `/agent-pm:manage`.

@@ -15,6 +15,7 @@ const REARM_WAIT = 5000; // ms, the SessionStart hooks' timeout
 
 const created = new Set(); // root sessions created in this process
 const children = new Set();
+let client = null;
 const seen = new Set();
 const pending = new Map(); // session → its re-arm prompt's promise, until the turn that got it ends
 const reached = new Set();
@@ -102,10 +103,24 @@ function handle(event) {
   }
 }
 
+// A session this process did not create: its saved parent, null when unknown.
+async function parent(session) {
+  try {
+    return (await client?.session?.get({ path: { id: session } }))?.data?.parentID || null;
+  } catch {
+    return null;
+  }
+}
+
 async function system(session, output) {
   if (!session || children.has(session)) return;
   if (!seen.has(session)) {
     seen.add(session);
+    if (!created.has(session) && (await parent(session))) {
+      children.add(session);
+      pending.delete(session);
+      return;
+    }
     if (!pending.has(session)) arm(session, created.has(session) ? "startup" : "resume");
   }
   const text = await pending.get(session);
@@ -114,8 +129,9 @@ async function system(session, output) {
   if (text) output.system.push(text);
 }
 
-export const AgentPmCommander = async () => {
+export const AgentPmCommander = async (input) => {
   if (process.env.AGENT_PM_AGENT_SESSION !== undefined) return {};
+  client = input?.client ?? client;
   const found = commands();
   return {
     config: async (config) => {
