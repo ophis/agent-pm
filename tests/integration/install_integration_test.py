@@ -72,6 +72,8 @@ PROVIDER_ANSWERS = (
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
 TOKEN_Q = r"Paste the setup-token \(hidden\):"
+LEAVE_Q = r"Press Enter to leave this screen:"
+SCREEN_ON, SCREEN_OFF = "\x1b[?1049h\x1b[H\x1b[2J", "\x1b[H\x1b[2J\x1b[?1049l"
 PEM_Q = r"private key \(\.pem; [^)]*\), empty to skip:"
 DOCKER_LOGINS = ((TOKEN_Q, TOKEN), (PEM_Q, ""))
 REMOVE_Q = r"Remove all of this\? \[y/N\]"
@@ -1097,6 +1099,40 @@ class InstallTest(Case):
         self.assert_ok(result)
         self.assertIn("claude setup-token", self.calls())
         self.assertIn("agent-pm-broker login claude", self.calls())
+
+    def test_setup_token_on_a_cleared_alternate_screen(self):
+        """The token setup-token prints and its paste stay on the alternate screen, cleared before leaving it."""
+        result = self.fresh(clients="claude", docker="y")
+        self.assert_ok(result)
+        self.assertEqual((result.tty.count(SCREEN_ON), result.tty.count(SCREEN_OFF)), (1, 1))
+        on = result.tty.index(SCREEN_ON)
+        off = result.tty.index(SCREEN_OFF)
+        self.assertLess(on, off)
+        shown = [m.start() for m in re.finditer(re.escape(TOKEN), result.tty)]
+        self.assertTrue(shown)
+        self.assertTrue(all(on < at < off for at in shown), result.tty)
+        self.assertRegex(result.tty[on:off], TOKEN_Q)
+        self.assertIn("    setup-token saved in the broker; its screen is cleared\n", result.stderr)
+        self.assertEqual((self.fakes / "broker/claude_token").read_text(), TOKEN)
+        self.assert_secret_free(TOKEN, result=result)
+
+    def test_setup_token_failure_leaves_the_alternate_screen(self):
+        """A failed setup-token or broker login waits for Enter on that screen, then leaves it and stops."""
+        failed = "install.sh: broker login: Claude failed; rerun the same command to continue\n"
+        self.assert_ok(self.fresh("--no-docker", clients="claude"))
+        config = [(WRITE_Q, "y")]
+        for call in ("claude setup-token", "agent-pm-broker login claude"):
+            with self.subTest(call=call):
+                (self.fakes / "fail").write_text(call)
+                result = self.again("--docker", answers=[*config, (LEAVE_Q, "")])
+                config = []
+                self.assertEqual(result.code, 1, result.stderr)
+                on = result.tty.index(SCREEN_ON)
+                self.assertGreater(result.tty.index(LEAVE_Q.replace("\\", ""), on), on)
+                self.assertTrue(result.tty.endswith(SCREEN_OFF), result.tty[-200:])
+                self.assertEqual(result.stderr.count(failed), 1, result.stderr)
+                self.assertNotIn("setup-token saved in the broker", result.stderr)
+                self.assertNotIn("login_claude", self.state())
 
     def test_terminal_without_a_device_name(self):
         (self.fakes / "tty_name").write_text("??\n")

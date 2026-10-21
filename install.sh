@@ -41,6 +41,7 @@ feeder=
 askpass_dir=
 current=
 answer=
+token_screen=
 pkg=
 user_path=$PATH
 reload=
@@ -305,6 +306,7 @@ state_set() {
 
 on_exit() {
   local rc=$?
+  token_screen_leave
   sudo_end
   if [ "$rc" -ne 0 ] && [ -n "$current" ]; then
     say "$me: $current failed; rerun the same command to continue"
@@ -1364,6 +1366,20 @@ to_terminal() {
   done
 }
 
+# The token screen: the terminal's alternate screen, which keeps no scrollback, cleared on entering and on leaving,
+# for claude setup-token's token and its paste.
+token_screen_enter() {
+  printf '\033[?1049h\033[H\033[2J' >&3
+  token_screen=1
+}
+
+token_screen_leave() {
+  if [ -n "$token_screen" ]; then
+    printf '\033[H\033[2J\033[?1049l' >&3
+    token_screen=
+  fi
+}
+
 broker_logins() {
   local sha min need said slug
   sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
@@ -1373,10 +1389,15 @@ broker_logins() {
   elif [ "$(state_get login_claude)" = "$sha" ]; then
     skip "done for this broker"
   else
-    say "Create a token with claude setup-token, then paste it at the broker's prompt"
+    say "Create a token with claude setup-token, then paste it at the broker's prompt; both run on a screen cleared afterwards"
     record_item agent-pm-claude default
-    claude setup-token <&3 >&3 2>&3
-    "$broker" login claude <&3 >&3 2>&3
+    token_screen_enter
+    if ! { claude setup-token <&3 >&3 2>&3 && "$broker" login claude <&3 >&3 2>&3; }; then
+      ask "Press Enter to leave this screen:"
+      exit 1
+    fi
+    token_screen_leave
+    say "    setup-token saved in the broker; its screen is cleared"
     state_set login_claude "$sha"
   fi
   step "broker login: GitHub"
