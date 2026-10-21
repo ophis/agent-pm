@@ -402,7 +402,7 @@ var (
 		"bootstrap: existing Codex credentials are unreadable",
 		"bootstrap: existing Codex credentials belong to another account",
 	}
-	codexWriteFailure = regexp.MustCompile(`^bootstrap: cannot write managed Codex credentials: [A-Za-z '-]{1,64}$`)
+	codexWriteFailure = regexp.MustCompile(`^bootstrap: cannot write managed Codex credentials: [A-Za-z '/-]{1,64}$`)
 )
 
 func writerCause(err error) string {
