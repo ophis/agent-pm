@@ -1981,7 +1981,10 @@ class InstallTest(Case):
         runtime.parent.rmdir()
         data.parent.rmdir()
         board.rmdir()
-        self.assert_ok(self.cleanup("--yes"))
+        result = self.cleanup()
+        self.assert_ok(result)
+        self.assertIn("nothing recorded by install.sh; nothing to remove", result.stderr)
+        self.assertFalse([c for c in self.calls() if c.startswith("sudo")])
         self.assertFalse(board.exists())
 
     def test_board_local_cleanup_keeps_router_state(self):
