@@ -42,6 +42,7 @@ REAL = (
     "tr",
     "mktemp",
     "mkfifo",
+    "stty",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 FAKED += ("xcode-select", "ps", "sw_vers", "lipo")

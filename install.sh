@@ -498,7 +498,9 @@ ask_valid() {
 # The checklist on the terminal: up/down (or k/j) move, space ticks, Enter confirms. labels[] are its items, ticks[]
 # their 1/0, in and out.
 checklist() {
-  local n=${#labels[@]} at=0 i key rest mark drawn=
+  local n=${#labels[@]} at=0 i key rest mark drawn= saved
+  saved=$(stty -g <&3)
+  stty -echo <&3
   printf 'Choose what to install (up/down move, space ticks, Enter confirms):\n' >&3
   while :; do
     if [ -n "$drawn" ]; then printf '\033[%dA' "$n" >&3; fi
@@ -508,7 +510,10 @@ checklist() {
       if [ "${ticks[i]}" = 1 ]; then mark=x; fi
       if [ "$i" = "$at" ]; then printf '\r\033[K> [%s] %s\n' "$mark" "${labels[i]}" >&3; else printf '\r\033[K  [%s] %s\n' "$mark" "${labels[i]}" >&3; fi
     done
-    IFS= read -rsn1 -d '' key <&3 || die "no answer on the terminal"
+    if ! IFS= read -rsn1 -d '' key <&3; then
+      stty "$saved" <&3
+      die "no answer on the terminal"
+    fi
     case $key in
       $'\033')
         IFS= read -rsn2 rest <&3 || rest=
@@ -520,7 +525,10 @@ checklist() {
       k) at=$(((at + n - 1) % n)) ;;
       j) at=$(((at + 1) % n)) ;;
       ' ') ticks[at]=$((1 - ticks[at])) ;;
-      $'\n' | $'\r') return 0 ;;
+      $'\n' | $'\r')
+        stty "$saved" <&3
+        return 0
+        ;;
     esac
   done
 }
