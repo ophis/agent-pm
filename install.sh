@@ -1289,6 +1289,27 @@ terminal() {
   printf '%s' "$root/dev/tty"
 }
 
+# The banner a finished install ends with, a line at a time on a terminal.
+celebrate() {
+  local line pause=
+  if [ -t 2 ]; then pause=0.08; fi
+  while IFS= read -r line; do
+    say "$line"
+    if [ -n "$pause" ]; then sleep "$pause"; fi
+  done <<'EOF'
+
+                        _
+  __ _  __ _  ___ _ __ | |_      _ __  _ __ ___
+ / _` |/ _` |/ _ \ '_ \| __|____| '_ \| '_ ` _ \
+| (_| | (_| |  __/ | | | ||_____| |_) | | | | | |
+ \__,_|\__, |\___|_| |_|\__|    | .__/|_| |_| |_|
+       |___/                    |_|
+
+EOF
+  say "agent-pm is installed (ref $ref, clients $clients, Docker $docker)."
+  say "Welcome aboard, and congrats: your crew is ready. Open a commander with ctmux <name>."
+}
+
 main() {
   local platform
   set +x
@@ -1317,7 +1338,7 @@ main() {
   linear_keys
   board_jobs
   current=
-  say "agent-pm is installed (ref $ref, clients $clients, Docker $docker)."
+  celebrate
 }
 
 main "$@"

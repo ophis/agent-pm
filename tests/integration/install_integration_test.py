@@ -474,6 +474,12 @@ class InstallTest(Case):
         profile = Path(self.home, ".zprofile").read_text()
         self.assertIn(f'eval "$({self.root}/opt/homebrew/bin/brew shellenv)"\n', profile)
         self.assertTrue(result.stderr.endswith(RELOAD + "\n"), result.stderr)
+        self.assertIn("| (_| | (_| |  __/ | | | ||_____| |_) | | | | | |\n", result.stderr)
+        self.assertIn(
+            "agent-pm is installed (ref main, clients claude,codex, Docker no).\n"
+            "Welcome aboard, and congrats: your crew is ready.",
+            result.stderr,
+        )
         self.assertIn("Log in to gh in your browser.", result.tty)
         self.assertEqual(self.state()["docker"], "no")
         self.assertEqual(self.state()["clients"], "claude,codex")
