@@ -1813,7 +1813,7 @@ class InstallTest(Case):
         self.linear()
         result = self.configured(
             HAND_CONFIG.replace('tracker = "linear"', 'tracker = "local"'),
-            then=[*self.keys(*SLOTS), *BOARD],
+            then=[*self.keys(*SLOTS), (PROJECT_Q, "ophis/widget"), (WRITE_Q, "y"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
         self.assertEqual(

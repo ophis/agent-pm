@@ -627,7 +627,7 @@ answers() {
     if [ "${ticks[4]}" = 1 ]; then board=yes; else board=no; fi
   fi
   board_tracker=$(state_get board_tracker)
-  [ -n "$board_tracker" ] || board_tracker=$(configured_tracker)
+  if [ "$board" = yes ] && [ -z "$board_tracker" ]; then board_tracker=$(configured_tracker); fi
   case $board_tracker in local | linear) ;; *) board_tracker=local ;; esac
   case $board_flag in local | linear) board_tracker=$board_flag ;; esac
   board_jobs_choice=${jobs_flag:-$(state_get board_jobs)}
