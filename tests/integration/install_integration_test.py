@@ -727,19 +727,19 @@ class InstallTest(Case):
             "# Written by install.sh. Keys and defaults: each layer's packaged config.toml "
             "(its `# local:` lines);\n# the Linear board: docs/board.md#setup.\n"
             '[session.hosts]\ndefault = "docker"\n\n[delegate]\nclient = "codex"\n\n'
-            '[session.hosts.docker]\nplugins = []\n\n[delegate.delegates]\nharness_host = "tmux"\n',
+            '[delegate.delegates]\nharness_host = "tmux"\n',
         )
         cases = (
             (
                 '# mine\n[session.hosts]\ndefault = "tmux" # x\n\n[other]\nx = 1\n',
                 '# mine\n[session.hosts]\ndefault = "docker"\n\n[other]\nx = 1\n\n'
-                '[delegate]\nclient = "codex"\n\n[session.hosts.docker]\nplugins = []\n\n'
+                '[delegate]\nclient = "codex"\n\n'
                 '[delegate.delegates]\nharness_host = "tmux"\n',
             ),
             (
                 '[delegate.delegates]\n\n[session.hosts]\ndefault = "docker"\n[delegate]\nclient = "codex"\n',
                 '[delegate.delegates]\nharness_host = "tmux"\n\n[session.hosts]\ndefault = "docker"\n'
-                '[delegate]\nclient = "codex"\n\n[session.hosts.docker]\nplugins = []\n',
+                '[delegate]\nclient = "codex"\n',
             ),
         )
         for before, after in cases:
@@ -863,6 +863,37 @@ class InstallTest(Case):
                 "claude plugin enable autopilot@claude-autopilot",
             ],
         )
+
+    def test_docker_installs_only_agent_pm_plugins_on_host(self):
+        self.assert_ok(self.fresh(docker="y"))
+        self.assertEqual(
+            self.plugin_calls(),
+            [
+                "claude plugin marketplace add ophis/agent-pm",
+                "claude plugin install agent-pm@agent-pm",
+                "codex plugin marketplace add ophis/agent-pm",
+                "codex plugin add agent-pm@agent-pm",
+            ],
+        )
+
+    def test_docker_does_not_enable_existing_disabled_autopilot(self):
+        self.assert_ok(self.fresh())
+        for client in ("claude", "codex"):
+            path = Path(self.fakes, client, "plugins.json")
+            path.write_text(path.read_text().replace("true", "false"))
+        self.assert_ok(
+            self.again("--docker", answers=[(WRITE_Q, "y"), (TOKEN_Q, TOKEN), (PEM_Q, "")])
+        )
+        self.assertNotIn("autopilot", "\n".join(self.plugin_calls()))
+
+    def test_docker_keeps_an_explicit_image_plugin_list(self):
+        self.assert_ok(self.fresh(clients="claude", docker="y"))
+        self.config().write_text(
+            self.config().read_text()
+            + '\n[session.hosts.docker]\nplugins = ["custom@owner/repo"]\n'
+        )
+        self.assert_ok(self.again("--clients", "codex", "--docker", answers=[(WRITE_Q, "y")]))
+        self.assertIn('plugins = ["custom@owner/repo"]', self.config().read_text())
 
     def test_fresh_install(self):
         result = self.fresh(docker="y")
@@ -1467,11 +1498,22 @@ class InstallTest(Case):
         self.assertNotIn("opencode plugin", calls)
         self.assertNotIn("api.github.com", calls)
 
-    def test_docker_without_claude_stages_no_plugins(self):
-        """The broker stages plugins from Claude Code's install record; Codex or OpenCode alone has none."""
+    def test_codex_only_docker_keeps_default_image_plugins(self):
         result = self.fresh("--clients", "codex", "--docker", logins=[(PEM_Q, "")])
         self.assert_ok(result)
-        self.assertIn("[session.hosts.docker]\nplugins = []\n", self.config().read_text())
+        self.assertNotIn("plugins =", self.config().read_text())
+        self.assertNotIn("autopilot", "\n".join(self.plugin_calls()))
+
+    def test_opencode_only_docker_keeps_default_image_plugins(self):
+        result = self.fresh(
+            clients="opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(PEM_Q, ""), (r"OpenCode provider lan API key \(hidden\):", KEY)],
+        )
+        self.assert_ok(result)
+        self.assertNotIn("plugins =", self.config().read_text())
+        self.assertFalse(self.plugin_calls())
 
     def test_cleanup_round_trip_opencode_only(self):
         conf = Path(self.home, ".config/opencode")
