@@ -170,8 +170,9 @@ credential.
 - The pinned native app-server refreshes the account in a private temporary home (as in
   [Login trust](#login-trust)), with bounded output and a 120 s deadline. The broker requires the same account, a
   changed access value, a later expiry and a verified keychain readback; it never sends an upstream refresh itself.
-- Publication replaces the effective `CODEX_HOME/auth.json`, also after Codex replaced its original link, and
-  saves the expiry durably before GitHub renewal, so a lost response or GitHub failure cannot erase it; retries
+- Publication replaces `/run/agent-pm/secrets/codex/auth.json` and points `CODEX_HOME/auth.json` at it again
+  when Codex replaced or removed that link; it writes nothing else into `CODEX_HOME`, whose tmpfs Codex's own state
+  fills. It saves the expiry durably before GitHub renewal, so a lost response or GitHub failure cannot erase it; retries
   repair publication on their own.
 - The terminal keeps its launch, permissions and history. By pinned source ([Plan A](#plan-a-validation-report)
   evidence), it reloads proactively within 300 s of the old access expiry, and reloads same-account state on an
