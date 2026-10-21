@@ -2,7 +2,8 @@
 
 Every call is logged to $LOG (argv) and $ENVLOG (environment values). State lives under
 $FAKES: brew/<name> (installed), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
-broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once).
+broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once), tty_name
+(what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty).
 """
 
 import base64
@@ -51,6 +52,19 @@ def uname(_args):
 
 def id_(_args):
     out("501\n")
+
+
+def ps(_args):
+    out((FAKES / "tty_name").read_text() if (FAKES / "tty_name").exists() else "??\n")
+
+
+def bun(name):
+    """None, or 1 after Bun's error when stdin is the terminal macOS's kqueue refuses."""
+    refused = FAKES / "kqueue_refuses"
+    if refused.exists() and os.isatty(0) and os.ttyname(0) == refused.read_text():
+        out(f"{name}: error: EINVAL: invalid argument, kqueue\n", sys.stderr)
+        return 1
+    return None
 
 
 def sudo(args):
@@ -165,6 +179,8 @@ def marketplace_name(source):
 
 
 def claude(args):
+    if args in (["auth", "login"], ["setup-token"]) and bun("claude"):
+        return 1
     done = login("claude", args, ["auth", "status"], ["auth", "login"], ["auth", "logout"])
     if done is not None:
         return done
@@ -374,6 +390,8 @@ def opencode(args):
         out((FAKES / "opencode_version").read_text() + "\n")
         return 0
     if args == ["auth", "login"]:
+        if bun("opencode"):
+            return 1
         out("Provider: ")
         name = sys.stdin.readline().strip()
         out("API key: ")
@@ -389,6 +407,7 @@ def opencode(args):
 TOOLS = {
     "uname": uname,
     "id": id_,
+    "ps": ps,
     "sudo": sudo,
     "curl": curl,
     "brew": brew,

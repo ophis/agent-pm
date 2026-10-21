@@ -42,7 +42,7 @@ REAL = (
     "tr",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
-FAKED += ("xcode-select",)
+FAKED += ("xcode-select", "ps")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -166,6 +166,7 @@ class InstallTest(Case):
             executable(self.fakes / "apps" / app, wrapper.format(sys.executable, FAKE_TOOLS, app))
         (self.fakes / "sudo_password").write_text(PASSWORD)
         (self.fakes / "claude_token").write_text(TOKEN)
+        (self.fakes / "tty_name").write_text("ttys001\n")
         (self.root / "dev").mkdir(parents=True)
         self.pkg_src = self.fakes / "pkg-src"
         executable(self.pkg_src / "broker/install.sh", BROKER_INSTALL)
@@ -190,13 +191,16 @@ class InstallTest(Case):
             "AGENT_PM_INSTALL_ROOT": str(self.root),
         }
 
-    def run_install(self, *args, answers=(), stdin=None, tty=True, script=SCRIPT):
+    def run_install(self, *args, answers=(), stdin=None, tty=True, script=SCRIPT, ctty=None):
+        """`ctty`: what /dev/tty opens, else the terminal, which is also /dev/ttys001."""
         self.log.unlink(missing_ok=True)
         terminal = Tty() if tty else None
-        link = self.root / "dev/tty"
-        link.unlink(missing_ok=True)
+        links = (self.root / "dev/tty", self.root / "dev/ttys001")
+        for link in links:
+            link.unlink(missing_ok=True)
         if terminal:
-            link.symlink_to(terminal.path)
+            links[0].symlink_to(ctty or terminal.path)
+            links[1].symlink_to(terminal.path)
         out, err = Path(self.home, "stdout"), Path(self.home, "stderr")
         try:
             with out.open("w") as stdout, err.open("w") as stderr:
@@ -231,8 +235,12 @@ class InstallTest(Case):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def run_calls(self):
-        """The calls, sorted, but the keep-alive's: pipelines and the keep-alive interleave."""
-        return sorted(c for c in self.calls() if c != "sudo -n -v")
+        """The calls, sorted, but the keep-alive's and the terminal lookup's (its pid varies):
+        pipelines and the keep-alive interleave.
+        """
+        return sorted(
+            c for c in self.calls() if c != "sudo -n -v" and not c.startswith("ps -o tty= -p ")
+        )
 
     def state(self):
         path = Path(self.agent_pm, "install/state")
@@ -257,7 +265,7 @@ class InstallTest(Case):
             for name, text in texts.items():
                 self.assertNotIn(secret, text, name)
 
-    def fresh(self, *args, clients="", docker="n", opencode=(), logins=None):
+    def fresh(self, *args, clients="", docker="n", opencode=(), logins=None, ctty=None):
         """A first run answering every question: brew profile line, clients, Docker, the
         OpenCode provider, the config, the Docker logins and the PATH line.
         """
@@ -269,7 +277,7 @@ class InstallTest(Case):
         answers += [(CLIENTS_Q, clients)] if "--clients" not in args else []
         answers += [(DOCKER_Q, docker)] if not {"--docker", "--no-docker"} & set(args) else []
         answers += [*opencode, (WRITE_Q, "y"), *(logins or ()), (WRITE_Q, "y")]
-        return self.run_install(*args, answers=answers)
+        return self.run_install(*args, answers=answers, ctty=ctty)
 
     def again(self, *args, answers=()):
         return self.run_install(*args, answers=[(SUDO_Q, PASSWORD), *answers])
@@ -824,6 +832,37 @@ class InstallTest(Case):
         self.assertNotIn("opencode auth login", self.calls())
         self.assertNotIn("npm install", "\n".join(self.calls()))
         self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def refused_tty(self):
+        """Another terminal as /dev/tty, which the Bun-built clients die on, as macOS's kqueue does."""
+        master, slave = os.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        (self.fakes / "kqueue_refuses").write_text(os.ttyname(slave))
+        return os.ttyname(slave)
+
+    def test_logins_use_the_terminal_device(self):
+        result = self.fresh(
+            "--no-docker",
+            clients="claude,opencode",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+            ctty=self.refused_tty(),
+        )
+        self.assert_ok(result)
+        self.assertIn("claude auth login", self.calls())
+        self.assertIn("opencode auth login", self.calls())
+
+    def test_broker_logins_use_the_terminal_device(self):
+        result = self.fresh(clients="claude", docker="y", ctty=self.refused_tty())
+        self.assert_ok(result)
+        self.assertIn("claude setup-token", self.calls())
+        self.assertIn("agent-pm-broker login claude", self.calls())
+
+    def test_terminal_without_a_device_name(self):
+        (self.fakes / "tty_name").write_text("??\n")
+        self.assert_ok(self.fresh())
+        self.assertIn("claude auth login", self.calls())
 
     def test_opencode_key_from_stdin(self):
         self.auth_json().parent.mkdir(parents=True)
