@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import re
@@ -141,16 +142,22 @@ def inject_codex(stream, secrets=None, directory=None):
             output.write(raw)
         os.replace(staged, secret)
         if not managed:
-            pointer = directory / f".auth-link-{os.getpid()}"
-            pointer.unlink(missing_ok=True)
-            os.symlink(secret, pointer)
+            while True:
+                candidate = directory / f".auth-link-{os.urandom(16).hex()}"
+                try:
+                    os.symlink(secret, candidate)
+                except FileExistsError:
+                    continue
+                pointer = candidate
+                break
             os.replace(pointer, link)
     except OSError as error:
         reject(f"cannot write managed Codex credentials: {error.strerror or type(error).__name__}")
     finally:
         for path in (staged, pointer):
             if path is not None:
-                path.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
 
 
 def stage_runtime(stream, root=Path("/run/agent-pm")):
