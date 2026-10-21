@@ -74,7 +74,7 @@ usage: $synopsis
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
   --docker                    run workers in Docker: Docker Desktop, the broker and its logins
   --no-docker                 run workers on the local tmux Host; no Docker
-  --board, --no-board         install, or not, the Linear board's keys and launchd jobs (when the config names one)
+  --board, --no-board         set up, or not, the Linear board: its keys, configuration and launchd jobs
   --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
   --opencode-url <url>        its base URL, ending /v1
   --opencode-model <model>    its model
@@ -588,9 +588,9 @@ answers() {
     if [ "$default" = docker ]; then docker=yes; else docker=no; fi
   fi
   board=${board_flag:-$(state_get board)}
-  board=${board:-yes}
+  board=${board:-no}
   if [ -z "$clients_flag" ] || [ -z "$docker_flag" ]; then
-    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board launchd jobs and Linear keys (with a Linear board)")
+    labels=("Claude Code" "Codex" "OpenCode" "Docker workers (Docker Desktop and the agent-pm broker)" "Board: Linear keys, configuration and launchd jobs (a Linear board set up per docs/board.md)")
     ticks=()
     for item in "${names[@]}"; do
       if has "$item"; then ticks+=(1); else ticks+=(0); fi

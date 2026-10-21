@@ -139,7 +139,7 @@ Result = namedtuple("Result", "code stdout stderr tty")
 ITEMS = ("claude", "codex", "opencode", "docker", "board")
 
 
-def menu(want, have=("claude", "codex", "board")):
+def menu(want, have=("claude", "codex")):
     """The checklist keys that turn the ticked items `have` into `want`: space where they differ, down to the
     next item; the answer's newline confirms."""
     return "".join((" " if (i in want) != (i in have) else "") + "\x1b[B" for i in ITEMS)
@@ -323,12 +323,13 @@ class InstallTest(Case):
         answers = [(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
         if "--clients" not in args or not {"--docker", "--no-docker"} & set(args):
             on = "--docker" in args or ("--no-docker" not in args and docker == "y")
-            have = ("claude", "codex", "board")
+            have = ("claude", "codex", *(("board",) if "--board" in args else ()))
             if "--clients" in args:
-                have = (*chosen.split(","), "board")
+                have = chosen.split(",")
             if "--docker" in args:
                 have = (*have, "docker")
-            want = (*(chosen or "claude,codex").split(","), *(("docker",) if on else ()), "board")
+            want = (*(chosen or "claude,codex").split(","), *(("docker",) if on else ()))
+            want = (*want, *(("board",) if "--board" in args else ()))
             answers.append((MENU_Q, menu(want, have)))
         plugin = [(WRITE_Q, "y")] if "opencode" in (chosen or "") else []
         answers += [*opencode, (WRITE_Q, "y"), *plugin, *(logins or ()), (WRITE_Q, "y")]
@@ -544,8 +545,8 @@ class InstallTest(Case):
         self.assertTrue(result.stderr.endswith(RELOAD + "\n"), result.stderr)
 
     def test_checklist(self):
-        """j/k move too; no client ticked asks again; an unticked board skips its steps."""
-        keys = " j jjj "
+        """j/k move too; no client ticked asks again; a first run leaves the board unticked, which skips its steps."""
+        keys = " j jjj"
         result = self.run_install(
             answers=[
                 (SUDO_Q, PASSWORD),
@@ -561,6 +562,7 @@ class InstallTest(Case):
             (self.state()["clients"], self.state()["docker"], self.state()["board"]),
             ("codex", "no", "no"),
         )
+        self.assertIn("  [ ] Board: Linear keys, configuration and launchd jobs", result.tty)
         self.assertIn("==> board launchd jobs\n    skip: board not chosen", result.stderr)
         self.assertIn("==> Linear keys\n    skip: board not chosen", result.stderr)
 
@@ -574,10 +576,18 @@ class InstallTest(Case):
     def test_answers_kept_and_flags_override(self):
         self.assert_ok(self.fresh(clients="claude", docker="y"))
         self.assertEqual((self.state()["clients"], self.state()["docker"]), ("claude", "yes"))
+        self.assertEqual(self.state()["board"], "no")
         self.assertNotIn("brew install --cask codex", self.calls())
         result = self.again()
         self.assert_ok(result)
-        for line in ("> [x] Claude Code", "  [ ] Codex", "  [ ] OpenCode", "  [x] Docker workers"):
+        lines = (
+            "> [x] Claude Code",
+            "  [ ] Codex",
+            "  [ ] OpenCode",
+            "  [x] Docker workers",
+            "  [ ] Board",
+        )
+        for line in lines:
             self.assertIn(line, result.tty)
         result = self.again("--clients", "claude,codex")
         self.assert_ok(result)
@@ -802,7 +812,7 @@ class InstallTest(Case):
             answers=[
                 (SUDO_Q, PASSWORD),
                 (WRITE_Q, "y"),
-                (MENU_Q, menu(("claude", "codex", "docker", "board"))),
+                (MENU_Q, menu(("claude", "codex", "docker"))),
                 (WRITE_Q, "y"),
             ]
         )
@@ -1051,7 +1061,7 @@ class InstallTest(Case):
             answers=[
                 (SUDO_Q, PASSWORD),
                 (WRITE_Q, "y"),
-                (MENU_Q, menu(("claude", "opencode", "board"))),
+                (MENU_Q, menu(("claude", "opencode"))),
                 (PROVIDER_Q, "ollama"),
                 (PROVIDER_Q, "lan.1"),
                 (PROVIDER_Q, "lan"),
@@ -1472,7 +1482,7 @@ class InstallTest(Case):
             self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)
 
     def test_linear_keys_and_board_jobs(self):
-        result = self.fresh()
+        result = self.fresh("--board")
         self.assert_ok(result)
         self.assertIn('skip: no tracker = "linear"', result.stderr)
         self.assertIn("==> board launchd jobs\n    skip: no Linear board", result.stderr)
@@ -1955,7 +1965,7 @@ class InstallTest(Case):
 
     def board_install(self):
         """A fresh install, then the Linear board set up and the installer run again for its keys and jobs."""
-        self.assert_ok(self.fresh("--no-docker"))
+        self.assert_ok(self.fresh("--no-docker", "--board"))
         first = self.run_calls()
         linear = (
             '\n[orchestrator]\ntracker = "linear"\n\n[orchestrator.linear]\n'
