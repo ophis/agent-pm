@@ -230,6 +230,10 @@ class InstallTest(Case):
     def calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
+    def run_calls(self):
+        """The calls, sorted, but the keep-alive's: pipelines and the keep-alive interleave."""
+        return sorted(c for c in self.calls() if c != "sudo -n -v")
+
     def state(self):
         path = Path(self.agent_pm, "install/state")
         lines = path.read_text().splitlines() if path.exists() else []
@@ -1160,7 +1164,7 @@ class InstallTest(Case):
         before = self.snapshot()
         first = self.full()
         self.assert_ok(first)
-        calls, ledger, files = self.calls(), self.ledger(), self.snapshot()
+        calls, ledger, files = self.run_calls(), self.ledger(), self.snapshot()
         result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
         self.assert_ok(result)
         self.assertEqual(self.snapshot(), before)
@@ -1171,12 +1175,13 @@ class InstallTest(Case):
         self.assert_secret_free(PASSWORD, KEY, TOKEN, result=result)
         second = self.full()
         self.assert_ok(second)
-        self.assertEqual(self.calls(), calls)
+        self.assertEqual(self.run_calls(), calls)
         self.assertEqual(self.ledger(), ledger)
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
 
-    def test_cleanup_removes_only_what_was_added(self):
+    def preinstalled_homebrew(self):
+        """Homebrew with gh and the Command Line Tools, there before install.sh; PATH lacks its bin."""
         prefix = Path(self.root, "opt/homebrew/bin")
         prefix.mkdir(parents=True)
         for app in ("brew", "gh"):
@@ -1184,6 +1189,9 @@ class InstallTest(Case):
         (self.fakes / "brew").mkdir()
         (self.fakes / "brew/gh").touch()
         Path(self.root, "Library/Developer/CommandLineTools").mkdir(parents=True)
+
+    def test_cleanup_removes_only_what_was_added(self):
+        self.preinstalled_homebrew()
         profile = Path(self.home, ".zprofile")
         profile.write_text("export EDITOR=vim\n")
         mine = '# mine\n[session.hosts]\ndefault = "tmux"\n'
@@ -1202,15 +1210,85 @@ class InstallTest(Case):
         self.assertEqual(self.snapshot(), before)
         self.assertTrue((self.fakes / "brew/gh").exists())
         self.assertTrue((self.fakes / "keychain/agent-pm-claude").exists())
+        self.assertNotIn("brew uninstall gh", self.calls())
+
+    def test_cleanup_without_brew_on_path(self):
+        self.preinstalled_homebrew()
+        self.assert_ok(self.fresh("--no-docker"))
+        self.assertNotIn(str(self.root), self.env["PATH"])
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
         calls = self.calls()
         for done in (
-            "brew uninstall --cask codex",
-            "brew uninstall --cask docker-desktop",
+            "codex plugin remove agent-pm@agent-pm",
+            "claude plugin uninstall agent-pm@agent-pm",
+            "claude plugin marketplace remove agent-pm",
+            "gh auth logout --hostname github.com",
             "claude auth logout",
+            "codex logout",
+            "brew uninstall --cask codex",
+            "brew uninstall --cask claude-code",
+            "brew uninstall tmux",
         ):
             self.assertIn(done, calls)
-        self.assertNotIn("brew uninstall gh", calls)
         self.assertEqual(list((self.fakes / "login").iterdir()), [])
+
+    def test_cleanup_keeps_a_failed_removal(self):
+        self.assert_ok(self.fresh("--no-docker"))
+        (self.fakes / "fail").write_text("claude plugin marketplace remove agent-pm")
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1)
+        self.assertIn("removing claude-marketplace agent-pm failed", result.stderr)
+        self.assertIn("claude-marketplace\tagent-pm", self.ledger())
+        self.assertNotIn("codex-plugin\tagent-pm@agent-pm", self.ledger())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm, "install").exists())
+
+    def board_install(self):
+        """A fresh install, then the Linear board set up and the installer run again for its keys and jobs."""
+        self.assert_ok(self.fresh("--no-docker"))
+        first = self.run_calls()
+        linear = (
+            '\n[orchestrator]\ntracker = "linear"\n\n[orchestrator.linear]\n'
+            'harness_key = "linear-harness"\nmanager_key = "linear-manager"\n'
+        )
+        self.config().write_text(self.config().read_text() + linear)
+        key = r"password data for new item:"
+        self.assert_ok(self.again(answers=[(key, "k1"), (key, "k2"), (WRITE_Q, "y")]))
+        return first + self.run_calls()
+
+    def test_cleanup_round_trip_with_board(self):
+        before = self.snapshot()
+        calls = self.board_install()
+        files = self.snapshot()
+        result = self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n")
+        self.assert_ok(result)
+        uid_calls = [c for c in self.calls() if c.startswith("launchctl bootout")]
+        self.assertEqual(len(uid_calls), 2)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list((self.fakes / "keychain").iterdir()), [])
+        self.assertEqual(self.board_install(), calls)
+        self.assertEqual(self.snapshot(), files)
+
+    def test_cleanup_round_trip_opencode_tmux(self):
+        def install():
+            result = self.fresh(
+                "--no-docker",
+                clients="claude,opencode",
+                opencode=PROVIDER_ANSWERS,
+                logins=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+            )
+            self.assert_ok(result)
+            return self.run_calls()
+
+        before = self.snapshot()
+        calls = install()
+        files = self.snapshot()
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(self.auth_json().exists())
+        self.assertEqual(install(), calls)
+        self.assertEqual(self.snapshot(), files)
 
     def test_cleanup_keeps_user_profile_lines(self):
         self.assert_ok(self.fresh("--no-docker"))
@@ -1249,9 +1327,23 @@ class InstallTest(Case):
 
     def test_cleanup_helpers_match(self):
         install, cleanup = SCRIPT.read_text(), CLEANUP.read_text()
+        pattern_line = re.compile(r"^name_pattern=.*$", re.M)
+        self.assertEqual(
+            pattern_line.search(cleanup).group(0), pattern_line.search(install).group(0)
+        )
         for name in SHARED:
             pattern = rf"^{name}\(\) \{{(?:[^\n]*\}}$|\n.*?^\}})"
             ours = re.search(pattern, install, re.S | re.M)
             theirs = re.search(pattern, cleanup, re.S | re.M)
             self.assertIsNotNone(theirs, name)
             self.assertEqual(theirs.group(0), ours.group(0), name)
+
+    def test_profile_without_a_final_newline(self):
+        profile = Path(self.home, ".zprofile")
+        profile.write_text("export EDITOR=vim")
+        self.assert_ok(self.fresh("--no-docker"))
+        lines = profile.read_text().splitlines()
+        self.assertEqual(lines[0], "export EDITOR=vim")
+        self.assertTrue(lines[1].startswith("eval "), lines)
+        self.assert_ok(self.again())
+        self.assertEqual(len(profile.read_text().splitlines()), 3)

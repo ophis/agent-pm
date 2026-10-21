@@ -328,6 +328,7 @@ profile_line() {
   elif consent "$file" "$1"; then
     if [ ! -e "$file" ]; then ledger_add profile-file "$file"; fi
     ledger_add profile "$file" "$1"
+    if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then printf '\n' >>"$file"; fi
     printf '%s\n' "$1" >>"$file"
   else
     skip declined
@@ -697,14 +698,17 @@ sys.exit(0 if m.get("source") == source and (ref == "*" or m.get("ref", "") in r
     "${CODEX_HOME:-$HOME/.codex}/config.toml" "$1" "$2" "$3"
 }
 
-codex_plugin_on() {
+# Exit 0: plugin $1 installed and enabled; 1: absent; 2: disabled.
+codex_plugin() {
   codex plugin list --json </dev/null | python3 -I -c '
 import json, sys
-sys.exit(0 if any(p.get("pluginId") == sys.argv[1] and p.get("enabled") for p in json.load(sys.stdin).get("installed", [])) else 1)' "$1"
+found = [p for p in json.load(sys.stdin).get("installed", []) if p.get("pluginId") == sys.argv[1]]
+sys.exit(1 if not found else 0 if found[0].get("enabled") else 2)' "$1"
 }
 
+# A re-pointed marketplace (rc 2) existed before, and so may its plugin: neither is recorded.
 claude_plugins() {
-  local source=ophis/agent-pm rc id
+  local source=ophis/agent-pm rc id repointed=
   [ "$ref" = main ] || source="ophis/agent-pm#$ref"
   step "Claude Code plugins"
   if ! has claude; then
@@ -718,6 +722,7 @@ claude_plugins() {
   else
     if [ "$rc" = 2 ]; then
       say "    marketplace agent-pm has another source: re-adding it from $source"
+      repointed=1
       claude plugin uninstall agent-pm@agent-pm </dev/null >&2 || true
       claude plugin marketplace remove agent-pm </dev/null >&2
     fi
@@ -739,7 +744,7 @@ claude_plugins() {
       0) skip "$id installed" ;;
       2) claude plugin enable "$id" </dev/null >&2 ;;
       *)
-        ledger_add claude-plugin "$id"
+        if [ -z "$repointed" ] || [ "$id" != agent-pm@agent-pm ]; then ledger_add claude-plugin "$id"; fi
         claude plugin install "$id" </dev/null >&2
         ;;
     esac
@@ -747,7 +752,7 @@ claude_plugins() {
 }
 
 codex_plugins() {
-  local rc id
+  local rc id repointed=
   step "Codex plugins"
   if ! has codex; then
     skip "Codex not chosen"
@@ -760,6 +765,7 @@ codex_plugins() {
   else
     if [ "$rc" = 2 ]; then
       say "    marketplace agent-pm has another source: re-adding it at $ref"
+      repointed=1
       codex plugin remove agent-pm@agent-pm </dev/null >&2 || true
       codex plugin marketplace remove agent-pm </dev/null >&2
     fi
@@ -779,12 +785,16 @@ codex_plugins() {
     skip "marketplace claude-autopilot"
   fi
   for id in agent-pm@agent-pm autopilot@claude-autopilot; do
-    if codex_plugin_on "$id"; then
-      skip "$id installed"
-    else
-      ledger_add codex-plugin "$id"
-      codex plugin add "$id" </dev/null >&2
-    fi
+    rc=0
+    codex_plugin "$id" || rc=$?
+    case $rc in
+      0) skip "$id installed" ;;
+      2) codex plugin add "$id" </dev/null >&2 ;;
+      *)
+        if [ -z "$repointed" ] || [ "$id" != agent-pm@agent-pm ]; then ledger_add codex-plugin "$id"; fi
+        codex plugin add "$id" </dev/null >&2
+        ;;
+    esac
   done
 }
 
@@ -986,7 +996,7 @@ store_app_key() {
   done
   id=$answer
   ledger_add keychain agent-pm-bot "$id"
-  key=$(base64 -i "$pem")
+  key=$(base64 -i "$pem") && [ -n "$key" ] || die "cannot read $pem"
   printf 'add-generic-password -s agent-pm-bot -a %s -U -w %s %s\n' "$id" "$key" \
     "$HOME/Library/Keychains/login.keychain-db" | security -i >/dev/null 2>&1 || true
   unset key
@@ -1176,6 +1186,7 @@ board_jobs() {
   fi
   uid=$(id -u)
   record_agent_dir "$HOME/.agent-pm/logs"
+  record_dir "$HOME/Library/LaunchAgents"
   mkdir -p "$HOME/.agent-pm/logs" "$HOME/Library/LaunchAgents"
   for job in $offered; do
     ledger_add launchd "$job"

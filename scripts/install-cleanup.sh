@@ -237,24 +237,33 @@ broker_files() {
   drop broker
 }
 
-# gone <list command...> <name>: exit 0 when the JSON list the command prints lacks <name>.
-codex_listed() {
-  codex plugin list --json </dev/null | python3 -I -c '
-import json, sys
-sys.exit(0 if any(p.get("pluginId") == sys.argv[1] for p in json.load(sys.stdin).get("installed", [])) else 1)' "$1"
-}
-
-codex_market_listed() {
-  codex plugin marketplace list --json </dev/null | python3 -I -c '
-import json, sys
-sys.exit(0 if any(m.get("name") == sys.argv[1] for m in json.load(sys.stdin).get("marketplaces", [])) else 1)' "$1"
-}
-
-claude_listed() {
-  claude plugin "$1" --json </dev/null | python3 -I -c '
-import json, sys
-key = "id" if sys.argv[1] == "list" else "name"
-sys.exit(0 if any(p.get(key) == sys.argv[2] for p in json.load(sys.stdin)) else 1)' "$1" "$2"
+# still <kind> <name>: after a failed remove, exit 0 when the client still lists it, 1 when it is gone;
+# a list that cannot be read fails the Step, the record kept.
+still() {
+  local listing
+  case $1 in
+    codex-plugin) listing=$(codex plugin list --json </dev/null) ;;
+    claude-plugin) listing=$(claude plugin list --json </dev/null) ;;
+    claude-marketplace) listing=$(claude plugin marketplace list --json </dev/null) ;;
+    codex-marketplace) listing=$(cat "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null || true) ;;
+  esac || die "cannot list $1 to check $2"
+  python3 -I -c '
+import json, sys, tomllib
+kind, name, text = sys.argv[1], sys.argv[2], sys.stdin.read()
+try:
+    if kind == "codex-marketplace":
+        found = name in tomllib.loads(text).get("marketplaces", {})
+    else:
+        data = json.loads(text)
+        items = data.get("installed", []) if kind == "codex-plugin" else data
+        key = {"codex-plugin": "pluginId", "claude-plugin": "id", "claude-marketplace": "name"}[kind]
+        found = any(item.get(key) == name for item in items)
+except (ValueError, AttributeError, tomllib.TOMLDecodeError):
+    sys.exit(2)
+sys.exit(0 if found else 1)' "$1" "$2" <<<"$listing" || {
+    [ $? = 1 ] && return 1
+    die "cannot read the $1 list to check $2"
+  }
 }
 
 plugins() {
@@ -263,26 +272,11 @@ plugins() {
   while IFS=$'\t' read -r kind name; do
     [ -n "$name" ] || continue
     case $kind in
-      codex-plugin)
-        need codex
-        codex plugin remove "$name" </dev/null >&2 || ! codex_listed "$name" || die "codex plugin remove $name failed"
-        ;;
-      codex-marketplace)
-        need codex
-        codex plugin marketplace remove "$name" </dev/null >&2 || ! codex_market_listed "$name" \
-          || die "codex plugin marketplace remove $name failed"
-        ;;
-      claude-plugin)
-        need claude
-        claude plugin uninstall "$name" </dev/null >&2 || ! claude_listed list "$name" \
-          || die "claude plugin uninstall $name failed"
-        ;;
-      claude-marketplace)
-        need claude
-        claude plugin marketplace remove "$name" </dev/null >&2 || ! claude_listed "marketplace list" "$name" \
-          || die "claude plugin marketplace remove $name failed"
-        ;;
-    esac
+      codex-plugin) need codex && codex plugin remove "$name" </dev/null >&2 ;;
+      codex-marketplace) need codex && codex plugin marketplace remove "$name" </dev/null >&2 ;;
+      claude-plugin) need claude && claude plugin uninstall "$name" </dev/null >&2 ;;
+      claude-marketplace) need claude && claude plugin marketplace remove "$name" </dev/null >&2 ;;
+    esac || ! still "$kind" "$name" || die "removing $kind $name failed; its record stays for a rerun"
     drop "$kind"$'\t'"$name"
   done <<<"$(of_kind codex-plugin; of_kind codex-marketplace; of_kind claude-plugin; of_kind claude-marketplace)"
 }
@@ -384,7 +378,12 @@ brew_packages() {
     if [ "$kind" = cask ]; then
       if brew list --cask "$name" </dev/null >/dev/null 2>&1; then brew uninstall --cask "$name" </dev/null >&2; fi
     elif brew list --formula "$name" </dev/null >/dev/null 2>&1; then
-      if ! reason=$(brew uninstall "$name" </dev/null 2>&1); then say "    kept $name: $reason"; fi
+      if ! reason=$(brew uninstall "$name" </dev/null 2>&1); then
+        case $reason in
+          *"required by"*) say "    kept $name: $reason" ;;
+          *) die "brew uninstall $name failed: $reason" ;;
+        esac
+      fi
     fi
     drop "$kind"$'\t'"$name"
   done <<<"$(grep -E '^(cask|formula)'$'\t' "$ledger" | sed -n '1!G;h;$p' || true)"
@@ -453,6 +452,9 @@ main() {
   homebrew_and_clt
   files_and_dirs
   step "~/.agent-pm"
+  if grep -vx "dir"$'\t'"$HOME/.agent-pm" "$ledger" | grep -q .; then
+    die "records no step removed are left in $ledger"
+  fi
   rm -rf "$state_dir"
   if [ -n "$agent_root" ]; then rm -rf "$HOME/.agent-pm"; fi
   current=

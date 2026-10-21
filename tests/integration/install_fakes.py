@@ -13,7 +13,7 @@ import shutil
 import sys
 from pathlib import Path
 
-FAKES = Path(os.environ["FAKES"])
+FAKES = Path(os.environ.get("FAKES", "/nonexistent"))
 ROOT = Path(os.environ.get("AGENT_PM_INSTALL_ROOT", "/nonexistent"))
 PREFIX = ROOT / "opt/homebrew"
 BROKER = ROOT / "usr/local/libexec/agent-pm/agent-pm-broker"
@@ -231,9 +231,6 @@ def codex(args):
         markets.pop(args[3])
     elif args == ["plugin", "list", "--json"]:
         out(json.dumps({"installed": plugins, "available": []}))
-        return 0
-    elif args == ["plugin", "marketplace", "list", "--json"]:
-        out(json.dumps({"marketplaces": [{"name": name} for name in markets]}))
         return 0
     elif args[:2] == ["plugin", "add"]:
         plugins.append({"pluginId": args[2], "installed": True, "enabled": True})
