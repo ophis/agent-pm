@@ -228,6 +228,10 @@ func TestStatusErrorRedactsCredentials(t *testing.T) {
 		"github token": "Rejected ghs_fakeResponseCredential",
 		"PAT":          "Rejected github_pat_fakeResponseCredential",
 		"JWT":          "Rejected " + jwt,
+		"JWT adjacent": "prefix" + jwt,
+		"JWT dotted":   "prefix." + jwt,
+		"JWT suffix":   jwt + ".suffix",
+		"unsigned JWT": strings.TrimSuffix(jwt, "fake-signature"),
 		"private key":  "-----BEGIN RSA PRIVATE KEY-----\nfake-key-material\n-----END RSA PRIVATE KEY-----",
 		"cut token":    strings.Repeat("a", 195) + "ghs_fakeResponseCredential",
 	} {
@@ -240,7 +244,8 @@ func TestStatusErrorRedactsCredentials(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			for _, secret := range []string{bearer, "ghs_", "github_pat_", jwt, "fake-key-material", "PRIVATE KEY", "access_token"} {
+			secrets := append(strings.Split(jwt, "."), bearer, "ghs_", "github_pat_", "fake-key-material", "PRIVATE KEY", "access_token")
+			for _, secret := range secrets {
 				if strings.Contains(err.Error(), secret) {
 					t.Fatal("credential or query leaked in error")
 				}

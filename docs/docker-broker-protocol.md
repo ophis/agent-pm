@@ -232,7 +232,7 @@ The common `error` definition validates the exit/code/command combination. Examp
 | `12` | `workspace_dirty` | workspace-rm | The check found unsaved work; `message` names each repo (relative to the mount point) and the `--force` command |
 | `13` | `workspace_rejected` | workspace-rm | The volume has no `agent-pm.kind` label, or its `agent-pm.workspace` path is not clean, absolute and outside the container's own trees |
 | `14` | `workspace_failed` | workspace-rm | No worker image, the check failed or printed no result, or deletion failed |
-| `15` | `github_failed` | start/refresh | A GitHub request failed (unexpected HTTP status: method, URL path without query, status and the JSON `message` field only, credential-redacted and truncated to 200 Unicode characters; invalid or oversized JSON omits the field), or the App private key is unusable |
+| `15` | `github_failed` | start/refresh | A GitHub request failed (unexpected HTTP status: method, URL path without query, status and the JSON `message` field only, credential-redacted and truncated to 200 Unicode characters; invalid or oversized JSON omits the field), or the App private key is unusable. Redaction conservatively hides whole JWT-shaped dotted sequences, including ordinary domains or version numbers |
 | `16` | `refresh_failed` | refresh | No tokens recorded for the container, it was closed during the refresh, writing a credential into it failed, or publishing its Codex deadline failed |
 | `70` | `internal_error` | All, or `unknown` | Unexpected broker failure |
 

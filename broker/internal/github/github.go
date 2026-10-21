@@ -73,7 +73,7 @@ func (e *StatusError) Error() string {
 
 var (
 	githubToken = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+`)
-	jwtToken    = regexp.MustCompile(`\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`)
+	jwtToken    = regexp.MustCompile(`[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){2,}`)
 )
 
 // redact removes credentials before truncation so no partial token can escape at the boundary.
@@ -81,19 +81,13 @@ func redact(text, bearer string) string {
 	if strings.Contains(text, "PRIVATE KEY") {
 		return "[redacted]"
 	}
+	text = githubToken.ReplaceAllString(text, "[redacted]")
+	// Hide the whole dotted sequence, including adjacent text, rather than trusting a candidate header.
+	text = jwtToken.ReplaceAllString(text, "[redacted]")
 	if bearer != "" {
 		text = strings.ReplaceAll(text, bearer, "[redacted]")
 	}
-	text = githubToken.ReplaceAllString(text, "[redacted]")
-	return jwtToken.ReplaceAllStringFunc(text, func(candidate string) string {
-		header, _, _ := strings.Cut(candidate, ".")
-		decoded, err := base64.RawURLEncoding.DecodeString(header)
-		var fields map[string]json.RawMessage
-		if err == nil && json.Unmarshal(decoded, &fields) == nil && fields != nil {
-			return "[redacted]"
-		}
-		return candidate
-	})
+	return text
 }
 
 type transportError struct{ op string }
