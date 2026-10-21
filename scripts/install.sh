@@ -2,7 +2,7 @@
 # Installs agent-pm on an Apple silicon Mac from nothing: dependencies, then your configuration
 # (clients, Docker, OpenCode provider, the board) into ~/.agent-pm/config.local.toml, then only what it needs.
 # Asks sudo once, every login on the spot, and before writing your files. Rerun to finish or check.
-#   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
+#   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install.sh | bash -s -- [flags]
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
 set -euo pipefail
 
@@ -56,7 +56,7 @@ name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
 url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
 model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
 context_pattern='^[1-9][0-9]{0,8}$'
-synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board <local|linear> | --no-board] [--launchd | --no-launchd] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
+synopsis='scripts/install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--board <local|linear> | --no-board] [--launchd | --no-launchd] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-context <tokens>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -73,7 +73,7 @@ usage() {
   cat <<EOF
 usage: $synopsis
 
-  curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
+  curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install.sh | bash -s -- [flags]
 
   --ref <ref>                 git branch or tag of ophis/agent-pm to install the plugin and broker from (default main)
   --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode)
@@ -90,7 +90,7 @@ usage: $synopsis
   --password-stdin            read the sudo password from stdin (first line, before the key)
 
 With --password-stdin or --opencode-key-stdin, stdin cannot carry the script:
-  security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh)" install.sh --password-stdin
+  security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/scripts/install.sh)" scripts/install.sh --password-stdin
 
 Without --clients and --docker/--no-docker it shows a checklist of what to install (a rerun ticks the last
 choices). It installs the dependencies, asks what the flags leave open, writes ~/.agent-pm/config.local.toml,

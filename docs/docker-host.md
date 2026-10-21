@@ -17,13 +17,13 @@ the installed agent-pm plugin directory.
 
 Needs Docker Desktop (running) and `gh` (logged in).
 
-`install.sh` installs Docker Desktop with the `docker-desktop` cask, stops unless its binary's CPU types include
+`scripts/install.sh` installs Docker Desktop with the `docker-desktop` cask, stops unless its binary's CPU types include
 `uname -m` and its `LSMinimumSystemVersion` is at most `sw_vers`, and starts it once without its windows: its own
 `Contents/MacOS/install --accept-license --user=<you>` (with the `sudo` password it holds), then
 `UseVirtualizationFrameworkRosetta: false` and `DisplayedOnboarding: true` in
 `~/Library/Group Containers/group.com.docker/settings-store.json` (settings already there are kept).
 
-**Rosetta** stays off and `install.sh` never installs it: the worker image is arm64. For an amd64-only base image in
+**Rosetta** stays off and `scripts/install.sh` never installs it: the worker image is arm64. For an amd64-only base image in
 your Dockerfile, run `softwareupdate --install-rosetta`, then turn on Docker Desktop › Settings › General › **Use Rosetta
 for x86_64/amd64 emulation on Apple Silicon**. Rosetta cannot be uninstalled, so `scripts/install-cleanup.sh` cannot
 undo it.
@@ -85,7 +85,7 @@ Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
 **GitHub**: the private key of your one GitHub App ([create it](#create-the-github-app)), whatever its name, must be
 a generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the key. Let the
-broker create it from the downloaded `.pem` (`install.sh` does), so the key never goes on a command line:
+broker create it from the downloaded `.pem` (`scripts/install.sh` does), so the key never goes on a command line:
 
 ```sh
 "$B" login github agent-pm-bot --key-file <key>.pem --app-id <App ID>   # then delete <key>.pem
@@ -101,7 +101,7 @@ and what is not: rerun it. Then it asks GitHub which App the key is (`GET /app`,
 on GitHub's public user API (no credential; needs network) and keeps both in the broker-only item
 `agent-pm-github-users`, for the containers' git identity; it prints
 `GitHub App <slug> bot user <slug>[bot] has ID <ID>`. Set `[session.hosts.docker.github] app = "<slug>"` in
-`~/.agent-pm/config.local.toml` (`install.sh` writes it): a start naming another App is `manifest_rejected`. The App must be private (installable only on your account): every session gets a token for every repo of
+`~/.agent-pm/config.local.toml` (`scripts/install.sh` writes it): a start naming another App is `manifest_rejected`. The App must be private (installable only on your account): every session gets a token for every repo of
 every installation.
 
 Checks: [Docker checks › GitHub login](docker-checks.md#github-login).
@@ -119,7 +119,7 @@ reads it back. A Docker OpenCode start needs every configured provider's key: a 
 
 ### Create the GitHub App
 
-`install.sh` does not create it. In GitHub › Settings › Developer settings › GitHub Apps › New GitHub App:
+`scripts/install.sh` does not create it. In GitHub › Settings › Developer settings › GitHub Apps › New GitHub App:
 
 1. Owned by you, installable **Only on this account** (private).
 2. Webhook: off (clear **Active**).
@@ -127,7 +127,7 @@ reads it back. A Docker OpenCode start needs every configured provider's key: a 
 4. Create it, note its **App ID**, then **Generate a private key** (a `.pem` download).
 5. **Install App** on only the repositories agents may push to.
 
-Then store the key and run `login github` as [above](#log-in); `install.sh` asks for the `.pem` and the App ID, does
+Then store the key and run `login github` as [above](#log-in); `scripts/install.sh` asks for the `.pem` and the App ID, does
 both and writes the App's slug to `github.app`.
 
 ## Build
@@ -184,7 +184,7 @@ same original `skills/*/SKILL.md` files and keeps their relative references. Cod
 
 Invalid sources and duplicate plugin names fail before Docker; marketplace, installation or metadata failures
 fail the image build. Selecting a plugin trusts its code, hooks and servers beside the container's credentials.
-`install.sh --docker` installs agent-pm on the host and leaves autopilot installation to the image;
+`scripts/install.sh --docker` installs agent-pm on the host and leaves autopilot installation to the image;
 `--no-docker` also installs autopilot for the selected host Claude/Codex clients.
 
 Checks: [Docker checks › Plugins](docker-checks.md#plugins).

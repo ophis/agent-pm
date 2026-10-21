@@ -238,7 +238,9 @@ func TestCodexWriteFailureCodeAndCause(t *testing.T) {
 	}{
 		{"known", "Traceback (most recent call last):\n  File x\n" + full + "\n", full, nil},
 		{"fixed", "bootstrap: existing Codex credentials belong to another account\n", "bootstrap: existing Codex credentials belong to another account", nil},
+		{"slash", "bootstrap: cannot write managed Codex credentials: Input/output error\n", "bootstrap: cannot write managed Codex credentials: Input/output error", nil},
 		{"forged", "bootstrap: cannot write managed Codex credentials: eyJ.fake-id-secret.sig\n", "credential writer exited 1 without a known diagnostic", nil},
+		{"forged digits", "bootstrap: cannot write managed Codex credentials: fake/secret/42\n", "credential writer exited 1 without a known diagnostic", nil},
 		{"other", "fake-account-secret\n", "credential writer exited 1 without a known diagnostic", nil},
 		{"command", "", "credential writer failed", errors.New("context canceled")},
 	} {

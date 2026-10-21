@@ -389,7 +389,7 @@ def main(image):
                     "--env",
                     f"CODEX_HOME={home}",
                     "--tmpfs",
-                    f"{home}:rw,noexec,nosuid,nodev,size=67108864{owner}",
+                    f"{home}:rw,noexec,nosuid,nodev,size=1073741824{owner}",
                     "--tmpfs",
                     f"/run/agent-pm:rw,noexec,nosuid,nodev,size=1048576{owner}",
                     "--tmpfs",

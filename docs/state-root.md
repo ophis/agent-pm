@@ -58,7 +58,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. With `tracker = "lin
 | `hidden/<name>.json` | each write of one (a `--display none` start, `show`, `hide`): an entry unwritten for 30 days whose tmux session is gone | any time: that session then reads not hidden |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody: your working directory | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
-| `docker/worker/` | nobody | never: your image definition; with it gone, `install.sh` seeds the default again |
+| `docker/worker/` | nobody | never: your image definition; with it gone, `scripts/install.sh` seeds the default again |
 | `docker-state/<name>/` | each new Docker start of that name remakes its client config dir; restart and resume keep it | once you won't restart or resume that session |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
