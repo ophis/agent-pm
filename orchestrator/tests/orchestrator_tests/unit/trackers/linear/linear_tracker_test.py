@@ -1248,6 +1248,24 @@ class Rechecks(Case):
                     ),
                 )
 
+    def test_a_missing_issue_is_not_ready(self):
+        for reply in (LinearError("linear api error: Entity not found: Issue"), {"issue": None}):
+            with self.subTest(reply=reply):
+                self.assertEqual(
+                    tracker(Gql(Q_RECHECK=reply)).recheck("TASK-9"),
+                    Recheck(
+                        ready=False,
+                        role=None,
+                        refused=None,
+                        assignee=None,
+                        home=None,
+                        task=Pick(),
+                        client=Pick(),
+                    ),
+                )
+        with self.assertRaises(LinearError):
+            tracker(Gql(Q_RECHECK=LinearError("linear api error: HTTP 400"))).recheck("TASK-9")
+
     def test_a_todo_id_shared_with_another_key_stays_ready(self):
         team = replace(TEAM_OBJ, states={**TEAM_OBJ.states, "in_progress": STATES["todo"]})
         gql = Gql(Q_RECHECK=rechecked(STATES["todo"]))

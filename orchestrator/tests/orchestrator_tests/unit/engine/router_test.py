@@ -3763,16 +3763,33 @@ class ExplicitIssueRuns(TickBase):
                 issue("TASK-2", "Todo", "someone"),
                 issue("TASK-3", "Todo"),
                 issue("TASK-4", "In Progress", "someone"),
-                issue("TASK-5", "Todo", "researcher", project=None),
             ]
         )
-        for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-9"):
+        for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-9"):
             with self.subTest(ident=ident):
                 self.assertEqual(self.tick(fake, "--issue", ident), 2)
                 self.assertEqual(
                     self.said(),
                     [f"pick-none {ident} reason=not a Todo issue assigned to a role account"],
                 )
+                self.assertEqual((self.start.launches, fake.mutations, self.state), ([], [], ""))
+
+    def test_no_project_is_the_reason_given(self):
+        fake = FakeLinear(
+            [
+                issue("TASK-5", "Todo", "researcher", project=None),
+                issue("TASK-6", "In Review", "researcher", project=None),
+            ]
+        )
+        for ident, dry, reason in (
+            ("TASK-5", False, "no project"),
+            ("TASK-5", True, "no project"),
+            ("TASK-6", False, "not a Todo issue assigned to a role account; no project"),
+        ):
+            with self.subTest(ident=ident, dry=dry):
+                code = self.tick(fake, "--issue", ident, *["--dry-run"] * dry)
+                self.assertEqual(code, 0 if dry else 2)
+                self.assertEqual(self.said(), [f"pick-none {ident} reason={reason}"])
                 self.assertEqual((self.start.launches, fake.mutations, self.state), ([], [], ""))
 
 

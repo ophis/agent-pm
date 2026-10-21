@@ -378,8 +378,23 @@ class LinearTracker(Tracker):
 
     def recheck(self, key):
         """ready: in the configured Todo state id, whatever other key shares it; refused without
-        a project."""
-        found = self.gql(Q_RECHECK, i=key)["issue"]
+        a project; no such issue: not ready."""
+        try:
+            found = self.gql(Q_RECHECK, i=key)["issue"]
+        except LinearError as e:
+            if not ops.not_found(e):
+                raise
+            found = None
+        if found is None:
+            return Recheck(
+                ready=False,
+                role=None,
+                refused=None,
+                assignee=None,
+                home=None,
+                task=Pick(),
+                client=Pick(),
+            )
         ready = found["state"]["id"] == _need("states", self.state_ids)[State.TODO]
         nodes = found["labels"]["nodes"]
         return Recheck(
