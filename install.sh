@@ -324,9 +324,6 @@ record_library() {
   done
 }
 
-# Records a directory under ~/.agent-pm, unless ~/.agent-pm itself is the installer's.
-record_agent_dir() { recorded dir "$HOME/.agent-pm" || record_dir "$1"; }
-
 # Records keychain item $1 / $2 when it does not exist yet.
 record_item() {
   security find-generic-password -s "$1" -a "$2" </dev/null >/dev/null 2>&1 || ledger_add keychain "$1" "$2"
@@ -1115,7 +1112,7 @@ opencode_install() {
   fi
   version=$(opencode_version)
   formula node
-  record_agent_dir "$opencode_prefix"
+  record_dir "$opencode_prefix"
   record_dir "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
   record_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   record_dir "${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
@@ -1314,10 +1311,10 @@ ctmux_install() {
   if [ -n "$missing" ]; then
     if [ -d "$HOME/.agent-pm/bin" ]; then
       for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchestrator; do
-        recorded dir "$HOME/.agent-pm" || [ -e "$HOME/.agent-pm/bin/$name" ] || ledger_add file "$HOME/.agent-pm/bin/$name"
+        [ -e "$HOME/.agent-pm/bin/$name" ] || ledger_add file "$HOME/.agent-pm/bin/$name"
       done
     else
-      record_agent_dir "$HOME/.agent-pm/bin"
+      record_dir "$HOME/.agent-pm/bin"
     fi
     "$pkg/manager/skills/manage/scripts/ctmux" --install </dev/null >&2
   else
@@ -1418,7 +1415,7 @@ broker_install() {
   docker_running
   step broker
   [ -e "$root/usr/local/libexec/agent-pm" ] || ledger_add broker
-  record_agent_dir "$HOME/.agent-pm/docker"
+  record_dir "$HOME/.agent-pm/docker"
   if [ "$ref" = main ]; then
     sh "$pkg/broker/install.sh" </dev/null >&2
   else
@@ -2038,7 +2035,7 @@ board_jobs() {
     return
   fi
   uid=$(id -u)
-  record_agent_dir "$HOME/.agent-pm/logs"
+  record_dir "$HOME/.agent-pm/logs"
   record_dir "$HOME/Library/LaunchAgents"
   mkdir -p "$HOME/.agent-pm/logs" "$HOME/Library/LaunchAgents"
   for job in $offered; do

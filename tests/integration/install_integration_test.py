@@ -1714,7 +1714,7 @@ class InstallTest(Case):
                     ],
                 )
                 if tomllib.loads(self.config().read_text())["orchestrator"]["tracker"] == "local":
-                    directory = orchestrator_config.load().board
+                    directory = orchestrator_config._board()
                     self.assertEqual(directory, str(Path(self.agent_pm, "board").resolve()))
                     self.assertEqual(local_board.scan(directory), ())
                 self.assertNotIn("AGENT_PM_BOARD_DIR", data["EnvironmentVariables"])
@@ -1958,6 +1958,8 @@ class InstallTest(Case):
         ledger = Path(self.agent_pm, "install/added")
         ledger.write_text(ledger.read_text() + "keychain\tlinear-pm\tlinear-pm\n")
         self.assertIn(f"board-dir\t{board}", self.ledger())
+        self.assertIn(f"dir\t{self.agent_pm}/bin", self.ledger())
+        self.assertIn(f"dir\t{self.agent_pm}/logs", self.ledger())
         result = self.cleanup("--yes")
         self.assert_ok(result)
         self.assertEqual(data.read_text(), "keep")
@@ -2464,6 +2466,7 @@ class InstallTest(Case):
                 "codex-marketplace\tclaude-autopilot",
                 "codex-plugin\tagent-pm@agent-pm",
                 "codex-plugin\tautopilot@claude-autopilot",
+                f"dir\t{h}/.agent-pm/bin",
                 f'profile\t{h}/.zprofile\texport PATH="$HOME/.agent-pm/bin:$PATH"',
             ],
         )
