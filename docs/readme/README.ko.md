@@ -124,7 +124,5 @@ agent-pm이 시작하는 session이 당신의 설정을 어떻게 불러오는�
 | [Customizing roles and tasks](../customizing-roles-and-tasks.md) | 실행 설정, team 디렉터리, role과 task 파일, 검사 |
 | [Board](../board.md) | 설정, issue 상태와 task 라벨, router 운영, Agent 라벨(issue별 client), 로컬 보드(`tracker`, `AGENT_PM_BOARD_DIR`, 구조, 파일 형식) |
 | [Sessions and client policy](../sessions.md) | session 설정, `agent-pm-session`, role run의 client 플래그, OpenCode session |
-| [State root](../state-root.md) | `~/.agent-pm/` 구조, 각 항목을 정리하는 주체, 삭제해도 되는 것 |
 | [Upgrading](../upgrading.md) | v0.6.20부터의 업그레이드 단계 |
-| [Core architecture](../architecture.md) | 레이어와 패키지(개발자) |
 | [Tests](../tests.md) | lint, 테스트 스위트, 커버리지, 로컬 모델로 판정할 수 있는 실기 테스트(개발자) |
