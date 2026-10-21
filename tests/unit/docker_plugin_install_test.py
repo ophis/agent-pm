@@ -190,6 +190,29 @@ class PluginInstall(Case):
             self.code["main"]([str(source), str(self.root)])
         self.assertTrue((self.root / "plugins/autopilot/skills/build/SKILL.md").is_file())
 
+    def test_invalid_marketplace_names_stop_before_other_client_or_plugin_install(self):
+        for index, name in enumerate((None, 42, [], {}, "", "../escape", "a" * 65)):
+            with self.subTest(name=name):
+                self.root = Path(self.home, f"market-{index}")
+                self.calls = []
+
+                def bad_marketplace(argv, *, name=name, **kw):
+                    result = self.client_run(argv, **kw)
+                    if argv[:4] == ["claude", "plugin", "marketplace", "add"]:
+                        manifest = (
+                            Path(kw["env"]["CLAUDE_CONFIG_DIR"])
+                            / "plugins/marketplaces/claude-autopilot/.claude-plugin/marketplace.json"
+                        )
+                        manifest.write_text(json.dumps({"name": name}))
+                    return result
+
+                with self.assertRaisesRegex(ValueError, "invalid marketplace name"):
+                    self.install([self.plugins[0]], run=bad_marketplace)
+                self.assertEqual(
+                    [argv for argv, _ in self.calls],
+                    [["claude", "plugin", "marketplace", "add", "ophis/claude-autopilot"]],
+                )
+
     def test_main_requires_input_file_and_absolute_root(self):
         for argv in ([], ["input"], ["input", "relative"]):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
