@@ -72,8 +72,8 @@ dialog and once without, proving Always Allow was clicked.
 
 Checks: [Docker checks › Claude login](docker-checks.md#claude-login).
 
-**GitHub**: the private key of the one GitHub App, `agent-pm-bot`, must be a generic-password item in the login
-keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
+**GitHub**: the private key of the one GitHub App, `agent-pm-bot` ([create it](#create-the-github-app)), must be a
+generic-password item in the login keychain, service `agent-pm-bot`, account its App ID, content the base64 key. Store it so (a bare `-w` prompts and
 truncates the key at 128 characters):
 
 ```sh
@@ -101,6 +101,18 @@ It saves the key in a new broker-only item `agent-pm-opencode` / `<name>`, repla
 only the broker (prompt `Login keychain password, to make the <name> API key trust only the broker (hidden):`) and
 reads it back. A Docker OpenCode start needs every configured provider's key: a missing one fails with
 `login_required`, naming this command.
+
+### Create the GitHub App
+
+`install.sh` does not create it. In GitHub › Settings › Developer settings › GitHub Apps › New GitHub App:
+
+1. Owned by you, installable **Only on this account** (private).
+2. Webhook: off (clear **Active**).
+3. Repository permissions: Contents and Pull requests **Read and write**; Checks, Actions and Metadata **Read-only**.
+4. Create it, note its **App ID**, then **Generate a private key** (a `.pem` download).
+5. **Install App** on only the repositories agents may push to.
+
+Then store the key and run `login github` as [above](#log-in); `install.sh` asks for the `.pem` and the App ID and does both.
 
 ## Build
 

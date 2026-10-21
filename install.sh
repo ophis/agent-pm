@@ -1127,7 +1127,7 @@ broker_logins() {
   if [ "$(state_get login_github)" = "$sha" ]; then
     skip "done for this broker"
   elif ! security find-generic-password -s agent-pm-bot </dev/null >/dev/null 2>&1 && ! store_app_key; then
-    skip "no agent-pm-bot App key (docs/docker-host.md#log-in)"
+    skip "no GitHub App key: create the App by docs/docker-host.md#create-the-github-app, then rerun"
   else
     record_item agent-pm-github-users agent-pm-bot
     "$broker" login github agent-pm-bot <&3 >&3 2>&3

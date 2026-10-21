@@ -686,7 +686,10 @@ class InstallTest(Case):
             calls.index("claude setup-token"), calls.index("agent-pm-broker login claude")
         )
         self.assertEqual((self.fakes / "broker/claude_token").read_text(), TOKEN)
-        self.assertIn("skip: no agent-pm-bot App key", result.stderr)
+        self.assertIn(
+            "skip: no GitHub App key: create the App by docs/docker-host.md#create-the-github-app",
+            result.stderr,
+        )
         state = self.state()
         self.assertEqual(state["github_app_key"], "skipped")
         self.assertEqual(len(state["login_claude"]), 64)
@@ -741,7 +744,10 @@ class InstallTest(Case):
         result = self.again()
         self.assert_ok(result)
         self.assertNotRegex(result.tty, PEM_Q)
-        self.assertIn("skip: no agent-pm-bot App key", result.stderr)
+        self.assertIn(
+            "skip: no GitHub App key: create the App by docs/docker-host.md#create-the-github-app",
+            result.stderr,
+        )
         (self.fakes / "keychain").mkdir(exist_ok=True)
         (self.fakes / "keychain/agent-pm-bot").write_text("stored by hand")
         self.assert_ok(self.again())
