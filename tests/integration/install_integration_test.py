@@ -44,7 +44,7 @@ REAL = (
     "stty",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum")
-FAKED += ("xcode-select", "ps", "sw_vers", "lipo")
+FAKED += ("xcode-select", "ps", "sw_vers", "lipo", "pgrep", "pkill")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -1765,6 +1765,35 @@ class InstallTest(Case):
         self.assertEqual(self.ledger(), ledger)
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
+
+    def test_cleanup_stops_docker_processes(self):
+        """What still runs from Docker.app after its cask is gone ends; nothing else is signalled."""
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        agent = (
+            f"{self.root}/Applications/Docker.app/Contents/Resources/cli-plugins/docker-agent serve"
+        )
+        others = [f"{self.root}/Applications/DockerXapp/Contents/MacOS/x", f"/bin/sh {agent}"]
+        processes = self.fakes / "processes"
+        self.assertEqual(processes.read_text().splitlines(), [agent])
+        processes.write_text("".join(f"{line}\n" for line in [agent, *others]))
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertEqual(processes.read_text().splitlines(), others)
+        calls = self.calls()
+        kill = next(c for c in calls if c.startswith("pkill -TERM -f "))
+        self.assertLess(calls.index("brew uninstall --cask docker-desktop"), calls.index(kill))
+        self.assertNotIn("pkill -KILL", "\n".join(calls))
+
+    def test_cleanup_fails_on_an_unkillable_docker_process(self):
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        (self.fakes / "unkillable").write_text((self.fakes / "processes").read_text())
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1, result.stderr)
+        self.assertIn(
+            "install-cleanup.sh: Docker Desktop processes still running: 1\n", result.stderr
+        )
+        self.assertIn("pkill -KILL", "\n".join(self.calls()))
+        self.assertIn("cask\tdocker-desktop", self.ledger())
 
     def test_cleanup_needs_full_disk_access_for_a_container(self):
         """macOS lets only Full Disk Access remove an app container: without it nothing is removed."""

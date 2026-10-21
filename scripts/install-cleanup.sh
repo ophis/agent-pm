@@ -469,6 +469,21 @@ opencode_configs() {
   done <<<"$(of_kind opencode-config)"
 }
 
+# Ends what still runs from Docker.app once its cask is gone (its quit misses helpers such as docker-agent): TERM, up to
+# 10 seconds, then KILL; matched by the literal command-line prefix, so nothing else is signalled.
+docker_processes() {
+  local pattern left tries
+  pattern=^$(printf '%s' "$root/Applications/Docker.app/" | sed 's/[]$*.^+?(){}|[\]/\\&/g')
+  pkill -TERM -f "$pattern" </dev/null || return 0
+  for tries in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$pattern" </dev/null >/dev/null || return 0
+    sleep 1
+  done
+  pkill -KILL -f "$pattern" </dev/null || true
+  sleep 1
+  if left=$(pgrep -f "$pattern" </dev/null); then die "Docker Desktop processes still running: ${left//$'\n'/ }"; fi
+}
+
 brew_packages() {
   local kind name reason
   step "Homebrew packages"
@@ -487,6 +502,7 @@ brew_packages() {
         fi
       fi
       if brew list --cask "$name" </dev/null >/dev/null 2>&1; then brew uninstall --cask "$name" </dev/null >&2; fi
+      if [ "$name" = docker-desktop ]; then docker_processes; fi
     elif brew list --formula "$name" </dev/null >/dev/null 2>&1; then
       if ! reason=$(brew uninstall "$name" </dev/null 2>&1); then
         case $reason in

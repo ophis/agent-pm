@@ -1,7 +1,7 @@
 """Fake macOS tools for install_integration_test: run as `install_fakes.py <tool> <args>`.
 
 Every call is logged to $LOG (argv) and $ENVLOG (environment values). State lives under
-$FAKES: brew/<name> (installed), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
+$FAKES: brew/<name> (installed), processes (one running command line each; unkillable: those KILL misses), login/<client>, keychain/<service>, claude/ and codex/ (plugins),
 broker/ (the broker's Codex install and tokens), fail (a call prefix that fails once), tty_name
 (what `ps -o tty=` reports), kqueue_refuses (a terminal the Bun-built clients die on, as on /dev/tty),
 commit (the commit GitHub reports for every agent-pm ref).
@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -413,9 +414,41 @@ def open_(args):
         if not (FAKES / "docker_started").exists():
             with open(Path(os.environ["HOME"], ".zprofile"), "a") as profile:
                 profile.write(DOCKER_BLOCK.format(home=os.environ["HOME"]))
+            agent = ROOT / "Applications/Docker.app/Contents/Resources/cli-plugins/docker-agent"
+            mark(
+                FAKES / "processes",
+                "".join(f"{line}\n" for line in [*processes(), f"{agent} serve"]),
+            )
             mark(FAKES / "docker_started")
         mark(FAKES / "docker_running")
     return 0
+
+
+def processes():
+    path = FAKES / "processes"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def pgrep(args):
+    """pgrep -f <regex>: the 1-based line numbers of the matching processes as their pids."""
+    pattern = re.compile(args[args.index("-f") + 1])
+    found = [str(n) for n, line in enumerate(processes(), 1) if pattern.search(line)]
+    out("".join(f"{pid}\n" for pid in found))
+    return 0 if found else 1
+
+
+def pkill(args):
+    """pkill -TERM|-KILL -f <regex>: ends the matching processes, but none listed in $FAKES/unkillable."""
+    pattern = re.compile(args[args.index("-f") + 1])
+    stays = (
+        set((FAKES / "unkillable").read_text().splitlines())
+        if (FAKES / "unkillable").exists()
+        else set()
+    )
+    running = processes()
+    kept = [line for line in running if not pattern.search(line) or line in stays]
+    mark(FAKES / "processes", "".join(f"{line}\n" for line in kept))
+    return 0 if any(pattern.search(line) for line in running) else 1
 
 
 def launchctl(args):
@@ -594,6 +627,8 @@ TOOLS = {
     "xcode-select": xcode_select,
     "open": open_,
     "launchctl": launchctl,
+    "pgrep": pgrep,
+    "pkill": pkill,
     "shasum": shasum,
     "agent-pm-broker": broker,
     "docker-uninstall": docker_uninstall,
