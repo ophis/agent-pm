@@ -83,6 +83,7 @@ ledger_valid() {
   case $1:$# in
     dir:2 | file:2 | profile-file:2) under_home "$2" ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
+    docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
     clt:1 | broker:1) true ;;
     config:2) case $2 in created | backup) true ;; *) false ;; esac ;;
@@ -246,7 +247,7 @@ show() {
   local kind
   printf 'install-cleanup.sh will remove what install.sh added:\n' >&3
   for kind in launchd keychain broker codex-plugin codex-marketplace claude-plugin claude-marketplace \
-    login opencode-auth opencode-config profile profile-file config cask formula homebrew clt file dir; do
+    login opencode-auth opencode-config docker-block profile profile-file config cask formula homebrew clt file dir; do
     of_kind "$kind" | tr '\t' ' ' | sed 's/^/  /' >&3
   done
 }
@@ -422,7 +423,7 @@ profiles() {
   if of_kind cask | grep -qx "cask"$'\t'"docker-desktop"; then
     while IFS= read -r file; do
       if [ -f "$file" ]; then docker_block "$file"; fi
-    done <<<"$(of_kind 'profile(-file)?' | cut -f2 | sort -u)"
+    done <<<"$(of_kind '(profile(-file)?|docker-block)' | cut -f2 | sort -u)"
   fi
   while IFS=$'\t' read -r _ file line; do
     [ -n "$file" ] || continue
@@ -433,6 +434,10 @@ profiles() {
     fi
     drop "profile"$'\t'"$file"$'\t'"$line"
   done <<<"$(of_kind profile)"
+  while IFS=$'\t' read -r _ file; do
+    [ -n "$file" ] || continue
+    drop "docker-block"$'\t'"$file"
+  done <<<"$(of_kind docker-block)"
   while IFS=$'\t' read -r _ file; do
     [ -n "$file" ] || continue
     if [ -f "$file" ] && ! grep -q '[^[:space:]]' "$file"; then rm -f "$file"; fi
@@ -532,10 +537,17 @@ homebrew_and_clt() {
 }
 
 files_and_dirs() {
-  local path
+  local path domain
   step "files and directories"
   while IFS=$'\t' read -r _ path; do
     [ -n "$path" ] || continue
+    # Through cfprefsd first, so it does not write back a preferences plist it still holds.
+    case $path in
+      "$HOME/Library/Preferences/"*.plist)
+        domain=${path##*/}
+        defaults delete "${domain%.plist}" </dev/null >/dev/null 2>&1 || true
+        ;;
+    esac
     rm -f "$path"
     drop "file"$'\t'"$path"
   done <<<"$(of_kind file)"

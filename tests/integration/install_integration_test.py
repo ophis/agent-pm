@@ -44,7 +44,7 @@ REAL = (
     "stty",
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum")
-FAKED += ("xcode-select", "ps", "sw_vers", "lipo", "pgrep", "pkill")
+FAKED += ("xcode-select", "ps", "sw_vers", "lipo", "pgrep", "pkill", "defaults")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
 APPS += ("npm", "node", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
@@ -118,6 +118,23 @@ for n in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-orchest
   chmod 755 "$HOME/.agent-pm/bin/$n"
 done
 """
+ITERM_DIRS = (
+    "Application Support/iTerm2",
+    "Application Support/iTerm",
+    "Caches/com.googlecode.iterm2",
+    "HTTPStorages/com.googlecode.iterm2",
+    "WebKit/com.googlecode.iterm2",
+    "Saved Application State/com.googlecode.iterm2.savedState",
+    "Containers/com.googlecode.iterm2.iTermFileProvider",
+    "Containers/iTermAI",
+    "Application Scripts/com.googlecode.iterm2.iTermFileProvider",
+)
+ITERM_FILES = (
+    "Preferences/com.googlecode.iterm2.plist",
+    "Preferences/com.googlecode.iterm2.private.plist",
+    "Cookies/com.googlecode.iterm2.binarycookies",
+    "HTTPStorages/com.googlecode.iterm2.binarycookies",
+)
 Result = namedtuple("Result", "code stdout stderr tty")
 ITEMS = ("claude", "codex", "opencode", "docker", "board")
 
@@ -1535,8 +1552,8 @@ class InstallTest(Case):
                 "formula\tgit",
                 f"dir\t{h}/.config",
                 f"dir\t{h}/.config/iterm2",
-                f"dir\t{h}/Library/Application Support/iTerm2",
-                f"file\t{h}/Library/Preferences/com.googlecode.iterm2.plist",
+                *(f"dir\t{h}/Library/{path}" for path in ITERM_DIRS),
+                *(f"file\t{h}/Library/{path}" for path in ITERM_FILES),
                 "cask\titerm2",
                 "config\tcreated",
                 f"dir\t{h}/.config/gh",
@@ -1765,6 +1782,34 @@ class InstallTest(Case):
         self.assertEqual(self.ledger(), ledger)
         self.assertEqual(second.tty, first.tty)
         self.assertEqual(self.snapshot(), files)
+
+    def test_cleanup_round_trip_leaves_no_docker_files(self):
+        """Docker Desktop's and iTerm2's own files go; a shell rc there before keeps its own lines."""
+        bashrc = Path(self.home, ".bashrc")
+        bashrc.write_text("export EDITOR=vim\n")
+        self.assert_ok(self.fresh("--docker", logins=[(TOKEN_Q, TOKEN), (PEM_Q, "")]))
+        library = Path(self.home, "Library")
+        written = [
+            library / "Application Support/Docker Desktop/state.json",
+            library / "Preferences/com.docker.docker.plist",
+            Path(self.home, ".zshrc"),
+        ]
+        self.assertTrue(all(path.exists() for path in written))
+        self.assertIn("by Docker Desktop", bashrc.read_text())
+        for path in ("Preferences/com.googlecode.iterm2.plist", "Application Support/iTerm2/x"):
+            (library / path).parent.mkdir(parents=True, exist_ok=True)
+            (library / path).write_text("iTerm2")
+        self.assertIn(f"profile-file\t{self.home}/.zshrc", self.ledger())
+        self.assertIn(f"docker-block\t{bashrc}", self.ledger())
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        for path in [*written, library / "Preferences/com.googlecode.iterm2.plist"]:
+            self.assertFalse(path.exists(), path)
+        self.assertFalse((library / "Application Support/Docker Desktop").exists())
+        self.assertFalse((library / "Application Support/iTerm2").exists())
+        self.assertEqual(bashrc.read_text(), "export EDITOR=vim\n")
+        self.assertIn("defaults delete com.docker.docker", self.calls())
+        self.assertIn("defaults delete com.googlecode.iterm2", self.calls())
 
     def test_cleanup_stops_docker_processes(self):
         """What still runs from Docker.app after its cask is gone ends; nothing else is signalled."""

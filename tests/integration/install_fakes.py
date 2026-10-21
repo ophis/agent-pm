@@ -405,15 +405,22 @@ def docker(args):
 
 
 def open_(args):
-    """Docker Desktop's first start also adds its block to ~/.zprofile. Installed by the cask, it asks for its
+    """Docker Desktop's first start also adds its block to ~/.zprofile, ~/.zshrc and ~/.bashrc and writes its own
+    files under ~/Library. Installed by the cask, it asks for its
     license unless its install command accepted it."""
     cask = (FAKES / "brew/docker-desktop").exists()
     if cask and not (FAKES / "docker_license").exists():
         return 0
     if args == ["-a", "Docker"] and not (FAKES / "docker_wont_start").exists():
         if not (FAKES / "docker_started").exists():
-            with open(Path(os.environ["HOME"], ".zprofile"), "a") as profile:
-                profile.write(DOCKER_BLOCK.format(home=os.environ["HOME"]))
+            home = Path(os.environ["HOME"])
+            for name in (".zprofile", ".zshrc", ".bashrc"):
+                rc = home / name
+                if "by Docker Desktop" not in (rc.read_text() if rc.exists() else ""):
+                    with open(rc, "a") as profile:
+                        profile.write(DOCKER_BLOCK.format(home=home))
+            mark(home / "Library/Application Support/Docker Desktop/state.json", "{}")
+            mark(home / "Library/Preferences/com.docker.docker.plist", "prefs")
             agent = ROOT / "Applications/Docker.app/Contents/Resources/cli-plugins/docker-agent"
             mark(
                 FAKES / "processes",
@@ -449,6 +456,10 @@ def pkill(args):
     kept = [line for line in running if not pattern.search(line) or line in stays]
     mark(FAKES / "processes", "".join(f"{line}\n" for line in kept))
     return 0 if any(pattern.search(line) for line in running) else 1
+
+
+def defaults(_args):
+    return 0
 
 
 def launchctl(args):
@@ -627,6 +638,7 @@ TOOLS = {
     "xcode-select": xcode_select,
     "open": open_,
     "launchctl": launchctl,
+    "defaults": defaults,
     "pgrep": pgrep,
     "pkill": pkill,
     "shasum": shasum,
