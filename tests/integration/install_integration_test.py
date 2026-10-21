@@ -1,5 +1,6 @@
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from collections import namedtuple
 from pathlib import Path
 
 from agent_pm.orchestrator.engine import config as orchestrator_config
+from agent_pm.orchestrator.trackers.local import board as local_board
 
 from tests.case import REPO, Case
 
@@ -25,6 +27,7 @@ REAL = (
     "sed",
     "cat",
     "mkdir",
+    "rmdir",
     "mv",
     "rm",
     "cp",
@@ -1695,6 +1698,19 @@ class InstallTest(Case):
             self.assertEqual(target.exists(), installed)
             bootstraps = [c for c in self.calls() if c == f"launchctl bootstrap gui/501 {target}"]
             self.assertEqual(bool(bootstraps), installed)
+            if installed:
+                data = plistlib.loads(target.read_bytes())
+                self.assertEqual(
+                    data["ProgramArguments"],
+                    [
+                        f"{self.agent_pm}/bin/agent-pm-orchestrator",
+                        job,
+                    ],
+                )
+                if tomllib.loads(self.config().read_text())["orchestrator"]["tracker"] == "local":
+                    directory = data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"]
+                    self.assertEqual(directory, self.state()["local_board_dir"])
+                    self.assertEqual(local_board.scan(directory), ())
 
     def test_board_local_with_jobs(self):
         result = self.fresh(
@@ -1704,7 +1720,7 @@ class InstallTest(Case):
             "--board",
             "local",
             "--launchd",
-            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
         self.assertEqual(
@@ -1731,7 +1747,7 @@ class InstallTest(Case):
             "--board",
             "local",
             "--no-launchd",
-            then=[(WRITE_Q, "y")],
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
         self.assertEqual(
@@ -1739,6 +1755,7 @@ class InstallTest(Case):
         )
         self.assert_jobs(installed=False)
         self.assert_no_linear(result)
+        self.assertEqual(local_board.scan(str(Path(self.agent_pm, "board"))), ())
         result = self.again()
         self.assert_ok(result)
         self.assertEqual(self.state()["board_jobs"], "no")
@@ -1752,7 +1769,7 @@ class InstallTest(Case):
         )
         state = Path(self.agent_pm, "install/state")
         state.write_text(state.read_text().replace("board=no", "board=yes"))
-        result = self.again("--launchd", answers=[(WRITE_Q, "y")])
+        result = self.again("--launchd", answers=[(WRITE_Q, "y"), (WRITE_Q, "y")])
         self.assert_ok(result)
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
@@ -1772,7 +1789,7 @@ class InstallTest(Case):
         self.assert_no_linear(result)
 
     def test_board_switch_from_linear_to_local(self):
-        result = self.configured(HAND_CONFIG, board="local", then=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        result = self.configured(HAND_CONFIG, board="local", then=[(WRITE_Q, "y")] * 3)
         self.assert_ok(result)
         data = tomllib.loads(self.config().read_text())["orchestrator"]
         self.assertEqual(data["tracker"], "local")
@@ -1804,7 +1821,7 @@ class InstallTest(Case):
         self.assertNotIn("orchestrator", tomllib.loads(self.config().read_text()))
         self.assert_jobs(installed=False)
         self.assert_no_linear(result)
-        result = self.again(answers=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        result = self.again(answers=[(WRITE_Q, "y")] * 3)
         self.assert_ok(result)
         self.assert_jobs(installed=True)
         self.assert_no_linear(result)
@@ -1822,6 +1839,124 @@ class InstallTest(Case):
         orchestrator_config.load()
         self.assert_jobs(installed=True)
         self.assert_secret_free("k-SENTINEL", result=result)
+
+    def test_board_local_initialization_declined(self):
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y"), (WRITE_Q, "n")],
+        )
+        self.assert_ok(result)
+        self.assertFalse(Path(self.agent_pm, "board").exists())
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+        result = self.again(answers=[(WRITE_Q, "y"), (WRITE_Q, "y")])
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+
+    def test_board_local_custom_path_and_cleanup(self):
+        directory = Path(self.tmp, "new parent", "board & work")
+        self.env["AGENT_PM_BOARD_DIR"] = str(directory)
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y")] * 3,
+        )
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+        self.assert_no_linear(result)
+        for path in (directory.parent, directory, directory / "unassigned"):
+            self.assertIn(f"board-dir\t{path}", self.ledger())
+        del self.env["AGENT_PM_BOARD_DIR"]
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotRegex(result.tty, WRITE_Q)
+        self.assertEqual(self.state()["local_board_dir"], str(directory))
+        result = self.cleanup("--yes")
+        self.assert_ok(result)
+        self.assertFalse(directory.parent.exists())
+
+    def test_board_local_cleanup_preserves_existing_root(self):
+        directory = Path(self.agent_pm, "board")
+        directory.mkdir(parents=True)
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--no-launchd",
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        self.assertEqual(local_board.scan(str(directory)), ())
+        self.assertNotIn(f"board-dir\t{directory}", self.ledger())
+        self.assertIn(f"board-dir\t{directory / 'unassigned'}", self.ledger())
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertTrue(directory.is_dir())
+        self.assertFalse((directory / "unassigned").exists())
+
+    def test_board_local_tilde_path(self):
+        self.env["AGENT_PM_BOARD_DIR"] = "~/my board"
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y")] * 3,
+        )
+        self.assert_ok(result)
+        self.assert_jobs(installed=True)
+        self.assertEqual(self.state()["local_board_dir"], str(Path(self.home, "my board")))
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.home, "my board").exists())
+
+    def test_board_local_invalid_path_stops_before_jobs(self):
+        self.env["AGENT_PM_BOARD_DIR"] = "relative/board"
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--launchd",
+            then=[(WRITE_Q, "y")],
+        )
+        self.assertEqual(result.code, 1)
+        self.assertIn("AGENT_PM_BOARD_DIR must name", result.stderr)
+        self.assert_jobs(installed=False)
+        self.assert_no_linear(result)
+
+    def test_board_local_cleanup_stops_on_new_data(self):
+        result = self.fresh(
+            "--clients",
+            "claude",
+            "--no-docker",
+            "--board",
+            "local",
+            "--no-launchd",
+            then=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        data = Path(self.agent_pm, "board/unassigned/keep.txt")
+        data.write_text("keep")
+        result = self.cleanup("--yes")
+        self.assertEqual(result.code, 1)
+        self.assertEqual(data.read_text(), "keep")
+        self.assertIn(f"board-dir\t{data.parent}", self.ledger())
+        data.unlink()
+        self.assert_ok(self.cleanup("--yes"))
+        self.assertFalse(Path(self.agent_pm, "board").exists())
 
     def test_board_linear_without_jobs(self):
         self.linear()
@@ -1865,6 +2000,7 @@ class InstallTest(Case):
                 (r"Board tracker \[local/linear\] \[local\]:", "invalid"),
                 (r"Board tracker \[local/linear\] \[local\]:", ""),
                 (r"Install board launchd jobs\? \[y/N\]", "n"),
+                (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (WRITE_Q, "y"),
                 (WRITE_Q, "y"),

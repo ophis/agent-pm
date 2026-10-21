@@ -24,6 +24,8 @@ board=
 board_tracker=
 jobs_flag=
 board_jobs_choice=
+local_board_dir=
+local_board_ready=
 provider_flag=
 url_flag=
 model_flag=
@@ -257,6 +259,10 @@ ledger_valid() {
   local plain='^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$'
   case $1:$# in
     dir:2 | file:2 | profile-file:2) under_home "$2" ;;
+    board-dir:2)
+      case $2 in /?*) ;; *) return 1 ;; esac
+      case /$2/ in */../* | */./* | *$'\t'* | *$'\n'*) false ;; *) true ;; esac
+      ;;
     profile:3) under_home "$2" && case $3 in *$'\t'* | *$'\n'* | '') false ;; esac ;;
     docker-block:2) under_home "$2" && case ${2##*/} in .zshrc | .bashrc | .bash_profile | .zprofile) true ;; *) false ;; esac ;;
     homebrew:2) [ "$2" = "$root/opt/homebrew" ] ;;
@@ -1931,12 +1937,63 @@ with open(out, "w", encoding="utf-8") as f:
     json.dump(plan, f)' "$config" "$1" "$slots" "$stages" "$pkg/delegate/src/agent_pm/delegate/team/roles"
 }
 
+local_board_setup() {
+  local wanted directory
+  local_board_dir=$(python3 -I -c '
+import os, sys
+value = os.environ.get("AGENT_PM_BOARD_DIR") or sys.argv[1] or "~/.agent-pm/board"
+path = os.path.expanduser(value)
+if not path.isprintable() or not os.path.isabs(path) or not os.path.normpath(path).strip("/"):
+    sys.exit("install.sh: AGENT_PM_BOARD_DIR must name a printable absolute or ~ board path")
+print(os.path.normpath(path))' "$(state_get local_board_dir)")
+  state_set local_board_dir "$local_board_dir"
+  wanted=$(python3 -I -c '
+import sys
+from pathlib import Path
+board = Path(sys.argv[1])
+if (board / "unassigned").is_symlink():
+    sys.exit("install.sh: local board unassigned must be a directory, not a symlink")
+planned = []
+for target in (board, board / "unassigned"):
+    missing, at = [], target
+    while not at.exists():
+        if at.is_symlink():
+            sys.exit("install.sh: local board path contains a broken symlink")
+        missing.append(str(at))
+        at = at.parent
+    if not at.is_dir():
+        sys.exit("install.sh: local board path must contain only directories")
+    planned.extend(reversed(missing))
+print("\n".join(dict.fromkeys(planned)))' "$local_board_dir")
+  if [ -n "$wanted" ]; then
+    if ! consent "$local_board_dir" "Create directories:
+$wanted"; then
+      skip declined
+      return 0
+    fi
+    while IFS= read -r directory; do
+      if [ ! -d "$directory" ]; then
+        ledger_add board-dir "$directory"
+        mkdir "$directory"
+      fi
+    done <<<"$wanted"
+  else
+    skip "local board initialized"
+  fi
+  local_board_ready=yes
+}
+
 board_config() {
   local plan=$state_dir/board.json
   if [ "$board_tracker" = local ]; then step "local board configuration"; else step "Linear board configuration"; fi
   board_wanted || return 0
   if [ "$board_tracker" = local ]; then
     config_file orchestrator tracker local
+    if [ "$(configured_tracker)" = local ]; then
+      local_board_setup
+    else
+      skip "local tracker not configured"
+    fi
     return 0
   fi
   if board_complete; then
@@ -1967,16 +2024,20 @@ board_plist() {
   local path=
   IFS=: launchd_path
   python3 -I -c '
-import sys
+import plistlib, sys
 from xml.sax.saxutils import escape
-source, out, home, path = sys.argv[1:]
+source, out, home, path, board = sys.argv[1:]
 with open(source, encoding="utf-8") as f:
     text = f.read()
 if "@HOME@" not in text or "@PATH@" not in text:
     sys.exit(f"install.sh: {source} is not a template with @HOME@ and @PATH@")
 text = text.replace("@HOME@", escape(home)).replace("@PATH@", escape(path))
+if board:
+    data = plistlib.loads(text.encode())
+    data["EnvironmentVariables"]["AGENT_PM_BOARD_DIR"] = board
+    text = plistlib.dumps(data).decode()
 with open(out, "w", encoding="utf-8") as f:
-    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path"
+    f.write(text)' "$pkg/orchestrator/launchd/com.ophis.agent-pm.$1.plist" "$2" "$HOME" "$path" "$local_board_dir"
 }
 
 board_jobs() {
@@ -1989,6 +2050,10 @@ board_jobs() {
   fi
   if [ "$(configured_tracker)" != "$board_tracker" ]; then
     skip "board tracker not configured"
+    return 0
+  fi
+  if [ "$board_tracker" = local ] && [ "$local_board_ready" != yes ]; then
+    skip "local board not initialized"
     return 0
   fi
   if [ "$board_tracker" = linear ] && ! board_complete; then
