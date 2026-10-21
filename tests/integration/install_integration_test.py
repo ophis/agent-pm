@@ -38,8 +38,16 @@ REAL = (
 )
 FAKED = ("uname", "id", "sudo", "curl", "security", "open", "launchctl", "shasum", "base64")
 APPS = ("brew", "gh", "tmux", "git", "go", "claude", "codex", "docker", "agent-pm-broker")
+APPS += ("npm", "opencode")
 PASSWORD = "pw-SENTINEL-sudo"
 TOKEN = "sk-ant-oat01-SENTINEL-token"
+KEY = "sk-SENTINEL-opencode-key"
+CLIENTS_Q = r"Which clients, comma-separated \(claude, codex, opencode\)\? \[[a-z,]+\]"
+PROVIDER_Q = r"OpenCode provider name:"
+URL_Q = r"Its base URL \(ending /v1\):"
+MODEL_Q = r"Its model:"
+OPENCODE_LOGIN_Q = r"Provider:"
+PROVIDER_ANSWERS = ((PROVIDER_Q, "lan"), (URL_Q, "http://10.0.0.5:8080/v1"), (MODEL_Q, "m1"))
 DOCKER_Q = r"Run workers in Docker \(Docker Desktop and the agent-pm broker\)\? \[y/N\]"
 SUDO_Q = r"Password:"
 WRITE_Q = r"Write it\? \[y/N\]"
@@ -53,6 +61,7 @@ DOCKER_STEPS = (
     "broker login: GitHub",
     "broker Codex install",
     "broker login: Codex",
+    "broker login: OpenCode",
 )
 BROKER_INSTALL = """#!/bin/sh
 set -eu
@@ -144,6 +153,9 @@ class InstallTest(Case):
         self.versions = self.pkg_src / "broker/internal/codex/versions.go"
         self.versions.parent.mkdir(parents=True)
         self.versions.write_text('package codex\n\nconst MinVersion = "0.163.0"\n')
+        launcher = self.pkg_src / "broker/internal/launcher/versions.go"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text('package launcher\n\nconst opencodeMinVersion = "1.19.3"\n')
         executable(self.pkg_src / "manager/skills/manage/scripts/ctmux", CTMUX)
         (self.pkg_src / ".claude-plugin").mkdir()
         (self.pkg_src / ".claude-plugin/plugin.json").write_text('{"version": "9.8.7"}\n')
@@ -209,7 +221,7 @@ class InstallTest(Case):
 
     def assert_secret_free(self, *secrets, result):
         kept = {self.fakes / "keychain", self.fakes / "broker/claude_token"}
-        kept |= {self.fakes / "sudo_password", self.fakes / "claude_token"}
+        kept |= {self.fakes / "sudo_password", self.fakes / "claude_token", self.auth_json()}
         texts = {"stdout": result.stdout, "stderr": result.stderr}
         for path in Path(self.home).rglob("*"):
             if (
@@ -222,44 +234,81 @@ class InstallTest(Case):
             for name, text in texts.items():
                 self.assertNotIn(secret, text, name)
 
-    def fresh(self, *args, docker="n", extra=None):
-        if extra is None:
-            extra = DOCKER_LOGINS if docker == "y" else ()
-        return self.run_install(
-            *args,
-            answers=[
-                (DOCKER_Q, docker),
-                (SUDO_Q, PASSWORD),
-                (WRITE_Q, "y"),
-                *extra,
-                (WRITE_Q, "y"),
-            ],
-        )
+    def fresh(self, *args, clients="", docker="n", opencode=(), logins=None):
+        """A first run answering every question: brew profile line, clients, Docker, the
+        OpenCode provider, the config, the Docker logins and the PATH line.
+        """
+        chosen = args[args.index("--clients") + 1] if "--clients" in args else clients
+        if logins is None and (docker == "y" or "--docker" in args):
+            logins = [(TOKEN_Q, TOKEN)] if "claude" in (chosen or "claude") else []
+            logins.append((PEM_Q, ""))
+        answers = [(SUDO_Q, PASSWORD), (WRITE_Q, "y")]
+        answers += [(CLIENTS_Q, clients)] if "--clients" not in args else []
+        answers += [(DOCKER_Q, docker)] if not {"--docker", "--no-docker"} & set(args) else []
+        answers += [*opencode, (WRITE_Q, "y"), *(logins or ()), (WRITE_Q, "y")]
+        return self.run_install(*args, answers=answers)
+
+    def again(self, *args, answers=()):
+        return self.run_install(*args, answers=[(SUDO_Q, PASSWORD), *answers])
+
+    def config(self):
+        return Path(self.agent_pm, "config.local.toml")
+
+    def plugin_calls(self):
+        return [c for c in self.calls() if " plugin " in c and " list " not in c]
+
+    def broker_calls(self):
+        own = {"sudo -n true", "sudo -v", "sudo -n -v", "sudo -k", "sudo -S -p  -v"}
+        wanted = ("broker-", "sudo", "agent-pm-broker")
+        return [
+            c for c in self.calls() if c.startswith(wanted) and c not in own and "status" not in c
+        ]
+
+    def broker_path(self):
+        return Path(self.root, "usr/local/libexec/agent-pm/agent-pm-broker")
+
+    def auth_json(self):
+        return Path(self.home, ".local/share/opencode/auth.json")
 
     def test_usage_and_platform(self):
         result = self.run_install("--help", tty=False)
         self.assertEqual(result.code, 0)
         self.assertIn("usage: install.sh [--ref <ref>]", result.stdout)
-        cases = (["--bogus"], ["--ref"], ["--ref", "-x"], ["--docker", "--no-docker"])
+        cases = (
+            ["--bogus"],
+            ["--ref"],
+            ["--ref", "-x"],
+            ["--docker", "--no-docker"],
+            ["--clients", "opencode"],
+            ["--clients", "claude,,codex"],
+            ["--clients", "claude,vim"],
+            ["--opencode-provider", "ollama"],
+            ["--opencode-provider", "lan.1"],
+            ["--opencode-url", 'http://h"x/v1'],
+            ["--opencode-url", "http://user:key@host/v1"],
+            ["--opencode-url", "http://host/api"],
+            ["--opencode-model", "a b"],
+        )
         for args in cases:
             result = self.run_install(*args, tty=False)
             self.assertEqual(result.code, 2, args)
             self.assertIn("install.sh: usage: install.sh [--ref <ref>]", result.stderr)
         tty = Tty()
         try:
-            with open(tty.path) as stdin:
-                proc = subprocess.run(
-                    ["bash", str(SCRIPT), "--password-stdin"],
-                    env=self.env,
-                    stdin=stdin,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
+            for flag in ("--password-stdin", "--opencode-key-stdin"):
+                with open(tty.path) as stdin:
+                    proc = subprocess.run(
+                        ["bash", str(SCRIPT), flag],
+                        env=self.env,
+                        stdin=stdin,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                self.assertEqual(proc.returncode, 2, flag)
+                self.assertIn("read a pipe, not a terminal", proc.stderr)
         finally:
             tty.close()
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("--password-stdin reads a pipe, not a terminal", proc.stderr)
         (self.fakes / "platform").write_text("Linux x86_64\n")
         result = self.run_install(tty=False)
         self.assertEqual(result.code, 1)
@@ -276,8 +325,10 @@ class InstallTest(Case):
         result = self.run_install(
             "--password-stdin",
             "--no-docker",
+            "--clients",
+            "claude,codex",
             stdin=PASSWORD + "\n",
-            answers=[(WRITE_Q, "y"), (WRITE_Q, "y")],
+            answers=[(WRITE_Q, "y"), (WRITE_Q, "y"), (WRITE_Q, "y")],
         )
         self.assert_ok(result)
         self.assertNotRegex(result.tty, SUDO_Q)
@@ -328,6 +379,9 @@ class InstallTest(Case):
                 "brew install --cask codex",
             ],
         )
+        tty = result.tty
+        self.assertLess(tty.index("Write it?"), tty.index("Which clients"))
+        self.assertLess(tty.index("Which clients"), tty.index("config.local.toml:"))
         logins = [c for c in calls if " login" in c or c.endswith(" status")]
         self.assertEqual(
             logins,
@@ -345,25 +399,115 @@ class InstallTest(Case):
         self.assertIn(f'eval "$({self.root}/opt/homebrew/bin/brew shellenv)"\n', profile)
         self.assertIn("Log in to gh in your browser.", result.tty)
         self.assertEqual(self.state()["docker"], "no")
+        self.assertEqual(self.state()["clients"], "claude,codex")
 
-    def test_docker_choice_kept_and_flag_overrides(self):
-        self.assert_ok(self.fresh(docker="y"))
-        self.assertEqual(self.state()["docker"], "yes")
-        self.assertIn("brew install --cask docker-desktop", self.calls())
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+    def test_answers_kept_and_flags_override(self):
+        self.assert_ok(self.fresh(clients="claude", docker="y"))
+        self.assertEqual((self.state()["clients"], self.state()["docker"]), ("claude", "yes"))
+        self.assertNotIn("brew install --cask codex", self.calls())
+        result = self.again()
         self.assert_ok(result)
         self.assertNotRegex(result.tty, DOCKER_Q)
-        self.assertIn("Docker: yes", result.stderr)
-        result = self.run_install("--no-docker", answers=[(SUDO_Q, PASSWORD)])
+        self.assertNotRegex(result.tty, CLIENTS_Q)
+        result = self.again("--clients", "claude,codex")
+        self.assert_ok(result)
+        self.assertEqual(self.state()["clients"], "claude,codex")
+        self.assertIn("brew install --cask codex", self.calls())
+        self.assertIn("codex plugin add agent-pm@agent-pm", self.calls())
+        result = self.again("--no-docker", answers=[(WRITE_Q, "y")])
         self.assert_ok(result)
         self.assertEqual(self.state()["docker"], "no")
-        Path(self.agent_pm, "config.local.toml").write_text('[session.hosts]\ndefault = "docker"\n')
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        self.assertIn('default = "tmux"', self.config().read_text())
+        Path(self.agent_pm, "install/state").unlink()
+        self.config().write_text(
+            '[session.hosts]\ndefault = "docker"\n[delegate]\nclient = "codex"\n'
+        )
+        result = self.again(answers=[(WRITE_Q, "y"), (PEM_Q, "")])
         self.assert_ok(result)
-        self.assertEqual(self.state()["docker"], "yes")
+        self.assertNotRegex(result.tty, CLIENTS_Q)
+        self.assertEqual((self.state()["clients"], self.state()["docker"]), ("codex", "yes"))
 
-    def plugin_calls(self):
-        return [c for c in self.calls() if " plugin " in c and " list " not in c]
+    def test_config_template_and_edit(self):
+        self.assert_ok(self.fresh("--docker", "--clients", "codex"))
+        self.assertEqual(
+            self.config().read_text(),
+            "# Written by install.sh. Keys and defaults: each layer's packaged config.toml "
+            "(its `# local:` lines);\n# the Linear board: docs/board.md#setup.\n"
+            '[session.hosts]\ndefault = "docker"\n\n[delegate]\nclient = "codex"\n\n'
+            '[delegate.delegates]\nharness_host = "tmux"\n',
+        )
+        cases = (
+            (
+                '# mine\n[session.hosts]\ndefault = "tmux" # x\n\n[other]\nx = 1\n',
+                '# mine\n[session.hosts]\ndefault = "docker"\n\n[other]\nx = 1\n\n'
+                '[delegate]\nclient = "codex"\n\n[delegate.delegates]\nharness_host = "tmux"\n',
+            ),
+            (
+                '[delegate.delegates]\n\n[session.hosts]\ndefault = "docker"\n[delegate]\nclient = "codex"\n',
+                '[delegate.delegates]\nharness_host = "tmux"\n\n[session.hosts]\ndefault = "docker"\n'
+                '[delegate]\nclient = "codex"\n',
+            ),
+        )
+        for before, after in cases:
+            self.config().write_text(before)
+            result = self.again(answers=[(WRITE_Q, "y")])
+            self.assert_ok(result)
+            self.assertEqual(self.config().read_text(), after)
+        dotted = 'session.hosts.default = "tmux"\ndelegate.client = "codex"\n'
+        self.config().write_text(dotted)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertIn("skip: set it by hand", result.stderr)
+        self.assertIn('[session.hosts] default = "docker"', result.stderr)
+        self.assertEqual(self.config().read_text(), dotted)
+        self.config().write_text("[broken\n")
+        result = self.again()
+        self.assertEqual(result.code, 1)
+        self.assertIn("config.local.toml failed", result.stderr)
+        self.assertEqual(self.config().read_text(), "[broken\n")
+
+    def test_declined_writes_nothing(self):
+        result = self.run_install(
+            "--no-docker",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "n"),
+                (CLIENTS_Q, ""),
+                (WRITE_Q, "n"),
+                (WRITE_Q, "n"),
+            ],
+        )
+        self.assert_ok(result)
+        self.assertEqual(result.stderr.count("skip: declined"), 3)
+        self.assertFalse(Path(self.home, ".zprofile").exists())
+        self.assertFalse(self.config().exists())
+
+    def test_codex_only(self):
+        result = self.fresh("--no-docker", clients="codex")
+        self.assert_ok(result)
+        calls = "\n".join(self.calls())
+        for absent in ("claude-code", "claude auth", "claude plugin"):
+            self.assertNotIn(absent, calls)
+        pkg = Path(self.home, ".codex/plugins/cache/agent-pm/agent-pm/9.8.7")
+        self.assertIn(f"    {pkg}", result.stderr)
+        self.assertIn("ctmux --install", self.calls())
+        self.assertIn('[delegate]\nclient = "codex"\n', self.config().read_text())
+
+    def test_claude_only(self):
+        result = self.fresh(clients="claude", docker="y")
+        self.assert_ok(result)
+        calls = "\n".join(self.calls())
+        for absent in (
+            "--cask codex",
+            "codex login",
+            "codex plugin",
+            "install-codex",
+            "login codex",
+        ):
+            self.assertNotIn(absent, calls)
+        self.assertIn("==> broker Codex install\n    skip: Codex not chosen", result.stderr)
+        self.assertIn("agent-pm-broker login claude", calls)
+        self.assertNotIn("[delegate]", self.config().read_text())
 
     def test_ref_installs_branch(self):
         result = self.fresh("--ref", "orchestrator-revamped")
@@ -393,8 +537,7 @@ class InstallTest(Case):
     def test_ref_change_readds_marketplaces(self):
         self.assert_ok(self.fresh())
         self.assertIn("claude plugin marketplace add ophis/agent-pm", self.calls())
-        result = self.run_install("--ref", "next", answers=[(SUDO_Q, PASSWORD)])
-        self.assert_ok(result)
+        self.assert_ok(self.again("--ref", "next"))
         self.assertEqual(
             self.plugin_calls(),
             [
@@ -409,15 +552,14 @@ class InstallTest(Case):
             ],
         )
         self.assertNotIn("ctmux --install", self.calls())
-        result = self.run_install("--ref", "next", answers=[(SUDO_Q, PASSWORD)])
-        self.assert_ok(result)
+        self.assert_ok(self.again("--ref", "next"))
         self.assertEqual(self.plugin_calls(), [])
 
     def test_disabled_plugin_is_enabled(self):
         self.assert_ok(self.fresh())
         plugins = Path(self.fakes, "claude/plugins.json")
         plugins.write_text(plugins.read_text().replace("true", "false"))
-        self.assert_ok(self.run_install(answers=[(SUDO_Q, PASSWORD)]))
+        self.assert_ok(self.again())
         self.assertEqual(
             self.plugin_calls(),
             [
@@ -425,15 +567,6 @@ class InstallTest(Case):
                 "claude plugin enable autopilot@claude-autopilot",
             ],
         )
-
-    def broker_calls(self):
-        calls = self.calls()
-        own = {"sudo -n true", "sudo -v", "sudo -n -v", "sudo -k", "sudo -S -p  -v"}
-        wanted = ("broker-", "sudo", "agent-pm-broker")
-        return [c for c in calls if c.startswith(wanted) and c not in own and "status" not in c]
-
-    def broker_path(self):
-        return Path(self.root, "usr/local/libexec/agent-pm/agent-pm-broker")
 
     def test_fresh_install(self):
         result = self.fresh(docker="y")
@@ -466,9 +599,7 @@ class InstallTest(Case):
         self.assert_secret_free(PASSWORD, TOKEN, result=result)
 
     def test_no_docker(self):
-        result = self.run_install(
-            "--no-docker", answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y")]
-        )
+        result = self.fresh("--no-docker")
         self.assert_ok(result)
         for name in DOCKER_STEPS:
             self.assertIn(f"==> {name}\n    skip: Docker not chosen", result.stderr)
@@ -491,7 +622,14 @@ class InstallTest(Case):
         (self.fakes / "docker_wont_start").touch()
         skip = (r"first-run setup.*\(or type skip\)", "skip")
         result = self.run_install(
-            answers=[(DOCKER_Q, "y"), (SUDO_Q, PASSWORD), (WRITE_Q, "y"), skip]
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (CLIENTS_Q, ""),
+                (DOCKER_Q, "y"),
+                (WRITE_Q, "y"),
+                skip,
+            ]
         )
         self.assertEqual(result.code, 1)
         self.assertIn("install.sh: Docker Desktop not running", result.stderr)
@@ -500,20 +638,18 @@ class InstallTest(Case):
         )
         self.assertNotIn("broker-install ", self.calls())
         (self.fakes / "docker_wont_start").unlink()
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD), *DOCKER_LOGINS, (WRITE_Q, "y")])
-        self.assert_ok(result)
+        self.assert_ok(self.again(answers=[*DOCKER_LOGINS, (WRITE_Q, "y")]))
         self.assertIn("broker-install ", self.calls())
 
     def test_github_app_key_optional(self):
         self.assert_ok(self.fresh(docker="y"))
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        result = self.again()
         self.assert_ok(result)
         self.assertNotRegex(result.tty, PEM_Q)
         self.assertIn("skip: no agent-pm-bot App key", result.stderr)
         (self.fakes / "keychain").mkdir(exist_ok=True)
         (self.fakes / "keychain/agent-pm-bot").write_text("stored by hand")
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
-        self.assert_ok(result)
+        self.assert_ok(self.again())
         self.assertIn("agent-pm-broker login github agent-pm-bot", self.calls())
         self.assertEqual(len(self.state()["login_github"]), 64)
 
@@ -522,9 +658,9 @@ class InstallTest(Case):
         secret = "-----BEGIN RSA PRIVATE KEY-----SENTINELKEY-----END RSA PRIVATE KEY-----"
         pem.write_text(secret)
         encoded = base64.b64encode(secret.encode()).decode()
-        answers = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
-        answers.append((r"App ID \(digits\):", "5352992"))
-        result = self.fresh(docker="y", extra=answers)
+        logins = [(TOKEN_Q, TOKEN), (PEM_Q, str(pem)), (r"App ID \(digits\):", "12 -w x")]
+        logins.append((r"App ID \(digits\):", "5352992"))
+        result = self.fresh(docker="y", logins=logins)
         self.assert_ok(result)
         self.assertEqual((self.fakes / "keychain/agent-pm-bot").read_text(), encoded)
         self.assertEqual((self.fakes / "keychain/agent-pm-bot.account").read_text(), "5352992")
@@ -535,15 +671,14 @@ class InstallTest(Case):
 
     def test_broker_change_logs_in_again(self):
         self.assert_ok(self.fresh(docker="y"))
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+        result = self.again()
         self.assert_ok(result)
         self.assertEqual(self.broker_calls(), [])
         self.assertIn("==> broker\n    skip: installed from this plugin", result.stderr)
         self.assertIn("==> Docker Desktop running\n    skip: broker current", result.stderr)
         versions = Path(self.fakes, "claude/cache/0/broker/internal/codex/versions.go")
         versions.write_text('package codex\n\nconst MinVersion = "0.170.0"\n')
-        result = self.run_install(answers=[(SUDO_Q, PASSWORD), (TOKEN_Q, TOKEN)])
-        self.assert_ok(result)
+        self.assert_ok(self.again(answers=[(TOKEN_Q, TOKEN)]))
         calls = self.calls()
         self.assertIn("broker-install ", calls)
         self.assertIn("agent-pm-broker login claude", calls)
@@ -565,7 +700,7 @@ class InstallTest(Case):
         )
         for status, action in cases:
             codex.write_text(json.dumps(status))
-            result = self.run_install(answers=[(SUDO_Q, PASSWORD)])
+            result = self.again()
             calls = self.calls()
             if action == "busy":
                 self.assertEqual(result.code, 1)
@@ -577,3 +712,156 @@ class InstallTest(Case):
             self.assertNotIn(f"sudo {broker} install-codex 0.163.0", calls)
             login = "agent-pm-broker login codex" in calls
             self.assertEqual(login, status["state"] != "ready", status)
+
+    def test_opencode_config_and_flags(self):
+        flags = ("--clients", "claude,opencode", "--no-docker")
+        flags += ("--opencode-provider", "lan", "--opencode-url", "http://10.0.0.5:8080/v1")
+        flags += ("--opencode-model", "m1", "--opencode-key-stdin")
+        result = self.run_install(
+            *flags,
+            stdin=KEY + "\n",
+            answers=[(SUDO_Q, PASSWORD), (WRITE_Q, "y"), (WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        exe = f"{self.agent_pm}/opencode/bin/opencode"
+        tiers = "".join(f'{n} = "lan/m1"\n' for n in "1234")
+        self.assertTrue(
+            self.config()
+            .read_text()
+            .endswith(
+                f'[session.clients.opencode]\nexecutable = "{exe}"\nmodel = "lan/m1"\n\n'
+                '[session.clients.opencode.providers.lan]\nbase_url = "http://10.0.0.5:8080/v1"\n'
+                f'models = ["m1"]\n\n[session.clients.opencode.tiers]\n{tiers}'
+            ),
+            self.config().read_text(),
+        )
+        self.assertEqual(
+            (self.state()["opencode_provider"], self.state()["opencode_model"]), ("lan", "m1")
+        )
+        text = self.config().read_text().replace('3 = "lan/m1"', '3 = "lan/mine"')
+        self.config().write_text(text)
+        result = self.again("--opencode-model", "m2", answers=[(WRITE_Q, "y")])
+        self.assert_ok(result)
+        text = self.config().read_text()
+        self.assertIn('models = ["m2"]', text)
+        self.assertIn('1 = "lan/m2"', text)
+        self.assertIn('3 = "lan/mine"', text)
+        self.assertIn('model = "lan/m2"', text)
+        self.assertNotIn("Which clients", result.tty)
+
+    def test_opencode_flags_refused(self):
+        result = self.run_install("--clients", "claude", "--opencode-model", "m", tty=False)
+        self.assertEqual(result.code, 2)
+        self.assertIn("opencode is not among the clients", result.stderr)
+        result = self.run_install("--docker", "--opencode-key-stdin", stdin=KEY + "\n", tty=False)
+        self.assertEqual(result.code, 2)
+        self.assertIn("the broker reads a provider key only from a terminal", result.stderr)
+        self.assertEqual(self.calls(), [])
+        result = self.run_install(
+            "--no-docker",
+            answers=[
+                (SUDO_Q, PASSWORD),
+                (WRITE_Q, "y"),
+                (CLIENTS_Q, "claude,opencode"),
+                (PROVIDER_Q, "ollama"),
+                (PROVIDER_Q, "lan.1"),
+                (PROVIDER_Q, "lan"),
+                (URL_Q, 'http://h"/v1'),
+                (URL_Q, "http://host/v1"),
+                (MODEL_Q, "m"),
+                (WRITE_Q, "y"),
+                (OPENCODE_LOGIN_Q, "lan"),
+                (r"API key:", KEY),
+                (WRITE_Q, "y"),
+            ],
+        )
+        self.assert_ok(result)
+        self.assertEqual(self.state()["opencode_provider"], "lan")
+
+    def test_opencode_tmux_interactive(self):
+        result = self.fresh(
+            "--no-docker",
+            clients="claude,opencode",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+        )
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn("brew install node", calls)
+        prefix = f"{self.agent_pm}/opencode"
+        self.assertIn(
+            f"npm install -g --prefix {prefix} --cache {prefix}/.npm-cache opencode-ai@1.19.3",
+            calls,
+        )
+        self.assertIn("opencode auth login", calls)
+        self.assertIn("In opencode auth login pick Other, enter lan", result.stderr)
+        self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assertNotIn("npm install", "\n".join(self.calls()))
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_key_from_stdin(self):
+        self.auth_json().parent.mkdir(parents=True)
+        self.auth_json().write_text('{"other": {"type": "api", "key": "theirs"}}')
+        result = self.run_install(
+            "--password-stdin",
+            "--opencode-key-stdin",
+            "--no-docker",
+            "--clients",
+            "codex,opencode",
+            stdin=f"{PASSWORD}\n{KEY}\n",
+            answers=[(WRITE_Q, "y"), *PROVIDER_ANSWERS, (WRITE_Q, "y"), (WRITE_Q, "y")],
+        )
+        self.assert_ok(result)
+        data = json.loads(self.auth_json().read_text())
+        self.assertEqual(
+            data, {"other": {"type": "api", "key": "theirs"}, "lan": {"type": "api", "key": KEY}}
+        )
+        self.assertEqual(self.auth_json().stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assertEqual(list(self.auth_json().parent.glob(".auth.json.*")), [])
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_docker_broker_login(self):
+        result = self.fresh(
+            clients="claude,opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[
+                (TOKEN_Q, TOKEN),
+                (PEM_Q, ""),
+                (r"OpenCode provider lan API key \(hidden\):", KEY),
+            ],
+        )
+        self.assert_ok(result)
+        calls = self.calls()
+        self.assertIn("agent-pm-broker login opencode lan", calls)
+        self.assertLess(
+            calls.index("agent-pm-broker login claude"),
+            calls.index("agent-pm-broker login opencode lan"),
+        )
+        self.assertNotIn("opencode auth login", calls)
+        self.assertFalse(self.auth_json().exists())
+        self.assertTrue(self.state()["login_opencode"].endswith(" lan"))
+        self.assert_ok(self.again())
+        self.assertNotIn("agent-pm-broker login opencode lan", self.calls())
+        self.assert_secret_free(KEY, TOKEN, result=result)
+
+    def test_opencode_http_warning(self):
+        flags = ("--clients", "claude,opencode", "--no-docker", "--opencode-provider", "lan")
+        flags += ("--opencode-model", "m", "--opencode-key-stdin")
+        for url, warned in (("http://10.0.0.5:8080/v1", True), ("http://localhost:8080/v1", False)):
+            self.config().unlink(missing_ok=True)
+            Path(self.agent_pm, "install/state").unlink(missing_ok=True)
+            self.auth_json().unlink(missing_ok=True)
+            result = self.run_install(
+                *flags,
+                "--opencode-url",
+                url,
+                stdin=KEY + "\n",
+                answers=[(SUDO_Q, PASSWORD), *([(WRITE_Q, "y")] * (3 if warned else 1))],
+            )
+            self.assert_ok(result)
+            self.assertEqual("sends the API key in plaintext" in result.stderr, warned, url)

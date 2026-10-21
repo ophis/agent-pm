@@ -1,22 +1,42 @@
 #!/bin/bash
-# Installs agent-pm on an Apple silicon Mac from nothing: Homebrew, tools, clients, plugins, logins.
-# Asks sudo once, every login on the spot, and before writing your config. Rerun to finish or check.
+# Installs agent-pm on an Apple silicon Mac from nothing: dependencies, then your configuration
+# (clients, Docker, OpenCode provider) into ~/.agent-pm/config.local.toml, then only what it needs.
+# Asks sudo once, every login on the spot, and before writing your files. Rerun to finish or check.
 #   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 # AGENT_PM_INSTALL_ROOT prefixes its system paths; only tests set it.
 set -euo pipefail
 
 root=${AGENT_PM_INSTALL_ROOT:-}
 broker=$root/usr/local/libexec/agent-pm/agent-pm-broker
-state_file=$HOME/.agent-pm/install/state
+state_dir=$HOME/.agent-pm/install
+state_file=$state_dir/state
 config=$HOME/.agent-pm/config.local.toml
+opencode_prefix=$HOME/.agent-pm/opencode
 ref=main
+clients_flag=
+clients=
 docker_flag=
 docker=
+provider_flag=
+url_flag=
+model_flag=
+provider=
+url=
+model=
+prev_provider=
+prev_url=
+prev_model=
+key_stdin=
 password_stdin=
 sudo_mine=
 keepalive=
 current=
 answer=
+pkg=
+name_pattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+url_pattern='^https?://[A-Za-z0-9._~:/%+-]+/v1$'
+model_pattern='^[A-Za-z0-9._:/-]{1,200}$'
+synopsis='install.sh [--ref <ref>] [--clients <claude,codex,opencode>] [--docker | --no-docker] [--opencode-provider <name>] [--opencode-url <url>] [--opencode-model <model>] [--opencode-key-stdin] [--password-stdin]'
 
 say() { printf '%s\n' "$*" >&2; }
 step() {
@@ -30,26 +50,53 @@ die() {
 }
 
 usage() {
-  cat <<'EOF'
-usage: install.sh [--ref <ref>] [--docker | --no-docker] [--password-stdin]
+  cat <<EOF
+usage: $synopsis
 
   curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh | bash -s -- [flags]
 
-  --ref <ref>         git branch or tag of ophis/agent-pm to install the plugin and broker from (default main)
-  --docker            run workers in Docker: Docker Desktop, the broker and its logins
-  --no-docker         run workers on the local tmux Host; no Docker
-  --password-stdin    read the sudo password from stdin; stdin then cannot carry the script:
-    security find-generic-password -s <item> -w | bash -c "$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh)" install.sh --password-stdin
+  --ref <ref>                 git branch or tag of ophis/agent-pm to install the plugin and broker from (default main)
+  --clients <list>            comma-separated: claude (Claude Code), codex (Codex), opencode (OpenCode); claude or codex needed
+  --docker                    run workers in Docker: Docker Desktop, the broker and its logins
+  --no-docker                 run workers on the local tmux Host; no Docker
+  --opencode-provider <name>  the OpenAI-compatible provider OpenCode runs on, e.g. a LAN model server
+  --opencode-url <url>        its base URL, ending /v1
+  --opencode-model <model>    its model
+  --opencode-key-stdin        read the provider's API key from stdin (tmux Host only)
+  --password-stdin            read the sudo password from stdin (first line, before the key)
 
-Without --docker or --no-docker it asks once and keeps the answer. A rerun skips what is done.
+With --password-stdin or --opencode-key-stdin, stdin cannot carry the script:
+  security find-generic-password -s <item> -w | bash -c "\$(curl -fsSL https://raw.githubusercontent.com/ophis/agent-pm/<ref>/install.sh)" install.sh --password-stdin
+
+It installs the dependencies, asks what the flags leave open, writes ~/.agent-pm/config.local.toml,
+then installs and logs in only what that needs. A rerun keeps the last answers unless a flag changes
+them, and skips what is done.
 EOF
 }
 
 usage_error() {
   say "install.sh: $1"
-  say "install.sh: usage: install.sh [--ref <ref>] [--docker | --no-docker] [--password-stdin]"
+  say "install.sh: usage: $synopsis"
   exit 2
 }
+
+# The canonical form of a clients list (claude,codex,opencode order), or exit 1 when it is not one.
+clients_of() {
+  local item out=
+  case $1 in '' | ,* | *, | *,,* | *[!a-z,]*) return 1 ;; esac
+  for item in ${1//,/ }; do
+    case $item in claude | codex | opencode) ;; *) return 1 ;; esac
+  done
+  for item in claude codex opencode; do
+    case ",$1," in *",$item,"*) out=${out:+$out,}$item ;; esac
+  done
+  case ",$out," in *,claude,* | *,codex,*) ;; *) return 1 ;; esac
+  printf '%s' "$out"
+}
+
+valid_name() { [[ $1 =~ $name_pattern ]] && [ "$1" != ollama ]; }
+valid_url() { [[ $1 =~ $url_pattern ]]; }
+valid_model() { [[ $1 =~ $model_pattern ]]; }
 
 parse_args() {
   while [ $# -gt 0 ]; do
@@ -66,6 +113,11 @@ parse_args() {
         ref=$2
         shift
         ;;
+      --clients)
+        [ $# -ge 2 ] || usage_error "--clients needs a value"
+        clients_flag=$(clients_of "$2") || usage_error "--clients: want a comma-separated list of claude, codex, opencode with claude or codex, not $2"
+        shift
+        ;;
       --docker)
         [ "$docker_flag" != no ] || usage_error "--docker and --no-docker exclude each other"
         docker_flag=yes
@@ -74,13 +126,44 @@ parse_args() {
         [ "$docker_flag" != yes ] || usage_error "--docker and --no-docker exclude each other"
         docker_flag=no
         ;;
+      --opencode-provider)
+        [ $# -ge 2 ] && valid_name "$2" || usage_error "--opencode-provider: want 1-64 letters, digits, _ or -, not ollama"
+        provider_flag=$2
+        shift
+        ;;
+      --opencode-url)
+        [ $# -ge 2 ] && valid_url "$2" || usage_error "--opencode-url: want http(s)://<host>[:<port>]/.../v1, no user info or quotes"
+        url_flag=$2
+        shift
+        ;;
+      --opencode-model)
+        [ $# -ge 2 ] && valid_model "$2" || usage_error "--opencode-model: want 1-200 letters, digits, ., _, :, / or -"
+        model_flag=$2
+        shift
+        ;;
+      --opencode-key-stdin) key_stdin=1 ;;
       --password-stdin) password_stdin=1 ;;
       *) usage_error "unknown argument: $1" ;;
     esac
     shift
   done
-  if [ -n "$password_stdin" ] && [ -t 0 ]; then
-    usage_error "--password-stdin reads a pipe, not a terminal"
+  if { [ -n "$password_stdin" ] || [ -n "$key_stdin" ]; } && [ -t 0 ]; then
+    usage_error "--password-stdin and --opencode-key-stdin read a pipe, not a terminal"
+  fi
+}
+
+opencode_flags() { [ -n "$provider_flag$url_flag$model_flag$key_stdin" ]; }
+
+# The flags' conflicts that flags and State already decide, before anything runs.
+early_checks() {
+  local said_docker
+  said_docker=$docker_flag
+  [ -n "$said_docker" ] || said_docker=$(state_get docker)
+  if [ -n "$key_stdin" ] && [ "$said_docker" = yes ]; then
+    usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
+  fi
+  if opencode_flags && [ -n "$clients_flag" ]; then
+    case ",$clients_flag," in *,opencode,*) ;; *) usage_error "--opencode-*: opencode is not among the clients" ;; esac
   fi
 }
 
@@ -114,7 +197,7 @@ state_get() {
 
 state_set() {
   local key value
-  mkdir -p "${state_file%/*}"
+  mkdir -p "$state_dir"
   {
     if [ -f "$state_file" ]; then
       while IFS='=' read -r key value; do
@@ -124,42 +207,6 @@ state_set() {
     printf '%s=%s\n' "$1" "$2"
   } >"$state_file.tmp"
   mv "$state_file.tmp" "$state_file"
-}
-
-# [session.hosts] default from config.local.toml, read as text: python may not exist yet.
-config_default() {
-  local line in_table= pattern='^default *= *"([A-Za-z0-9_-]+)"'
-  [ -f "$config" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case $line in
-      '[session.hosts]')
-        in_table=1
-        continue
-        ;;
-      '['*) in_table= ;;
-    esac
-    if [ -n "$in_table" ] && [[ $line =~ $pattern ]]; then
-      printf '%s' "${BASH_REMATCH[1]}"
-      return 0
-    fi
-  done <"$config"
-}
-
-docker_answer() {
-  local found
-  if [ -n "$docker_flag" ]; then
-    docker=$docker_flag
-  elif found=$(config_default) && [ -n "$found" ]; then
-    if [ "$found" = docker ]; then docker=yes; else docker=no; fi
-  elif found=$(state_get docker) && [ -n "$found" ]; then
-    docker=$found
-  elif ask_yn "Run workers in Docker (Docker Desktop and the agent-pm broker)?"; then
-    docker=yes
-  else
-    docker=no
-  fi
-  state_set docker "$docker"
-  say "Docker: $docker"
 }
 
 on_exit() {
@@ -175,12 +222,13 @@ on_exit() {
 }
 
 sudo_once() {
-  local password
+  local password=
   step sudo
+  if [ -n "$password_stdin" ]; then IFS= read -r password || true; fi
   if sudo -n true </dev/null >/dev/null 2>&1; then
+    unset password
     skip "already valid"
   elif [ -n "$password_stdin" ]; then
-    IFS= read -r password || true
     if ! printf '%s\n' "$password" | sudo -S -p '' -v; then
       unset password
       die "sudo rejected the password from stdin"
@@ -260,18 +308,239 @@ cask() {
 }
 
 python_ok() {
-  command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' </dev/null 2>/dev/null
+  command -v python3 >/dev/null && python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' </dev/null 2>/dev/null
 }
 
-brew_packages() {
-  step "brew packages"
+has() { case ",$clients," in *",$1,"*) return 0 ;; esac; return 1; }
+
+dependencies() {
+  step dependencies
   formula gh
   formula tmux
   formula git
   if python_ok; then skip "python3 is 3.11+"; else brew_install python; fi
   cask iterm2 "" "$root/Applications/iTerm.app"
-  cask claude-code claude
-  cask codex codex
+}
+
+# What an existing config.local.toml says: "<[session.hosts] default>\t<[delegate] client>".
+config_says() {
+  [ -f "$config" ] || return 0
+  python3 -I -c '
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except (OSError, tomllib.TOMLDecodeError):
+    sys.exit()
+def get(*keys):
+    node = data
+    for key in keys:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, str) else ""
+print(get("session", "hosts", "default") + "\t" + get("delegate", "client"))' "$config"
+}
+
+# ask_valid <question> <check>: asks until <check> accepts the answer.
+ask_valid() {
+  while :; do
+    ask "$1"
+    if "$2" "$answer"; then return 0; fi
+  done
+}
+
+# The configuration: each answer from its flag, else the last answer (State), else the config, else a question.
+answers() {
+  local said default client offer=claude,codex
+  step configuration
+  said=$(config_says)
+  default=${said%%$'\t'*}
+  client=${said#*$'\t'}
+  if [ -n "$clients_flag" ]; then
+    clients=$clients_flag
+  elif clients=$(state_get clients) && [ -n "$clients" ]; then
+    :
+  elif [ "$client" = codex ]; then
+    clients=codex
+  else
+    if opencode_flags; then offer=claude,codex,opencode; fi
+    while :; do
+      ask "Which clients, comma-separated (claude, codex, opencode)? [$offer]"
+      if clients=$(clients_of "${answer:-$offer}"); then break; fi
+    done
+  fi
+  if [ -n "$docker_flag" ]; then
+    docker=$docker_flag
+  elif docker=$(state_get docker) && [ -n "$docker" ]; then
+    :
+  elif [ -n "$default" ]; then
+    if [ "$default" = docker ]; then docker=yes; else docker=no; fi
+  elif ask_yn "Run workers in Docker (Docker Desktop and the agent-pm broker)?"; then
+    docker=yes
+  else
+    docker=no
+  fi
+  if opencode_flags && ! has opencode; then usage_error "--opencode-*: opencode is not among the clients"; fi
+  if [ -n "$key_stdin" ] && [ "$docker" = yes ]; then
+    usage_error "--opencode-key-stdin: the broker reads a provider key only from a terminal; log in at its prompt instead"
+  fi
+  prev_provider=$(state_get opencode_provider)
+  prev_url=$(state_get opencode_url)
+  prev_model=$(state_get opencode_model)
+  if has opencode; then
+    provider=${provider_flag:-$prev_provider}
+    url=${url_flag:-$prev_url}
+    model=${model_flag:-$prev_model}
+    if [ -z "$provider" ]; then
+      ask_valid "OpenCode provider name:" valid_name
+      provider=$answer
+    fi
+    if [ -z "$url" ]; then
+      ask_valid "Its base URL (ending /v1):" valid_url
+      url=$answer
+    fi
+    if [ -z "$model" ]; then
+      ask_valid "Its model:" valid_model
+      model=$answer
+    fi
+    state_set opencode_provider "$provider"
+    state_set opencode_url "$url"
+    state_set opencode_model "$model"
+  fi
+  state_set clients "$clients"
+  state_set docker "$docker"
+  say "    clients: $clients, Docker: $docker${provider:+, OpenCode provider: $provider}"
+}
+
+# Plans the edits that give config.local.toml (or a new one) the wanted settings; writes the result to
+# $1 and prints the changes (exit 3), prints only them when line edits cannot apply them (exit 4), or exit 0.
+config_plan() {
+  python3 -I -c '
+import os, re, sys, tomllib
+path, out, default, harness, client, exe, name, url, model, prev_name, prev_url, prev_model = sys.argv[1:]
+fresh = not os.path.exists(path)
+text = ""
+if not fresh:
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+try:
+    data = tomllib.loads(text)
+except tomllib.TOMLDecodeError as error:
+    sys.exit(f"{path}: {error}")
+def get(data, table, key=None):
+    node = data
+    for part in table.split("."):
+        node = node.get(part) if isinstance(node, dict) else None
+    if key is None:
+        return node
+    return node.get(key) if isinstance(node, dict) else None
+wanted = []
+def want(table, key, value):
+    if get(data, table, key) != value:
+        wanted.append((table, key, value))
+if fresh or (get(data, "session.hosts", "default") or "tmux") != default:
+    wanted.append(("session.hosts", "default", default))
+if client and (get(data, "delegate", "client") or "claude") != client:
+    wanted.append(("delegate", "client", client))
+if harness and get(data, "delegate.delegates", "harness_host") in (None, "", "docker"):
+    wanted.append(("delegate.delegates", "harness_host", harness))
+if name:
+    target, before = f"{name}/{model}", f"{prev_name}/{prev_model}" if prev_name else None
+    if get(data, "session.clients.opencode", "executable") in (None, ""):
+        want("session.clients.opencode", "executable", exe)
+    def ours(value):
+        return value is None or (isinstance(value, str) and (value.startswith("ollama/") or value == before))
+    if ours(get(data, "session.clients.opencode", "model")):
+        want("session.clients.opencode", "model", target)
+    table = f"session.clients.opencode.providers.{name}"
+    found = get(data, table)
+    if found is None or (name == prev_name and found.get("base_url") == prev_url and found.get("models") == [prev_model]):
+        want(table, "base_url", url)
+        want(table, "models", [model])
+    for tier in "1234":
+        if ours(get(data, "session.clients.opencode.tiers", tier)):
+            want("session.clients.opencode.tiers", tier, target)
+if not wanted:
+    sys.exit(0)
+def toml(value):
+    return "[" + ", ".join(toml(item) for item in value) + "]" if isinstance(value, list) else f"\"{value}\""
+lines = text.splitlines(keepends=True)
+if fresh:
+    lines = ["# Written by install.sh. Keys and defaults: each layer\x27s packaged config.toml (its `# local:` lines);\n",
+             "# the Linear board: docs/board.md#setup.\n"]
+if lines and not lines[-1].endswith("\n"):
+    lines[-1] += "\n"
+for table, key, value in wanted:
+    new = f"{key} = {toml(value)}\n"
+    print(f"[{table}] {new.strip()}")
+    starts = [i for i, line in enumerate(lines) if line.strip() == f"[{table}]"]
+    if not starts:
+        lines += (["\n"] if lines and not (fresh and len(lines) == 2) else []) + [f"[{table}]\n", new]
+        continue
+    end = starts[0] + 1
+    while end < len(lines) and not lines[end].lstrip().startswith("["):
+        end += 1
+    hits = [i for i in range(starts[0] + 1, end) if re.match(rf"\s*{re.escape(key)}\s*=", lines[i])]
+    if hits:
+        lines[hits[0]] = new
+    else:
+        lines.insert(end if fresh else starts[0] + 1, new)
+result = "".join(lines)
+try:
+    edited = tomllib.loads(result)
+except tomllib.TOMLDecodeError:
+    sys.exit(4)
+if any(get(edited, table, key) != value for table, key, value in wanted):
+    sys.exit(4)
+with open(out, "w", encoding="utf-8") as f:
+    f.write(result)
+sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
+    "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$prev_provider" "$prev_url" "$prev_model"
+}
+
+config_file() {
+  local wanted_default=tmux wanted_harness= wanted_client= changes rc=0 plan
+  step config.local.toml
+  if [ "$docker" = yes ]; then
+    wanted_default=docker
+    wanted_harness=tmux
+  fi
+  if ! has claude; then wanted_client=codex; fi
+  mkdir -p "$state_dir"
+  plan=$state_dir/config.local.toml.plan
+  changes=$(config_plan "$plan") || rc=$?
+  case $rc in
+    0) skip "has the configuration" ;;
+    3)
+      if [ ! -f "$config" ]; then changes=$(cat "$plan"); fi
+      if consent "$config" "$changes"; then
+        if [ -f "$config" ]; then backup_config; fi
+        mv "$plan" "$config"
+      else
+        rm -f "$plan"
+        skip declined
+      fi
+      ;;
+    4)
+      say "    set these by hand in $config:"
+      say "$changes"
+      skip "set it by hand"
+      ;;
+    *) die "cannot read $config" ;;
+  esac
+}
+
+# Keeps the user's own config.local.toml once, before the installer's first edit (the cleanup restores it).
+backup_config() {
+  local backup=$state_dir/config.local.toml.orig
+  [ -f "$backup" ] && return 0
+  cp "$config" "$backup.tmp"
+  mv "$backup.tmp" "$backup"
+}
+
+apps() {
+  step apps
+  if has claude; then cask claude-code claude; else skip "Claude Code: not chosen"; fi
+  if has codex; then cask codex codex; else skip "Codex: not chosen"; fi
   if [ "$docker" = yes ]; then
     cask docker-desktop "" "$root/Applications/Docker.app"
     if [ "$ref" = main ]; then skip "go: the broker comes from a release"; else formula go; fi
@@ -288,13 +557,17 @@ client_logins() {
     gh auth login --hostname github.com --git-protocol https --web <&3 >&3 2>&3
   fi
   step "Claude Code login"
-  if claude auth status </dev/null >/dev/null 2>&1; then
+  if ! has claude; then
+    skip "Claude Code not chosen"
+  elif claude auth status </dev/null >/dev/null 2>&1; then
     skip "logged in"
   else
     claude auth login <&3 >&3 2>&3
   fi
   step "Codex login"
-  if codex login status </dev/null >/dev/null 2>&1; then
+  if ! has codex; then
+    skip "Codex not chosen"
+  elif codex login status </dev/null >/dev/null 2>&1; then
     skip "logged in"
   else
     codex login <&3 >&3 2>&3
@@ -303,7 +576,7 @@ client_logins() {
 
 # Exit 0: marketplace $1 is $2 at ref $3 ("*": any ref); 1: absent; 2: another source or ref.
 claude_market() {
-  claude plugin marketplace list --json </dev/null | python3 -c '
+  claude plugin marketplace list --json </dev/null | python3 -I -c '
 import json, sys
 name, repo, ref = sys.argv[1:]
 refs = {"", "main"} if ref == "main" else {ref}
@@ -315,14 +588,14 @@ sys.exit(1)' "$1" "$2" "$3"
 
 # Exit 0: plugin $1 installed and enabled; 1: absent; 2: disabled.
 claude_plugin() {
-  claude plugin list --json </dev/null | python3 -c '
+  claude plugin list --json </dev/null | python3 -I -c '
 import json, sys
 found = [p for p in json.load(sys.stdin) if p.get("id") == sys.argv[1]]
 sys.exit(1 if not found else 0 if found[0].get("enabled") else 2)' "$1"
 }
 
 codex_market() {
-  python3 -c '
+  python3 -I -c '
 import sys, tomllib
 path, name, source, ref = sys.argv[1:]
 try:
@@ -338,7 +611,7 @@ sys.exit(0 if m.get("source") == source and (ref == "*" or m.get("ref", "") in r
 }
 
 codex_plugin_on() {
-  codex plugin list --json </dev/null | python3 -c '
+  codex plugin list --json </dev/null | python3 -I -c '
 import json, sys
 sys.exit(0 if any(p.get("pluginId") == sys.argv[1] and p.get("enabled") for p in json.load(sys.stdin).get("installed", [])) else 1)' "$1"
 }
@@ -347,6 +620,10 @@ claude_plugins() {
   local source=ophis/agent-pm rc id
   [ "$ref" = main ] || source="ophis/agent-pm#$ref"
   step "Claude Code plugins"
+  if ! has claude; then
+    skip "Claude Code not chosen"
+    return
+  fi
   rc=0
   claude_market agent-pm ophis/agent-pm "$ref" || rc=$?
   if [ "$rc" = 0 ]; then
@@ -380,6 +657,10 @@ claude_plugins() {
 codex_plugins() {
   local rc id
   step "Codex plugins"
+  if ! has codex; then
+    skip "Codex not chosen"
+    return
+  fi
   rc=0
   codex_market agent-pm https://github.com/ophis/agent-pm.git "$ref" || rc=$?
   if [ "$rc" = 0 ]; then
@@ -408,14 +689,112 @@ codex_plugins() {
   done
 }
 
-# The installed Claude Code plugin: the whole repo at $ref, source of the broker, ctmux and jobs.
+# The installed plugin: the whole repo at $ref, source of the broker, ctmux and jobs. Claude Code's
+# install first, else Codex's newest, as manager/skills/manage/scripts/launcher looks.
 plugin_dir() {
   step "plugin directory"
-  pkg=$(claude plugin list --json </dev/null | python3 -c '
+  if has claude; then
+    pkg=$(claude plugin list --json </dev/null | python3 -I -c '
 import json, sys
 print(next((p.get("installPath", "") for p in json.load(sys.stdin) if p.get("id") == "agent-pm@agent-pm"), ""))')
-  [ -n "$pkg" ] && [ -d "$pkg" ] || die "claude plugin list --json names no agent-pm@agent-pm directory"
+  else
+    pkg=$(python3 -I -c '
+import glob, os, sys
+def version(path):
+    return [int(part) if part.isdigit() else -1 for part in os.path.basename(path).split(".")]
+found = sorted(glob.glob(os.path.join(glob.escape(sys.argv[1]), "*")), key=version, reverse=True)
+print(found[0] if found else "")' "${CODEX_HOME:-$HOME/.codex}/plugins/cache/agent-pm/agent-pm")
+  fi
+  [ -n "$pkg" ] && [ -d "$pkg" ] || die "no installed agent-pm plugin directory"
   say "    $pkg"
+}
+
+# go_const <file> <name>: the string value of `const <name> = "..."` in a Go file of the plugin.
+go_const() {
+  local value
+  value=$(sed -n "s/^const $2 = \"\\([0-9.]*\\)\"\$/\\1/p" "$pkg/$1")
+  [ -n "$value" ] || die "no $2 in $pkg/$1"
+  printf '%s' "$value"
+}
+
+opencode_install() {
+  local version found=
+  step "OpenCode install"
+  if ! has opencode; then
+    skip "OpenCode not chosen"
+    return
+  fi
+  version=$(go_const broker/internal/launcher/versions.go opencodeMinVersion)
+  formula node
+  if [ -x "$opencode_prefix/bin/opencode" ]; then
+    found=$("$opencode_prefix/bin/opencode" --version </dev/null 2>/dev/null || true)
+  fi
+  if [ "$found" = "$version" ]; then
+    skip "OpenCode $version in $opencode_prefix"
+  else
+    npm install -g --prefix "$opencode_prefix" --cache "$opencode_prefix/.npm-cache" "opencode-ai@$version" </dev/null >&2
+  fi
+  case $(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url") in
+    localhost | 127.0.0.1) ;;
+    *) case $url in http://*) say "$url: http:// sends the API key in plaintext over the network (docs/docker-host.md › Risks)" ;; esac ;;
+  esac
+}
+
+opencode_auth_file() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; }
+
+# Exit 0 when OpenCode's auth.json has an entry for $1; its key is never read out.
+opencode_has_key() {
+  python3 -I -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        sys.exit(0 if sys.argv[2] in json.load(f) else 1)
+except (OSError, ValueError):
+    sys.exit(1)' "$(opencode_auth_file)" "$1"
+}
+
+# Adds {"<name>": {"type": "api", "key": <stdin line>}} to auth.json: 0600, atomic, others kept.
+opencode_store_key() {
+  python3 -I -c '
+import json, os, sys, tempfile
+path, name = sys.argv[1:]
+key = sys.stdin.readline().rstrip("\n")
+if not key:
+    sys.exit("install.sh: no OpenCode key on stdin")
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except FileNotFoundError:
+    data = {}
+except ValueError:
+    sys.exit(f"install.sh: {path} is not JSON; nothing written")
+data[name] = {"type": "api", "key": key}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".auth.json.")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(temp, path)
+except BaseException:
+    os.unlink(temp)
+    raise' "$(opencode_auth_file)" "$provider"
+}
+
+opencode_key() {
+  step "OpenCode key"
+  if ! has opencode; then
+    skip "OpenCode not chosen"
+  elif [ "$docker" = yes ]; then
+    skip "logged in through the broker"
+  elif opencode_has_key "$provider"; then
+    skip "$provider in $(opencode_auth_file)"
+  elif [ -n "$key_stdin" ]; then
+    opencode_store_key
+  else
+    say "In opencode auth login pick Other, enter $provider, then paste its API key"
+    "$opencode_prefix/bin/opencode" auth login <&3 >&3 2>&3
+    opencode_has_key "$provider" || die "no $provider key in $(opencode_auth_file)"
+  fi
 }
 
 ctmux_install() {
@@ -499,7 +878,7 @@ store_app_key() {
 
 # install, update, login, ready or busy: what the broker's pinned Codex needs.
 codex_need() {
-  "$broker" status </dev/null | python3 -c '
+  "$broker" status </dev/null | python3 -I -c '
 import json, sys
 codex = json.load(sys.stdin).get("codex") or {}
 state = codex.get("state", "")
@@ -522,7 +901,9 @@ broker_logins() {
   local sha min need
   sha=$(shasum -a 256 "$broker" | cut -d' ' -f1)
   step "broker login: Claude"
-  if [ "$(state_get login_claude)" = "$sha" ]; then
+  if ! has claude; then
+    skip "Claude Code not chosen"
+  elif [ "$(state_get login_claude)" = "$sha" ]; then
     skip "done for this broker"
   else
     say "Create a token with claude setup-token, then paste it at the broker's prompt"
@@ -540,19 +921,33 @@ broker_logins() {
     state_set login_github "$sha"
   fi
   step "broker Codex install"
-  min=$(sed -n 's/^const MinVersion = "\([0-9.]*\)"$/\1/p' "$pkg/broker/internal/codex/versions.go")
-  [ -n "$min" ] || die "no MinVersion in $pkg/broker/internal/codex/versions.go"
-  need=$(codex_need "$min")
-  case $need in
-    busy) die "broker busy; rerun" ;;
-    install | update) sudo "$broker" "$need-codex" "$min" </dev/null >&2 ;;
-    *) skip "Codex $min or newer installed" ;;
-  esac
-  step "broker login: Codex"
-  if [ "$(codex_need "$min")" = ready ]; then
-    skip "logged in"
+  if ! has codex; then
+    skip "Codex not chosen"
+    step "broker login: Codex"
+    skip "Codex not chosen"
   else
-    "$broker" login codex <&3 >&3 2>&3
+    min=$(go_const broker/internal/codex/versions.go MinVersion)
+    need=$(codex_need "$min")
+    case $need in
+      busy) die "broker busy; rerun" ;;
+      install | update) sudo "$broker" "$need-codex" "$min" </dev/null >&2 ;;
+      *) skip "Codex $min or newer installed" ;;
+    esac
+    step "broker login: Codex"
+    if [ "$(codex_need "$min")" = ready ]; then
+      skip "logged in"
+    else
+      "$broker" login codex <&3 >&3 2>&3
+    fi
+  fi
+  step "broker login: OpenCode"
+  if ! has opencode; then
+    skip "OpenCode not chosen"
+  elif [ "$(state_get login_opencode)" = "$sha $provider" ]; then
+    skip "done for this broker"
+  else
+    "$broker" login opencode "$provider" <&3 >&3 2>&3
+    state_set login_opencode "$sha $provider"
   fi
 }
 
@@ -560,7 +955,7 @@ docker_steps() {
   local name
   if [ "$docker" != yes ]; then
     for name in "Docker Desktop running" broker "broker login: Claude" "broker login: GitHub" \
-      "broker Codex install" "broker login: Codex"; do
+      "broker Codex install" "broker login: Codex" "broker login: OpenCode"; do
       step "$name"
       skip "Docker not chosen"
     done
@@ -572,24 +967,30 @@ docker_steps() {
 
 main() {
   local platform
+  set +x
   parse_args "$@"
+  early_checks
   platform=$(uname -sm)
   [ "$platform" = "Darwin arm64" ] || die "needs macOS on Apple silicon (Darwin arm64), not $platform"
   if [ ! -e "$root/dev/tty" ] || ! (: <>"$root/dev/tty") 2>/dev/null; then die "needs a terminal for its questions and logins"; fi
   exec 3<>"$root/dev/tty"
   trap on_exit EXIT
-  docker_answer
   sudo_once
   homebrew
-  brew_packages
+  dependencies
+  answers
+  config_file
+  apps
   client_logins
   claude_plugins
   codex_plugins
   plugin_dir
+  opencode_install
+  opencode_key
   docker_steps
   ctmux_install
   current=
-  say "agent-pm is installed (ref $ref, Docker $docker)."
+  say "agent-pm is installed (ref $ref, clients $clients, Docker $docker)."
 }
 
 main "$@"

@@ -17,7 +17,7 @@ FAKES = Path(os.environ["FAKES"])
 ROOT = Path(os.environ.get("AGENT_PM_INSTALL_ROOT", "/nonexistent"))
 PREFIX = ROOT / "opt/homebrew"
 BROKER = ROOT / "usr/local/libexec/agent-pm/agent-pm-broker"
-APPS = {"gh": "gh", "tmux": "tmux", "git": "git", "go": "go", "python": "python3"}
+APPS = {"gh": "gh", "tmux": "tmux", "git": "git", "go": "go", "python": "python3", "node": "npm"}
 CASKS = {"claude-code": "claude", "codex": "codex", "docker-desktop": "docker"}
 CASK_APPS = {"docker-desktop": "Docker.app", "iterm2": "iTerm.app"}
 
@@ -178,8 +178,12 @@ def claude(args):
     return 0
 
 
+def codex_home():
+    return Path(os.environ.get("CODEX_HOME") or Path(os.environ["HOME"], ".codex"))
+
+
 def codex_config(markets):
-    home = Path(os.environ.get("CODEX_HOME") or Path(os.environ["HOME"], ".codex"))
+    home = codex_home()
     lines = []
     for name, m in markets.items():
         lines += [f"[marketplaces.{name}]", 'source_type = "git"', f'source = "{m["source"]}"']
@@ -204,6 +208,11 @@ def codex(args):
         return 0
     elif args[:2] == ["plugin", "add"]:
         plugins.append({"pluginId": args[2], "installed": True, "enabled": True})
+        if args[2] == "agent-pm@agent-pm":
+            cache = codex_home() / "plugins/cache/agent-pm/agent-pm/9.8.7"
+            shutil.rmtree(cache, ignore_errors=True)
+            shutil.copytree(FAKES / "pkg-src", cache)
+            mark(cache / "REF", markets["agent-pm"].get("ref", ""))
     elif args[:2] == ["plugin", "remove"]:
         if not any(p["pluginId"] == args[2] for p in plugins):
             return 1
@@ -296,6 +305,41 @@ def broker(args):
     if args == ["login", "codex"]:
         save(codex_file, {**(state or {}), "state": "ready", "repair": ""})
         return 0
+    if args[:2] == ["login", "opencode"]:
+        out(f"OpenCode provider {args[2]} API key (hidden): ")
+        store_key(f"agent-pm-opencode.{args[2]}", sys.stdin.readline().rstrip("\n"))
+        return 0
+    return 2
+
+
+def opencode_auth():
+    data = Path(os.environ.get("XDG_DATA_HOME") or Path(os.environ["HOME"], ".local/share"))
+    return data / "opencode/auth.json"
+
+
+def npm(args):
+    prefix = Path(args[args.index("--prefix") + 1])
+    version = args[-1].split("@", 1)[1]
+    (prefix / "bin").mkdir(parents=True, exist_ok=True)
+    shutil.copy(FAKES / "apps/opencode", prefix / "bin/opencode")
+    mark(FAKES / "opencode_version", version)
+    return 0
+
+
+def opencode(args):
+    if args == ["--version"]:
+        out((FAKES / "opencode_version").read_text() + "\n")
+        return 0
+    if args == ["auth", "login"]:
+        out("Provider: ")
+        name = sys.stdin.readline().strip()
+        out("API key: ")
+        key = sys.stdin.readline().rstrip("\n")
+        path = opencode_auth()
+        data = json.loads(path.read_text()) if path.exists() else {}
+        data[name] = {"type": "api", "key": key}
+        mark(path, json.dumps(data))
+        return 0
     return 2
 
 
@@ -309,6 +353,8 @@ TOOLS = {
     "tmux": lambda _args: 0,
     "git": lambda _args: 0,
     "go": lambda _args: 0,
+    "npm": npm,
+    "opencode": opencode,
     "claude": claude,
     "codex": codex,
     "security": security,
