@@ -301,9 +301,11 @@ class InstallTest(Case):
         shutil.copytree(Path(REPO, "orchestrator/launchd"), self.pkg_src / "orchestrator/launchd")
         flow = "orchestrator/src/agent_pm/orchestrator/engine/flow"
         (self.pkg_src / flow).mkdir(parents=True)
-        shutil.copy(Path(REPO, flow, "workflow.toml"), self.pkg_src / flow)
         charters = "delegate/src/agent_pm/delegate/team/roles"
-        shutil.copytree(Path(REPO, charters), self.pkg_src / charters)
+        (self.pkg_src / charters).mkdir(parents=True)
+        # copyfile: CI makes the shipped source read-only, and the cleanup must delete these copies
+        for source in [Path(REPO, flow, "workflow.toml"), *Path(REPO, charters).glob("*.md")]:
+            shutil.copyfile(source, self.pkg_src / source.relative_to(REPO))
         self.log, self.envlog = Path(self.home, "calls.log"), Path(self.home, "env.log")
         self.env = {
             "HOME": self.home,
@@ -1868,11 +1870,21 @@ class InstallTest(Case):
             self.assertNotIn("\x1b[2J@", text)
 
     def test_board_quoted_label_written(self):
-        quoted = 'a" = "b'
-        self.linear(labels=[*LINEAR["labels"], label(46, quoted, 43)])
+        quoted, astral = 'a" = "b', "\U0001f916 bot"
+        labels = [*LINEAR["labels"], label(46, quoted, 43), label(47, astral, 43)]
+        self.linear(labels=labels)
         result = self.fresh("--board", then=[*self.keys(*SLOTS), *BOARD])
         self.assert_ok(result)
-        self.assertEqual(self.board_config()["agent_labels"][quoted], uuid(46))
+        agents = self.board_config()["agent_labels"]
+        self.assertEqual((agents[quoted], agents[astral]), (uuid(46), uuid(47)))
+
+    def test_board_unreadable_workflow_stops(self):
+        result = self.configured('[orchestrator]\nworkflow = "~/missing.toml"\n')
+        self.assertNotEqual(result.code, 0)
+        self.assertIn(
+            f"install.sh: {self.home}/missing.toml: cannot read its [[stage]] roles", result.stderr
+        )
+        self.assertFalse([c for c in self.calls() if c.startswith(("security add", "launchctl"))])
 
     def ledger(self):
         path = Path(self.agent_pm, "install/added")

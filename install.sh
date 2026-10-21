@@ -653,8 +653,7 @@ answers() {
 # $1 and prints the changes (exit 3), prints only them when line edits cannot apply them (exit 4), or exit 0.
 config_plan() {
   python3 -I -c '
-import os, re, sys, tomllib
-import json
+import json, os, re, sys, tomllib
 path, out, default, harness, client, exe, name, url, model, context, prev_name, prev_url, prev_model, prev_context, only, board = sys.argv[1:]
 fresh = not os.path.exists(path)
 text = ""
@@ -715,9 +714,9 @@ if not wanted:
 def toml(value):
     if isinstance(value, list):
         return "[" + ", ".join(toml(item) for item in value) + "]"
-    return str(value) if isinstance(value, int) else json.dumps(value)
+    return str(value) if isinstance(value, int) else json.dumps(value, ensure_ascii=False)
 def toml_key(key):
-    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key, ensure_ascii=False)
 def line_key(line):
     try:
         parsed = tomllib.loads(line)
@@ -758,19 +757,19 @@ with open(out, "w", encoding="utf-8") as f:
     f.write(result)
 sys.exit(3)' "$config" "$1" "$wanted_default" "$wanted_harness" "$wanted_client" \
     "$opencode_prefix/bin/opencode" "$provider" "$url" "$model" "$context" \
-    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$only" "$board_plan"
+    "$prev_provider" "$prev_url" "$prev_model" "$prev_context" "$only" "$board_file"
 }
 
 # Writes the configuration's settings into config.local.toml with consent; given <table> <key> <value>, only that;
-# given board <file>, the board plan's settings in <file> (board_plan).
+# given board <file>, the settings board_plan wrote to <file>.
 config_file() {
-  local wanted_default=tmux wanted_harness= wanted_client= only= board_plan= changes rc=0 plan
+  local wanted_default=tmux wanted_harness= wanted_client= only= board_file= changes rc=0 plan
   if [ $# = 2 ] && [ "$1" = board ]; then
-    board_plan=$2
+    board_file=$2
   elif [ $# = 3 ]; then
     only=$1$'\t'$2$'\t'$3
   fi
-  step "config.local.toml${only:+: [$1] $2}${board_plan:+: Linear board}"
+  step "config.local.toml${only:+: [$1] $2}${board_file:+: Linear board}"
   if [ "$docker" = yes ]; then
     wanted_default=docker
     wanted_harness=tmux
@@ -1571,7 +1570,7 @@ print("\n".join(f"{role}\t{input_}" for role, input_ in stages))' "$config" "$pk
 # service is config.local.toml's, else linear-<slot>; its account the role's account there, else the service.
 linear_slots() {
   local stages
-  stages=$(stage_roles)
+  stages=$(stage_roles) || exit 1
   python3 -I -c '
 import os, re, sys, tomllib
 config, roles = sys.argv[1], [line.split("\t")[0] for line in sys.argv[2].splitlines()]
@@ -1661,7 +1660,7 @@ linear_keys() {
 board_complete() {
   local stages
   [ -f "$config" ] || return 1
-  stages=$(stage_roles)
+  stages=$(stage_roles) || exit 1
   python3 -I -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
@@ -1689,8 +1688,8 @@ sys.exit(0 if orchestrator.get("tracker") == "linear" and docs and all(set_(line
 # before it is shown or planned.
 board_plan() {
   local slots stages
-  slots=$(linear_slots)
-  stages=$(stage_roles)
+  slots=$(linear_slots) || exit 1
+  stages=$(stage_roles) || exit 1
   python3 -I -c "$linear_client"'
 import os, re, tomllib
 config, out, slot_lines, stage_lines, charters = sys.argv[1:]
