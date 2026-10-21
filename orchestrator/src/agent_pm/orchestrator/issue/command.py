@@ -271,29 +271,35 @@ _MOVE_HELP = (
 
 _EDIT_HELP = (
     _WRITE_RULES % "" + "Changes the given fields of one issue in one update naming only what\n"
-    "  changes; give at least one of --title, --body-file, --role, --task,\n"
-    "  --client, --priority. Every given value already so: result unchanged,\n"
-    "  nothing written. A name the configuration lacks exits 2 before anything\n"
-    "  is read.\n"
+    "  changes; give at least one of --title, --body-file, --role, --project,\n"
+    "  --task, --client, --priority. Every given value already so: result\n"
+    "  unchanged, nothing written. A name the configuration lacks exits 2 before\n"
+    "  anything is read.\n"
     "--title TEXT: not blank. --body-file FILE: the new Markdown description,\n"
     "  UTF-8, sent verbatim, minus a leading byte order mark; - reads stdin;\n"
     "  blank or unreadable exits 2.\n"
     "--role SPEC: the assignee: a configured role's account, me (the\n"
     "  linear.manager_key account) or unassigned (no assignee); a local board:\n"
     "  the file moves to <SPEC>/<state>/, an archived issue exits 2.\n"
+    "--project VALUE: Linear only (a local board exits 2): a project of the\n"
+    "  configured team, an id or exact name, resolved before the issue is read;\n"
+    "  no match, several or another team's exits 2 naming the candidates. Only\n"
+    "  on an issue of the configured team (linear.team): another team's exits 2.\n"
     "--task NAME / --client NAME: a configured task / client name (a local\n"
     "  board: a configured role's task / any client name). On Linear its label\n"
     "  replaces the issue's labels of that group: every other label stays, and\n"
     "  only on an issue of the configured team (linear.team): another team's\n"
     "  exits 2.\n"
     "--priority NAME: none, urgent, high, medium or low.\n\n"
-    "Example (a configured board holding TASK-1):\n"
+    "Example (a configured board holding TASK-1; the last: Linear):\n"
     "  agent-pm-orchestrator issue edit TASK-1 --title 'Fix login' --task build\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file note.md --priority high\n"
     "  agent-pm-orchestrator issue edit TASK-1 --body-file - --client <client> < note.md\n"
-    "  agent-pm-orchestrator issue edit TASK-1 --role engineer\n\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --role engineer\n"
+    "  agent-pm-orchestrator issue edit TASK-1 --project 'Agent PM'\n\n"
     "Recovery and next help:\n"
     "  The issue's fields and labels: agent-pm-orchestrator issue read TASK-1\n"
+    "  Project values: agent-pm-orchestrator issue lookup projects\n"
     "  Configuration and command discovery: agent-pm-orchestrator --help"
 )
 
@@ -494,9 +500,9 @@ def _parser():
     )
     change = commands.add_parser(
         "edit",
-        help="change one issue's title, description, assignee, task, client or priority",
-        description="Change the title, description, assignee, task, client or priority of one "
-        "issue.",
+        help="change one issue's title, description, assignee, project, task, client or priority",
+        description="Change the title, description, assignee, project, task, client or priority "
+        "of one issue.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_EDIT_HELP,
     )
@@ -507,6 +513,9 @@ def _parser():
     )
     change.add_argument(
         "--role", action=_Once, metavar="SPEC", help="assignee: a configured role, me or unassigned"
+    )
+    change.add_argument(
+        "--project", action=_Once, metavar="VALUE", help="Linear only: project id or name"
     )
     change.add_argument("--task", action=_Once, metavar="NAME", help="a configured task name")
     change.add_argument("--client", action=_Once, metavar="NAME", help="a configured client name")
@@ -612,11 +621,13 @@ def _limit(text):
 def _usage(args):
     """The usage error in args' options, or None."""
     if args.command == "edit" and (
-        (args.title, args.body_file, args.role, args.task, args.client, args.priority)
-        == (None,) * 6
+        (args.title, args.body_file, args.role, args.project, args.task, args.client)
+        + (args.priority,)
+        == (None,) * 7
     ):
         return (
-            "edit: give at least one of --title, --body-file, --role, --task, --client, --priority"
+            "edit: give at least one of --title, --body-file, --role, --project, --task, "
+            "--client, --priority"
         )
     if args.command in ("create", "edit") and args.title is not None and not args.title.strip():
         return "--title: empty title"
@@ -697,6 +708,7 @@ def _request(args, body):
             title=args.title,
             body=body,
             role=args.role,
+            project=args.project,
             task=args.task,
             client=args.client,
             priority=_priority(args.priority),
@@ -781,6 +793,8 @@ def _linear_only(command, request):
             "--project": request.project is not None,
             "--milestone": request.milestone is not None,
         }
+    elif isinstance(request, IssueEdit):
+        given = {"--project": request.project is not None}
     else:
         return None
     return next((option for option, is_set in given.items() if is_set), None)

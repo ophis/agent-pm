@@ -55,6 +55,7 @@ from orchestrator_tests.unit.issue_fixtures import (
     create_gql,
     issue_node,
     label,
+    project,
     rel,
     tree,
     uid,
@@ -262,6 +263,7 @@ class Help(Case):
             ["edit", "TASK-1", "--priority", "2"],
             ["edit", "TASK-1", "--state", "done"],
             ["edit", "TASK-1", "--role", "me", "--role", "pm"],
+            ["edit", "TASK-1", "--project", "a", "--project", "b"],
             ["edit", "TASK-1", "--label", "bug"],
             ["list", "--team", "TASK"],
             ["list", "--assignee", "me"],
@@ -543,6 +545,14 @@ class Edit(IssueCase):
                 self.assertEqual((code, err, json.loads(out)["result"]), (0, "", "changed"))
                 self.assertEqual([w[1]["in"] for w in gql.writes], [{"assigneeId": want}])
 
+    def test_a_project_alone_changes_the_project(self):
+        for value in (uid(4), "Agent PM"):
+            gql = EditGql((self.BUILD,), [], projects=(project(4, "Agent PM"),))
+            with self.subTest(value=value):
+                code, out, err = self.run_main(["edit", "TASK-2", "--project", value], gql)
+                self.assertEqual((code, err, json.loads(out)["result"]), (0, "", "changed"))
+                self.assertEqual([w[1]["in"] for w in gql.writes], [{"projectId": uid(4)}])
+
     def test_unchanged_exits_zero(self):
         gql = EditGql((self.BUILD,), [], fields={"title": "Same"})
         code, out, _ = self.run_main(["edit", "TASK-2", "--title", "Same"], gql)
@@ -555,8 +565,8 @@ class Edit(IssueCase):
         for argv, phrase in (
             (
                 [],
-                "edit: give at least one of --title, --body-file, --role, --task, --client, "
-                "--priority",
+                "edit: give at least one of --title, --body-file, --role, --project, --task, "
+                "--client, --priority",
             ),
             (["--title", " \n"], "--title: empty title"),
             (["--body-file", blank], "--body-file"),
@@ -574,6 +584,7 @@ class Edit(IssueCase):
             (EditGql((), [], fields=other), ["--task", "build"], 2, "is in team OPS"),
             (EditGql((), []), ["--client", "nope"], 2, "--client nope"),
             (EditGql((), []), ["--role", "nope"], 2, "--role nope: not a role"),
+            (EditGql((), []), ["--project", "Nope"], 2, "--project 'Nope': no project"),
             (EditGql((), [], result={"success": False}), ["--title", "New"], 1, "success: false"),
             (
                 EditGql((), [], result=Unavailable("issueUpdate", reason="timed out")),
@@ -588,7 +599,7 @@ class Edit(IssueCase):
                 self.assertEqual((code, out), (want, b""))
                 self.assertTrue(err.startswith("agent-pm-orchestrator issue: "), err)
                 self.assertIn(phrase, err)
-        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 0, 1, 1])
+        self.assertEqual([len(gql.writes) for gql, *_ in cases], [0, 0, 0, 0, 1, 1])
 
 
 class Comment(IssueCase):
@@ -1115,6 +1126,8 @@ class LinearOnlyOnLocal(LocalCase):
         (["list", "--label", "", "--full", "--output", "out.json"], "--label"),
         (["create", "--title", "t", "--body-file", "-", "--label", "bug"], "--label"),
         (["create", "--title", "t", "--body-file", "-", "--project", "P"], "--project"),
+        (["edit", "LOC-1", "--project", "P"], "--project"),
+        (["edit", "LOC-1", "--title", "t", "--project", "P"], "--project"),
         (["create", "--title", "t", "--body-file", "-", "--milestone", "M"], "--milestone"),
         (
             ["create", "--title", "t", "--body-file", "-", "--milestone", "M", "--label", "a"],
@@ -1627,12 +1640,14 @@ class Requests(Case):
 
     def test_edit(self):
         argv = ("edit", "TASK-1", "--title", "T", "--body-file", "f", "--task", "build")
-        got = self.request(*argv, "--role", "pm", "--client", "c", "--priority", "low", body="B")
+        argv += ("--role", "pm", "--project", "P", "--client", "c", "--priority", "low")
+        got = self.request(*argv, body="B")
         want = IssueEdit(
             id="TASK-1",
             title="T",
             body="B",
             role="pm",
+            project="P",
             task="build",
             client="c",
             priority=Priority.LOW,
@@ -1646,6 +1661,7 @@ class Requests(Case):
                 title=None,
                 body=None,
                 role=None,
+                project=None,
                 task="build",
                 client=None,
                 priority=None,

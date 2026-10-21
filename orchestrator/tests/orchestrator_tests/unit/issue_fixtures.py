@@ -88,7 +88,7 @@ def new_issue(**given):
 
 def issue_change(ident, **given):
     """An IssueEdit of ident changing only the given fields."""
-    none = ("title", "body", "role", "task", "client", "priority")
+    none = ("title", "body", "role", "project", "task", "client", "priority")
     return IssueEdit(**{"id": ident, **dict.fromkeys(none), **given})
 
 
@@ -641,20 +641,39 @@ class LabelGql:
 
 
 class EditGql(LabelGql):
-    """LabelGql whose issue TASK-2 also holds `fields` (title, description, priority, assignee;
-    team to move it), answering `agent-pm-orchestrator issue edit`'s read and its --role lookups
-    (the role accounts' users, the viewer); the mutation applies its label changes.
+    """LabelGql whose issue TASK-2 also holds `fields` (title, description, priority, assignee,
+    project; team to move it), answering `agent-pm-orchestrator issue edit`'s read, its --role
+    lookups (the role accounts' users, the viewer) and its --project ones from `projects`
+    (project() nodes), strictly as Routes; the mutation applies its label changes.
     """
 
-    def __init__(self, catalog, carried, *, fields=None, **options):
+    def __init__(self, catalog, carried, *, fields=None, projects=(), **options):
         super().__init__(catalog, carried, **options)
+        self.projects = {n["id"]: n for n in projects}
         self.fields = {
             "title": "Old",
             "description": "Old body",
             "priority": 0,
             "assignee": None,
+            "project": None,
             **(fields or {}),
         }
+
+    def _project(self, query, variables):
+        if query == issue_refs.Q_PROJECT:
+            if (node := self.projects.get(variables["id"])) is None:
+                raise GraphQLErrors([{"message": "Entity not found: Project"}])
+            teams = [t for t in node["teams"]["nodes"] if t["id"] == variables["t"]]
+            return {"project": {"id": node["id"], "name": node["name"], "teams": conn(teams)}}
+        if complexity(query, variables) > LIMIT:
+            raise LinearError(f"linear api error: {client.operation(query)}: HTTP 400")
+        found = [
+            n
+            for n in self.projects.values()
+            if {"id": variables["t"]} in n["teams"]["nodes"]
+            and (variables["f"] is None or _holds(n, variables["f"]))
+        ]
+        return {"team": {"projects": edges(found[: variables["first"]])}}
 
     def __call__(self, query, **variables):
         if query in (ops.Q_USER, issue_names.Q_VIEWER):
@@ -662,6 +681,9 @@ class EditGql(LabelGql):
             return (
                 {"users": role_users(variables)} if query == ops.Q_USER else {"viewer": self.viewer}
             )
+        if "project(" in query or "ProjectFilter" in query:
+            self.calls.append((query, variables))
+            return self._project(query, variables)
         found = super().__call__(query, **variables)
         if query == issue_edit.Q_READ and found["issue"] is not None:
             found["issue"].update(self.fields)

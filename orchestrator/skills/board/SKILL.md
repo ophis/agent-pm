@@ -19,7 +19,7 @@ The prefix `agent-pm-orchestrator issue` is left out. `ID` is an issue identifie
 | `read ID --full --output FILE` | every page and body, to FILE |
 | `list [filters]` | the board's issues, newest update first; also the search |
 | `create --title TEXT --body-file FILE` | one issue with its fields and blocking relations; `--parent ID` makes it a sub-issue (a split) |
-| `edit ID [--title …] [--body-file …] [--role …] [--task …] [--client …] [--priority …]` | change those fields, keeping the rest |
+| `edit ID [--title …] [--body-file …] [--role …] [--project …] [--task …] [--client …] [--priority …]` | change those fields, keeping the rest |
 | `move ID STATE` | set its state |
 | `comment ID --body-file FILE` | a new top-level comment |
 | `relation add ID --blocks OTHER` | one blocking edge; `remove` deletes it; `--blocked-by` for the other direction |
@@ -116,10 +116,12 @@ agent-pm-orchestrator issue lookup users --query ada
 agent-pm-orchestrator issue lookup teams --full --output teams.json
 agent-pm-orchestrator issue list --label bug --project 'Agent PM'
 agent-pm-orchestrator issue create --title 'Fix login' --body-file note.md --label bug --project 'Agent PM' --milestone M1
+agent-pm-orchestrator issue edit TASK-1 --project 'Agent PM'
 agent-pm-orchestrator issue label swap TASK-1 --from todo --to doing
 ```
 
 - `lookup RESOURCE` lists `teams`, `states`, `labels`, `projects`, `milestones` (`--project`) or `users` with their ids.
 - `--label`, `--project` and `--milestone` take an id or an exact name. No match, several, or one outside the team exits 2 naming the candidates and the `lookup` command that lists them: pick an id from it, never the first match.
+- `edit --project` changes only the issue's project. The router starts only issues with a project: give one to an issue created without `--project`.
 - `label swap` replaces one label, keeping the rest; it refuses when the issue carries neither label, or when NEW's group already has another of its labels.
 - An operation no command covers (other Linear entities) falls back to your own Linear tool, such as a personal `/linear`.
