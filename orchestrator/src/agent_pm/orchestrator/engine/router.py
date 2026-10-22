@@ -1072,6 +1072,9 @@ def run_issue(opts, cfg, gql, start, *, keychain, wiring, clock=datetime.now, la
 
 
 def brake(role, cfg):
+    client = os.environ.get(CLIENT_ENV) or cfg.roles[role].run.client
+    if not cfg.usage_limit.get(client, True):
+        return 0
     raw_tier = os.environ.get(TIER_ENV, "")
     if raw_tier and raw_tier not in {"1", "2", "3", "4"}:
         print(f"router.py: ${TIER_ENV}: want a tier from 1 to 4", file=sys.stderr)
@@ -1079,7 +1082,7 @@ def brake(role, cfg):
     usage = read_usage(
         role,
         cfg,
-        client=os.environ.get(CLIENT_ENV) or None,
+        client=client,
         tier=int(raw_tier) if raw_tier else None,
     )
     print(summary(usage))

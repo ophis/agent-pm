@@ -53,6 +53,14 @@ implementation = "agent_pm.delegate:HarnessDelegate"
 # local: claude = 3
 # local: codex = 2
 
+# Per-client usage checks, owned by the orchestrator; empty table or an unlisted client means "on".
+#   <client>  "on": keep the board-start usage gate and researcher brake (80% five-hour usage).
+#             "off": neither reads nor evaluates usage, including recorded quota holds; other clients keep their setting.
+[usage_limit]
+
+# local: [orchestrator.usage_limit]
+# local: "<client>" = "off"
+
 # An orchestrated role: each workflow stage's role is one, and a table names only a stage's role. Its tasks are its
 # charter's index (roles/<role>.md › Tasks, in core or a [delegate] team_dirs dir). Its Linear account and key:
 # [linear.roles.<role>]. A table for a packaged stage your workflow leaves out is ignored.

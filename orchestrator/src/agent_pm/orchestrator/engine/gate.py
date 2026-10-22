@@ -40,6 +40,8 @@ class Gate:
 
     def blocked(self, role, ident, *, key, reject_config=False, tier=None):
         kind, client = key
+        if not self.cfg.usage_limit.get(client, True):
+            return False
         if key in self.limits:
             reason, fields = "limit", {"until": self.limits[key].isoformat()}
             if self.dry:

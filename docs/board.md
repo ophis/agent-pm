@@ -153,6 +153,16 @@ Each new run selects again, retries included. A session resumes only in the clie
 
 Scheduled quota checks use each candidate’s selected or recorded client, caching each Delegate/role/client/tier context within a tick; blocked usage logs `usage-skip` without switching clients. On the Docker Host with two or more [Claude accounts](docker-host.md#claude-accounts), the Claude probe reads every account (cached 5 minutes) and passes while any is under the thresholds, the run then starting on the one with the most usage left; every account over logs `usage-skip` with reason `usage`. A role's selected account (`[orchestrator.core.roles.<role>.accounts]`) changes neither: probe and limit hold stay per client. Inside an agent run, `--brake <role>` uses its `AGENT_PM_CLIENT` environment, set at process launch from the effective client, including resumed snapshots; outside one it uses the role default.
 
+For a client without a usage dashboard (for example, an API-key login), disable its usage checks in `~/.agent-pm/config.local.toml`:
+
+```toml
+[orchestrator.usage_limit]
+claude = "off"
+codex = "off"
+```
+
+Each entry accepts `"on"` or `"off"`; an unlisted client defaults to `"on"`. The orchestrator owns this setting. For an off client, board starts and recovery ignore recorded quota holds and never read or evaluate usage; the researcher brake returns success without probing. Other clients keep their settings. On keeps today's start thresholds and the researcher's 80% five-hour brake (weekly exhaustion also brakes). Role and client concurrency limits still apply.
+
 `--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client, or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged.
 
 Rollout:
