@@ -12,6 +12,7 @@ from agent_pm.session.clients.common import select
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
+    ProviderProbe,
     Resumable,
     SessionInfo,
     SessionStatus,
@@ -55,6 +56,12 @@ class Client:
         return None
 
     def usage_probe(self) -> Launch | None:
+        return None
+
+    def _usage_executable(self, *, container: bool = False) -> str:
+        return ""
+
+    def _provider_probe(self) -> ProviderProbe | None:
         return None
 
     def _accounts(self) -> frozenset[str] | None:

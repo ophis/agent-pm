@@ -67,7 +67,7 @@ class RunToReview(BinFlow):
 
     def comments(self, ident=ID):
         """(origin, key, body) of each comment, in file order."""
-        detail = LocalTracker(self.board, ("researcher",)).detail(ident)
+        detail = LocalTracker(self.board, ("researcher",), prefix="LOC").detail(ident)
         keys = [m[3] for m in map(HEADER.fullmatch, self.text().splitlines()) if m]
         return [(c.origin, key, c.body) for c, key in zip(detail.comments, keys, strict=True)]
 

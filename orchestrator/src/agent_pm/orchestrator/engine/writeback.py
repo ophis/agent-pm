@@ -81,10 +81,9 @@ MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
-# a run whose client's turn failed (delegate runner's Result.error) ends without an outcome; it is
-# written back as failed under its own steps, a later outcome of its session keeping theirs
-TURN_FAILED = "the client's turn failed: "
+# Failed attempts keep their own steps; a later valid outcome keeps the session's normal steps.
 NO_OUTCOME = "no-outcome:"
+INTERRUPTED = ("stopped: Stopped", "stopped: KeyboardInterrupt")
 # what a failed tracker read or write raises
 ERRORS = (
     LinearError,
@@ -613,9 +612,15 @@ def _deliver(ctx, cfg, claim, event, *, now) -> bool:
         )
     # Finished: the outcome (once ledgered, never again), the limit, then the session's end
     outcome = event.outcome
-    if outcome is None and event.limit is None and event.error.startswith(TURN_FAILED):
-        failed = Outcome(OutcomeStatus.FAILED, "The client's turn failed", event.error)
-        ok = f"{NO_OUTCOME}outcome" in _done(ctx) or finish(ctx, failed, steps=NO_OUTCOME)
+    if (
+        outcome is None
+        and event.limit is None
+        and event.error
+        and not event.error.startswith(INTERRUPTED)
+    ):
+        failed = Outcome(OutcomeStatus.FAILED, "The agent run failed", event.error)
+        steps = f"{NO_OUTCOME}{attempt}:"
+        ok = f"{steps}outcome" in _done(ctx) or finish(ctx, failed, steps=steps)
     else:
         ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
     if event.limit is not None:

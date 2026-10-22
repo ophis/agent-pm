@@ -799,6 +799,13 @@ class DockerHost(Host):
             ),
         )
 
+    def _provider_usage(self, request):
+        try:
+            self.broker.version()
+            return self.broker.probe_provider(request.provider, request.base_url)
+        except SessionError as error:
+            raise ConfigError(str(error)) from None
+
     def _client_env(
         self, name: str, client: str, home: ClientHome | None, *, resume: bool
     ) -> Mapping[str, str]:

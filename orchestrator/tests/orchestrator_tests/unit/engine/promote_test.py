@@ -832,7 +832,7 @@ class LocalBoardPromotion(Base):
         return found
 
     def tracker(self):
-        return LocalTracker(self.board, ("researcher", "pm", "engineer"))
+        return LocalTracker(self.board, ("researcher", "pm", "engineer"), prefix="LOC")
 
     def test_promotes_past_the_undo_window(self):
         self.approved()

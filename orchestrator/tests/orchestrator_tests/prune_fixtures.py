@@ -325,6 +325,7 @@ class PruneScenario(Case):
             roles=dict.fromkeys(ROLES.values()),  # prune reads only the names
             local_clones={},
             tracker=TrackerKind.LINEAR,
+            local_prefix="",
             linear=linear,
             board=None,
             work_dir=self.root,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import builtins
 import os
 import re
+import shutil
 import sys
 import time
 import uuid
@@ -147,13 +148,22 @@ def _probe_dir() -> str | None:
     return path
 
 
-def _read_usage(setup: _Setup, client: Client, launch: Launch | None) -> Usage | None:
+def _read_usage(
+    setup: _Setup, client: Client, launch: Launch | None, *, container: bool = False
+) -> Usage | None:
     if launch is None or not launch.argv:
         return None
     cwd = launch.cwd or _probe_dir()
     if cwd is None:
         return None
-    output = setup.probe(launch.argv, cwd=cwd, env=child_env(launch, cwd), timeout=PROBE_TIMEOUT)
+    env = child_env(launch, cwd)
+    if executable := client._usage_executable(container=container):
+        program = os.path.join(cwd, executable) if os.path.dirname(executable) else executable
+        if shutil.which(program, path=env.get("PATH", os.defpath)) is None:
+            raise ConfigError(
+                f"client executable {executable!r} is missing or not executable; install or configure this client"
+            )
+    output = setup.probe(launch.argv, cwd=cwd, env=env, timeout=PROBE_TIMEOUT)
     if output is None:
         return None
     try:
@@ -440,8 +450,18 @@ class HostedSession(Session):
     def usage(cls, client: str) -> Usage | None:
         setup = cls._config()
         found = setup.registry.client(client)
-        if (pool := _pooled(setup, client, found, cls.host())) is None:
-            return _read_usage(setup, found, found.usage_probe())
+        host = cls.host()
+        if (
+            request := found._provider_probe()
+        ) is not None and host._client_context().container is not None:
+            return Usage(None, None) if host._provider_usage(request) else None
+        if (pool := _pooled(setup, client, found, host)) is None:
+            return _read_usage(
+                setup,
+                found,
+                found.usage_probe(),
+                container=host._client_context().container is not None,
+            )
         return None if (name := accounts.best(pool)) is None else pool[name]
 
     @classmethod

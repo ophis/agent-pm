@@ -147,14 +147,28 @@ class Finished(Writeback):
             {SID: ["running:1", "comment", f"attach:{DOC}", "move:in_review", "outcome"]},
         )
 
-    def test_no_outcome_ends_the_session_and_stays_in_progress(self):
+    def test_no_outcome_reports_the_error_and_returns_first_research_to_todo(self):
         self.claim()
         self.ok("begun")
         self.ok("finished", returncode=1, outcome=None, error="the client exited 1", limit=None)
         [session] = [b for _, b in self.comments(ID) if b.startswith(f"Run {SID}")]
         self.assertRegex(session, rf"\ARun {SID} · interrupted · #2 · \S+ → \S+ · exit 1\Z")
-        self.assertEqual((self.state(ID), self.history(ID)), ("in_progress", []))
-        self.assertEqual(self.ledger(ID), {SID: ["running:1"]})
+        researcher = ACCOUNTS["researcher"]
+        self.assertEqual(
+            (self.state(ID), self.history(ID)), ("todo", [("in_progress", "todo", researcher)])
+        )
+        self.assertIn("the client exited 1", self.comments(ID)[-1][1])
+        self.assertEqual(
+            self.ledger(ID),
+            {
+                SID: [
+                    "running:1",
+                    "no-outcome:1:comment",
+                    "no-outcome:1:move:todo",
+                    "no-outcome:1:outcome",
+                ]
+            },
+        )
 
 
 class Limit(Writeback):

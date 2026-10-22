@@ -873,7 +873,12 @@ class OverlayTest(HarnessCase):
         overlays = ({"roles": {"dummy-tester": {"client": "claude"}}},)
         HarnessDelegate.usage("dummy-tester", session_cls=UsageSession)
         HarnessDelegate.usage("dummy-tester", overlays=overlays, session_cls=UsageSession)
-        self.assertEqual(UsageSession.clients, ["fake", "claude"])
+        HarnessDelegate.usage(
+            "dummy-tester",
+            overlays=({"roles": {"dummy-tester": {"client": "opencode", "tier": 3}}},),
+            session_cls=UsageSession,
+        )
+        self.assertEqual(UsageSession.clients, ["fake", "claude", "opencode"])
 
     def test_owner_overlays_shape_the_persisted_run(self):
         self.make()

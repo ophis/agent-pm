@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 12",
+  "title": "Docker broker protocol 17",
   "$ref": "#/$defs/manifest",
   "$defs": {
     "text": {
@@ -346,7 +346,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "16"
+          "const": "17"
         }
       },
       "required": [
@@ -758,7 +758,8 @@
                 "close",
                 "status",
                 "workspace-rm",
-                "unknown"
+                "unknown",
+                "probe-provider"
               ]
             },
             "code": {
@@ -877,7 +878,8 @@
                     "close",
                     "status",
                     "workspace-rm",
-                    "unknown"
+                    "unknown",
+                    "probe-provider"
                   ]
                 }
               }
@@ -937,7 +939,8 @@
                 "command": {
                   "enum": [
                     "start",
-                    "refresh"
+                    "refresh",
+                    "probe-provider"
                   ]
                 }
               }
@@ -1058,7 +1061,8 @@
                     "start",
                     "refresh",
                     "close",
-                    "status"
+                    "status",
+                    "probe-provider"
                   ]
                 }
               }
@@ -1180,7 +1184,8 @@
                     "close",
                     "status",
                     "workspace-rm",
-                    "unknown"
+                    "unknown",
+                    "probe-provider"
                   ]
                 }
               }
@@ -1355,6 +1360,52 @@
         "image_version",
         "target_version",
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "probe_provider_input": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "probe-provider"
+            },
+            {
+              "const": "--provider"
+            },
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            {
+              "const": "--base-url"
+            },
+            {
+              "type": "string",
+              "pattern": "^https?://(?:\\[[0-9A-Fa-f:.]+\\]|[^\\s/:?#@]+)(?::[0-9]+)?(?:/[^?#\\s]*)?$"
+            }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "probe_provider_output": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "available"
       ],
       "additionalProperties": false
     }

@@ -51,6 +51,7 @@ class HarnessRun(HarnessCase):
             delegate_kind="harness",
             delegates={"harness": HARNESS_DELEGATE},
             core={},
+            local_prefix="",
         )
 
     def test_real_harness_state_round_trip_owns_both_sessions_and_resumes_once(self):

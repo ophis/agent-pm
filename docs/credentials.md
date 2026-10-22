@@ -19,7 +19,7 @@ with the broker; a provider API key is the same long-lived key in every containe
 | `tmux` | Codex | the user, beforehand: `codex login` ([Codex auth]) | `~/.codex/auth.json`, or the OS credential store per `cli_auth_credentials_store` ([Codex auth]) | no container | — |
 | Docker | Claude Code | the user, once per broker install and [account](docker-host.md#claude-accounts): `claude setup-token` in its subscription, pasted into `<B> login claude [<name>]` ([Log in](docker-host.md#log-in)) | `agent-pm-claude` / account name | the selected account's token alone, `/run/agent-pm/secrets/claude`, 0400 on tmpfs, given to the client only as `CLAUDE_CODE_OAUTH_TOKEN` | deleted with the container (close, restart, resume start a new one); never revoked |
 | Docker | Codex | an admin installs the pinned Codex (`sudo <B> install-codex <version>`); the user, once per broker install: `<B> login codex` in a browser ([Codex](docker-host.md#codex)) | `agent-pm-codex` / `auth` | `/run/agent-pm/secrets/codex/auth.json`, 0400 on tmpfs, with no refresh token; the broker publishes each renewal | deleted with the container; never revoked |
-| `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm never reads it | no container | — |
+| `tmux` | OpenCode | no one for the host's Ollama on `127.0.0.1` ([Docker host › OpenCode](docker-host.md#opencode)); a configured provider's API key: the user, beforehand: `opencode auth login` ([OpenCode sessions](sessions.md#opencode-sessions)) | OpenCode's `auth.json`; agent-pm reads the selected API entry only for provider availability probes | no container | — |
 | Docker | OpenCode | no one for the host's Ollama (through `host.docker.internal`); each configured provider's API key: the user, once per broker install and provider: `<B> login opencode <name>` ([Log in](docker-host.md#log-in)) | `agent-pm-opencode` / `<name>` | the GitHub tokens and each configured provider's key, `/run/agent-pm/secrets/opencode/<name>.key`, 0400 on tmpfs, read by OpenCode through `{file:…}` in its inline config, never env or argv | deleted with the container; never revoked |
 
 GitHub on the Docker Host needs no per-run login: `<B> login github agent-pm-bot` once per broker install
@@ -128,7 +128,7 @@ One per `[session.clients.opencode.providers.<name>]` table, such as a LAN Strat
 |---|---|---|
 | Purpose | OpenCode's requests to the provider | the same, from a container |
 | Minimum permission | whatever the provider's key grants; issue one for agent-pm alone | the same |
-| Stored at | OpenCode's `auth.json` (`opencode auth login`); agent-pm never reads it | `agent-pm-opencode` / `<name>`; per container `/run/agent-pm/secrets/opencode/<name>.key` |
+| Stored at | OpenCode's `auth.json` (`opencode auth login`); agent-pm reads the selected API entry only for provider availability probes | `agent-pm-opencode` / `<name>`; per container `/run/agent-pm/secrets/opencode/<name>.key` |
 | Readers | OpenCode and any process running as the user | item: the broker only, once `login opencode <name>` has made it trust only the broker; container copy: **three-way readers**; on the network: anyone between the container and an `http://` `base_url` ([Risks](#risks)) |
 | Lifetime | until the provider revokes it | the same; a container's copy until the container goes |
 | Revoke | revoke it at the provider; `opencode auth logout` removes it locally | revoke it at the provider, then `<B> login opencode <name>` with a new one, which replaces the item; running containers keep the old copy until closed |
@@ -279,6 +279,8 @@ agent-pm 0.6.28.
 - Config picks a Docker Claude session's account ([Claude accounts](docker-host.md#claude-accounts)); it is no
   access control: any process running as the user can start a container with any logged-in account (`<B> start`
   does not check its caller).
+- `<B> probe-provider --provider NAME --base-url URL` also does not check its caller: any process running as
+  the user can choose an endpoint and have the broker send that provider's stored API key to it.
 - An OpenCode provider whose `base_url` is `http://` gets its API key in plaintext: anyone on the LAN path, or on the
   Docker Desktop VM's network, can capture it and the prompts. Prefer `https://`, or a key that reaches only that
   server.

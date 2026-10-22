@@ -476,7 +476,11 @@ class UsageTest(Base):
                 self.scenario(**fields)
                 if name == "no claude":
                     os.environ["PATH"] = self.dir
-                self.assertIsNone(self.session_cls.usage("claude"))
+                if name == "no claude":
+                    with self.assertRaisesRegex(ConfigError, "missing or not executable"):
+                        self.session_cls.usage("claude")
+                else:
+                    self.assertIsNone(self.session_cls.usage("claude"))
 
 
 def panel(five, week):

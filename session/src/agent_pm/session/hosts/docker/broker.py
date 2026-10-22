@@ -21,7 +21,7 @@ from agent_pm.utils import save
 # Installed by broker/install.sh and the worker image (broker/internal/launcher/assets/Dockerfile).
 BROKER = "/usr/local/libexec/agent-pm/agent-pm-broker"
 RELAY = "/opt/agent-pm/bin/relay"
-PROTOCOL = "16"
+PROTOCOL = "17"
 SCHEMA = "protocol/docker-broker/protocol.schema.json"
 INSTALL = "install or upgrade it: see docs/docker-host.md#install"
 TIMEOUT = 1800
@@ -39,19 +39,29 @@ LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 COMMANDS = frozenset(
-    {"version", "build", "start", "refresh", "close", "status", "workspace-rm", "unknown"}
+    {
+        "version",
+        "build",
+        "start",
+        "refresh",
+        "close",
+        "status",
+        "workspace-rm",
+        "probe-provider",
+        "unknown",
+    }
 )
 CODES = {  # code → (exit code, the commands that report it)
     "usage": (2, COMMANDS),
     "manifest_rejected": (3, {"start", "refresh"}),
     "mount_rejected": (4, {"start", "refresh"}),
-    "login_required": (5, {"start", "refresh"}),
+    "login_required": (5, {"start", "refresh", "probe-provider"}),
     "image_rejected": (6, {"start"}),
     "docker_unreachable": (7, {"build", "start", "refresh", "close", "workspace-rm"}),
     "build_failed": (8, {"build"}),
     "start_failed": (9, {"start"}),
     "close_failed": (10, {"close"}),
-    "keychain_failed": (11, {"start", "refresh", "close", "status"}),
+    "keychain_failed": (11, {"start", "refresh", "close", "status", "probe-provider"}),
     "workspace_dirty": (12, {"workspace-rm"}),
     "workspace_rejected": (13, {"workspace-rm"}),
     "workspace_failed": (14, {"workspace-rm"}),
@@ -302,6 +312,17 @@ class Broker:
                 f"broker {BROKER}: protocol {found['protocol_version']!r:.20}, want {PROTOCOL!r};"
                 f" {INSTALL}"
             )
+
+    def probe_provider(self, provider: str, base_url: str) -> bool:
+        found = self._parsed(
+            "probe-provider",
+            lambda d: set(d) == {"available"} and type(d["available"]) is bool,
+            "--provider",
+            provider,
+            "--base-url",
+            base_url,
+        )
+        return found["available"]
 
     def build(
         self, package: str, *, plugins: Sequence[str] = (), max_age: int | None = None

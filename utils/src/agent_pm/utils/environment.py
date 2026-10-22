@@ -19,6 +19,7 @@ LEASE_ENV = (
 AGENT_SESSION_ENV = "AGENT_PM_AGENT_SESSION"
 # and the name of the client it runs, when the session has one
 CLIENT_ENV = "AGENT_PM_CLIENT"
+TIER_ENV = "AGENT_PM_TIER"
 
 
 def nested_start() -> str | None:

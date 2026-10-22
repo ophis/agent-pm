@@ -833,7 +833,7 @@ def main(argv, *, gql=linear_gql, config_path=None, out=None, err=None, stdin=No
         return USAGE
     try:
         board = (
-            LocalIssues(cfg.board, cfg.roles)
+            LocalIssues(cfg.board, cfg.roles, prefix=cfg.local_prefix)
             if cfg.tracker is TrackerKind.LOCAL
             else _linear(cfg, gql)
         )

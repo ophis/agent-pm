@@ -1091,6 +1091,118 @@ class EventsOverAModeTest(Case):
 
 
 class UsageTest(Base):
+    def test_a_configured_non_executable_program_is_a_configuration_error(self):
+        program = os.path.join(self.dir, "not-executable")
+        with open(program, "w", encoding="utf-8") as file:
+            file.write("data")
+        os.chmod(program, 0o600)
+        session = HostedSession.configured(
+            clients={
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "ollama/local",
+                    "executable": program,
+                }
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+        )
+        with self.assertRaisesRegex(ConfigError, "missing or not executable"):
+            session.usage("opencode")
+
+    def test_missing_builtin_executables_raise_configuration_errors_before_probing(self):
+        probe = mock.Mock(return_value=None)
+        session = HostedSession.configured(
+            clients={
+                "claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"},
+                "codex": {"implementation": "agent_pm.session.clients.codex:CodexClient"},
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "ollama/local",
+                },
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+            probe=probe,
+        )
+        for name in ("claude", "codex", "opencode"):
+            with (
+                self.subTest(name=name),
+                mock.patch("shutil.which", return_value=None),
+                self.assertRaisesRegex(ConfigError, "missing or not executable"),
+            ):
+                session.usage(name)
+        probe.assert_not_called()
+        with mock.patch("shutil.which", return_value="/bin/client"):
+            self.assertIsNone(session.usage("claude"))
+        self.assertEqual(probe.call_count, 1)
+
+    def test_default_provider_reaches_the_container_host_without_a_host_probe(self):
+        class ProviderHost(ScreenHost):
+            def _client_context(self):
+                return dataclasses.replace(
+                    super()._client_context(),
+                    container=engine_types.Container("/bin", "/python", "/source", "/state"),
+                )
+
+            def _provider_usage(self, request):
+                self.request = request
+                return self.available
+
+        host = ProviderHost("tmux")
+        probe = mock.Mock(return_value='{"models": []}')
+        self.session = HostedSession.configured(
+            clients={
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "strata/remote",
+                    "tiers": {"1": "ollama/local"},
+                    "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
+                }
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+            probe=probe,
+            host_factory=lambda *_args: host,
+        )
+        for available in (True, False):
+            host.available = available
+            self.assertEqual(
+                self.session.usage("opencode"),
+                Usage(None, None) if available else None,
+            )
+            self.assertEqual(
+                (host.request.provider, host.request.base_url), ("strata", "https://strata.test/v1")
+            )
+        probe.assert_not_called()
+
+    def test_default_ollama_ignores_a_remote_tier_and_needs_no_host_opencode(self):
+        class ContainerHost(ScreenHost):
+            def _client_context(self):
+                return dataclasses.replace(
+                    super()._client_context(),
+                    container=engine_types.Container("/bin", "/python", "/source", "/state"),
+                )
+
+            def _provider_usage(self, request):
+                raise AssertionError("the default Ollama model needs no provider request")
+
+        probe = mock.Mock(return_value='{"models": []}')
+        self.session = HostedSession.configured(
+            clients={
+                "opencode": {
+                    "implementation": "agent_pm.session.clients.opencode:OpenCodeClient",
+                    "model": "ollama/local",
+                    "tiers": {"1": "strata/remote"},
+                    "providers": {"strata": {"base_url": "https://strata.test/v1", "models": []}},
+                }
+            },
+            hosts=parsed(FAKE_HOSTS, "fake"),
+            probe=probe,
+            host_factory=lambda *_args: ContainerHost("tmux"),
+        )
+        with mock.patch("shutil.which", return_value=None) as executable:
+            self.assertEqual(self.session.usage("opencode"), Usage(None, None))
+        self.assertNotIn("opencode", [call.args[0] for call in executable.call_args_list])
+        self.assertEqual(probe.call_count, 1)
+
     def probing(self, out="42.5", **launch) -> mock.Mock:
         """Client probe configured, its probe the Launch of `launch` (argv ("probe-cmd", "-x")
         unless given), the Setup's probe a mock giving `out`.

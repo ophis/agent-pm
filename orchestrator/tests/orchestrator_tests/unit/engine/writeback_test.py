@@ -2057,10 +2057,10 @@ class FinishedEvents(Events):
             session_body(f"done · #1 · {STARTED} → {RESTARTED} · exit 1"),
         )
 
-    def test_no_outcome_ends_the_session_and_leaves_the_issue_in_progress(self):
+    def test_interruption_ends_the_session_and_leaves_the_issue_for_recover(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         n = len(self.linear.calls)
-        self.assertTrue(self.deliver(self.finished(1, error="the client exited 1")))
+        self.assertTrue(self.deliver(self.finished(1, error="stopped: Stopped: 143")))
         ended = session_body(f"interrupted · #2 · {STARTED} → {RESTARTED} · exit 1")
         harness = self.cfg.linear.harness_key
         self.assertEqual(
@@ -2072,7 +2072,7 @@ class FinishedEvents(Events):
         )
         self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
         self.assertIn(
-            f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=the client exited 1",
+            f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=stopped: Stopped: 143",
             self.said(),
         )
         self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
@@ -2084,8 +2084,36 @@ class FinishedEvents(Events):
             self.linear.comments[RUN_SESSION]["body"],
             session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0"),
         )
-        self.assertEqual(self.linear.state, self.cfg.linear.states["in_progress"])
-        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["running:1"])
+        self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
+        self.assertEqual(
+            self.linear.comments[ops.client_id(RUN_SID, "no-outcome:1:comment")]["body"],
+            "Build failed: the agent run returned no outcome",
+        )
+
+    def test_errors_without_outcomes_report_the_reason_and_move_once_per_attempt(self):
+        self.now = iter([STARTED, RESTARTED] * 6)
+        for attempt, error in enumerate(
+            (
+                "invalid outcome: status converged",
+                "the client exited 1",
+                "stopped: ValueError: broken",
+            ),
+            1,
+        ):
+            with self.subTest(attempt=attempt):
+                self.linear.state = self.cfg.linear.states["in_progress"]
+                event = self.finished(1, error=error, attempt=attempt)
+                self.assertTrue(self.deliver(event))
+                self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
+                self.assertEqual(
+                    self.linear.comments[ops.client_id(RUN_SID, f"no-outcome:{attempt}:comment")][
+                        "body"
+                    ],
+                    f"Build failed: {error}",
+                )
+                calls = len(self.linear.calls)
+                self.assertTrue(self.deliver(event))
+                self.assertEqual(len(self.linear.calls), calls)
 
     def test_a_failed_turn_without_an_outcome_is_written_back_as_failed(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
@@ -2093,7 +2121,7 @@ class FinishedEvents(Events):
         self.assertTrue(self.deliver(self.finished(0, error=TURN_FAILED)))
         harness, states = self.cfg.linear.harness_key, self.cfg.linear.states
         ended = session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0")
-        comment = ops.client_id(RUN_SID, "no-outcome:comment")
+        comment = ops.client_id(RUN_SID, "no-outcome:1:comment")
         self.assertEqual(
             self.linear.calls[n:],
             [
@@ -2112,7 +2140,12 @@ class FinishedEvents(Events):
         )
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
-            ["running:1", "no-outcome:comment", "no-outcome:move:in_review", "no-outcome:outcome"],
+            [
+                "running:1",
+                "no-outcome:1:comment",
+                "no-outcome:1:move:in_review",
+                "no-outcome:1:outcome",
+            ],
         )
         self.assertIn(
             f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error={TURN_FAILED}", self.said()
@@ -2138,10 +2171,11 @@ class FinishedEvents(Events):
                 self.assertTrue(self.deliver(event))
                 self.assertEqual(self.linear.state, self.cfg.linear.states[state])
                 self.assertEqual(
-                    self.linear.comments[ops.client_id(OTHER_SID, "no-outcome:comment")]["body"],
+                    self.linear.comments[ops.client_id(OTHER_SID, f"no-outcome:{attempt}:comment")][
+                        "body"
+                    ],
                     TURN_FAILED,
                 )
-                self.ledger_reset(OTHER_SID)
 
     def test_a_partial_turn_failure_write_back_leaves_a_later_outcome_its_own_steps(self):
         self.linear.fail = lambda op, _v: (
@@ -2157,7 +2191,7 @@ class FinishedEvents(Events):
         self.assertEqual(self.linear.state, self.cfg.linear.states["in_review"])
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
-            ["no-outcome:comment", "comment", f"attach:{PR}", "move:in_review", "outcome"],
+            ["no-outcome:1:comment", "comment", f"attach:{PR}", "move:in_review", "outcome"],
         )
 
     def test_a_failed_turn_with_a_limit_or_an_outcome_is_not_rewritten(self):
@@ -2165,7 +2199,7 @@ class FinishedEvents(Events):
         self.assertEqual(
             self.linear.comments[ops.client_id(RUN_SID, "comment")]["body"], "Build ready: Ready."
         )
-        self.assertNotIn(ops.client_id(RUN_SID, "no-outcome:comment"), self.linear.comments)
+        self.assertNotIn(ops.client_id(RUN_SID, "no-outcome:1:comment"), self.linear.comments)
 
     def test_a_finished_without_begun_starts_its_session_then(self):
         self.assertTrue(self.deliver(self.finished(1, error="launch failed")))

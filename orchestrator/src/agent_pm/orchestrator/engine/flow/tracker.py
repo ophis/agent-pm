@@ -150,6 +150,10 @@ class Tracker(ABC):
     @abstractmethod
     def ready(self) -> list[tuple[IssueRecord, tuple[str, ...]]]: ...
 
+    def dependency_cycles(self) -> tuple[tuple[str, ...], ...]:
+        """Closed unfinished dependency paths, when inspectable."""
+        return ()
+
     @abstractmethod
     def moved_at(self, key: str, state: Listed, *, by: Origin | None = None) -> datetime | None: ...
 

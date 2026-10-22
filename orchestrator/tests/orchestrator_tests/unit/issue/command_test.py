@@ -1299,6 +1299,22 @@ class LocalErrors(LocalCase):
         self.assertEqual(self.snapshot(), before)
 
 
+class LocalFirstIssue(LocalCase):
+    def test_create_on_an_empty_board(self):
+        os.makedirs(os.path.join(self.board, "unassigned"))
+        code, out, err = self.run_local(["create", "--title", "First", "--body-file", "-"], b"body")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out)["issue"]["identifier"], "LOC-1")
+
+    def test_create_uses_the_local_configuration(self):
+        os.makedirs(os.path.join(self.board, "unassigned"))
+        path = Path(self.config)
+        path.write_text(path.read_text().replace('issue_prefix = "LOC"', 'issue_prefix = "AGE"'))
+        code, out, err = self.run_local(["create", "--title", "First", "--body-file", "-"], b"body")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out)["issue"]["identifier"], "AGE-1")
+
+
 class LocalCreatePartial(LocalCase):
     def test_a_failed_blocks_write_exits_one_with_the_report_and_the_issue_made(self):
         failing = self.put("pm/ready", "LOC-1")
@@ -1350,7 +1366,9 @@ class LocalArchiveRefused(LocalCase):
         self.put("pm/done", "LOC-1")
         self.put("pm/ready", "LOC-2", parent="LOC-1")
         before = self.snapshot()
-        plan = LocalIssues(self.board, config.load(path=self.config).roles).archive_plan("LOC-1")
+        plan = LocalIssues(
+            self.board, config.load(path=self.config).roles, prefix="LOC"
+        ).archive_plan("LOC-1")
         self.assertEqual(plan.outcome, "refused")
         code, out, err = self.run_local(["archive", "LOC-1"])
         self.assertEqual(

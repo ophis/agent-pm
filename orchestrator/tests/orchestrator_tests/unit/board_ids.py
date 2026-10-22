@@ -35,6 +35,7 @@ HEADER = (
     )
     + f'linear.task_label_group = "{TASK_GROUP}"\n'
     + 'delegates = { default = "harness", harness = { implementation = "agent_pm.delegate:HarnessDelegate" } }\n'
+    + 'local.issue_prefix = "LOC"\n'
 )
 ACCOUNTS = {r: f"{r}@agents.test" for r in ("researcher", "pm", "engineer")}
 

@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 from unittest import mock
 
 from agent_pm.session.clients.opencode import probe
@@ -25,6 +26,111 @@ def connection(status=200, body=b'{"models": []}', error=None):
 
 
 class ProbeTest(Case):
+    def test_provider_rejects_bad_urls_without_opening_the_store(self):
+        for base in (
+            "file:///tmp/key",
+            "http://",
+            "https://user:secret@host/v1",
+            "https://host/v1?x",
+            "https://host/v1#",
+            "https://host/\n",
+        ):
+            with (
+                self.subTest(base=base),
+                mock.patch("builtins.open", side_effect=AssertionError("read store")),
+            ):
+                self.assertIsNone(probe.provider("strata", base))
+
+    def test_provider_unknown_auth_and_network_failures_are_opaque(self):
+        directory = os.path.join(self.home, "data", "opencode")
+        os.makedirs(directory)
+        path = os.path.join(directory, "auth.json")
+        for auth in (
+            [],
+            {},
+            {"strata": {}},
+            {"strata": {"type": "oauth", "key": "x"}},
+            {"strata": {"type": "api", "key": "bad\nkey"}},
+            {"strata": {"type": "api", "key": "x" * probe.LIMIT}},
+        ):
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(auth, file)
+            with (
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+                mock.patch.object(probe.http.client, "HTTPSConnection") as network,
+            ):
+                self.assertIsNone(probe.provider("strata", "https://strata.test/v1"))
+                network.assert_not_called()
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump({"strata": {"type": "api", "key": "TEST-SECRET"}}, file)
+        for error in (OSError("TEST-SECRET"), http.client.HTTPException("TEST-SECRET")):
+            made = connection(error=error)
+            with (
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+                mock.patch.object(probe.http.client, "HTTPConnection", return_value=made),
+            ):
+                self.assertIsNone(probe.provider("strata", "http://strata.test/v1"))
+                made.close.assert_called_once()
+
+    def test_provider_reads_auth_json_and_returns_only_availability(self):
+        directory = os.path.join(self.home, "data", "opencode")
+        os.makedirs(directory)
+        with open(os.path.join(directory, "auth.json"), "w", encoding="utf-8") as file:
+            json.dump({"strata": {"type": "api", "key": "TEST-SECRET"}}, file)
+        for status in (200, 204):
+            made = connection(status=status, body=b"TEST-SECRET")
+            response = made.getresponse.return_value
+            with (
+                self.subTest(status=status),
+                mock.patch.object(
+                    response, "read", side_effect=AssertionError("read response body")
+                ) as read,
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+                mock.patch.object(
+                    probe.http.client, "HTTPSConnection", return_value=made
+                ) as network,
+            ):
+                self.assertEqual(
+                    probe.provider("strata", "https://strata.test/v1/"), {"available": True}
+                )
+                read.assert_not_called()
+            network.assert_called_once_with("strata.test", None, timeout=5)
+            made.request.assert_called_once_with(
+                "GET", "/v1/models", headers={"Authorization": "Bearer TEST-SECRET"}
+            )
+            made.close.assert_called_once()
+
+    def test_provider_failures_do_not_read_a_response_body_or_follow_redirects(self):
+        directory = os.path.join(self.home, "data", "opencode")
+        os.makedirs(directory)
+        path = os.path.join(directory, "auth.json")
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump({"strata": {"type": "api", "key": "TEST-SECRET"}}, file)
+        for status in (302, 401, 500):
+            made = connection(status=status)
+            with (
+                self.subTest(status=status),
+                mock.patch.object(
+                    made.getresponse.return_value,
+                    "read",
+                    side_effect=AssertionError("read response body"),
+                ) as read,
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+                mock.patch.object(probe.http.client, "HTTPSConnection", return_value=made),
+            ):
+                self.assertIsNone(probe.provider("strata", "https://strata.test/v1"))
+                read.assert_not_called()
+            self.assertEqual(made.request.call_count, 1)
+            made.close.assert_called_once()
+        with open(path, "w", encoding="utf-8") as file:
+            file.write("not JSON TEST-SECRET")
+        with (
+            mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.dirname(directory)}),
+            mock.patch.object(probe.http.client, "HTTPSConnection") as network,
+        ):
+            self.assertIsNone(probe.provider("strata", "https://strata.test/v1"))
+            network.assert_not_called()
+
     def listing(self, port="11434", **response):
         made = connection(**response)
         with mock.patch.object(probe.http.client, "HTTPConnection", return_value=made) as kind:

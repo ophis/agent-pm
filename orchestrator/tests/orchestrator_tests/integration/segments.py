@@ -436,8 +436,20 @@ class Segment(TmuxFlow):
                 if state == "in_review" and HUMAN not in want.subscribers:
                     changes["subscribers"] = [HUMAN]
                 changes.update(state=state, history=[("in_progress", state, account)])
+            else:
+                attempt = sum(s.startswith("running:") for s in ledgered)
+                prefix = f"no-outcome:{attempt}:"
+                state = "in_review" if p.resumed else writeback.FIRST_FAILURE[task.first_failure]
+                self.texts["the agent run returned no outcome"] = "run-error"
+                comments.append((account, "run-error"))
+                steps += [prefix + "comment", prefix + f"move:{state}", prefix + "outcome"]
+                changes.update(state=state, history=[("in_progress", state, account)])
+                if state == "in_review" and HUMAN not in want.subscribers:
+                    changes["subscribers"] = [HUMAN]
             # write-back looks each comment step up before posting it: its event may come again
-            posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
+            posts = [
+                s for s in steps if s not in ledgered and (s == "start" or s.endswith("comment"))
+            ]
             self.expect_problem(*[lookup(account)] * len(posts))
             self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
 

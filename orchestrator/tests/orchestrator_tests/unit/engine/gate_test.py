@@ -13,6 +13,17 @@ SHARED = ("first", "shared-client")
 
 
 class DelegateQuotaKeys(Case):
+    def test_tier_context_is_overlaid_and_not_shared_in_the_cache(self):
+        provider = quota_provider("shared-client", 10)
+        gate = self.gate(provider)
+        for tier in (1, 2, 1):
+            self.assertFalse(gate.blocked("engineer", "TASK-1", key=SHARED, tier=tier))
+        self.assertEqual(provider.queried, ["engineer", "engineer"])
+        self.assertEqual(
+            [o[-1] for o in provider.overlays],
+            [{"roles": {"engineer": {"tier": 1}}}, {"roles": {"engineer": {"tier": 2}}}],
+        )
+
     def gate(self, provider, *, kind="first", say=None, client=None, core=None, log=None):
         cfg = quota_config(
             provider, kind, core=core, clients=None if client is None else {"engineer": client}
@@ -46,13 +57,13 @@ class DelegateQuotaKeys(Case):
         self.assertTrue(gate.blocked("engineer", "TASK-1", key=("first", "overlay-client")))
         self.assertEqual(provider.queried, ["engineer"])
 
-    def test_roles_sharing_a_client_probe_once_even_when_blocked(self):
+    def test_roles_sharing_a_client_have_separate_probe_contexts(self):
         provider = quota_provider("shared-client", 95)
         gate = self.gate(provider)
         self.assertTrue(gate.blocked("engineer", "TASK-1", key=SHARED))
         self.assertTrue(gate.blocked("pm", "TASK-2", key=SHARED))
         self.assertTrue(gate.blocked("engineer", "TASK-3", key=SHARED))
-        self.assertEqual(provider.queried, ["engineer"])
+        self.assertEqual(provider.queried, ["engineer", "pm"])
 
     def test_allowed_usage_is_not_cached_across_ticks(self):
         provider = quota_provider("shared-client", 10)
@@ -60,9 +71,9 @@ class DelegateQuotaKeys(Case):
             gate = self.gate(provider)
             self.assertFalse(gate.blocked("engineer", "TASK-1", key=SHARED))
             self.assertFalse(gate.blocked("pm", "TASK-2", key=SHARED))
-        self.assertEqual(provider.queried, ["engineer", "engineer"])
+        self.assertEqual(provider.queried, ["engineer", "pm", "engineer", "pm"])
 
-    def test_distinct_kinds_sharing_a_client_probe_once(self):
+    def test_distinct_kinds_sharing_a_client_have_separate_probe_contexts(self):
         exhausted = quota_provider("shared-client", 95)
         available = quota_provider("shared-client", 10)
         gate = self.gate(exhausted)
@@ -70,8 +81,8 @@ class DelegateQuotaKeys(Case):
         gate.cfg.delegate_kind = "second"
         gate.cfg.delegate_cls = available
         gate.cfg.delegates["second"] = available
-        self.assertTrue(gate.blocked("engineer", "TASK-2", key=("second", "shared-client")))
-        self.assertEqual((exhausted.queried, available.queried), (["engineer"], []))
+        self.assertFalse(gate.blocked("engineer", "TASK-2", key=("second", "shared-client")))
+        self.assertEqual((exhausted.queried, available.queried), (["engineer"], ["engineer"]))
 
     def test_recorded_client_is_probed_through_its_recorded_provider(self):
         provider = quota_provider("current-client", 95)

@@ -1422,6 +1422,18 @@ class AgentLabels(Base):
 
 
 class LabelClients(TickBase):
+    def test_missing_selected_client_is_a_launch_error_comment(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        fake = self.fake(
+            issue("TASK-1", "Todo", "engineer", labels=[label("chosen", AGENT_A, AGENT_GROUP)])
+        )
+        self.api.usages["a"] = ConfigError("client executable claude is missing or not executable")
+        self.assertEqual(self.tick(fake), 0)
+        self.assertFalse(self.start.launches)
+        self.assertTrue(any(line.startswith("launch-error TASK-1") for line in self.said()))
+        self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+        self.assertTrue(any("missing or not executable" in str(call) for call in fake.mutations))
+
     def test_a_todo_run_after_a_start_on_another_client_follows_the_label(self):
         self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
         for argv in ((), ("--issue", "TASK-1")):
@@ -1791,7 +1803,7 @@ class ClientUsage(Base):
                 self.raw = ""
                 self.assertEqual(self.said(), [f"usage-skip TASK-1 client=a {why}"] if why else [])
 
-    def test_one_probe_per_client(self):
+    def test_one_probe_per_client_and_role_context(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
@@ -1803,7 +1815,7 @@ class ClientUsage(Base):
                     ("engineer", "TASK-3", "a"),
                 )
             ]
-        self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b"]))
+        self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b", "a"]))
 
     def test_usage_cache_does_not_cross_ticks(self):
         self.api.usages = {"a": reading(95)}
@@ -2191,6 +2203,30 @@ class RunBrake(Base):
                     self.assertEqual(self.brake("researcher"), (rc, quota.summary(usage) + "\n"))
                 self.assertEqual(self.api.usage_calls, ["b"])
 
+    def test_brake_probes_the_runs_tier_instead_of_the_role_default(self):
+        queried = []
+
+        def make(api, cfg):
+            cls = provider(api, cfg)
+
+            def usage(role, *, overlays=()):
+                tier = 2
+                for overlay in overlays:
+                    tier = overlay.get("roles", {}).get(role, {}).get("tier", tier)
+                queried.append(tier)
+                return reading(None, None) if tier == 1 else None
+
+            cls.usage = staticmethod(usage)
+            return cls
+
+        with mock.patch("orchestrator_tests.router_fixtures.provider", side_effect=make):
+            with mock.patch.dict(os.environ, {"AGENT_PM_TIER": "1"}):
+                self.assertEqual(self.brake("researcher"), (0, "five_hour=none weekly=none\n"))
+            self.assertEqual(queried, [1])
+            with mock.patch.dict(os.environ, {"AGENT_PM_TIER": "bad"}):
+                self.assertEqual(self.brake("researcher")[0], 2)
+            self.assertEqual(queried, [1])
+
     def test_no_such_role(self):
         self.assertEqual(self.brake("ghost"), (2, ""))
         self.assertEqual((self.err, self.api.usage_calls), ("router.py: no role ghost\n", []))
@@ -2228,6 +2264,27 @@ class LocalBoard(TickBase):
     def connect(self, gql, cfg, *, say):
         self.connects.append(cfg.tracker)
         return BrokenBoard()
+
+    def test_cycle_diagnostic_is_once_and_leaves_a_healthy_issue_schedulable(self):
+        ready = os.path.join(self.tmp, "board", "researcher", "ready")
+        os.makedirs(ready)
+        for number, blocked in ((1, "blocked_by: [LOC-1]\n"), (2, "")):
+            with open(os.path.join(ready, f"LOC-{number} x.md"), "w", encoding="utf-8") as f:
+                f.write(
+                    f"---\nid: LOC-{number}\ntitle: Issue\ncreated: 2026-09-01T00:00:00Z\n{blocked}---\n"
+                )
+        for again in (False, True):
+            self.assertEqual(self.tick(self.fake(), "--dry-run", again=again), 0)
+            self.assertIn("preview LOC-2 client=a client_source=default", self.said())
+            diagnostic = [s for s in self.said() if s.startswith("dependency-cycle ")]
+            self.assertEqual(len(diagnostic), 1)
+            self.assertIn("LOC-1 -> LOC-1", diagnostic[0])
+            self.assertIn("blocked_by", diagnostic[0])
+        self.assertEqual(self.tick(self.fake()), 0)
+        logs = config.load(path=self.config_path).logs_dir
+        self.assertEqual(len([s for s in logged(logs) if s["kind"] == "dependency-cycle"]), 1)
+        self.assertEqual(self.tick(self.fake(), again=True), 0)
+        self.assertEqual(len([s for s in logged(logs) if s["kind"] == "dependency-cycle"]), 1)
 
     def on_local(self, fake, *argv, **kw):
         wiring = replace(cli.TRACKERS[TrackerKind.LOCAL], connect=self.connect)
@@ -2465,7 +2522,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(self.api.usage_calls, ["a", "b"])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
-    def test_all_blocked_starts_nothing_and_probes_a_client_once(self):
+    def test_all_blocked_starts_nothing_and_probes_each_role_context_once(self):
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
             issue("TASK-1", "In Progress", "researcher", priority=1),
@@ -2482,7 +2539,7 @@ class ScheduledUsageGates(TickBase):
                 self.assertEqual(self.said(), said)
                 self.assertEqual(
                     (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
-                    ([], [], before, ["a"]),
+                    ([], [], before, ["a", "a"]),
                 )
 
     def test_a_live_limit_row_lets_the_other_client_start(self):
