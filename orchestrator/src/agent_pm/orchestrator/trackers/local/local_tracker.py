@@ -31,6 +31,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Pick,
     Recheck,
     Ref,
+    RunRef,
     Snapshot,
     SubIssue,
 )
@@ -173,9 +174,19 @@ class LocalTracker(Tracker):
     def issue(self, ident):
         found = self._need(ident)
         files = self.files()
+        statuses = {
+            n.body.split()[1]: n.body.partition(" · ")[2].partition(" · ")[0]
+            for n in found.comments
+            if _is_run(n)
+        }
         notes = (
             Note(
-                n.body, stamp_time(n.at), None, n.source.value, ORIGINS[n.source], run=_note_run(n)
+                n.body,
+                stamp_time(n.at),
+                None,
+                n.source.value,
+                ORIGINS[n.source],
+                run=_note_run(n, statuses),
             )
             for n in found.comments
             if not _is_run(n)
@@ -568,10 +579,10 @@ def archived_from(issue):
     return name
 
 
-def _note_run(note):
+def _note_run(note, statuses):
     sid, _, step = unquote(note.key or "").partition(":")
     return (
-        sid
+        RunRef(sid, step, statuses.get(sid))
         if note.source == Source.SELF and UUID_RE.fullmatch(sid) and step in ("start", "comment")
         else None
     )

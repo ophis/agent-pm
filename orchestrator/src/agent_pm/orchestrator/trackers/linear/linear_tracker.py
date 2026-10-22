@@ -30,6 +30,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Pick,
     Recheck,
     Ref,
+    RunRef,
     Snapshot,
     SubIssue,
 )
@@ -482,7 +483,9 @@ class LinearTracker(Tracker):
         if node["identifier"] != ident:
             raise IssueError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
         run_notes = {
-            client_id(c["body"].split()[1], step): c["body"].split()[1]
+            client_id(c["body"].split()[1], step): RunRef(
+                c["body"].split()[1], step, c["body"].partition(" · ")[2].partition(" · ")[0]
+            )
             for c in node["comments"]["nodes"]
             if is_comment(c)
             for step in ("start", "comment")

@@ -206,13 +206,20 @@ BOTH_DIRECTIONS = (
 
 
 @dataclass(frozen=True)
+class RunRef:
+    sid: str
+    step: str
+    status: str | None
+
+
+@dataclass(frozen=True)
 class Note:
     body: str
     at: str
     account: str | None
     name: str | None
     origin: Origin
-    run: str | None = field(default=None, kw_only=True)
+    run: RunRef | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Pick,
     Recheck,
     Ref,
+    RunRef,
     Snapshot,
     SubIssue,
 )
@@ -578,10 +579,19 @@ class ResumeInputs(Board):
                 "#### other · 2026-10-22 08:44:37.000\nAdd another line.\n\n"
                 f"#### self · 2026-10-22 08:44:37.900 <!-- id=c2 key={second}:start -->\nBuild started: interrupted\n\n"
                 f"#### self · 2026-10-22 09:14:38.000 <!-- id=c3 key={first}:comment -->\nBuild ready: delivered late\n"
+                f"\n#### self · 2026-10-22 09:14:38.000 <!-- id=c4 key={first}:session -->\nRun {first} · done · #2 · 2026-10-22T08:44:16Z\n"
             ),
         )
         issue = self.tracker.issue("LOC-1")
-        self.assertEqual([n.run for n in issue.notes], [first, None, second, first])
+        self.assertEqual(
+            [n.run for n in issue.notes],
+            [
+                RunRef(first, "start", "done"),
+                None,
+                RunRef(second, "start", None),
+                RunRef(first, "comment", "done"),
+            ],
+        )
         text = inputs.render(
             issue,
             "engineer",

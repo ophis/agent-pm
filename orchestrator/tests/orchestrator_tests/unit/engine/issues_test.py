@@ -9,6 +9,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Link,
     Linked,
     Note,
+    RunRef,
 )
 from agent_pm.orchestrator.trackers.linear import linear_tracker, ops
 from agent_pm.orchestrator.trackers.linear.linear_tracker import LinearTracker
@@ -69,7 +70,7 @@ def note(
     name="Agent",
     origin="self",
     *,
-    run=SID,
+    run=None,
 ):
     return Note(body, at, email, name, origin, run=run)
 
@@ -112,16 +113,27 @@ class ReadIssue(Case):
         session = comment(
             f"Run {SID} · done · #2 · 2026-09-02T00:00:00Z", "2026-09-02T00:00:00Z", me=True
         )
-        for me in (False, True):
-            with self.subTest(harness=me):
+        for me, status in (
+            (False, "done"),
+            (True, "done"),
+            (True, "failed"),
+            (True, "needs_input"),
+            (True, ""),
+        ):
+            with self.subTest(harness=me, status=status):
                 session["user"]["isMe"] = me
+                session["body"] = f"Run {SID} · {status} · #2 · 2026-09-02T00:00:00Z"
                 got = read(comments={"nodes": [done, start, session]})
                 self.assertEqual(
                     [(n.body, n.run) for n in got.notes if n.body.startswith("Build")],
-                    [(start["body"], SID if me else None), (done["body"], SID if me else None)],
+                    [
+                        (start["body"], RunRef(SID, "start", status) if me else None),
+                        (done["body"], RunRef(SID, "comment", status) if me else None),
+                    ],
                 )
                 self.assertEqual(
-                    issues.build_cutoff(got), start["createdAt"] if me else got.created_at
+                    issues.build_cutoff(got),
+                    start["createdAt"] if me and status == "done" else got.created_at,
                 )
 
     def test_maps_fields_and_queries_by_identifier(self):
@@ -295,127 +307,106 @@ class BuildCutoff(Case):
     DONE = "2026-10-22T08:45:00.000Z"
     NEXT = "2026-10-22T09:14:37.900Z"
 
+    def start(self, at=START, body="Build started", sid=SID):
+        return note(body, at, run=RunRef(sid, "start", "done"))
+
+    def delivery(self, at=DONE, body="Build ready", *, sid=SID, status="done"):
+        return note(body, at, run=RunRef(sid, "comment", status))
+
     def cutoff(self, *notes):
         return issues.build_cutoff(issue(created_at=self.CREATED, notes=notes))
 
-    def test_a_start_without_delivery_does_not_consume_comments(self):
-        for body in ("Build started", "Build started: light-build", "\n Build started: x\n"):
-            with self.subTest(body=body):
-                self.assertEqual(self.cutoff(note(body, self.START)), self.CREATED)
-
-    def test_only_successful_build_delivery_qualifies_a_start(self):
-        for body in ("Build ready", "Build ready: done", "\n Build ready: done\n"):
-            with self.subTest(body=body):
+    def test_start_requires_a_successful_delivery_from_the_same_run(self):
+        for status in ("failed", "needs_input", "interrupted", "limit", "no outcome", None):
+            with self.subTest(status=status):
                 self.assertEqual(
-                    self.cutoff(note("Build started", self.START), note(body, self.DONE)),
-                    self.START,
+                    self.cutoff(self.start(), self.delivery(status=status)), self.CREATED
                 )
-        for body in ("Build failed: no", "Question: which?", "Build readying", "build ready"):
-            with self.subTest(body=body):
-                self.assertEqual(
-                    self.cutoff(note("Build started", self.START), note(body, self.DONE)),
-                    self.CREATED,
-                )
+        self.assertEqual(self.cutoff(self.start()), self.CREATED)
+        self.assertEqual(self.cutoff(self.start(), self.delivery(sid="another")), self.CREATED)
+        self.assertEqual(self.cutoff(self.start(), self.delivery()), self.START)
 
-    def test_later_unfinished_build_keeps_the_previous_delivered_boundary(self):
+    def test_later_unfinished_build_keeps_previous_delivery_by_time_not_position(self):
         self.assertEqual(
-            self.cutoff(
-                note("Build started: next", self.NEXT),
-                note("Build ready: done", self.DONE),
-                note("Build started: first", self.START),
-            ),
+            self.cutoff(self.start(self.NEXT, sid="another"), self.delivery(), self.start()),
             self.START,
         )
-
-    def test_latest_delivered_start_wins_by_time_not_position_or_iso_spelling(self):
         self.assertEqual(
             self.cutoff(
-                note("Build ready", "2026-10-22T11:20:00+02:00"),
-                note("Build started: next", self.NEXT),
-                note("Build ready", self.DONE),
-                note("Build started: first", self.START),
+                self.delivery("2026-10-22T11:20:00+02:00", sid="another"),
+                self.start(self.NEXT, sid="another"),
+                self.delivery(),
+                self.start(),
             ),
             self.NEXT,
         )
 
     def test_human_lookalikes_and_other_stages_do_not_qualify_a_build(self):
         for start, done in (
-            (note("Build started", self.START, origin="other"), note("Build ready", self.DONE)),
-            (note("Build started", self.START), note("Build ready", self.DONE, origin="other")),
-            (note("Research started", self.START), note("Build ready", self.DONE)),
-            (note("Build startedness", self.START), note("Build ready", self.DONE)),
-            (note("Build started", self.START), note("Research ready", self.DONE)),
+            (dataclasses.replace(self.start(), origin="other"), self.delivery()),
+            (self.start(), dataclasses.replace(self.delivery(), origin="other")),
+            (self.start(body="Research started"), self.delivery()),
+            (self.start(body="Build startedness"), self.delivery()),
         ):
             with self.subTest(start=start, done=done):
                 self.assertEqual(self.cutoff(start, done), self.CREATED)
 
-    def test_completion_without_a_preceding_start_has_no_boundary(self):
-        self.assertEqual(self.cutoff(note("Build ready", self.DONE)), self.CREATED)
+    def test_delivery_requires_a_preceding_start_and_the_comment_step(self):
+        self.assertEqual(self.cutoff(self.delivery()), self.CREATED)
         self.assertEqual(
-            self.cutoff(note("Build ready", self.START), note("Build started", self.DONE)),
-            self.CREATED,
+            self.cutoff(self.delivery(self.START), self.start(self.DONE)), self.CREATED
         )
+        progress = dataclasses.replace(self.delivery(), run=RunRef(SID, "progress", "done"))
+        self.assertEqual(self.cutoff(self.start(), progress), self.CREATED)
 
     def test_late_delivery_does_not_consume_another_interrupted_runs_comments(self):
         self.assertEqual(
             self.cutoff(
-                note("Build started: first", self.START),
-                note("Build started: interrupted", self.DONE, run="another-run"),
-                note("Build ready: first delivered late", self.NEXT),
+                self.start(), self.start(self.DONE, sid="another"), self.delivery(self.NEXT)
             ),
             self.START,
         )
 
     def test_unassociated_comments_cannot_consume_requirements(self):
         self.assertEqual(
-            self.cutoff(
-                note("Build started", self.START, run=None),
-                note("Build ready", self.DONE, run=None),
-            ),
-            self.CREATED,
-        )
-
-    def test_punctuation_leads_match_the_written_colon_space_or_bare_form(self):
-        config.TASKS.load(
-            workflow_file(
-                PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding!:"').replace(
-                    'done = "Build ready:"', 'done = "Delivered!:"'
-                )
-            )
-        )
-        for suffix in (": first", " first", ""):
-            with self.subTest(suffix=suffix):
-                self.assertEqual(
-                    self.cutoff(
-                        note("Coding!" + suffix, self.START), note("Delivered!" + suffix, self.DONE)
-                    ),
-                    self.START,
-                )
-
-    def test_leads_come_from_the_loaded_workflow(self):
-        config.TASKS.load(
-            workflow_file(
-                PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding:"').replace(
-                    'done = "Build ready:"', 'done = "Delivered:"'
-                )
-            )
-        )
-        self.assertEqual(
-            self.cutoff(note("Coding: go", self.START), note("Delivered: done", self.DONE)),
-            self.START,
-        )
-        self.assertEqual(
             self.cutoff(note("Build started", self.START), note("Build ready", self.DONE)),
             self.CREATED,
         )
 
-    def test_empty_start_or_done_lead_cannot_qualify_a_boundary(self):
+    def test_punctuation_and_bare_start_leads(self):
+        config.TASKS.load(
+            workflow_file(PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding!:"'))
+        )
+        for suffix in (": first", " first", ""):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    self.cutoff(self.start(body="Coding!" + suffix), self.delivery()), self.START
+                )
+
+    def test_start_lead_comes_from_loaded_workflow(self):
+        config.TASKS.load(
+            workflow_file(PACKAGED_FLOW.replace('start = "Build started:"', 'start = "Coding:"'))
+        )
+        self.assertEqual(self.cutoff(self.start(body="Coding: go"), self.delivery()), self.START)
+        self.assertEqual(self.cutoff(self.start(), self.delivery()), self.CREATED)
+
+    def test_empty_display_leads_use_persisted_steps_and_status(self):
         for lead in ('start = "Build started:"', 'done = "Build ready:"'):
             with self.subTest(lead=lead):
                 config.TASKS.load(
                     workflow_file(PACKAGED_FLOW.replace(lead, lead.split("=")[0] + '= ""'))
                 )
-                self.assertEqual(
-                    self.cutoff(note("Build started", self.START), note("Build ready", self.DONE)),
-                    self.CREATED,
+                start = self.start(
+                    body="first build" if lead.startswith("start") else "Build started"
                 )
+                done = self.delivery(body="Delivered" if lead.startswith("done") else "Build ready")
+                self.assertEqual(self.cutoff(start, done), self.START)
+
+    def test_failed_body_matching_a_done_prefix_does_not_consume_comments(self):
+        config.TASKS.load(
+            workflow_file(PACKAGED_FLOW.replace('done = "Build ready:"', 'done = "Build:"'))
+        )
+        self.assertEqual(
+            self.cutoff(self.start(), self.delivery(body="Build failed: error", status="failed")),
+            self.CREATED,
+        )

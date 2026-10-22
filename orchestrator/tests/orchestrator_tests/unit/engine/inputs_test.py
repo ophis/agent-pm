@@ -14,6 +14,7 @@ from agent_pm.orchestrator.engine.flow.types import (
     Link,
     Linked,
     Note,
+    RunRef,
 )
 from agent_pm.orchestrator.engine.types import (
     Ref,
@@ -65,7 +66,11 @@ def note(body, at, who=AGENT):
         at,
         *who,
         "self" if who is AGENT else "other",
-        run="build-session" if who is AGENT else None,
+        run=RunRef(
+            "build-session", "start" if body.startswith("Build started") else "comment", "done"
+        )
+        if who is AGENT and body.startswith(("Build started", "Build ready"))
+        else None,
     )
 
 
