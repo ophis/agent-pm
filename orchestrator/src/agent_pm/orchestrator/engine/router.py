@@ -38,7 +38,7 @@ Prerequisites and effects:
   print JSON lines to stderr. Output files follow Delegate configuration.
 
 Exit conditions:
-  Tick: 2 on configuration failure, 1 when Linear is unavailable (each logged
+  Tick: 2 on configuration or host usage probe failure, 1 when Linear is unavailable (each logged
   once a day), otherwise 0.
   --issue: 2 on configuration failure, 1 when Linear is unavailable or on
   unknown run inventory; 2 when busy,
@@ -1238,6 +1238,9 @@ def main(
             clock=now,
             launch_sid=launch_sid,
         )
+    except ConfigError as error:
+        config.report_error("router", error, dry=opts["dry"])
+        return 2
     except LinearError as e:
         return event_log.config_error("router", e, dry=opts["dry"])
     except TrackerFileError as e:

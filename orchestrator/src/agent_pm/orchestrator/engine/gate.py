@@ -6,6 +6,7 @@ from collections.abc import Callable
 from agent_pm import delegate
 from agent_pm.orchestrator.engine.log import log
 from agent_pm.orchestrator.engine.runs import limits
+from agent_pm.orchestrator.engine.types import ConfigError
 from agent_pm.utils import exhausted, summary
 
 BRAKE_5H = 80
@@ -16,7 +17,7 @@ def read_usage(role, cfg, *, client=None):
 
 
 def _probe(role, cfg, provider, client):
-    """Usage, else None, and the ConfigError that left it unknown."""
+    """Usage, else None, and the configuration or runtime error that left it unknown."""
     if provider is None:
         return None, None
     overlays = (cfg.core,)
@@ -26,8 +27,8 @@ def _probe(role, cfg, provider, client):
         return provider.usage(role, overlays=overlays), None
     except delegate.ConfigError as error:
         return None, error
-    except delegate.SessionError:
-        return None, None
+    except delegate.SessionError as error:
+        return None, error
 
 
 class Gate:
@@ -56,6 +57,8 @@ class Gate:
 
     def _check(self, role, client, kind):
         usage, error = _probe(role, self.cfg, self.cfg.delegates.get(kind), client)
+        if isinstance(error, delegate.SessionError):
+            raise ConfigError(f"host usage probe failed for client {client}: {error}") from None
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}

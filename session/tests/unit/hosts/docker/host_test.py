@@ -147,6 +147,8 @@ class FakeBroker:
 
     def probe_provider(self, provider, base_url):
         self.order.append(("probe", provider, base_url))
+        if "probe-provider" in self.failing:
+            raise self.failing["probe-provider"]
         return True
 
     def build(self, package, *, plugins=(), max_age=None):
@@ -307,8 +309,21 @@ class ConfigTest(Base):
         self.assertTrue(self.host._provider_usage(request))
         self.assertEqual(self.order, ["version", ("probe", "strata", "https://strata.test/v1")])
         self.broker.failing["version"] = SessionError("upgrade broker")
-        with self.assertRaisesRegex(ConfigError, "upgrade broker"):
+        with self.assertRaisesRegex(SessionError, "upgrade broker"):
             self.host._provider_usage(request)
+
+    def test_provider_usage_preserves_host_credential_failures(self):
+        request = SimpleNamespace(provider="strata", base_url="https://strata.test/v1")
+        for exit_code, code, message in (
+            (5, "login_required", "secret-store agent-pm-strata: keychain locked"),
+            (11, "keychain_failed", "secret-store agent-pm-strata: credentials unreadable"),
+        ):
+            with self.subTest(code=code):
+                error = BrokerError(exit_code, code, message, "not_needed", None)
+                self.broker.failing["probe-provider"] = error
+                with self.assertRaises(SessionError) as caught:
+                    self.host._provider_usage(request)
+                self.assertIs(caught.exception, error)
 
     def test_the_packaged_table_parses_and_tmux_stays_the_default(self):
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
