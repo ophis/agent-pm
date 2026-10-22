@@ -56,18 +56,15 @@ with complete, disjoint coverage. Invalid, empty or duplicate-ID shards fail.
 Subtest annotations use the method ID and keep parameters in the error text; selecting
 that method runs all its subtests.
 
-Repository CI sharding is delivered in [TASK-850's workflow patch](patches/TASK-850-repository-tests.patch).
-A manager with workflow write permission reviews it, runs
-`git apply --check docs/patches/TASK-850-repository-tests.patch`, then
-`git apply docs/patches/TASK-850-repository-tests.patch`, commits and pushes on the PR branch.
-Until applied, the workflow still runs the repository suite serially. After application,
-eight `Repository tests N` jobs each run one supervised shard; `fail-fast: false` lets all
+The `repository` matrix in `.github/workflows/test.yml` runs eight jobs,
+`Repository tests 1` through `Repository tests 8`, when full scope is selected.
+Each job runs one supervised shard using `--shard N/8`; `fail-fast: false` lets all
 shards finish, every shard retains source protection and the unchanged-checkout guard,
 and the existing `CI` dependency on `repository` waits for the entire matrix.
 The CLI help matrix is split by surface and configuration so its long parameter loops
 can land on different shards; both help flags and all three entry modes remain covered.
-Compare all eight job durations with the other jobs after the manager's push, including
-setup and cleanup; the target is about 3.5 minutes per job, with headroom below 15 minutes.
+Compare all eight job durations with the other jobs, including setup and cleanup;
+the target is about 3.5 minutes per job, with headroom below 15 minutes.
 
 Docker protocol fixtures need `python3 -m pip install jsonschema==4.26.0` (test only).
 Run `python3 .github/run_tests.py Protocol tests/unit/docker_broker_protocol_test.py tests/unit/docker_relay_protocol_test.py`.
