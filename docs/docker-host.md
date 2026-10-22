@@ -125,21 +125,49 @@ After a rebuild, `build` removes unused older images, keeping those used by cont
 
 ### Plugins
 
-A container's Claude Code and Codex independently install the plugins listed in `[session.hosts.docker] plugins`, default `["autopilot"]`
-(the team's `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review`); `[]`: none. Never agent-pm's own:
-every session runs with it disabled, and the image holds the team at `/opt/agent-pm/team`.
+A container’s Claude Code and Codex independently install `[session.hosts.docker] plugins` from public GitHub
+marketplaces. The [packaged default](../session/src/agent_pm/session/config.toml) explicitly pins autopilot
+(the team’s `/autopilot:build`, `/autopilot:light-build` and `/autopilot:review`); `[]`: none. Every entry requires
+`name@owner/repo#<full-commit>`: exactly 40 lowercase hexadecimal characters, not a branch, tag or short hash.
+The old `autopilot`, `name@marketplace` and unpinned `name@owner/repo` forms are rejected.
 
 ```toml
 [session.hosts.docker]
-plugins = ["autopilot", "other@owner/marketplace-repo"]
+plugins = ["autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"]
 ```
 
-`autopilot` means `autopilot@ophis/claude-autopilot`. Other entries use `name@owner/repo`, a public GitHub
-marketplace repository; its manifest supplies the marketplace name. Older `name@marketplace` entries must be
-replaced. The broker passes these sources into the image without reading host plugin installation records or
-copying host plugin contents. A host with only OpenCode gets the same default autopilot installation.
+The broker stages `name`, `repo` and `commit` in `/opt/agent-pm/plugin-sources.json`; changing the pin changes
+the image key. It reads no host installation records or plugin contents. Each client fetches that commit into
+its own `/opt/agent-pm/<client>-plugins/sources/<owner>/<repo>`, checks out detached HEAD, and registers that
+local marketplace. Before registration and after each install, `git rev-parse HEAD` must equal the configured
+commit; a mismatch fails the build with client, repository, expected and actual values. Logs record each
+installed version and verified commit. Plugins sharing a repository must share its commit; duplicate plugin
+names or conflicting pins fail before Docker.
 
-Each image refresh installs the latest default branch of each plugin source, without a version pin. Build logs record each installed version and marketplace commit. Host plugin updates do not refresh an image; `--max-age 0` forces it.
+The marketplace manifest supplies its name. A selected plugin must have a `./` source directory within that
+checkout; remote plugin sources and paths escaping it are rejected so the pin covers the plugin files too.
+The image never installs agent-pm’s own plugin: every session disables it and uses `/opt/agent-pm/team`.
+A host with only OpenCode gets the same pinned default.
+
+#### Upgrade a plugin
+
+```mermaid
+flowchart LR
+    R[Review target commit] --> C[Change configured pin]
+    C --> B[Rebuild image]
+    B --> V[Verify both clients]
+```
+
+| Action | File or check |
+|---|---|
+| Choose the commit | Review the source diff; resolve a reviewed tag with `git -C <source-checkout> rev-parse <tag>^{commit}` and use the full commit, not the tag. |
+| Set the pin | Your override: `~/.agent-pm/config.local.toml`, `[session.hosts.docker] plugins` (replaces the whole list). Packaged default: `session/src/agent_pm/session/config.toml`; Worker image CI reads that same list. Keep all plugins from one repo on the same pin. |
+| Force a build | `/usr/local/libexec/agent-pm/agent-pm-broker build --agent-pm <plugin-dir> --plugin <name>@<owner>/<repo>#<full-commit> --max-age 0`; repeat `--plugin` for every configured entry. Upgrade the broker from this checkout first. |
+| Check the result | Build logs must report the configured commit for both `claude` and `codex`. In the image, compare `plugin-sources.json` with `git -c safe.directory=<checkout> -C <checkout> rev-parse HEAD` for both source directories above. Worker image CI checks these values and both installed caches. |
+| Exercise a failure | `python3 .github/run_tests.py Unit tests/unit/docker_plugin_install_test.py` with [test setup](tests.md): fake git returns a different commit for each client, before and after installation, and checks the explicit mismatch error. Real configuration and credentials stay untouched. |
+
+Host plugin updates do not change these pins. A default-branch move cannot change a pinned build; if the
+configured commit cannot be fetched, the build fails instead of falling back to another revision.
 
 Claude loads its installation through `/opt/agent-pm/plugins/<name>`, listed in `CLAUDE_CODE_PLUGIN_DIRS`, with
 `/<name>:` commands. OpenCode's container config points `skills.paths` at `/opt/agent-pm/plugins`: it discovers the
@@ -202,7 +230,7 @@ default = "docker"
 | `[session.hosts.docker]` key | Default | Meaning |
 |---|---|---|
 | `docker` | `/usr/local/bin/docker` | the docker CLI, an absolute path |
-| `plugins` | `["autopilot"]` | the plugin payloads every image holds ([Plugins](#plugins)); `[]`: none |
+| `plugins` | pinned autopilot from packaged config | the plugin payloads every image holds ([Plugins](#plugins)); `[]`: none |
 | `github.app` | `""` | the slug of the GitHub App `login github` saved, whose installation tokens every session gets, as `AGENT_PM_PR_AUTHOR=<app>[bot]` names it; `""`: none |
 | `isolated` | `true` | its sessions' clients run in yolo mode ([Permissions](#permissions)); `false`: auto mode, as on tmux |
 

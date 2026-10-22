@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Docker broker protocol 17",
+  "title": "Docker broker protocol 18",
   "$comment": "Changes to the protocol format defined by this schema require bumping Version in broker/internal/protocol/protocol.go.",
   "$ref": "#/$defs/manifest",
   "$defs": {
@@ -347,7 +347,7 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "17"
+          "const": "18"
         }
       },
       "required": [
@@ -1224,7 +1224,7 @@
     },
     "plugin": {
       "type": "string",
-      "pattern": "^(?:autopilot|[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99})$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}#[a-f0-9]{40}$"
     },
     "codex_status": {
       "type": "object",
