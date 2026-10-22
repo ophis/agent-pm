@@ -1676,6 +1676,65 @@ class InstallTest(Case):
         self.assertEqual(item.read_text(), KEY)
         self.assert_secret_free(KEY, PASSWORD, result=result)
 
+    def test_opencode_docker_canceled_login_preserves_preexisting_oauth(self):
+        self.auth_json().parent.mkdir(parents=True)
+        self.auth_json().write_text(json.dumps({"lan": {"type": "oauth", "access": KEY}}))
+        before = self.auth_json().read_bytes()
+        (self.fakes / "fail").write_text("opencode auth login")
+        result = self.fresh(
+            clients="opencode",
+            docker="y",
+            opencode=PROVIDER_ANSWERS,
+            logins=[(PEM_Q, ""), (r"Try again\? \[y/N\]", "n")],
+        )
+        self.assert_ok(result)
+        self.assertEqual(self.auth_json().read_bytes(), before)
+        ledger = Path(self.agent_pm, "install/added").read_text()
+        self.assertNotIn(f"opencode-auth\t{self.auth_json()}\tlan", ledger)
+        self.assertFalse(any(c.startswith("agent-pm-broker login opencode") for c in self.calls()))
+        self.assert_ok(self.cleanup("--yes", "--password-stdin", stdin=PASSWORD + "\n"))
+        self.assertEqual(self.auth_json().read_bytes(), before)
+        self.assert_secret_free(KEY, PASSWORD, result=result)
+
+    def test_opencode_docker_replaces_unusable_api_entries_before_import(self):
+        self.assert_ok(
+            self.fresh(
+                clients="opencode",
+                docker="y",
+                opencode=PROVIDER_ANSWERS,
+                logins=[(PEM_Q, ""), (OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)],
+            )
+        )
+        entries = {
+            "oauth": {"type": "oauth", "access": KEY},
+            "wrong type": {"type": "api", "key": 42},
+            "empty": {"type": "api", "key": ""},
+            "whitespace": {"type": "api", "key": KEY + " "},
+            "control": {"type": "api", "key": KEY + "\u0000"},
+            "too long": {"type": "api", "key": "x" * 16385},
+        }
+        for name, entry in entries.items():
+            with self.subTest(name=name):
+                self.auth_json().write_text(json.dumps({"lan": entry}))
+                (self.fakes / "keychain/agent-pm-opencode").unlink()
+                result = self.again(answers=[(OPENCODE_LOGIN_Q, "lan"), (r"API key:", KEY)])
+                self.assert_ok(result)
+                calls = self.calls()
+                login = f"agent-pm-broker login opencode lan --auth-file {self.auth_json()}"
+                self.assertLess(calls.index("opencode auth login"), calls.index(login))
+                self.assertEqual(json.loads(self.auth_json().read_text())["lan"]["key"], KEY)
+                self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), KEY)
+                self.assertNotIn(KEY, result.tty)
+                self.assert_secret_free(KEY, PASSWORD, result=result)
+        boundary = "x" * 16384
+        self.auth_json().write_text(json.dumps({"lan": {"type": "api", "key": boundary}}))
+        (self.fakes / "keychain/agent-pm-opencode").unlink()
+        result = self.again()
+        self.assert_ok(result)
+        self.assertNotIn("opencode auth login", self.calls())
+        self.assertEqual((self.fakes / "keychain/agent-pm-opencode").read_text(), boundary)
+        self.assert_secret_free(boundary, PASSWORD, result=result)
+
     def test_opencode_empty_key_asked_again_or_skipped(self):
         key_q = r"API key:"
         again = r"No lan key stored\. Try again\? \[y/N\]"

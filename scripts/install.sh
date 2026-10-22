@@ -1211,20 +1211,22 @@ opencode_plugin() {
 
 opencode_auth_file() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; }
 
-# Exit 0 when OpenCode's auth.json has a usable API entry for $1; its key is never read out.
-opencode_has_key() {
+# Checks $1 in auth.json: $2=entry for ledger ownership, api for a usable key; no key is read out.
+opencode_has_auth() {
   python3 -I -c '
 import json, sys, unicodedata
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
         data = json.load(f)
+    if sys.argv[3] == "entry":
+        sys.exit(0 if isinstance(data, dict) and sys.argv[2] in data else 1)
     entry = data.get(sys.argv[2]) if isinstance(data, dict) else None
     key = entry.get("key") if isinstance(entry, dict) and entry.get("type") == "api" else None
     valid = isinstance(key, str) and 0 < len(key.encode("utf-8")) <= 16384 and not any(
         c.isspace() or unicodedata.category(c) == "Cc" or c == "\ufffd" for c in key)
     sys.exit(0 if valid else 1)
 except (OSError, ValueError):
-    sys.exit(1)' "$(opencode_auth_file)" "$1"
+    sys.exit(1)' "$(opencode_auth_file)" "$1" "$2"
 }
 
 # Adds {"<name>": {"type": "api", "key": <stdin line>}} to auth.json: 0600, atomic, others kept.
@@ -1263,7 +1265,7 @@ key_login() {
 
 # OpenCode's own login, which stores the key in auth.json; exit 1 when no $provider key landed there.
 opencode_login() {
-  "$opencode_prefix/bin/opencode" auth login && opencode_has_key "$provider"
+  "$opencode_prefix/bin/opencode" auth login && opencode_has_auth "$provider" api
 }
 
 opencode_key() {
@@ -1273,10 +1275,10 @@ opencode_key() {
     skip "OpenCode not chosen"
     return
   fi
-  if opencode_has_key "$provider"; then
+  if opencode_has_auth "$provider" api; then
     skip "$provider in $(opencode_auth_file)"
   else
-    ledger_add opencode-auth "$(opencode_auth_file)" "$provider"
+    opencode_has_auth "$provider" entry || ledger_add opencode-auth "$(opencode_auth_file)" "$provider"
     if [ -n "$key_stdin" ]; then
       opencode_store_key
     else
