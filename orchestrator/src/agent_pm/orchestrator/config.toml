@@ -91,9 +91,7 @@ max_runs = 3
 #   <run key>  as in delegate/config.toml, local keys included (e.g. a trusted cwd); users, trusted_dirs,
 #              and [clients] tables are refused; a role table holding the old
 #              task-level keys is an error
-[core.roles.researcher]
-# the gate is this installation's bin/ command: the router puts that bin/ on its runs' PATH
-gate = "agent-pm-orchestrator router --brake researcher"
+[core]
 # local: [orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"
 

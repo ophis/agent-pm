@@ -585,9 +585,8 @@ class Parameters(Fake):
     def test_gate_used_by_name_in_an_indexed_task_file_only(self):
         self.write({"tasks/short-note.md": "# Short Note\n\nRun `<gate>` first.\n"})
         self.assertEqual(parameters(self.compose()[0])["<gate>"], "`none`")
-        self.assertEqual(
-            parameters(self.compose(overlays=[{"gate": "make gate"}])[0])["<gate>"], "`make gate`"
-        )
+        with self.assertRaisesRegex(ConfigError, "unknown key 'gate'"):
+            self.compose(overlays=[{"gate": "make gate"}])
         self.assertNotIn("<gate>", parameters(self.compose("editor")[0]))
 
     def test_gate_used_in_a_method_file_a_text_names(self):
@@ -1032,14 +1031,14 @@ class Real(RealConfig):
                 self.assertNotIn(root, prompt.replace(TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
-    def test_every_researcher_run_names_the_gate_default_none(self):
-        gate = "python3 /u/usage.py --below 80"
+    def test_every_researcher_run_uses_the_fixed_orchestrator_brake(self):
+        gate = "agent-pm-orchestrator router --brake researcher"
         for task in (None, "deep-research", "research", "light-research"):
             prompt = composed("researcher", task)[0]
             self.assertIn("the gate is `<gate>`", prompt, task)
-            self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
-            prompt = composed("researcher", task, overlays=[{"gate": gate}])[0]
             self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`", task)
+            with self.assertRaisesRegex(ConfigError, "unknown key 'gate'"):
+                composed("researcher", task, overlays=[{"gate": gate}])
 
     def test_github_host_defaults_and_overrides(self):
         prompt, run = composed("researcher")

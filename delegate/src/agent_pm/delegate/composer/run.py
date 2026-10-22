@@ -1,7 +1,7 @@
 """A role's run config (resolve: the core config, then the caller's overlays) and accounts table, one
 run's params and its client-neutral access intent (access), whose env is the session env its
-commands and gate need.
-An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
+commands need.
+An overlay can widen read, write and commands, so a caller passes only operator-controlled
 config as one.
 """
 
@@ -39,7 +39,6 @@ RUN_KEYS = frozenset(
         "commands",
         "templates",
         "output",
-        "gate",
         "language",
         "cwd",
         "idle_timeout",
@@ -110,7 +109,11 @@ def resolve(
         raise misnamed_error(team, "tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         )
-    return replace(run, role_title=title_of(*found))
+    return replace(
+        run,
+        role_title=title_of(*found),
+        gate="agent-pm-orchestrator router --brake researcher" if role == "researcher" else "",
+    )
 
 
 def accounts(
@@ -238,6 +241,8 @@ def approved(
 
 
 def _check(cfg: Mapping) -> None:
+    if "gate" in cfg:
+        raise ConfigError("unknown key 'gate'")
     for key in cfg:
         if hint := utils.renamed_key(key):
             raise ConfigError(f"unknown key {key!r}{hint}")
