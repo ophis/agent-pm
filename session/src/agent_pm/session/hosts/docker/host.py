@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import select
 import shlex
 import shutil
 import signal
@@ -95,9 +94,7 @@ from agent_pm.session.hosts.docker.relay import GEN, SOCKET
 from agent_pm.session.hosts.docker.types import Started
 from agent_pm.session.hosts.types import CommandView
 from agent_pm.utils import (
-    CLIENT_ENV,
     DOCKER_STATE,
-    HOST_CALL_ENV,
     Display,
     Record,
     command_path,
@@ -777,8 +774,6 @@ class DockerHost(Host):
         stale = os.path.join(state, f"{row.generation}.stale")
         lock = None
         try:
-            if os.path.isfile(os.path.join(state, f"{row.generation}.call.json")):
-                self._spawn_host_call(row.name, row.container, row.generation)
             if not _lock_free(os.path.join(state, "supervisor.lock")):
                 return True
             hook = None
@@ -1102,30 +1097,13 @@ class DockerHost(Host):
             ended = timestamp()
             laps("start")
             created = _Container(container, generation, hook, image, cwd, started, began, ended)
-            if command := launch.env.get(HOST_CALL_ENV):
-                argv = shlex.split(command)
-                if not argv:
-                    raise ConfigError("host call: empty command")
-                if not os.path.isabs(argv[0]):
-                    program = command_path(argv[0])
-                    if program is None:
-                        raise ConfigError("host call: executable is not on the host PATH")
-                    argv[0] = program
-                context = {CLIENT_ENV: launch.env.get(CLIENT_ENV, "")}
-                if not context[CLIENT_ENV]:
-                    raise ConfigError("host call: missing client")
-                save(
-                    os.path.join(state_dir(name), f"{generation}.call.json"),
-                    json.dumps({"generation": generation, "argv": argv, "env": context}),
-                )
-                self._spawn_host_call(name, container, generation)
             _save_result(name, created, laps.phases)
         except BrokerError as error:
             if error.cleanup == "failed" and error.container:
                 with contextlib.suppress(SessionError):
                     self.broker.close(error.container)
             raise
-        except (ConfigError, SessionError, OSError, ValueError) as error:
+        except (SessionError, OSError) as error:
             cleanup = self._roll_back(None, container)
             raise SessionError(f"docker session {name}: {error}{cleanup}") from error
         return created
@@ -1272,7 +1250,7 @@ class DockerHost(Host):
 
     def _exec_env(self, launch: Launch, started: Started) -> dict[str, str]:
         """launch's env, plus with a GitHub App its bot as PR author and git identity."""
-        env = {k: v for k, v in launch.env.items() if k not in {"PATH", HOST_CALL_ENV}}
+        env = {k: v for k, v in launch.env.items() if k != "PATH"}
         if self.github:
             bot = f"{self.github}[bot]"
             email = f"{started.github_user_id}+{bot}@users.noreply.github.com"
@@ -1284,48 +1262,6 @@ class DockerHost(Host):
                 "GIT_COMMITTER_EMAIL": email,
             }
         return env
-
-    def _spawn_host_call(self, name: str, container: str, generation: str) -> None:
-        connector, env = docker_call(
-            self.docker,
-            "exec",
-            "-i",
-            container,
-            IMAGE_PYTHON,
-            "-I",
-            "/opt/agent-pm/session/src/agent_pm/session/hosts/docker/call.py",
-            "serve",
-            generation,
-        )
-        proc = subprocess.Popen(
-            [
-                os.path.realpath(sys.executable),
-                "-I",
-                os.path.join(os.path.dirname(__file__), "call.py"),
-                "host",
-                os.path.join(state_dir(name), f"{generation}.call.json"),
-                json.dumps(connector),
-            ],
-            env=env,
-            cwd="/",
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        try:
-            assert proc.stdout is not None
-            if not select.select([proc.stdout], [], [], READY_WAIT)[0]:
-                raise SessionError("host call: startup timed out")
-            if json.loads(proc.stdout.readline(1024)) != {"ready": True, "generation": generation}:
-                raise SessionError("host call: startup failed")
-        except (OSError, ValueError, SessionError) as error:
-            kill_group(proc)
-            raise SessionError("host call: startup failed") from error
-        finally:
-            if proc.stdout is not None:
-                proc.stdout.close()
-        threading.Thread(target=proc.wait, daemon=True).start()
 
     def _close_piped(self, name: str, container: str) -> None:
         try:

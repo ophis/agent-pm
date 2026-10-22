@@ -19,8 +19,6 @@ LEASE_ENV = (
 AGENT_SESSION_ENV = "AGENT_PM_AGENT_SESSION"
 # and the name of the client it runs, when the session has one
 CLIENT_ENV = "AGENT_PM_CLIENT"
-HOST_CALL_ENV = "AGENT_PM_HOST_CALL"
-HOST_CALL_COMMAND = "agent-pm-host-call"
 
 
 def nested_start() -> str | None:

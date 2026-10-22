@@ -18,7 +18,7 @@ from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import ACCOUNT_ENV, HOST_CALL_COMMAND, HOST_CALL_ENV, thaw, under
+from agent_pm.utils import ACCOUNT_ENV, thaw, under
 
 
 def _own(f):
@@ -138,14 +138,13 @@ def plan(
     )
     for path in intent.dirs:
         _refuse_overlap("write dir", path, layout)
-    gate = HOST_CALL_COMMAND if docker and intent.gate else intent.gate
     access = Access(
         dirs=intent.dirs,
-        commands=intent.commands + ((gate,) if gate else ()),
+        commands=intent.commands + ((intent.gate,) if intent.gate else ()),
         cwd=here,
         project=project,
         reads=intent.reads,
-        env=dict(intent.env) | ({HOST_CALL_ENV: intent.gate} if docker and intent.gate else {}),
+        env=intent.env,
     )
     flags, env = driver.policy(client)
     if docker:
@@ -172,10 +171,7 @@ def plan(
     )
     planned = Plan(spec, session, run, repo, docker)
     return replace(
-        planned,
-        session=replace(
-            session, prompt=composition.render(replace(run, gate=gate), planned.params)
-        ),
+        planned, session=replace(session, prompt=composition.render(run, planned.params))
     )
 
 

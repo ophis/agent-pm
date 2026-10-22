@@ -237,8 +237,6 @@ network unasked, within the container's reach (workspace volume, the session's G
 
 ### Role runs
 
-The board researcher's brake runs on the host through the image's `agent-pm-host-call`, in headless and TUI runs and after recovery. It returns the registered command's output and exit code; the container cannot supply a command or change its client. `[orchestrator.usage_limit]` applies as in [Usage checks](board.md#agent-label): off never reads usage, on keeps the 80% brake. Rebuild the worker image after upgrading to add this entrypoint; restart existing containers to use it.
-
 Role runs (`agent-pm-crew role`, attended board runs) run their client in a container; their harness stays on the
 host, on another Host:
 

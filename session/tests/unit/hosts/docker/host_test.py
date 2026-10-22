@@ -10,7 +10,6 @@ import os
 import re
 import runpy
 import shlex
-import shutil
 import signal
 import stat
 import sys
@@ -41,7 +40,6 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.engine.worker import Worker, WorkerState
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.docker import host as docker_host
 from agent_pm.session.hosts.docker.broker import REFRESH, RELAY, BrokerError, client_keys
 from agent_pm.session.hosts.docker.daemon import CLEARED, RUN_TIMEOUT, Overflow
 from agent_pm.session.hosts.docker.host import (
@@ -383,43 +381,6 @@ class ConfigTest(Base):
                 DockerHost("docker", settings)
 
 
-class HostCallStartTest(Base):
-    def test_start_waits_for_the_generations_ready_message(self):
-        proc = mock.Mock(
-            stdout=io.BytesIO(json.dumps({"ready": True, "generation": GEN}).encode() + b"\n")
-        )
-        self.spawn_mock.side_effect = None
-        self.spawn_mock.return_value = proc
-        with mock.patch.object(docker_host.select, "select", return_value=([proc.stdout], [], [])):
-            self.host._spawn_host_call("w", CONTAINER, GEN)
-        argv, options = self.spawn_mock.call_args
-        self.assertEqual(argv[0][3:5], ["host", os.path.join(self.state, f"{GEN}.call.json")])
-        connector = json.loads(argv[0][5])
-        self.assertEqual(connector[-2:], ["serve", GEN])
-        self.assertIn(CONTAINER, connector)
-        self.assertEqual(options["cwd"], "/")
-        self.assertTrue(proc.stdout.closed)
-
-    def test_bad_ready_or_timeout_kills_only_the_started_process(self):
-        for line, readable in ((b"", True), (b"invalid\n", True), (b"{}\n", True), (b"", False)):
-            with self.subTest(line=line, readable=readable):
-                proc = mock.Mock(pid=4343, stdout=io.BytesIO(line))
-                self.spawn_mock.side_effect = None
-                self.spawn_mock.return_value = proc
-                with (
-                    mock.patch.object(
-                        docker_host.select,
-                        "select",
-                        return_value=([proc.stdout] if readable else [], [], []),
-                    ),
-                    mock.patch("os.killpg") as kill,
-                    self.assertRaisesRegex(SessionError, "host call: startup failed"),
-                ):
-                    self.host._spawn_host_call("w", CONTAINER, GEN)
-                kill.assert_called_once_with(proc.pid, signal.SIGKILL)
-                self.assertTrue(proc.stdout.closed)
-
-
 class ClientEnvTest(Base):
     def test_a_client_without_home_is_refused(self):
         for client, named in (("other", "client other"), ("", r"client \(unnamed\)")):
@@ -472,87 +433,6 @@ class ClientEnvTest(Base):
 
 
 class StartTest(Base):
-    def test_host_command_identity_is_validated_before_the_client_runs(self):
-        for command, client in (
-            ("   ", "agent"),
-            ("'", "agent"),
-            ("/host/call", ""),
-        ):
-            with self.subTest(command=command, client=client):
-                self.launch = replace(
-                    self.launch,
-                    env={
-                        "AGENT_PM_HOST_CALL": command,
-                        "AGENT_PM_CLIENT": client,
-                    },
-                )
-                with self.assertRaises(SessionError):
-                    self.start()
-                self.popen_mock.assert_not_called()
-
-    def test_host_command_name_is_resolved_on_the_hosts_path(self):
-        self.launch = replace(
-            self.launch,
-            env={
-                "AGENT_PM_HOST_CALL": "owner-brake researcher",
-                "AGENT_PM_CLIENT": "agent",
-            },
-        )
-        original = shutil.which
-        with (
-            mock.patch(
-                "shutil.which",
-                side_effect=lambda name: (
-                    "/host/owner-brake" if name == "owner-brake" else original(name)
-                ),
-            ),
-            mock.patch.object(self.host, "_spawn_host_call"),
-        ):
-            self.start()
-        with open(os.path.join(self.state, f"{GEN}.call.json")) as stream:
-            self.assertEqual(json.load(stream)["argv"], ["/host/owner-brake", "researcher"])
-
-    def test_a_fixed_host_command_is_started_before_the_tui_client(self):
-        self.launch = replace(
-            self.launch,
-            env=dict(self.launch.env)
-            | {
-                "AGENT_PM_HOST_CALL": "/host/owner-brake researcher",
-                "AGENT_PM_CLIENT": "agent",
-            },
-        )
-        with mock.patch.object(self.host, "_spawn_host_call") as start:
-            self.start()
-        start.assert_called_once_with("w", CONTAINER, GEN)
-        with open(os.path.join(self.state, f"{GEN}.call.json")) as stream:
-            self.assertEqual(
-                json.load(stream),
-                {
-                    "generation": GEN,
-                    "argv": ["/host/owner-brake", "researcher"],
-                    "env": {"AGENT_PM_CLIENT": "agent"},
-                },
-            )
-        self.assertFalse(any("AGENT_PM_HOST_CALL" in str(call) for call in self.docker.order))
-
-    def test_a_failed_host_call_start_rolls_back_the_container(self):
-        self.launch = replace(
-            self.launch,
-            env=dict(self.launch.env)
-            | {
-                "AGENT_PM_HOST_CALL": "/host/owner-brake",
-                "AGENT_PM_CLIENT": "agent",
-            },
-        )
-        with (
-            mock.patch.object(
-                self.host, "_spawn_host_call", side_effect=SessionError("host call unavailable")
-            ),
-            self.assertRaisesRegex(SessionError, "host call unavailable"),
-        ):
-            self.start()
-        self.assertEqual(self.broker.closed, [CONTAINER])
-
     def test_runtime_staging_errors_are_reported_without_container_output(self):
         files = json.dumps({"/run/agent-pm/agent-store/" + "a" * 64 + ".json": "{}"})
         for result in (
@@ -1537,28 +1417,6 @@ class PipeTest(Base):
             metadata={k: v for k, v in {**self.METADATA, **metadata}.items() if v is not None},
         )
 
-    def test_a_fixed_host_command_is_started_for_the_headless_client(self):
-        self.launch = replace(
-            self.launch,
-            env=dict(self.launch.env)
-            | {
-                "AGENT_PM_HOST_CALL": "/host/owner-brake researcher",
-                "AGENT_PM_CLIENT": "agent",
-            },
-        )
-        with mock.patch.object(self.host, "_spawn_host_call") as start:
-            pipe = self.pipe()
-        self.addCleanup(pipe.close)
-        start.assert_called_once_with("w", CONTAINER, GEN)
-        self.assertNotIn("AGENT_PM_HOST_CALL", self.popened[1]["env"])
-        with open(os.path.join(self.state, f"{GEN}.call.json")) as stream:
-            self.assertEqual(
-                json.load(stream)["env"],
-                {
-                    "AGENT_PM_CLIENT": "agent",
-                },
-            )
-
     def test_no_name_or_a_docker_env_key_is_refused_before_docker(self):
         with self.assertRaisesRegex(
             ConfigError, "^a headless session on the Docker Host needs a name$"
@@ -2202,14 +2060,6 @@ class CloseTest(Base):
 
 
 class RecoverTest(Base):
-    def test_a_live_hook_supervisor_does_not_prevent_host_call_recovery(self):
-        self.live_supervisor()
-        with open(os.path.join(self.state, f"{GEN}.call.json"), "w") as stream:
-            json.dump({"generation": GEN}, stream)
-        with mock.patch.object(self.host, "_spawn_host_call") as start:
-            self.host.attach("w")
-        start.assert_called_once_with("w", CONTAINER, GEN)
-
     def setUp(self):
         super().setUp()
         self.listed("w")

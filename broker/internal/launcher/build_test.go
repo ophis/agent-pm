@@ -335,8 +335,7 @@ func TestWorkerImageHasItsScripts(t *testing.T) {
 	}
 	for _, want := range []string{
 		`'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/relay.py "$@"' > /opt/agent-pm/bin/relay`,
-		`'exec /opt/agent-pm/venv/bin/python -I /opt/agent-pm/session/src/agent_pm/session/hosts/docker/call.py call "$@"' > /opt/agent-pm/bin/agent-pm-host-call`,
-		"chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/agent-pm-host-call /opt/agent-pm/bin/relay ",
+		"chmod 755 /opt/agent-pm/bin/codex /opt/agent-pm/bin/agent-pm-session /opt/agent-pm/bin/relay ",
 		"install -d -o agent -g agent -m 0700 /run/agent-pm /run/agent-pm/relay-queue",
 		"COPY bootstrap.py codex-update.py opencode-install.py plugin-install.py hook-stub with-secrets workspace-check gh git-credential-agent-pm /opt/agent-pm/lib/",
 		`python3 -I /opt/agent-pm/lib/opencode-install.py "$(dpkg --print-architecture)" /opt/agent-pm/clients`,

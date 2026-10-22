@@ -665,18 +665,13 @@ class Docker(Base):
     def planned(self, *args, **kw):
         return super().planned(*args, **{"mode": "tui", **kw})
 
-    def test_a_gate_runs_on_the_host_through_the_images_command(self):
+    def test_a_runtime_gate_is_passed_unchanged_to_each_mode(self):
         for mode in ("headless", "tui"):
             with self.subTest(mode=mode):
                 got, _ = self.planned(mode=mode, keys={"gate": "owner-brake researcher"})
                 self.assertEqual(got.run.gate, "owner-brake researcher")
-                self.assertEqual(got.session.access.env["AGENT_PM_HOST_CALL"], got.run.gate)
-                self.assertIn("agent-pm-host-call", got.session.access.commands)
-                self.assertNotIn(got.run.gate, got.session.access.commands)
-                self.assertIn("`agent-pm-host-call`", got.prompt)
-                self.assertNotIn("owner-brake researcher", got.prompt)
-        got, _ = self.planned()
-        self.assertNotIn("AGENT_PM_HOST_CALL", got.session.access.env)
+                self.assertIn(got.run.gate, got.session.access.commands)
+                self.assertIn("`owner-brake researcher`", got.prompt)
 
     def test_a_headless_run_gets_the_docker_rules_and_an_in_process_one_none(self):
         got, _ = self.planned(mode="headless", out=None)

@@ -163,7 +163,7 @@ codex = "off"
 
 Each entry accepts `"on"` or `"off"`; an unlisted client defaults to `"on"`. The orchestrator owns this setting. For an off client, board starts and recovery ignore recorded quota holds and never read or evaluate usage; the researcher brake returns success without probing. Other clients keep their settings. On keeps today's start thresholds and the researcher's 80% five-hour brake (weekly exhaustion also brakes). Role and client concurrency limits still apply.
 
-The orchestrator supplies the researcher's brake command through the Delegate's runtime overlays, which persist across resumes. Docker runs call it on the host through the image's `agent-pm-host-call`, with the accepted client; the host reads the current usage switch and account pool. Delegate does not infer the command from callbacks. There is no `gate` configuration key; standalone researcher runs have no brake.
+The orchestrator supplies the researcher's brake command through the Delegate's runtime overlays, which persist across resumes. Delegate passes the command unchanged. There is no `gate` configuration key; standalone researcher runs have no brake. On Docker, the existing missing-command failure remains; Docker brake support is deferred to TASK-856.
 
 `--dry-run` re-reads each new candidate's labels and prints `client`, `client_source` (`label` or `default`) and its task's `tier` ([Task labels](#task-labels)); a resume prints its recorded client, or `restart` when it starts a new session. Invalid labels print `would comment`; both scheduled and `--issue` previews leave issue state, comments and run logs unchanged.
 
