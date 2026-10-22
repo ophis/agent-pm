@@ -261,7 +261,7 @@ class Shipped(Case):
         with files(package).joinpath(name).open("rb") as f:
             whitelist = tomllib.load(f)["hosts"]["docker"]["plugins"]
         self.assertTrue(called)
-        self.assertLessEqual(called, set(whitelist))
+        self.assertLessEqual(called, {source.split("@", 1)[0] for source in whitelist})
 
     def test_product_design_reviews_the_prd_with_autopilot_review_to_its_default_cap(self):
         text = task_text("product-design")

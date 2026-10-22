@@ -79,7 +79,7 @@ FIRST_FAILURE = {"ready": "todo", "review": "in_review"}
 LOCK = "writeback.lock"
 MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
-FOOTER = "Answer in a comment, then move this issue back to Todo."
+FOOTER = "Answer in a comment, then move this issue back to {state}."
 LIMIT = "Usage limit,"
 # Failed attempts keep their own steps; a later valid outcome keeps the session's normal steps.
 NO_OUTCOME = "no-outcome:"
@@ -153,11 +153,11 @@ def say(lead, text):
     return f"{lead}\n{text}" if "\n" in text else f"{lead} {text}"
 
 
-def approve_line(repo):
+def approve_line(repo, approved):
     if repo is None:
-        return "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
+        return f"**🔴 To approve, move this issue to {approved} with a comment `Repo: <owner>/<name>` naming the target repo.**"
     return (
-        f"**🔴 Target repo:** `{repo}` **(from the project mapping). To approve, move this issue to Handoff; "
+        f"**🔴 Target repo:** `{repo}` **(from the project mapping). To approve, move this issue to {approved}; "
         "to use another repo, comment** `Repo: <owner>/<name>` **first.**"
     )
 
@@ -342,9 +342,14 @@ def _completion_body(ctx, o):
     task, url = TASKS[ctx.role], _url(ctx, o.url)
     if o.status == OutcomeStatus.DONE:
         lead, text, state = task.done, o.summary, "in_review"
+        if task.input == "build" and text:
+            text = "Agent report before delivery:\n\n" + "\n".join(
+                f"> {line}" for line in text.splitlines()
+            )
     elif o.status == OutcomeStatus.NEEDS_INPUT:
         questions = "\n".join(f"{n}. {q}" for n, q in enumerate(o.questions, 1))
-        text = f"{questions}\n\n{FOOTER}" + (f" {task.hint}" if task.hint else "")
+        footer = FOOTER.format(state=ctx.tracker.state_name(IssueState.READY))
+        text = f"{questions}\n\n{footer}" + (f" {task.hint}" if task.hint else "")
         lead, state = task.question, "in_review"
     else:
         lead, text, state = (
@@ -358,7 +363,7 @@ def _completion_body(ctx, o):
     ):
         body += f"\n\n{url}"
     if task.approve and o.status == OutcomeStatus.DONE:
-        body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
+        body += f"\n\n{approve_line(ctx.repos.get(ctx.project), ctx.tracker.state_name(IssueState.APPROVED))}"
 
     return body, state, url
 
@@ -649,7 +654,8 @@ def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
     src = tracker.on_board(h.source) if h else None
     if h is not None and src:
         text = (
-            f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
+            f"Repo check failed: {reason}. To build it, move {h.source} to "
+            f"{tracker.state_name(IssueState.APPROVED)} again with a comment "
             "`Repo: <owner>/<name>` naming the target repo."
         ) + (
             f" Or fix {LOCAL}'s [orchestrator.linear.project_repos] entry."
@@ -670,7 +676,7 @@ def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
             say(
                 "Question:",
                 f"repo check failed: {reason}. Fix the description's `Repo:` "
-                "line, then move this issue back to Todo.",
+                f"line, then move this issue back to {tracker.state_name(IssueState.READY)}.",
             )
             + notes,
         )

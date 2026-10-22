@@ -8,18 +8,105 @@ import sys
 from pathlib import Path
 
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-COMMIT = re.compile(r"[a-f0-9]{40,64}")
+COMMIT = re.compile(r"[a-f0-9]{40}")
+REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
 def command(argv, env):
-    return subprocess.run(
-        argv,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    try:
+        return subprocess.run(
+            argv,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(f"plugin-install: command failed: {' '.join(argv)}") from error
+
+
+def validate(plugins):
+    if not isinstance(plugins, list):
+        raise ValueError("plugin-install: sources must be a list")
+    names, repos = set(), {}
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or any(
+            not isinstance(plugin.get(key), str) or pattern.fullmatch(plugin[key]) is None
+            for key, pattern in (("name", NAME), ("repo", REPO), ("commit", COMMIT))
+        ):
+            raise ValueError("plugin-install: each source needs name, owner/repo and full commit")
+        name, repo, commit = plugin["name"], plugin["repo"], plugin["commit"]
+        if name in names:
+            raise ValueError(f"plugin-install: duplicate plugin name {name}")
+        if repo in repos and repos[repo] != commit:
+            raise ValueError(f"plugin-install: conflicting commits for {repo}")
+        names.add(name)
+        repos[repo] = commit
+
+
+def verify(client, repo, expected, checkout, env):
+    actual = command(["git", "-C", str(checkout), "rev-parse", "HEAD"], env)
+    if actual != expected:
+        raise ValueError(f"plugin-install: {client} {repo}: expected {expected}, actual {actual!r}")
+    return actual
+
+
+def marketplace(checkout, names):
+    manifest = json.loads((checkout / ".claude-plugin/marketplace.json").read_text())
+    market = manifest.get("name")
+    if not isinstance(market, str) or NAME.fullmatch(market) is None:
+        raise ValueError("plugin-install: invalid marketplace name")
+    entries = manifest.get("plugins", [])
+    for name in names:
+        selected = [
+            entry for entry in entries if isinstance(entry, dict) and entry.get("name") == name
+        ]
+        source = selected[0].get("source") if len(selected) == 1 else None
+        if not isinstance(source, str) or not source.startswith("./"):
+            raise ValueError(f"plugin-install: {name}: source must be a local ./ directory")
+        path = (checkout / source).resolve()
+        if not path.is_relative_to(checkout.resolve()) or not path.is_dir():
+            raise ValueError(f"plugin-install: {name}: source must stay inside its checkout")
+    return market
+
+
+def prepare(repo, commit, names, homes, *, markets, env):
+    sources, market = {}, None
+    for client, home in homes.items():
+        checkout = home / "sources" / repo
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            command(["git", "init", str(checkout)], env)
+            command(
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "fetch",
+                    "--depth=1",
+                    f"https://github.com/{repo}.git",
+                    commit,
+                ],
+                env,
+            )
+            command(["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"], env)
+            verify(client, repo, commit, checkout, env)
+            actual_market = marketplace(checkout, names)
+        except (ValueError, OSError) as error:
+            raise ValueError(
+                f"plugin-install: {client} {repo} expected {commit}: {error}"
+            ) from error
+        if market is not None and market != actual_market:
+            raise ValueError(f"plugin-install: {repo}: client marketplace names differ")
+        market = actual_market
+        if market in markets and markets[market] != repo:
+            raise ValueError(f"plugin-install: duplicate marketplace name {market} from {repo}")
+        sources[client] = checkout
+    markets[market] = repo
+    for client, checkout in sources.items():
+        command([client, "plugin", "marketplace", "add", str(checkout)], env)
+    return market, sources
 
 
 def installed(home, market, name):
@@ -44,6 +131,7 @@ def installed(home, market, name):
 
 
 def install(plugins, root):
+    validate(plugins)
     claude, codex = root / "claude-plugins", root / "codex-plugins"
     shared = root / "plugins"
     for home in (claude, codex):
@@ -57,35 +145,19 @@ def install(plugins, root):
         "CODEX_HOME": str(codex),
         "GIT_TERMINAL_PROMPT": "0",
     }
-    markets = {}
+    homes = {"claude": claude, "codex": codex}
+    markets, prepared = {}, {}
     for plugin in plugins:
-        name, repo = plugin["name"], plugin["repo"]
-        if repo not in markets:
-            # Discover only the marketplace just added, without depending on host or install records.
-            before = set(
-                (claude / "plugins/marketplaces").glob("*/.claude-plugin/marketplace.json")
-            )
-            command(["claude", "plugin", "marketplace", "add", repo], env)
-            after = set((claude / "plugins/marketplaces").glob("*/.claude-plugin/marketplace.json"))
-            added = after - before
-            if len(added) != 1:
-                raise ValueError(f"plugin-install: expected a new marketplace for {repo}")
-            path = added.pop()
-            market = json.loads(path.read_text())["name"]
-            if not isinstance(market, str) or NAME.fullmatch(market) is None:
-                raise ValueError("plugin-install: invalid marketplace name")
-            command(["codex", "plugin", "marketplace", "add", repo], env)
-            markets[repo] = market, path.parent.parent
-        market, source = markets[repo]
+        name, repo, expected = plugin["name"], plugin["repo"], plugin["commit"]
+        if repo not in prepared:
+            names = [item["name"] for item in plugins if item["repo"] == repo]
+            prepared[repo] = prepare(repo, expected, names, homes, markets=markets, env=env)
+        market, sources = prepared[repo]
         identifier = f"{name}@{market}"
         for client, verb, home in (("claude", "install", claude), ("codex", "add", codex)):
             command([client, "plugin", verb, identifier], env)
             location, version = installed(home, market, name)
-            # Both clients retain their own checkout. Log each checkout's actual commit.
-            checkout = source if client == "claude" else codex / ".tmp/marketplaces" / market
-            commit = command(["git", "-C", str(checkout), "rev-parse", "HEAD"], env)
-            if COMMIT.fullmatch(commit) is None:
-                raise ValueError(f"plugin-install: cannot identify {client} marketplace commit")
+            commit = verify(client, repo, expected, sources[client], env)
             print(
                 f"plugin-install: {client} {identifier} version={version} commit={commit}",
                 flush=True,
@@ -97,7 +169,10 @@ def install(plugins, root):
 def main(argv):
     if len(argv) != 2 or not Path(argv[1]).is_absolute():
         sys.exit("usage: plugin-install.py SOURCES ABSOLUTE_ROOT")
-    install(json.loads(Path(argv[0]).read_text()), Path(argv[1]))
+    try:
+        install(json.loads(Path(argv[0]).read_text()), Path(argv[1]))
+    except (ValueError, OSError) as error:
+        sys.exit(f"plugin-install: {error}")
 
 
 if __name__ == "__main__":

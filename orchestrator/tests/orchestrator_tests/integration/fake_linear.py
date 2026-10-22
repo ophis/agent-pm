@@ -774,6 +774,9 @@ class FakeLinear:
             }
         }
 
+    def _state_name(self, caller, v):
+        return {"workflowState": {"name": TITLES[NAMES[v["i"]]]}}
+
     def _teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
@@ -1007,6 +1010,7 @@ OPS = {
     "router.issues": FakeLinear._board,
     "router.issues+relations": FakeLinear._board,
     "issues.Q_ISSUE": FakeLinear._issue,
+    "sessions.Q_STATE_NAME": FakeLinear._state_name,
     "sessions.M_UPDATE": FakeLinear._comment_update,
     "writeback.M_TITLE": FakeLinear._set_title,
     "writeback.M_ATTACH": FakeLinear._attach,

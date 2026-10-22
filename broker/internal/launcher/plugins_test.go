@@ -30,7 +30,7 @@ func TestBuildStagesPluginSourcesWithoutHostRecord(t *testing.T) {
 					t.Fatal(err)
 				}
 				var sources []map[string]string
-				if err := json.Unmarshal(data, &sources); err != nil || len(sources) != 2 || sources[0]["repo"] != "ophis/claude-autopilot" || sources[1]["repo"] != "owner/market" {
+				if err := json.Unmarshal(data, &sources); err != nil || len(sources) != 2 || sources[0]["repo"] != "ophis/claude-autopilot" || sources[1]["repo"] != "owner/market" || sources[0]["commit"] != "030a7926ae31a1f9c46625790111af96fd93a217" || sources[1]["commit"] != strings.Repeat("b", 40) {
 					t.Fatalf("sources %s: %v", data, err)
 				}
 				if !slices.Contains(args, "AGENT_PM_PLUGIN_DIRS=/opt/agent-pm/plugins/autopilot:/opt/agent-pm/plugins/beta") {
@@ -40,7 +40,7 @@ func TestBuildStagesPluginSourcesWithoutHostRecord(t *testing.T) {
 		}
 		return inner(args)
 	}
-	if _, err := e.host().Build(context.Background(), e.pkg, []string{"beta@owner/market", "autopilot"}, -1); err != nil {
+	if _, err := e.host().Build(context.Background(), e.pkg, []string{"beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"}, -1); err != nil {
 		t.Fatal(err)
 	}
 	if !seen {
@@ -58,21 +58,33 @@ func TestPluginSourcesChangeTheKeyButHostPluginsDoNot(t *testing.T) {
 		}
 		return result
 	}
-	none, first := build(), build("autopilot")
+	none, first := build(), build("autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217")
 	if none.Image == first.Image {
 		t.Fatal("plugins absent from key")
 	}
 	putFile(t, filepath.Join(e.home, ".claude/plugins/installed_plugins.json"), "invalid JSON")
-	if again := build("autopilot"); again.Rebuilt || again.Image != first.Image {
+	if again := build("autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"); again.Rebuilt || again.Image != first.Image {
 		t.Fatal("host plugins affected image")
 	}
-	if next := build("autopilot@owner/other"); next.Image == first.Image {
+	if next := build("autopilot@owner/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); next.Image == first.Image {
 		t.Fatal("repo absent from key")
 	}
 }
 
+func TestPluginCommitChangesTheKey(t *testing.T) {
+	e := newBuildEnv(t)
+	first, err := e.host().Build(context.Background(), e.pkg, []string{"x@owner/repo#" + strings.Repeat("a", 40)}, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := e.host().Build(context.Background(), e.pkg, []string{"x@owner/repo#" + strings.Repeat("b", 40)}, -1)
+	if err != nil || first.Image == next.Image {
+		t.Fatalf("commit absent from key: %v", err)
+	}
+}
+
 func TestPluginSourceValidation(t *testing.T) {
-	for _, names := range [][]string{{"unknown"}, {"autopilot@market"}, {"x@../repo"}, {"x@owner/.."}, {"x@owner/repo#ref"}, {"autopilot", "autopilot@owner/repo"}} {
+	for _, names := range [][]string{{"autopilot"}, {"x@owner/repo"}, {"x@owner/repo#" + strings.Repeat("a", 39)}, {"x@owner/repo#" + strings.Repeat("A", 40)}, {"x@owner/repo#" + strings.Repeat("a", 40), "y@owner/repo#" + strings.Repeat("b", 40)}, {"x@owner/repo#" + strings.Repeat("a", 40), "x@owner/other#" + strings.Repeat("a", 40)}, {"unknown"}, {"autopilot@market"}, {"x@../repo"}, {"x@owner/.."}, {"x@owner/repo#ref"}, {"autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217", "autopilot@owner/repo"}} {
 		t.Run(strings.Join(names, ","), func(t *testing.T) {
 			e := newBuildEnv(t)
 			_, err := e.host().Build(context.Background(), e.pkg, names, -1)

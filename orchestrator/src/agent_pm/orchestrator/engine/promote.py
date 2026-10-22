@@ -84,7 +84,7 @@ Recovery and next help:
 """
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
-NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
+NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to {state}."
 
 
 def child_title(prefix, src_prefix, title):
@@ -133,7 +133,10 @@ class Promoter:
                     "handoff-wait",
                     src.ident,
                     once=True,
-                    reason=f"in Handoff under {MATURE.seconds // 60} min",
+                    reason=(
+                        f"in {self.tracker.state_name(IssueState.APPROVED)} "
+                        f"under {MATURE.seconds // 60} min"
+                    ),
                 )
                 continue
             try:
@@ -180,7 +183,11 @@ class Promoter:
         src, detail, role, nxt = handoff.source, handoff.detail, handoff.role, handoff.next
         comments = self.instructions(detail, handoff.cutoff)
         if not comments and self.tasks[role].require_instructions:
-            if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
+            if self.comment_and_move(
+                src,
+                NO_INSTRUCTIONS.format(state=self.tracker.state_name(IssueState.REVIEW)),
+                "handoff-bounce",
+            ):
                 self.say("handoff-bounce", src.ident, to="in_review", reason="no instructions")
             return
         once = (src.key, nxt, handoff.first)
@@ -243,7 +250,7 @@ class Promoter:
             self.say(
                 "handoff-error",
                 src.ident,
-                reason="could not move to In Review",
+                reason=f"could not move to {self.tracker.state_name(IssueState.REVIEW)}",
                 error=one_line(e),
             )
 

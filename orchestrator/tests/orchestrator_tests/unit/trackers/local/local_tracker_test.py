@@ -74,6 +74,12 @@ class Board(Case):
 
 
 class States(Case):
+    def test_display_names_are_board_directories(self):
+        tracker = LocalTracker("unused", (), prefix="LOC")
+        self.assertEqual(tracker.state_name(IssueState.READY), "ready/")
+        self.assertEqual(tracker.state_name(IssueState.REVIEW), "review/")
+        self.assertEqual(tracker.state_name(IssueState.APPROVED), "approved/")
+
     def test_issue_states(self):
         self.assertEqual(
             ISSUE_STATES,
@@ -518,7 +524,7 @@ class Reads(Board):
 
     def test_approved(self):
         front = "priority: 2\nparent: LOC-5\nlinks:\n  - title: the doc\n    url: https://x/doc\n"
-        path = self.write("pm/approved", "LOC-1", front=front)
+        self.write("pm/approved", "LOC-1", front=front)
         self.write("engineer/approved", "LOC-2")
         self.write("me/approved", "LOC-3")
         self.write("archive", "LOC-4", history="- 2026-10-19 16:10 approved self\n")
@@ -528,7 +534,7 @@ class Reads(Board):
                 Approved(
                     "LOC-1",
                     "LOC-1",
-                    Path(path).as_uri(),
+                    "",
                     "LOC-1 title",
                     2,
                     "2026-10-19T14:02:00-04:00",

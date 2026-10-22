@@ -31,7 +31,7 @@ T0 = datetime(2026, 10, 1, 9, tzinfo=UTC)
 USAGE = "five_hour=50% weekly=none"
 BAD_TASK = (
     'Task "light-research" is not one of engineer\'s tasks (build, light-build). '
-    "Fix the task or the assignee, then move the issue back to Todo."
+    "Fix the task or the assignee, then move the issue back to ready/."
 )
 
 
@@ -233,16 +233,21 @@ class LocalBoard(BinFlow):
         )
 
     def test_dry_run_matches_linear(self):
-        """Spec AC5: the same issues on Linear print the same router lines."""
+        """Same routing, with each tracker's state names in the repair comment."""
         self.seed_board()
         on_board = self.dry_run()
         self.use("linear")
         self.seed_linear()
         on_linear = self.dry_run()
-        self.assertEqual(
-            [json.loads(re.sub(r"\bLOC-(\d+)", r"TASK-\1", json.dumps(e))) for e in on_board],
-            on_linear,
-        )
+        local_comment = next(e for e in on_board if e["kind"] == "would comment")
+        linear_comment = next(e for e in on_linear if e["kind"] == "would comment")
+        self.assertEqual(local_comment["body"], BAD_TASK)
+        self.assertEqual(linear_comment["body"], BAD_TASK.replace("ready/", "Todo"))
+        normalized = [
+            json.loads(re.sub(r"\bLOC-(\d+)", r"TASK-\1", json.dumps(e))) for e in on_board
+        ]
+        next(e for e in normalized if e["kind"] == "would comment")["body"] = linear_comment["body"]
+        self.assertEqual(normalized, on_linear)
 
     def test_dry_run_writes_nothing(self):
         """Spec AC5: no lock, no state, every issue file byte- and mtime-identical."""

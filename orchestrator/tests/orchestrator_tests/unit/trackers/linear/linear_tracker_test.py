@@ -105,7 +105,7 @@ LISTS = {
 }
 TRIAGE = "00000000-0000-4000-8000-000000000019"
 OTHER = "00000000-0000-4000-8000-000000000099"  # another team's state
-NEW = ("Q_SNAPSHOTS", "Q_CHANGED")  # TASK-809's, not on orchestrator-revamped
+NEW = ("Q_SNAPSHOTS", "Q_CHANGED", "Q_STATE_NAME")  # TASK-809's, not on orchestrator-revamped
 # ops queries the adapter delegates to
 OPS = {getattr(ops, n): n for n in ("M_COMMENT", "M_STATE", "M_SUBSCRIBE", "Q_ISSUE_STATE")}
 HUMANS = ("Me@X.com", "you@x.com")
@@ -206,6 +206,27 @@ class Gql:
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+
+class StateNames(Case):
+    def test_names_come_from_configured_state_ids_and_are_cached(self):
+        calls = []
+
+        def gql(query, **variables):
+            calls.append((query, variables))
+            return {"workflowState": {"name": "Ready for agents"}}
+
+        port = LinearTracker(gql, states=STATES)
+        self.assertEqual(port.state_name(IssueState.READY), "Ready for agents")
+        self.assertEqual(port.state_name(IssueState.READY), "Ready for agents")
+        self.assertEqual(calls, [(linear_tracker.Q_STATE_NAME, {"i": STATES["todo"]})])
+
+    def test_unreadable_name_is_not_replaced_with_a_linear_default(self):
+        def gql(*_, **__):
+            raise LinearError("unavailable")
+
+        with self.assertRaises(LinearError):
+            LinearTracker(gql, states=STATES).state_name(IssueState.READY)
 
 
 def tracker(gql, team=TEAM_OBJ):
@@ -1360,6 +1381,7 @@ class Interface(Case):
                 "issue",
                 "search",
                 "description",
+                "state_name",
             },
         )
         self.assertIsInstance(LinearTracker(None), Tracker)

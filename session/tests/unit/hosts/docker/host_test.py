@@ -318,7 +318,9 @@ class ConfigTest(Base):
             {
                 "implementation": "agent_pm.session.hosts.docker.host:DockerHost",
                 "docker": "/usr/local/bin/docker",
-                "plugins": ["autopilot"],
+                "plugins": [
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"
+                ],
                 "isolated": True,
                 "github": {"app": ""},
             },
@@ -328,15 +330,33 @@ class ConfigTest(Base):
         host = DockerHost("docker", settings)
         self.assertEqual(
             (host.docker, host.github, host.plugins, host._isolated),
-            ("/usr/local/bin/docker", "", ("autopilot",), True),
+            (
+                "/usr/local/bin/docker",
+                "",
+                ("autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",),
+                True,
+            ),
         )
         bare = DockerHost("docker", {"docker": DOCKER})
         self.assertEqual((bare.github, bare.plugins, bare._isolated), ("", (), False))
         self.assertTrue(DockerHost("docker", {"docker": DOCKER, "isolated": True})._isolated)
         named = DockerHost(
-            "docker", {"docker": DOCKER, "plugins": ["autopilot", "b.c@owner/market_1-x"]}
+            "docker",
+            {
+                "docker": DOCKER,
+                "plugins": [
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                    "b.c@owner/market_1-x#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ],
+            },
         )
-        self.assertEqual(named.plugins, ("autopilot", "b.c@owner/market_1-x"))
+        self.assertEqual(
+            named.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "b.c@owner/market_1-x#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        )
 
     def test_bad_settings_name_their_key(self):
         for settings, key in (
@@ -362,15 +382,20 @@ class ConfigTest(Base):
             *(
                 (
                     {"docker": DOCKER, "plugins": plugins},
-                    r"^\[hosts.docker\] plugins: want a list of unique plugin names$",
+                    r"^\[hosts.docker\] plugins: want unique name@owner/repo#40-hex-commit sources$",
                 )
                 for plugins in (
-                    "autopilot",
+                    "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
                     ["a", "a"],
                     [1],
                     [["a"]],
                     [""],
                     ["../a"],
+                    ["autopilot"],
+                    ["x@owner/repo"],
+                    ["x@owner/repo#main"],
+                    ["x@owner/repo#" + "a" * 39],
+                    ["x@owner/repo#" + "A" * 40],
                     ["a@"],
                     ["a@b@c"],
                     ["-a"],
@@ -596,9 +621,18 @@ class StartTest(Base):
         self.popen_mock.assert_not_called()
 
     def test_the_build_holds_the_whitelisted_plugins(self):
-        self.host.plugins = ("autopilot", "beta@owner/market")
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         self.start()
-        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
 
     def test_start_order(self):
         os.makedirs(self.home_dir)
@@ -1692,10 +1726,19 @@ class PreflightTest(Base):
         self.assertFalse(os.path.exists(self.state))
 
     def test_resume_preflight_builds_with_the_whitelisted_plugins(self):
-        self.host.plugins = ("autopilot", "beta@owner/market")
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         self.validate()
         self.assertEqual(self.order, ["version", ("build", REPO)])
-        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
         self.assertEqual(self.broker.max_ages, [REFRESH])
         self.assertFalse(os.path.exists(self.state))
 
@@ -2103,9 +2146,18 @@ class RecoverTest(Base):
         )
 
     def test_supervisor_recovery_checks_the_digest_with_the_whitelisted_plugins(self):
-        self.host.plugins = ("autopilot", "beta@owner/market")
+        self.host.plugins = (
+            "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+            "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         self.host.attach("w")
-        self.assertEqual(self.broker.plugins, ("autopilot", "beta@owner/market"))
+        self.assertEqual(
+            self.broker.plugins,
+            (
+                "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217",
+                "beta@owner/market#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+        )
         self.assertEqual(self.broker.max_ages, [None])
         self.assertEqual(len(self.spawned), 1)
 

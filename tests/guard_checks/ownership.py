@@ -17,6 +17,7 @@ from tests.guard_data.orchestrator import (
 )
 from tests.guard_data.session import (
     CLIENTS_HOME,
+    PLUGIN_SOURCE_CONFIG,
     SESSION_SRC,
     STATUS_LOG_CLOCK,
     STATUS_LOG_HOME,
@@ -39,6 +40,15 @@ TOML_IMPLEMENTATION = re.compile(
 
 
 TOML_CLIENT = re.compile(r'\s*client\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+
+
+TOML_PLUGINS = re.compile(r"\s*plugins\s*=")
+
+
+TOML_PLUGIN_SOURCE = re.compile(
+    r'"[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9-]{0,38}/'
+    r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}#[a-f0-9]{40}"'
+)
 
 
 TOML_TABLE = re.compile(r"\s*(?:#\s*local:\s*)?\[\s*([^\]\s]+)\s*\]\s*(?:#.*)?\Z")
@@ -271,6 +281,9 @@ def client_names(repo: str) -> list[str]:
                     or TOML_CLIENT.match(line)
                 ):
                     continue
+                if rel == PLUGIN_SOURCE_CONFIG and TOML_PLUGINS.match(line):
+                    # A pinned repository name is source data, not a client selection.
+                    line = TOML_PLUGIN_SOURCE.sub('""', line)
             found.update(f"{rel}:{number}: client name {word}" for word in CLIENT.findall(line))
     return sorted(found)
 

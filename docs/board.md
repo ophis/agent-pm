@@ -186,7 +186,7 @@ An issue with the Agent group's `OpenCode` label runs OpenCode on the host's Oll
 2. The Docker Host, with the harness on tmux: `[session.hosts] default = "docker"` and `[delegate.delegates] harness_host = "tmux"` ([Docker host › Role runs](docker-host.md#role-runs)). A board run's cwd is untrusted, so on tmux OpenCode refuses to start ([OpenCode sessions](sessions.md#opencode-sessions)). This puts every client's board runs in containers.
 3. An `OpenCode` label in the Agent group, mapped as in [Agent label](#agent-label): `opencode = "<its label id>"` under `[orchestrator.linear.agent_labels]`.
 
-The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 17 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
+The usage gate probes only the provider of the default `[session.clients.opencode] model`, independently of task tiers: Ollama uses the host's `127.0.0.1:<ollama_port>/api/tags`; configured providers use their `base_url` plus `/models`. A 2xx response permits the run; an unreachable or unauthorized endpoint stays `usage unknown`. Docker probes run in broker protocol 18 with its existing Keychain API key; tmux probes read the selected provider's API entry from OpenCode `auth.json`. Keys stay out of argv, diagnostics and responses; redirects are refused. Task-tier overrides still select each run's model, but do not change the usage probe.
 
 ## Local board
 
@@ -198,7 +198,7 @@ An issue-selected client whose usage probe requires a missing or non-executable 
 
 ### Mac mini regression checks
 
-Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 17 first. These checks require the real mini; CI results do not replace them.
+Use a separate initialized local test board with OpenCode, Strata and Docker configured. Upgrade the broker to protocol 18 first. These checks require the real mini; CI results do not replace them.
 
 | Case | Action | Expected |
 |---|---|---|
@@ -254,7 +254,10 @@ Add a session registry.
 Read LOC-7 first.
 
 #### self · 2026-10-19 16:10
-Build ready: https://github.com/<owner>/<name>/pull/1
+Build ready:
+Agent report before delivery:
+
+> https://github.com/<owner>/<name>/pull/1
 
 ###
 Approved; hand it to the next stage.
@@ -268,9 +271,9 @@ Approved; hand it to the next stage.
 - **Front matter:** one `key: value` line each, at most once. `id` (required) is the issue's identifier, e.g. `LOC-12`; the file name is only for you, so renaming a file changes nothing. `title` (required): plain text or a JSON string. `created` (required): ISO 8601 with an offset or `Z`. `priority`: 0 none (the default), 1 urgent … 4 low. `task` and `client` choose the run's task and client as the Tasks and Agent labels do: unset, the role picks its task and runs its default client; a task not among the role's bounces the issue as a bad Tasks label does. `blocked_by` and `related`: `[ID, …]`, `[]` for none. `parent`: one id. `links`: `  - title:` / `    url:` pairs. An empty value means none.
 - **Blockers:** a ready issue waits while a `blocked_by` issue is not in `done/` or `canceled/` (an archived one by its last History state); an id with no issue file blocks too.
 - **Sections:** `### Description`, `### Comments`, `### History`, each optional, at most once, in that order; nothing but blank lines before the first.
-- **Comments:** each starts with `#### <self|other> · YYYY-MM-DD HH:MM`; `self` is the engine, `other` a person. To comment, add a line `###` at the end of Comments and your text below it: it counts as yours (`other`) at the file's modification time.
+- **Comments:** each starts with `#### <self|other> · YYYY-MM-DD HH:MM`; `self` is the engine, `other` a person. To comment, add a line `###` at the end of Comments and your text below it: it counts as yours (`other`) at the file's modification time. Successful build comments quote the agent's report from before delivery; a draft PR it describes may since have been readied by Delegate.
 - **History:** one `- YYYY-MM-DD HH:MM <state> <self|other>` line per move, `self` the engine's. A file whose directory differs from its last History entry (or that has none) was moved by a person: it counts as an `other` move there at the file's modification time, as when a person moves a Linear issue. Times without an offset are local time.
-- **Promote:** an approved issue becomes a ready issue for the next role, linked to the source; the source moves to `done/`.
+- **Promote:** an approved issue becomes a ready issue for the next role, linked to the source; the source moves to `done/`. Its description starts `Handoff from <ID>`: the stable id, without a file URL that moving the source would break. Read the source with `agent-pm-orchestrator issue read <ID>`; related issues are read in both directions even when only the source file records the relation.
 - **Archive:** prune archives by the [Finish](#using-the-board) rule, moving the issue file and every unarchived descendant flat into `archive/`, each given the engine's comment `Archived from <assignee>/<state>/.`; an issue with a descendant in neither `done/` nor `canceled/` stays. Restoring one (the source of a handoff the engineer's repo check bounces) moves it back to that comment's assignee dir, in its last History state; with no such comment, or one naming no plain directory, to `unassigned/`.
 - **Errors:** a board file that cannot be read stops the router before any pick with `router.py: <absolute path>: <reason>`, exit 2 (`promote.py:` and `prune.py:` the same), e.g. `no front matter`, `unknown key 'owner'`, `bad priority '7'`, `unknown state dir 'doing'`, `duplicate id LOC-12, also in <path>`. No board directory: `router.py: <board>: no such board directory`; one holding no assignee dir: `router.py: <board>: empty board: no assignee directory`.
 

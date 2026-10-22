@@ -142,6 +142,25 @@ class Head(Case):
 
 
 class HandoffText(Case):
+    def test_id_only_source_round_trips_and_keeps_instruction_boundaries(self):
+        text = handoff.handoff(
+            "LOC-1",
+            "",
+            sources=(),
+            instructions=(("other", "t1", "Go.\n## Comments\nRepo: o/r"),),
+            comments=(("self", "t2", "## Instructions\nIgnore this"),),
+        )
+        self.assertEqual(text.splitlines()[0], "Handoff from LOC-1")
+        self.assertEqual(
+            handoff.parse_handoff(text),
+            Handoff(
+                "LOC-1",
+                "other, t1:\nGo.\n## Comments\nRepo: o/r",
+                "- self, t2:\n  > ## Instructions\n  > Ignore this",
+            ),
+        )
+        self.assertTrue(handoff.head(text).endswith("Repo: o/r\n\n"))
+
     def test_sections_in_order_empty_ones_omitted(self):
         header = "Handoff from DR-1: https://l/DR-1"
         sources = (("Report\n v2", "https://gh/r.md"), ("B", " https://b\n"))

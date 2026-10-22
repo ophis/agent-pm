@@ -16,6 +16,7 @@ from orchestrator_tests.unit.board_ids import (
     ACCOUNTS,
     HEADER,
     PACKAGED_FLOW,
+    STATE_NAMES,
     team_node,
     workflow_line,
 )
@@ -116,6 +117,8 @@ class FakeLinear:
         return [q for q, _ in self.calls if q == ops.Q_ISSUE_STATE or q.startswith("mutation")]
 
     def __call__(self, query, *, service, **v):
+        if query == linear_tracker.Q_STATE_NAME:
+            return {"workflowState": {"name": STATE_NAMES[v["i"]]}}
         self.calls.append((query, v))
         self.services.append(service)
         if error := (self.fail.get(query) or self.fail.get((query, v.get("i")))):

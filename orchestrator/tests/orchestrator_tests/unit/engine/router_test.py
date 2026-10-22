@@ -937,7 +937,7 @@ class RouterEntry(OuterBase):
                 self.assertEqual(self.entry(now=NOW + timedelta(hours=3)), 0)
                 self.assertEqual(len(self.api.constructed), 1)
                 self.assertEqual(len(self.todo["comments"]), 1)
-                self.assertNotIn(router.INTERRUPTED, text)
+                self.assertNotIn(router.INTERRUPTED.format(state="Todo"), text)
 
     def test_label_client_other_launch_errors_keep_recovery_behavior(self):
         self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
@@ -969,7 +969,7 @@ class RouterEntry(OuterBase):
         retry = runs.parse_log(self.runs)[-1]
         self.assertEqual((retry.kind, retry.client), ("start", "a"))
         self.assertNotEqual(retry.sid, self.sid("old"))
-        self.assertIn(router.INTERRUPTED, self.todo["comments"])
+        self.assertIn(router.INTERRUPTED.format(state="Todo"), self.todo["comments"])
 
     def test_label_client_bounce_write_failure_is_transient(self):
         class RejectReview(ClaimLinear):
@@ -1761,7 +1761,9 @@ class RouterOutages(TickBase):
                         "launch TASK-1 exit=0",
                     ],
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+                self.assertEqual(
+                    fake.issues["TASK-1"]["comments"], [router.INTERRUPTED.format(state="Todo")]
+                )
 
 
 class ClientUsage(Base):
@@ -2338,6 +2340,16 @@ class LocalBoard(TickBase):
         wiring = replace(cli.TRACKERS[TrackerKind.LOCAL], connect=self.connect)
         return self.tick(fake, *argv, trackers={TrackerKind.LOCAL: wiring}, **kw)
 
+    def test_unqueued_diagnostic_uses_ready_directory(self):
+        folder = os.path.join(self.tmp, "board", "researcher", "review")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "LOC-1 One.md"), "w", encoding="utf-8") as file:
+            file.write("---\nid: LOC-1\ntitle: One\ncreated: 2026-09-01T00:00:00Z\n---\n")
+        self.assertEqual(self.tick(self.fake(), "--dry-run", "--issue", "LOC-1"), 0)
+        self.assertIn(
+            "pick-none LOC-1 reason=not a ready/ issue assigned to a role account", self.said()
+        )
+
     def test_brake_on_local(self):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.on_local(self.fake(), "--brake", "researcher"), 0)
@@ -2401,7 +2413,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(len(comments), 1)
         self.assertIn("b: not installed", comments[0])
         self.assertNotIn("hidden details", comments[0])
-        self.assertNotIn(router.INTERRUPTED, comments[0])
+        self.assertNotIn(router.INTERRUPTED.format(state="Todo"), comments[0])
         self.assertTrue(
             any(line.startswith("launch-error TASK-2 client=b") for line in self.said())
         )
@@ -2678,7 +2690,9 @@ class TaskSelection(TaskLabelsScenario):
             ),
         ):
             with self.subTest(pick=pick):
-                self.assertEqual(router.task_for(pick, "researcher", role_tasks), want)
+                self.assertEqual(
+                    router.task_for(pick, "researcher", role_tasks, lambda: "Todo"), want
+                )
 
     def test_client_for(self):
         for pick, want in (
@@ -3015,7 +3029,9 @@ class ScheduledTaskSelection(TickBase):
         self.moved("TASK-1", 61)
         self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=60)
         self.tick(fake)
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+        self.assertEqual(
+            fake.issues["TASK-1"]["comments"], [router.INTERRUPTED.format(state="Todo")]
+        )
         self.assertIn(
             "claim TASK-1 role=researcher task=light-research client=a client_source=default",
             self.said(),
@@ -3547,7 +3563,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: self.add(kind="start", ident="TASK-1", sid="n", minutes_ago=5),
                 "recover TASK-1 to=todo reason=not resumable sid=n",
                 "Todo",
-                router.INTERRUPTED,
+                router.INTERRUPTED.format(state="Todo"),
             ),
             (
                 "no sid",
@@ -3555,7 +3571,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: self.moved("TASK-1", 5),
                 "recover TASK-1 to=todo reason=no session",
                 "Todo",
-                router.INTERRUPTED,
+                router.INTERRUPTED.format(state="Todo"),
             ),
         ]
 
@@ -4251,7 +4267,9 @@ class RunPlanning(Base):
                         "TASK-6": "In Progress",
                     },
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
+                self.assertEqual(
+                    fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED.format(state="Todo")
+                )
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
@@ -4282,7 +4300,7 @@ class RunPlanning(Base):
         t = fake.issues["TASK-1"]
         self.assertEqual(
             (t["state"], t["assignee"], t["comments"]),
-            ("Todo", who("engineer"), [router.INTERRUPTED]),
+            ("Todo", who("engineer"), [router.INTERRUPTED.format(state="Todo")]),
         )
         self.assertNotIn("subscribers", t)
         self.assertFalse(any("assigneeId" in repr(v) for _, v in fake.mutations))
@@ -4499,7 +4517,8 @@ class StaleRunRecovery(Base):
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
-                    (t["state"], t.get("comments")), (state, [router.INTERRUPTED] if out else None)
+                    (t["state"], t.get("comments")),
+                    (state, [router.INTERRUPTED.format(state="Todo")] if out else None),
                 )
                 self.assertEqual(
                     self.said(),
@@ -4590,7 +4609,9 @@ class StaleByMoveIntoRunning(TickBase):
         self.assertEqual(self.tick(fake, live=["agent-pm-researcher-TASK-5"]), 0)
         self.assertEqual(self.said(), [said])
         t = fake.issues["TASK-1"]
-        self.assertEqual((t["state"], t["comments"]), ("Todo", [router.INTERRUPTED]))
+        self.assertEqual(
+            (t["state"], t["comments"]), ("Todo", [router.INTERRUPTED.format(state="Todo")])
+        )
 
     def test_entered_over_two_hours_ago_recovers_whatever_the_edits(self):
         entered = (NOW - timedelta(minutes=180)).isoformat()
@@ -4617,7 +4638,9 @@ class StaleByMoveIntoRunning(TickBase):
         self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 2)
         self.assertEqual(self.said(), ["recover TASK-1 to=todo reason=no session"])
         t = fake.issues["TASK-1"]
-        self.assertEqual((t["state"], t["comments"]), ("Todo", [router.INTERRUPTED]))
+        self.assertEqual(
+            (t["state"], t["comments"]), ("Todo", [router.INTERRUPTED.format(state="Todo")])
+        )
         self.assertNotIn("TASK-1", [v["i"] for q, v in fake.queries if "history" in q])
 
 
@@ -5081,7 +5104,7 @@ class ScheduledRuns(TickScenario):
             {i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
             {
                 "TASK-1": ("In Progress", None),
-                "TASK-2": ("Todo", [router.INTERRUPTED]),
+                "TASK-2": ("Todo", [router.INTERRUPTED.format(state="Todo")]),
                 "TASK-3": ("In Review", [router.CAP_COMMENT]),
                 "TASK-4": ("Todo", None),
                 "TASK-5": ("In Progress", None),

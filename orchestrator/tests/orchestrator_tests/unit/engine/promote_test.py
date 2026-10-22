@@ -7,6 +7,7 @@ import os
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -148,7 +149,7 @@ class PartialPromotion(Base):
             (
                 "In Review",
                 [
-                    promote.NO_INSTRUCTIONS
+                    promote.NO_INSTRUCTIONS.format(state="In Review")
                     + "\n\nCould not subscribe me@x.com: LinearError: linear api error: boom"
                 ],
             ),
@@ -513,7 +514,9 @@ class HandoffPromotion(Base):
         self.fake.said("DR-1", 50, user=AGENT, body="agent")
         self.fake.said("DR-1", 49, user=OTHER, body="other")
         self.fake.said("DR-1", 48, user=None, body="bot")
-        self.fake.said("DR-1", 47, user=AGENT, body=promote.NO_INSTRUCTIONS)
+        self.fake.said(
+            "DR-1", 47, user=AGENT, body=promote.NO_INSTRUCTIONS.format(state="In Review")
+        )
         self.fake.said("DR-1", 46, body="mine")
         self.fake.said("DR-1", 45, user={"email": "ME@X.com", "name": "Me"}, body="caps")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
@@ -599,7 +602,8 @@ class HandoffPromotion(Base):
                 self.run_main()
                 self.assertEqual(self.fake.children, {})
                 self.assertEqual(
-                    (src["state"], src["posted"]), ("In Review", [promote.NO_INSTRUCTIONS])
+                    (src["state"], src["posted"]),
+                    ("In Review", [promote.NO_INSTRUCTIONS.format(state="In Review")]),
                 )
 
     def test_no_instructions_bounces(self):
@@ -616,7 +620,7 @@ class HandoffPromotion(Base):
                 "In Review",
                 {"id": "u-researcher"},
                 ["me@x.com", "b@x.com"],
-                [promote.NO_INSTRUCTIONS],
+                [promote.NO_INSTRUCTIONS.format(state="In Review")],
             ),
         )
         self.assertEqual(
@@ -862,12 +866,37 @@ class LocalBoardPromotion(Base):
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.files(), before)
         self.assertIn("handoff-wait LOC-1", self.out)
+        self.assertIn("reason=in approved/ under 10 min", self.out)
+
+    def test_default_research_prefix_is_replaced_by_pm_prefix(self):
+        self.approved()
+        self.tracker().retitle("LOC-1", "RES: Queue survey")
+        self.assertEqual(self.run_main(), 0, self.err)
+        self.assertEqual(self.tracker().issue("LOC-2").title, "PRD: Queue survey")
+
+    def test_source_reference_survives_source_moves_and_has_inverse_related(self):
+        old = self.approved()
+        self.assertEqual(self.run_main(), 0, self.err)
+        port = self.tracker()
+        child = port.issue("LOC-2")
+        self.assertEqual(child.description.splitlines()[0], "Handoff from LOC-1")
+        self.assertNotIn(Path(old).as_uri(), child.description)
+        self.assertEqual(child.handoff.source, "LOC-1")
+        self.assertIn("LOC-1", port.detail("LOC-2").related)
+        self.assertIn("LOC-1", [each.identifier for each in child.linked])
+        port.move("LOC-1", IssueState.REVIEW)
+        source = port.issue(child.handoff.source)
+        self.assertTrue(source.url.endswith("researcher/review/LOC-1%20Queue%20survey.md"))
+        self.assertIn("LOC-2", port.detail("LOC-1").related)
 
     def test_bounces_without_instructions(self):
         self.approved(comments="")
         self.assertEqual(self.run_main(), 0, self.err)
         self.assertEqual(self.tracker().read("LOC-1").state, IssueState.REVIEW)
-        self.assertEqual(self.tracker().detail("LOC-1").comments[-1].body, promote.NO_INSTRUCTIONS)
+        self.assertEqual(
+            self.tracker().detail("LOC-1").comments[-1].body,
+            "Handoff needs a comment saying what to build next. Moving back to review/.",
+        )
         self.assertFalse(os.path.exists(os.path.join(self.board, "pm")))
 
     def test_dry_run_writes_nothing(self):
@@ -890,6 +919,9 @@ class LocalBoardPromotion(Base):
         """The source archived meanwhile: its bounce fails as a handoff-error, not a crash."""
 
         class Archived:
+            def state_name(self, _state):
+                return "review/"
+
             def comment_and_move(self, *_, **__):
                 raise IssueError("LOC-1: archived")
 
@@ -900,7 +932,7 @@ class LocalBoardPromotion(Base):
         [record] = logged(self.logs)
         self.assertEqual(
             (record["kind"], record["reason"], record["error"]),
-            ("handoff-error", "could not move to In Review", "IssueError: LOC-1: archived"),
+            ("handoff-error", "could not move to review/", "IssueError: LOC-1: archived"),
         )
 
 
@@ -914,7 +946,11 @@ PROMOTION = {  # one Handoff issue promoted
     "ops.M_STATE": 1,
     "ops.M_COMMENT": 1,
 }
-WAITING = {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_DETAIL": 1}  # TASK-1003 not yet due
+WAITING = {
+    "linear_tracker.Q_HANDOFF": 1,
+    "linear_tracker.Q_DETAIL": 1,
+    "linear_tracker.Q_STATE_NAME": 1,
+}  # TASK-1003 not yet due
 
 
 class RequestCountTest(HostScale):
@@ -925,7 +961,7 @@ class RequestCountTest(HostScale):
         expected = {
             "cold": {
                 "setup": SETUP_REQUESTS,
-                "promote": {"linear_tracker.Q_HANDOFF": 1, **two},
+                "promote": {"linear_tracker.Q_HANDOFF": 1, "linear_tracker.Q_STATE_NAME": 1, **two},
                 "prune": {
                     "linear_tracker.Q_SNAPSHOTS": 6,
                     "linear_tracker.Q_ISSUE": 2,
@@ -972,5 +1008,5 @@ class RequestCountTest(HostScale):
         self.assertLessEqual(max(sum(r["prune"].values()) for r in found.values()), cap)
         self.assertEqual(
             {name: sum(sum(p.values()) for p in r.values()) for name, r in found.items()},
-            {"cold": 45, "warm": 11, "quiet": 5, "next_day": 28},
+            {"cold": 46, "warm": 12, "quiet": 6, "next_day": 28},
         )

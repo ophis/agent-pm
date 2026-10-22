@@ -62,7 +62,7 @@ func invoke(a app, args ...string) (int, string, string) {
 
 func TestVersion(t *testing.T) {
 	code, out, errOut := invoke(app{}, "version")
-	if code != 0 || out != `{"protocol_version":"17"}`+"\n" || errOut != "" {
+	if code != 0 || out != `{"protocol_version":"18"}`+"\n" || errOut != "" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	for _, c := range fixtures.Cases(t, "version_output") {
@@ -421,8 +421,8 @@ func TestBuildPlugins(t *testing.T) {
 		maxAge  time.Duration
 	}{
 		{nil, nil, -1},
-		{[]string{"--plugin", "autopilot"}, []string{"autopilot"}, -1},
-		{[]string{"--plugin", "b@o/r", "--plugin", "a@o/m.x", "--max-age", "60"}, []string{"b@o/r", "a@o/m.x"}, time.Minute},
+		{[]string{"--plugin", "autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"}, []string{"autopilot@ophis/claude-autopilot#030a7926ae31a1f9c46625790111af96fd93a217"}, -1},
+		{[]string{"--plugin", "b@o/r#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--plugin", "a@o/m.x#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--max-age", "60"}, []string{"b@o/r#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a@o/m.x#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, time.Minute},
 	} {
 		var plugins []string
 		maxAge := time.Duration(-2)
