@@ -586,6 +586,13 @@ def _client_max_runs(cfg):
 
 
 def _runnable(cfg, work, delegate_cls, index):
+    overlay = cfg.get("core", {})
+    tables = {"overlay": overlay}
+    if isinstance(overlay, dict) and isinstance(roles := overlay.get("roles", {}), dict):
+        tables.update({f"overlay.roles.{role}": table for role, table in roles.items()})
+    for where, table in tables.items():
+        if isinstance(table, dict) and "gate" in table:
+            raise ConfigError(f"core: run overlay: unknown key 'gate' in [{where}]")
     try:
         trusted = delegate_cls.trusted_dirs()
     except (OSError, ValueError, delegate.ConfigError) as e:
@@ -593,7 +600,7 @@ def _runnable(cfg, work, delegate_cls, index):
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
-    out = _resolve_roles(cfg, cfg.get("core", {}), delegate_cls, index)
+    out = _resolve_roles(cfg, overlay, delegate_cls, index)
     _runnable_inputs(cfg, out)
     return out
 

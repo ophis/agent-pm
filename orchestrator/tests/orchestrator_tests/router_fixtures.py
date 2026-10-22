@@ -739,7 +739,18 @@ class OuterBase(TickBase):
                     self.rd,
                 ],
                 "overlays": (self.cfg().core,)
-                + (() if tier is None else ({"roles": {role: {"tier": tier}}},)),
+                + (() if tier is None else ({"roles": {role: {"tier": tier}}},))
+                + (
+                    (
+                        {
+                            "roles": {
+                                role: {"gate": "agent-pm-orchestrator router --brake researcher"}
+                            }
+                        },
+                    )
+                    if role == "researcher"
+                    else ()
+                ),
             },
         )
         return spec

@@ -119,7 +119,16 @@ class Runs(RunCase):
                 "display": "opaque:\nvalue",
                 "callback": ["agent-pm-orchestrator", "writeback", "--issue", "TASK-1", "--workdir"]
                 + [spec.workdir],
-                "overlays": (self.cfg.core,),
+                "overlays": (
+                    self.cfg.core,
+                    {
+                        "roles": {
+                            "researcher": {
+                                "gate": "agent-pm-orchestrator router --brake researcher"
+                            }
+                        }
+                    },
+                ),
             },
         )
         self.assertEqual(record.display, "opaque:\nvalue")
@@ -145,7 +154,47 @@ class Runs(RunCase):
                 )
                 self.assertEqual(
                     owner.delegate.accepted[2]["overlays"],
-                    (self.cfg.core, {"roles": {"researcher": {"tier": 3}}}),
+                    (
+                        self.cfg.core,
+                        {"roles": {"researcher": {"tier": 3}}},
+                        {
+                            "roles": {
+                                "researcher": {
+                                    "gate": "agent-pm-orchestrator router --brake researcher"
+                                }
+                            }
+                        },
+                    ),
+                )
+
+    def test_only_researcher_receives_the_orchestrators_brake(self):
+        for role in ("researcher", "engineer", "pm"):
+            with self.subTest(role=role):
+                owner = LinearRun(
+                    "TASK-1",
+                    "input",
+                    self.cfg.issue_workdir("TASK-1"),
+                    cfg=self.cfg,
+                    role=role,
+                    sid=SID,
+                    delegate_cls=CapturedDelegate,
+                )
+                self.assertEqual(
+                    owner.delegate.accepted[2]["overlays"],
+                    (self.cfg.core,)
+                    + (
+                        (
+                            {
+                                "roles": {
+                                    role: {
+                                        "gate": "agent-pm-orchestrator router --brake researcher"
+                                    }
+                                }
+                            },
+                        )
+                        if role == "researcher"
+                        else ()
+                    ),
                 )
 
     def test_spec_passes_only_the_workdir(self):

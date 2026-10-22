@@ -417,15 +417,17 @@ class Resolve(Fake):
 
     def test_gate_config_is_removed_at_every_level(self):
         self.assertEqual(self.resolved().gate, "")
-        for overlay in ({"gate": "make gate"}, {"roles": {"writer": {"gate": "make gate"}}}):
-            with self.subTest(overlay=overlay):
-                self.assertIn("unknown key 'gate'", self.refused(overlays=[overlay]))
         self.configure(
             RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"')
         )
         self.assertIn("unknown key 'gate'", self.refused())
         self.configure('gate = "make gate"\n' + RUN_CONFIG)
         self.assertIn("unknown key 'gate'", self.refused())
+
+    def test_runtime_overlays_carry_the_owners_gate(self):
+        for overlay in ({"gate": "owner brake"}, {"roles": {"writer": {"gate": "owner brake"}}}):
+            with self.subTest(overlay=overlay):
+                self.assertEqual(self.resolved(overlays=[overlay]).gate, "owner brake")
 
     def test_language_at_any_level(self):
         self.assertEqual(self.resolved("editor").language, "")
@@ -588,9 +590,9 @@ class Validate(Fake):
         language = "language must be one line of text"
         for overlay, msg in (
             ({"tier": 9}, TIER),
-            ({"gate": "a\nb"}, "unknown key 'gate'"),
-            ({"gate": "echo `id`"}, "unknown key 'gate'"),
-            ({"gate": 7}, "unknown key 'gate'"),
+            ({"gate": "a\nb"}, "gate must be one line"),
+            ({"gate": "echo `id`"}, "gate must be one line"),
+            ({"gate": 7}, "gate must be one line"),
             ({"language": "a\nb"}, language),
             ({"language": 7}, language),
         ):

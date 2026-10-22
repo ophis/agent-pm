@@ -78,18 +78,6 @@ from agent_pm.utils import (
 )
 
 
-def _braked(run: RunConfig, callback: Sequence[str] | None) -> RunConfig:
-    if (
-        run.role == "researcher"
-        and callback is not None
-        and len(callback) >= 2
-        and os.path.basename(callback[0]) == "agent-pm-orchestrator"
-        and callback[1] == "writeback"
-    ):
-        return replace(run, gate="agent-pm-orchestrator router --brake researcher")
-    return run
-
-
 def _team(team: Team) -> Team:
     return teams.team(team.root, team.dirs)
 
@@ -208,7 +196,7 @@ class HarnessDelegate(Delegate):
             self.composer = composer or Composer(
                 config=DelegateConfig(read_config()), team=spec.team
             )
-            run = _braked(self.composer.resolve(role, spec.task, overlays=overlays), callback)
+            run = self.composer.resolve(role, spec.task, overlays=overlays)
             accounts = self.composer.accounts(role, overlays=overlays)
             self._settings = thaw(self.composer.config.values)
             self.session_cls = session_cls
@@ -1084,10 +1072,7 @@ class HarnessDelegate(Delegate):
                 events=state.events if tui else None,
             )
             accepted = plan(
-                _braked(
-                    self.composer.resolve(state.role, spec.task, overlays=state.overlays),
-                    state.callback,
-                ),
+                self.composer.resolve(state.role, spec.task, overlays=state.overlays),
                 spec,
                 driver=self.driver,
                 composition=self.composer,
