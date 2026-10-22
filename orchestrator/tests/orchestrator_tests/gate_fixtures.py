@@ -42,4 +42,5 @@ def quota_config(provider, kind, *, core=None, clients=None):
         delegates={kind: provider},
         roles=roles,
         core=core or {},
+        usage_limit={},
     )

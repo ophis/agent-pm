@@ -665,6 +665,14 @@ class Docker(Base):
     def planned(self, *args, **kw):
         return super().planned(*args, **{"mode": "tui", **kw})
 
+    def test_a_runtime_gate_is_passed_unchanged_to_each_mode(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                got, _ = self.planned(mode=mode, keys={"gate": "owner-brake researcher"})
+                self.assertEqual(got.run.gate, "owner-brake researcher")
+                self.assertIn(got.run.gate, got.session.access.commands)
+                self.assertIn("`owner-brake researcher`", got.prompt)
+
     def test_a_headless_run_gets_the_docker_rules_and_an_in_process_one_none(self):
         got, _ = self.planned(mode="headless", out=None)
         self.assertTrue(got.docker)

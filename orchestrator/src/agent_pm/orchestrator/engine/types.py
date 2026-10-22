@@ -65,6 +65,7 @@ class LinearSettings:
 class Config:
     task_tiers: Mapping[str, int]
     client_max_runs: Mapping[str, int]
+    usage_limit: Mapping[str, bool]
     roles: Mapping[str, Role]
     local_clones: Mapping[str, str]
     tracker: TrackerKind

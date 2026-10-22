@@ -90,7 +90,7 @@ def corpus():
         cases[f"custom/{task or 'default'}"] = (
             "corpus-poet",
             task,
-            ({"templates": ["corpus-card"], "gate": "python3 /corpus/gate.py --below 80"},),
+            ({"templates": ["corpus-card"]},),
             RunParams(input=INPUT, out=f"{WORKDIR}/out.md", workdir=WORKDIR, resume=True),
         )
     return cfg, found, files, cases

@@ -415,14 +415,19 @@ class Resolve(Fake):
         self.assertIs(run.effort, Effort.LOW)
         self.assertEqual(self.resolved("editor", overlays=[overlay, {"tier": 4}]).tier, 4)
 
-    def test_gate_defaults_to_empty_and_an_overlays_or_the_configs_gate_is_its_value_verbatim(self):
+    def test_gate_config_is_removed_at_every_level(self):
         self.assertEqual(self.resolved().gate, "")
-        gate = "python3 /u/usage.py --below 80 *"
-        self.assertEqual(self.resolved(overlays=[{"roles": {"writer": {"gate": gate}}}]).gate, gate)
         self.configure(
             RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"')
         )
-        self.assertEqual(self.resolved().gate, "make gate")
+        self.assertIn("unknown key 'gate'", self.refused())
+        self.configure('gate = "make gate"\n' + RUN_CONFIG)
+        self.assertIn("unknown key 'gate'", self.refused())
+
+    def test_runtime_overlays_carry_the_owners_gate(self):
+        for overlay in ({"gate": "owner brake"}, {"roles": {"writer": {"gate": "owner brake"}}}):
+            with self.subTest(overlay=overlay):
+                self.assertEqual(self.resolved(overlays=[overlay]).gate, "owner brake")
 
     def test_language_at_any_level(self):
         self.assertEqual(self.resolved("editor").language, "")
@@ -582,15 +587,12 @@ class Validate(Fake):
 
     def test_an_invalid_overlay_value(self):
         self.assertLessEqual({"language", "client"}, RUN_KEYS)
-        gate, language = (
-            "gate must be one line of shell command without backticks",
-            "language must be one line of text",
-        )
+        language = "language must be one line of text"
         for overlay, msg in (
             ({"tier": 9}, TIER),
-            ({"gate": "a\nb"}, gate),
-            ({"gate": "echo `id`"}, gate),
-            ({"gate": 7}, gate),
+            ({"gate": "a\nb"}, "gate must be one line"),
+            ({"gate": "echo `id`"}, "gate must be one line"),
+            ({"gate": 7}, "gate must be one line"),
             ({"language": "a\nb"}, language),
             ({"language": 7}, language),
         ):

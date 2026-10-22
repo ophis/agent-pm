@@ -2,7 +2,6 @@
 
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -44,13 +43,10 @@ print(json.dumps({
 """
 
 
-DEPLOYED_LOAD = """import json, sys
+DEPLOYED_LOAD = """import json
 from agent_pm.orchestrator.engine import config
 cfg = config.load()
-if sys.argv[1:] == ["gate"]:
-    print(json.dumps(cfg.roles["researcher"].run.gate))
-else:
-    print(json.dumps({"work": cfg.work_dir, "clones": dict(cfg.local_clones)}))
+print(json.dumps({"work": cfg.work_dir, "clones": dict(cfg.local_clones)}))
 """
 
 
@@ -322,9 +318,9 @@ class PackagedDeployments(ConfigFile, Case):
         ]
         return clean_env(os.environ, *roots)
 
-    def child(self, *arguments):
+    def child(self):
         result = subprocess.run(
-            [*PY, "-c", DEPLOYED_LOAD, *arguments],
+            [*PY, "-c", DEPLOYED_LOAD],
             cwd=self.dir,
             env=self.environment(),
             capture_output=True,
@@ -350,7 +346,6 @@ class PackagedDeployments(ConfigFile, Case):
 
     def test_default_gate_runs_outside_checkout_cwd(self):
         self.local(PIPELINE)
-        gate = self.child("gate")
         fake_bin = Path(self.dir) / "bin"
         fake_bin.mkdir()
         marker = Path(self.dir) / "usage-probe-ran"
@@ -365,7 +360,7 @@ class PackagedDeployments(ConfigFile, Case):
         env = self.environment()
         env["PATH"] = os.pathsep.join((str(self.deployment / "bin"), env["PATH"]))
         result = subprocess.run(
-            shlex.split(gate),
+            ["agent-pm-orchestrator", "router", "--brake", "researcher"],
             cwd=self.dir,
             env={**env, "AGENT_PM_PATH": str(fake_bin)},
             capture_output=True,
