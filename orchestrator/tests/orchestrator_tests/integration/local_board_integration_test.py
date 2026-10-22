@@ -218,7 +218,6 @@ class LocalBoard(BinFlow):
                 *picked(5),
                 *picked(1),
                 *picked(2),
-                {"kind": "usage", "client": "claude", "usage": USAGE, "allowed": True},
                 *picked(8),
                 *picked(15),
                 {
@@ -229,7 +228,6 @@ class LocalBoard(BinFlow):
                 },
                 {"kind": "would comment", "issue": "LOC-15", "body": BAD_TASK, "to": "in_review"},
                 *picked(14, "label"),
-                {"kind": "usage", "client": "claude", "usage": USAGE, "allowed": True},
                 *picked(3),
             ),
         )
